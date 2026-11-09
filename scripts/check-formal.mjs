@@ -26,6 +26,11 @@ const files = readdirSync(modelDirectory)
       file.endsWith(".qnt") && (!selected || file === `${selected}.qnt`),
   )
   .sort();
+// This finite graph completed in 219s with unchanged inputs. Keep the
+// exception explicit and source-bound; ordinary stages retain their limits.
+const verificationTimeouts = {
+  "ui_submitted_payment_recovery.qnt": 600_000,
+};
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const toolHashes = Object.fromEntries(
@@ -122,6 +127,9 @@ models: for (const file of files) {
         ],
       ];
   for (const args of stages) {
+    const timeoutMs = verify
+      ? (verificationTimeouts[file] ?? 180_000)
+      : 90_000;
     const testedSha256 = digest(readFileSync(join(root, input)));
     const testedSources = Object.fromEntries(
       modelSources
@@ -154,7 +162,7 @@ models: for (const file of files) {
           TMP: stageDirectory,
           TEMP: stageDirectory,
         },
-        timeoutMs: verify ? 180_000 : 90_000,
+        timeoutMs,
         signal: cancellation.signal,
         onStdout: collect,
         onStderr: collect,
@@ -179,6 +187,7 @@ models: for (const file of files) {
       command,
       passed,
       exitCode: status,
+      timeoutMs,
       durationMs: Date.now() - started,
       output,
       error: stable

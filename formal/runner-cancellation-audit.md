@@ -44,11 +44,29 @@ check cancellation before new writes/signing and pass the signal into their
 API requests. Already submitted external operations cannot be retracted.
 
 `runner_cancellation.qnt` models three queued jobs, two active jobs, startup
-that completes after cancellation, direct phase ownership, cleanup, repeated
-signals, cleanup failure and first-failure preservation. Settling a cleanup
-attempt does not assert that a process/container disappeared. Its five named scenarios were authored
+that completes after cancellation, startup rejection, direct phase ownership,
+cleanup, repeated signals, cleanup failure and first-failure preservation.
+A rejected startup settles that job, records the first nonzero result, and
+cancels new starts. A sibling which returns a resource later must still drain
+its cleanup before completion. Rejection does not establish that any resource
+hidden inside the rejected startup was stopped; no handle was returned.
+Settling a cleanup
+attempt does not assert that a process/container disappeared. Its original five named scenarios were authored
 but **not run**. It abstracts the phase helper's process-group behavior rather
 than proving it.
+
+A source-only follow-up at `d6323d9f2` adds the explicit startup-rejection
+transition and two named scenarios: a late-returning sibling must be closed,
+and an earlier signal result must survive a later startup rejection. The
+model now contains fourteen named scenarios. **No checks were run for this
+follow-up**, and no runtime code changed.
+
+The local follow-up preserves the refusal-scenario split reviewed in PR 2427:
+an action's `.fail()` assertion ends its own scenario instead of serving as a
+state-preserving step before more actions. Startup rejection now has separate
+refusal cases for new work, late launches and premature completion, alongside
+the successful drain trace. These new scenarios are unexecuted; the parent
+PR's evidence does not certify the added startup-rejection states.
 
 ## Explicit limits
 

@@ -43,6 +43,15 @@ State the scheduler or external-service fairness assumptions with each progress
 property. A timeout or retry bound must settle visibly; fairness must not assume
 that a payment, provider request or human approval succeeds.
 
+Type, scenario and simulation stages have a 90-second deadline. Finite
+verification normally has a 180-second deadline. The checked-in runner grants
+`ui_submitted_payment_recovery` 600 seconds: its unchanged graph completed in
+about 219 seconds after earlier 180-second timeouts. This changes the execution
+allowance, not the model's state bounds, guards or invariants. Each result
+records the selected `timeoutMs`, and the allowance table is bound by the
+runner's recorded source hash. Cancellation and timeout behavior remain in
+`formal_process`; numerical wall-clock performance is not a model proof.
+
 Results, exact commands, source/model hashes and tool versions belong under
 ignored `evidence/formal/`. Source mappings and review findings belong in this
 directory. A mapped file is a review index, not proof that every source branch

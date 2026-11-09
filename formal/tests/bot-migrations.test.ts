@@ -103,11 +103,15 @@ test("incomplete-source upgrade backfills only known gaps and real retry preserv
       { delivery_id: "gap-1", incomplete_since: null },
       { delivery_id: "gap-2", incomplete_since: null },
     ]);
-    const claim = await claimValueRequest(
-      db,
-      "gap-0",
-      new Date("2026-11-01T02:00:00.000Z"),
+    // Preserve the historical migration rows and backfill expectations above.
+    // Only this new operational lease must clear SQLite's execution clock.
+    const clock = sqlite
+      .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+      .get() as { at: string };
+    const resumedAt = new Date(
+      Math.max(Date.parse(clock.at), Date.parse(at)) + 2 * 3_600_000,
     );
+    const claim = await claimValueRequest(db, "gap-0", resumedAt);
     if (!claim) throw new Error("Expected retry lease");
     expect(
       sqlite
@@ -121,7 +125,7 @@ test("incomplete-source upgrade backfills only known gaps and real retry preserv
       claim,
       "current",
       null,
-      new Date("2026-11-01T02:01:00.000Z"),
+      new Date(resumedAt.getTime() + 60_000),
     );
     expect(
       sqlite

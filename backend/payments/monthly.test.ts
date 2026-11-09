@@ -429,6 +429,183 @@ for (const [boundary, initiallyOff] of [
     expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2026-11`]);
   });
 }
+for (const mutation of ["allocation", "enable", "disable"] as const) {
+  test(`a queued ${mutation} refuses a registry authority change before its INSERT`, async () => {
+    clock = beforeCutoff;
+    const persistence = new CloudflareProjectPersistence(db);
+    const original = await persistence.getProject(project.id);
+    if (!original) throw new Error("Missing fixture project");
+    const beforeSettings = count("monthly_payment_settings");
+    const beforeAllocations = count("monthly_allocation_changes");
+    const service = monthlyOwnerService({
+      db,
+      ...projects(),
+      networks: () => ["base-sepolia"],
+      schedule: () => schedule,
+      now: () => clock,
+      // GitHub remains controlled, but the selected User steward must match.
+      verifyAuthority: async (current, who) => {
+        if (
+          current.manifest.steward.github.type === "User" &&
+          current.manifest.steward.github.actorId !== who.githubId
+        )
+          throw new MonthlyPaymentError(
+            403,
+            "owner_required",
+            "The current project steward must authorize the change.",
+          );
+      },
+    });
+    let reachedInsert = () => {};
+    let releaseInsert = () => {};
+    const queued = new Promise<void>((resolve) => {
+      reachedInsert = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      releaseInsert = resolve;
+    });
+    const prepare = db.prepare.bind(db);
+    const target =
+      mutation === "allocation"
+        ? "INSERT INTO monthly_allocation_changes("
+        : "INSERT INTO monthly_payment_settings(";
+    let held = false;
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (!sql.startsWith(target)) return statement;
+      return new Proxy(statement, {
+        get(statementTarget, key) {
+          if (key === "bind")
+            return (...args: unknown[]) => {
+              const bound = statementTarget.bind(...args);
+              return new Proxy(bound, {
+                get(inner, method) {
+                  if (method === "run")
+                    return async () => {
+                      if (!held) {
+                        held = true;
+                        reachedInsert();
+                        await released;
+                      }
+                      return inner.run();
+                    };
+                  const value = Reflect.get(inner, method);
+                  return typeof value === "function"
+                    ? value.bind(inner)
+                    : value;
+                },
+              });
+            };
+          const value = Reflect.get(statementTarget, key);
+          return typeof value === "function"
+            ? value.bind(statementTarget)
+            : value;
+        },
+      });
+    };
+    const pending =
+      mutation === "allocation"
+        ? service.changeAllocation(project.id, "2026-11", actor, {
+            githubUserId: B,
+            grossBase: "300",
+            expectedSequence: 0,
+          })
+        : service.setAutomatic(project.id, actor, mutation === "enable");
+    try {
+      await Promise.race([
+        queued,
+        pending.then(() => {
+          throw new Error(
+            "The monthly mutation completed before its INSERT was held.",
+          );
+        }),
+      ]);
+      const manifest = {
+        ...original.manifest,
+        steward: {
+          ...original.manifest.steward,
+          displayName: "Next fixture owner",
+          kind: "individual" as const,
+          github: {
+            actorId: "900000072",
+            nodeId: "U_fixtureNextMonthlyOwner",
+            login: "next-fixture-owner",
+            type: "User" as const,
+            profileUrl: "https://github.com/next-fixture-owner",
+          },
+        },
+      };
+      assertProjectDefinition(manifest);
+      const text = JSON.stringify(manifest);
+      expect(
+        await persistence.appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: original.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Change fixture authority while the old owner INSERT waits",
+            actor,
+            at: clock.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      releaseInsert();
+      await rejects(pending, "project_changed");
+      expect(held).toBe(true);
+      expect(count("monthly_payment_settings")).toBe(beforeSettings);
+      expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      expect(count("monthly_payment_runs")).toBe(0);
+      const current = await persistence.getProject(project.id);
+      expect(current?.revision).toBe(original.revision + 1);
+      expect(current?.manifest.steward.github.actorId).toBe("900000072");
+      // The same caller is now explicitly refused by current authority.
+      await rejects(
+        service.setAutomatic(project.id, actor, false),
+        "owner_required",
+      );
+    } finally {
+      releaseInsert();
+      db.prepare = prepare;
+      await pending.catch(() => {});
+    }
+  });
+}
+
+test("an unchanged paused project still permits owner opt-out and allocation edits", async () => {
+  clock = beforeCutoff;
+  const manifest = { ...project.manifest, status: "paused" as const };
+  const text = JSON.stringify(manifest);
+  expect(
+    await new CloudflareProjectPersistence(db).appendProjectRevision(
+      {
+        projectId: project.id,
+        expectedRevision: project.revision,
+        manifest,
+        manifestText: text,
+        manifestSha256: await sha256Hex(text),
+        reason: "Keep paused project owner controls available",
+        actor,
+        at: clock.toISOString(),
+      },
+      0,
+    ),
+  ).toBe("updated");
+  expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+    automatic: false,
+  });
+  await owner().changeAllocation(project.id, "2026-11", actor, {
+    githubUserId: B,
+    grossBase: "300",
+    expectedSequence: 0,
+  });
+  expect(count("monthly_payment_settings")).toBe(1);
+  expect(count("monthly_allocation_changes")).toBe(1);
+  expect(count("monthly_payment_runs")).toBe(0);
+});
+
 for (const automatic of [false, true]) {
   test(`${automatic ? "automatic" : "owner"} finalization preserves a project pause committed before the freeze write`, async () => {
     clock = automatic ? afterCutoff : beforeCutoff;

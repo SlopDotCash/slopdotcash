@@ -503,6 +503,338 @@ async function signIn(page: Page, token: string) {
   );
 }
 
+function settingsGate() {
+  let release!: () => void;
+  let started!: () => void;
+  let completed!: () => void;
+  return {
+    wait: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    requested: new Promise<void>((resolve) => {
+      started = resolve;
+    }),
+    returned: new Promise<void>((resolve) => {
+      completed = resolve;
+    }),
+    release: () => release(),
+    started: () => started(),
+    completed: () => completed(),
+  };
+}
+
+async function settingsSession(page: Page, role: Role) {
+  await page.evaluate(
+    ([name, value]) => {
+      document.cookie = `${name}=${value}; Path=/; Secure; SameSite=Strict`;
+    },
+    [COOKIE, TOKENS[role]],
+  );
+}
+
+/** Existing real Pages/D1/GitHub fixture, with no vault or provider needed. */
+async function settingsProject(request: APIRequestContext) {
+  const id = `settings-life-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {
+    securityBounty: bountyTerms(repository, {
+      status: "paused",
+      rewardMode: "separate",
+      fundingPolicy: "after-approval",
+      amount: {
+        currency: "USD",
+        decimals: 2,
+        network: null,
+        grossMinor: "10000",
+      },
+      settlement: undefined,
+    }),
+  });
+  const permissionPath = `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/permission/e2e-reporter-b`;
+  const permission = await fetch(`${permissionPath}/admin`, { method: "PUT" });
+  expect(permission.status).toBe(204);
+  return {
+    id,
+    async close() {
+      const reset = await fetch(`${permissionPath}/none`, { method: "PUT" });
+      expect(reset.status).toBe(204);
+    },
+  };
+}
+
+async function openSettings(page: Page, id: string) {
+  await signIn(page, TOKENS.security);
+  await page.goto(`/projects/${id}/security#security-settings`, {
+    waitUntil: "networkidle",
+  });
+  await openProjectSecuritySettings(page);
+  await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+    "100",
+  );
+}
+
+async function reviewSettingsAmount(page: Page, amount: string) {
+  await page.getByLabel("Published gross award (USD)").fill(amount);
+  await page
+    .getByRole("button", { name: "Review bounty terms", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Review bounty terms", exact: true }),
+  ).toBeVisible();
+}
+
+test("a captured management permission cannot grant access after the cookie changes @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  const permissionActors: (string | undefined)[] = [];
+  await page.route(
+    `**/api/v1/project-setup/${fixture.id}?attempt=0`,
+    async (route) => {
+      const expected = route.request().headers()["x-slop-expected-github-id"];
+      permissionActors.push(expected);
+      if (permissionActors.length > 1) return route.continue();
+      expect(expected).toBe(account("security").githubId);
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      held.started();
+      await held.wait;
+      await route.fulfill({ response });
+      held.completed();
+    },
+  );
+  try {
+    await signIn(page, TOKENS.security);
+    await page.goto(`/projects/${fixture.id}/security#security-settings`, {
+      waitUntil: "domcontentloaded",
+    });
+    await held.requested;
+    await settingsSession(page, "reporter-b");
+    held.release();
+    await held.returned;
+    await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+      "100",
+    );
+    expect(permissionActors).toContain(account("reporter-b").githubId);
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+test("bounty publication refuses a different current actor before dispatch @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  let writes = 0;
+  await page.route(`**/api/v1/projects/${fixture.id}`, (route) => {
+    if (route.request().method() === "PUT") writes++;
+    return route.continue();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    await settingsSession(page, "reporter-b");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    // The confirmed change refreshes the parent without a synthetic focus.
+    await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+      "100",
+    );
+    expect(writes).toBe(0);
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a departed bounty publication cannot replace a later owner's revision @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  let writes = 0;
+  await page.route(`**/api/v1/projects/${fixture.id}`, async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const attempt = ++writes;
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    if (attempt === 1) {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        account("security").githubId,
+      );
+      held.started();
+      await held.wait;
+    } else {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        account("reporter-b").githubId,
+      );
+    }
+    await route.fulfill({ response });
+    if (attempt === 2) return;
+    held.completed();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    await held.requested;
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision + 1,
+    );
+    await settingsSession(page, "reporter-b");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const amount = page.getByLabel("Published gross award (USD)");
+    await expect(amount).toBeEnabled();
+    await expect(amount).toHaveValue("200");
+    await reviewSettingsAmount(page, "300");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    const result = `Published revision ${before.revision + 2}.`;
+    await expect(
+      page.getByRole("status").filter({ hasText: result }),
+    ).toBeVisible();
+    held.release();
+    await held.returned;
+    await expect(
+      page.getByRole("status").filter({ hasText: result }),
+    ).toBeVisible();
+    await expect(amount).toHaveValue("300");
+    const stored = await adminProject(request, fixture.id);
+    expect(stored.revision).toBe(before.revision + 2);
+    expect(
+      (stored.manifest.securityBounty as SecurityBountyTerms).amount.grossMinor,
+    ).toBe("30000");
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+test("leaving bounty settings during publication preflight sends no revision @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  let armed = false;
+  let writes = 0;
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (!armed) return route.continue();
+    armed = false;
+    const response = await route.fetch();
+    held.started();
+    await held.wait;
+    await route.fulfill({ response });
+    held.completed();
+  });
+  await page.route(`**/api/v1/projects/${fixture.id}`, (route) => {
+    if (route.request().method() === "PUT") writes++;
+    return route.continue();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    armed = true;
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    await held.requested;
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    held.release();
+    await held.returned;
+    await expect(page).toHaveURL(/\/$/u);
+    expect(writes).toBe(0);
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision,
+    );
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+for (const failure of ["access", "changed-actor", "same-actor"] as const) {
+  test(`bounty publication ${failure} error keeps only an authorized current editor @registry`, async ({
+    page,
+    request,
+    diagnostics,
+  }) => {
+    const fixture = await settingsProject(request);
+    const status = failure === "access" ? 403 : 503;
+    diagnostics.allowResponse(status, "PUT", `/api/v1/projects/${fixture.id}`);
+    let inject = true;
+    await page.route(`**/api/v1/projects/${fixture.id}`, async (route) => {
+      if (route.request().method() !== "PUT" || !inject) return route.continue();
+      inject = false;
+      if (failure === "changed-actor")
+        await settingsSession(page, "reporter-b");
+      await route.fulfill({
+        status,
+        json: {
+          error: status === 403 ? "forbidden" : "unavailable",
+          message: "Injected publication failure.",
+        },
+      });
+    });
+    try {
+      await openSettings(page, fixture.id);
+      const before = await adminProject(request, fixture.id);
+      await reviewSettingsAmount(page, "200");
+      await page
+        .getByRole("button", { name: "Publish bounty terms", exact: true })
+        .click();
+      if (failure === "same-actor") {
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Injected publication failure." }),
+        ).toBeVisible();
+        await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+          "200",
+        );
+        await reviewSettingsAmount(page, "200");
+        await page
+          .getByRole("button", { name: "Publish bounty terms", exact: true })
+          .click();
+        await expect(
+          page.getByRole("status").filter({
+            hasText: `Published revision ${before.revision + 1}.`,
+          }),
+        ).toBeVisible();
+      } else if (failure === "changed-actor") {
+        await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+          "100",
+        );
+        expect((await adminProject(request, fixture.id)).revision).toBe(
+          before.revision,
+        );
+      } else {
+        await expect(page.getByLabel("Published gross award (USD)")).toHaveCount(0);
+        await expect(
+          page.getByRole("button", { name: "Retry management access", exact: true }),
+        ).toBeVisible();
+        expect((await adminProject(request, fixture.id)).revision).toBe(
+          before.revision,
+        );
+      }
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
 async function refreshReporting(request: APIRequestContext) {
   const endpoint = process.env.SLOP_E2E_REPORTING_REFRESH;
   expect(endpoint).toBeTruthy();

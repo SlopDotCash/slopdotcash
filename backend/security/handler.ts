@@ -68,6 +68,7 @@ import {
   type DirectPaymentConfiguration,
   directConsent,
   directPaymentNetworks,
+  directPreparationFence,
   directRecoveryConsent,
   directRecoveryView,
   directSettlementView,
@@ -2849,6 +2850,12 @@ async function planChange(
           },
           deps.directPayments,
         );
+        const current = directPreparationFence(
+          row.id,
+          row.reporter_github_id,
+          actor.githubId,
+          intent,
+        );
         return {
           kind: action,
           role: actingRole(["security-maintainer", "financial"]),
@@ -2856,6 +2863,9 @@ async function planChange(
           evidenceReference: null,
           detail: { network: intent.network, rail: "direct" },
           set: {},
+          requireSql: current.requireSql,
+          requireValues: current.requireValues,
+          unmet: current.unmet,
           after: [
             insertDirectIntent(
               deps.db,
@@ -2864,6 +2874,7 @@ async function planChange(
               idempotencyKey,
               intent,
               at,
+              current,
             ),
           ],
         };
@@ -2977,6 +2988,9 @@ async function planChange(
         evidenceReference: null,
         detail: recovery.detail,
         set: {},
+        requireSql: recovery.requireSql,
+        requireValues: recovery.requireValues,
+        unmet: recovery.unmet,
         after: recovery.after,
       };
     }

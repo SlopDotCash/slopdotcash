@@ -187,6 +187,62 @@ test("large private evidence downloads with a single-use browser grant @registry
       exact: true,
     })
     .focus();
+  let releaseGrant = () => {};
+  let grantStarted = () => {};
+  const grantWaiting = new Promise<void>((resolve) => {
+    grantStarted = resolve;
+  });
+  const grantRelease = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  const grantPath = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download-grant`;
+  await page.route(`**${grantPath}`, async (route) => {
+    const response = await route.fetch();
+    grantStarted();
+    await grantRelease;
+    await route.fulfill({ response });
+  });
+  const abandonedDownloads: string[] = [];
+  const observeAbandoned = (download: { suggestedFilename(): string }) => {
+    abandonedDownloads.push(download.suggestedFilename());
+  };
+  page.on("download", observeAbandoned);
+  const delayedGrant = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === grantPath,
+  );
+  await page.keyboard.press("Enter");
+  await grantWaiting;
+  try {
+    // Leave through the actual SPA control while the real grant reply waits.
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(
+    page.getByRole("heading", { name: "Evidence inventory" }),
+  ).toHaveCount(0);
+  } finally {
+    releaseGrant();
+  }
+  await (await delayedGrant).finished();
+  await page.evaluate(
+    () => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ),
+  );
+  expect(abandonedDownloads).toEqual([]);
+  page.off("download", observeAbandoned);
+  await page.unroute(`**${grantPath}`);
+  await page.goto(
+    `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
+    { waitUntil: "networkidle" },
+  );
+  await page.getByRole("button", {
+    name: `Select Synthetic VM disk overlay, ${sha.slice(0, 12)}`,
+    exact: true,
+  }).click();
+  await item.getByRole("textbox").fill("Inspect the complete synthetic disk overlay without execution");
+  await item.getByRole("button", {
+    name: "Download Synthetic VM disk overlay",
+    exact: true,
+  }).focus();
   const downloadPromise = page.waitForEvent("download");
   await page.keyboard.press("Enter");
   const downloaded = await downloadPromise;

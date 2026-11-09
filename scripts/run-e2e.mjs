@@ -568,7 +568,7 @@ async function runRegistryPhase() {
               SLOP_E2E_INTAKE_GRANT_KEY: randomBytes(32).toString("base64url"),
             }
           : {}),
-        SLOP_E2E_OUTPUT: "registry",
+        SLOP_E2E_OUTPUT: process.env.SLOP_E2E_OUTPUT ?? "registry",
         SLOP_E2E_NOTIFY_SERVICE: notify.name,
         SLOP_E2E_SLOPBOT_SERVICE: slopbot.name,
         SLOP_E2E_REPORTING_REFRESH: `http://127.0.0.1:${basePort + 5}/__fixture/reporting-refresh`,

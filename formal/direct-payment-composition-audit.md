@@ -1,9 +1,12 @@
 # Direct-payment parent and recovery composition
 
-This source-only review started at `120c7a22a121`. It adds two focused models;
-it changes no production code. The user initially directed the team to skip
-checks and focus on pushing, so that first checkpoint had no execution
-evidence. The independent review below records the later scoped checks.
+This review started at `120c7a22a121`, with a follow-up at `d6323d9f2426`.
+It adds two focused models and the read-generation correction described below.
+The user directed this chat to skip checks and focus on pushing, so those
+authoring checkpoints had no execution evidence. The independent review below
+records later scoped checks of the reviewed parent. The additional captured-
+storage and accepted-replacement transitions are now reconciled with those
+reviewed models; earlier results do not validate their combined revision.
 
 ## Parent selection and identity
 
@@ -16,7 +19,7 @@ their callbacks in `src/SecurityBounty.tsx`, plus `DirectBountyPayment.tsx`,
   the selected detail is keyed by case. Private API calls check the actor
   before and after the request and send the expected-actor header.
 - Case refresh retains the last ready detail. Request generations prevent an
-  older GET from replacing a newer result. A transient refresh error is shown
+  older GET from replacing a newer GET result. A transient refresh error is shown
   with the retained case. Authoritative access refusal is also handled by the
   enclosing private provider; it is not permission to keep sending from a
   stale case.
@@ -57,15 +60,24 @@ can still write its captured old storage key; it does not fill a new child's
 in-memory state. A known wallet decline removes the old marker only when the
 storage clear succeeds.
 
-Unmount does not universally cancel a send already in progress. In particular,
-the EVM path awaits wallet/network/nonce work after its last private identity
-guard. The model admits departure during that tail and a subsequent marker and
-wallet handoff for the already selected request. This is an explicit boundary,
-not a claim that navigation proves nothing was sent. No new source defect or
-authorization bypass was established by this review.
+The final `beforeSend` callback in both senders now checks the component's
+mounted lifetime immediately before recording and opening the wallet request.
+A component that departs while its preflight or adapter preparation is waiting
+cannot then create a new marker or open a prompt. The parent model's earlier
+departed-preflight witness is corrected to refuse that transition; its State,
+finished-prompt cleanup, factored choices and finite bounds are unchanged.
+
+Once `beforeSend` has recorded the request and the wallet prompt is open,
+navigation does not cancel that prompt. Its later wallet response may retain
+evidence for the original request, subject to that component's storage-ownership
+checks. It does not fill a replacement child's local state. The separate
+[Solana pending-record audit](solana-payment-pending-audit.md) covers the
+same-slot candidate/write race, failed-save acknowledgement and exact-record
+guards added after this parent review. A recorded signature remains evidence
+to check, not proof of finality or payment.
 
 This module bounds one selected case, two actors, two generations/messages/plan
-classes, three case reads, two identity rechecks and one outstanding wallet
+classes, three case reads, two local replacements, two identity rechecks and one outstanding wallet
 invocation. The journal is one representative transfer. It does not exclude
 simultaneous prompts from independent children/tabs, model every partial EVM
 leg or prove nonce uniqueness. Those remain the `ui_tab_scope` and financial
@@ -89,8 +101,19 @@ identifiers at the time of the click. Already-confirmed identifiers are hidden
 and excluded from that list. Inputs remain editable while the action runs;
 later edits do not change its captured list. The callback first checks the raw
 actor and authorizes the current generation. It writes candidates back to their
-original storage records. A failed later write can leave earlier candidate
-writes intact, but it stops the verification call.
+original storage records. The follow-up replaces the model's single storage
+list with four actor/generation groups and captures the original row group
+alongside the clicked rows. A generation change and new storage read while
+authorization is pending must not redirect those writes into the new group's
+records. A named scenario records the old candidate in generation 1 while
+preserving the newly loaded generation-2 record.
+
+The source's storage loop has no `await`. The model now treats it as one atomic
+attempt with zero, one or both row writes completed; it no longer admits React
+input edits between its synchronous writes. A failed later write can leave
+earlier candidate writes intact, but it stops the verification call. Edits
+during either pending API request remain possible and do not change the
+captured POST body or captured storage keys.
 
 `verifyExistingPayment` then performs another fresh, actor-bound case GET. It
 requires `verify-payment` and the same generation, and sends the POST with the
@@ -104,10 +127,15 @@ available path. Removing only the fallback does not cancel its promise while
 the enclosing provider stays valid. Removing the provider prevents a later
 successful private response from being delivered, although a POST already
 accepted by the server may have recorded evidence. The second model keeps
-server acceptance distinct from delivery to the current private view.
+server acceptance distinct from delivery to the private view. The model names
+the latter `responseDelivered`: it is an observation that the response arrived
+through a valid provider, not a lasting authority capability. It can remain a
+historical observation after the private view is closed; it does not then
+enable a new verification request.
 
 `ui_submitted_payment_recovery` bounds one fallback instance, two actors,
-two generations, two rows and two dependency-triggered storage reads. It
+two generations, two stable row keys per actor/generation group, two visible
+rows and two dependency-triggered storage reads. It
 models both preflights, partial candidate writes, captured versus edited
 inputs, confirmation filtering, cookie changes and both departure boundaries.
 Its finite `step` now explores at most two verification invocations and two
@@ -121,6 +149,22 @@ Hash grammar, local-storage key enumeration, receipt cryptography, backend
 atomicity and the exact chain status are external predicates. It is not a
 model of payment broadcasting.
 
+## Source-confirmed replacement race
+
+The follow-up found that `useSecurityData.replace(value)` did not advance the
+read generation. An active GET could therefore start before an action, return
+after the action's successful replacement, and overwrite that newer detail.
+An old GET failure could likewise add a refresh error to the replaced value.
+This is a source-confirmed interleaving; no new runtime reproduction was run.
+
+The shared hook now advances its read generation before publishing a local
+replacement. Existing success/error callbacks from older reads fail their
+generation comparison. Two named model scenarios cover replacement followed
+by an old success and by an old failure. The model does not infer that a
+displayed revision is current authorization: each payment preflight still
+reads the private API. The correction fences the hook's state commit, not
+independent authority decisions made by the enclosing private-request wrapper.
+
 ## Conformance references and status
 
 The existing `tests/e2e/bounty-full-flow.spec.ts` and
@@ -131,7 +175,7 @@ authority over intent, generation, receipt and settlement rules. Those are
 references for future conformance checks; no earlier pass certifies these new
 models. Model-to-source mapping is not proof of refinement or completion.
 
-## Independent model review
+## Earlier independent model review
 
 The PR review found two authoring errors before model execution: a list used
 the set-only `filter` operator, and the typed `received` function lacked its
@@ -179,7 +223,7 @@ deadline stopped the run with no reported violation. Both timeout receipts
 are retained outside the source tree. This result does not permit a claim
 that the submitted-recovery model passed finite verification.
 
-## Property-specific storage quotient
+## Earlier property-specific storage quotient
 
 A separate review found that `stored` cell values feed only later `stored`
 writes in this model. No guard, visible row, identity check, authorization,
@@ -214,3 +258,66 @@ completed in 99.98 seconds with the same 4,819,932 distinct states,
 hashes stayed unchanged during the run. Exact stored cells remain outside
 this finite result; all 13 concrete scenarios and the separate 500-trace
 `concreteStep` and `unboundedStep` simulations pass with those cells retained.
+
+## Reconciliation with the observation fixes
+
+Commit `07a232357428cf5055ee7f5f29bb751d69ac5e2d` combines the reviewed
+state types, completed-call cleanup and factored choices with the later
+observation changes. The parent model adds two accepted replacements and
+retains the corresponding epoch bound of seven. The fallback model retains
+four actor/generation slots with two rows each, captured write targets,
+zero/one/all-write outcomes for the synchronous storage loop, and the
+historical `responseDelivered` observation. Neither model changes application
+code.
+
+The fallback's finite `step` still projects stored payload values, while
+retaining slot identity and all control decisions. `concreteStep`,
+`unboundedStep` and the named scenarios retain actual cell values. The 17
+named scenarios include nonzero captured-slot and partial-write witnesses.
+`postStarted` and `postAuthorized` retain their historical meaning; the
+implication between them is not an independent proof that every retry checks
+authority. The guarded preflight transitions and concrete retry scenarios are
+separate obligations.
+
+The reconciled parent passed 15 named scenarios and the fallback passed 17;
+both passed their normal seeded simulations. Both exhaustive TLC runs hit the
+unchanged 180-second deadline with work still queued. The parent's last
+progress report recorded 45,728,506 generated states, 833,208 distinct states,
+depth 11 and 498,493 queued states. The fallback recorded 17,361,030 generated
+states, 1,336,578 distinct states, depth 16 and 292,463 queued states. These are
+incomplete runs, not successful verification or complete reachable-state
+bounds. No counterexample was reported before either timeout.
+
+The unchanged-input receipts remain at
+`slopdotcash-lemma-bounty-parent-reconcile/evidence/formal/verification-ui_bounty_payment_parent.json`
+(SHA-256 `afcece5a4b96411fa09b0fd3038b692c3111b9395935d0f2c017c166239d79b7`)
+and
+`slopdotcash-lemma-submitted-model/evidence/formal/verification-ui_submitted_payment_recovery.json`
+(SHA-256 `3711a8813c5fc3a6d95786c12b471174e548ba1672fb20c242a2c71ba551d59b`).
+Further complete verification remains required. Preserve these failed runs
+when recording any later optimization or larger-budget result.
+
+## Completed submitted-recovery diagnostic
+
+The independent same-input diagnostic for the reconciled submitted-recovery
+model completed with a 600-second allowance: 60,118,525 generated states,
+3,549,900 distinct states, depth 27 and zero states left queued. TLC took
+219,413 ms; the wrapper took 227,169 ms. No violation was reported, and the
+receipt records unchanged model, mapped source and runtime inputs. Its model
+and all three mapped source hashes match this prepared branch. This is the
+stated finite storage quotient and invocation bounds, not exact stored-content
+or implementation refinement proof.
+
+The receipt is
+`slopdotcash-lemma-submitted-model/evidence/submitted-reconciliation/diagnostic600-awake/result.json`,
+SHA-256 `562839723a0293aa5d051b2a012df616d214a2faa385639ea8def18002a16353`.
+The earlier 180-second failures remain incomplete. A separate 600-second run
+was interrupted by host sleep and is not a valid runtime-budget measurement.
+
+The checked-in runner now allows 600 seconds for this model's verification
+stage and records the effective `timeoutMs` in every stage result. Its normal
+type/scenario/simulation stages remain at 90 seconds; other verification
+stages remain at 180 seconds. The allowance table is part of the hashed runner
+source. No model domain, guard, invariant or temporal property changed. The
+diagnostic did not use this new runner revision, so final combined-run evidence
+is still required. Parent and journal completion remain separate obligations.

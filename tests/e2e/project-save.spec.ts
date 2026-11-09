@@ -184,7 +184,7 @@ test("retains edits typed while a project revision is being published", async ({
     }),
   );
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", async (route) => {
     if (route.request().method() === "PUT") {
@@ -250,6 +250,141 @@ test("retains edits typed while a project revision is being published", async ({
   );
   await expectAccessible(page);
 });
+
+for (const boundary of ["departure", "actor-change"] as const) {
+  test(`an accepted project revision cannot clear a newer draft after ${boundary}`, async ({
+    page,
+    diagnostics,
+  }, info) => {
+    const registered = PROJECTS.find((project) => project.id === "eliza");
+    if (!registered) throw new Error("Missing project fixture");
+    const project = {
+      ...registered,
+      contribution: { ...CONTRIBUTION },
+      skill: {
+        ...registered.skill,
+        sourcePath: PROJECT_SKILL_TEMPLATES.contributor,
+        publishAtRoot: false,
+      },
+      reviewSkill: {
+        ...registered.reviewSkill,
+        sourcePath: PROJECT_SKILL_TEMPLATES.reviewer,
+      },
+    };
+    const api = await projectImageApiFixture(project, {
+      incompleteAssessments: true,
+    });
+    let otherActor = false;
+    let accepted = false;
+    let otherRevisionReads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    diagnostics.allowCanceledBackgroundReads();
+    await page.route("**/api/v1/projects", (route) =>
+      route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+    );
+    await page.route("**/api/v1/points/me", (route) =>
+      route.fulfill({ json: null }),
+    );
+    await page.route(
+      /\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u,
+      async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        const response = await api.fetch(
+          new Request(request.url(), {
+            method: request.method(),
+            headers: {
+              ...request.headers(),
+              ...(otherActor ? { "x-fixture-role": "other" } : {}),
+            },
+            ...(request.method() === "GET"
+              ? {}
+              : { body: request.postData() }),
+          }),
+        );
+        if (request.method() === "PUT") {
+          expect(request.headers()["x-slop-expected-github-id"]).toBe("4242");
+          expect(response.status).toBe(200);
+          accepted = true;
+          await held;
+        } else if (
+          otherActor &&
+          url.pathname === "/api/v1/projects/eliza"
+        ) {
+          otherRevisionReads += 1;
+        }
+        await route.fulfill({
+          status: response.status,
+          headers: Object.fromEntries(response.headers),
+          body: await response.text(),
+        });
+      },
+    );
+    try {
+      await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+      const description = page.getByLabel("Short description", { exact: true });
+      await description.fill("Submitted revision before the view changed");
+      await expect
+        .poll(async () =>
+          (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+        )
+        .toBe("Submitted revision before the view changed");
+      await page
+        .getByRole("button", { name: "Publish changes", exact: true })
+        .click();
+      await expect.poll(() => accepted).toBe(true);
+      expect((await api.stored()).revision).toBe(2);
+
+      if (boundary === "departure") {
+        await page
+          .getByRole("link", { name: "Slop home", exact: true })
+          .click();
+        await expect(description).toHaveCount(0);
+        await page.goBack();
+      } else {
+        // The real fixture changes both its session response and the actor
+        // consumed by subsequent project requests. It grants both actors
+        // repository access; this tests lifetime, not access denial.
+        otherActor = true;
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await expect.poll(() => otherRevisionReads).toBeGreaterThan(0);
+      }
+      await expect(description).toBeVisible();
+      await description.fill("Newer local draft must survive the old response");
+      await expect
+        .poll(async () =>
+          (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+        )
+        .toBe("Newer local draft must survive the old response");
+      release();
+      await page.waitForLoadState("networkidle");
+      await expect(description).toHaveValue(
+        "Newer local draft must survive the old response",
+      );
+      expect(
+        (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+      ).toBe("Newer local draft must survive the old response");
+      await expect(
+        page.getByText("Published revision 2.", { exact: true }),
+      ).toHaveCount(0);
+      const stored = await api.stored();
+      expect(stored.revision).toBe(2);
+      expect(stored.project.headline).toBe(
+        "Submitted revision before the view changed",
+      );
+      await page.screenshot({
+        path: info.outputPath(`project-publication-${boundary}.png`),
+        fullPage: true,
+      });
+    } finally {
+      release();
+      await api.dispose();
+    }
+  });
+}
 
 test("discarding an old project draft cancels its pending image decode", async ({
   page,

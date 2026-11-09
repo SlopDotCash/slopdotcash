@@ -1,5 +1,10 @@
 # Owner bounty funding parent
 
+The later source correction and `ui_owner_private_requests` refinement are
+recorded in `owner-private-requests-audit.md`. They replace this original
+review's assumed response/session association with explicit pre/post actor
+observations. The historical validation below does not certify those changes.
+
 This focused review starts from `80e6de887`. It adds a parent-state model for
 `src/OwnerBountyVault.tsx`; the generic transaction model did not represent its
 private read, refresh error, capability or child lifetime. No production code

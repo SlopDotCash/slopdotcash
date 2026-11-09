@@ -266,6 +266,9 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   let account = donor;
   let wrongNetwork = true;
   let rejected = false;
+  let holdRejectedSend = false;
+  let releaseRejectedSend: (() => void) | undefined;
+  let heldRejectedSendStarted = false;
   let ambiguous = false;
   let forceFailedTransaction = false;
   const sends: string[] = [];
@@ -276,7 +279,15 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       if (method === "eth_accounts" || method === "eth_requestAccounts")
         return [account];
       if (method === "eth_sendTransaction") {
-        if (rejected) return { fixtureError: "rejected" };
+        if (rejected) {
+          if (holdRejectedSend) {
+            heldRejectedSendStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseRejectedSend = resolve;
+            });
+          }
+          return { fixtureError: "rejected" };
+        }
         const requestParams = forceFailedTransaction
           ? [{ ...(params[0] as Record<string, unknown>), gas: "0x7000" }]
           : params;
@@ -307,8 +318,16 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
               ) => Promise<unknown>;
             }
           ).vaultWalletRequest(method, params);
-          if ((value as { fixtureError?: string })?.fixtureError === "rejected")
+          if (
+            (value as { fixtureError?: string })?.fixtureError === "rejected"
+          ) {
+            // A timer observes the reply after the application's promise catch.
+            setTimeout(() => {
+              const state = window as unknown as { rejectedReplies?: number };
+              state.rejectedReplies = (state.rejectedReplies ?? 0) + 1;
+            }, 0);
             throw Object.assign(new Error("User rejected"), { code: 4001 });
+          }
           if ((value as { fixtureError?: string })?.fixtureError === "unknown")
             throw new Error("Transport interrupted after send");
           return value;
@@ -696,8 +715,38 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(4);
+  // A wallet can reply after the user leaves this component and starts again.
+  // The rejected first prompt must not clear the newer real Anvil submission.
+  const rejectedRepliesBeforeHold = await page.evaluate(
+    () =>
+      (window as unknown as { rejectedReplies?: number }).rejectedReplies ?? 0,
+  );
+  holdRejectedSend = true;
+  await ownerActions
+    .getByRole("button", { name: "Authorize this award in wallet" })
+    .click();
+  await expect.poll(() => heldRejectedSendStarted).toBe(true);
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await expect(ownerActions).toHaveCount(0);
+  await page.goBack();
+  await expect(ownerActions).toBeVisible();
+  await ownerActions
+    .getByText("Wallet confirms nothing was sent", { exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", {
+      name: "I checked my wallet; this request was not sent",
+    })
+    .click();
   rejected = false;
+  holdRejectedSend = false;
   ambiguous = true;
+  await ownerActions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", { name: "Verify award and funding" })
+    .click();
   await ownerActions
     .getByRole("button", { name: "Authorize this award in wallet" })
     .click();
@@ -705,6 +754,25 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "wallet result is unclear",
   );
   expect(sends).toHaveLength(5);
+  const commitmentKey =
+    "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
+  const retainedRetry = await page.evaluate(
+    (key) => sessionStorage.getItem(key),
+    commitmentKey,
+  );
+  expect(retainedRetry).not.toBeNull();
+  releaseRejectedSend?.();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { rejectedReplies?: number }).rejectedReplies,
+      ),
+    )
+    .toBeGreaterThan(rejectedRepliesBeforeHold);
+  expect(
+    await page.evaluate((key) => sessionStorage.getItem(key), commitmentKey),
+  ).toBe(retainedRetry);
   reviewAvailable = false;
   const unavailableReview = diagnostics.allowResponse(
     503,
@@ -1111,6 +1179,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
   const apiPort = anvilPort + 2;
   const origin = `http://127.0.0.1:${apiPort}`;
   const temporary = mkdtempSync(join(tmpdir(), "slop-vault-setup-"));
+  let releaseSetupRejection = () => {};
+  let releaseCreationReview = () => {};
   if (!project.escrow) throw new Error("Missing project vault policy");
   const target = {
     ...project,
@@ -1318,12 +1388,22 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toBe(1);
     const sends: string[] = [];
     let unknownSend = true;
+    let rejectNextSetupSend = false;
+    let setupRejectionStarted = false;
     await page.exposeFunction(
       "setupWalletRequest",
       async (method: string, params: unknown[]) => {
         if (method === "eth_accounts" || method === "eth_requestAccounts")
           return [donor];
         if (method === "eth_sendTransaction") {
+          if (rejectNextSetupSend) {
+            rejectNextSetupSend = false;
+            setupRejectionStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseSetupRejection = resolve;
+            });
+            return { fixtureError: "rejected" };
+          }
           const hash = await rpc(method, params);
           sends.push(hash);
           if (unknownSend) return { unknown: true };
@@ -1350,6 +1430,17 @@ test("owner creates, registers and funds a vault through the real API", async ({
                 setupWalletRequest(m: string, p: unknown[]): Promise<unknown>;
               }
             ).setupWalletRequest(method, params);
+            if (
+              (result as { fixtureError?: string })?.fixtureError === "rejected"
+            ) {
+              setTimeout(() => {
+                const state = window as unknown as {
+                  setupRejectedReplies?: number;
+                };
+                state.setupRejectedReplies = (state.setupRejectedReplies ?? 0) + 1;
+              }, 0);
+              throw Object.assign(new Error("User rejected"), { code: 4001 });
+            }
             if ((result as { unknown?: boolean })?.unknown)
               throw new Error("Transport interrupted after send");
             return result;
@@ -1444,11 +1535,103 @@ test("owner creates, registers and funds a vault through the real API", async ({
       path: info.outputPath("owner-vault-create-review.png"),
       fullPage: true,
     });
+    const setupKey = `slop:vault-setup:v1:${project.id}`;
+    let creationReviewStarted = () => {};
+    const creationReviewWaiting = new Promise<void>((resolve) => {
+      creationReviewStarted = resolve;
+    });
+    const creationReviewRelease = new Promise<void>((resolve) => {
+      releaseCreationReview = resolve;
+    });
+    const setupPath = `/api/v1/project-vaults/${project.id}`;
+    await page.route(`**${setupPath}`, async (route) => {
+      if (
+        route.request().method() !== "POST" ||
+        route.request().postDataJSON()?.step !== "review"
+      ) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      creationReviewStarted();
+      await creationReviewRelease;
+      await route.fulfill({ response });
+    });
+    const delayedReview = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === setupPath &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON()?.step === "review",
+    );
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await creationReviewWaiting;
+    try {
+      await page.getByRole("link", { name: "Slop home", exact: true }).click();
+      await expect(setup).toHaveCount(0);
+    } finally {
+      releaseCreationReview();
+    }
+    await (await delayedReview).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(sends).toHaveLength(0);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
+    ).toBeNull();
+    await page.unroute(`**${setupPath}`);
+    await page.goBack();
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    if (!automatic) await monthlySetting.selectOption("off");
+    await reviewButton.click();
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toBeEnabled();
+    // A confirmed rejection may clear only its own marker, even after a new
+    // component has recovered that marker and started another real request.
+    rejectNextSetupSend = true;
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect.poll(() => setupRejectionStarted).toBe(true);
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(setup).toHaveCount(0);
+    await page.goBack();
+    await setup
+      .getByText("Wallet confirms nothing was sent", { exact: true })
+      .click();
+    await setup
+      .getByRole("button", {
+        name: "I checked my wallet; this request was not sent",
+      })
+      .click();
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    if (!automatic) await monthlySetting.selectOption("off");
+    await reviewButton.click();
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
     await expect(setup.getByRole("alert")).toContainText(
       "Transport interrupted",
     );
     expect(sends).toHaveLength(1);
+    const retainedSetupRetry = await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      setupKey,
+    );
+    expect(retainedSetupRetry).not.toBeNull();
+    releaseSetupRejection();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { setupRejectedReplies?: number })
+              .setupRejectedReplies ?? 0,
+        ),
+      )
+      .toBe(1);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
+    ).toBe(retainedSetupRetry);
     await page.reload({ waitUntil: "networkidle" });
     // The original tab keeps the interrupted request and offers no second send.
     await expect(setup.getByLabel("Creation transaction hash")).toHaveValue("");
@@ -1731,6 +1914,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
   } finally {
+    releaseCreationReview();
+    releaseSetupRejection();
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
     await info.attach("vault-setup-api.log", {
@@ -2155,6 +2340,48 @@ test("owner registers a separate bounty vault through the API and funds it priva
     );
     expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
     expect(expectedPrivateErrors).toBe(2);
+    let releasePrivateRead = () => {},
+      privateReadStarted = () => {};
+    const privateReadWaiting = new Promise<void>((resolve) => {
+      privateReadStarted = resolve;
+    });
+    const privateReadRelease = new Promise<void>((resolve) => {
+      releasePrivateRead = resolve;
+    });
+    await page.route(privateUrl, async (route) => {
+      const response = await route.fetch();
+      privateReadStarted();
+      await privateReadRelease;
+      await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await privateReadWaiting;
+    try {
+      // The private read was accepted for A. Change the next real UI session
+      // observation to B without a focus/navigation event before delivery.
+      await page.route("**/api/v1/project-session", (route) =>
+        route.fulfill({
+          json: {
+            session: {
+              githubId: "900000999",
+              githubLogin: "other-owner",
+              admin: false,
+            },
+          },
+        }),
+      );
+    } finally {
+      releasePrivateRead();
+    }
+    await expect(bountyFunds.getByRole("alert")).toContainText(
+      "account changed",
+    );
+    await expect(bountyFunds).not.toContainText(
+      "Available for new awards: 10 USDC",
+    );
+    await expect(funding).toHaveCount(0);
+    await page.unroute(privateUrl);
+    await page.unroute("**/api/v1/project-session");
   } finally {
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });

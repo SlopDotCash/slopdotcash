@@ -671,6 +671,10 @@ export function SecurityProgramPage({
     revision: number;
   } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
+  const refreshIdentity = useCallback(
+    () => setSessionEpoch((value) => value + 1),
+    [],
+  );
   const session = useProjectSession(sessionEpoch);
   usePrivateDraftSession(session);
   useEffect(() => {
@@ -700,6 +704,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -873,6 +878,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -1118,24 +1124,36 @@ function usePrivateRequest() {
 
 function useSecurityData<T>(
   path: string | null,
-): [Loaded<T>, () => void, (value: T) => void] {
+): [
+  Loaded<T>,
+  () => void,
+  (value: T, accept?: (previous: T) => boolean | "refresh") => void,
+] {
   const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
+  const mounted = useRef(false);
   const generation = useRef(0);
+  const activeRead = useRef<number | null>(null);
+  const accepted = useRef<{ value: T } | null>(null);
   const load = useCallback(() => {
-    if (path === null) return;
+    if (!mounted.current || path === null) return;
     const current = ++generation.current;
+    activeRead.current = current;
     // A refresh keeps the loaded view, so an open case stays mounted.
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
     );
     privateRequest<T>("GET", path).then(
       (value) => {
-        if (generation.current === current)
+        if (generation.current === current) {
+          activeRead.current = null;
+          accepted.current = { value };
           setState({ status: "ready", value });
+        }
       },
       (error: unknown) => {
         if (generation.current !== current) return;
+        activeRead.current = null;
         if (error instanceof ProjectApiError && error.status === 401) {
           setState({ status: "signed-out" });
           return;
@@ -1153,14 +1171,35 @@ function useSecurityData<T>(
     );
   }, [path, privateRequest]);
   useEffect(() => {
+    mounted.current = true;
     load();
     return () => {
+      mounted.current = false;
       generation.current += 1;
+      activeRead.current = null;
     };
   }, [load]);
   const replace = useCallback(
-    (value: T) => setState({ status: "ready", value }),
-    [],
+    (value: T, accept?: (previous: T) => boolean | "refresh") => {
+      if (!mounted.current) return;
+      const decision =
+        accepted.current !== null && accept
+          ? accept(accepted.current.value)
+          : true;
+      if (decision === "refresh") {
+        // Keep current projections until a fresh read answers. An existing
+        // current read already owns that work; do not cancel it and start over.
+        if (activeRead.current !== generation.current) load();
+        return;
+      }
+      if (!decision) return;
+      // An action result supersedes every read started before it.
+      generation.current += 1;
+      activeRead.current = null;
+      accepted.current = { value };
+      setState({ status: "ready", value });
+    },
+    [load],
   );
   return [state, load, replace];
 }
@@ -3330,8 +3369,21 @@ function CaseDetail({
 }) {
   const privateRequest = usePrivateRequest();
   const recoveryAction = useAction();
-  const [state, reload, replace] = useSecurityData<{ case: SecurityCase }>(
+  const [state, reload, replaceData] = useSecurityData<{
+    case: SecurityCase;
+  }>(
     `security-cases/${encodeURIComponent(caseId)}`,
+  );
+  const replace = useCallback(
+    (value: { case: SecurityCase }) =>
+      replaceData(
+        value,
+        (previous) =>
+          value.case.revision === previous.case.revision
+            ? "refresh"
+            : value.case.revision > previous.case.revision,
+      ),
+    [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
   if (state.status === "loading")

@@ -33,9 +33,12 @@ for every statement in that file.
 | `bot_close_recovery_claim` | Expired original request, recovery claim, fact confirmation and late response | Two claim generations; a late receipt does not restore comment or review-completion authority |
 
 `api_reporting_readiness` also maps the scheduled/private reporting refresher.
-`api_points_disputes` maps Points triage/escalation orchestration. Their existing
-finite abstractions remain limited: they do not prove every lease interleaving
-or all structured model outputs. `bot-stateless.json` contains only the entry
+`api_points_disputes` maps Points intake/triage/escalation. The separate
+`points_dispute_lease` now represents two worker claims, expiry, returned call
+costs, draft persistence and token-matched cleanup. See
+`points-dispute-lease-audit.md` for its unexecuted status and composition limits.
+These finite abstractions do not prove all structured model outputs or every
+lease interleaving. `bot-stateless.json` contains only the entry
 module that re-exports these implementations. Worker deployment configuration
 is not stateless and remains an operational review boundary.
 

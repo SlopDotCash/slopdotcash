@@ -204,20 +204,54 @@ export async function recordDelivery(
   state: string,
   evidence: string | null = null,
   channel: "security" | "activity" = "security",
-) {
+  nextAttemptAt: string | null = null,
+): Promise<boolean> {
   const at = deps.now().toISOString();
-  await deps.db.batch([
+  const results = await deps.db.batch([
     deps.db
       .prepare(
-        `UPDATE ${channel}_notification_outbox SET state = ?, updated_at = ? WHERE id = ? AND state = 'sending' AND attempts = ?`,
+        `UPDATE ${channel}_notification_outbox SET state = ?, updated_at = ?, next_attempt_at = COALESCE(?, next_attempt_at) WHERE id = ? AND state = 'sending' AND attempts = ?`,
       )
-      .bind(state, at, row.id, row.attempts + 1),
+      .bind(state, at, nextAttemptAt, row.id, row.attempts + 1),
     deps.db
       .prepare(
-        `INSERT INTO ${channel}_notification_delivery_events(delivery_id, state, evidence_reference, at, attempt, destination_digest) SELECT id, ?, ?, ?, attempts, destination_digest FROM ${channel}_notification_outbox WHERE id = ? AND state = ? AND attempts = ? AND updated_at = ?`,
+        `INSERT INTO ${channel}_notification_delivery_events(delivery_id, state, evidence_reference, at, attempt, destination_digest) SELECT id, ?, ?, ?, attempts, destination_digest FROM ${channel}_notification_outbox WHERE id = ? AND state = ? AND attempts = ? AND updated_at = ? AND changes() = 1`,
       )
       .bind(state, evidence, at, row.id, state, row.attempts + 1, at),
   ]);
+  return results[0]?.meta?.changes === 1;
+}
+
+/** Preparing an older attempt cannot replace a successor's destination. */
+export async function recordDeliveryDestination(
+  db: SecurityD1Database,
+  row: Pick<Delivery, "id" | "attempts">,
+  digest: string,
+  channel: "security" | "activity" = "security",
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE ${channel}_notification_outbox SET destination_digest = ? WHERE id = ? AND state = 'sending' AND attempts = ?`,
+    )
+    .bind(digest, row.id, row.attempts + 1)
+    .run();
+  return result.meta?.changes === 1;
+}
+
+/** A final local check, not an atomic transaction with the mail provider. */
+export async function ownsDeliveryAttempt(
+  db: SecurityD1Database,
+  row: Pick<Delivery, "id" | "attempts">,
+  channel: "security" | "activity" = "security",
+): Promise<boolean> {
+  return (
+    (await db
+      .prepare(
+        `SELECT id FROM ${channel}_notification_outbox WHERE id = ? AND state = 'sending' AND attempts = ?`,
+      )
+      .bind(row.id, row.attempts + 1)
+      .first<{ id: string }>()) !== null
+  );
 }
 
 /**
@@ -231,21 +265,14 @@ export async function retryWithoutProviderCall(
   deps: Pick<SecurityMailDependencies, "db" | "now">,
   row: Pick<Delivery, "id" | "attempts">,
   channel: "security" | "activity" = "security",
-): Promise<"retrying" | "exhausted"> {
+): Promise<"retrying" | "exhausted" | "superseded"> {
   const state = row.attempts + 1 >= MAX_ATTEMPTS ? "exhausted" : "retrying";
-  await deps.db
-    .prepare(
-      `UPDATE ${channel}_notification_outbox SET next_attempt_at = ? WHERE id = ?`,
-    )
-    .bind(
-      new Date(
-        deps.now().getTime() + Math.min(3600, 60 * 2 ** row.attempts) * 1000,
-      ).toISOString(),
-      row.id,
-    )
-    .run();
-  await recordDelivery(deps, row, state, null, channel);
-  return state;
+  const nextAttemptAt = new Date(
+    deps.now().getTime() + Math.min(3600, 60 * 2 ** row.attempts) * 1000,
+  ).toISOString();
+  return (await recordDelivery(deps, row, state, null, channel, nextAttemptAt))
+    ? state
+    : "superseded";
 }
 
 export async function destinationDigest(value: object): Promise<string> {
@@ -310,7 +337,10 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
   await deps.db.batch([
     deps.db
       .prepare(`INSERT INTO notifications(event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
-      VALUES (?, ?, 'security_case', ?, NULL, ?, ?, ?)
+      SELECT ?, ?, 'security_case', ?, NULL, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM security_notification_outbox
+        WHERE id = ? AND acknowledged_at IS NULL AND escalation_of IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM security_notification_outbox WHERE escalation_of = ?)
       ON CONFLICT(event_key, recipient_github_id) DO NOTHING`)
       .bind(
         eventKey,
@@ -319,10 +349,12 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
         `/security?case=${row.case_id}`,
         at,
         at,
+        row.id,
+        row.id,
       ),
     deps.db
       .prepare(`UPDATE security_notification_outbox SET escalation_of = ?
-      WHERE event_key = ? AND recipient_github_id = ? AND escalation_of IS NULL`)
+      WHERE event_key = ? AND recipient_github_id = ? AND escalation_of IS NULL AND changes() = 1`)
       .bind(row.id, eventKey, backupId),
   ]);
 }
@@ -408,16 +440,15 @@ export async function dispatchSecurityMail(
         // attempt a second time.
         destinationNotYetInEffect = true;
       } else {
-        await deps.db
-          .prepare(
-            "UPDATE security_notification_outbox SET destination_digest = ? WHERE id = ?",
-          )
-          .bind(
+        if (
+          !(await recordDeliveryDestination(
+            deps.db,
+            row,
             registered?.destinationVersion ??
               (await destinationDigest(destination)),
-            row.id,
-          )
-          .run();
+          ))
+        )
+          continue;
       }
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
@@ -441,6 +472,9 @@ export async function dispatchSecurityMail(
           registered.destinationVersion,
           deps.now(),
         );
+      // Token preparation is asynchronous too. This local check cannot
+      // recall a provider call once begun, or atomically fence its service.
+      if (!(await ownsDeliveryAttempt(deps.db, row))) continue;
     } catch {
       // Preparation failed before any provider call; no reconciliation is needed.
       const state = await retryWithoutProviderCall(deps, row);
@@ -460,8 +494,8 @@ export async function dispatchSecurityMail(
         continue;
       }
       // The binding has no definitive non-acceptance receipt. A thrown send is ambiguous.
-      await recordDelivery(deps, row, "ambiguous");
-      await escalate(deps, row);
+      if (await recordDelivery(deps, row, "ambiguous"))
+        await escalate(deps, row);
       continue;
     }
     await recordDelivery(deps, row, "provider-accepted");

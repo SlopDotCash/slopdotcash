@@ -106,3 +106,234 @@ Model/source corrections and verification limits are recorded in
 `backend-runner-review-audit.md`, `binding-veto-audit.md`,
 `runner-cancellation-audit.md` and `direct-payment-composition-audit.md`.
 Final combined-head checks remain separate from these scoped results.
+
+The further local source review found an older private-case GET could overwrite
+a newer action response because `useSecurityData.replace` did not advance its
+read generation. The correction advances that generation. Its runtime evidence
+is still pending; this is a source-confirmed pre-existing race, not a newly
+executed reproduction. See `direct-payment-composition-audit.md`.
+
+The same unvalidated local follow-up also addresses:
+
+- Inbox focus reads could supersede a pending mutation and suppress its final
+  readback; see `inbox-mutation-focus-audit.md`.
+- Direct recovery could commit a captured successor wallet after a later wallet
+  replacement; see `direct-recovery-completion-audit.md`. The prior result was
+  stale recovery metadata, not a demonstrated unauthorized payment.
+- A departed owner verification could clear a newer retry's marker; see
+  `owner-recovery-lifetime-audit.md`. New attempt identity and exact-value
+  removal preserve the newer marker and retain the existing user-reset boundary.
+
+Inbox and owner-attempt paths remain source-confirmed corrections without
+passing runtime regressions. Direct recovery has since been independently
+reproduced and validated against the actual private API, migrated SQLite and
+local Anvil; see `direct-recovery-completion-audit.md`. The original full
+application branch has not been revalidated with these combined changes.
+
+The continued source pass adds initial direct-payment preparation fencing,
+revision-aware case responses with equal-revision refresh, owned vault and
+monthly-setting recovery snapshots, and per-nonce direct-payment journal
+merges. See `direct-preparation-completion-audit.md`,
+`private-action-lifetimes-audit.md`, `owner-recovery-lifetime-audit.md`, and
+`direct-bounty-journal-audit.md`. These are separate source-confirmed fixes;
+their presence in this list does not claim passing browser or combined-head
+evidence. Model authoring errors found by independent checks are retained in
+their audits alongside their corrections.
+
+
+## Separate X lifecycle corrections
+
+Source-only review found that a failed flow deletion skipped the required
+temporary-token revocation attempt. It also found that a shared cookie could
+be cleared by an older callback or overwritten by a delayed start response.
+The handler now attempts revocation in nested cleanup and uses per-flow
+cookie names with an expiring legacy fallback. See
+`x-connection-lifecycle-audit.md` for the29unexecuted scenarios, nineteen
+added handler cases and remaining browser/provider acceptance. These are
+source-confirmed corrections; no executed before/after result is claimed.
+
+## Separate Points private-view correction
+
+Source review found that a failed post-response identity check only showed an
+error while retaining the earlier account's private award/form. The Points
+view now clears cached private content before notifying the parent of known
+identity loss, and clears before parent revalidation when the session or
+access is unavailable. The extended browser workflow changes the real test
+session while an accepted response is held. It and the26newmodel scenarios
+are unexecuted in this lane. This is a source-confirmed correction, not a
+claimed browser reproduction or a completed UI acceptance result.
+
+
+## Separate operator evidence view corrections
+
+Source review found that the first render after an actor change could show
+previously loaded private inventory before its effect reset. Inventory is now
+bound to both actor and lookup, and response-time identity is rechecked. A
+departed EvidenceItem could also trigger a native or Blob download after its
+grant/read completed. Its current actor and attempt now guard those effects;
+body reads are canceled on departure. The grant service remains the authority.
+The 32 new UI model scenarios and held-response browser regressions are unexecuted;
+no server bypass or completed browser acceptance is claimed.
+
+The operator expected-actor header was also previously ignored by the
+evidence service. An already authorized different operator could receive an
+inspection grant intended for the earlier account. The shared actor guard now
+refuses that mismatch before grant creation or audit. Reader error paths also
+clear on authoritative refusal and recheck identity before retaining other
+errors. The new handler/SQLite assertions cover the refused write boundary;
+they have not been executed here.
+
+## Separate wallet lifetime and account corrections
+
+Source inspection found that Earnings and owner vault setup could open a
+wallet prompt after leaving their view. Their later callbacks could also
+start another chain or replace a newer recovery record. The new lifetime and
+record guards stop those continuations while retaining already accepted
+server facts and owned transaction evidence.
+
+Earnings also lacked an initiating-account check before registering a newly
+connected wallet. If its session changed from A to B while connection waited,
+the normal API could register and authorize B's new claim from A's old view.
+Fresh browser observations and the API's optional expected-actor admission
+now preserve that boundary. Existing per-claim signature checks remain in
+force. The change does not cancel an already open prompt or reverse an
+accepted A request.
+
+Referral claims shared one localStorage recovery slot without serialization
+or record ownership. A late wallet result could overwrite or clear a later
+request. A per-key Web Lock, UUID ownership and exact-record cleanup preserve
+cooperating browser views and refuse changed records. The source retains
+legacy and unknown outcomes and does not activate a referral program.
+
+Four new models contain 64 unexecuted scenarios. New or extended browser and
+handler workflows are also unexecuted. These are source-confirmed corrections,
+not passing runtime reproductions or a complete application-state proof.
+The four area audits describe their finite bounds and remaining acceptance.
+
+## Further private-view and flag-state corrections
+
+Owner award mutation refusals retained the earlier private proposal after
+clearing only drafts. Owner bounty-funds reads and pending-application reads
+also lacked a response-time actor check. The corrected paths bind requests
+to their initiating account, recheck identity, and remove private views on
+known access loss. Departed callbacks cannot publish into another view.
+Accepted writes remain backend facts even when their responses arrive late.
+
+Flag admission used eligibility from a captured project but inserted against
+the latest revision. The insertion now requires that captured revision and
+manifest hash. A concurrent change returns the existing retry response.
+Source review also corrected the reinstatement model: a withdrawn reporter's
+new flag has a new immutable ID, and a clean scan resolves captured flags
+even if it cannot reinstate the project. New model and regression definitions
+remain unexecuted. The linked area audits retain these bounds and limits.
+
+## Project publication, authority and setup
+
+A publication could return a later writer's registry head as its own result.
+The editor then treated an older local draft as based on that newer revision,
+allowing a later save to overwrite the unseen change. Publication now returns
+its own immutable committed revision. A new project and stored application
+also use their own committed revision for setup and refuse a first write if
+the checked enforcement generation changed.
+
+The maintainer hook could attribute another account's successful access
+response to the initiating account. Project creation, editor publication and
+setup checks also lacked complete initiating-actor/response-lifetime guards.
+Those requests now carry the expected actor and check response-time identity.
+Late results preserve accepted backend writes and local draft ownership.
+Five new models and refined registry models add 52 unexecuted scenarios.
+New browser/handler definitions and fixture corrections are also unexecuted;
+see the three project-publication/authority audits for exact boundaries.
+
+## Notification ownership and resource deadlines
+
+Notification completion already guarded its state transition, but retry timing
+and destination writes used only the delivery ID. An old worker could therefore
+alter successor metadata. Those writes now share the current-attempt predicate;
+a lost attempt stops before a new provider call. The final local check remains
+separate from the external send and cannot recall one already started.
+
+Backup escalation checked an old acknowledgment snapshot before awaiting access.
+Its insertion now requires the primary to remain unacknowledged and without an
+existing backup. The consent model also now captures its revision when Verify
+starts, matching the actual handler, and the fan-out model distinguishes a
+notify-service request from individual provider acceptances.
+
+A resource deadline previously only aborted a signal; loaders that ignored it
+could publish later. Deadline, success and failure now share terminal settlement.
+Admin list/fee reads bind their actor and recheck identity. Retaining a private
+list after a transport failure requires a completed matching admin check;
+timeout during that check clears the old data. New models and regression
+definitions are unexecuted. The related audits state each external boundary.
+
+## Admin intent, assessment access and value finish
+
+Enforcement confirmation rebuilt a request from current inputs after showing
+an older preview. The corrected control stores and confirms the reviewed
+payload, including its project revision, sequence and resolved account IDs.
+Admin writes and vetting reads/writes also bind the initiating actor, suppress
+departed callbacks and invalidate the private parent on access loss. An
+accepted editor write retains its exact-byte draft cleanup semantics.
+
+Incomplete-assessment pagination removed only its own page when identity or
+access changed, leaving the parent's earlier private notifications visible.
+It now asks the parent to revalidate or report the known identity change.
+The vetting handler also enforces the existing expected-actor header before
+an admin request can read or write.
+
+Value-request finish used its captured timestamp as the lease clock. A queued
+statement could therefore complete after actual expiry. The final SQL fence
+now requires the lease to exceed both the captured and execution clocks and
+preserves every owner/sibling record when refused. Five new models and refined
+worker scenarios add 67 unexecuted cases; the added browser, handler and SQLite
+definitions are also unexecuted. Source review is not runtime acceptance.
+
+## Explicit signout and inference reservation
+
+Successful signout updated the header but left independent private consumers
+and session hooks with their prior state. A local session revision and direct
+consumer invalidation now hide those views, cancel owned reads and suppress
+earlier callbacks. Already accepted writes, pending payment records and email
+verification tokens keep their recovery semantics.
+
+The inference model counted admissions that had no reservation and did not
+represent free provider spending denials. Its refined accounting matches those
+source distinctions. Source review also found that concurrent admitted attempts
+could both reserve the final available attempt slot. Reservation now repeats
+the shared count predicate inside its INSERT, and returns its refusal reason
+from the same transaction. This fixes excess reservations; it is not evidence
+that an extra paid provider call occurred.
+
+The enforcement model now distinguishes a changed fingerprint before dispatch
+from a changed fingerprint after server acceptance. Two new models and refined
+existing models add 43 unexecuted scenarios. New browser and SQLite definitions
+are also unexecuted; these changes await exact-source validation.
+
+## Security settings, email continuation and worker completion
+
+The active security settings view could accept a permission reply for an old
+actor, publish that actor's loaded terms through a later actor's session, and
+apply an old accepted response after its editor was replaced. The corrected
+read/write boundaries retain actor and lifetime ownership. Confirmed identity
+changes refresh the parent; ordinary access and transport failures retain an
+explicit local retry.
+
+Email preference continuations could start a session or preference reload
+after departure, or apply a reply after their generation changed. Reads,
+mutation statuses, postflight checks and error publication now share the
+current-generation guard. Current destination-conflict feedback and editable
+draft recovery remain.
+
+A value worker checked local project/installation authority before a remote
+membership wait, then checked only leases afterward. It now repeats local
+authority before its final lease observations. A later change after those
+observations remains outside an atomic transaction with the provider.
+
+The inference cap also treated a pending response or pending result retention
+as terminal exhaustion. An expired worker could then finish a free response or
+retain a valid result after its successor had stopped retrying. Completion is
+now an immutable fact separate from reservation, costs and publication. Full
+unfinished capacity stays reserved and retryable; completed non-free exhaustion
+rechecks retained results. Historical completion is not inferred or backfilled.
+The four new models and 59 scenario additions, plus their browser/SQLite
+definitions, are unexecuted source-review evidence.
