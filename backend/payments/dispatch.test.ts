@@ -345,7 +345,7 @@ test("Quint ambiguous-send trace conforms to migrated SQLite dispatch and finali
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/payment_dispatch.qnt",
+        "formal/models/payments/payment_dispatch.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^ambiguousRetryTest$",
@@ -429,7 +429,7 @@ test("Quint late original remains payable after a newly authorized wallet replac
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/payment_dispatch.qnt",
+        "formal/models/payments/payment_dispatch.qnt",
         "--backend=typescript",
         "--seed=1",
         "--match=^lateOriginalAfterWalletReplacementTest$",

@@ -1,46 +1,36 @@
 /** Repository source census. Mapping is review evidence, not a refinement proof. */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  listModels,
+  modelScenarios,
+  modelSources,
+  writeOrCompareIndex,
+} from "./formal-models.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const output = resolve(root, "formal/inventory.json");
 const write = process.argv.includes("--write");
 const requireMapped = process.argv.includes("--require-mapped");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const modelRoot = resolve(root, "formal/models");
-const stateless = new Map();
-for (const file of readdirSync(resolve(root, "formal")).filter((name) =>
-  name.endsWith("-stateless.json"),
-)) {
-  const entries = JSON.parse(
-    readFileSync(resolve(root, "formal", file), "utf8"),
-  );
-  for (const [path, reason] of Object.entries(entries)) {
-    if (typeof reason !== "string" || !reason.trim())
-      throw new Error(`Missing stateless review reason for ${path}`);
-    if (stateless.has(path))
-      throw new Error(`Duplicate stateless review for ${path}`);
-    stateless.set(path, reason);
-  }
-}
-const models = readdirSync(modelRoot)
-  .filter((path) => path.endsWith(".qnt"))
-  .sort()
-  .map((file) => {
-    const source = readFileSync(resolve(modelRoot, file), "utf8");
-    return {
-      path: `formal/models/${file}`,
-      sha256: digest(source),
-      sources: [...source.matchAll(/^\s*\/\/\s*@source\s+(\S+)\s*$/gmu)]
-        .map((match) => match[1])
-        .sort(),
-      scenarios: [...source.matchAll(/^\s*run\s+(\w+Test)\s*=/gmu)]
-        .map((match) => match[1])
-        .sort(),
-    };
-  });
+const stateless = new Map(
+  Object.entries(
+    JSON.parse(readFileSync(resolve(root, "formal/stateless.json"), "utf8")),
+  ),
+);
+for (const [path, reason] of stateless)
+  if (typeof reason !== "string" || !reason.trim())
+    throw new Error(`Missing stateless review reason for ${path}`);
+const models = listModels(root).map((path) => {
+  const source = readFileSync(resolve(root, path), "utf8");
+  return {
+    path,
+    sha256: digest(source),
+    sources: modelSources(source).sort(),
+    scenarios: modelScenarios(source).sort(),
+  };
+});
 const paths = [
   ...new Set(
     execFileSync(
@@ -129,22 +119,13 @@ const manifest = {
   sources,
   models,
 };
-if (write) {
-  const formatted = execFileSync(
-    resolve(root, "node_modules/.bin/biome"),
-    ["format", "--stdin-file-path", "formal/inventory.json"],
-    { cwd: root, input: JSON.stringify(manifest), encoding: "utf8" },
-  );
-  writeFileSync(output, formatted);
-} else if (
-  !existsSync(output) ||
-  JSON.stringify(JSON.parse(readFileSync(output, "utf8"))) !==
-    JSON.stringify(manifest)
-) {
-  throw new Error(
-    "Formal inventory changed. Review source/model changes, then run bun run formal:inventory:update.",
-  );
-}
+writeOrCompareIndex(
+  root,
+  "formal/inventory.json",
+  manifest,
+  write,
+  "Formal inventory changed. Review source/model changes, then run bun run formal:inventory:update.",
+);
 const pending = sources.filter((source) => source.review === "pending").length;
 console.log(
   `${sources.length} source files, ${models.length} models, ${pending} files pending mapping. Mapping does not establish refinement.`,

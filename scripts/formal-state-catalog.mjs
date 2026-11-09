@@ -1,9 +1,9 @@
 /** Candidate discovery only: literal coverage is not semantic refinement. */
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { writeOrCompareIndex } from "./formal-models.mjs";
 
 const { ts } = createRequire(import.meta.resolve("lemmascript/package.json"))(
   "ts-morph",
@@ -102,28 +102,19 @@ const states = candidates.map((candidate) => ({
 const result = {
   schemaVersion: 1,
   meaning:
-    "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
+    "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
   inventorySha256: createHash("sha256")
     .update(JSON.stringify(inventory))
     .digest("hex"),
   states,
 };
-const path = resolve(root, "formal/state-catalog.json");
-if (write) {
-  const formatted = execFileSync(
-    resolve(root, "node_modules/.bin/biome"),
-    ["format", "--stdin-file-path", "formal/state-catalog.json"],
-    { cwd: root, input: JSON.stringify(result), encoding: "utf8" },
-  );
-  writeFileSync(path, formatted);
-} else if (
-  JSON.stringify(JSON.parse(readFileSync(path, "utf8"))) !==
-  JSON.stringify(result)
-) {
-  throw new Error(
-    "State catalog is stale; review then run bun run formal:states:update.",
-  );
-}
+writeOrCompareIndex(
+  root,
+  "formal/state-catalog.json",
+  result,
+  write,
+  "State catalog is missing or stale; review then run bun run formal:states:update.",
+);
 console.log(
   `${states.length} declared lifecycle candidates; lexical model mentions are not semantic coverage.`,
 );

@@ -229,7 +229,7 @@ function retainedModelStates() {
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/points_retained_provenance.qnt",
+        "formal/models/points/points_retained_provenance.qnt",
         "--backend=typescript",
         "--seed=1",
         `--out-itf=${join(directory, "trace-{test}-{seq}.json")}`,

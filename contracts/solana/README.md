@@ -357,7 +357,7 @@ already be shared with the engine's VM. The launcher mounts those inputs read
 only and does not change VM sharing. Native Solana CLI and Anchor tools are
 still needed for program preparation and client commands. Per-instance
 receipts distinguish ready, stopped and unconfirmed cleanup; retain a failed
-receipt before retrying. See [the lifecycle audit](../../formal/solana-container-audit.md).
+receipt before retrying. See [the lifecycle model](../../formal/models/contracts/solana_container_lifecycle.qnt).
 
 Run `npm run build` here to build the actual SBF binary and its IDL.
 Run `npm run test:e2e` to load that binary into an isolated local validator and

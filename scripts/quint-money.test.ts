@@ -79,7 +79,7 @@ test("seeded Quint allocation traces agree with production allocation in either 
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        "formal/models/monthly_allocation.qnt",
+        "formal/models/rewards/monthly_allocation.qnt",
         "--backend=typescript",
         "--seed=20261107",
         "--max-samples=100",
@@ -136,7 +136,7 @@ test("Quint shuffled review traces preserve first-review order, highest band and
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        "formal/models/review_credit.qnt",
+        "formal/models/rewards/review_credit.qnt",
         "--backend=typescript",
         "--seed=20261107",
         "--max-samples=100",
@@ -208,7 +208,7 @@ test("Quint historical disclosure trace reproduces legacy rounding without asser
       [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "test",
-        "formal/models/historical_disclosure.qnt",
+        "formal/models/payments/historical_disclosure.qnt",
         "--backend=typescript",
         "--seed=20261107",
         "--match=^legacyRoundingDisclosedTest$",
@@ -318,7 +318,7 @@ test("Quint signed bucket traces agree with production sums and ordered consumpt
       args: [
         resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
         "run",
-        "formal/models/bucket_aggregation.qnt",
+        "formal/models/rewards/bucket_aggregation.qnt",
         "--backend=typescript",
         "--seed=20261108",
         "--max-samples=100",
