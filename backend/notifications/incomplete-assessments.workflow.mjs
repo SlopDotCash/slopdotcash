@@ -1,23 +1,18 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Real notification reads and native D1, with isolated synthetic projects and
 // an administrator session. No GitHub or model requests are part of this path.
-const directory = await mkdtemp(join(tmpdir(), "slop-incomplete-inbox-"));
 const actor = { githubId: "900000002", githubLogin: "fixture-admin" };
 const at = "2026-10-30T00:00:00.000Z";
 const endpoint =
   "https://slop.cash/api/v1/notifications/incomplete-assessments";
-let runtime;
+let worker;
 try {
   const projects = Array.from({ length: 100 }, (_, index) => {
     const id = `incomplete-${String(index).padStart(3, "0")}`;
@@ -32,11 +27,12 @@ try {
     return project;
   });
   assert.equal(assertProjectRegistry(projects).length, 100);
-  const entry = join(directory, "worker.ts");
-  const output = join(directory, "worker.mjs");
-  await writeFile(
-    entry,
-    `import { handleNotificationsApi } from ${JSON.stringify(resolve("backend/notifications/handler.ts"))};
+  worker = await startHandlerWorker({
+    d1: "incomplete-inbox",
+    outbound() {
+      throw new Error("Unexpected outbound request");
+    },
+    entrySource: `import { handleNotificationsApi } from ${JSON.stringify(resolve("backend/notifications/handler.ts"))};
 export default { fetch(request, env) {
   return handleNotificationsApi(request, {
     db: env.DB, now: () => new Date(${JSON.stringify(at)}),
@@ -44,36 +40,8 @@ export default { fetch(request, env) {
     adminGithubIds: new Set([${JSON.stringify(actor.githubId)}])
   });
 }};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    { encoding: "utf8" },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "incomplete-inbox" },
-      outboundService() {
-        throw new Error("Unexpected outbound request");
-      },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
-  }
+  });
+  const { runtime, db } = worker;
   for (const [index, project] of projects.entries()) {
     const manifest = JSON.stringify(project);
     const digest = createHash("sha256").update(manifest).digest("hex");
@@ -150,7 +118,5 @@ export default { fetch(request, env) {
     }),
   );
 } finally {
-  await runtime?.dispose();
-  assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep));
-  await rm(directory, { recursive: true, force: true });
+  await worker?.dispose();
 }

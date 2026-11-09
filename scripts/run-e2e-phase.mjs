@@ -147,6 +147,10 @@ export function runE2ePhase({
   cwd,
   env,
   timeoutMs = 40 * 60_000,
+  // Bounded waits for a graceful interrupt and for verified group exit. Tests
+  // shorten them; the production runner keeps the defaults.
+  interruptGraceMs = 5000,
+  cleanupGraceMs = 5000,
   signal,
   interruptSignal,
   browserOwnership = false,
@@ -187,7 +191,7 @@ export function runE2ePhase({
     let launcherAcknowledged = false;
     const knownProcesses = new Map();
     const handledRequests = new Set();
-    let detachedGroups = new Map();
+    const detachedGroups = new Map();
     const cleanupError = (message) => {
       ownershipFailed = true;
       stderr.write(`[${label}] process cleanup failed: ${message}\n`);
@@ -333,7 +337,7 @@ export function runE2ePhase({
         child.stdout.destroy();
         child.stderr.destroy();
         finish(failureStatus || 1);
-      }, 5000);
+      }, cleanupGraceMs);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -361,7 +365,10 @@ export function runE2ePhase({
         }
         try {
           process.kill(child.pid, interruptSignal);
-          interruptTimer = setTimeout(() => stopProcessTree(1), 5000);
+          interruptTimer = setTimeout(
+            () => stopProcessTree(1),
+            interruptGraceMs,
+          );
           return;
         } catch (error) {
           if (error.code !== "ESRCH")

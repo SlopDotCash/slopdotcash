@@ -31,7 +31,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
-import type { QueuedAssessment } from "./queue";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
@@ -920,7 +920,7 @@ const OBFUSCATION =
  * obfuscation signal in bulk content sends the model every match in context
  * (`signalExcerpt`).
  */
-export function bulkClass(
+function bulkClass(
   path: string,
   surfaces: ScanSurface[],
 ): "lockfile" | "data" | "generated" | "vendored" | null {
@@ -953,7 +953,7 @@ const SIGNAL_CONTEXT = 1536;
  * bulk file, with character offsets; null when there is none. The
  * deterministic checks still read the whole file.
  */
-export function signalExcerpt(
+function signalExcerpt(
   path: string,
   text: string,
   nonMatches?: ReadonlySet<RegExp>,
@@ -1942,7 +1942,7 @@ export function executionInventory(inspection: RepositoryInspection) {
  * itself, with no score threshold: any suspected malice or high finding is
  * high risk, any other finding or incomplete coverage is ambiguous.
  */
-export function scanReview(evidence: ScannerEvidence): ScanReview {
+function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
   const risk = !completed
     ? null

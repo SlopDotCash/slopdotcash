@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { MonthlyCommitmentInput } from "../backend/payments/monthly";
 import { decodeBase58Bytes } from "./lib/base58";
 import { errorMessage } from "./lib/errors";
@@ -16,9 +16,7 @@ import {
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
   clearPendingAttempt,
-  createPendingAttempt,
   type PendingAttempt,
-  updatePendingAttempt,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
 import {
@@ -30,6 +28,7 @@ import {
 } from "./lib/solana-commitment-actions";
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
+import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
 import { isWalletAddress } from "./lib/wallets";
 import {
   PendingTransaction,
@@ -91,18 +90,19 @@ export default function OwnerCommitment({
     ESCROW_NETWORKS[expected.network as keyof typeof ESCROW_NETWORKS]?.family;
   const solana = family === "solana";
   const key = `slop:award-commitment:v2:${projectId}:${cycleId}:${expected.network}:${expected.githubUserId}`;
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const [saved] = useState(() => {
-    let raw: string | null = null;
-    try {
-      raw = sessionStorage.getItem(key);
-      if (raw === null) return { pending: null, error: "", raw };
+  const {
+    mounted,
+    saved,
+    storedPending,
+    pending,
+    setPending,
+    storageError,
+    remember,
+    clear,
+    clearUnreadable,
+  } = usePendingWalletAttempt<Pending>(
+    key,
+    (raw) => {
       const value = JSON.parse(raw) as Pending;
       if (
         !validPendingAttemptId(value.attemptId) ||
@@ -126,19 +126,11 @@ export default function OwnerCommitment({
         if (!value.solanaPlan) throw new Error();
         verifySolanaCommitmentPlan(value.plan, value.solanaPlan, value.wallet);
       } else evmCommitmentIntent(value.plan);
-      return { pending: value, error: "", raw };
-    } catch {
-      return {
-        pending: null,
-        raw,
-        error:
-          "The saved commitment cannot be read. Check wallet activity before clearing it.",
-      };
-    }
-  });
-  const storedPending = useRef<Pending | null>(saved.pending);
-  const [pending, setPending] = useState<Pending | null>(saved.pending);
-  const [storageError, setStorageError] = useState(Boolean(saved.error));
+      return value;
+    },
+    () =>
+      "The saved commitment cannot be read. Check wallet activity before clearing it.",
+  );
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [review, setReview] = useState<{
     plan: OwnerCommitmentPlan;
@@ -148,23 +140,6 @@ export default function OwnerCommitment({
   const [notice, setNotice] = useState("");
   const [recoveryHash, setRecoveryHash] = useState("");
   const wallets = usePayoutWallets().filter((entry) => entry.family === family);
-  const remember = (value: Pending, previous?: Pending) => {
-    const stored = previous
-      ? updatePendingAttempt(key, previous, value)
-      : createPendingAttempt(key, value);
-    if (!stored) return false;
-    storedPending.current = value;
-    if (mounted.current) setPending(value);
-    return true;
-  };
-  const clear = (value: Pending) => {
-    if (!mounted.current) return false;
-    if (!clearPendingAttempt(key, value))
-      throw new Error("The saved request changed. Reload before continuing.");
-    storedPending.current = null;
-    setPending(null);
-    return true;
-  };
   const { busy, error, run: act } = useAction(saved.error);
   const run = (action: () => Promise<void>) => {
     setNotice("");
@@ -231,13 +206,13 @@ export default function OwnerCommitment({
         try {
           if (!remember(submitted, intent) && mounted.current)
             setNotice(
-              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+              `Submitted ${hash}. Keep this hash; the saved request changed.`,
             );
         } catch {
           if (mounted.current) {
             setPending(submitted);
             setNotice(
-              `Submitted: ${hash}. Save this hash; browser storage could not save it.`,
+              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
             );
           }
         }
@@ -300,17 +275,7 @@ export default function OwnerCommitment({
         <button
           type="button"
           disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              if (!mounted.current) return;
-              if (sessionStorage.getItem(key) !== saved.raw)
-                throw new Error(
-                  "The saved request changed. Reload before continuing.",
-                );
-              sessionStorage.removeItem(key);
-              setStorageError(false);
-            })
-          }
+          onClick={() => void run(async () => clearUnreadable())}
         >
           I checked wallet activity; clear the unreadable local record
         </button>

@@ -10,6 +10,7 @@
 // @source src/OwnerBountyVault.tsx
 // @source src/OwnerAwards.tsx
 // @source src/lib/use-action.ts
+// @source src/lib/use-pending-wallet-attempt.ts
 // VaultActions, OwnerCommitment, OwnerVaultSetup, AutomaticMonthlyPayment,
 // OwnerReserveRelease, DirectBountyPayment, SolanaBountyPayment, ReferralClaims.
 // Models one wallet operation. Approval evidence is distinct from a completed transfer.

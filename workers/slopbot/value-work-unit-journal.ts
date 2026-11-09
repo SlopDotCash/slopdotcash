@@ -23,15 +23,13 @@ import {
   type ValuePublicationFence,
   valuePublicationFenceValues,
 } from "./value-publication-fence";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitEvidence,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   validateWorkUnitAssessment,
   type WorkUnitAssessment,
   type WorkUnitAssessmentResult,
 } from "./value-work-unit-review";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 export interface WorkUnitRecord {
   schemaVersion: "slop-work-unit-record:v1";

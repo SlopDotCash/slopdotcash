@@ -17,7 +17,7 @@ export const CLAIM_CHAIN = "robinhood";
 
 export type PostNetwork = "robinhood-testnet" | "robinhood-mainnet";
 
-export const POST_NETWORKS: readonly PostNetwork[] = [
+const POST_NETWORKS: readonly PostNetwork[] = [
   "robinhood-testnet",
   "robinhood-mainnet",
 ];

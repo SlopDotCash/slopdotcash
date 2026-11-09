@@ -36,6 +36,7 @@ concurrency:
 jobs:
   scope:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       solana: ${{ steps.scope.outputs.solana }}
       evm: ${{ steps.scope.outputs.evm }}

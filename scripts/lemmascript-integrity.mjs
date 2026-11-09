@@ -347,3 +347,101 @@ export function requireProofIntegrity(generated, proof) {
       throw Error(`Unsupported added declaration ${added.name}`);
   }
 }
+
+const specOperators = ["<==>", "==>", "===", "!==", "==", "!=", ">=", "<="];
+const reflexiveOperators = new Set(["<==>", "==>", "===", "==", ">=", "<="]);
+
+function stripOuterParentheses(text) {
+  let value = text;
+  while (value.startsWith("(") && value.endsWith(")")) {
+    let depth = 0;
+    let wraps = true;
+    for (let i = 0; i < value.length; i++) {
+      if (value[i] === "(") depth++;
+      else if (value[i] === ")") depth--;
+      if (depth === 0 && i < value.length - 1) {
+        wraps = false;
+        break;
+      }
+    }
+    if (!wraps) break;
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+/** Top-level `&&` conjuncts, each with its top-level comparison operators. */
+function topLevelParts(text) {
+  const conjuncts = [];
+  let depth = 0;
+  let start = 0;
+  let current = [];
+  let other = false;
+  for (let i = 0; i < text.length; ) {
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < text.length && text[i] !== quote)
+        i += text[i] === "\\" ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    if (c === ")" || c === "]" || c === "}") depth--;
+    if (depth === 0) {
+      if (text.startsWith("&&", i)) {
+        conjuncts.push({
+          text: text.slice(start, i),
+          operators: current,
+          other,
+        });
+        current = [];
+        other = false;
+        i += 2;
+        start = i;
+        continue;
+      }
+      if (text.startsWith("||", i) || c === "?") other = true;
+      const operator = specOperators.find((candidate) =>
+        text.startsWith(candidate, i),
+      );
+      if (operator) {
+        current.push({ operator, at: i - start });
+        i += operator.length;
+        continue;
+      }
+    }
+    i++;
+  }
+  conjuncts.push({ text: text.slice(start), operators: current, other });
+  return conjuncts;
+}
+
+function tautology(expression) {
+  const text = stripOuterParentheses(expression.replace(/\s+/g, ""));
+  if (text === "true") return true;
+  const parts = topLevelParts(text);
+  if (parts.length > 1) return parts.some((part) => tautology(part.text));
+  const [{ operators, other }] = parts;
+  if (other || operators.length !== 1) return false;
+  const [{ operator, at }] = operators;
+  if (!reflexiveOperators.has(operator)) return false;
+  const left = stripOuterParentheses(text.slice(0, at));
+  const right = stripOuterParentheses(text.slice(at + operator.length));
+  return left.length > 0 && left === right;
+}
+
+/**
+ * Rejects a contract clause that holds for every input, such as
+ * `ensures true`, `\\result == \\result`, or `x ==> x`, including one such
+ * top-level conjunct. A tautological clause proves nothing about the code.
+ */
+export function requireMeaningfulSpecifications(source) {
+  for (const match of source.matchAll(
+    /\/\/@\s+(requires|ensures|invariant)\s+(.*)$/gm,
+  )) {
+    if (tautology(match[2]))
+      throw new Error(`Tautological ${match[1]} clause: ${match[2].trim()}`);
+  }
+}

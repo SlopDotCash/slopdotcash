@@ -1,4 +1,5 @@
 // @source workers/payment-executor/release-staging.mjs
+// @source scripts/worker-release.mjs
 // All inventories precede any deploy. Each staged byte digest and active source
 // tag is checked before Pages receives the complete binding set. Two networks.
 module staging_attester_release {

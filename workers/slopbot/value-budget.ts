@@ -62,6 +62,7 @@ export async function reserveValueBudget(
 }
 
 /** Reconcile only after every expected call has an immutable provider amount.
+ * An attempt that made no call reconciles with zero calls and zero cost.
  * Estimates or missing receipts stay unknown. Capped attempts also need the
  * actual cost to fit their reserved capacity; alerts-only has no such limit.
  * The attempt ID must be the review_key used by recordCalls, which retains
@@ -72,7 +73,12 @@ export async function reconcileValueBudget(
   attemptId: string,
   expectedCalls: number,
 ): Promise<boolean> {
-  if (!attempt(attemptId) || !positive(expectedCalls))
+  // Zero settles an attempt whose authority check refused before any call.
+  if (
+    !attempt(attemptId) ||
+    !Number.isSafeInteger(expectedCalls) ||
+    expectedCalls < 0
+  )
     throw new Error("Invalid value budget reconciliation");
   const row = await db
     .prepare(

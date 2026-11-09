@@ -28,10 +28,6 @@ function census(repositories: readonly string[]): ProfileIndex {
   } as ProfileIndex;
 }
 
-test("the fixture registry has a current target to drop", () => {
-  expect(targets.length).toBeGreaterThan(1);
-});
-
 test("a published census of every current target passes both checks", () => {
   expect(() =>
     assertPublishedProfiles(census(targets), { current: false }),

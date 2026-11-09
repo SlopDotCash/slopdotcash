@@ -13,7 +13,6 @@
 import { FeeCapTooLowError } from "viem";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
-import { LOCK_MS } from "./store";
 import {
   acceptableMinimum,
   remainingBudget,
@@ -312,6 +311,12 @@ const QUOTE_ABANDON_MS = 60 * 60 * 1000;
  */
 export const REPLACEMENT_WAIT_MS = 3 * 60 * 1000;
 const RESCALE_ATTEMPTS = 3;
+/**
+ * One lease covers a whole run. The store holds it for this long, and the run
+ * sizes its own renewal interval from it so it never signs after the lease it
+ * holds has expired.
+ */
+export const LOCK_MS = 14 * 60 * 1000;
 /**
  * How long a run may go without renewing its lease. A run renews at a chunk
  * boundary once this much time has passed, so a chunk that starts always has
@@ -766,14 +771,16 @@ export async function runNetwork(
             runId,
             runValue,
             dayValue,
+            // Counted as soon as the value is journaled, so a later broadcast
+            // or update failure cannot leave the remaining tokens a stale cap.
+            commit: (micro) => {
+              runValue += micro;
+              dayValue += micro;
+            },
           },
           assertLease,
         );
-        result.records[outcome.state] += 1;
-        if (outcome.committedMicro > 0n) {
-          runValue += outcome.committedMicro;
-          dayValue += outcome.committedMicro;
-        }
+        result.records[outcome] += 1;
       } catch (error) {
         deps.log({
           event: "fee_conversion_error",
@@ -926,6 +933,8 @@ interface Budget {
   runId: string;
   runValue: bigint;
   dayValue: bigint;
+  /** Adds journaled conversion value to the run and daily totals. */
+  commit(micro: bigint): void;
 }
 
 async function convert(
@@ -937,7 +946,7 @@ async function convert(
   deps: RunDependencies,
   budget: Budget,
   assertLease: () => Promise<void>,
-): Promise<{ state: ConversionState; committedMicro: bigint }> {
+): Promise<ConversionState> {
   const { limits } = deps;
   const at = () => deps.now().toISOString();
   const unbalanced = (): ConversionRow => ({
@@ -972,9 +981,7 @@ async function convert(
     finalizedAt: null,
   });
 
-  const record = async (
-    row: ConversionRow,
-  ): Promise<{ state: ConversionState; committedMicro: bigint }> => {
+  const record = async (row: ConversionRow): Promise<ConversionState> => {
     // A token stuck below the minimum would otherwise add the same row every
     // run; repeat only when the amount or the reason changes.
     if (
@@ -990,10 +997,10 @@ async function convert(
         last.amountIn === row.amountIn &&
         last.mode === row.mode
       )
-        return { state: row.state, committedMicro: 0n };
+        return row.state;
     }
     await deps.store.insert(row);
-    return { state: row.state, committedMicro: 0n };
+    return row.state;
   };
 
   const targetBefore = (await client.balance(usdc)).toString();
@@ -1081,7 +1088,8 @@ async function convert(
     // Count dry-run quotes against the run cap so the record shows what a
     // live run would have sent.
     await record(row);
-    return { state: "quoted", committedMicro: quote.amountOut };
+    budget.commit(quote.amountOut);
+    return "quoted";
   }
 
   let prepared: PreparedSend;
@@ -1100,7 +1108,7 @@ async function convert(
       reason: `prepare: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "failed", committedMicro: 0n };
+    return "failed";
   }
   const approval = prepared.kind === "approval";
   // One row per signed intent; approval bytes are never overwritten by a swap.
@@ -1122,8 +1130,8 @@ async function convert(
     },
     { runId: budget.runId, now: deps.now() },
   );
+  if (!approval) budget.commit(quote.amountOut);
   await assertLease();
-  const committedMicro = approval ? 0n : quote.amountOut;
   try {
     await client.broadcast(prepared.rawTx);
   } catch (error) {
@@ -1132,7 +1140,7 @@ async function convert(
       reason: `broadcast: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "unknown", committedMicro };
+    return "unknown";
   }
   deps.log({
     event: approval ? "fee_approval_submitted" : "fee_conversion_submitted",
@@ -1142,5 +1150,5 @@ async function convert(
     amountIn: amount.toString(),
     minAmountOut: prepared.minAmountOut.toString(),
   });
-  return { state: "submitted", committedMicro };
+  return "submitted";
 }

@@ -42,10 +42,10 @@ import {
   allocationFundingMinor,
   deriveAllocationFundingBasis,
 } from "../src/lib/allocation-funding";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import type { RepositoryAccess } from "../src/lib/project-contracts";
 import { rewardFields } from "../src/lib/project-proposal";
 import { PROJECT_SKILL_TEMPLATES } from "../src/lib/project-schema.mjs";
-import { sha256Hex } from "../src/lib/project-skill-publication.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import {
   REWARD_ASSET_NETWORKS,

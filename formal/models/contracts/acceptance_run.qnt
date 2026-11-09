@@ -5,6 +5,7 @@
 // @source scripts/escrow-acceptance/local.ts
 // @source contracts/solana/scripts/acceptance.ts
 // @source contracts/solana/scripts/acceptance-extended.ts
+// @source scripts/payment-keeper/store.ts
 // Run/journal control only. Specific escrow scenarios refine the money models.
 // One keyed send; two retries; one mined transaction. Waiting is resumable and
 // cannot produce a pass without canonical finalized evidence.

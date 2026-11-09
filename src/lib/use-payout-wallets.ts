@@ -7,6 +7,7 @@ import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletWithFeatures } from "@wallet-standard/base";
 import type { StandardConnectFeature } from "@wallet-standard/features";
 import { useEffect, useState } from "react";
+import { bytesToHex, encodeBase64 } from "./byte-encoding";
 import type { EscrowFamily } from "./escrow-policy.mjs";
 
 type EthereumWallet = {
@@ -124,7 +125,7 @@ function evmWallet(
         },
         async sign(message) {
           if (!trusted()) throw new Error(conflictMessage);
-          const hex = `0x${Array.from(new TextEncoder().encode(message), (n) => n.toString(16).padStart(2, "0")).join("")}`;
+          const hex = `0x${bytesToHex(new TextEncoder().encode(message))}`;
           const signature = await provider.request({
             method: "personal_sign",
             params: [hex, address],
@@ -385,7 +386,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                   throw new Error(
                     "Your wallet changed the message. Use a wallet that signs it exactly.",
                   );
-                return btoa(String.fromCharCode(...result.signature));
+                return encodeBase64(result.signature);
               },
             };
           },
@@ -426,7 +427,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                   new TextEncoder().encode(message),
                   "utf8",
                 );
-                return btoa(String.fromCharCode(...result.signature));
+                return encodeBase64(result.signature);
               },
             };
           },

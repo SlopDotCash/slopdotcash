@@ -20,11 +20,8 @@ import { slopbotRepositoryAccess } from "../projects/repository-access";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
 import { type AdvisoryReader, parsePrivateReport } from "./advisories";
 import type { SecurityAnalysisInput, SecurityAnalyzer } from "./analysis";
-import {
-  handleSecurityApi,
-  type SecurityD1Database,
-  securityNotificationAccess,
-} from "./handler";
+import type { SecurityD1Database } from "./case-store";
+import { handleSecurityApi, securityNotificationAccess } from "./handler";
 import { githubIntakeOAuth, type IntakeConfig } from "./intake-grant";
 import { deterministicAnalyzer } from "./report-analysis";
 import {
@@ -32,7 +29,7 @@ import {
   refreshReportingObservation,
   reportingTarget,
 } from "./reporting-readiness";
-import { RECONCILE_QUIET_MS, SUBMITTED_LIMIT_MS } from "./submissions";
+import { RECONCILE_QUIET_MS, SUBMITTED_LIMIT_MS } from "./submission-store";
 
 // Several tests build more than one database with every migration.
 setDefaultTimeout(30_000);

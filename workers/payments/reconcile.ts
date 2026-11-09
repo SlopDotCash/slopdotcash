@@ -2,7 +2,7 @@ import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { evmRpc } from "../../contracts/evm/adapter";
 import { solanaRpc } from "../../contracts/solana/adapter";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
-import type { DeploymentView } from "./index";
+import type { DeploymentView } from "./deployment-types";
 
 /** Reuse the same canonical finalized-revert proof for payout and binding retries. */
 export async function finalizedEvmRevert(

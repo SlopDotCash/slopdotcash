@@ -1,4 +1,5 @@
 // @source scripts/qualify-security-screening.ts
+// @source scripts/protected-main-release.ts
 // Three attempts, one scaled worst-case unit per call. Unknown transport or
 // receipt outcomes charge the full bound before a retry; missing/over-budget
 // receipts and wrong decisions stop immediately. Provider overcharge may

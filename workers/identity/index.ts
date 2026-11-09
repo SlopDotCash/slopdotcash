@@ -1,3 +1,4 @@
+import { githubHeaders } from "../../backend/github";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
 import { identityPublicOrigin } from "./contracts";
@@ -69,12 +70,7 @@ async function fetchPrivateIntakeStatus(
   fetchImpl: FetchLike,
   token?: string,
 ): Promise<Response | null> {
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": "slop-identity",
-    "x-github-api-version": "2022-11-28",
-  };
-  if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  const headers = githubHeaders(token, "slop-identity");
   try {
     return await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
       method: "GET",
@@ -264,12 +260,7 @@ async function resolveGithubIdentity(
     }
     accessToken = candidate;
     const userResponse = await fetch("https://api.github.com/user", {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${accessToken}`,
-        "user-agent": "slop-identity",
-        "x-github-api-version": "2022-11-28",
-      },
+      headers: githubHeaders(accessToken, "slop-identity"),
       signal: AbortSignal.timeout(10_000),
     });
     accessToken = "";

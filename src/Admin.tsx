@@ -391,7 +391,7 @@ function ProjectEditor({
         setBusy(false);
         if (currentDraft.current !== submittedDraft) {
           setError(
-            "The submitted revision was saved. Your newer edits remain in this editor. Keep a copy before reloading the latest project revision.",
+            "Revision saved. Your newer edits are still here; copy them before reloading.",
           );
           return;
         }

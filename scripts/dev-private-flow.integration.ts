@@ -191,19 +191,48 @@ async function request(
     signal: AbortSignal.timeout(10_000),
   });
 }
+// Cold Vite and API startup on a shared CI runner can take longer than a
+// proof step; main CI exceeded 25 s before the first health answer. Startup
+// gets its own bound, and a child that exits fails the wait at once instead
+// of waiting out the deadline. Every proof assertion is unchanged.
+const STARTUP_TIMEOUT_MS = 120_000;
+function exited(child: ChildProcess | undefined) {
+  return child && (child.exitCode !== null || child.signalCode !== null)
+    ? `${child.exitCode ?? child.signalCode}`
+    : null;
+}
 async function wait<T>(
+  step: string,
   read: () => Promise<T | false>,
   timeout = 25_000,
 ): Promise<T> {
   const end = Date.now() + timeout;
+  let last: unknown = null;
   while (Date.now() < end) {
+    for (const [name, child] of [
+      ["API", api],
+      ["Vite", site],
+    ] as const) {
+      const status = exited(child);
+      if (status !== null)
+        throw new Error(
+          `${name} exited (${status}) while waiting for ${step}; see ${artifact}`,
+        );
+    }
     try {
       const value = await read();
       if (value !== false) return value;
-    } catch {}
+      last = null;
+    } catch (error) {
+      last = error;
+    }
     await Bun.sleep(100);
   }
-  throw new Error("Local proof deadline exceeded");
+  throw new Error(
+    `Local proof deadline exceeded after ${timeout} ms waiting for ${step}${
+      last instanceof Error ? ` (last error: ${last.message})` : ""
+    }`,
+  );
 }
 try {
   startApi();
@@ -227,7 +256,11 @@ try {
       ],
     },
   );
-  await wait(async () => (await request("/__dev/health", null)).ok);
+  await wait(
+    "the first Vite and API health answer",
+    async () => (await request("/__dev/health", null)).ok,
+    STARTUP_TIMEOUT_MS,
+  );
   const inventory = (await (
     await request("/api/v1/projects", null)
   ).json()) as { projects: { id: string }[] };
@@ -258,7 +291,7 @@ try {
     202,
     "real local verification API must accept enrollment",
   );
-  const mail = await wait(async () => {
+  const mail = await wait("the captured verification email", async () => {
     const response = await request("/__dev/mail");
     const text = await response.text();
     return text.includes("#verify-email=") ? text : false;
@@ -312,15 +345,23 @@ try {
     (await request(`/api/v1/security-submissions/${submission.id}`, 1)).status,
     200,
   );
-  await wait(async () => {
-    const html = await (await request("/__dev/mail")).text();
-    return html.includes(`href="${origin}/inbox"`);
-  }, 12_000);
+  await wait(
+    "the captured private-report notice",
+    async () => {
+      const html = await (await request("/__dev/mail")).text();
+      return html.includes(`href="${origin}/inbox"`);
+    },
+    12_000,
+  );
   const captured = await (await request("/__dev/mail")).text();
   assert.ok(!captured.includes(report.description));
   await stop(api);
   startApi();
-  await wait(async () => (await request("/__dev/health", null)).ok);
+  await wait(
+    "the restarted API health answer",
+    async () => (await request("/__dev/health", null)).ok,
+    STARTUP_TIMEOUT_MS,
+  );
   const persisted = await request(
     `/api/v1/security-submissions/${submission.id}`,
   );

@@ -1,3 +1,4 @@
+import { bytesToHex } from "@noble/hashes/utils.js";
 /** Bounded remote artifact retrieval and byte-level verification. */
 import {
   artifactCanBeEvidenceFile,
@@ -560,9 +561,7 @@ function readEbmlId(bytes, offset) {
   }
   if (length > 4 || offset + length > bytes.length) return null;
   return {
-    id: Array.from(bytes.subarray(offset, offset + length), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join(""),
+    id: bytesToHex(bytes.subarray(offset, offset + length)),
     length,
   };
 }

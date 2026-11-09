@@ -9,6 +9,14 @@
 // IDs vary lexical order; A's later band is 1 or 3. Pool size 0,1,3,9. The first
 // review may fall outside the acceptance-anchored allocation window. Current
 // scoring window advances while the allocation window stays fixed.
+// Finite reduction: `step` ingests the smallest unseen review ID. `seen` is
+// read only through `eligible`, by `allocate` (guarded by `seen == 1..7`) and
+// by `advanceWindow` (done phase, where `seen` is complete). The invariant
+// constrains only the done phase. Every ingestion order ends at the same
+// complete set with the same configuration, so the omitted non-prefix
+// subsets reach no other allocation or invariant state. Direct
+// `ingest(id)` still accepts any unseen ID; `produce` and the named
+// scenarios keep arbitrary orders.
 module ui_review_pool {
   var s:{phase:str,seen:Set[int],size:int,high:int,tie:bool,outside:bool,later:bool,currentFrom:int,
     credited:List[int],sources:List[int],shares:List[int],poolAmount:int,positive:Set[int],issued:Set[int],retained:Set[int]}
@@ -58,9 +66,10 @@ module ui_review_pool {
     choose(assessed,high,tie,outside,currentFrom,later)
   }
   action ingestAny = {nondet id=1.to(7).exclude(s.seen).oneOf() ingest(id)}
+  action ingestNext = all {s.seen.size()<7,ingest(s.seen.size()+1)}
   action produce = configure.then(ingestAny).then(ingestAny).then(ingestAny)
     .then(ingestAny).then(ingestAny).then(ingestAny).then(ingestAny).then(allocate)
-  action step = any {configure,ingestAny,allocate,advanceWindow,s'=s}
+  action step = any {configure,ingestNext,allocate,advanceWindow,s'=s}
   val invariant = s.phase=="done" implies all {s.credited.length()==5,
     s.shares.foldl(0,(sum,v)=>sum+v)==s.poolAmount,s.poolAmount>=1,s.poolAmount<=9,
     s.issued.intersect(s.retained)==Set(),s.issued.union(s.retained)==s.positive}
@@ -79,5 +88,8 @@ module ui_review_pool {
   run advancingWindowKeepsSharesTest = init.then(choose(9,3,false,false,2,true))
     .then(ingest(1)).then(ingest(2)).then(ingest(3)).then(ingest(4)).then(ingest(5)).then(ingest(6)).then(ingest(7)).then(allocate).then(advanceWindow)
     .expect(s.credited==List(1,2,3,4,5) and s.shares==List(3,1,1,1,1) and s.retained==Set(1,2))
+  run orderedIngestionReachesSameAllocationTest = init.then(choose(1,1,true,false,2,true))
+    .then(ingestNext).then(ingestNext).then(ingestNext).then(ingestNext).then(ingestNext).then(ingestNext).then(ingestNext)
+    .then(allocate).expect(s.credited==List(2,1,3,4,5) and s.shares==List(1,0,0,0,0) and s.retained==Set(2) and invariant)
   run sampledPoolTest = init.then(produce).expect(invariant)
 }

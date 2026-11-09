@@ -6,6 +6,7 @@
 // @source src/lib/solana-commitment-actions.ts
 // @source src/lib/monthly-commitment-actions.ts
 // @source src/lib/monthly-release-actions.ts
+// @source src/lib/solana-wire.ts
 // Reviewed instruction bytes, wallet signature and finalized deltas are distinct stages.
 module solana_owner_action {
   type S={operation:str,owner:bool,deployment:bool,asset:bool,funds:bool,phase:str,exact:bool}

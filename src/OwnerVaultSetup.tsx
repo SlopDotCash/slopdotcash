@@ -6,6 +6,12 @@ import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
+import {
+  clearPendingAttempt,
+  type PendingAttempt,
+  updatePendingAttempt,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
@@ -18,12 +24,13 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
-type Pending = {
+type Pending = PendingAttempt & {
   version: 1;
   input: VaultSetupInput & { expectedRevision: number };
   review: VaultSetupReview;
@@ -60,6 +67,7 @@ function restore(key: string): Pending | null {
   const value = JSON.parse(text) as Pending;
   if (
     value.version !== 1 ||
+    !validPendingAttemptId(value.attemptId) ||
     !value.input ||
     !value.review ||
     typeof value.review.owner !== "string" ||
@@ -96,6 +104,17 @@ export function OwnerVaultSetup({
     }
   });
   const [pending, setPending] = useState<Pending | null>(saved.pending);
+  // The record this view last saw in storage. Writes compare against it, so a
+  // wallet result that outlives this view cannot recreate a cleared request
+  // or replace a newer one.
+  const storedPending = useRef<Pending | null>(saved.pending);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const { busy, error, setError, run: act } = useAction(saved.error);
   const [info, setInfo] = useState<{
     revision: number;
@@ -179,10 +198,17 @@ export function OwnerVaultSetup({
     });
   };
 
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
+  const changed = () =>
+    new Error("The saved request changed. Reload before continuing.");
+  const show = (value: Pending | null) => {
+    storedPending.current = value;
+    if (mounted.current) setPending(value);
+  };
+  /** Clears only the record this view saved or restored. */
+  const forget = () => {
+    const current = storedPending.current;
+    if (current && !clearPendingAttempt(key, current)) throw changed();
+    show(null);
   };
   const connect = (provider: PayoutWallet) =>
     run(async () => {
@@ -276,8 +302,16 @@ export function OwnerVaultSetup({
         throw new Error("The creation request changed. Review again.");
       // Refresh Solana's transaction lifetime only after the owner, policy and
       // exact creation instructions still match the review above.
-      const ready = { ...review, review: fresh.review };
-      remember(ready);
+      const ready: Pending = {
+        ...review,
+        review: fresh.review,
+        attemptId: crypto.randomUUID(),
+      };
+      const attempt = vaultSetupAttempt(key, ready);
+      if (!mounted.current)
+        throw new Error("The setup view was closed. Review before sending.");
+      if (!attempt.begin()) throw changed();
+      show(ready);
       try {
         let hash: unknown;
         if (ready.review.family === "solana") {
@@ -288,7 +322,9 @@ export function OwnerVaultSetup({
             wallet,
             ready.review.transaction.transaction,
             solanaVaultCreationMessage(ready.review),
-            () => remember(ready),
+            () => {
+              if (!mounted.current || !attempt.stillCurrent()) throw changed();
+            },
           );
         } else {
           if (!wallet.evmRequest) throw new Error("Choose an EVM wallet.");
@@ -303,25 +339,46 @@ export function OwnerVaultSetup({
           throw new Error(
             "The wallet did not return a transaction hash. Recover it from wallet activity.",
           );
-        remember({ ...ready, hash });
+        if (!attempt.submitted(hash)) {
+          // The owner cleared or replaced this request while the wallet was
+          // open. Keep the newer record and show the hash for recovery.
+          if (mounted.current)
+            setNotice(
+              `Creation sent: ${hash}. Keep this hash; the saved request changed.`,
+            );
+          return;
+        }
+        show({ ...ready, hash });
+        if (!mounted.current) return;
         setRecoveryHash(hash);
         setReview(null);
         setNotice("Creation sent. Check registration once it is finalized.");
       } catch (e) {
-        if ((e as { code?: number })?.code === 4001) remember(null);
+        if ((e as { code?: number })?.code === 4001 && attempt.declined())
+          show(null);
         throw e;
       }
     });
   const register = () =>
     run(async () => {
-      const current = pending ?? review;
+      const stored = storedPending.current;
+      const current = stored ?? review;
       if (!current) throw new Error("Review the existing vault first.");
       const hash = recoveryHash.trim();
       if (!isVaultCreationId(current.input.network, hash))
         throw new Error(
           "Enter the creation transaction hash from your wallet.",
         );
-      remember({ ...current, hash });
+      const next: Pending = stored
+        ? { ...stored, hash }
+        : { ...current, attemptId: crypto.randomUUID(), hash };
+      if (
+        !(stored
+          ? updatePendingAttempt(key, stored, next)
+          : vaultSetupAttempt(key, next).begin())
+      )
+        throw changed();
+      show(next);
       const result = (await request(`project-vaults/${project.id}`, {
         ...current.input,
         step: "register",
@@ -351,7 +408,7 @@ export function OwnerVaultSetup({
         result.notice,
         Number(result.revision),
       );
-      remember(null);
+      forget();
       setReview(null);
     });
   const active = pending ?? review;
@@ -382,11 +439,13 @@ export function OwnerVaultSetup({
       {failedCreation ? (
         <button
           type="button"
-          onClick={() => {
-            remember(null);
-            setReview(null);
-            setFailedCreation(false);
-          }}
+          onClick={() =>
+            void run(async () => {
+              forget();
+              setReview(null);
+              setFailedCreation(false);
+            })
+          }
         >
           Review a new creation request
         </button>
@@ -592,14 +651,16 @@ export function OwnerVaultSetup({
               {pending && !pending.hash ? (
                 <UnsentTransactionRecovery
                   disabled={busy}
-                  onClear={() => {
-                    remember(null);
-                    setReview(null);
-                    setRecoveryHash("");
-                    setNotice(
-                      "Local request cleared. Review again before sending.",
-                    );
-                  }}
+                  onClear={() =>
+                    void run(async () => {
+                      forget();
+                      setReview(null);
+                      setRecoveryHash("");
+                      setNotice(
+                        "Local request cleared. Review again before sending.",
+                      );
+                    })
+                  }
                 />
               ) : null}
             </>

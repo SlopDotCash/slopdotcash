@@ -3,6 +3,7 @@
 // @source src/VaultActions.tsx
 // @source src/AutomaticMonthlyPayment.tsx
 // @source src/lib/pending-attempt.ts
+// @source src/lib/use-pending-wallet-attempt.ts
 // Two component instances share one same-tab slot. Attempt 1 may be legacy;
 // retry 2 always has a fresh ID. One check per instance, one wallet tail per
 // attempt. Outcomes: 1 pending, 2 finalized failure, 3 finalized success,

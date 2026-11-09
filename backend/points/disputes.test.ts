@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { escalateAppeal } from "../../workers/slopbot/appeals";
 import { handleNotificationsApi } from "../notifications/handler";
 import { handlePointsApi } from "./handler";
@@ -994,4 +994,34 @@ test("triage resolves the current repository path after a project rename or tran
   } finally {
     globalThis.fetch = nativeFetch;
   }
+});
+
+test("the dispute list finds awards recorded under the other node spelling of the member", async () => {
+  const h = await fixture();
+  // The member signed in with the legacy node ID; this award was recorded
+  // with the current spelling of the same GitHub user 42.
+  const record: Omit<PointRevision, "id"> = {
+    ...h.revision,
+    sourceDigest: "b".repeat(64),
+    award: {
+      ...h.revision.award,
+      key: "alpha:manual:42-current",
+      actor: { id: "U_kgDOAAAAKg", login: owner.githubLogin },
+      sourceId: "manual-award-42-current",
+      workUnitId: "manual-award-42-current",
+    },
+  };
+  const current: PointRevision = { ...record, id: pointRevisionId(record) };
+  h.insert(current);
+  const listed = (await (await h.call("")).json()) as {
+    awards: { revisionId: string }[];
+  };
+  expect(listed.awards.map((award) => award.revisionId).sort()).toEqual(
+    [h.revision.id, current.id].sort(),
+  );
+  // Another member's list never includes them.
+  const other = (await (await h.call("", undefined, otherToken)).json()) as {
+    awards: unknown[];
+  };
+  expect(other.awards).toEqual([]);
 });

@@ -32,6 +32,7 @@ test("the home points summary keeps every contributor's all-time total in rank o
 });
 
 const received = {
+  schemaVersion: "1",
   generatedAt: "2026-10-28T00:00:00.000Z",
   contributors: [
     {
@@ -46,10 +47,13 @@ const received = {
         { projectId: "eliza", usdMicro: "1407908903" },
         { projectId: "asi", usdMicro: "356081097" },
       ],
+      otherAssets: [],
     },
   ],
   totals: {
     usdMicro: "1763990000",
+    directMicro: "1763990000",
+    vaultUsdMicro: "0",
     directTransfers: 3,
     vaultPayments: 0,
     contributors: 1,
@@ -57,6 +61,7 @@ const received = {
 };
 
 test("received totals reject a total that does not add up", () => {
+  expect(isReceivedTotals(received)).toBe(true);
   expect(
     isReceivedTotals({
       ...received,

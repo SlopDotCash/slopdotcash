@@ -27,13 +27,14 @@ import {
 } from "../../contracts/solana/monthly-reserve";
 import { checkSolanaWalletTransaction } from "../../contracts/solana/wallet-transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { sha256Hex } from "../../src/lib/sha256";
-import type { JournalStore } from "./core";
+import type { JournalStore } from "./binding-shared";
 
 export interface MonthlyReleaseDependencies {
   db: D1TransactionalDatabase;
@@ -246,9 +247,7 @@ export async function checkMonthlyReserveRelease(
     throw new Error("Project policy changed");
   if (plan.family === "solana") {
     const config = await deps.solana(deployment);
-    const wire = Uint8Array.from(atob(plan.prepared.transaction), (c) =>
-      c.charCodeAt(0),
-    );
+    const wire = decodeBase64(plan.prepared.transaction);
     const result = await checkSolanaWalletTransaction(
       config,
       deployment.owner,

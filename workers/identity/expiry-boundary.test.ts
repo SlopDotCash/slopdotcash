@@ -89,12 +89,15 @@ test("callback cannot report success if the flow expires during GitHub exchange"
         githubNodeId: "U_tester",
       };
     };
-    expect((await callback()).status).toBe(409);
+    // An expired claim is terminal: the callback says so and ends the flow.
+    const expired = await callback();
+    expect(expired.status).toBe(410);
+    expect(await expired.text()).toContain("Sign-in expired");
     expect(
       ctx.sqlite
         .query("SELECT status FROM identity_oauth_flows WHERE id=?")
         .get(flow.flowId),
-    ).toEqual({ status: "callback_processing" });
+    ).toEqual({ status: "callback_failed" });
     expect((await poll()).status).toBe(410);
   } finally {
     ctx.sqlite.close();

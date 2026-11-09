@@ -65,7 +65,7 @@ test("project exposes eligible work with GitHub targets and keyboard access", as
   });
   await expect(issue).toHaveAttribute("href", snapshot.workQueue.issues[0].url);
   const review = work.getByRole("link", {
-    name: "Review #17340: Finish the open contribution checklist",
+    name: "PR #17340: Finish the open contribution checklist",
   });
   await expect(review).toHaveAttribute(
     "href",
@@ -96,10 +96,7 @@ test("project exposes eligible work with GitHub targets and keyboard access", as
   await target.close();
   const box = await issue.boundingBox();
   expect(box?.height).toBeGreaterThanOrEqual(44);
-  await expect(work.locator("time")).toHaveAttribute(
-    "datetime",
-    snapshot.generatedAt,
-  );
+  await expect(work.locator("time")).toHaveCount(0);
   await expectAccessible(page, { include: ".project-work" });
   await test.info().attach("project-work-accessibility-tree", {
     body: await work.ariaSnapshot(),
@@ -147,8 +144,9 @@ test("old work stays dated and an empty queue does not claim availability", asyn
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
   const work = page.getByRole("region", { name: "Suggested work" });
   await expect(work).toBeVisible();
-  await expect(work).toContainText("May be outdated");
-  await expect(work).toContainText("No suggested work in this snapshot.");
+  // One stale notice per page, whichever section shows it.
+  await expect(page.getByText(/Points may be outdated/)).toHaveCount(1);
+  await expect(work).toContainText("No suggested work right now.");
   await expect(work.getByRole("link")).toHaveCount(0);
 });
 

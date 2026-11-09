@@ -43,7 +43,7 @@ const VALUE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
  * attempt, capped at one day, so a block that persists stops costing an hourly
  * run without turning the outcome into a final zero.
  */
-export function valueRetryDelayMs(attempt: number): number {
+function valueRetryDelayMs(attempt: number): number {
   const step = Math.max(Math.trunc(attempt), 1) - 1;
   return Math.min(VALUE_RETRY_BASE_MS * 2 ** step, VALUE_RETRY_MAX_MS);
 }

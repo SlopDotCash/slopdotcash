@@ -36,12 +36,13 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
+import type { JournalStore } from "./binding-shared";
 import {
   authorizeRegistry,
   authorizeWalletRotation,
-  type JournalStore,
   requireWalletAuthorization,
 } from "./core";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
@@ -49,6 +50,21 @@ import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 export interface SolanaSigner {
   address: string;
   signMessage(message: Uint8Array): Promise<Uint8Array>;
+}
+/** The signer's strict Ed25519 signature over `message`, or a refusal. */
+export async function verifiedSignerSignature(
+  signer: SolanaSigner,
+  message: Uint8Array,
+): Promise<Uint8Array> {
+  const signature = await signer.signMessage(message);
+  if (
+    signature.length !== 64 ||
+    !ed25519.verify(signature, message, bytes(signer.address), {
+      zip215: false,
+    })
+  )
+    throw new Error("Invalid signer response");
+  return signature;
 }
 export interface SolanaExecutorEnvironment {
   PAYMENTS_DB: D1Database;
@@ -267,7 +283,7 @@ interface Attempt {
   /** Set while the destination wallet's signature is still missing from raw. */
   cosigner?: string;
 }
-export interface PreparedBinding {
+interface PreparedBinding {
   transactionId: string;
   /** Base64 transaction carrying the identity signature and an empty slot for the destination wallet. */
   transaction?: string;
@@ -372,14 +388,7 @@ async function send(
         throw new Error("Expired attempt disappeared from durable journal");
       if (existing)
         await store.put(`${key}:expired:${existing.generation}`, existing);
-      const signature = await env.SOLANA_SIGNER.signMessage(msg);
-      if (
-        signature.length !== 64 ||
-        !ed25519.verify(signature, msg, bytes(env.SOLANA_SIGNER.address), {
-          zip215: false,
-        })
-      )
-        throw new Error("Invalid signer response");
+      const signature = await verifiedSignerSignature(env.SOLANA_SIGNER, msg);
       // A co-signed binding leaves the second signature slot empty until the
       // destination wallet signs the same bytes.
       const raw = cosigner
@@ -391,7 +400,7 @@ async function send(
         network: input.network,
         vault: input.vault,
         fingerprint,
-        raw: btoa(String.fromCharCode(...raw)),
+        raw: encodeBase64(raw),
         transactionId: solanaBase58(signature),
         lastValidBlockHeight: latest.value.lastValidBlockHeight,
         generation: latest.value.lastValidBlockHeight,
@@ -485,8 +494,8 @@ export async function completeSolanaBinding(
   if (!attempt.cosigner) return broadcastSolanaTransaction(ctx, attempt);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(transaction))
     throw new Error("Invalid signed transaction encoding");
-  const signed = Uint8Array.from(atob(transaction), (c) => c.charCodeAt(0));
-  const prepared = Uint8Array.from(atob(attempt.raw), (c) => c.charCodeAt(0));
+  const signed = decodeBase64(transaction);
+  const prepared = decodeBase64(attempt.raw);
   const msg = prepared.slice(129);
   if (
     signed.length !== prepared.length ||
@@ -514,7 +523,7 @@ export async function completeSolanaBinding(
     if (!current.cosigner) return current;
     const next: Attempt = {
       ...current,
-      raw: btoa(String.fromCharCode(...signed)),
+      raw: encodeBase64(signed),
     };
     delete next.cosigner;
     await store.put(key, next);

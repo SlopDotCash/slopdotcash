@@ -57,6 +57,11 @@ export type ProjectRevisionInput = {
   projectId: string;
   /** Revision the caller read; the write fails if another write landed. */
   expectedRevision: number;
+  /**
+   * Admission-clearance generation read before the caller checked clearance.
+   * When given, the write fails if an assessment or exemption changed since.
+   */
+  expectedClearanceGeneration?: string;
   manifest: ProjectDefinition;
   manifestText: string;
   manifestSha256: string;

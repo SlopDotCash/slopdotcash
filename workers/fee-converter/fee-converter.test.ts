@@ -28,7 +28,8 @@ import {
 import { createEvmClient, usdMicro } from "./evm";
 import worker, { runOnce } from "./index";
 import { NativeGasJournal } from "./native-gas";
-import { createSolanaClient, parseTransaction } from "./solana";
+import { createSolanaClient } from "./solana";
+import { parseTransaction } from "./solana-transaction";
 import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
 
 const TOKEN = "0x1111111111111111111111111111111111111111";
@@ -779,6 +780,39 @@ describe("conversion policy", () => {
     expect(rows.map((row) => row.state)).toEqual(["submitted", "submitted"]);
     expect(total).toBeLessThanOrEqual(30_000_000);
     expect(Number(rows[1].amount_in)).toBeLessThan(25_000_000);
+  });
+
+  test("a journaled send counts against the run cap even when its broadcast and status update fail", async () => {
+    const h = harness({
+      env: { FEE_CONVERTER_RUN_CAP_MICRO: "30000000" },
+      projectTokens: [OTHER],
+    });
+    h.chain.balances.set(TOKEN, 20_000_000n);
+    h.chain.balances.set(OTHER, 20_000_000n);
+    h.chain.broadcastError = new Error("response lost");
+    const store = h.deps.store;
+    const update = store.update.bind(store);
+    let updates = 0;
+    store.update = async (id, fields) => {
+      updates += 1;
+      if (updates === 1) throw new Error("database write lost");
+      return update(id, fields);
+    };
+    await runNetwork(h.network, h.deps);
+    const rows = h.rows();
+    // The first token's 20 USDC send is journaled before the broadcast fails.
+    expect(rows[0]).toMatchObject({
+      state: "submitted",
+      quote_value_micro: 20_000_000,
+    });
+    // The second token sees only the 10 USDC left under the 30 USDC cap.
+    expect(rows).toHaveLength(2);
+    expect(Number(rows[1].quote_value_micro)).toBeLessThanOrEqual(10_000_000);
+    const total = rows.reduce(
+      (sum, row) => sum + Number(row.quote_value_micro),
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(30_000_000);
   });
 
   test("live sends in the last 24 hours count against the daily cap", async () => {

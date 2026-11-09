@@ -12,6 +12,7 @@ import {
   automaticMonthlyPayment,
   coordinateMonthlyPayments,
 } from "../../backend/payments/monthly";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   refreshVaultSnapshots,
   type VaultTotals,
@@ -33,17 +34,13 @@ import {
   readVaultTotals as readSolanaVaultTotals,
   solanaPaymentAdapter,
 } from "../../contracts/solana/adapter";
-import {
-  chainFamily,
-  type PaymentDeploymentRecord,
-} from "../../src/lib/escrow-policy.mjs";
-import type { PayoutPolicy } from "../../src/lib/payments/contracts";
+import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
   monthlyCutoff,
   parseMonthlySchedule,
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
-import type { MonthlyAuthorization } from "../payment-executor/monthly";
+import type { DeploymentView, PaymentDeployment } from "./deployment-types";
 import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
@@ -51,17 +48,6 @@ import {
 import { reconcileFailedAttempts } from "./reconcile";
 import { type ScanEvent, scanEvmPayments, scanSolanaPayments } from "./scanner";
 
-/** One reviewed registry deployment; the private bounty Worker adds its payout policy. */
-export type PaymentDeployment = PaymentDeploymentRecord & {
-  payoutPolicy?: PayoutPolicy;
-};
-/** The fields one chain step reads. Local integration chains (Anvil, fixtures)
- * use network names outside the registry. */
-export type DeploymentView<
-  Fields extends keyof PaymentDeployment,
-  OptionalFields extends keyof PaymentDeployment = never,
-> = Pick<PaymentDeployment, Exclude<Fields, "network">> &
-  Partial<Pick<PaymentDeployment, OptionalFields>> & { network: string };
 export interface PaymentsWorkerEnvironment {
   /** Private worker only. Its entrypoint binds the separate private ledger. */
   PAYMENT_SCOPE?: "security-bounty";

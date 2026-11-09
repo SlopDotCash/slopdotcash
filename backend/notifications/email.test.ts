@@ -12,7 +12,7 @@ import {
 } from "../../workers/notify/activity";
 import { reconcileSecurityMail } from "../../workers/notify/security";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import type { SecurityD1Database } from "../security/handler";
+import type { SecurityD1Database } from "../security/case-store";
 import { ProjectFlagStore } from "../vetting/flags";
 import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
@@ -779,7 +779,7 @@ test("vetting ban mail rechecks affected contributors and current staff after an
         .run(body, "a".repeat(64), at, at);
       h.sqlite
         .query(
-          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('affected','101','affected',?,0)",
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('U_kgDOAAAAZQ','101','affected',?,0)",
         )
         .run(at);
       h.sqlite
@@ -790,7 +790,8 @@ test("vetting ban mail rechecks affected contributors and current staff after an
           at,
           JSON.stringify({
             award: {
-              actor: { id: "affected" },
+              // The award keeps the legacy spelling of member 101's node ID.
+              actor: { id: "MDQ6VXNlcjEwMQ==" },
               projectId: "affected-project",
               amount: 10,
             },

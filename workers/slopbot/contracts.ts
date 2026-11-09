@@ -83,7 +83,7 @@ export type ConfigResult =
   | { ok: true; config: RepositoryConfig }
   | { ok: false; config: RepositoryConfig; problem: string };
 
-export function parseRepositoryConfig(text: string): ConfigResult {
+function parseRepositoryConfig(text: string): ConfigResult {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -294,7 +294,7 @@ type Rate = {
 };
 type PriceEntry = Rate & { reconciliation: "list-price" | "estimated" };
 
-export const PRICES: Record<string, PriceEntry> = {
+const PRICES: Record<string, PriceEntry> = {
   // Best listed Surplus offer on 9 October 2026. Actual offers vary, so the
   // row stays "estimated" until reconciled against Surplus spend. Surplus
   // publishes no cache prices; input price is charged for cache tokens.

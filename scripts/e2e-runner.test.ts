@@ -47,7 +47,10 @@ test("a timed-out launcher stops its descendant server before returning failure"
     command: "node",
     args: ["-e", launcher],
     cwd: directory,
-    timeoutMs: 15_000,
+    // Windows keeps the full cold-start budget; POSIX launchers are ready in
+    // well under a second, so the deadline path is reached quickly.
+    timeoutMs: process.platform === "win32" ? 15_000 : 4000,
+    cleanupGraceMs: 1000,
   };
   // Run the phase in Node, the runtime of `bun run test:e2e`. Bun 1.3.14 on
   // Windows starts a spawnSync timeout from its previous spawnSync call, so
@@ -143,8 +146,11 @@ for (const trigger of ["cancellation", "deadline"]) {
         label: `detached-${trigger}`,
         args: ["-e", launcher],
         cwd: directory,
-        timeoutMs: trigger === "deadline" ? 5000 : 20_000,
+        timeoutMs: trigger === "deadline" ? 3000 : 20_000,
         interruptSignal: "SIGINT",
+        // The launcher ignores SIGINT, so the grace elapses before group cleanup.
+        interruptGraceMs: 500,
+        cleanupGraceMs: 1000,
       };
       const script = `import { existsSync } from "node:fs"; import { runE2ePhase } from ${JSON.stringify(runner)}; const controller = new AbortController(); const timer = ${trigger === "cancellation" ? `setInterval(() => { if (existsSync(${JSON.stringify(ready)})) controller.abort(); }, 25)` : "null"}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, command: process.execPath, env: process.env, signal: controller.signal }); clearInterval(timer);`;
       const phase = Bun.spawn(["node", "--input-type=module", "-e", script], {
@@ -204,6 +210,7 @@ for (const exitStatus of [0, 7]) {
           cwd: directory,
           timeoutMs: 15_000,
           browserOwnership: true,
+          cleanupGraceMs: 1000,
         };
         const script = `import { runE2ePhase } from ${JSON.stringify(runner)}; process.exitCode = await runE2ePhase({ ...${JSON.stringify(options)}, command: process.execPath, env: process.env });`;
         const phase = Bun.spawn(["node", "--input-type=module", "-e", script], {
@@ -349,6 +356,7 @@ for (const exitStatus of [0, 7])
             args: ["-e", launcher],
             cwd: directory,
             timeoutMs: 5000,
+            cleanupGraceMs: 1000,
           };
           // Exercise the production Node runtime, including its POSIX process
           // group signaling, rather than Bun's node:child_process emulation.

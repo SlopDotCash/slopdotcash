@@ -9,6 +9,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { handlePointsApi } from "../backend/points/handler";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import type { PublishedPenalty } from "../src/lib/leaderboard-types";
 import {
@@ -31,7 +32,6 @@ import {
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 import { MIGRATIONS, sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 import {
   applyRetainedHistoryBatch,
   pointsSql,

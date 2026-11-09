@@ -633,6 +633,18 @@ method planFlagScanReinstatement(records: seq<EnforcementHistoryRow>, state: str
   return reinstate("clear", (if (appeal == "requested") then "granted" else "none"));
 }
 
+method pausedByFlagsOnly(records: seq<EnforcementHistoryRow>, state: string) returns (res: bool)
+  ensures (res ==> (state == "quarantined"))
+  ensures (res <==> (((state == "quarantined") && (LastRestriction(records) >= 0)) && (records[LastRestriction(records)].actorRole == "contributor-flags")))
+{
+  if (state != "quarantined") {
+    return false;
+  }
+  var i_t31 := latestRestrictionSource(records);
+  var latest := i_t31;
+  return ((latest >= 0) && (records[latest].actorRole == "contributor-flags"));
+}
+
 predicate Restrictive(action: string)
 {
   action == "quarantine" || action == "ban"

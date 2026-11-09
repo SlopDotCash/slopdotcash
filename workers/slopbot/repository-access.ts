@@ -3,6 +3,7 @@
 // repository and what base permission one GitHub account has there. The
 // answer comes from GitHub through the App, never from installation records
 // alone, and it carries no token.
+import { githubHeaders } from "../../backend/github";
 import {
   parseRepositoryIdentity,
   REPOSITORY_READ_HEADER,
@@ -12,10 +13,7 @@ import {
 } from "../../src/lib/project-contracts";
 import { appJwt } from "./github";
 
-export { REPOSITORY_READ_URL };
-
-export const REPOSITORY_ACCESS_URL =
-  "https://slopbot.internal/v1/repository-access";
+const REPOSITORY_ACCESS_URL = "https://slopbot.internal/v1/repository-access";
 
 const REPOSITORY = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/u;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
@@ -47,12 +45,7 @@ async function repositoryInstallation(
   const call = (path: string, token: string, method = "GET") =>
     fetcher(`https://api.github.com${path}`, {
       method,
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "user-agent": "slopbot",
-        "x-github-api-version": "2022-11-28",
-      },
+      headers: githubHeaders(token, "slopbot"),
       redirect: "manual",
     });
   const found = await call(`/repos/${owner}/${repo}/installation`, jwt);
@@ -186,7 +179,7 @@ export function routeRepositoryAccess(
 }
 
 /** Serves the internal route; public hosts never match its origin. */
-export async function handleRepositoryAccess(
+async function handleRepositoryAccess(
   request: Request,
   env: AccessEnv,
   fetcher: typeof fetch = fetch,

@@ -111,7 +111,6 @@ test("seeded Quint allocation traces agree with production allocation in either 
         }[];
       };
       const final = trace.states.at(-1)?.s;
-      expect(final).toBeDefined();
       if (!final) throw new Error("Quint omitted final allocation state");
       const input = [
         contributor("a", Number(final.aWeight)),

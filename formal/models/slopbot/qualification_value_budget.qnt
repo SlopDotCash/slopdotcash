@@ -1,4 +1,5 @@
 // @source scripts/qualify-value-models.ts
+// @source scripts/protected-main-release.ts
 // Two value-route requests (one for general review); two scaled budget units.
 // Sending makes the outcome uncertain until a bounded cost receipt arrives.
 // A provider amount above the budget is reported as failure, never clamped.

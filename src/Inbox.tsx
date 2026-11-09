@@ -375,63 +375,62 @@ export default function InboxPage() {
           </Suspense>
         </div>
       ) : null}
-      <>
-        {state.status === "ready" ? (
-          <InboxList
-            busy={busy}
-            response={state.value}
-            onMark={(keys, done) =>
-              void act((actorId) => markRead(keys, actorId), done)
-            }
-            onAcknowledge={(notification) =>
-              void act(
-                (actorId) => acknowledgeSecurity(notification, actorId),
-                "Security notice acknowledged.",
-              )
-            }
-          />
-        ) : null}
-        {state.status === "ready" &&
-        (previousPages.length > 0 || state.value.nextCursor) ? (
-          <nav aria-label="Notification pages" className="handoff-actions">
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || previousPages.length === 0}
-              onClick={() => {
-                setCursor(previousPages.at(-1) ?? null);
-                setPreviousPages((pages) => pages.slice(0, -1));
-                setMessage("");
-              }}
-            >
-              Newer notifications
-            </button>
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || !state.value.nextCursor}
-              onClick={() => {
-                setPreviousPages((pages) => [...pages, cursor]);
-                setCursor(state.value.nextCursor ?? null);
-                setMessage("");
-              }}
-            >
-              Older notifications
-            </button>
-          </nav>
-        ) : null}
-        {message ? <p role="status">{message}</p> : null}
-        {actionError ? (
-          <p className="form-error" role="alert">
-            {actionError}
-          </p>
-        ) : null}
-        {state.status === "ready" ? (
-          <p>
-            <a href="/account#notifications">Email preferences</a>
-          </p>
-        ) : null}
-      </>
+
+      {state.status === "ready" ? (
+        <InboxList
+          busy={busy}
+          response={state.value}
+          onMark={(keys, done) =>
+            void act((actorId) => markRead(keys, actorId), done)
+          }
+          onAcknowledge={(notification) =>
+            void act(
+              (actorId) => acknowledgeSecurity(notification, actorId),
+              "Security notice acknowledged.",
+            )
+          }
+        />
+      ) : null}
+      {state.status === "ready" &&
+      (previousPages.length > 0 || state.value.nextCursor) ? (
+        <nav aria-label="Notification pages" className="handoff-actions">
+          <button
+            type="button"
+            className="button secondary-button"
+            disabled={busy || previousPages.length === 0}
+            onClick={() => {
+              setCursor(previousPages.at(-1) ?? null);
+              setPreviousPages((pages) => pages.slice(0, -1));
+              setMessage("");
+            }}
+          >
+            Newer notifications
+          </button>
+          <button
+            type="button"
+            className="button secondary-button"
+            disabled={busy || !state.value.nextCursor}
+            onClick={() => {
+              setPreviousPages((pages) => [...pages, cursor]);
+              setCursor(state.value.nextCursor ?? null);
+              setMessage("");
+            }}
+          >
+            Older notifications
+          </button>
+        </nav>
+      ) : null}
+      {message ? <p role="status">{message}</p> : null}
+      {actionError ? (
+        <p className="form-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {state.status === "ready" ? (
+        <p>
+          <a href="/account#notifications">Email preferences</a>
+        </p>
+      ) : null}
     </main>
   );
 }

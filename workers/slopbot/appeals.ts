@@ -11,10 +11,10 @@ import { dispatchDueJobs } from "./maintainer-holds";
 import type { D1Database, D1TransactionalDatabase } from "./persistence";
 
 export const APPEAL_RESOLUTION_DAYS = 7;
-export const ESCALATION_DEBIT_THIRDS = 24;
+const ESCALATION_DEBIT_THIRDS = 24;
 export const MODERATOR_LABEL = "slopbot: moderator";
 
-export type AppealDueJob = Extract<Job, { kind: "appeal_due" }>;
+type AppealDueJob = Extract<Job, { kind: "appeal_due" }>;
 export type Appeal = {
   appeal_key: string;
   item_node_id: string;
@@ -30,8 +30,8 @@ export type Appeal = {
   resolved_by: "appellant" | "maintainer" | "moderator" | null;
 };
 /** Fixed internal stores; never a request-supplied SQL identifier. */
-export type AppealTable = "slopbot_appeals" | "points_disputes";
-export type PointsAppealFence = { claimToken: string };
+type AppealTable = "slopbot_appeals" | "points_disputes";
+type PointsAppealFence = { claimToken: string };
 
 /** The published escalation criteria that Slopbot can decide by itself.
  * Rejection of the draft and the 7-day limit are recorded by their own paths.
