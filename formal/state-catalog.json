@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "5ab888a9c27d3a59ce7f437ad7622518431db2e90336e4ddfc92401d3a64dec8",
+  "inventorySha256": "8e82a2be22c195982a7199619b8802c338a356e5448b2f52dc1b1fe6116a20d3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -110,6 +110,7 @@
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
@@ -137,6 +138,7 @@
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
@@ -2876,7 +2878,7 @@
       "name": "ApplicationStatus",
       "kind": "string-union",
       "values": ["approved", "pending", "rejected"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": ["approved", "pending", "rejected"],
       "review": "candidate-only"
     },
@@ -2886,7 +2888,7 @@
       "name": "RestrictionState",
       "kind": "string-union",
       "values": ["banned", "clear", "quarantined"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": ["banned", "clear", "quarantined"],
       "review": "candidate-only"
     },
@@ -2896,8 +2898,8 @@
       "name": "AppealState",
       "kind": "string-union",
       "values": ["denied", "granted", "none", "requested"],
-      "models": [],
-      "lexicallyUnmentionedValues": ["denied", "granted", "none", "requested"],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "lexicallyUnmentionedValues": ["denied", "granted", "requested"],
       "review": "candidate-only"
     },
     {
@@ -2906,7 +2908,7 @@
       "name": "EnforcementResult",
       "kind": "string-union",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -2925,7 +2927,7 @@
         "owner-request",
         "standing-rule"
       ],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": [
         "account-request",
         "admin-panel",
@@ -2940,7 +2942,7 @@
       "name": "moderation",
       "kind": "string-union",
       "values": ["moderator", "not-moderator", "unconfigured"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": [
         "moderator",
         "not-moderator",
@@ -2954,7 +2956,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": [
         "action_required",
         "ready",
@@ -2970,13 +2972,8 @@
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
-      "models": [],
-      "lexicallyUnmentionedValues": [
-        "installed",
-        "missing",
-        "retry",
-        "suspended"
-      ],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "lexicallyUnmentionedValues": ["retry"],
       "review": "candidate-only"
     },
     {
@@ -2985,7 +2982,7 @@
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": [
         "existing-project",
         "owner-approved-admission"
@@ -2998,7 +2995,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": ["pledged", "verified"],
       "review": "candidate-only"
     },
@@ -3008,7 +3005,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "lexicallyUnmentionedValues": ["committed", "pledged"],
       "review": "candidate-only"
     },
@@ -3019,10 +3016,11 @@
       "kind": "string-union",
       "values": ["monthly", "none"],
       "models": [
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
-      "lexicallyUnmentionedValues": ["monthly", "none"],
+      "lexicallyUnmentionedValues": ["monthly"],
       "review": "candidate-only"
     },
     {

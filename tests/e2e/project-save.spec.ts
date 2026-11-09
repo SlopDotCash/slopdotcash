@@ -3,7 +3,76 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { projectImageApiFixture } from "../project-image-api-fixture.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
-import { readProjectDraft } from "./project-draft-fixture";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  readProjectDraft,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
+
+test("committed project editor unmount retires publication before dispatch", async ({
+  page,
+}) => {
+  const registered = PROJECTS.find((project) => project.id === "eliza");
+  if (!registered) throw new Error("Missing project fixture");
+  const api = await projectImageApiFixture({
+    ...registered,
+    contribution: { ...CONTRIBUTION },
+    skill: {
+      ...registered.skill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.contributor,
+      publishAtRoot: false,
+    },
+    reviewSkill: {
+      ...registered.reviewSkill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.reviewer,
+    },
+  });
+  let writes = 0;
+  await page.route(
+    /\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u,
+    async (route) => {
+      const request = route.request();
+      if (request.method() === "PUT") writes += 1;
+      const response = await api.fetch(
+        new Request(request.url(), {
+          method: request.method(),
+          headers: request.headers(),
+          ...(request.method() === "GET" ? {} : { body: request.postData() }),
+        }),
+      );
+      await route.fulfill({
+        status: response.status,
+        headers: Object.fromEntries(response.headers),
+        body: await response.text(),
+      });
+    },
+  );
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    await page.getByLabel("Short description", { exact: true }).fill(
+      "A draft that must remain unpublished after leaving its editor",
+    );
+    const savedDraft = await readProjectDraft(page, "slop:project-update:v2:eliza");
+    const before = await api.stored();
+    await holdProjectSessionUntilUnmount(page, "#field-headline");
+    await page.evaluate(() => {
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", "/projects/eliza/manage");
+    });
+    await page.getByRole("button", { name: "Publish changes", exact: true }).click();
+    await leaveEditorWithHeldSession(page);
+    await expect(page.locator("#field-headline")).toHaveCount(0);
+    expect(writes).toBe(0);
+    expect(await api.stored()).toEqual(before);
+    expect(await readProjectDraft(page, "slop:project-update:v2:eliza")).toEqual(
+      savedDraft,
+    );
+  } finally {
+    await releaseHeldEditorSession(page);
+    await api.dispose();
+  }
+});
 
 test("an image decoded after a headline publication uses the new draft revision", async ({
   page,
