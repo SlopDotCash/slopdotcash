@@ -87,8 +87,11 @@ module bot_close_recorded_key {
     s.attempt == "rejected" implies s.github != "closedByApp",
     s.attempt != "none" implies s.recordedKey.in(Set(1, 2)),
     s.progress != "none" implies s.review == "running",
-    // An unfinished app close can always be recovered once no run holds it.
-    (unfinished and s.review != "running") implies recoverEnabled,
+    // An unfinished app close was actually sent and still holds the key that
+    // reserved it, whatever the current key is. Recovery reaching completion
+    // is checked by recoveryProgressProperty.
+    unfinished implies (s.sent and s.recordedKey.in(Set(1, 2))
+      and s.penalties <= (if (s.eligible) 1 else 0)),
   }
   // Scheduler fairness only: a queued retry eventually runs recovery and its
   // D1 steps. It does not assume GitHub or provider success (the close

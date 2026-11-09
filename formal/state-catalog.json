@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "cc8b5afd60c0e164f5e3cab8e1a55b2a9964588cd4efb1b22350280167b3fe18",
+  "inventorySha256": "f96ea48bf96bfd0ac07203577a3d552f35194093ffec0b5986dc90f2755e7a23",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -96,7 +96,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2266,
+      "line": 2265,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -104,7 +104,6 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
-        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -114,7 +113,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2470,
+      "line": 2469,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -122,7 +121,6 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
-        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -751,7 +749,7 @@
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/payments/security_rail_exclusivity.qnt"
       ],
-      "lexicallyUnmentionedValues": ["reserved"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1566,7 +1564,7 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
-      "lexicallyUnmentionedValues": ["not-applicable", "reserved"],
+      "lexicallyUnmentionedValues": ["not-applicable"],
       "review": "candidate-only"
     },
     {

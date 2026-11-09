@@ -12,6 +12,9 @@
 // appeal or a related-party review (caseRoles) and upholds the appeal, which
 // restores `from`, or returns it, which reopens triage and turns only an
 // ineligible award back into pending. Finance reads only an approved award.
+// "reserved" is a confirmed case that held a reservation before
+// discretionary awards (`legacyReservation`, the earlier writer): awardOpen
+// accepts it and only an amount approves it; it is not appealable.
 module api_private_case_roles {
   type R = {receipt: str, award: str, appeal: str, from: str, relatedPending: bool,
     relatedApproved: bool, authority: bool, triager: bool, lastAction: str, lastActor: int,
@@ -39,15 +42,16 @@ module api_private_case_roles {
     s' = s.with("readRoles", roles(who)).with("readActor", who).with("hasRead", true)
       .with("readHadAward", s.award == "approved").with("readHadReview", reviewed) }
   action decide(who: int, outcome: str): bool = all {
-    roles(who).contains("security-maintainer"), s.receipt == "open", s.award != "approved",
+    roles(who).contains("security-maintainer"), s.receipt == "open",
+    not(Set("reserved", "approved").contains(s.award)),
     outcome.in(refusals.union(Set("confirmed"))),
     s' = record(s.with("receipt", outcome)
       .with("award", if (outcome == "confirmed") "pending" else "ineligible"), "decide", who) }
   // planAward: a funded amount, an unfunded amount (capacity wait) or none.
   action award(who: int, kind: str): bool = all {
     roles(who).contains("security-maintainer"), s.receipt == "confirmed", s.appeal != "open",
-    not(s.relatedPending), Set("pending", "capacity-exhausted").contains(s.award),
-    kind.in(Set("amount", "short", "none")),
+    not(s.relatedPending), Set("pending", "capacity-exhausted", "reserved").contains(s.award),
+    kind.in(Set("amount", "short", "none")), s.award == "reserved" implies kind == "amount",
     s' = record(s.with("award", if (kind == "amount") "approved"
       else if (kind == "short") "capacity-exhausted" else "ineligible"), "award", who) }
   action appeal(who: int): bool = all { roles(who).contains("reporter"), appealable,
@@ -59,6 +63,8 @@ module api_private_case_roles {
       else s.with("appeal", "returned").with("receipt", "open")
         .with("award", if (s.award == "ineligible") "pending" else s.award),
       "decide-appeal", who) }
+  action legacyReservation = all { s.receipt == "confirmed", s.award == "pending",
+    not(s.relatedPending), s' = s.with("award", "reserved") }
   action markRelated = all { s.award != "approved", s' = s.with("relatedPending", true) }
   action approveRelated(who: int): bool = all { roles(who).contains("dispute"), s.relatedPending,
     s.receipt == "confirmed",
@@ -78,7 +84,7 @@ module api_private_case_roles {
     nondet kind = Set("amount", "short", "none").oneOf()
     nondet yes = Set(true, false).oneOf()
     any { read(who), decide(who, outcome), award(who, kind), appeal(who), decideAppeal(who, yes),
-      markRelated, approveRelated(who), preparePayment(who), disclose(who), revokeAuthority,
+      legacyReservation, markRelated, approveRelated(who), preparePayment(who), disclose(who), revokeAuthority,
       revokeTriager, s' = s }
   }
   val invariant = all {
@@ -94,6 +100,7 @@ module api_private_case_roles {
     s.lastAction == "prepare-payment" implies
       (s.lastActor == 2 or s.lastActor == 3),
     s.award == "approved" implies (s.receipt == "confirmed" and not(s.relatedPending)),
+    s.award == "reserved" implies s.receipt == "confirmed",
     (s.appeal == "open") iff (s.receipt == "disputed"),
     s.appeal == "open" implies (refusals.contains(s.from) or (s.from == "confirmed"
       and Set("ineligible", "capacity-exhausted").contains(s.award))),
@@ -133,5 +140,11 @@ module api_private_case_roles {
     .then(award(2, "amount").fail())
   run relatedAwardReviewTest = init.then(decide(2, "confirmed")).then(markRelated)
     .then(approveRelated(4)).then(award(2, "amount"))
+  run legacyReservationAwardedByAmountTest = init.then(decide(2, "confirmed"))
+    .then(legacyReservation).then(award(2, "none").fail())
+  run legacyReservationNotAppealableTest = init.then(decide(2, "confirmed"))
+    .then(legacyReservation).then(appeal(1).fail())
+  run legacyReservationApprovedTest = init.then(decide(2, "confirmed"))
+    .then(legacyReservation).then(award(2, "amount")).then(read(3))
   run reporterCannotDiscloseTest = init.then(disclose(1).fail())
 }

@@ -18,7 +18,8 @@
 // abstracted to "uphold", "deny" or "unavailable".
 module api_points_dispute_lease {
   type Dispute = { draft: str, escalated: bool, resolved: bool, token: int,
-    until: int, calls: int, callsAtDraft: int, frozen: (str, bool, int) }
+    until: int, claims: int, calls: int, callsAtDraft: int, draftWrites: int,
+    frozen: (str, bool, int) }
   type Worker = { phase: str, d: int, token: int, sawDraft: str, thrown: bool }
   var disputes: int -> Dispute
   var workers: int -> Worker
@@ -35,7 +36,8 @@ module api_points_dispute_lease {
   val idleWorker = { phase: "idle", d: 0, token: 0, sawDraft: "none", thrown: false }
   action init = all {
     disputes' = DISPUTES.mapBy(_ => { draft: "none", escalated: false, resolved: false,
-      token: 0, until: 0, calls: 0, callsAtDraft: 0, frozen: ("none", false, 0) }),
+      token: 0, until: 0, claims: 0, calls: 0, callsAtDraft: 0, draftWrites: 0,
+      frozen: ("none", false, 0) }),
     workers' = WORKERS.mapBy(_ => idleWorker),
     now' = 0, nextToken' = 0, cursor' = 0, runSet' = Set(), visited' = Set(),
     failures' = 0, runs' = 0, reported' = -1,
@@ -58,7 +60,8 @@ module api_points_dispute_lease {
     if (w == 1) cursor == d and runSet.contains(d) else d == 1
   action claim(w: int, d: int): bool = all {
     workers.get(w).phase == "idle", mayVisit(w, d), claimable(d), nextToken < 3,
-    disputes' = disputes.setBy(d, x => x.with("token", nextToken + 1).with("until", now + 1)),
+    disputes' = disputes.setBy(d, x => x.with("token", nextToken + 1).with("until", now + 1)
+      .with("claims", x.claims + 1)),
     setWorker(w, { phase: "claimed", d: d, token: nextToken + 1, sawDraft: "none", thrown: false }),
     nextToken' = nextToken + 1, now' = now, keepCron,
   }
@@ -106,7 +109,8 @@ module api_points_dispute_lease {
         setWorker(w, wk.with("phase", "exit")) }
       else all {
         disputes' = disputes.setBy(wk.d, x => if (x.draft == "none")
-          x.with("draft", result).with("callsAtDraft", x.calls) else x),
+          x.with("draft", result).with("callsAtDraft", x.calls)
+            .with("draftWrites", x.draftWrites + 1) else x),
         setWorker(w, wk.with("phase", "drafted")) },
       now' = now, nextToken' = nextToken, keepCron,
     }
@@ -184,11 +188,14 @@ module api_points_dispute_lease {
       cronStart, cronSkip, cronReport, resolve(d), tick }
   }
   val invariant = all {
-    // A draft is written once, and no model call follows it.
+    // recordDraft's `draft IS NULL` term: a row's draft is written once.
+    DISPUTES.forall(d => disputes.get(d).draftWrites <= 1
+      and (disputes.get(d).draft != "none") == (disputes.get(d).draftWrites == 1)),
+    // No model call follows a recorded draft, whichever lease wrote it.
     DISPUTES.forall(d => disputes.get(d).draft != "none"
       implies disputes.get(d).calls == disputes.get(d).callsAtDraft),
-    // Each lease makes at most one model call.
-    DISPUTES.forall(d => disputes.get(d).calls <= disputes.get(d).token),
+    // Each lease on the row makes at most one model call.
+    DISPUTES.forall(d => disputes.get(d).calls <= disputes.get(d).claims),
     // A resolved row keeps the draft, escalation and calls it had.
     DISPUTES.forall(d => disputes.get(d).resolved implies
       (disputes.get(d).draft, disputes.get(d).escalated, disputes.get(d).calls)

@@ -523,12 +523,11 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "5e9e58af051bbcf58084c524132b4a416d0c5c226e151d0e2402bcb1e23b6d50",
+      "sha256": "93e6585fd9ac4669e8938d018625af5742c6a88d1f0771bee369e1a5b4e15469",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
-        "formal/models/api/project_setup_status.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
@@ -537,12 +536,12 @@
         159, 164, 174, 178, 236, 261, 266, 293, 294, 296, 298, 347, 431, 438,
         444, 448, 449, 457, 523, 527, 858, 895, 911, 1007, 1020, 1025, 1032,
         1033, 1036, 1051, 1053, 1055, 1066, 1084, 1091, 1102, 1128, 1134, 1135,
-        1146, 1148, 1153, 1154, 1155, 1156, 1168, 1169, 1170, 1172, 1177, 1216,
-        1310, 1344, 1362, 1429, 1510, 1521, 1530, 1533, 1553, 1595, 1601, 1605,
-        1611, 1617, 1653, 1661, 1664, 1665, 1710, 1711, 1712, 1729, 1775, 1782,
-        1794, 1831, 1850, 1854, 2028, 2032, 2059, 2080, 2081, 2092, 2096, 2135,
-        2153, 2170, 2202, 2211, 2355, 2381, 2530, 2587, 2627, 2638, 2639, 2752,
-        2760, 2778, 2972
+        1146, 1148, 1153, 1154, 1155, 1156, 1168, 1169, 1170, 1172, 1177, 1215,
+        1309, 1343, 1361, 1428, 1509, 1520, 1529, 1532, 1552, 1594, 1600, 1604,
+        1610, 1616, 1652, 1660, 1663, 1664, 1709, 1710, 1711, 1728, 1774, 1781,
+        1793, 1830, 1849, 1853, 2027, 2031, 2058, 2079, 2080, 2091, 2095, 2134,
+        2152, 2169, 2201, 2210, 2354, 2380, 2529, 2586, 2626, 2637, 2638, 2751,
+        2759, 2777, 2971
       ],
       "review": "mapped-abstraction"
     },
@@ -555,18 +554,18 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "sha256": "4df4293e86b067f3ff2453af5fe43b1f7e0661529c6c25a8f07775c21e97037e",
+      "sha256": "f016055ed484e670715c8d7739b516bd780944c4d57a506d94c7231958ac53de",
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_setup_status.qnt"
       ],
       "candidateLines": [
         7, 49, 50, 60, 61, 112, 120, 126, 130, 139, 147, 148, 218, 230, 238,
-        240, 244, 256, 264, 269, 274, 280, 285, 289, 291, 296, 304, 315, 316,
-        319, 324, 328, 333, 334, 335, 337, 340, 341, 347, 350, 351, 354, 357,
-        358, 361, 362, 364, 365, 371, 372, 374, 375, 377, 378, 383, 384, 386,
-        396, 398, 399, 401, 402, 404, 415, 418, 428, 429, 474, 518, 525, 532,
-        556, 567, 575, 580
+        240, 244, 256, 264, 269, 274, 280, 285, 289, 291, 296, 304, 313, 314,
+        317, 322, 326, 331, 332, 333, 335, 338, 339, 345, 348, 349, 352, 355,
+        356, 359, 360, 362, 363, 369, 370, 372, 373, 375, 376, 381, 382, 385,
+        393, 395, 396, 398, 399, 401, 412, 415, 425, 426, 471, 515, 522, 529,
+        553, 564, 572, 577
       ],
       "review": "mapped-abstraction"
     },
@@ -3434,7 +3433,7 @@
     },
     {
       "path": "scripts/lemmascript-integrity.mjs",
-      "sha256": "da0f10653602a0ac8c21869cf69d6a580ae72c2cb7c0581a7c77c646911c7567",
+      "sha256": "b444d506f48b03da70dc276cc07237bc1cf611e463464f9e880df1018d92dc21",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4774,12 +4773,12 @@
     },
     {
       "path": "src/ProjectSetupStatus.tsx",
-      "sha256": "9e99d7af3007204cfe75f064d61e1cb1469932253f4409099088146c78e8aedd",
+      "sha256": "254e062f084092ad172fe4efbfa4195682625ad08eefb9101bf2cd02f8526e75",
       "models": ["formal/models/ui/ui_project_setup.qnt"],
       "candidateLines": [
         10, 20, 24, 29, 34, 37, 43, 45, 61, 64, 68, 78, 96, 99, 102, 103, 124,
-        127, 128, 153, 156, 157, 161, 165, 166, 212, 214, 228, 230, 247, 251,
-        254, 256, 298
+        127, 128, 153, 156, 157, 161, 165, 166, 213, 215, 229, 231, 248, 252,
+        255, 257, 299
       ],
       "review": "mapped-abstraction"
     },
@@ -8218,7 +8217,7 @@
     },
     {
       "path": "formal/models/api/api_points_dispute_lease.qnt",
-      "sha256": "b5e204e604c3c3b72455a78cf777e31994dae25cc40026c67fc5674734f68029",
+      "sha256": "cb4d457fb1ec76dac0f16707d1822070965d6e9654ed716cb0731f8b895f2ec2",
       "sources": [
         "migrations/0114_points_dispute_intake.sql",
         "workers/slopbot/appeals.ts",
@@ -8282,7 +8281,7 @@
     },
     {
       "path": "formal/models/api/api_private_case.qnt",
-      "sha256": "2fa2f49efbf682c57da5b94dcbaa531ae82bddc6d20ba53521e5ab9418fd590d",
+      "sha256": "4eb0171e06bc5bc9b179f982e970d747f902cb22de29d4f9b56be97307d8082b",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/award-asset.ts",
@@ -8312,7 +8311,7 @@
     },
     {
       "path": "formal/models/api/api_private_case_roles.qnt",
-      "sha256": "8363392db5b02e380c4ec4e6e58bf414de1d458763d101ca4244a71728b66b3a",
+      "sha256": "e4e6b6e27d245ce2408d15cea5e20c75ab4d3cbb930c91286d2900e783ba48ad",
       "sources": [
         "backend/security/case-store.ts",
         "backend/security/handler.ts",
@@ -8327,6 +8326,9 @@
         "financeBeforeAwardRefusedTest",
         "financeWaitsOnCapacityTest",
         "ineligibleAwardAppealTest",
+        "legacyReservationApprovedTest",
+        "legacyReservationAwardedByAmountTest",
+        "legacyReservationNotAppealableTest",
         "maintainerCannotDecideAppealTest",
         "maintainerDecisionTest",
         "moderatorWithoutCaseReviewRefusedTest",
@@ -8345,7 +8347,7 @@
     },
     {
       "path": "formal/models/api/api_private_case_transaction.qnt",
-      "sha256": "1a8247702fa463b651bfeb8c3169b09b58ce97afc2fb3ac3f3bf160cc4a12172",
+      "sha256": "c40e1cf219e255de7fe4e7cda5fca455c4de43d48ccf8f9ef6a13b24519f5cd2",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/case-store.ts",
@@ -8362,6 +8364,9 @@
         "decisionWinsReportRaceTest",
         "declinedAwardAppealUpheldTest",
         "duplicateAppealUpheldTest",
+        "legacyReservationApprovesOnlyByAmountTest",
+        "legacyReservationAwardTest",
+        "legacyReservationNotAppealableTest",
         "outOfScopeAppealReturnedTest",
         "pendingAwardNotAppealableTest",
         "returnedAppealCanReviseButNeedsFreshDecisionTest",
@@ -8702,8 +8707,8 @@
     },
     {
       "path": "formal/models/api/project_setup_status.qnt",
-      "sha256": "7c6f583dadcd37ba69a047cecf90e9d6b341cde883380ec155b3008190e8ad4d",
-      "sources": ["backend/projects/handler.ts", "backend/projects/setup.ts"],
+      "sha256": "f9946938565cfb5d97097dd4ac02128abd986d95e8064980ce32576bddbe802e",
+      "sources": ["backend/projects/setup.ts"],
       "scenarios": [
         "incompleteSkillsStayPausedTest",
         "ownerRevisionKeepsPauseTest",
@@ -8884,7 +8889,7 @@
     },
     {
       "path": "formal/models/contracts/evm_upgrade_qualification.qnt",
-      "sha256": "d3ac5c0904cb9491d34b50b5c8cf22bfbd25c980d3773b082805e2b721c0b4f6",
+      "sha256": "c90f4ea3851b55153e1504fb7781f1dd39a482a1a82dd1f6a75e43c44c687498",
       "sources": [
         "contracts/evm/integration/mainnet-upgrade-rehearsal.ts",
         "contracts/evm/integration/upgrade.ts",
@@ -8895,16 +8900,17 @@
         "scripts/escrow-acceptance/upgrade-verify.ts"
       ],
       "scenarios": [
+        "crashedExecutingRecordResumesTest",
+        "crashedRecordCanBeExecutedAgainTest",
         "exactLaterPaymentAcceptedTest",
         "failedReentersExecuteTest",
+        "lateVaultAfterTemplateRefusedTest",
         "lateVaultRecoveredTest",
-        "lateVaultStopsCompletionTest",
         "mainnetRunnerRecordsFailureTest",
         "mainnetRunnerRefusedTest",
         "passedRerunStaysPassableTest",
         "unexplainedChangeCannotPassTest",
         "unexplainedChangeRefusedTest",
-        "waitingRerunDoesNotResignTest",
         "waitingResumesWithoutReplayTest"
       ]
     },
@@ -10981,7 +10987,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_close_recorded_key.qnt",
-      "sha256": "7355f2ef0aa9aa722806e1c31b7af97b3e8e63c8f06c9937d0147476f054fbfd",
+      "sha256": "8248f0dcbd9fe9d3717873b58a9d46fc83eeba39d157d3bee96beeeeb0221978",
       "sources": [
         "migrations/0117_slopbot_close_attempts.sql",
         "workers/slopbot/close-attempts.ts",

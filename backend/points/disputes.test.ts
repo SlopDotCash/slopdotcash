@@ -606,7 +606,9 @@ test("one dispute that throws does not stop the rest of its batch", async () => 
       reason: "The second manual credit needs review.",
     })
   ).json();
-  // The first dispute's lease claim fails, so processPointsDispute rethrows.
+  // The first dispute's lease claim throws before its try block, so
+  // processPointsDispute throws for it. This is an ordinary thrown error, not
+  // the unrecorded-model-call rethrow; the batch must continue either way.
   const db: typeof h.db = {
     ...h.db,
     prepare(sql) {
