@@ -24,6 +24,8 @@
 // Old shared input/return actions are excluded from step and used only in
 // negative controls. Existing browser definitions are partial evidence; no
 // test, parser, checker or provider was executed for this model.
+// Scenario helpers start from `initState`, which equals `init`; TLA+
+// translation forbids reusing the init action inside other actions.
 module solana_message_buffers {
   val identities = Set(1, 2)
   val echoKinds = Set("input", "copy", "other", "short", "absent")
@@ -33,12 +35,16 @@ module solana_message_buffers {
     providerSignature: int, signatureLength: int, returnedSignature: int,
     signatureAtValidation: int, returnShared: bool, returnedMutated: bool,
     echoAtValidation: int, accepted: bool }
-  action init = s' = { phase: "idle", kind: "standard", caller: 1, entry: 0, expected: 0,
+  // `initial` is shared by `init` and the `initState` helper so
+  // scenario helpers never reuse the TLA+ init action (QNT409).
+  val initial = { phase: "idle", kind: "standard", caller: 1, entry: 0, expected: 0,
     providerInput: 0, inputExposed: false, inputShared: false, callerMutated: false,
     present: false, echo: 0, echoAliasesInput: false, echoLength: false,
     providerSignature: 0, signatureLength: 0, returnedSignature: 0,
     signatureAtValidation: 0, returnShared: false, returnedMutated: false,
     echoAtValidation: 0, accepted: false }
+  action init = s' = initial
+  action initState = s' = initial
   def other(value: int): int = if (value == 1) 2 else 1
   val echoed = if (s.echoAliasesInput) s.providerInput else s.echo
   val comparison = if (s.inputShared) s.caller else s.expected
@@ -104,7 +110,7 @@ module solana_message_buffers {
     s.accepted implies s.signatureLength == 64,
     s.accepted and s.kind == "standard" implies s.echoAtValidation == s.entry,
     s.accepted and not(s.returnedMutated) implies s.returnedSignature == s.signatureAtValidation }
-  action exact(kind: str): bool = init.then(start(kind))
+  action exact(kind: str): bool = initState.then(start(kind))
   action standardReply = providerReply(1, 64, "input", true).then(validate)
   action legacyReady = exact("legacy").then(reconnectReply(true))
 

@@ -6,6 +6,8 @@
 // Provider observations, nested helper return, caller use and a mutation's
 // captured cookie remain separate. Layout cleanup invalidates generation at
 // the committed removal; fetch/status effects stay passive.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_email_preference_requests {
   type Request = { kind: str, phase: str, generation: int, actor: int,
     cookie: int, status: int, accepted: bool, target: bool, observedActor: int }
@@ -26,6 +28,18 @@ module ui_email_preference_requests {
     publication: 0, publicationGeneration: 0,
     requests: ids.mapBy(_ => {kind: "read", phase: "unused", generation: 0,
       actor: 0, cookie: 0, status: 0, accepted: false, target: false, observedActor: 0}) }
+  // Step-only compaction (see the step comment). Direct actions pass false.
+  pure val retiredRequest = {kind: "read", phase: "done", generation: 0,
+    actor: 0, cookie: 0, status: 0, accepted: false, target: false, observedActor: 0}
+  pure def compactIf(compact: bool, st: State): State = if (not(compact)) st
+    else st.with("requests", ids.mapBy(id => {
+      val r = st.requests.get(id)
+      val owned = st.mounted and r.generation == st.generation
+      if (r.phase == "unused" or id == st.publication) r
+      else if (r.phase == "done" or not(owned)) retiredRequest
+      else if (Set("dispatch", "http", "body", "failure", "post").contains(r.phase)) r.with("observedActor", 0)
+      else r
+    }))
   def owns(id: int): bool = s.mounted and s.requests.get(id).generation == s.generation
   pure def done(value: State, id: int): State = value.with("requests",
     value.requests.set(id, value.requests.get(id).with("phase", "done")))
@@ -44,61 +58,70 @@ module ui_email_preference_requests {
     actors.contains(actor), s' = s.with("cookie", actor) }
   action editDraft(value: int): bool = all {
     s.mounted, s.editing, ids.contains(value), s' = s.with("draft", value) }
-  action beginAction(id: int, kind: str): bool = all {
+  action beginAction(id: int, kind: str): bool = beginActionAs(id, kind, false)
+  action beginActionAs(id: int, kind: str, compact: bool): bool = all {
     s.mounted, s.view == "ready", not(s.busy), not(s.checking), ids.contains(id),
     Set("save", "verify").contains(kind), s.requests.get(id).phase == "unused",
-    s' = s.with("busy", true).with("error", "none").with("key", s.key or kind == "verify")
+    s' = compactIf(compact, s.with("busy", true).with("error", "none").with("key", s.key or kind == "verify")
       .with("requests", s.requests.set(id, {kind: kind, phase: "pre", generation: s.generation,
-        actor: s.actor, cookie: 0, status: 0, accepted: false, target: not(s.enabled), observedActor: 0})) }
-  action beginRead(id: int, background: bool): bool = all {
+        actor: s.actor, cookie: 0, status: 0, accepted: false, target: not(s.enabled), observedActor: 0}))) }
+  action beginRead(id: int, background: bool): bool = beginReadAs(id, background, false)
+  action beginReadAs(id: int, background: bool, compact: bool): bool = all {
     s.mounted, not(s.busy), ids.contains(id), s.requests.get(id).phase == "unused",
-    s' = s.with("generation", s.generation + 1).with("error", "none").with("checking", true)
+    s' = compactIf(compact, s.with("generation", s.generation + 1).with("error", "none").with("checking", true)
       .with("publication", 0)
       .with("view", if (background and s.view == "ready") "ready" else "loading")
       .with("requests", s.requests.set(id, {kind: "read", phase: "pre", generation: s.generation + 1,
-        actor: s.actor, cookie: 0, status: 0, accepted: false, target: s.enabled, observedActor: 0})) }
-  action preflightStart(id: int): bool = all {
+        actor: s.actor, cookie: 0, status: 0, accepted: false, target: s.enabled, observedActor: 0}))) }
+  action preflightStart(id: int): bool = preflightStartAs(id, false)
+  action preflightStartAs(id: int, compact: bool): bool = all {
     owns(id), s.requests.get(id).phase == "pre",
-    s' = s.with("sessionReads", s.sessionReads + 1).with("requests",
-      s.requests.set(id, s.requests.get(id).with("phase", "pre-wait"))) }
+    s' = compactIf(compact, s.with("sessionReads", s.sessionReads + 1).with("requests",
+      s.requests.set(id, s.requests.get(id).with("phase", "pre-wait")))) }
   // -1 is an unreadable session; 0 is a confirmed signed-out response. A
   // session reply is an observation, not a synchronous view of the cookie.
-  action preflightObserve(id: int, observed: int): bool = all {
+  action preflightObserve(id: int, observed: int): bool = preflightObserveAs(id, observed, false)
+  action preflightObserveAs(id: int, observed: int, compact: bool): bool = all {
     s.requests.get(id).phase == "pre-wait", observedActors.contains(observed),
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
-      .with("phase", "pre-observed").with("observedActor", observed))) }
-  action preflightReturn(id: int): bool = all { s.requests.get(id).phase == "pre-observed",
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "pre-returned"))) }
-  action preflightUse(id: int, observed: int): bool = {
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "pre-observed").with("observedActor", observed)))) }
+  action preflightReturn(id: int): bool = preflightReturnAs(id, false)
+  action preflightReturnAs(id: int, compact: bool): bool = all { s.requests.get(id).phase == "pre-observed",
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "pre-returned")))) }
+  action preflightUse(id: int, observed: int): bool = preflightUseAs(id, observed, false)
+  action preflightUseAs(id: int, observed: int, compact: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "pre-returned", observed == r.observedActor, observedActors.contains(observed),
-      s' = if (not(owns(id))) done(s, id)
+      s' = compactIf(compact, if (not(owns(id))) done(s, id)
       else if (r.kind == "read" and observed == 0)
         s.with("view", "loading").with("draft", 0).with("editing", false).with("key", false)
           .with("requests", s.requests.set(id, r.with("phase", "dispatch").with("actor", 0)))
       else if (observed != r.actor) lost(s, id, observed)
-      else s.with("requests", s.requests.set(id, r.with("phase", "dispatch"))) }
+      else s.with("requests", s.requests.set(id, r.with("phase", "dispatch")))) }
   }
   action preflightReply(id: int, observed: int): bool = preflightObserve(id, observed)
     .then(preflightReturn(id)).then(preflightUse(id, observed))
-  action dispatch(id: int): bool = {
+  action dispatch(id: int): bool = dispatchAs(id, false)
+  action dispatchAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
     all { owns(id), r.phase == "dispatch",
-      s' = s.with("requests", s.requests.set(id, r.with("phase", "http").with("cookie", s.cookie)))
+      s' = compactIf(compact, s.with("requests", s.requests.set(id, r.with("phase", "http").with("cookie", s.cookie)))
         .with("reads", s.reads + (if (r.kind == "read") 1 else 0))
-        .with("posts", s.posts + (if (r.kind == "read") 0 else 1)) }
+        .with("posts", s.posts + (if (r.kind == "read") 0 else 1))) }
   }
-  action accepted(id: int): bool = {
+  action accepted(id: int): bool = acceptedAs(id, false)
+  action acceptedAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
     all { r.kind != "read", r.phase == "http", r.cookie == r.actor, r.cookie != 0,
-      s' = s.with("requests", s.requests.set(id, r.with("accepted", true))) }
+      s' = compactIf(compact, s.with("requests", s.requests.set(id, r.with("accepted", true)))) }
   }
-  action httpReply(id: int, status: int): bool = {
+  action httpReply(id: int, status: int): bool = httpReplyAs(id, status, false)
+  action httpReplyAs(id: int, status: int, compact: bool): bool = {
     val r = s.requests.get(id)
     val finished = done(s, id).with("busy", false)
     all { r.phase == "http", Set(200, 202, 401, 403, 409, 429, 503).contains(status),
       not((r.kind == "save" and status == 200) or (r.kind == "verify" and status == 202)) or r.accepted,
-      s' = if (not(owns(id))) done(s, id)
+      s' = compactIf(compact, if (not(owns(id))) done(s, id)
       else if (status == 401) lost(s, id, 0)
       else if (r.kind == "save" and Set(403, 409).contains(status))
         finished.with("generation", s.generation + 1).with("reloads", s.reloads + 1)
@@ -112,84 +135,125 @@ module ui_email_preference_requests {
           .with("draft", if (status == 403) 0 else s.draft)
       else s.with("requests", s.requests.set(id,
         r.with("phase", if (r.kind == "save" and status != 200) "failure" else "body")
-          .with("status", status))) }
+          .with("status", status)))) }
   }
-  action bodyReply(id: int, valid: bool): bool = {
+  action bodyReply(id: int, valid: bool): bool = bodyReplyAs(id, valid, false)
+  action bodyReplyAs(id: int, valid: bool, compact: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "body",
-      s' = if (not(owns(id))) done(s, id)
+      s' = compactIf(compact, if (not(owns(id))) done(s, id)
       else if (r.kind == "read" and (not(valid) or r.actor == 0))
         done(s, id).with("view", "error").with("checking", false).with("error", "request")
       else if (not(valid)) s.with("requests", s.requests.set(id, r.with("phase", "failure")))
-      else s.with("requests", s.requests.set(id, r.with("phase", "post"))) }
+      else s.with("requests", s.requests.set(id, r.with("phase", "post")))) }
   }
-  action postflightStart(id: int): bool = all {
+  action postflightStart(id: int): bool = postflightStartAs(id, false)
+  action postflightStartAs(id: int, compact: bool): bool = all {
     owns(id), s.requests.get(id).phase == "post",
-    s' = s.with("sessionReads", s.sessionReads + 1).with("requests",
-      s.requests.set(id, s.requests.get(id).with("phase", "post-wait"))) }
-  action postflightObserve(id: int, observed: int): bool = all {
+    s' = compactIf(compact, s.with("sessionReads", s.sessionReads + 1).with("requests",
+      s.requests.set(id, s.requests.get(id).with("phase", "post-wait")))) }
+  action postflightObserve(id: int, observed: int): bool = postflightObserveAs(id, observed, false)
+  action postflightObserveAs(id: int, observed: int, compact: bool): bool = all {
     s.requests.get(id).phase == "post-wait", observedActors.contains(observed),
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
-      .with("phase", "post-observed").with("observedActor", observed))) }
-  action postflightReturn(id: int): bool = all { s.requests.get(id).phase == "post-observed",
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "post-returned"))) }
-  action postflightUse(id: int, observed: int): bool = {
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "post-observed").with("observedActor", observed)))) }
+  action postflightReturn(id: int): bool = postflightReturnAs(id, false)
+  action postflightReturnAs(id: int, compact: bool): bool = all { s.requests.get(id).phase == "post-observed",
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "post-returned")))) }
+  action postflightUse(id: int, observed: int): bool = postflightUseAs(id, observed, false)
+  action postflightUseAs(id: int, observed: int, compact: bool): bool = {
     val r = s.requests.get(id)
     val finished = done(s, id).with("busy", false).with("requests",
       s.requests.set(id, r.with("phase", "done").with("observedActor", observed)))
     val published = finished.with("publication", id).with("publicationGeneration", s.generation)
     all { r.phase == "post-returned", observed == r.observedActor, observedActors.contains(observed),
-      s' = if (not(owns(id))) done(s, id)
+      s' = compactIf(compact, if (not(owns(id))) done(s, id)
       else if (observed != r.actor) lost(s, id, observed)
       else if (r.kind == "read") published.with("view", "ready").with("checking", false)
       else if (r.kind == "save" and r.status == 200) published.with("enabled", r.target)
       else if (r.kind == "verify" and r.status == 202) published.with("verificationPending", true)
         .with("editing", false).with("key", false)
-      else s.with("requests", s.requests.set(id, r.with("phase", "failure"))) }
+      else s.with("requests", s.requests.set(id, r.with("phase", "failure")))) }
   }
   action postflightReply(id: int, observed: int): bool = postflightObserve(id, observed)
     .then(postflightReturn(id)).then(postflightUse(id, observed))
-  action requestFailure(id: int): bool = all {
+  action requestFailure(id: int): bool = requestFailureAs(id, false)
+  action requestFailureAs(id: int, compact: bool): bool = all {
     Set("dispatch", "http", "body").contains(s.requests.get(id).phase),
-    s' = if (not(owns(id))) done(s, id)
+    s' = compactIf(compact, if (not(owns(id))) done(s, id)
     else if (s.requests.get(id).kind == "read") done(s, id).with("view", "error").with("checking", false).with("error", "request")
-    else s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "failure"))) }
-  action failureCheckStart(id: int): bool = all {
+    else s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "failure")))) }
+  action failureCheckStart(id: int): bool = failureCheckStartAs(id, false)
+  action failureCheckStartAs(id: int, compact: bool): bool = all {
     owns(id), s.requests.get(id).phase == "failure",
-    s' = s.with("sessionReads", s.sessionReads + 1).with("requests",
-      s.requests.set(id, s.requests.get(id).with("phase", "failure-wait"))) }
-  action failureCheckObserve(id: int, observed: int): bool = all {
+    s' = compactIf(compact, s.with("sessionReads", s.sessionReads + 1).with("requests",
+      s.requests.set(id, s.requests.get(id).with("phase", "failure-wait")))) }
+  action failureCheckObserve(id: int, observed: int): bool = failureCheckObserveAs(id, observed, false)
+  action failureCheckObserveAs(id: int, observed: int, compact: bool): bool = all {
     s.requests.get(id).phase == "failure-wait", observedActors.contains(observed),
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
-      .with("phase", "failure-observed").with("observedActor", observed))) }
-  action failureCheckReturn(id: int): bool = all { s.requests.get(id).phase == "failure-observed",
-    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "failure-returned"))) }
-  action failureCheckUse(id: int, observed: int): bool = {
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "failure-observed").with("observedActor", observed)))) }
+  action failureCheckReturn(id: int): bool = failureCheckReturnAs(id, false)
+  action failureCheckReturnAs(id: int, compact: bool): bool = all { s.requests.get(id).phase == "failure-observed",
+    s' = compactIf(compact, s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "failure-returned")))) }
+  action failureCheckUse(id: int, observed: int): bool = failureCheckUseAs(id, observed, false)
+  action failureCheckUseAs(id: int, observed: int, compact: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "failure-returned", observed == r.observedActor, observedActors.contains(observed),
-      s' = if (not(owns(id))) done(s, id)
+      s' = compactIf(compact, if (not(owns(id))) done(s, id)
       else if (observed != r.actor) lost(s, id, observed)
-      else done(s, id).with("busy", false).with("error", if (r.status == 429) "rate-limit" else "request") }
+      else done(s, id).with("busy", false).with("error", if (r.status == 429) "rate-limit" else "request")) }
   }
   action failureCheckReply(id: int, observed: int): bool = failureCheckObserve(id, observed)
     .then(failureCheckReturn(id)).then(failureCheckUse(id, observed))
-  action depart = all { s.mounted,
-    s' = s.with("mounted", false).with("generation", s.generation + 1)
-      .with("publication", 0).with("view", "departed") }
-  action remount = all { not(s.mounted), s.life == 1,
-    s' = s.with("mounted", true).with("life", 2).with("view", "ready")
-      .with("busy", false).with("checking", false).with("draft", 2).with("editing", true).with("key", false).with("error", "none") }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet observed = observedActors.oneOf()
-    nondet status = Set(200, 202, 401, 403, 409, 429, 503).oneOf()
-    nondet valid = Set(false, true).oneOf()
-    any { cookieChanges(0), cookieChanges(1), cookieChanges(2), editDraft(id),
-      beginAction(id, "save"), beginAction(id, "verify"), beginRead(id, valid),
-      preflightStart(id), preflightObserve(id, observed), preflightReturn(id), preflightUse(id, observed), dispatch(id), accepted(id),
-      httpReply(id, status), bodyReply(id, valid), postflightStart(id), postflightObserve(id, observed), postflightReturn(id), postflightUse(id, observed),
-      requestFailure(id), failureCheckStart(id), failureCheckObserve(id, observed), failureCheckReturn(id), failureCheckUse(id, observed), depart, remount, s' = s }
-  }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = all { s.mounted,
+    s' = compactIf(compact, s.with("mounted", false).with("generation", s.generation + 1)
+      .with("publication", 0).with("view", "departed")) }
+  action remount = remountAs(false)
+  action remountAs(compact: bool): bool = all { not(s.mounted), s.life == 1,
+    s' = compactIf(compact, s.with("mounted", true).with("life", 2).with("view", "ready")
+      .with("busy", false).with("checking", false).with("draft", 2).with("editing", true).with("key", false).with("error", "none")) }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // Step-only compaction (formal/README.md, "Retired requests" and
+  // "Write-only fields and canonical choices"); direct actions and scenarios keep every field:
+  // - A request stops being owned for good: the generation only grows. A
+  //   request that is not owned changes only its own fields (every use
+  //   without ownership only finishes it, and acceptance requires its own
+  //   cookie to equal its actor). The invariant reads a request only through
+  //   that acceptance conjunct, true by that guard, and as the published
+  //   request, which is owned while published. Other actions read a request
+  //   only through its phase being unused. Step therefore stores one
+  //   canonical finished record for each finished or unowned request except
+  //   the published one.
+  // - `observedActor` is read only by the uses and by the invariant for the
+  //   published request; every later use is preceded by an observation that
+  //   overwrites it, so step clears it from dispatch through "post" and in
+  //   "failure".
+  action step = any {
+    cookieChanges(0), cookieChanges(1), cookieChanges(2), { nondet id = ids.oneOf() editDraft(id) },
+    { nondet id = ids.oneOf() beginActionAs(id, "save", true) },
+    { nondet id = ids.oneOf() beginActionAs(id, "verify", true) },
+    { nondet id = ids.oneOf() nondet valid = Set(false, true).oneOf() beginReadAs(id, valid, true) },
+    { nondet id = ids.oneOf() preflightStartAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() preflightObserveAs(id, observed, true) },
+    { nondet id = ids.oneOf() preflightReturnAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() preflightUseAs(id, observed, true) },
+    { nondet id = ids.oneOf() dispatchAs(id, true) }, { nondet id = ids.oneOf() acceptedAs(id, true) },
+    { nondet id = ids.oneOf() nondet status = Set(200, 202, 401, 403, 409, 429, 503).oneOf() httpReplyAs(id, status, true) },
+    { nondet id = ids.oneOf() nondet valid = Set(false, true).oneOf() bodyReplyAs(id, valid, true) },
+    { nondet id = ids.oneOf() postflightStartAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() postflightObserveAs(id, observed, true) },
+    { nondet id = ids.oneOf() postflightReturnAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() postflightUseAs(id, observed, true) },
+    { nondet id = ids.oneOf() requestFailureAs(id, true) }, { nondet id = ids.oneOf() failureCheckStartAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() failureCheckObserveAs(id, observed, true) },
+    { nondet id = ids.oneOf() failureCheckReturnAs(id, true) },
+    { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() failureCheckUseAs(id, observed, true) },
+    departAs(true), remountAs(true), s' = s }
   val invariant = all { s.generation >= 1, s.generation <= 6,
     s.posts <= 2, s.reads <= 2, s.reloads <= 2, s.sessionReads <= 6,
     ids.forall(id => s.requests.get(id).accepted implies

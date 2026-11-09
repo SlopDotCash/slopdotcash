@@ -15053,7 +15053,7 @@
     },
     {
       "path": "formal/models/ui/solana_message_buffers.qnt",
-      "sha256": "3f99e86ad6aefada5ce60d3dd229c8bbb695ad954d4545b6c73189d03a6f1bac",
+      "sha256": "8b3467d975b7a1f33232ced14a28f8cbd407899c3c337e1ed043f1e06c57d15d",
       "sources": [
         "backend/security/direct-solana-recovery.ts",
         "src/SolanaBountyRecovery.tsx",
@@ -15084,7 +15084,7 @@
     },
     {
       "path": "formal/models/ui/solana_wallet_provider.qnt",
-      "sha256": "d53f4b00c425926d0e8257ca47f750f891e0142861980d143ca38fcdf24b7fcf",
+      "sha256": "dba833c57a941ce4732ff80eb042fa80d1cfaa95dff73e79e94a50a6a7f4737f",
       "sources": [
         "src/Earnings.tsx",
         "src/PayoutConsent.tsx",
@@ -15175,7 +15175,7 @@
     },
     {
       "path": "formal/models/ui/ui_admin_mutation_identity.qnt",
-      "sha256": "7ce20cb86641dfab1de3b8cc8ad522e5844225228f913112118dac96dcc0b3aa",
+      "sha256": "e8952460bf18b86b3f4440f578d4b1c35f857577a93244bb9e936247e821795d",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -15244,7 +15244,7 @@
     },
     {
       "path": "formal/models/ui/ui_admin_vetting_requests.qnt",
-      "sha256": "89875db677c47f8bd762b35388e22a16c158dc525d92be93b21a18d9e5f3c3ac",
+      "sha256": "e618cc56cf8fd50bd5d3a2e1a6aec39221cfb1d01c8cf499a612b95874c2d65b",
       "sources": [
         "backend/vetting/handler.ts",
         "src/Admin.tsx",
@@ -15389,7 +15389,7 @@
     },
     {
       "path": "formal/models/ui/ui_contributor_allocation.qnt",
-      "sha256": "0e0a3b32ee3482532ee395c17bc9f10593511fa0df0a2545387ff24cb2a3de6a",
+      "sha256": "9eb47dedcb16b1fb8d2c6a7ccdea01d7f46b842df110c474e087e0f972c44098",
       "sources": [
         "src/ContributorAllocation.tsx",
         "src/Earnings.tsx",
@@ -15430,7 +15430,7 @@
     },
     {
       "path": "formal/models/ui/ui_cycle_archive.qnt",
-      "sha256": "32c836414be57af07ebebcb97d18f99bd0f361d75baf9466f9426d0cccdbb8a7",
+      "sha256": "37d5aab313c439faf17bcfbd0aab29123840089bab7b2de741e9ad8d2a604af5",
       "sources": [
         "src/App.tsx",
         "src/CyclePages.tsx",
@@ -15456,6 +15456,7 @@
         "recordNeedsNoSnapshotTest",
         "recordReplacesFailedLiveFallbackTest",
         "refreshRemovesMissingSelectionTest",
+        "reopeningShownArchiveKeepsDeadlineTimerTest",
         "retiredMissingRecordWaitsForSnapshotTest",
         "retiredRecordLinkResolvesTest",
         "retirementDoesNotRestoreProjectPageTest",
@@ -15592,7 +15593,7 @@
     },
     {
       "path": "formal/models/ui/ui_email_actions.qnt",
-      "sha256": "49c87cec8855abab691b369bfef3424876831ebde6cc33cd1c46b61f5ec258f3",
+      "sha256": "ff3a417244a9540678e1f2a6c0a654a915dbdebdd4e9bbcfe9cea488bd08bb1d",
       "sources": [
         "src/InboxEmail.tsx",
         "src/lib/project-api.ts",
@@ -15667,7 +15668,7 @@
     },
     {
       "path": "formal/models/ui/ui_email_preference_requests.qnt",
-      "sha256": "ab01b26e0f8aafcd2970457e844e01e45907b1a7e978c6385cbd44c2418d24a7",
+      "sha256": "de6437cdb654460bd784c2e28c38c49558f98f2375f1b9942ae2f7ae8c813792",
       "sources": ["src/InboxEmail.tsx", "src/lib/project-api.ts"],
       "scenarios": [
         "backgroundReadRetainsEditedDraftTest",
@@ -15789,7 +15790,7 @@
     },
     {
       "path": "formal/models/ui/ui_identity_poll_protocol.qnt",
-      "sha256": "510d009745668ed4ce5fb0afa8d34a497504d0c359909282acfe9313187152a9",
+      "sha256": "02d5cb363bd9a6d03f4e9a459566ca9f837c66afce58bcf752d808b11329f8bd",
       "sources": [
         "src/Points.tsx",
         "src/lib/identity-flow.ts",
@@ -16087,7 +16088,7 @@
     },
     {
       "path": "formal/models/ui/ui_owner_private_requests.qnt",
-      "sha256": "415c9b6ada4670c86ce5ffd878a6ec0d7e454e2545553b33465a7d569cb9aa8b",
+      "sha256": "3657d3de65cbd50df27932d3264f1416586dd9e4aaecc94a7821f383596629f3",
       "sources": [
         "backend/http.ts",
         "src/OwnerAwards.tsx",

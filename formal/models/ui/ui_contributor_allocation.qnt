@@ -21,6 +21,8 @@
 // has no visible consumer, not that the provider request was never performed.
 // A changed published file is observed only on retry or component remount;
 // there is no live file subscription. Timer fairness is not a safety assumption.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_contributor_allocation {
   type Request = { phase: str, life: int, outcome: str,
     recipients: int, transfers: int, closed: bool }
@@ -38,12 +40,16 @@ module ui_contributor_allocation {
   val empty = { phase: "unused", life: 0, outcome: "none",
     recipients: 0, transfers: 0, closed: false }
   var s: State
-  action init = s' = { mounted: true, life: 1, actor: 1, active: 0,
+  // `initial` is shared by `init` and the `initState` helper so scenario
+  // helpers never reuse the TLA+ init action (QNT409).
+  val initial = { mounted: true, life: 1, actor: 1, active: 0,
     loadScheduled: true, document: "loading", error: false,
     recipients: 0, transfers: 0, closed: false,
     wallets: ids.mapBy(_ => Set("none")), nowExpired: false, renderedExpired: false,
     boundaryInstalled: false, boundaryArmed: false,
     publishedBy: 0, publishedLife: 0, requests: ids.mapBy(_ => empty) }
+  action init = s' = initial
+  action initState = s' = initial
   pure def maskContains(mask: int, actor: int): bool = actor > 0 and
     (mask == 3 or mask == actor)
   pure def subset(transfers: int, recipients: int): bool =
@@ -85,9 +91,12 @@ module ui_contributor_allocation {
   action requestFails(id: int): bool = all { Set("http", "body").contains(s.requests.get(id).phase),
     s' = s.with("requests", s.requests.set(id,
       s.requests.get(id).with("phase", "decoded").with("outcome", "request-error"))) }
-  action publish(id: int): bool = {
+  // Step-only compaction (see the step comment). Direct actions pass false.
+  val retired = empty.with("phase", "done")
+  action publish(id: int): bool = publishAs(id, false)
+  action publishAs(id: int, compact: bool): bool = {
     val request = s.requests.get(id)
-    val finished = s.with("requests", s.requests.set(id, request.with("phase", "done")))
+    val finished = s.with("requests", s.requests.set(id, if (compact) retired else request.with("phase", "done")))
     all { request.phase == "decoded",
       s' = if (not(owns(id))) finished
         else if (not(Set("valid", "absent").contains(request.outcome)))
@@ -116,27 +125,51 @@ module ui_contributor_allocation {
       .with("renderedExpired", s.nowExpired) }
   action fireBoundary = all { s.mounted, s.boundaryArmed, s.nowExpired,
     s' = s.with("boundaryArmed", false).with("renderedExpired", true) }
-  action depart = all { s.mounted,
-    s' = s.with("mounted", false).with("active", 0).with("boundaryArmed", false) }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = all { s.mounted,
+    s' = if (not(compact)) s.with("mounted", false).with("active", 0).with("boundaryArmed", false)
+      else if (s.life == 2) initial.with("mounted", false).with("life", 2).with("requests", ids.mapBy(_ => retired))
+      else s.with("mounted", false).with("active", 0).with("boundaryArmed", false)
+        .with("requests", s.requests.keys().mapBy(id =>
+          if (s.requests.get(id).phase == "unused") empty else retired)) }
   action remount(actor: int): bool = all { not(s.mounted), s.life == 1, actors.contains(actor),
     s' = s.with("mounted", true).with("life", 2).with("actor", actor)
       .with("loadScheduled", true).with("document", "loading").with("error", false)
       .with("recipients", 0).with("transfers", 0).with("closed", false)
       .with("publishedBy", 0).with("publishedLife", 0)
       .with("renderedExpired", s.nowExpired).with("boundaryInstalled", false) }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = actors.oneOf()
-    nondet recipients = masks.oneOf()
-    nondet transfers = masks.oneOf()
-    nondet first = walletClasses.oneOf()
-    nondet second = walletClasses.oneOf()
-    nondet outcome = Set("valid", "absent", "invalid").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { beginRead(id), headers(id, yes), body(id, outcome, recipients, transfers, yes),
-      requestFails(id), publish(id), retry, accountChanges(actor), walletsChange(id, first, second),
-      deadline, installBoundary, fireBoundary, depart, remount(actor), s' = s }
-  }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // A wallet set is read only through `contains("on-time")` (eligibleWallet),
+  // and every wallet change makes the same other updates. Step therefore uses
+  // one representative per class: {"on-time", "none"} or {"none"}
+  // (formal/README.md, "Write-only fields and canonical choices"). Scenarios
+  // still exercise the individual ineligible classes and mixed pairs.
+  // Requests: a request that is not owned can never become owned again
+  // (`active` names only a newly begun unused id; `life` only grows), so its
+  // later transitions change only its own fields, which nothing else reads.
+  // Only whether an id is still unused matters, to beginRead. Step therefore
+  // stores one canonical finished record for every used request when it is
+  // published or the page departs. A departure in the second lifetime is
+  // final: no action can remount, read or change a displayed field, and
+  // every invariant conjunct over the frozen fields already held before it,
+  // so step stores one canonical departed state. An invalid body's masks and
+  // closed flag, and an absent body's masks, are never published, so step
+  // decodes them with zero masks (and closed false when invalid).
+  action step = any {
+    { nondet id = ids.oneOf() beginRead(id) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() headers(id, yes) },
+    { nondet id = ids.oneOf() nondet recipients = masks.oneOf() nondet transfers = masks.oneOf() nondet yes = Set(false, true).oneOf()
+      body(id, "valid", recipients, transfers, yes) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() body(id, "absent", 0, 0, yes) },
+    { nondet id = ids.oneOf() body(id, "invalid", 0, 0, false) },
+    { nondet id = ids.oneOf() requestFails(id) }, { nondet id = ids.oneOf() publishAs(id, true) }, retry,
+    { nondet actor = actors.oneOf() accountChanges(actor) },
+    { nondet id = ids.oneOf() nondet first = Set("on-time", "none").oneOf() walletsChange(id, first, "none") },
+    deadline, installBoundary, fireBoundary, departAs(true), { nondet actor = actors.oneOf() remount(actor) },
+    s' = s }
   val invariant = all { s.life >= 1, s.life <= 2, actors.contains(s.actor),
     masks.contains(s.recipients), masks.contains(s.transfers), subset(s.transfers, s.recipients),
     rowActor > 0 implies rowActor == s.actor and displayedAmount == s.actor,
@@ -147,7 +180,7 @@ module ui_contributor_allocation {
     not(s.mounted) implies state == "hidden" }
   action loadPublished(id: int, recipients: int, transfers: int, closed: bool): bool =
     beginRead(id).then(headers(id, true)).then(body(id, "valid", recipients, transfers, closed)).then(publish(id))
-  action ready = init.then(loadPublished(1, 1, 0, false))
+  action ready = initState.then(loadPublished(1, 1, 0, false))
 
   // Retain the original five disposition scenarios with explicit file reads.
   run deadlineTest = ready.then(installBoundary).then(deadline).then(fireBoundary)

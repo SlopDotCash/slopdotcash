@@ -9,6 +9,8 @@
 // Two actors/requests/lifetimes, three draft values. Source-only, unexecuted.
 // Committed layout cleanup retires each form. Session observation, helper
 // return and caller use are separate; actor/role observations are snapshots.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_admin_mutation_identity {
   type Request = { phase: str, kind: str, actor: int, cookie: int, lifetime: int,
     draft: int, admitted: bool, accepted: bool, observedActor: int, observedAdmin: bool }
@@ -23,6 +25,11 @@ module ui_admin_mutation_identity {
     requests: ids.mapBy(_ => { phase: "unused", kind: "save", actor: 0, cookie: 0,
       lifetime: 1, draft: 0, admitted: false, accepted: false, observedActor: 0, observedAdmin: false }),
     didClear: false, clearExpected: 0, clearObserved: 0 }
+  // Step-only compaction (see the step comment). Direct actions pass false.
+  val retired = { phase: "done", kind: "save", actor: 0, cookie: 0,
+    lifetime: 1, draft: 0, admitted: false, accepted: false, observedActor: 0, observedAdmin: false }
+  pure def finish(value: State, id: int, compact: bool): State =
+    if (compact) value.with("requests", value.requests.set(id, retired)) else done(value, id)
   def owns(id: int): bool = s.mounted and s.active == id
     and s.requests.get(id).lifetime == s.lifetime
   pure def done(value: State, id: int): State = value.with("requests",
@@ -32,11 +39,13 @@ module ui_admin_mutation_identity {
     s' = s.with("cookie", actor).with("admin", admin and actor != 0) }
   action edit(value: int): bool = all { s.mounted, s.data, Set(1, 2, 3).contains(value),
     s' = s.with("draft", value).with("stored", value) }
-  action begin(id: int, kind: str): bool = all { s.mounted, s.data, s.active == 0,
+  action begin(id: int, kind: str): bool = beginAs(id, kind, false)
+  action beginAs(id: int, kind: str, compact: bool): bool = all { s.mounted, s.data, s.active == 0,
     ids.contains(id), s.requests.get(id).phase == "unused", Set("save", "action").contains(kind),
     s' = s.with("active", id).with("error", "none").with("requests", s.requests.set(id,
       { phase: "preflight", kind: kind, actor: s.actor, cookie: 0, lifetime: s.lifetime,
-        draft: s.draft, admitted: false, accepted: false, observedActor: 0, observedAdmin: false })) }
+        draft: if (compact and kind == "action") 0 else s.draft,
+        admitted: false, accepted: false, observedActor: 0, observedAdmin: false })) }
   action observePreflight(id: int, available: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "preflight",
@@ -45,11 +54,14 @@ module ui_admin_mutation_identity {
   }
   action returnPreflight(id: int): bool = all { s.requests.get(id).phase == "preflight-observed",
     s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "preflight-returned"))) }
-  action usePreflight(id: int): bool = {
+  action usePreflight(id: int): bool = usePreflightAs(id, false)
+  action usePreflightAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
-    all { r.phase == "preflight-returned", s' = if (not(owns(id))) done(s, id)
-      else if (r.observedActor != r.actor or not(r.observedAdmin)) denied(done(s, id))
-      else s.with("requests", s.requests.set(id, r.with("phase", "dispatch"))) }
+    val dispatched = r.with("phase", "dispatch")
+    all { r.phase == "preflight-returned", s' = if (not(owns(id))) finish(s, id, compact)
+      else if (r.observedActor != r.actor or not(r.observedAdmin)) denied(finish(s, id, compact))
+      else s.with("requests", s.requests.set(id,
+        if (compact) dispatched.with("observedActor", 0).with("observedAdmin", false) else dispatched)) }
   }
   action preflight(id: int, available: bool): bool = observePreflight(id, available)
     .then(returnPreflight(id)).then(usePreflight(id))
@@ -69,16 +81,18 @@ module ui_admin_mutation_identity {
       s' = s.with("accepted", s.accepted.union(Set(id))).with("requests",
         s.requests.set(id, r.with("accepted", true))) }
   }
-  action response(id: int, outcome: str, storageWorks: bool): bool = {
+  action response(id: int, outcome: str, storageWorks: bool): bool = responseAs(id, outcome, storageWorks, false)
+  action responseAs(id: int, outcome: str, storageWorks: bool, compact: bool): bool = {
     val r = s.requests.get(id)
     val clear = outcome == "success" and r.kind == "save" and s.stored == r.draft and storageWorks
     val received = s.with("stored", if (clear) 0 else s.stored).with("didClear", clear)
-      .with("clearExpected", r.draft).with("clearObserved", s.stored)
+      .with("clearExpected", if (compact and not(clear)) 0 else r.draft)
+      .with("clearObserved", if (compact and not(clear)) 0 else s.stored)
       .with("requests", s.requests.set(id, r.with("phase", "recheck")))
     all { r.phase == "http", Set("success", "temporary", "refused").contains(outcome),
       outcome != "success" or r.accepted,
-      s' = if (not(owns(id))) done(received, id)
-      else if (outcome == "refused") denied(done(received, id))
+      s' = if (not(owns(id))) finish(received, id, compact)
+      else if (outcome == "refused") denied(finish(received, id, compact))
       else received.with("error", if (outcome == "temporary") "request" else "none") }
   }
   action observeRecheck(id: int, available: bool): bool = {
@@ -89,10 +103,11 @@ module ui_admin_mutation_identity {
   }
   action returnRecheck(id: int): bool = all { s.requests.get(id).phase == "recheck-observed",
     s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "recheck-returned"))) }
-  action useRecheck(id: int): bool = {
+  action useRecheck(id: int): bool = useRecheckAs(id, false)
+  action useRecheckAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
-    val completed = done(s, id).with("active", 0)
-    all { r.phase == "recheck-returned", s' = if (not(owns(id))) done(s, id)
+    val completed = finish(s, id, compact).with("active", 0)
+    all { r.phase == "recheck-returned", s' = if (not(owns(id))) finish(s, id, compact)
       else if (r.observedActor != r.actor or not(r.observedAdmin)) denied(completed)
       else if (s.error == "request") completed
       else if (r.kind == "save" and s.draft != r.draft) completed.with("error", "newer-draft")
@@ -100,23 +115,71 @@ module ui_admin_mutation_identity {
   }
   action recheck(id: int, available: bool): bool = observeRecheck(id, available)
     .then(returnRecheck(id)).then(useRecheck(id))
-  action depart = all { s.mounted,
-    s' = s.with("present", false).with("mounted", false).with("data", false).with("active", 0) }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = all { s.mounted,
+    s' = s.with("present", false).with("mounted", false).with("data", false).with("active", 0)
+      .with("requests", if (not(compact)) s.requests else s.requests.keys().mapBy(id => {
+        val r = s.requests.get(id)
+        if (Set("unused", "admission", "http").contains(r.phase)) r else retired
+      })) }
   action remount(actor: int): bool = all { not(s.mounted), s.lifetime == 1, Set(1, 2).contains(actor),
     s' = s.with("present", true).with("mounted", true).with("lifetime", 2).with("actor", actor)
       .with("data", true).with("draft", s.stored).with("error", "none") }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet draft = Set(1, 2, 3).oneOf()
-    nondet flag = Set(false, true).oneOf()
-    nondet kind = Set("save", "action").oneOf()
-    nondet outcome = Set("success", "temporary", "refused").oneOf()
-    any { sessionChanges(actor, flag), edit(draft), begin(id, kind),
-      observePreflight(id, flag), returnPreflight(id), usePreflight(id), dispatch(id),
-      admit(id, flag), commit(id), response(id, outcome, flag),
-      observeRecheck(id, flag), returnRecheck(id), useRecheck(id), depart, remount(actor), s' = s }
-  }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // Step-only compaction (formal/README.md, "Retired requests" and
+  // "Write-only fields and canonical choices"); direct actions and scenarios keep every field:
+  // - `active` names only a newly begun unused id and departure resets it,
+  //   so a request that is not owned never becomes owned again. A finished
+  //   request is read only as "not unused"; the invariant reads only its
+  //   cookie, actor and `admitted`, which finishing does not change and the
+  //   previous state already checked. Step stores one canonical finished
+  //   record instead.
+  // - After departure a request in a preflight, dispatch or recheck phase can
+  //   only finish (dispatch needs ownership), changing nothing else, so
+  //   departure stores the canonical finished record for it. Admission and
+  //   HTTP requests are kept: they can still commit, change `accepted` and
+  //   clear storage.
+  // - Observed actor and role are read only by usePreflight and useRecheck,
+  //   and observeRecheck overwrites them first, so step clears them when a
+  //   request is dispatched.
+  // - `clearExpected` and `clearObserved` are read only by the invariant
+  //   under `didClear`, and every response overwrites them, so step stores
+  //   zero when a response does not clear.
+  // - After a departure in the second lifetime nothing reads the cookie or
+  //   role (no request can be observed or dispatched), so step stops session
+  //   changes there.
+  // - An action request never reads its draft (only saves clear storage or
+  //   report a newer draft), so step records draft 0 for it.
+  // - Request ids are interchangeable (identical unused records, symmetric
+  //   guards and invariant); swapping them maps every path to one that begins
+  //   request 1 first, so step begins request 2 only after request 1.
+  // - Draft values 1..3 are compared only for equality with each other (0
+  //   means cleared). Any permutation of values absent from the state maps
+  //   paths to paths and preserves the invariant, so step edits to a value
+  //   already present or to the least absent one.
+  val usedDrafts = Set(s.draft, s.stored, s.clearExpected, s.clearObserved)
+    .union(ids.map(id => s.requests.get(id).draft)).intersect(Set(1, 2, 3))
+  val freshDrafts = Set(1, 2, 3).exclude(usedDrafts)
+  val draftChoices = if (freshDrafts.size() == 0) usedDrafts
+    else usedDrafts.union(Set(freshDrafts.fold(3, (least, v) => if (v < least) v else least)))
+  action step = any {
+    { nondet actor = Set(0, 1, 2).oneOf() nondet flag = Set(false, true).oneOf()
+      all { s.mounted or s.lifetime == 1, sessionChanges(actor, flag) } },
+    { nondet draft = draftChoices.oneOf() edit(draft) },
+    { nondet id = ids.oneOf() nondet kind = Set("save", "action").oneOf()
+      all { id == 1 or s.requests.get(1).phase != "unused", beginAs(id, kind, true) } },
+    { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() observePreflight(id, flag) },
+    { nondet id = ids.oneOf() returnPreflight(id) }, { nondet id = ids.oneOf() usePreflightAs(id, true) },
+    { nondet id = ids.oneOf() dispatch(id) },
+    { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() admit(id, flag) },
+    { nondet id = ids.oneOf() commit(id) },
+    { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() nondet outcome = Set("success", "temporary", "refused").oneOf() responseAs(id, outcome, flag, true) },
+    { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() observeRecheck(id, flag) },
+    { nondet id = ids.oneOf() returnRecheck(id) }, { nondet id = ids.oneOf() useRecheckAs(id, true) }, departAs(true),
+    { nondet actor = Set(0, 1, 2).oneOf() remount(actor) }, s' = s }
   val invariant = all { not(s.present) implies not(s.mounted),
     s.callbacks.subseteq(s.accepted), s.didClear implies s.clearExpected == s.clearObserved,
     ids.forall(id => s.requests.get(id).admitted implies s.requests.get(id).cookie == s.requests.get(id).actor) }

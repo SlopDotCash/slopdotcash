@@ -13,6 +13,8 @@
 // this model (ui_cycle_publication and ui_resources cover other boundaries).
 // URL synchronization and timer delivery are separate from a render. These
 // source-authored scenarios have not been executed.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_cycle_archive {
   type Filters = { project: int, month: int, state: int }
   var s: { mounted: bool, route: str, target: int, index: str, generation: int,
@@ -86,25 +88,62 @@ module ui_cycle_archive {
     s' = s.with("route", "detail").with("target", id).with("scheduled", 0) }
   action openProject(id: int): bool = all { s.mounted, ids.contains(id),
     s' = s.with("route", "project").with("target", id).with("scheduled", 0) }
-  action openArchive = all { s.mounted,
-    s' = s.with("route", "archive").with("scheduled", 0) }
+  // Navigating to the archive while it is already shown keeps the mounted
+  // page and its boundary effect; useTimeBoundary clears its timer only on
+  // unmount or a changed timestamp. Arriving from another route mounts a page
+  // without a timer until it renders.
+  action openArchive = openArchiveAs(false)
+  action openArchiveAs(compact: bool): bool = all { s.mounted,
+    s' = s.with("route", "archive").with("target", if (compact) 1 else s.target)
+      .with("scheduled", if (s.route == "archive") s.scheduled else 0) }
   action snapshotReady = all { needsSnapshot, s' = s.with("snapshot", "ready") }
   action publishedDuringSnapshot = all { needsSnapshot, ids.contains(s.target),
     s' = s.with("snapshot", "ready").with("bundledRecords", Set(s.target)) }
   action snapshotFailure = all { needsSnapshot, s' = s.with("snapshot", "error") }
-  action depart = s' = s.with("mounted", false).with("scheduled", 0)
-  action step = {
-    nondet id = ids.oneOf()
-    nondet projectFilter = Set(0, 1, 2, 3).oneOf()
-    nondet monthFilter = Set(0, 1, 2, 3).oneOf()
-    nondet stateFilter = Set(0, 1, 2, 3).oneOf()
-    nondet target = Set(1, 2, 3).oneOf()
-    nondet records = Set(Set(), Set(1), Set(2), ids).oneOf()
-    any { indexReady(s.generation, records), indexFailure(s.generation), refresh,
-      requestFilters(projectFilter, monthFilter, stateFilter), synchronizeFilters, renderArchive,
-      advanceClock, deliverTimer, retire(id), openDetail(target), openProject(id),
-      openArchive, snapshotReady, publishedDuringSnapshot, snapshotFailure, depart, s' = s }
-  }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = s' = if (not(compact)) s.with("mounted", false).with("scheduled", 0)
+    else { mounted: false, route: "archive", target: 1, index: "loading", generation: 1, records: Set(),
+      bundledRecords: Set(), requested: allFilters, url: allFilters, snapshot: "loading", retired: Set(),
+      now: 0, paintedAt: 0, scheduled: 0 }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // Further step-only reductions (formal/README.md, "Write-only fields and
+  // canonical choices"); direct actions and scenarios are unchanged:
+  // - Requested filter values are read only through `filters` (and copied to
+  //   the write-only `url`). Records are subsets of {1, 2}, so project or
+  //   month 3 retains to 0 exactly as 0 does, and state 2 or 3 retains to 0
+  //   exactly as 0 does. Step requests only representatives 0..2 and 0..1.
+  //   After the second index read (`generation == 2`) records never change:
+  //   when it is ready, a value outside its records retains to 0, so step
+  //   offers only records and 0 (state 1 only with records); when it failed,
+  //   `filters` is never read again and step offers only all-zero filters.
+  // - The target is read only on detail and project routes, and opening
+  //   either route overwrites it, so step stores target 1 when it opens the
+  //   archive.
+  // - A departed page enables no action that reads or changes its fields
+  //   except the clock and retirement, and no departed state can make an
+  //   invariant conjunct false that held just before departure (records,
+  //   generation, filters and paint time are copied; `display` becomes
+  //   "departed"). The temporal property's consequent holds once unmounted.
+  //   Step therefore stores one canonical departed state.
+  // None of these reductions changes a guard of a mounted state, the
+  // invariant's truth or the atoms and fairness condition of the temporal
+  // property.
+  val finalIndex = s.generation == 2 and s.index != "loading"
+  val filterChoices = if (not(finalIndex)) Set(0, 1, 2)
+    else if (s.index == "ready") s.records.union(Set(0)) else Set(0)
+  val stateChoices = if (not(finalIndex)) Set(0, 1)
+    else if (s.index == "ready" and s.records.size() > 0) Set(0, 1) else Set(0)
+  action step = any {
+    { nondet records = Set(Set(), Set(1), Set(2), ids).oneOf() indexReady(s.generation, records) },
+    indexFailure(s.generation), refresh,
+    { nondet projectFilter = filterChoices.oneOf() nondet monthFilter = filterChoices.oneOf()
+      nondet stateFilter = stateChoices.oneOf() requestFilters(projectFilter, monthFilter, stateFilter) },
+    synchronizeFilters, renderArchive, advanceClock, deliverTimer, { nondet id = ids.oneOf() retire(id) },
+    { nondet target = Set(1, 2, 3).oneOf() openDetail(target) }, { nondet id = ids.oneOf() openProject(id) },
+    openArchiveAs(true), snapshotReady, publishedDuringSnapshot, snapshotFailure, departAs(true), s' = s }
   val invariant = all {
     s.records.subseteq(ids), s.generation >= 1, s.generation <= 2,
     s.now >= 0, s.now <= 3, s.paintedAt <= s.now,
@@ -177,6 +216,9 @@ module ui_cycle_archive {
     .then(publishedDuringSnapshot).expect(display == "record" and s.records == Set() and s.bundledRecords == Set(1))
   run staleIndexReplyRefusesTest = init.then(refresh).expect(s.index == "loading" and s.records == Set())
     .then(indexReady(1, ids).fail())
+  run reopeningShownArchiveKeepsDeadlineTimerTest = init.then(indexReady(1, ids)).then(renderArchive)
+    .then(advanceClock).then(openArchive).expect(s.scheduled == 1).then(deliverTimer)
+    .expect(displayedReviews == Set(1) and s.paintedAt == 1)
   run timerCannotFireAfterDepartureTest = init.then(indexReady(1, ids)).then(renderArchive).then(advanceClock)
     .then(depart).expect(s.paintedAt == 0).then(deliverTimer.fail())
   run oldUnknownFilterMismatchNegativeControlTest = init.then(indexReady(1, ids)).then(requestFilters(0, 0, 3))

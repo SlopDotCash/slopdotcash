@@ -35,6 +35,8 @@
 // persistent send reservations and financial authorization are separate.
 // Old generic-sign bypasses are negative controls outside step. The listed
 // fixtures are partial evidence; no tests, parsers, providers or checks ran.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module solana_wallet_provider {
   val ids = Set(1, 2)
   val addresses = Set(1, 2)
@@ -54,11 +56,15 @@ module solana_wallet_provider {
     transactionFeature: bool, sendFeature: bool, chains: Set[int],
     transactionLegacy: bool, sendLegacy: bool, operations: int -> Operation,
     effects: Set[int] }
-  action init = s' = { configured: false, kind: "standard", phase: "idle",
+  // `initial` is shared by `init` and the `initState` helper so scenario
+  // helpers never reuse the TLA+ init action (QNT409).
+  val initial = { configured: false, kind: "standard", phase: "idle",
     registered: true, address: 1, accountObject: 1, capturedAddress: 0,
     exposedTransaction: false, exposedSend: false, messageFeature: true,
     transactionFeature: true, sendFeature: true, chains: Set(1, 2),
     transactionLegacy: true, sendLegacy: true, operations: ids.mapBy(_ => idle), effects: Set() }
+  action init = s' = initial
+  action initState = s' = initial
   def ended(op: Operation, result: str): Operation = op.with("phase", "done").with("result", result)
   def feature(method: str): bool = if (Set("text", "message").contains(method)) s.messageFeature
     else if (method == "transaction") s.transactionFeature else s.sendFeature
@@ -87,15 +93,23 @@ module solana_wallet_provider {
     s' = s.with("chains", s.chains.exclude(Set(chain))) }
   action removeLegacyFormat(method: str): bool = all { Set("transaction", "send").contains(method),
     s' = if (method == "transaction") s.with("transactionLegacy", false) else s.with("sendLegacy", false) }
-  action begin(id: int, method: str, chain: int): bool = all {
+  // Step-only compaction (reduction 6 below). Direct actions pass false.
+  def stored(compact: bool, op: Operation): Operation =
+    if (not(compact)) op
+    else if (op.phase == "done" and not(op.invoked)) idle.with("phase", "done")
+    else if (op.invoked) op.with("chain", 1)
+    else op
+  action begin(id: int, method: str, chain: int): bool = beginAs(id, method, chain, false)
+  action beginAs(id: int, method: str, chain: int, compact: bool): bool = all {
     s.phase == "connected", ids.contains(id), methods.contains(method), addresses.contains(chain),
     s.operations.get(id).phase == "unused",
-    s' = s.with("operations", s.operations.set(id,
+    s' = s.with("operations", s.operations.set(id, stored(compact,
       (if (not(exposed(method))) ended(idle, "unsupported") else idle.with("phase", if (s.kind == "legacy") "reconnect" else "gate"))
-        .with("method", method).with("address", s.capturedAddress).with("chain", chain))) }
+        .with("method", method).with("address", s.capturedAddress).with("chain", chain)))) }
   // Standard gate and feature invocation are synchronous up to the provider
   // promise. Only the explicitly supplied beforeSend callback lies between.
-  action standardInvoke(id: int, callbackSucceeds: bool): bool = {
+  action standardInvoke(id: int, callbackSucceeds: bool): bool = standardInvokeAs(id, callbackSucceeds, false)
+  action standardInvokeAs(id: int, callbackSucceeds: bool, compact: bool): bool = {
     val op = s.operations.get(id)
     val chainRequired = Set("transaction", "send").contains(op.method)
     val chainMatch = not(chainRequired) or s.chains.contains(op.chain)
@@ -108,9 +122,9 @@ module solana_wallet_provider {
       .with("chainMatch", chainMatch).with("legacyFormat", legacyFormat).with("usedObject", s.accountObject)
       .with("callback", callback)
     all { s.kind == "standard", op.phase == "gate",
-      s' = s.with("operations", s.operations.set(id,
+      s' = s.with("operations", s.operations.set(id, stored(compact,
         if (invoke) observed.with("phase", "provider-wait").with("invoked", true)
-        else ended(observed, if (not(permitted)) "wallet-changed" else if (not(legacyFormat)) "legacy-format" else "callback-error"))) }
+        else ended(observed, if (not(permitted)) "wallet-changed" else if (not(legacyFormat)) "legacy-format" else "callback-error")))) }
   }
   action reconnect(id: int): bool = {
     val op = s.operations.get(id)
@@ -119,13 +133,14 @@ module solana_wallet_provider {
   }
   // Address comparison and signMessage invocation share the continuation after
   // the reconnect promise; there is no invented asynchronous gap between them.
-  action reconnectReply(id: int, valid: bool): bool = {
+  action reconnectReply(id: int, valid: bool): bool = reconnectReplyAs(id, valid, false)
+  action reconnectReplyAs(id: int, valid: bool, compact: bool): bool = {
     val op = s.operations.get(id)
     val matching = valid and s.address == op.address
-    all { op.phase == "reconnect-wait", s' = s.with("operations", s.operations.set(id,
+    all { op.phase == "reconnect-wait", s' = s.with("operations", s.operations.set(id, stored(compact,
       if (matching) op.with("phase", "provider-wait").with("checked", true).with("matched", true).with("feature", true)
         .with("chainMatch", true).with("legacyFormat", true).with("usedObject", s.accountObject).with("invoked", true)
-      else ended(op, if (valid) "wallet-changed" else "provider-error"))) }
+      else ended(op, if (valid) "wallet-changed" else "provider-error")))) }
   }
   action providerReply(id: int, outcome: str): bool = {
     val op = s.operations.get(id)
@@ -148,20 +163,70 @@ module solana_wallet_provider {
     all { op.method == "text", Set("gate", "reconnect").contains(op.phase),
       s' = s.with("operations", s.operations.set(id, op.with("phase", "provider-wait").with("invoked", true))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet method = methods.oneOf()
-    nondet chain = addresses.oneOf()
-    nondet address = Set(0, 1, 2).oneOf()
-    nondet account = addresses.oneOf()
-    nondet caps = capabilities.oneOf()
-    nondet kind = Set("standard", "legacy").oneOf()
-    nondet outcome = Set("exact", "short", "changed-message", "changed-transaction", "empty-transaction", "missing", "throw").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { configure(kind), connect, connectReply(account, caps, yes), unregister, setAddress(address), replaceAccountObject,
-      withdrawFeature(method), removeChain(chain), removeLegacyFormat(method), begin(id, method, chain),
-      standardInvoke(id, yes), reconnect(id), reconnectReply(id, yes), providerReply(id, outcome), sendEffect(id), s' = s }
-  }
+  // Finite `step` reductions (formal/README.md, "Scoped nondeterministic
+  // choices" and "Dead environment changes"). Direct actions and named
+  // scenarios are unchanged.
+  // 1. Each nondeterministic choice is scoped to the one action that reads it.
+  //    The disjunction of per-action existentials equals the former single
+  //    existential over every choice, so successors are unchanged.
+  // 2. Wallet-environment changes (registration, address, account object,
+  //    features, chains, legacy formats) are taken only while a later
+  //    transition can still read the changed field. Only begin, standardInvoke
+  //    and reconnectReply read them, all after `phase == "connected"`, and
+  //    that phase is final. Before connection every reachable state satisfies
+  //    the invariant (all operations unused, captured address 0) and connect,
+  //    connectReply and configure read no environment field, so an earlier
+  //    change commutes past the connection. After connection a field that no
+  //    pending operation can read again stays unread forever (operations only
+  //    advance and exposure is fixed): changing it reaches a state that
+  //    differs only in that unread field, with the same invariant truth and
+  //    the same successors. Legacy reads only the address and account object;
+  //    Standard reads transaction or send fields only when that method was
+  //    exposed and an unused or gated operation may still use it.
+  // 3. The account object is copied only to `usedObject`, which no guard or
+  //    invariant reads (scenarios check it through direct actions), so step
+  //    does not replace it.
+  // 4. Message methods never read the operation chain, so step begins them
+  //    with chain 1 only.
+  // 5. Operation ids are interchangeable (identical idle records, symmetric
+  //    guards, effects and invariant). Swapping them maps every path to one in
+  //    which operation 1 begins first, so step begins operation 2 only after
+  //    operation 1.
+  // 6. A finished operation that never invoked the provider is read by no
+  //    guard, update or invariant conjunct beyond its phase and `invoked`
+  //    (sendEffect requires `invoked`), so step stores one canonical finished
+  //    record for it. An invoked operation no longer reads its chain, so step
+  //    stores chain 1 for it. Scenarios inspect results through direct actions.
+  val replyOutcomes = Set("exact", "short", "changed-message", "changed-transaction", "empty-transaction", "missing", "throw")
+  def mayRead(methodSet: Set[str]): bool = s.phase == "connected" and ids.exists(id => {
+    val op = s.operations.get(id)
+    op.phase == "unused" or (Set("gate", "reconnect", "reconnect-wait").contains(op.phase) and methodSet.contains(op.method))
+  })
+  val standardLive = s.kind == "standard" and mayRead(methods)
+  val messageLive = s.kind == "standard" and mayRead(Set("text", "message"))
+  val transactionLive = s.kind == "standard" and s.exposedTransaction and mayRead(Set("transaction"))
+  val sendLive = s.kind == "standard" and s.exposedSend and mayRead(Set("send"))
+  def methodLive(method: str): bool = if (method == "transaction") transactionLive
+    else if (method == "send") sendLive else messageLive
+  action step = any {
+    { nondet kind = Set("standard", "legacy").oneOf() configure(kind) },
+    connect,
+    { nondet account = addresses.oneOf() nondet caps = capabilities.oneOf() nondet yes = Set(false, true).oneOf()
+      connectReply(account, caps, yes) },
+    all { standardLive, unregister },
+    all { mayRead(methods), nondet address = Set(0, 1, 2).oneOf() setAddress(address) },
+    { nondet method = methods.oneOf() all { methodLive(method), withdrawFeature(method) } },
+    { nondet chain = addresses.oneOf() all { transactionLive or sendLive, removeChain(chain) } },
+    { nondet method = Set("transaction", "send").oneOf() all { methodLive(method), removeLegacyFormat(method) } },
+    { nondet id = ids.oneOf() nondet method = methods.oneOf() nondet chain = addresses.oneOf()
+      all { id == 1 or s.operations.get(1).phase != "unused",
+        Set("transaction", "send").contains(method) or chain == 1, beginAs(id, method, chain, true) } },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() standardInvokeAs(id, yes, true) },
+    { nondet id = ids.oneOf() reconnect(id) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() reconnectReplyAs(id, yes, true) },
+    { nondet id = ids.oneOf() nondet outcome = replyOutcomes.oneOf() providerReply(id, outcome) },
+    { nondet id = ids.oneOf() sendEffect(id) },
+    s' = s }
   val invariant = all {
     Set(0, 1, 2).contains(s.address), Set(0, 1, 2).contains(s.capturedAddress), s.effects.subseteq(ids),
     s.phase == "connected" implies addresses.contains(s.capturedAddress),
@@ -174,7 +239,7 @@ module solana_wallet_provider {
         op.encoded implies op.method == "text" and op.result == "ok",
         s.effects.contains(id) implies op.invoked and op.method == "send" }
     }) }
-  action connected(kind: str, caps: str): bool = init.then(configure(kind)).then(connect).then(connectReply(1, caps, true))
+  action connected(kind: str, caps: str): bool = initState.then(configure(kind)).then(connect).then(connectReply(1, caps, true))
   action standardCall(id: int, method: str): bool = begin(id, method, 1).then(standardInvoke(id, true))
   action legacyCall(id: int, method: str): bool = begin(id, method, 1).then(reconnect(id)).then(reconnectReply(id, true))
 

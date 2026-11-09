@@ -13,6 +13,8 @@
 // Admin role and cookie identity can change independently; server admission
 // remains an external authority decision, not a promise made by a prior read.
 // Source-authored; no parser, simulation, or verifier execution is claimed.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_admin_vetting_requests {
   type Read = { life: int, generation: int, actor: int, cookie: int,
     phase: str, failure: str, observed: int, observedAdmin: bool, gate: str }
@@ -23,11 +25,30 @@ module ui_admin_vetting_requests {
     phase: "unused", failure: "", observed: 0, observedAdmin: false, gate: "none" }
   pure val emptyMutation = { life: 0, ownerRead: 0, actor: 0, cookie: 0,
     phase: "unused", failure: "", payload: 0, observed: 0, observedAdmin: false, gate: "none" }
-  var s: { present: bool, mounted: bool, life: int, actor: int, cookie: int, admin: bool,
+  type State = { present: bool, mounted: bool, life: int, actor: int, cookie: int, admin: bool,
     identityAvailable: bool, generation: int, activeRead: int,
     reads: int -> Read, mutation: Mutation, privateRead: int,
     formPayload: int, note: bool, error: bool, invalidated: bool,
     accepted: bool, callbacks: int, refreshes: int }
+  var s: State
+  // Step-only read compaction (see the step comment). Direct actions pass false.
+  pure def ownsReadIn(st: State, id: int): bool = st.mounted and not(st.invalidated)
+    and st.activeRead == id and st.reads.get(id).life == st.life
+    and st.reads.get(id).generation == st.generation and st.reads.get(id).actor == st.actor
+  pure def ownsMutationIn(st: State): bool = st.mounted and not(st.invalidated)
+    and st.mutation.life == st.life and st.mutation.actor == st.actor
+    and st.privateRead != 0 and st.mutation.ownerRead == st.privateRead
+  pure def compactIf(compact: bool, st: State): State = if (not(compact)) st
+    else st.with("reads", ids.mapBy(id => {
+      val r = st.reads.get(id)
+      if (r.phase == "unused" or id == st.privateRead or (r.phase != "done" and ownsReadIn(st, id))) r
+      else emptyRead.with("phase", "done")
+    })).with("mutation", {
+      val m = st.mutation
+      if (Set("unused", "http").contains(m.phase) or st.callbacks > 0
+        or (m.phase != "done" and ownsMutationIn(st))) m
+      else emptyMutation.with("phase", "done").with("actor", m.actor).with("cookie", m.cookie)
+    })
 
   action init = s' = { present: true, mounted: true, life: 1, actor: 1, cookie: 1, admin: true,
     identityAvailable: true, generation: 0, activeRead: 0,
@@ -53,24 +74,27 @@ module ui_admin_vetting_requests {
   action adminRole(allowed: bool): bool = s' = s.with("admin", allowed)
   action editPayload(payload: int): bool = all {
     visible, ids.contains(payload), s' = s.with("formPayload", payload) }
-  action depart = all { s.mounted,
-    s' = s.with("present", false).with("mounted", false).with("privateRead", 0)
-      .with("note", false).with("activeRead", 0) }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = all { s.mounted,
+    s' = compactIf(compact, s.with("present", false).with("mounted", false).with("privateRead", 0)
+      .with("note", false).with("activeRead", 0)) }
   // An outer session revalidation tears down the old keyed subtree. A later
   // observed actor may mount a fresh one; old requests retain their life IDs.
-  action remount = all { not(s.mounted), s.life == 1,
+  action remount = remountAs(false)
+  action remountAs(compact: bool): bool = all { not(s.mounted), s.life == 1,
     s.identityAvailable, ids.contains(s.cookie),
-    s' = s.with("present", true).with("mounted", true).with("life", 2).with("actor", s.cookie)
+    s' = compactIf(compact, s.with("present", true).with("mounted", true).with("life", 2).with("actor", s.cookie)
       .with("invalidated", false).with("error", false).with("note", false)
-      .with("activeRead", 0).with("privateRead", 0) }
+      .with("activeRead", 0).with("privateRead", 0)) }
 
-  action beginRead(id: int): bool = all {
+  action beginRead(id: int): bool = beginReadAs(id, false)
+  action beginReadAs(id: int, compact: bool): bool = all {
     s.mounted, not(s.invalidated), s.reads.get(id).phase == "unused",
-    s' = s.with("generation", s.generation + 1).with("activeRead", id)
+    s' = compactIf(compact, s.with("generation", s.generation + 1).with("activeRead", id)
       .with("privateRead", 0).with("error", false)
       .with("reads", s.reads.set(id, { life: s.life,
         generation: s.generation + 1, actor: s.actor, cookie: 0,
-        phase: "preflight", failure: "", observed: 0, observedAdmin: false, gate: "none" })) }
+        phase: "preflight", failure: "", observed: 0, observedAdmin: false, gate: "none" }))) }
   action observeReadIdentity(id: int): bool = all {
     Set("preflight", "postflight", "failure").contains(s.reads.get(id).phase),
     s' = s.with("reads", s.reads.set(id, s.reads.get(id)
@@ -79,16 +103,17 @@ module ui_admin_vetting_requests {
       .with("observedAdmin", s.identityAvailable and s.admin))) }
   action returnReadIdentity(id: int): bool = all { s.reads.get(id).phase == "identity-observed",
     s' = s.with("reads", s.reads.set(id, s.reads.get(id).with("phase", "identity-returned"))) }
-  action useReadIdentity(id: int): bool = {
+  action useReadIdentity(id: int): bool = useReadIdentityAs(id, false)
+  action useReadIdentityAs(id: int, compact: bool): bool = {
     val r = s.reads.get(id)
     val completed = s.with("reads", s.reads.set(id, r.with("phase", "done")))
     all { r.phase == "identity-returned",
-      s' = if (not(ownsRead(id))) completed
+      s' = compactIf(compact, if (not(ownsRead(id))) completed
         else if (r.failure == "access" or r.observed != r.actor or not(r.observedAdmin))
           completed.with("invalidated", true).with("privateRead", 0).with("note", false).with("error", true)
         else if (r.gate == "preflight") s.with("reads", s.reads.set(id, r.with("phase", "checked")))
         else if (r.gate == "postflight") completed.with("privateRead", id).with("error", false)
-        else completed.with("error", true) }
+        else completed.with("error", true)) }
   }
   // Scenario conveniences are excluded from step; exploration sees the gaps.
   action readPreflight(id: int): bool = observeReadIdentity(id).then(returnReadIdentity(id)).then(useReadIdentity(id))
@@ -112,10 +137,11 @@ module ui_admin_vetting_requests {
   action publishRead(id: int): bool = observeReadIdentity(id).then(returnReadIdentity(id)).then(useReadIdentity(id))
   action readAccessLost(id: int): bool = observeReadIdentity(id).then(returnReadIdentity(id)).then(useReadIdentity(id))
   action readLocalError(id: int): bool = observeReadIdentity(id).then(returnReadIdentity(id)).then(useReadIdentity(id))
-  action dropRead(id: int): bool = all {
+  action dropRead(id: int): bool = dropReadAs(id, false)
+  action dropReadAs(id: int, compact: bool): bool = all {
     not(ownsRead(id)),
     not(Set("unused", "done").contains(s.reads.get(id).phase)),
-    s' = s.with("reads", s.reads.set(id, s.reads.get(id).with("phase", "done"))) }
+    s' = compactIf(compact, s.with("reads", s.reads.set(id, s.reads.get(id).with("phase", "done")))) }
 
   // This one mutation abstracts queue, grant and revoke: their bodies differ,
   // but each captures its selected revision/reason/reference before awaiting.
@@ -130,59 +156,87 @@ module ui_admin_vetting_requests {
       .with("observedAdmin", s.identityAvailable and s.admin)) }
   action returnMutationIdentity = all { s.mutation.phase == "identity-observed",
     s' = s.with("mutation", s.mutation.with("phase", "identity-returned")) }
-  action useMutationIdentity = {
+  action useMutationIdentity = useMutationIdentityAs(false)
+  action useMutationIdentityAs(compact: bool): bool = {
     val m = s.mutation
     val completed = s.with("mutation", m.with("phase", "done"))
     all { m.phase == "identity-returned",
-      s' = if (not(ownsMutation)) completed
+      s' = compactIf(compact, if (not(ownsMutation)) completed
         else if (m.failure == "access" or m.observed != m.actor or not(m.observedAdmin))
           completed.with("invalidated", true).with("privateRead", 0).with("note", false).with("error", true)
         else if (m.gate == "preflight") s.with("mutation", m.with("phase", "checked"))
         else if (m.gate == "postflight") s.with("mutation", m.with("phase", "callback-ready"))
-        else completed.with("error", true) }
+        else completed.with("error", true)) }
   }
   action mutationPreflight = observeMutationIdentity.then(returnMutationIdentity).then(useMutationIdentity)
   action dispatchMutation = all { ownsMutation, s.mutation.phase == "checked",
     s' = s.with("mutation", s.mutation.with("phase", "http").with("cookie", s.cookie)) }
-  action admitMutation(allow: bool): bool = all { s.mutation.phase == "http",
-    s' = s.with("accepted", allow and s.mutation.cookie == s.mutation.actor)
+  action admitMutation(allow: bool): bool = admitMutationAs(allow, false)
+  action admitMutationAs(allow: bool, compact: bool): bool = all { s.mutation.phase == "http",
+    s' = compactIf(compact, s.with("accepted", allow and s.mutation.cookie == s.mutation.actor)
       .with("mutation", s.mutation
         .with("phase", if (allow and s.mutation.cookie == s.mutation.actor)
           "postflight" else "failure")
         .with("failure", if (allow and s.mutation.cookie == s.mutation.actor)
-          "" else "access")) }
-  action mutationTemporaryFailure = all { s.mutation.phase == "http",
-    s' = s.with("mutation", s.mutation.with("phase", "failure").with("failure", "local")) }
+          "" else "access"))) }
+  action mutationTemporaryFailure = mutationTemporaryFailureAs(false)
+  action mutationTemporaryFailureAs(compact: bool): bool = all { s.mutation.phase == "http",
+    s' = compactIf(compact, s.with("mutation", s.mutation.with("phase", "failure").with("failure", "local"))) }
   action mutationAccessLost = observeMutationIdentity.then(returnMutationIdentity).then(useMutationIdentity)
   action mutationLocalError = observeMutationIdentity.then(returnMutationIdentity).then(useMutationIdentity)
   // A successful current callback synchronously starts the parent's next read.
   // Its preflight is still separate and must re-observe the actor before GET.
-  action invokeMutationCallback(id: int): bool = all {
+  action invokeMutationCallback(id: int): bool = invokeMutationCallbackAs(id, false)
+  action invokeMutationCallbackAs(id: int, compact: bool): bool = all {
     ownsMutation, s.mutation.phase == "callback-ready", s.accepted,
     s.reads.get(id).phase == "unused",
-    s' = s.with("mutation", s.mutation.with("phase", "done"))
+    s' = compactIf(compact, s.with("mutation", s.mutation.with("phase", "done"))
       .with("callbacks", s.callbacks + 1).with("refreshes", s.refreshes + 1)
       .with("note", true).with("privateRead", 0).with("error", false)
       .with("generation", s.generation + 1).with("activeRead", id)
       .with("reads", s.reads.set(id, { life: s.life,
         generation: s.generation + 1, actor: s.actor, cookie: 0,
-        phase: "preflight", failure: "", observed: 0, observedAdmin: false, gate: "none" })) }
+        phase: "preflight", failure: "", observed: 0, observedAdmin: false, gate: "none" }))) }
   action finishMutation(id: int): bool = observeMutationIdentity.then(returnMutationIdentity)
     .then(useMutationIdentity).then(invokeMutationCallback(id))
   action dropMutation = all { not(ownsMutation),
     not(Set("unused", "done", "http").contains(s.mutation.phase)),
     s' = s.with("mutation", s.mutation.with("phase", "done")) }
 
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet flag = Set(false, true).oneOf()
-    any { cookieChanges(actor), identityAvailability(flag), adminRole(flag), editPayload(id),
-      depart, remount, beginRead(id), observeReadIdentity(id), returnReadIdentity(id), useReadIdentity(id), dispatchRead(id),
-      readResponse(id, flag), readTemporaryFailure(id), dropRead(id), beginMutation,
-      observeMutationIdentity, returnMutationIdentity, useMutationIdentity, dispatchMutation, admitMutation(flag), mutationTemporaryFailure,
-      invokeMutationCallback(id), dropMutation, s' = s }
-  }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // Step-only reductions (formal/README.md, "Retired requests" and
+  // "Write-only fields and canonical choices"); direct actions and scenarios keep every field:
+  // - `formPayload` is read only when a mutation captures it into `payload`,
+  //   which no guard or invariant reads, so step does not edit it.
+  // - A read stops being owned for good: invalidation is undone only by a
+  //   remount, which changes the lifetime, `activeRead` names only a newly
+  //   begun unused id, and generation and lifetime only grow. A read that is
+  //   not owned or has finished changes only its own fields (use without
+  //   ownership only finishes it), and the invariant reads a read only as
+  //   `privateRead`. Every guard reads other reads only as "unused" or not.
+  //   Step therefore stores one canonical finished record for each such read
+  //   except the published `privateRead`.
+  // - The mutation likewise stops being owned for good (its owner read can
+  //   never be published again). Unless it is awaiting admission in "http",
+  //   a finished or unowned mutation can only finish without changing
+  //   anything else. Before any callback the invariant reads only its cookie
+  //   and actor, so step keeps those and stores canonical values for the
+  //   rest. After a callback the finished mutation is kept unchanged.
+  action step = any {
+    { nondet actor = Set(0, 1, 2).oneOf() cookieChanges(actor) },
+    { nondet flag = Set(false, true).oneOf() identityAvailability(flag) },
+    { nondet flag = Set(false, true).oneOf() adminRole(flag) }, 
+    departAs(true), remountAs(true), { nondet id = ids.oneOf() beginReadAs(id, true) },
+    { nondet id = ids.oneOf() observeReadIdentity(id) }, { nondet id = ids.oneOf() returnReadIdentity(id) },
+    { nondet id = ids.oneOf() useReadIdentityAs(id, true) }, { nondet id = ids.oneOf() dispatchRead(id) },
+    { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() readResponse(id, flag) },
+    { nondet id = ids.oneOf() readTemporaryFailure(id) }, { nondet id = ids.oneOf() dropReadAs(id, true) },
+    beginMutation, observeMutationIdentity, returnMutationIdentity, useMutationIdentityAs(true), dispatchMutation,
+    { nondet flag = Set(false, true).oneOf() admitMutationAs(flag, true) }, mutationTemporaryFailureAs(true),
+    { nondet id = ids.oneOf() invokeMutationCallbackAs(id, true) }, dropMutation, s' = s }
   val invariant = all {
     not(s.present) implies not(s.mounted),
     s.callbacks <= 1, s.refreshes == s.callbacks,

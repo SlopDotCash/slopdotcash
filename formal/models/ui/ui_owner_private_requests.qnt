@@ -8,6 +8,8 @@
 // cleanup, before a returned session can resume its caller after removal.
 // Source-only: all scenarios are unexecuted. Money rules remain in other models.
 // Backend slice: requireActor's optional expected-actor header guard only.
+// Exhaustive verification explores a reduced `step`; the comment above it
+// states each reduction argument. Direct actions and scenarios are unreduced.
 module ui_owner_private_requests {
   type Request = { phase: str, kind: str, actor: int, cookie: int, admitted: bool,
     lifetime: int, outcome: str, setup: bool, observed: int, available: bool }
@@ -21,6 +23,9 @@ module ui_owner_private_requests {
     canSetup: false, error: "none", active: 0,
     requests: ids.mapBy(_ => { phase: "unused", kind: "read", actor: 0, cookie: 0, admitted: false,
       lifetime: 1, outcome: "success", setup: false, observed: 0, available: false }), accepted: Set() }
+  // Step-only compaction (see the step comment). Direct actions pass false.
+  val retired = { phase: "done", kind: "read", actor: 0, cookie: 0, admitted: false,
+    lifetime: 1, outcome: "success", setup: false, observed: 0, available: false }
   def owns(id: int): bool = s.mounted and s.active == id
     and s.requests.get(id).lifetime == s.lifetime
   pure def clearPrivate(value: State): State = value.with("data", false)
@@ -29,13 +34,15 @@ module ui_owner_private_requests {
     .with("draft", false).with("canSetup", true) }
   action sessionChanges(actor: int): bool = all {
     Set(0, 1, 2).contains(actor), s' = s.with("session", actor) }
-  action begin(id: int, kind: str): bool = all {
+  action begin(id: int, kind: str): bool = beginAs(id, kind, false)
+  action beginAs(id: int, kind: str, compact: bool): bool = all {
     s.mounted, ids.contains(id), Set("read", "mutation").contains(kind),
     kind == "read" or (s.mode == "awards" and s.data),
     s.requests.get(id).phase == "unused",
     s' = s.with("active", id).with("error", "none")
       .with("data", if (s.mode == "awards" and kind == "read") false else s.data)
-      .with("requests", s.requests.set(id, { phase: "preflight", kind: kind,
+      .with("requests", (if (compact and ids.contains(s.active) and s.active != id) s.requests.set(s.active, retired)
+        else s.requests).set(id, { phase: "preflight", kind: kind,
         actor: if (kind == "mutation") s.knownActor else 0, lifetime: s.lifetime,
         cookie: 0, admitted: false, outcome: "success", setup: false, observed: 0, available: false })) }
   action observePreflight(id: int, available: bool): bool = all {
@@ -44,11 +51,12 @@ module ui_owner_private_requests {
       .with("observed", s.session).with("available", available).with("phase", "preflight-observed"))) }
   action returnPreflight(id: int): bool = all { s.requests.get(id).phase == "preflight-observed",
     s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "preflight-returned"))) }
-  action usePreflight(id: int): bool = {
+  action usePreflight(id: int): bool = usePreflightAs(id, false)
+  action usePreflightAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
     val refused = not(r.available) or r.observed == 0
       or (r.kind == "mutation" and r.actor != r.observed)
-    val finished = s.with("requests", s.requests.set(id, r.with("phase", "done")))
+    val finished = s.with("requests", s.requests.set(id, if (compact) retired else r.with("phase", "done")))
     all { r.phase == "preflight-returned",
       s' = if (not(owns(id))) finished
       else if (refused) clearPrivate(finished).with("error", "identity")
@@ -92,9 +100,10 @@ module ui_owner_private_requests {
       .with("observed", s.session).with("available", available).with("phase", "recheck-observed"))) }
   action returnRecheck(id: int): bool = all { s.requests.get(id).phase == "recheck-observed",
     s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "recheck-returned"))) }
-  action useRecheck(id: int): bool = {
+  action useRecheck(id: int): bool = useRecheckAs(id, false)
+  action useRecheckAs(id: int, compact: bool): bool = {
     val r = s.requests.get(id)
-    val finished = s.with("requests", s.requests.set(id, r.with("phase", "done")))
+    val finished = s.with("requests", s.requests.set(id, if (compact) retired else r.with("phase", "done")))
     all { r.phase == "recheck-returned",
       s' = if (not(owns(id))) finished
       else if (not(r.available) or r.observed != r.actor)
@@ -110,20 +119,48 @@ module ui_owner_private_requests {
   }
   action recheck(id: int, available: bool): bool = observeRecheck(id, available)
     .then(returnRecheck(id)).then(useRecheck(id))
-  action depart = all { s.mounted, s' = clearPrivate(s).with("present", false).with("mounted", false) }
+  action depart = departAs(false)
+  action departAs(compact: bool): bool = all { s.mounted,
+    s' = if (not(compact)) clearPrivate(s).with("present", false).with("mounted", false)
+      else if (s.lifetime == 2) clearPrivate(s).with("present", false).with("mounted", false)
+        .with("mode", "awards").with("session", 1).with("error", "none").with("active", 0)
+        .with("requests", ids.mapBy(_ => retired)).with("accepted", Set())
+      else clearPrivate(s).with("present", false).with("mounted", false)
+        .with("requests", s.requests.keys().mapBy(id =>
+          if (s.requests.get(id).phase == "unused") s.requests.get(id) else retired)) }
   action remount = all { not(s.mounted), s.lifetime == 1,
     s' = clearPrivate(s).with("present", true).with("mounted", true).with("lifetime", 2).with("active", 0)
       .with("error", "none") }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet kind = Set("read", "mutation").oneOf()
-    nondet outcome = Set("success", "temporary", "refused", "invalid").oneOf()
-    nondet available = Set(false, true).oneOf()
-    nondet setup = Set(false, true).oneOf()
-    any { fundsMode, sessionChanges(actor), begin(id, kind), observePreflight(id, available), returnPreflight(id), usePreflight(id), dispatch(id), admit(id),
-      response(id, outcome, setup), observeRecheck(id, available), returnRecheck(id), useRecheck(id), depart, remount, s' = s }
-  }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  // Step-only compaction (formal/README.md, "Retired requests" and
+  // "Write-only fields and canonical choices"); direct actions and scenarios keep every field:
+  // - A request that is not owned can never become owned again: `active`
+  //   names only a newly begun unused id and the lifetime only grows. Its
+  //   later transitions change only its own fields and may add its id to
+  //   `accepted`, which the invariant only requires to be a subset of ids.
+  //   Every reachable request satisfies its own invariant conjuncts by
+  //   construction (actors come from 0..2 and admit computes `admitted` from
+  //   cookie and actor), and begin reads only whether an id is unused. Step therefore
+  //   stores one canonical finished record when a request finishes, when a
+  //   newer request replaces it as active, or when the page departs.
+  // - A departure in the second lifetime is final: no action can remount or
+  //   begin, and private fields are already cleared. The remaining fields can
+  //   change only through fundsMode and session changes, which read nothing
+  //   that a later invariant evaluation depends on, so step stores one
+  //   canonical departed state.
+  action step = any {
+    fundsMode, { nondet actor = Set(0, 1, 2).oneOf() sessionChanges(actor) },
+    { nondet id = ids.oneOf() nondet kind = Set("read", "mutation").oneOf() beginAs(id, kind, true) },
+    { nondet id = ids.oneOf() nondet available = Set(false, true).oneOf() observePreflight(id, available) },
+    { nondet id = ids.oneOf() returnPreflight(id) }, { nondet id = ids.oneOf() usePreflightAs(id, true) },
+    { nondet id = ids.oneOf() dispatch(id) }, { nondet id = ids.oneOf() admit(id) },
+    { nondet id = ids.oneOf() nondet outcome = Set("success", "temporary", "refused", "invalid").oneOf() nondet setup = Set(false, true).oneOf() response(id, outcome, setup) },
+    { nondet id = ids.oneOf() nondet available = Set(false, true).oneOf() observeRecheck(id, available) },
+    { nondet id = ids.oneOf() returnRecheck(id) }, { nondet id = ids.oneOf() useRecheckAs(id, true) }, departAs(true),
+    remount, s' = s }
   val invariant = all { not(s.present) implies not(s.mounted), s.data implies s.knownActor > 0,
     s.stale implies (s.mode == "funds" and s.data and not(s.canSetup)),
     not(s.mounted) implies not(s.data), s.accepted.subseteq(ids),

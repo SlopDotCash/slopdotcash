@@ -20,6 +20,8 @@
 // Time and abort events interleave at awaits. A setup callback may synchronously
 // abort too (modeled by abortFromHook), without inventing browser event turns
 // between synchronous statements. No fairness, provider success or retry promise.
+// Verification scopes each `step` choice to its action (see the comment
+// above `step`); successors are unchanged.
 module ui_identity_poll_protocol {
   val intervals = 1.to(10)
   val startClasses = Set("valid", "missing", "non-record", "expired", "future", "flow-id", "capability", "url", "interval")
@@ -29,11 +31,15 @@ module ui_identity_poll_protocol {
     authorizationCalls: int, saveCalls: int, clearCalls: int,
     storageIntent: str, receivedAssertion: bool, assertionExpiry: int, validatedAt: int,
     returnedAssertion: bool, joinRequested: bool, result: str, reason: str }
-  action init = s' = { phase: "setup", now: 0, resumed: false, hook: false, aborted: false, mounted: true,
+  // `initial` is shared by `init` and the `initState` helper so scenario
+  // helpers never reuse the TLA+ init action (QNT409).
+  val initial = { phase: "setup", now: 0, resumed: false, hook: false, aborted: false, mounted: true,
     startRequests: 0, polls: 0, baseInterval: 1, interval: 1,
     authorizationCalls: 0, saveCalls: 0, clearCalls: 0,
     storageIntent: "none", receivedAssertion: false, assertionExpiry: -1, validatedAt: -1,
     returnedAssertion: false, joinRequested: false, result: "pending", reason: "none" }
+  action init = s' = initial
+  action initState = s' = initial
   action begin(resumed: bool, hook: bool, originValid: bool, interval: int): bool = all {
     s.phase == "setup", intervals.contains(interval),
     s' = s.with("resumed", resumed).with("hook", hook).with("baseInterval", interval).with("interval", interval)
@@ -119,19 +125,20 @@ module ui_identity_poll_protocol {
   action parentGuard = all { s.phase == "returned",
     s' = s.with("phase", if (s.aborted) "discarded" else "join-requested")
       .with("joinRequested", not(s.aborted)) }
-  action step = {
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet interval = intervals.oneOf()
-    nondet retry = 0.to(11).oneOf()
-    nondet kind = startClasses.oneOf()
-    nondet expires = 0.to(8).oneOf()
-    any { begin(yes, other, third, interval), tick, abort, startReply(kind), saveStart(yes),
-      abortFromHook, timeInHook, authorize(yes), scheduleDelay, timerFires, requestFails,
-      pollPending(retry), pollRefuses, pollComplete(yes, expires), clearAuthorization(yes),
-      depart, parentGuard, s' = s }
-  }
+  // Each nondeterministic choice is scoped to the one action that reads it
+  // (formal/README.md, "Scoped nondeterministic choices"). The disjunction of
+  // per-action existentials equals the former single existential over every
+  // choice, so successors and enabledness are unchanged.
+  action step = any {
+    { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() nondet third = Set(false, true).oneOf()
+      nondet interval = intervals.oneOf() begin(yes, other, third, interval) },
+    tick, abort, { nondet kind = startClasses.oneOf() startReply(kind) },
+    { nondet yes = Set(false, true).oneOf() saveStart(yes) }, abortFromHook, timeInHook,
+    { nondet yes = Set(false, true).oneOf() authorize(yes) }, scheduleDelay, timerFires, requestFails,
+    { nondet retry = 0.to(11).oneOf() pollPending(retry) }, pollRefuses,
+    { nondet yes = Set(false, true).oneOf() nondet expires = 0.to(8).oneOf()
+      pollComplete(yes, expires) },
+    { nondet yes = Set(false, true).oneOf() clearAuthorization(yes) }, depart, parentGuard, s' = s }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.startRequests >= 0, s.startRequests <= 1,
     s.polls >= 0, s.polls <= 2, intervals.contains(s.interval),
@@ -143,8 +150,8 @@ module ui_identity_poll_protocol {
     s.phase == "discarded" implies s.returnedAssertion and s.aborted,
     s.result == "error" implies not(s.returnedAssertion) and not(s.joinRequested) }
 
-  action fresh = init.then(begin(false, true, true, 2))
-  action resumed = init.then(begin(true, true, true, 2))
+  action fresh = initState.then(begin(false, true, true, 2))
+  action resumed = initState.then(begin(true, true, true, 2))
   action waiting = startReply("valid").then(saveStart(true)).then(authorize(true)).then(scheduleDelay)
   action polling = waiting.then(timerFires)
 

@@ -158,6 +158,68 @@ reasoning, not a machine-checked equivalence theorem.
 - `referral_root_history` stores a voided epoch in one fixed form. Nothing
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
+- `ui_cycle_archive` requests only filter representatives (0..2 for project
+  and month, 0..1 for state), offers only retained values once the second
+  index read has settled, stores target 1 on the archive route and stores one
+  canonical departed state. Its temporal property reads none of these fields.
+- `ui_contributor_allocation` changes wallets only to `{"on-time", "none"}`
+  or `{"none"}`, the two classes `eligibleWallet` distinguishes, and decodes
+  unpublished body fields as zero.
+- `ui_admin_mutation_identity` records draft 0 for action requests, clears
+  dead observation and storage-clear witnesses, begins request 2 only after
+  request 1 (the ids are interchangeable) and edits only to present draft
+  values or the least absent one (absent values are interchangeable).
+- `ui_admin_vetting_requests` does not edit the write-only form payload.
+
+### Scoped nondeterministic choices
+
+A `step` that draws every `nondet` value once and then offers every action
+makes TLC enumerate the product of all choices for each action, including
+actions that read none of them. `∃a, b: A(a) ∨ B(b) ∨ C` and
+`(∃a: A(a)) ∨ (∃b: B(b)) ∨ C` are the same formula for nonempty domains, so
+moving each choice into the one action branch that reads it changes no
+successor, enabledness, invariant or scenario. It changes only the number of
+generated (not distinct) states. These models use the scoped form:
+`solana_wallet_provider`, `ui_admin_mutation_identity`,
+`ui_admin_vetting_requests`, `ui_contributor_allocation`, `ui_cycle_archive`,
+`ui_email_actions`, `ui_email_preference_requests`,
+`ui_identity_poll_protocol` and `ui_owner_private_requests`.
+
+### Retired requests
+
+Several UI models keep a fixed set of request slots. Ownership of a slot is
+lost for good: lifetimes and generations only grow, a departed view never
+returns, and the active pointer names only a newly begun unused slot. A slot
+that is finished, or no longer owned, can then change only its own fields,
+other actions read it only as "unused" or not, and the invariant reads at most
+fields that finishing does not change or that a guard fixes by construction.
+In `step` such a slot is replaced by one canonical finished record; direct
+actions (and so every named scenario) keep the original record. A slot that
+can still change shared state stays exact: admission/HTTP requests in
+`ui_admin_mutation_identity`, the HTTP request in `ui_email_actions`, a
+mutation awaiting admission or after its callback in
+`ui_admin_vetting_requests`, and a published read in
+`ui_admin_vetting_requests` and `ui_email_preference_requests`. Each model
+header states its argument. `ui_contributor_allocation` and
+`ui_owner_private_requests` also store one canonical state after a final
+second-lifetime departure. `ui_email_actions` additionally stores 0 for the
+write-only `stored`/`storedActor` pair, whose only invariant conjuncts are
+ranges every assignment satisfies. This is reviewed reasoning, not a
+machine-checked equivalence theorem.
+
+### Dead environment changes
+
+`solana_wallet_provider` lets the wallet environment (registration, address,
+features, chains, legacy formats) change in `step` only while a pending
+operation can still read the changed field. Every reader runs after the final
+"connected" phase, every pre-connection state satisfies the invariant, and the
+connection actions read no environment field, so earlier changes commute past
+connection. After connection, operations only advance and method exposure is
+fixed, so an unread field stays unread. Step also omits the account-object
+replacement (its copy `usedObject` is never read), begins message methods with
+chain 1, begins operation 2 only after operation 1 (the ids are
+interchangeable), and stores one canonical record for an operation that ended
+without invoking the provider. Scenarios keep every direct action.
 
 ## Inventory and review
 
