@@ -38,11 +38,11 @@ import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import { resolveRewardCapMinor } from "../src/lib/reward-cap.mjs";
 import type { VettingClearance } from "../src/lib/vetting-contracts";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
-import { seedProject } from "../tests/project-registry.fixture";
 import {
   applicationManifest,
   CONTRIBUTION,
 } from "../tests/project-application-manifest";
+import { seedProject } from "../tests/project-registry.fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 
 const ADMIN = "900000001";
