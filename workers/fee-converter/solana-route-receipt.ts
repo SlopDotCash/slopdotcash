@@ -148,12 +148,28 @@ export function finalizedRouteCredit(
       programId: identity(value.programId),
       amount: BigInt(value.uiTokenAmount.amount),
     }));
+  // SyncNative folds lamports anyone sent to the wrapped SOL account into its
+  // amount. The synced account keeps its rent reserve, so an existing native
+  // input held its final amount less its lamport change before the swap.
+  const changes = expected.nativeInput
+    ? nativeLamportDeltas({ ...receipt.meta }, proof.keys)
+    : null;
+  const synced = changes ? after.get(sourceIndex) : undefined;
   const wallet = identity(expected.wallet),
     inputMint = identity(expected.inputMint),
     outputMint = identity(expected.outputMint),
     inputProgram = identity(expected.inputProgram),
     outputProgram = identity(expected.outputProgram),
-    tokenBefore = project(before),
+    tokenBefore = project(before).map((value) =>
+      changes && synced && value.accountIndex === sourceIndex
+        ? {
+            ...value,
+            amount:
+              BigInt(synced.uiTokenAmount.amount) -
+              (changes.get(proof.keys[sourceIndex]) ?? 0n),
+          }
+        : value,
+    ),
     tokenAfter = project(after);
   const credit = routeTokenCredit(
     tokenBefore,
@@ -179,8 +195,7 @@ export function finalizedRouteCredit(
     throw new Error(
       "Finalized swap did not debit its exact input and credit its minimum output",
     );
-  if (expected.nativeInput) {
-    const changes = nativeLamportDeltas({ ...receipt.meta }, proof.keys);
+  if (changes) {
     const rent = associatedAccountCreations(
       parsed,
       proof.keys,

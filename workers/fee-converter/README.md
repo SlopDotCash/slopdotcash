@@ -529,8 +529,10 @@ admitted token program and extension set, and the instruction must bind the
 fee wallet, canonical input/output accounts, exact amount, minimum output
 and bounded slippage. Simulation must show the exact input debit and minimum
 output credit without changing the accounts' authority fields. For native SOL,
-the exact wrap and swap leave any pre-existing wrapped SOL unchanged; the native
-wallet debit must equal the input plus bounded network cost and account rent. This uses
+the exact wrap and swap leave any pre-existing wrapped SOL unchanged. That
+existing amount is measured by the account's lamports above its rent reserve,
+because `SyncNative` also folds in lamports that anyone sent to the account;
+the native wallet debit must equal the input plus bounded network cost and account rent. This uses
 the pinned minimal Jupiter wire schema in `jupiter-route-schema.ts`; the IDL
 source digest records the schema source, not a program-code attestation.
 
