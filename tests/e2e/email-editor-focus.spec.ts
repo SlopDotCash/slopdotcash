@@ -11,15 +11,20 @@ const FIRST = "900000098";
 const SECOND = "900000099";
 function gate() {
   let release!: () => void;
+  let started!: () => void;
   const promise = new Promise<void>((resolve) => {
     release = resolve;
   });
-  return { promise, release };
+  const requested = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  return { promise, release, requested, started: () => started() };
 }
 async function serveAccount(
   page: Page,
   context: BrowserContext,
   memberInitially = false,
+  verifiedDestination = false,
 ) {
   const state = {
     actor: FIRST as string | null,
@@ -29,6 +34,12 @@ async function serveAccount(
     emailGate: null as ReturnType<typeof gate> | null,
     sessionFailure: false,
     refuseVerification: false,
+    verifiedDestination,
+    preferenceReads: 0,
+    enabled: false,
+    securityEnabled: false,
+    verifiedEmail: "verified@example.test",
+    destinationVersion: "a".repeat(64),
     posts: [] as { path: string; actor: string | undefined }[],
   };
   const membership = (actor: string) => ({
@@ -124,19 +135,29 @@ async function serveAccount(
       return route.fulfill({ status: 401, json: { error: "unauthenticated" } });
     }
     if (path === "/api/v1/notifications/email") {
-      if (request.method() !== "GET")
+      if (request.method() !== "GET") {
         state.posts.push({
           path,
           actor: request.headers()["x-slop-expected-github-id"],
         });
+        const body = request.postDataJSON();
+        state.enabled = body.enabled;
+        state.securityEnabled = body.securityEnabled;
+      } else state.preferenceReads++;
       await state.emailGate?.promise;
       return route.fulfill({
         json: {
-          enabled: false,
-          securityEnabled: false,
+          enabled: state.enabled,
+          securityEnabled: state.securityEnabled,
           enrollmentAvailable: true,
           pending: null,
-          availability: "unverified",
+          ...(state.verifiedDestination
+            ? {
+                availability: "verified",
+                email: state.verifiedEmail,
+                destinationVersion: state.destinationVersion,
+              }
+            : { availability: "unverified" }),
         },
       });
     }
@@ -180,6 +201,10 @@ async function serveAccount(
     name: "Email address",
     exact: true,
   });
+  if (verifiedDestination)
+    await preferences
+      .getByRole("button", { name: "Add or change email", exact: true })
+      .click();
   await expect(input).toBeVisible();
   await input.fill("retained-before-check@example.test");
   await preferences
@@ -443,4 +468,265 @@ test("an unauthorized verification response clears the old draft", async ({
   expect(state.posts).toEqual([
     { path: "/api/v1/notifications/email/verification", actor: FIRST },
   ]);
+});
+
+test("a departed verification preflight cannot reload preferences for a mismatched actor", async ({
+  page,
+  context,
+}) => {
+  const { state, preferences } = await serveAccount(page, context);
+  const held = gate();
+  state.actor = SECOND;
+  await page.route(`${origins.site}/api/v1/project-session`, async (route) => {
+    held.started();
+    await held.promise;
+    await route.fulfill({
+      json: { session: { githubId: SECOND, githubLogin: "second" } },
+    });
+  });
+  try {
+    await preferences
+      .getByRole("button", { name: "Send verification", exact: true })
+      .click();
+    await held.requested;
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(preferences).toHaveCount(0);
+    const reads = state.preferenceReads;
+    const response = page.waitForResponse(
+      (reply) => new URL(reply.url()).pathname === "/api/v1/project-session",
+    );
+    held.release();
+    await response;
+    await page.evaluate(
+      () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+    );
+    expect(state.preferenceReads).toBe(reads);
+    expect(state.posts).toEqual([]);
+  } finally {
+    held.release();
+  }
+});
+
+for (const status of [403, 409]) {
+  test(`a departed preference ${status} response cannot start a new preference read`, async ({
+    page,
+    context,
+    diagnostics,
+  }) => {
+    const { state, preferences } = await serveAccount(page, context, true, true);
+    const held = gate();
+    diagnostics.allow(
+      new RegExp(
+        `^console Failed to load resource: the server responded with a status of ${status} (.+) at ${escapeRegExp(origins.site)}/api/v1/notifications/email$`,
+        "u",
+      ),
+    );
+    await page.route(
+      `${origins.site}/api/v1/notifications/email`,
+      async (route) => {
+        if (route.request().method() === "GET") return route.fallback();
+        state.posts.push({
+          path: "/api/v1/notifications/email",
+          actor: route.request().headers()["x-slop-expected-github-id"],
+        });
+        held.started();
+        await held.promise;
+        await route.fulfill({ status, json: { error: "fixture_refusal" } });
+      },
+    );
+    try {
+      await preferences
+        .getByRole("switch", { name: "Activity email", exact: true })
+        .click();
+      await held.requested;
+      await page.getByRole("link", { name: "Slop home", exact: true }).click();
+      const reads = state.preferenceReads;
+      const response = page.waitForResponse(
+        (reply) =>
+          new URL(reply.url()).pathname === "/api/v1/notifications/email" &&
+          reply.request().method() === "POST",
+      );
+      held.release();
+      await response;
+      await page.evaluate(
+        () => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+      );
+      expect(state.preferenceReads).toBe(reads);
+      expect(state.posts).toEqual([
+        { path: "/api/v1/notifications/email", actor: FIRST },
+      ]);
+      await expect(preferences).toHaveCount(0);
+    } finally {
+      held.release();
+    }
+  });
+}
+
+test("an old preference postflight cannot reset a remounted actor's new draft", async ({
+  page,
+  context,
+}) => {
+  const { state, preferences, input } = await serveAccount(
+    page,
+    context,
+    true,
+    true,
+  );
+  const held = gate();
+  let postflight = false;
+  await page.route(
+    `${origins.site}/api/v1/notifications/email`,
+    async (route) => {
+      if (route.request().method() === "GET") return route.fallback();
+      state.posts.push({
+        path: "/api/v1/notifications/email",
+        actor: route.request().headers()["x-slop-expected-github-id"],
+      });
+      state.enabled = true;
+      state.actor = SECOND;
+      postflight = true;
+      await route.fulfill({ json: { enabled: true, securityEnabled: false } });
+    },
+  );
+  await page.route(`${origins.site}/api/v1/project-session`, async (route) => {
+    if (!postflight) return route.fallback();
+    postflight = false;
+    held.started();
+    await held.promise;
+    await route.fulfill({
+      json: { session: { githubId: SECOND, githubLogin: "second" } },
+    });
+  });
+  try {
+    await preferences
+      .getByRole("switch", { name: "Activity email", exact: true })
+      .click();
+    await held.requested;
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    state.actor = FIRST;
+    await page.getByRole("button", { name: "Your account", exact: true }).click();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await preferences
+      .getByRole("button", { name: "Add or change email", exact: true })
+      .click();
+    await input.fill("new-mounted-draft@example.test");
+    const reads = state.preferenceReads;
+    const response = page.waitForResponse(
+      (reply) => new URL(reply.url()).pathname === "/api/v1/project-session",
+    );
+    held.release();
+    await response;
+    await page.evaluate(
+      () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+    );
+    expect(state.preferenceReads).toBe(reads);
+    await expect(input).toHaveValue("new-mounted-draft@example.test");
+    await expect(
+      preferences.getByRole("switch", { name: "Activity email", exact: true }),
+    ).toBeChecked();
+  } finally {
+    held.release();
+  }
+});
+
+for (const changed of [false, true]) {
+  test(`a preference failure ${changed ? "drops the changed actor's editor" : "retains the same actor's draft"}`, async ({
+    page,
+    context,
+    diagnostics,
+  }) => {
+    const { state, preferences, input } = await serveAccount(
+      page,
+      context,
+      true,
+      true,
+    );
+    diagnostics.allow(
+      new RegExp(
+        `^console Failed to load resource: the server responded with a status of 503 (.+) at ${escapeRegExp(origins.site)}/api/v1/notifications/email$`,
+        "u",
+      ),
+    );
+    await page.route(
+      `${origins.site}/api/v1/notifications/email`,
+      async (route) => {
+        if (route.request().method() === "GET") return route.fallback();
+        if (changed) state.actor = SECOND;
+        await route.fulfill({ status: 503, json: { error: "unavailable" } });
+      },
+    );
+    await preferences
+      .getByRole("switch", { name: "Activity email", exact: true })
+      .click();
+    if (changed) {
+      await expect(input).toHaveCount(0);
+      await expect(preferences).toContainText("The inbox account changed");
+    } else {
+      await expect(preferences).toContainText("Your preference could not be saved");
+      await expect(input).toHaveValue("retained-before-check@example.test");
+      await expect(input).toBeEditable();
+      await expect(
+        preferences.getByRole("button", {
+          name: "Send verification",
+          exact: true,
+        }),
+      ).toBeEnabled();
+    }
+  });
+}
+
+test("a current destination conflict keeps explicit feedback and the editable draft", async ({
+  page,
+  context,
+  diagnostics,
+}) => {
+  const { state, preferences, input } = await serveAccount(
+    page,
+    context,
+    true,
+    true,
+  );
+  diagnostics.allow(
+    new RegExp(
+      `^console Failed to load resource: the server responded with a status of 409 (.+) at ${escapeRegExp(origins.site)}/api/v1/notifications/email$`,
+      "u",
+    ),
+  );
+  let conflict = true;
+  const versions: string[] = [];
+  await page.route(
+    `${origins.site}/api/v1/notifications/email`,
+    async (route) => {
+      if (route.request().method() === "GET") return route.fallback();
+      versions.push(route.request().postDataJSON().destinationVersion);
+      if (!conflict) return route.fallback();
+      conflict = false;
+      state.destinationVersion = "b".repeat(64);
+      state.verifiedEmail = "changed-destination@example.test";
+      await route.fulfill({ status: 409, json: { error: "destination_changed" } });
+    },
+  );
+  await preferences
+    .getByRole("switch", { name: "Activity email", exact: true })
+    .click();
+  await expect(preferences).toContainText(
+    "Your verified destination changed. Review it before turning on email.",
+  );
+  await expect(preferences).toContainText("changed-destination@example.test");
+  await expect(input).toHaveValue("retained-before-check@example.test");
+  await expect(input).toBeEditable();
+  await preferences
+    .getByRole("switch", { name: "Activity email", exact: true })
+    .click();
+  await expect(
+    preferences.getByRole("switch", { name: "Activity email", exact: true }),
+  ).toBeChecked();
+  expect(versions).toEqual(["a".repeat(64), "b".repeat(64)]);
+  await expect(input).toHaveValue("retained-before-check@example.test");
 });

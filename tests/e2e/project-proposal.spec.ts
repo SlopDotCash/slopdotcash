@@ -217,6 +217,159 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+async function prepareCreationReview(page: Page) {
+  await routeGitHub(page);
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await enterRepository(page, "example/open-protein");
+  await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page
+    .getByLabel("Short description")
+    .fill("Reproducible protein-folding benchmarks.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
+}
+
+test("project creation refuses a silent account change before dispatch", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let writes = 0;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  actor = "4343";
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  expect(writes).toBe(0);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("an accepted project creation is not displayed under a later account", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let accepted = 0;
+  let release = () => {};
+  let started = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    accepted += 1;
+    started();
+    await held;
+    await route.fulfill({
+      status: 201,
+      json: {
+        project: { id: "open-protein", revision: 1 },
+        setup: CREATED_SETUP,
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await waiting;
+  try {
+    actor = "4343";
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+  expect(accepted).toBe(1);
+});
+
+test("a stale session observation cannot authorize creation for a new actor", async ({
+  page,
+  diagnostics,
+}) => {
+  let actor = "4242";
+  let replaceAfterSessionRead = false;
+  let attempts = 0;
+  diagnostics.allowResponse(403, "POST", "/api/v1/projects");
+  await page.route("**/api/v1/project-session", (route) => {
+    const observed = actor;
+    // Return the previous observation once; the following API request belongs
+    // to the changed actor in this explicit identity-provider double.
+    if (replaceAfterSessionRead) {
+      replaceAfterSessionRead = false;
+      actor = "4343";
+    }
+    return route.fulfill({
+      json: {
+        session: {
+          githubId: observed,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    });
+  });
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(actor).toBe("4343");
+    attempts += 1;
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    await route.fulfill({
+      status: 403,
+      json: {
+        error: "actor_changed",
+        message:
+          "The signed-in account changed. Retry with the current account.",
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  replaceAfterSessionRead = true;
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "signed-in account changed",
+  );
+  expect(attempts).toBe(1);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+});
+
 for (const integrationBranch of ["release/2026+10", "개발/다음"]) {
   test(`creates a project with selectable integration branch ${integrationBranch}`, async ({
     page,

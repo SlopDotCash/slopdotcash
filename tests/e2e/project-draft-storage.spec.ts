@@ -50,7 +50,9 @@ async function serveEditor(context: BrowserContext, delay = false) {
     route.fulfill({ json: { repositories: [] } }),
   );
   await context.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup: setup() } }),
+    route.fulfill({
+      json: { viewer: { githubId: "4242" }, setup: setup() },
+    }),
   );
   await context.route("**/api/v1/projects/eliza*", async (route) => {
     if (route.request().method() === "PUT") {

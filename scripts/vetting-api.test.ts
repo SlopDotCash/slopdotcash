@@ -239,6 +239,70 @@ async function publicVetting() {
   ).vetting;
 }
 
+test("admin vetting binds protected reads and writes to the displayed actor", async () => {
+  await listPausedProject();
+  const bindActor = (request: Request, expected: string) => {
+    const headers = new Headers(request.headers);
+    headers.set("x-slop-expected-github-id", expected);
+    return new Request(request, { headers });
+  };
+  const before = await vetting.listAssessments();
+  for (const [method, path] of [
+    ["GET", "admin/vetting"],
+    ["POST", "admin/vetting/assessments"],
+    ["POST", "admin/vetting/exemptions"],
+    ["POST", "admin/vetting/exemptions/unknown/revoke"],
+  ] as const) {
+    for (const [expected, status, code] of [
+      [APPLICANT.githubId, 403, "actor_changed"],
+      ["invalid", 400, "invalid_expected_actor"],
+    ] as const) {
+      const response = await vettingApi(
+        bindActor(
+          sessionRequest(
+            method,
+            path,
+            "admin",
+            method === "POST" ? {} : undefined,
+          ),
+          expected,
+        ),
+      );
+      expect(response.status).toBe(status);
+      expect((await response.json()).error).toBe(code);
+    }
+  }
+  expect(await vetting.listAssessments()).toEqual(before);
+  expect(await vetting.listAdmissionExemptions()).toEqual([]);
+  const read = sessionRequest("GET", "admin/vetting", "admin");
+  expect((await vettingApi(read)).status).toBe(200);
+  expect((await vettingApi(bindActor(read, ADMIN.githubId))).status).toBe(200);
+  expect(
+    (
+      await vettingApi(
+        bindActor(
+          sessionRequest("GET", "admin/vetting", "applicant"),
+          APPLICANT.githubId,
+        ),
+      )
+    ).status,
+  ).toBe(403);
+  const queued = await vettingApi(
+    bindActor(
+      sessionRequest("POST", "admin/vetting/assessments", "admin", {
+        projectId: "open-registry",
+        revision: 1,
+        reason: "Actor-bound admission scan",
+      }),
+      ADMIN.githubId,
+    ),
+  );
+  expect(queued.status).toBe(201);
+  // The independent signed-service protocol does not inherit an admin header.
+  const service = await signed("GET", "vetting/requests");
+  expect((await vettingApi(bindActor(service, "invalid"))).status).toBe(200);
+});
+
 describe("community security vetting", () => {
   test("the trusted publisher journals one signed intake attempt", async () => {
     await listPausedProject();
@@ -693,12 +757,16 @@ test("private retained bytes remain inspectable without granting clean clearance
     actor = EVIDENCE_OWNER_GITHUB_ID,
     body?: unknown,
     grant?: string,
+    expectedActor?: string,
   ) =>
     (await retained.evidence.handle(
       new Request(`${ORIGIN}${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers: {
           "x-test-operator": actor,
+          ...(expectedActor === undefined
+            ? {}
+            : { "x-slop-expected-github-id": expectedActor }),
           ...(body === undefined
             ? {}
             : { origin: ORIGIN, "content-type": "application/json" }),
@@ -710,6 +778,36 @@ test("private retained bytes remain inspectable without granting clean clearance
   const overview = `/api/v1/operator/vetting-evidence?assessmentId=${id}&runId=${run}`;
   expect((await operator(overview, "900000001")).status).toBe(403);
   expect((await operator(overview, "")).status).toBe(401);
+  const countsBeforeMismatch = {
+    grants: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_grants").get(),
+    audits: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
+  };
+  for (const path of [overview, `${base}/grant`, `${base}/download-grant`]) {
+    const response = await operator(
+      path,
+      EVIDENCE_READER_GITHUB_ID,
+      path === overview ? undefined : { reason: "Inspect expected-actor refusal" },
+      undefined,
+      EVIDENCE_OWNER_GITHUB_ID,
+    );
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("actor_changed");
+  }
+  expect(
+    sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_grants").get(),
+  ).toEqual(countsBeforeMismatch.grants);
+  expect(
+    sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
+  ).toEqual(countsBeforeMismatch.audits);
+  const malformedExpected = await operator(
+    overview, undefined, undefined, undefined, "invalid",
+  );
+  expect(malformedExpected.status).toBe(400);
+  expect((await malformedExpected.json()).error).toBe("invalid_expected_actor");
+  const matchingExpected = await operator(
+    overview, undefined, undefined, undefined, EVIDENCE_OWNER_GITHUB_ID,
+  );
+  expect(matchingExpected.status).toBe(200);
   const visible = await operator(overview);
   expect(visible.status).toBe(200);
   expect(await visible.text()).not.toContain(VETTING_TRACE_BODY);

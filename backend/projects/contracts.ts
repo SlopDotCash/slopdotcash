@@ -48,13 +48,19 @@ export interface ProjectPersistence {
   projectCreator(projectId: string): Promise<GithubActor | null>;
   /** Membership is keyed by the immutable current GitHub actor ID. */
   hasSignedInActor(githubId: string): Promise<boolean>;
-  /** Atomically lists revision 1 of a paused project; "conflict" on a taken id or repository. */
-  createProject(input: NewProjectInput): Promise<"created" | "conflict">;
+  /** Lists revision 1 only while the checked enforcement generation is current. */
+  createProject(
+    input: NewProjectInput,
+    expectedEnforcementGeneration: number,
+  ): Promise<"created" | "conflict">;
   /**
    * Lists a pending application from before self-service setup as revision 1
    * of a paused project, published by its applicant.
    */
-  publishApplication(input: DecisionInput): Promise<"published" | "conflict">;
+  publishApplication(
+    input: DecisionInput,
+    expectedEnforcementGeneration: number,
+  ): Promise<"published" | "conflict">;
   /**
    * Appends the revision only while the project is at `expectedRevision`
    * and the enforcement generation is still `expectedEnforcementGeneration`.

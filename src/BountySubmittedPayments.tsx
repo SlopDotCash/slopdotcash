@@ -10,6 +10,10 @@ type Saved = {
   source: Record<string, unknown>;
 };
 
+function savedRecord(row: Saved) {
+  return row.item === null ? row.source : row.source[row.item];
+}
+
 /** Retains a verification path when a wallet change hides the old send request. */
 export function BountySubmittedPayments({
   caseId,
@@ -97,16 +101,40 @@ export function BountySubmittedPayments({
       await authorize();
       for (const row of rows) {
         if (!valid(row.value.trim())) continue;
-        const source = JSON.parse(
-          sessionStorage.getItem(row.key) ?? "{}",
-        ) as Record<string, unknown>;
-        if (row.item === null) source.candidate = row.value.trim();
-        else
-          source[row.item] = {
-            ...(source[row.item] as object),
-            candidate: row.value.trim(),
-          };
-        sessionStorage.setItem(row.key, JSON.stringify(source));
+        const raw = sessionStorage.getItem(row.key);
+        const source: Record<string, unknown> | null =
+          raw === null ? null : JSON.parse(raw);
+        const expected = JSON.stringify(savedRecord(row));
+        if (
+          source === null ||
+          JSON.stringify(row.item === null ? source : source[row.item]) !==
+            expected
+        )
+          throw new Error(
+            "The saved transaction changed. Reload before checking it again.",
+          );
+        const next =
+          row.item === null
+            ? { ...source, candidate: row.value.trim() }
+            : {
+                ...source,
+                [row.item]: {
+                  ...(source[row.item] as object),
+                  candidate: row.value.trim(),
+                },
+              };
+        sessionStorage.setItem(row.key, JSON.stringify(next));
+        // A retry owns the bytes just saved, while edits made during the
+        // request keep their current input value. Other nonce rows stay intact.
+        setRows((current) =>
+          current.map((entry) =>
+            entry.key === row.key &&
+            entry.item === row.item &&
+            JSON.stringify(savedRecord(entry)) === expected
+              ? { ...entry, source: next }
+              : entry,
+          ),
+        );
       }
       await verify(hashes);
     });

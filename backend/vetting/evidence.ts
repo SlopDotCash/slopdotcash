@@ -21,6 +21,7 @@ import {
   isSameOriginJsonWrite,
   JSON_HEADERS,
   json as jsonResponse,
+  requireActor,
 } from "../http";
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
@@ -227,8 +228,9 @@ export class VettingEvidence {
       .run();
   }
   async operator(request: Request) {
-    const actor = await this.deps.session?.(request);
-    if (!actor) fail(401, "unauthorized", "Sign in with GitHub");
+    const actor = await requireActor(request, {
+      sessionActor: async (value) => this.deps.session?.(value) ?? null,
+    });
     const { policy } = this.configuration();
     if (!policy.operatorGithubIds.includes(actor.githubId))
       fail(403, "forbidden", "Designated vetting operator access is required");

@@ -2,6 +2,7 @@
 // @source src/lib/use-time-boundary.ts
 // Automatic cutoff is a local render boundary and a separate server guard.
 // Manual finalization remains possible; a scheduled allocation is not payment.
+// Request/session/lifetime admission is refined by ui_owner_private_requests.
 module ui_owner_awards {
   var s: { automatic: bool, cutoffPassed: bool, finalized: bool, draft: bool,
     stored: int, proposed: int, frozen: int, requestedSequence: int, sequence: int,

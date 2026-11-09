@@ -215,6 +215,8 @@ authorization_receipt_name = ".slop-authorization.json"
 skill_prefix = f"{skill_name}/"
 max_archive_bytes = 10_485_760
 max_archive_entries = 33
+activation_revision = None
+activation_verified = False
 try:
     request_timeout_seconds = float(request_timeout_argument)
 except ValueError as error:
@@ -748,7 +750,18 @@ def replace_symlink_atomically(source, destination):
         close_handle(handle)
 
 
+def cleanup_preserving_error(cleanup, description):
+    primary_error = sys.exc_info()[1]
+    try:
+        cleanup()
+    except Exception as cleanup_error:
+        if primary_error is None:
+            raise RuntimeError(f"{description} failed: {cleanup_error}") from cleanup_error
+        print(f"Additional {description} failure: {cleanup_error}", file=sys.stderr)
+
+
 def activate(revision):
+    global activation_revision
     relative_target = os.path.join(versions_name, revision)
     temporary_link = os.path.join(
         skills_root,
@@ -770,12 +783,16 @@ def activate(revision):
         raise
     try:
         replace_symlink_atomically(temporary_link, target_path)
+        activation_revision = revision
     finally:
         if os.path.lexists(temporary_link):
-            os.unlink(temporary_link)
+            cleanup_preserving_error(
+                lambda: os.unlink(temporary_link), "temporary activation link cleanup"
+            )
 
 
 def install_or_update():
+    global activation_verified
     archive_url = f"{artifact_origin}/downloads/{skill_name}.skill"
     checksum_url = f"{archive_url}.sha256"
     archive_contents = fetch_bytes(archive_url, max_archive_bytes, artifact_origin)
@@ -847,13 +864,15 @@ def install_or_update():
         if activated[0] != key:
             raise ValueError("activated skill target has the wrong revision")
         verify_local_version(activated[1], key, canonical_files)
+        activation_verified = True
         action = "Installed" if installed is None else "Updated"
         print(f"{action} {skill_name} at verified revision {key}.")
     finally:
-        shutil.rmtree(work_root)
+        cleanup_preserving_error(lambda: shutil.rmtree(work_root), "staging cleanup")
 
 
 def rollback():
+    global activation_verified
     revision = require_version_key(rollback_revision, "requested rollback revision")
     installed = current_install()
     if installed is None:
@@ -874,6 +893,7 @@ def rollback():
     if activated[0] != revision:
         raise ValueError("activated rollback target has the wrong revision")
     verify_local_version(activated[1], revision, retained_files)
+    activation_verified = True
     print(f"Rolled back {skill_name} to verified retained revision {revision}.")
 
 
@@ -937,13 +957,24 @@ def main():
     finally:
         # Kernel locks are released even after an uncatchable process exit; the
         # inert file stays in place to avoid unlink/recreate split-lock races.
-        lock_file.close()
+        cleanup_preserving_error(lock_file.close, "installer lock cleanup")
 
 
 try:
     main()
 except Exception as error:  # error-policy:J1 installer process boundary
-    print(f"Refusing skill operation: {error}", file=sys.stderr)
+    if activation_revision is None:
+        print(f"Refusing skill operation: {error}", file=sys.stderr)
+    else:
+        verification = (
+            "Post-activation verification succeeded."
+            if activation_verified else "Post-activation verification did not complete."
+        )
+        print(
+            f"Skill activation committed at {activation_revision}. {verification} "
+            f"The operation failed: {error}. The committed activation was not reverted.",
+            file=sys.stderr,
+        )
     sys.exit(1)
 PY
 )`;

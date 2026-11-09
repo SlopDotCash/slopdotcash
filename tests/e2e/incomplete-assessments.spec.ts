@@ -15,6 +15,15 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   });
   let role = "maintainer";
   let unavailable = false;
+  let holdQueue = false;
+  let queueStarted = () => {};
+  let releaseQueue = () => {};
+  const queueWaiting = new Promise<void>((resolve) => {
+    queueStarted = resolve;
+  });
+  const queueHeld = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
   const actor = () =>
     role === "admin" ? "4243" : role === "other" ? "4244" : "4242";
   let paginationReads = 0;
@@ -50,7 +59,18 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       ];
     }).flat(),
   );
+  await api.db
+    .prepare(
+      "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('project-revision:private-owner-marker:2','4242','project_revision','private-owner-marker','/inbox',?,?)",
+    )
+    .bind(at, at)
+    .run();
   diagnostics.allowCanceledBackgroundReads();
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    "/api/v1/notifications/incomplete-assessments",
+  );
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -69,6 +89,11 @@ test("maintainers review incomplete assessments in private Inbox", async ({
           },
         }),
       );
+      if (holdQueue && path.endsWith("/incomplete-assessments")) {
+        holdQueue = false;
+        queueStarted();
+        await queueHeld;
+      }
       return route.fulfill({
         status: response.status,
         headers: Object.fromEntries(response.headers),
@@ -118,6 +143,29 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     );
     await queue.getByRole("button", { name: "Back", exact: true }).click();
     await expect(queue.getByRole("link")).toHaveCount(25);
+    const privateNotice = page.getByText(
+      "The private-owner-marker project settings changed.",
+      { exact: true },
+    );
+    await expect(privateNotice).toBeVisible();
+    // A's accepted page response arrives after the cookie belongs to B.
+    // This child must invalidate the parent, including A's other notices.
+    holdQueue = true;
+    await queue.getByRole("button", { name: "More", exact: true }).click();
+    await queueWaiting;
+    role = "other";
+    releaseQueue();
+    await expect(privateNotice).toHaveCount(0);
+    await expect(queue).toHaveCount(0);
+    role = "maintainer";
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(privateNotice).toBeVisible();
+    await expect(queue.getByRole("link")).toHaveCount(25);
+    // A silent swap before dispatch makes the real handler refuse the header.
+    role = "other";
+    await queue.getByRole("button", { name: "More", exact: true }).click();
+    await expect(privateNotice).toHaveCount(0);
+    await expect(queue).toHaveCount(0);
     role = "other";
     await page.reload({ waitUntil: "networkidle" });
     await expect(queue).toHaveCount(0);
@@ -139,6 +187,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     await page.reload({ waitUntil: "networkidle" });
     await expect(queue).toHaveCount(0);
   } finally {
+    releaseQueue();
     await api.dispose();
   }
 });

@@ -163,13 +163,20 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
         },
       }),
   );
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
-  );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
   let status = 401;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session:
+          status === 401
+            ? null
+            : { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
+  );
   let empty = false;
   let sequence = 0;
   let frozen = false;
@@ -510,7 +517,9 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       }),
   );
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "owner", admin: false } },
+    }),
   );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
@@ -689,7 +698,9 @@ async function serveDecemberReview(
       }),
   );
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: { session: { githubId: "123", githubLogin: "owner", admin: false } },
+    }),
   );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
@@ -746,6 +757,165 @@ async function serveDecemberReview(
     );
   }
 }
+
+async function ownedNovember(page: Page) {
+  await serveDecemberReview(page, {
+    schemaVersion: "1",
+    generatedAt: "2026-12-02T00:00:00.000Z",
+    cycles: [],
+  });
+  let actor = "123";
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: { session: { githubId: actor, githubLogin: "owner", admin: false } },
+    }),
+  );
+  const response = page.waitForResponse((value) =>
+    new URL(value.url()).pathname ===
+    "/api/v1/payments/projects/eliza/monthly/2026-11",
+  );
+  await openMonthlyAwards(page);
+  const value = await (await response).json();
+  await expect(page.getByLabel("Award for first-contributor")).toBeVisible();
+  return {
+    value,
+    changeActor: (next: string) => {
+      actor = next;
+    },
+  };
+}
+
+for (const status of [200, 403]) {
+  test(`an owner allocation ${status} response cannot retain the prior actor's private view`, async ({
+    page,
+    diagnostics,
+  }) => {
+    const fixture = await ownedNovember(page);
+    let release = () => {},
+      started = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const path = "/api/v1/payments/projects/eliza/monthly/2026-11/allocations";
+    if (status === 403) diagnostics.allowResponse(403, "POST", path);
+    await page.route(`**${path}`, async (route) => {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        "123",
+      );
+      started();
+      await held;
+      await route.fulfill({
+        status,
+        json:
+          status === 200
+            ? fixture.value
+            : {
+                message:
+                  "Current GitHub maintainer authority could not be verified.",
+              },
+      });
+    });
+    await page.getByLabel("Award for first-contributor").fill("1.8");
+    await page
+      .getByRole("button", { name: "Save first-contributor", exact: true })
+      .click();
+    await waiting;
+    try {
+      fixture.changeActor("456");
+    } finally {
+      release();
+    }
+    const awards = page.getByRole("region", { name: "Monthly awards" });
+    await expect(
+      awards.getByRole("list", { name: "Allocations", exact: true }),
+    ).toHaveCount(0);
+    await expect(awards.getByLabel("Award for first-contributor")).toHaveCount(
+      0,
+    );
+    await expect(awards.getByRole("alert")).toContainText("account changed");
+    await expect(awards).not.toContainText("Allocation saved privately.");
+  });
+}
+
+test("a same-actor allocation outage retains the unsaved draft", async ({
+  page,
+  diagnostics,
+}) => {
+  await ownedNovember(page);
+  const path = "/api/v1/payments/projects/eliza/monthly/2026-11/allocations";
+  diagnostics.allowResponse(503, "POST", path);
+  await page.route(`**${path}`, (route) =>
+    route.fulfill({
+      status: 503,
+      json: { message: "Allocation service unavailable." },
+    }),
+  );
+  const input = page.getByLabel("Award for first-contributor");
+  await input.fill("1.8");
+  await page
+    .getByRole("button", { name: "Save first-contributor", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Allocation service unavailable.",
+  );
+  await expect(input).toHaveValue("1.8");
+  await expect(input).toBeEnabled();
+});
+
+test("a departed allocation save keeps server acceptance without changing the new route", async ({
+  page,
+}) => {
+  const fixture = await ownedNovember(page);
+  let accepted = 0;
+  let release = () => {},
+    started = () => {},
+    delivered = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const finished = new Promise<void>((resolve) => {
+    delivered = resolve;
+  });
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11/allocations",
+    async (route) => {
+      accepted += 1;
+      started();
+      await held;
+      await route.fulfill({ json: fixture.value });
+      delivered();
+    },
+  );
+  await page.getByLabel("Award for first-contributor").fill("1.8");
+  await page
+    .getByRole("button", { name: "Save first-contributor", exact: true })
+    .click();
+  await waiting;
+  try {
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/u);
+  } finally {
+    release();
+  }
+  await finished;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  expect(accepted).toBe(1);
+  await expect(page).toHaveURL(/\/$/u);
+  await expect(
+    page.getByText("Allocation saved privately.", { exact: true }),
+  ).toHaveCount(0);
+});
 
 test("a monthly proposal with no public cycle is reachable", async ({
   page,

@@ -214,6 +214,64 @@ deadline can leave the private directory behind, and a removed directory does
 not prove that child processes stopped. Ownership checkpoints remain active
 during the interrupt grace period; each completion path retains its failures.
 
+## Current source-only follow-up
+
+The follow-up preserves the source work at
+[`5eed5ada2`](https://github.com/SlopDotCash/slopdotcash/tree/5eed5ada2341fad8df23ac5176ab1fc5d6864338/formal)
+while using the domain layout and consolidated stateless inventory from
+`82477b08`. Historical per-branch research remains in that immutable source
+and in ignored alignment notes; it is not restored as a second current audit
+index. No application, browser, parser, simulator or verifier ran during this
+alignment. Regenerated inventories and source comparisons are not acceptance.
+
+| Boundary | Model families | Source or existing regression entry points |
+| --- | --- | --- |
+| Private reads, explicit sign-out and account changes | `ui_session`, `ui_explicit_signout`, `ui_inbox_reads`, `ui_points_disputes`, `ui_vetting_inventory`, `ui_vetting_reader` | `src/lib/project-api.ts`, `src/Inbox.tsx`, `tests/e2e/explicit-signout-lifetime.spec.ts`, `tests/e2e/inbox-response-owner.spec.ts` |
+| Project publication and admin actions | `api_project_creation_completion`, `api_project_revision_receipt`, `ui_project_publication_lifetime`, `ui_admin_mutation_identity`, `ui_admin_enforcement_intent`, `ui_admin_vetting_requests` | `backend/projects/handler.ts`, `backend/projects/cloudflare-persistence.ts`, `src/Admin.tsx`, `tests/e2e/project-save.spec.ts`, `tests/e2e/admin-vetting-request-ownership.spec.ts` |
+| Wallet, owner and referral continuations | `ui_earnings_actor_binding`, `ui_earnings_wallet_lifetime`, `ui_owner_recovery_lifetime`, `ui_owner_vault_setup`, `ui_referral_claim_lifetime` | `src/Earnings.tsx`, `src/OwnerVaultSetup.tsx`, `src/ReferralClaims.tsx`, `tests/e2e/earnings-wallet-lifetime.spec.ts`, `tests/e2e/referral-claims.spec.ts` |
+| Direct-payment and monthly completion | `direct_preparation_completion`, `direct_recovery_completion`, `direct_bounty_journal`, `monthly_owner_completion`, `ui_submitted_candidate_ownership` | `backend/security/direct-payments.ts`, `backend/payments/monthly.ts`, `src/lib/pending-attempt.ts`, existing EVM/Solana payment workflows |
+| Notifications and inference accounting | `notification_attempt_ownership`, `notification_admin_fanout`, `notification_escalation`, `bot_inference_reservations`, `bot_value_attempt_recovery`, `bot_value_precall_authority` | `workers/notify/security.ts`, `workers/notify/activity.ts`, `workers/slopbot/value-budget.ts`, migration `0118_slopbot_value_attempt_completion.sql`, existing notification and value-pipeline tests |
+| Inbox storage and identity admission | `api_inbox`, `inbox_queries`, `inbox_mark_read`, `api_identity_admission`, `identity_rate_gate` | `backend/notifications/handler.ts`, `workers/identity/rate-limit.ts`, existing migrated notification workflows; direct rate-counter/gate execution evidence remains missing |
+| Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
+| Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
+| Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
+
+Names in the table are unique model basenames within `models/<domain>/`.
+Existing and added regression definitions have not run against this combined
+candidate. The table names entry points, not successful results or full
+model-to-implementation refinement.
+
+The models retain the distinction between a session observation and continuous
+knowledge of browser identity. Departed callbacks cannot replace a newer view;
+an already accepted backend write is not undone by departure. Local storage
+comparison-and-swap guards protect the compared slot only; they are not global
+locks or guarantees that unavailable storage was erased. Clipboard feedback
+belongs to the committed value and latest local request, not exclusive control
+of the operating-system clipboard.
+
+Notification pages and unread counts are independent observations. Committed
+read marks remain durable when their response fails. Identity rate admission
+uses the timestamp captured after edge admission, before hash and SQL awaits.
+Cleanup and reordered requests can therefore produce a returned snapshot whose
+expiry is already past the response-time clock. Its finite bound applies per
+counter generation, not to every possible wall-clock window. No stronger
+clock policy or approximate edge guarantee is inferred.
+
+Contributor lock publication and evidence publication distinguish committed
+state from cleanup failure. Failed compensation retains recovery inputs.
+These operations do not provide crash-atomic multi-path publication or proof
+against every unrelated filesystem writer. Evidence TLS success requires an
+observed socket close; the probe deadline is not a deadline for DNS or the
+whole recorder. Direct-child cleanup is not process-tree containment. Backup
+objects, readback verification, completion records and queue acknowledgment
+remain separate states.
+
+This candidate still must incorporate the final reviewed changes from PR
+[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) before its own PR
+review. Its independently collected results cover their named source heads,
+not this later source-only combination. The user instruction to skip checks
+remains in force for this lane; application-wide state assurance is incomplete.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one
