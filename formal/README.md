@@ -48,6 +48,14 @@ supervises each process group. Commands fail on violations, errors or timeouts.
 The Java 21 CI job enables the translator's real TLC regressions; without the
 environment flag those cases are reported as skipped.
 
+CI (`.github/workflows/formal.yml`) splits the sorted model list across
+parallel shards. Each shard runs `check-formal.mjs [--verify] --model=NAME`
+for its models. The final `quint` job fails unless every current model has
+exactly one passing check report and one passing verification report bound to
+the checked-out model, source and tool bytes, and it publishes the merged
+`checks.json` and `verification.json`. `tlc.json` runs four TLC workers, one
+per hosted-runner vCPU; the worker count changes no explored state space.
+
 Type, scenario and simulation stages have a 90-second limit. Finite verification
 normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds
 and `direct_bounty_journal` has 1,800 seconds. The runner records the effective
