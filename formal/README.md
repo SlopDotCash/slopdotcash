@@ -49,9 +49,11 @@ The Java 21 CI job enables the translator's real TLC regressions; without the
 environment flag those cases are reported as skipped.
 
 Type, scenario and simulation stages have a 90-second limit. Finite verification
-normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds
-and `direct_bounty_journal` has 1,800 seconds. The runner records the effective
-limit and its own hash. These allowances change no model domain or invariant.
+normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds.
+The full-state `ui_bounty_payment_parent` and `ui_solana_payment_pending` graphs
+and the `direct_bounty_journal` safety quotient have 1,800 seconds. The runner
+records the effective limit and its own hash. These allowances change no model
+domain or invariant.
 A timeout is an incomplete check, never a pass.
 
 The journal uses the exact, hash-bound safety view described in
@@ -76,6 +78,40 @@ refinement. The runner refuses stale or unexpected view evidence.
   progress property. A timeout or retry bound must settle visibly; fairness
   must not assume that a payment, provider request or human approval succeeds.
 - Record finite bounds and abstractions in the model's comments.
+
+### Tracked storage key
+
+The payment-parent model tracks durable storage contents for one storage key,
+chosen at initialization. Every guard and invariant that reads `savedKeys` or
+`hashKeys` concerns the current storage key or the open prompt key, and no
+transition copies contents between keys. An untracked slot is treated as
+empty, which only adds storage replies, so each tracked run over-approximates
+the full model's behavior for that key. Generation and message values 1 and 2
+are interchangeable (the initial state uses 0 and keys are compared only for
+equality), so keys 111, 112, 213 and 214 represent all twelve storage keys.
+This removes the `3^12` product of slot subsets that kept the full graph from
+completing. Scenarios fix the tracked key they assert on. This is reviewed
+reasoning, not a machine-checked equivalence theorem.
+
+### Duplicate transition choices
+
+The payment-parent model enumerates reply payloads only for the current,
+authenticated read. Every payload for another pending read produces the same
+removal from the pending set, so one original payload represents that successor.
+Storage replies retain both current-epoch plan values and the failed-write
+successor. A stale epoch already produced the identity successor from every
+state, including epochs outside the finite choice range; the wrapper retains
+that successor once and keeps the original range guard for current replies.
+
+The Solana pending model's completion flags affect its successor only through
+`authorized && storageWorks`. The wrapper therefore retains the original
+`true, true` and `false, false` representatives. Its direct action still accepts
+all four combinations, including the separately tested refusal cases.
+
+These changes preserve each wrapper's enabledness and full-state successors.
+They change the number of equivalent nondeterministic choices and can change
+seeded simulation frequencies. They do not project state fields or change
+initial states, direct actions, invariants, finite bounds or scenario outcomes.
 
 ## Inventory and review
 
