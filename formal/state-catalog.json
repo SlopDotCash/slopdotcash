@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7b455c51ba26433a506d62a1746ce71519392277d752102c218710623732bd1f",
+  "inventorySha256": "90ed63f58db66066c004c9c82a1fb12be27dcf9e80f75f2d38832bc27e14908a",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2294,7 +2294,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 261,
+      "line": 262,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2319,7 +2319,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 952,
+      "line": 953,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2344,7 +2344,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 967,
+      "line": 968,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2369,7 +2369,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 969,
+      "line": 970,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2394,7 +2394,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 985,
+      "line": 986,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2419,7 +2419,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1024,
+      "line": 1025,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -2472,7 +2472,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1342,
+      "line": 1343,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2497,7 +2497,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1617,
+      "line": 1618,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2663,7 +2663,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4621,
+      "line": 4619,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -3169,7 +3169,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "line": 108,
+      "line": 109,
       "name": "AttemptMode",
       "kind": "string-union",
       "values": ["none", "required"],
