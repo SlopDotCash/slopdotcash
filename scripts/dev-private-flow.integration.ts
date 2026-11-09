@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -192,6 +193,7 @@ async function request(
   });
 }
 async function wait<T>(
+  label: string,
   read: () => Promise<T | false>,
   timeout = 25_000,
 ): Promise<T> {
@@ -203,7 +205,27 @@ async function wait<T>(
     } catch {}
     await Bun.sleep(100);
   }
-  throw new Error("Local proof deadline exceeded");
+  throw new Error(`Local proof deadline exceeded: ${label} (${timeout}ms)`);
+}
+// A cold Vite and API start on a loaded CI runner usually takes about 10s but
+// exceeded 25s once (run 42609386004). Only process readiness gets this budget;
+// every behavioral wait keeps its original deadline.
+const STARTUP_TIMEOUT = 90_000;
+function processState(name: string, child: ChildProcess | undefined) {
+  if (!child) return `${name}: not started`;
+  if (child.exitCode !== null) return `${name}: exited ${child.exitCode}`;
+  if (child.signalCode !== null) return `${name}: killed ${child.signalCode}`;
+  return `${name}: running`;
+}
+function errorLogTail(name: string) {
+  try {
+    const lines = readFileSync(join(artifact, name), "utf8")
+      .trimEnd()
+      .split("\n");
+    return lines.slice(-40).join("\n");
+  } catch {
+    return "(absent)";
+  }
 }
 try {
   startApi();
@@ -227,7 +249,11 @@ try {
       ],
     },
   );
-  await wait(async () => (await request("/__dev/health", null)).ok);
+  await wait(
+    "initial Vite and API health",
+    async () => (await request("/__dev/health", null)).ok,
+    STARTUP_TIMEOUT,
+  );
   const inventory = (await (
     await request("/api/v1/projects", null)
   ).json()) as { projects: { id: string }[] };
@@ -258,7 +284,7 @@ try {
     202,
     "real local verification API must accept enrollment",
   );
-  const mail = await wait(async () => {
+  const mail = await wait("verification mail capture", async () => {
     const response = await request("/__dev/mail");
     const text = await response.text();
     return text.includes("#verify-email=") ? text : false;
@@ -312,15 +338,23 @@ try {
     (await request(`/api/v1/security-submissions/${submission.id}`, 1)).status,
     200,
   );
-  await wait(async () => {
-    const html = await (await request("/__dev/mail")).text();
-    return html.includes(`href="${origin}/inbox"`);
-  }, 12_000);
+  await wait(
+    "security notice mail capture",
+    async () => {
+      const html = await (await request("/__dev/mail")).text();
+      return html.includes(`href="${origin}/inbox"`);
+    },
+    12_000,
+  );
   const captured = await (await request("/__dev/mail")).text();
   assert.ok(!captured.includes(report.description));
   await stop(api);
   startApi();
-  await wait(async () => (await request("/__dev/health", null)).ok);
+  await wait(
+    "restarted API health",
+    async () => (await request("/__dev/health", null)).ok,
+    STARTUP_TIMEOUT,
+  );
   const persisted = await request(
     `/api/v1/security-submissions/${submission.id}`,
   );
@@ -360,6 +394,17 @@ try {
       liveProviderCalls: false,
     }),
   );
+} catch (error) {
+  // Error streams only: diagnostics for a failed run without the request logs.
+  console.error(
+    [
+      processState("vite", site),
+      processState("api", api),
+      `--- vite-errors.log (tail) ---\n${errorLogTail("vite-errors.log")}`,
+      `--- backend-errors.log (tail) ---\n${errorLogTail("backend-errors.log")}`,
+    ].join("\n"),
+  );
+  throw error;
 } finally {
   await stop(site);
   await stop(api);

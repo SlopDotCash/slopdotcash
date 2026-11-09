@@ -362,8 +362,16 @@ jobs:
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      # verify:code without formal:check: the Quint state-models job runs that
+      # same check for this SHA, and the quality gate requires it. Running it
+      # here too repeated about 15 minutes of model scenarios on every run.
       - name: Check code
-        run: bun run verify:code
+        run: |
+          set -euo pipefail
+          bun run typecheck
+          bun run lint:check
+          bun run test
+          bun run test:integration
 
       - name: Run installer lifecycle end-to-end checks
         if: steps.scope.outputs.installer == 'true'
@@ -517,6 +525,7 @@ jobs:
     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'cancelled') }}
     needs: [prepare, check, browsers, isolated-artifact, state-models, lemmascript]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Require the checked bundle, code checks and every browser lane
         env:
