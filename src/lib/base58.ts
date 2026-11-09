@@ -11,19 +11,6 @@ export function encodeBase58Bytes(bytes: Uint8Array): string {
     .join("");
 }
 
-export function encodeBase58Bytes(bytes: Uint8Array): string {
-  let value = 0n;
-  for (const byte of bytes) value = value * 256n + BigInt(byte);
-  let text = "";
-  while (value > 0n) {
-    text = BASE58_ALPHABET[Number(value % 58n)] + text;
-    value /= 58n;
-  }
-  let leading = 0;
-  while (leading < bytes.length && bytes[leading] === 0) leading += 1;
-  return "1".repeat(leading) + text;
-}
-
 /** Decodes base58 of any length, such as Solana instruction data. */
 export function decodeBase58Bytes(value: string): Uint8Array {
   const digits: number[] = [];
