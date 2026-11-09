@@ -5,6 +5,19 @@
 // grant, final wallet observation and caller use are distinct transitions.
 // Layout cleanup retires the view at committed removal. Already-open wallet
 // tails may still update their own exact slot. Unexecuted.
+//
+// Finite step reductions. Each action has a *With(..., reduce) form; direct
+// actions and named scenarios pass false and keep the exact state. step
+// passes true, which applies settle to every successor, and scopes each
+// nondeterministic choice to the action that reads it:
+// - errors is write-only (no guard or invariant reads it), so step stores {}.
+// - A departed or terminated view never remounts. Its target is read only by
+//   mounted observe/clearVerified, and its captured record only by mounted
+//   actions or its own walletDeclines tail, so step stores 0 when unread.
+//   Unmounted, its reviewed or locking phase can only become done without
+//   any other effect (requestLock and allowed grantLock need the mount), and
+//   reviewed, locking, done and terminated are read by nothing but the
+//   invariant's wallet and lock conjuncts, so step stores them as done.
 module ui_referral_claim_lifetime {
   // record: 0 empty, 1 legacy, 2/3 A unknown/hash, 4/5 B unknown/hash,
   // 6 unreadable. Values also represent exact captured JSON versions.
@@ -13,6 +26,17 @@ module ui_referral_claim_lifetime {
     memoryHash: Set[int], errors: Set[int], sent: Set[int], claimed: int }
   val views = Set(1, 2)
   var s: State
+  // Finite-step canonical form; see the header. Direct actions pass false.
+  pure def settle(reduce: bool, st: State): State = if (not(reduce)) st else {
+    def gone(id: int): bool = not(st.mounted.contains(id))
+    def quiet(id: int): bool = gone(id)
+      and Set("reviewed", "locking", "done", "terminated").contains(st.phase.get(id))
+    st.with("errors", Set())
+      .with("phase", views.mapBy(id => if (quiet(id)) "done" else st.phase.get(id)))
+      .with("target", views.mapBy(id => if (gone(id)) 0 else st.target.get(id)))
+      .with("captured", views.mapBy(id =>
+        if (gone(id) and st.phase.get(id) != "wallet") 0 else st.captured.get(id)))
+  }
   action init = s' = { present: views, mounted: views, supported: true, writeWorks: true,
     lock: 0, phase: views.mapBy(_ => "reviewed"), record: 0,
     captured: views.mapBy(_ => 0), target: views.mapBy(_ => 0), memoryHash: Set(), errors: Set(),
@@ -22,97 +46,132 @@ module ui_referral_claim_lifetime {
   pure def owner(record: int): int = if (record == 2 or record == 3) 1
     else if (record == 4 or record == 5) 2 else 0
   pure def amount(record: int): int = if (record == 4 or record == 5) 2 else 1
-  action unavailableLocks = all { s.lock == 0, s.sent == Set(), s' = s.with("supported", false) }
-  action storageFails = s' = s.with("writeWorks", false)
-  action storageRecovers = s' = s.with("writeWorks", true)
-  action restoreLegacy = all { s.record == 0, s.lock == 0, s.sent == Set(), s' = s.with("record", 1) }
-  action restoreUnreadable = all { s.record == 0, s.lock == 0, s.sent == Set(), s' = s.with("record", 6) }
-  action observe(id: int): bool = all { s.mounted.contains(id),
-    s' = s.with("captured", s.captured.set(id, s.record))
+  action unavailableLocksWith(reduce: bool): bool = all { s.lock == 0, s.sent == Set(), s' = settle(reduce, s.with("supported", false)) }
+  action unavailableLocks = unavailableLocksWith(false)
+  action storageFailsWith(reduce: bool): bool = s' = settle(reduce, s.with("writeWorks", false))
+  action storageFails = storageFailsWith(false)
+  action storageRecoversWith(reduce: bool): bool = s' = settle(reduce, s.with("writeWorks", true))
+  action storageRecovers = storageRecoversWith(false)
+  action restoreLegacyWith(reduce: bool): bool = all { s.record == 0, s.lock == 0, s.sent == Set(), s' = settle(reduce, s.with("record", 1)) }
+  action restoreLegacy = restoreLegacyWith(false)
+  action restoreUnreadableWith(reduce: bool): bool = all { s.record == 0, s.lock == 0, s.sent == Set(), s' = settle(reduce, s.with("record", 6)) }
+  action restoreUnreadable = restoreUnreadableWith(false)
+  action observeWith(id: int, reduce: bool): bool = all { s.mounted.contains(id),
+    s' = settle(reduce, s.with("captured", s.captured.set(id, s.record))
       .with("target", s.target.set(id, if (s.record == 0 or s.record == 6) 0
         else if (s.record == 1 and s.target.get(id) > 1) s.target.get(id)
-        else amount(s.record))) }
-  action requestLock(id: int): bool = all {
+        else amount(s.record)))) }
+  action observe(id: int): bool = observeWith(id, false)
+  action requestLockWith(id: int, reduce: bool): bool = all {
     s.mounted.contains(id), s.supported, s.phase.get(id) == "reviewed",
-    s' = s.with("phase", s.phase.set(id, "locking")) }
-  action grantLock(id: int): bool = {
+    s' = settle(reduce, s.with("phase", s.phase.set(id, "locking"))) }
+  action requestLock(id: int): bool = requestLockWith(id, false)
+  action grantLockWith(id: int, reduce: bool): bool = {
     val allowed = s.mounted.contains(id) and s.lock == 0
     all { s.phase.get(id) == "locking",
-      s' = s.with("lock", if (allowed) id else s.lock)
+      s' = settle(reduce, s.with("lock", if (allowed) id else s.lock)
         .with("phase", s.phase.set(id, if (allowed) "preflight" else "done"))
-        .with("errors", if (not(allowed) and s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors) }
+        .with("errors", if (not(allowed) and s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors)) }
   }
+  action grantLock(id: int): bool = grantLockWith(id, false)
   action beginSend(id: int): bool = requestLock(id).then(grantLock(id))
-  action observePreflight(id: int): bool = all {
+  action observePreflightWith(id: int, reduce: bool): bool = all {
     s.lock == id, s.phase.get(id) == "preflight",
-    s' = s.with("phase", s.phase.set(id, "observed")) }
-  action returnPreflight(id: int): bool = all {
+    s' = settle(reduce, s.with("phase", s.phase.set(id, "observed"))) }
+  action observePreflight(id: int): bool = observePreflightWith(id, false)
+  action returnPreflightWith(id: int, reduce: bool): bool = all {
     s.lock == id, s.phase.get(id) == "observed",
-    s' = s.with("phase", s.phase.set(id, "returned")) }
-  action dispatchWallet(id: int): bool = all {
+    s' = settle(reduce, s.with("phase", s.phase.set(id, "returned"))) }
+  action returnPreflight(id: int): bool = returnPreflightWith(id, false)
+  action dispatchWalletWith(id: int, reduce: bool): bool = all {
     s.mounted.contains(id), s.lock == id, s.phase.get(id) == "returned",
     s.record == 0, s.writeWorks,
-    s' = s.with("record", unknown(id)).with("captured", s.captured.set(id, unknown(id)))
+    s' = settle(reduce, s.with("record", unknown(id)).with("captured", s.captured.set(id, unknown(id)))
       .with("target", s.target.set(id, id))
-      .with("phase", s.phase.set(id, "wallet")).with("sent", s.sent.union(Set(id))) }
+      .with("phase", s.phase.set(id, "wallet")).with("sent", s.sent.union(Set(id)))) }
+  action dispatchWallet(id: int): bool = dispatchWalletWith(id, false)
   action requestWallet(id: int): bool = observePreflight(id).then(returnPreflight(id)).then(dispatchWallet(id))
-  action preflightRefuses(id: int): bool = all {
+  action preflightRefusesWith(id: int, reduce: bool): bool = all {
     s.lock == id, Set("preflight", "observed", "returned").contains(s.phase.get(id)),
-    s' = s.with("lock", 0).with("phase", s.phase.set(id, "done"))
-      .with("errors", if (s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors) }
-  action depart(id: int): bool = all {
-    s.mounted.contains(id), s' = s.with("present", s.present.exclude(Set(id)))
-      .with("mounted", s.mounted.exclude(Set(id))) }
+    s' = settle(reduce, s.with("lock", 0).with("phase", s.phase.set(id, "done"))
+      .with("errors", if (s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors)) }
+  action preflightRefuses(id: int): bool = preflightRefusesWith(id, false)
+  action departWith(id: int, reduce: bool): bool = all {
+    s.mounted.contains(id), s' = settle(reduce, s.with("present", s.present.exclude(Set(id)))
+      .with("mounted", s.mounted.exclude(Set(id)))) }
+  action depart(id: int): bool = departWith(id, false)
   // SPA departure retains the lock until the existing wallet request settles.
-  action walletHash(id: int): bool = all {
+  action walletHashWith(id: int, reduce: bool): bool = all {
     s.lock == id, s.phase.get(id) == "wallet",
-    s' = s.with("lock", 0).with("phase", s.phase.set(id, "done"))
+    s' = settle(reduce, s.with("lock", 0).with("phase", s.phase.set(id, "done"))
       .with("record", if (owner(s.record) == id and s.writeWorks) hashed(id) else s.record)
       .with("captured", if (owner(s.record) == id and s.writeWorks)
         s.captured.set(id, hashed(id)) else s.captured)
       .with("memoryHash", if (s.mounted.contains(id) and owner(s.record) == id)
-        s.memoryHash.union(Set(id)) else s.memoryHash) }
-  action walletDeclines(id: int): bool = all {
+        s.memoryHash.union(Set(id)) else s.memoryHash)) }
+  action walletHash(id: int): bool = walletHashWith(id, false)
+  action walletDeclinesWith(id: int, reduce: bool): bool = all {
     s.lock == id, s.phase.get(id) == "wallet",
-    s' = s.with("lock", 0).with("phase", s.phase.set(id, "done"))
-      .with("record", if (s.record == s.captured.get(id) and s.writeWorks) 0 else s.record) }
-  action walletUnknown(id: int): bool = all {
+    s' = settle(reduce, s.with("lock", 0).with("phase", s.phase.set(id, "done"))
+      .with("record", if (s.record == s.captured.get(id) and s.writeWorks) 0 else s.record)) }
+  action walletDeclines(id: int): bool = walletDeclinesWith(id, false)
+  action walletUnknownWith(id: int, reduce: bool): bool = all {
     s.lock == id, s.phase.get(id) == "wallet",
-    s' = s.with("lock", 0).with("phase", s.phase.set(id, "done")) }
+    s' = settle(reduce, s.with("lock", 0).with("phase", s.phase.set(id, "done"))) }
+  action walletUnknown(id: int): bool = walletUnknownWith(id, false)
   // Browser-context termination releases a Web Lock. It does not prove whether
   // the external transaction was sent, and it does not clear the marker.
-  action terminate(id: int): bool = all {
-    s.lock == id, s' = s.with("lock", 0).with("present", s.present.exclude(Set(id)))
+  action terminateWith(id: int, reduce: bool): bool = all {
+    s.lock == id, s' = settle(reduce, s.with("lock", 0).with("present", s.present.exclude(Set(id)))
       .with("mounted", s.mounted.exclude(Set(id)))
-      .with("phase", s.phase.set(id, "terminated")) }
-  action reset(id: int): bool = all {
+      .with("phase", s.phase.set(id, "terminated"))) }
+  action terminate(id: int): bool = terminateWith(id, false)
+  action resetWith(id: int, reduce: bool): bool = all {
     s.mounted.contains(id), s.supported, s.lock == 0, s.writeWorks,
     s.record == s.captured.get(id), s.record != 0,
-    s' = s.with("record", 0).with("captured", s.captured.set(id, 0))
-      .with("target", s.target.set(id, 0)) }
-  action refuseBusyOrUnsupported(id: int): bool = all {
+    s' = settle(reduce, s.with("record", 0).with("captured", s.captured.set(id, 0))
+      .with("target", s.target.set(id, 0))) }
+  action reset(id: int): bool = resetWith(id, false)
+  action refuseBusyOrUnsupportedWith(id: int, reduce: bool): bool = all {
     s.mounted.contains(id), not(s.supported) or s.lock != 0,
-    s' = s.with("errors", s.errors.union(Set(id))) }
-  action observeClaimed(total: int): bool = all {
-    total >= s.claimed, total <= 2, s' = s.with("claimed", total) }
-  action clearVerified(id: int): bool = all {
+    s' = settle(reduce, s.with("errors", s.errors.union(Set(id)))) }
+  action refuseBusyOrUnsupported(id: int): bool = refuseBusyOrUnsupportedWith(id, false)
+  action observeClaimedWith(total: int, reduce: bool): bool = all {
+    total >= s.claimed, total <= 2, s' = settle(reduce, s.with("claimed", total)) }
+  action observeClaimed(total: int): bool = observeClaimedWith(total, false)
+  action clearVerifiedWith(id: int, reduce: bool): bool = all {
     s.mounted.contains(id), s.supported, s.lock == 0, s.writeWorks,
     s.record == s.captured.get(id), s.record > 0, s.record < 6,
     s.target.get(id) > 0, s.claimed >= s.target.get(id),
-    s' = s.with("record", 0).with("captured", s.captured.set(id, 0)) }
+    s' = settle(reduce, s.with("record", 0).with("captured", s.captured.set(id, 0))) }
+  action clearVerified(id: int): bool = clearVerifiedWith(id, false)
   // An older, uncoordinated bundle or external writer is not protected by this
   // bundle's Web Lock. CAS still must not overwrite its different UUID/bytes.
-  action externalReplacement(record: int): bool = all {
-    Set(1, 3, 5, 6).contains(record), s' = s.with("record", record) }
-  action step = {
-    nondet id = views.oneOf()
-    nondet total = Set(0, 1, 2).oneOf()
-    nondet record = Set(1, 3, 5, 6).oneOf()
-    any { unavailableLocks, storageFails, storageRecovers, restoreLegacy,
-      restoreUnreadable, observe(id), requestLock(id), grantLock(id), observePreflight(id), returnPreflight(id), dispatchWallet(id), preflightRefuses(id),
-      depart(id), walletHash(id), walletDeclines(id), walletUnknown(id), terminate(id),
-      reset(id), refuseBusyOrUnsupported(id), observeClaimed(total), clearVerified(id),
-      externalReplacement(record), s' = s }
+  action externalReplacementWith(record: int, reduce: bool): bool = all {
+    Set(1, 3, 5, 6).contains(record), s' = settle(reduce, s.with("record", record)) }
+
+  action externalReplacement(record: int): bool = externalReplacementWith(record, false)
+  action step = any {
+    unavailableLocksWith(true), storageFailsWith(true), storageRecoversWith(true),
+    restoreLegacyWith(true), restoreUnreadableWith(true),
+    { nondet id = views.oneOf() observeWith(id, true) },
+    { nondet id = views.oneOf() requestLockWith(id, true) },
+    { nondet id = views.oneOf() grantLockWith(id, true) },
+    { nondet id = views.oneOf() observePreflightWith(id, true) },
+    { nondet id = views.oneOf() returnPreflightWith(id, true) },
+    { nondet id = views.oneOf() dispatchWalletWith(id, true) },
+    { nondet id = views.oneOf() preflightRefusesWith(id, true) },
+    { nondet id = views.oneOf() departWith(id, true) },
+    { nondet id = views.oneOf() walletHashWith(id, true) },
+    { nondet id = views.oneOf() walletDeclinesWith(id, true) },
+    { nondet id = views.oneOf() walletUnknownWith(id, true) },
+    { nondet id = views.oneOf() terminateWith(id, true) },
+    { nondet id = views.oneOf() resetWith(id, true) },
+    { nondet id = views.oneOf() refuseBusyOrUnsupportedWith(id, true) },
+    { nondet total = Set(0, 1, 2).oneOf() observeClaimedWith(total, true) },
+    { nondet id = views.oneOf() clearVerifiedWith(id, true) },
+    { nondet record = Set(1, 3, 5, 6).oneOf() externalReplacementWith(record, true) },
+    s' = s
   }
   val invariant = all {
     s.mounted.subseteq(s.present),
