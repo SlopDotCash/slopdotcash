@@ -380,7 +380,7 @@ bodies remain unreadable. See PRD sections 8–10.
 ## Private traces
 
 Contributors may opt into the minimized contribution-specific trace defined by
-`protocol/private-trace-v1.md`. Declining or failing upload never blocks submission. The contributor inspects and
+`backend/trace/README.md#private-trace-privacy-contract`. Declining or failing upload never blocks submission. The contributor inspects and
 redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
@@ -418,7 +418,7 @@ automatic monthly distribution.
 ## Participation points
 
 Slop Points are the single contribution and participation unit governed by
-`protocol/points-v1.md`. From 24 October 2026, grant no welcome or
+`docs/slop-product-requirements.md` section 7. From 24 October 2026, grant no welcome or
 X-connection points (PRD section 11, Participation points). Keep every award
 recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection

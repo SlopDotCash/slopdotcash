@@ -14,6 +14,7 @@ release. External provider and chain behavior remain separate trust boundaries.
 | --- | --- |
 | `models/<domain>/*.qnt` | Finite Quint models, one folder per domain. Model names are unique across folders. |
 | `inventory.json` | Generated census of production sources, their linked models and lexical state candidates. |
+| `lemmascript-inventory.json` | Generated callable census and selected runtime contracts; an inventory entry is not a proof. |
 | `state-catalog.json` | Generated list of declared lifecycle string unions and SQL state constraints. |
 | `stateless.json` | Reviewed reasons why a source holds no independent state. |
 | `tlc.json` | TLC worker and JVM settings for `formal:verify`. |
@@ -34,6 +35,7 @@ node scripts/check-formal.mjs --model=MODEL_NAME
 node scripts/check-formal.mjs --verify --model=MODEL_NAME
 SLOP_QUINT_TRANSLATOR_TEST=1 bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts
 bun run formal:inventory:update
+bun run lemmascript:inventory:update
 ```
 
 `formal:check` requires a current inventory with zero unmapped sources, a
@@ -83,6 +85,10 @@ otherwise `pending`. A mapping is a review index, not proof that every source
 branch refines the model. Refreshing the inventory alone cannot turn an
 unreviewed source into accepted coverage. After reviewing a source or model
 change, run `bun run formal:inventory:update` and commit both indexes.
+
+The LemmaScript callable census lives here rather than in the retired research
+notes. Run `bun run lemmascript:inventory:update` after source changes;
+`bun run lemmascript:inventory` rejects missing or stale census bytes.
 
 Unmentioned literals in `state-catalog.json` are review leads, not proof of a
 missing transition, and a matching literal is not proof of coverage. Boolean,

@@ -2,7 +2,7 @@
 // @source migrations/0095_fee_solana_expiry.sql
 // @source workers/fee-converter/solana-expiry.ts
 // @source workers/fee-converter/native-gas.ts
-// @evidence docs/lemmascript-expiry-traversal.md
+// @evidence https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/docs/lemmascript-expiry-traversal.md
 // fee-converter/solana-expiry.ts, native-gas.ts; full-history independent providers.
 module solana_expiry {
   type S = { signed: bool, hold: int, first: str, second: str, history: bool, released: bool }

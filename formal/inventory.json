@@ -3222,7 +3222,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "cd3bb4fba94f09742afc0f975e32e46f55e85071c269362c868b1b95c1e57ee7",
+      "sha256": "b4c6800d9cb6ff4ef52b8b5a8131f0708f5d7e697b79d3f251cf0f0678c7070c",
       "models": [
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
@@ -3314,7 +3314,7 @@
     },
     {
       "path": "scripts/lemmascript-inventory.mjs",
-      "sha256": "bccaadbdd3d42bd22c6661fef1e56e6346791e8137a1e17d59d3e87c5a335c9d",
+      "sha256": "307f89dfec5249e114580a039e97f09e6ebae97329c08932bfdbad86dfa546d4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [33, 85, 173, 213, 215, 242],
       "review": "mapped-abstraction"
@@ -3502,9 +3502,9 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "7481abf8ccb1d2c0e8e8d0a584b22d96442e1d11098740315e30feaf85d119bb",
+      "sha256": "e6896b1f0612b15d8be7c89fe2446511305a25a57a4ce5899edff7fb42643500",
       "models": ["formal/models/release/release_publication.qnt"],
-      "candidateLines": [199, 282],
+      "candidateLines": [215, 298],
       "review": "mapped-abstraction"
     },
     {
@@ -3562,7 +3562,7 @@
     },
     {
       "path": "scripts/protocol-identity.mjs",
-      "sha256": "224142eb81f0e7ae0ed1aaf26660d30f462c8038e79a74e5592009f085d3dd3f",
+      "sha256": "676f3c50f3ce14da2e22cf847e32175ac8242cc950e8f6970dc563be2d4b7d7f",
       "models": [],
       "candidateLines": [4],
       "review": "reviewed-no-independent-state",
@@ -3873,9 +3873,9 @@
     },
     {
       "path": "scripts/sync-contribution-quality.ts",
-      "sha256": "482271b0d3243fb8dc859d5687606a3f3a93e5c7a4c1783092dad98b50aaa2c9",
+      "sha256": "d92e5ca631d4b12464b12535b93654c9d350f457f25ef6bc7bc53b2dcc9c980a",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
-      "candidateLines": [7, 59, 60],
+      "candidateLines": [7, 65, 66],
       "review": "mapped-abstraction"
     },
     {
@@ -4013,7 +4013,7 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/run-receipt.mjs",
-      "sha256": "b548cfac9a02485615fb7dbb0d10eb2d45c0300ee5ef464f9ef02421a738f039",
+      "sha256": "43b7a42c57cb98d67f37cbeeea406e9bbeb1b5385fff693cc74f580312e65f13",
       "models": ["formal/models/contributor/skill_run_local.qnt"],
       "candidateLines": [
         139, 163, 188, 238, 327, 520, 592, 607, 614, 621, 647, 697, 755, 758,
@@ -4430,7 +4430,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "1eade5fdacc7e637fb1a5c0f53afadacc667ddc83b61019500b1020ea54ee976",
+      "sha256": "8b53d8f2ef67ed46c04f3c6a6376a1258a3191cee015164d742e6ca004a652f6",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -4952,12 +4952,12 @@
     },
     {
       "path": "src/lib/evaluator-awards.ts",
-      "sha256": "b3fb01f9670d852f9e58063adca8f15ffe836956f58656a496773c386f0ee3cf",
+      "sha256": "4120c9206d4c5574a5eeda73b65d5e69ba806fa50de66360e885a7bc756ee35d",
       "models": [
         "formal/models/rewards/evaluated_award_import.qnt",
         "formal/models/ui/ui_review_admission.qnt"
       ],
-      "candidateLines": [480],
+      "candidateLines": [449, 543],
       "review": "mapped-abstraction"
     },
     {
@@ -8983,7 +8983,7 @@
     },
     {
       "path": "formal/models/fees/solana_expiry.qnt",
-      "sha256": "9b71e1d27f8b3b27dbb0c04eb9c621987f7c494badc9493c37b042890fb9440e",
+      "sha256": "11c7993f8955f1bb2b41dd7998505680c83c555493f4dad8046f21638118f5f1",
       "sources": [
         "migrations/0095_fee_solana_expiry.sql",
         "workers/fee-converter/native-gas.ts",
@@ -11151,7 +11151,7 @@
     },
     {
       "path": "formal/models/tooling/jupiter_generation.qnt",
-      "sha256": "4905037a912814242b54930c4034d4fce7c98b966718bf5a62b843d4e8548f78",
+      "sha256": "af9e3d6e867a54da5741e53fe59dd6c903ee43cd69c2cd43d35a2ef55316de69",
       "sources": [
         "scripts/check-lemmascript.mjs",
         "scripts/generate-jupiter-decoder.mjs"

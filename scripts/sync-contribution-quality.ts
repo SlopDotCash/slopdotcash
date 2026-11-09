@@ -28,7 +28,13 @@ const entries: {
   sourceSnapshotSha256: string;
   path: string;
 }[] = [];
-for (const name of (await readdir(join(root, "funding/quality"))).sort()) {
+const qualityFiles = await readdir(join(root, "funding/quality")).catch(
+  (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  },
+);
+for (const name of qualityFiles.sort()) {
   if (name === "README.md") continue;
   if (!/^[a-z0-9-]+\.json$/.test(name))
     throw new Error("Unexpected quality input");
