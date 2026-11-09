@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "59f9cf7865b87f3f4b107cfbcedb26ce48b416ff53a69392fd738b6f9be822a5",
+  "inventorySha256": "def694087e83bfcf4d1c07abfc2cd13c34063235fc1ab926b305db46243505c3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -56,10 +56,11 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_release_gateway.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
-      "lexicallyUnmentionedValues": ["failed", "finalized"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -72,6 +73,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_release_gateway.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -329,6 +331,7 @@
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/payments/private_recovery_progress.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/solana_message_buffers.qnt"
       ],
@@ -2844,8 +2847,11 @@
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
-      "models": ["formal/models/contracts/solana_owner_action.qnt"],
-      "lexicallyUnmentionedValues": ["failed", "pending"],
+      "models": [
+        "formal/models/contracts/solana_owner_action.qnt",
+        "formal/models/ui/ui_monthly_reserve_release.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

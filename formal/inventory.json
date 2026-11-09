@@ -348,6 +348,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_release_gateway.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_payout_consent_lifetime.qnt"
       ],
@@ -400,7 +401,11 @@
     {
       "path": "backend/payments/monthly-reserve-release.ts",
       "sha256": "b4cd262bfbf138ae690f93db08926f89881adc7eff1cf682102d8f353b3f8aa9",
-      "models": ["formal/models/rewards/monthly_release.qnt"],
+      "models": [
+        "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_gateway.qnt",
+        "formal/models/rewards/monthly_release_prepare.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -411,6 +416,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_release_gateway.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -841,6 +847,7 @@
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/payments/private_recovery_progress.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
@@ -858,6 +865,7 @@
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/payments/private_recovery_progress.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/solana_message_buffers.qnt"
       ],
@@ -904,6 +912,7 @@
         "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
+        "formal/models/payments/private_recovery_progress.qnt",
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/security_rail_exclusivity.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
@@ -1361,7 +1370,8 @@
       "models": [
         "formal/models/contracts/vault_setup_resolution.qnt",
         "formal/models/payments/chain_evidence.qnt",
-        "formal/models/payments/evm_binding_consent_api.qnt"
+        "formal/models/payments/evm_binding_consent_api.qnt",
+        "formal/models/rewards/monthly_release_check.qnt"
       ],
       "candidateLines": [
         14, 71, 85, 201, 237, 256, 284, 299, 331, 497, 551, 639, 646, 647, 649,
@@ -1429,6 +1439,7 @@
       "models": [
         "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
@@ -1731,6 +1742,7 @@
       "models": [
         "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
@@ -1939,6 +1951,8 @@
       "sha256": "f76efac3c9654ad0564d36096503ea2ba2514766bffe5c0e42f6621b305a4389",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/rewards/monthly_release_check.qnt",
+        "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
@@ -3128,7 +3142,8 @@
         "formal/models/payments/bounty_payment.qnt",
         "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
-        "formal/models/payments/direct_recovery_completion.qnt"
+        "formal/models/payments/direct_recovery_completion.qnt",
+        "formal/models/payments/private_recovery_progress.qnt"
       ],
       "candidateLines": [12, 14, 16, 21, 46, 48, 50, 53, 57, 61, 74, 76],
       "review": "mapped-abstraction"
@@ -3140,7 +3155,8 @@
         "formal/models/payments/bounty_payment.qnt",
         "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
-        "formal/models/payments/direct_recovery_completion.qnt"
+        "formal/models/payments/direct_recovery_completion.qnt",
+        "formal/models/payments/private_recovery_progress.qnt"
       ],
       "candidateLines": [3, 19, 22],
       "review": "mapped-abstraction"
@@ -4915,6 +4931,7 @@
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_monthly_reserve_release.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
         "formal/models/ui/ui_owner_private_requests.qnt",
         "formal/models/ui/ui_time_boundary.qnt",
@@ -4974,8 +4991,8 @@
       "path": "src/OwnerReserveRelease.tsx",
       "sha256": "81bb42b08a5c61b8c4b49008e6a426a0c3a309769affa32d814928de3f1e8e53",
       "models": [
-        "formal/models/ui/ui_owner_recovery_lifetime.qnt",
-        "formal/models/ui/ui_transaction.qnt"
+        "formal/models/ui/ui_monthly_reserve_release.qnt",
+        "formal/models/ui/ui_owner_recovery_lifetime.qnt"
       ],
       "candidateLines": [
         1, 16, 19, 26, 48, 54, 57, 69, 70, 71, 73, 81, 90, 101, 115, 119, 141,
@@ -5883,7 +5900,10 @@
     {
       "path": "src/lib/monthly-release-actions.ts",
       "sha256": "b12943a194b85be3d9258dbe87351a650a5539880f168204fc33fa0d7db9a3a5",
-      "models": ["formal/models/contracts/solana_owner_action.qnt"],
+      "models": [
+        "formal/models/contracts/solana_owner_action.qnt",
+        "formal/models/ui/ui_monthly_reserve_release.qnt"
+      ],
       "candidateLines": [22, 47, 50, 51, 52, 54, 56],
       "review": "mapped-abstraction"
     },
@@ -5998,6 +6018,7 @@
       "path": "src/lib/pending-attempt.ts",
       "sha256": "5a7a4fd958aedbbb8d1c926051decfd60d206e38f7e9997447ca1d7ff5a1e0a0",
       "models": [
+        "formal/models/ui/ui_monthly_reserve_release.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
@@ -6410,6 +6431,7 @@
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
+        "formal/models/ui/ui_monthly_reserve_release.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
@@ -6498,6 +6520,7 @@
       "path": "src/lib/use-pending-wallet-attempt.ts",
       "sha256": "832daafb221557ef9b3785d5e733eeb8860227e69f6445e4d6b7d49d68288b72",
       "models": [
+        "formal/models/ui/ui_monthly_reserve_release.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
@@ -7440,7 +7463,11 @@
     {
       "path": "workers/payment-executor/monthly-release.ts",
       "sha256": "c164a6b2e1a694a2f561a90ad819a99105feee2732c6835481b3b088c20cbb16",
-      "models": ["formal/models/rewards/monthly_release.qnt"],
+      "models": [
+        "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_check.qnt",
+        "formal/models/rewards/monthly_release_prepare.qnt"
+      ],
       "candidateLines": [
         132, 152, 169, 184, 201, 210, 226, 257, 265, 273, 301, 302, 305, 306,
         322, 324, 325, 326
@@ -12609,6 +12636,38 @@
       ]
     },
     {
+      "path": "formal/models/payments/private_recovery_progress.qnt",
+      "sha256": "2b0f717cebce78b0ebf93d89911e0d7bc8aed045256f9805edc71507ea91efea",
+      "sources": [
+        "backend/security/direct-payments.ts",
+        "backend/security/direct-solana-recovery.ts",
+        "backend/security/handler.ts",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql"
+      ],
+      "scenarios": [
+        "concurrentScanCASPreservesFirstPageTest",
+        "delayedScanMayCommitAfterFailedCaseWriteTest",
+        "expiryBeforeValidationCanRetainInvalidCandidateTest",
+        "failedSuccessorPreparationKeepsHistoryTest",
+        "historyProgressPreservesEarlierMessagesTest",
+        "lostProgressReplyKeepsIdempotentEventTest",
+        "lostSuccessorReplyKeepsOneNewGenerationTest",
+        "newInvalidSignatureCannotBorrowPriorValidityTest",
+        "oldGenerationScanMayFinishAfterAnotherRecoveryTest",
+        "partialReplyNeverCreatesSuccessorTest",
+        "replacementTargetRejectsOldProgressAdoptionTest",
+        "replayCannotBeReusedByDifferentActorOrKindTest",
+        "revokedCompletionFenceKeepsPartialProgressUncommittedTest",
+        "scanSurvivesFailedCaseTransactionTest",
+        "secondRequestReusesFirstSignatureTest",
+        "staleConcurrentProgressCannotReplaceWinnerTest",
+        "successorGenerationRejectsOldProgressAdoptionTest",
+        "viewFailureDoesNotUndoProgressTest",
+        "walletChangeBeforeCommitRejectsCapturedProgressTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/received_totals.qnt",
       "sha256": "ff6ed5d807657c3edbc761967cd0c6e993b1984ef71f913666eee162434ca065",
       "sources": [
@@ -13770,6 +13829,99 @@
         "healthyRefusedTest",
         "touchedRefusedTest",
         "wrongTotalReleaseTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/monthly_release_check.qnt",
+      "sha256": "ae599c69de3daeead4c1ce182ae9685d352894a1013d5e2e85636f966226ab9a",
+      "sources": [
+        "contracts/evm/adapter.ts",
+        "contracts/solana/wallet-transactions.ts",
+        "workers/payment-executor/monthly-release.ts"
+      ],
+      "scenarios": [
+        "absentEvmReceiptRemainsPendingTest",
+        "absentProjectLookupRefusesBeforeRpcTest",
+        "absentSolanaStatusRemainsPendingTest",
+        "canonicalFailedEvmExecutionIsFailedTest",
+        "changedDeploymentRefusesRecoveryTest",
+        "changedSolanaWireRefusesTest",
+        "currentEvmReleaseFinalizesTest",
+        "currentManifestMayDifferFromPreparedManifestTest",
+        "exactFailedSolanaReceiptReturnsFailureTest",
+        "finalizedSolanaStatusWithMissingReceiptRemainsPendingTest",
+        "lateRegistryChangeDoesNotRewriteCapturedCheckTest",
+        "lostResponseDoesNotProveReleaseToBrowserTest",
+        "noncanonicalReceiptNeverFinalizesTest",
+        "solanaStatusReceiptDisagreementRefusesSuccessTest",
+        "unfinalizedMatchingReceiptRemainsPendingTest",
+        "unknownEvmStatusNeverCountsAsFailureProofTest",
+        "unreviewedReceiptCodeNeverFinalizesTest",
+        "wrongCalldataRefusesBeforeFinalityTest",
+        "wrongOwnerRefusesBeforeFinalityTest",
+        "wrongRequestIdentityRefusesBeforeRpcTest",
+        "wrongSolanaSignatureRefusesBeforeStatusTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/monthly_release_gateway.qnt",
+      "sha256": "95caf6e5c570b77cdde065dad2ecee4c02a96afd1eb6ea9ddec77123bf8740d0",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/monthly-reserve-release.ts",
+        "backend/payments/monthly.ts"
+      ],
+      "scenarios": [
+        "failedCheckIsRelayedTest",
+        "finalObservationDoesNotPromiseContinuousRevisionTest",
+        "finalizedCheckIsRelayedTest",
+        "heldResultDoesNotMintSignatureTest",
+        "invalidPeriodStopsBeforeWorkerTest",
+        "lostHttpResponseKeepsArtifactTest",
+        "missingWorkerIsUnavailableTest",
+        "observedOwnerIsNotContinuousAuthorityTest",
+        "otherNetworkStopsBeforeWorkerTest",
+        "ownerRefusalIsExplicitTest",
+        "pendingCheckIsNotFinalityTest",
+        "recoveryUsesCurrentManifestTest",
+        "revisionAfterWorkerRetainsPrivateSignatureTest",
+        "revisionBeforePreflightStopsWorkerTest",
+        "stablePrepareReturnsReadyTest",
+        "staleManifestStopsBeforeWorkerTest",
+        "workerFailureDoesNotEraseRetainedSignatureTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/monthly_release_prepare.qnt",
+      "sha256": "ee60a8787bac64eb605a6dc9069751b7b347528dc433c34e1b8843637b4f3bbf",
+      "sources": [
+        "backend/payments/monthly-reserve-release.ts",
+        "contracts/evm/monthly-reserve.ts",
+        "contracts/solana/monthly-reserve.ts",
+        "contracts/solana/wallet-transactions.ts",
+        "workers/payment-executor/monthly-release.ts"
+      ],
+      "scenarios": [
+        "absentProjectLookupNeverSignsTest",
+        "allocationChangeAfterProjectObservationRefusesTest",
+        "alternateRetainedCandidateCanMatchTest",
+        "authorityRotationRefusesRetainedSignatureTest",
+        "changedReserveAfterSigningRefusesBuilderTest",
+        "currentWrongSumBuildsOnlyOwnerPlanTest",
+        "evmSnapshotRemainsEvidenceAfterLatestTransitionTest",
+        "failedFinalFenceKeepsSignedEvidenceTest",
+        "healthyReserveNeverSignsTest",
+        "lateProjectChangeAfterFinalObservationRemainsSnapshotTest",
+        "legacyEvmCandidateCannotAuthorizeRepairTest",
+        "lostPlanReplyDoesNotEraseSavedPlanTest",
+        "missingAllocationNeverSignsTest",
+        "projectChangeBeforeSigningRefusesTest",
+        "projectFenceIsNotContinuousAuthorityTest",
+        "signatureJournalLostReplyIsRetryableTest",
+        "simulationRefusalRetainsSignatureTest",
+        "solanaSnapshotRequiresMatchingLaterBytesTest",
+        "touchedReserveNeverSignsTest",
+        "unavailableFirstCandidateCannotSkipToAlternativeTest"
       ]
     },
     {
@@ -16257,6 +16409,50 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_monthly_reserve_release.qnt",
+      "sha256": "8ea07dbfb4b2c0d9f54e7a0a042b7bf56f0309dc4ab762057f83706e9ebf9726",
+      "sources": [
+        "src/OwnerAwards.tsx",
+        "src/OwnerReserveRelease.tsx",
+        "src/lib/monthly-release-actions.ts",
+        "src/lib/pending-attempt.ts",
+        "src/lib/solana-vault-actions.ts",
+        "src/lib/use-pending-wallet-attempt.ts"
+      ],
+      "scenarios": [
+        "admittedAuthorityIsAnObservationNotContinuousLeaseTest",
+        "admittedPlanOutlivesCoownerCookieObservationTest",
+        "changedChainEvidenceStopsBeforeIntentTest",
+        "changedManifestRetiresOldPreflightTest",
+        "checkedWalletActivityCanClearDeclinedIntentTest",
+        "declinedReleaseKeepsUnsentIntentTest",
+        "departedCheckCannotClearReplacementEvidenceTest",
+        "departedReadyReplyCannotRestorePlanTest",
+        "differentMonthKeepsOldPendingSeparateTest",
+        "differentUnprivilegedActorRefusesAdmissionTest",
+        "exactCheckCannotOverwriteNewWalletEvidenceTest",
+        "explicitSignoutRetiresOldPreflightTest",
+        "failedFinalizedTransactionAllowsNewReviewTest",
+        "failedHashStorageKeepsVisibleHashTest",
+        "failedIntentStorageNeverPromptsTest",
+        "finalizedReleaseReturnsReserveWithoutPayingContributorTest",
+        "healthyReserveRemainsHeldTest",
+        "knownHashPersistsAfterDepartureTest",
+        "manifestReplacementRecoversSameStorageKeyTest",
+        "mismatchedPreparedBindingsRefuseTest",
+        "missingAllocationRemainsHeldTest",
+        "oldWalletHashCannotRecreateClearedIntentTest",
+        "oldWalletHashCannotReplaceNewAttemptTest",
+        "pendingCheckDoesNotReleaseTest",
+        "priorTransitionDoesNotReleaseAgainTest",
+        "revokedPermissionBeforeAdmissionRefusesTest",
+        "solanaReleaseUsesSameIntentAndFinalitySeparationTest",
+        "unavailableCheckRetainsEvidenceTest",
+        "uncertainWalletKeepsIntentTest",
+        "wrongOwnerWalletStopsBeforeIntentTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_monthly_setting_recovery.qnt",
       "sha256": "18a2c4bd452de7b27f6df29dad2baf276b8117a059646b9c93982a855e3b0058",
       "sources": [
@@ -17557,7 +17753,7 @@
     },
     {
       "path": "formal/models/ui/ui_transaction.qnt",
-      "sha256": "bc918e21bb1bf78c7285ea799a2fee4434cb6bcddc6632e010bf2a31169ccc6f",
+      "sha256": "46e551d3f815cc07cf9c9f3de32b671b0a350aa3bc46997449981fcdcb4abf0c",
       "sources": [
         "src/AutomaticMonthlyPayment.tsx",
         "src/BountySubmittedPayments.tsx",
@@ -17565,7 +17761,6 @@
         "src/OwnerAwards.tsx",
         "src/OwnerBountyVault.tsx",
         "src/OwnerCommitment.tsx",
-        "src/OwnerReserveRelease.tsx",
         "src/OwnerVaultSetup.tsx",
         "src/ReferralClaims.tsx",
         "src/SolanaBountyPayment.tsx",
@@ -17576,8 +17771,8 @@
       "scenarios": [
         "approvalTest",
         "changedWalletTest",
-        "lostResultTest",
-        "paidTest"
+        "completedOperationTest",
+        "lostResultTest"
       ]
     },
     {

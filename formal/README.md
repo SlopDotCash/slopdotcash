@@ -1032,6 +1032,28 @@ tested or verified here:
   failures and release. `fee_expiry_scan_protocol` separates provider horizon,
   local scan pages, committed checkpoints, readback and atomic native-hold
   release. These additions refine model coverage without changing runtime code.
+- `private_recovery_progress` models retained signatures, partial private-award
+  recovery, immutable scan checkpoints and the later case transaction. A failed
+  case write does not erase completed scans; a lost committed reply does not
+  free its idempotency key. The native API regression definition adds a lost
+  progress-reply/replay case. Two-plan concurrent caller acceptance remains a
+  separate gap; the existing native flow exercises one plan.
+- `monthly_release_gateway` models Pages owner admission, project observations
+  before/after the private worker, and HTTP reply loss. Its 17 scenarios do not
+  turn an observed owner into continuous authority. A retained worker signature
+  can survive a later gateway refusal. `monthly_release_prepare` and
+  `monthly_release_check` separately cover retained allocation candidates,
+  journal/signature/plan writes, exact owner transaction evidence and recovery.
+  A current manifest can differ from the saved plan's manifest only when the
+  saved deployment remains identical; recovery does not re-admit allocations.
+- `ui_monthly_reserve_release` covers the owner view's pending intent, wallet
+  prompt, exact-record recovery, late hash persistence and explicit no-hash
+  cleanup. Its 30 scenarios distinguish finalized return of the reserve to
+  free funds from contributor payment. This component is no longer mapped to
+  the generic transaction model. Generic wallet completion also no longer names
+  that outcome as paid; payment models retain their separate evidence gates.
+  No new runtime change or executed
+  browser/chain evidence is claimed for these release models.
 
 ## Acceptance requirements and limits
 

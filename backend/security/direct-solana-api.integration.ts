@@ -696,9 +696,58 @@ try {
       409,
       "expired requests never silently create another payable message",
     );
+    // Source-authored recovery-progress regression; unexecuted in this change.
+    // The first request stores its challenge, but the D1 reply is lost. Reusing
+    // that key must read the event back without another case mutation or plan.
+    const recoveryKey = `solana-recovery-reply-${scenario}`;
+    const originalBatch = db.batch.bind(db);
+    let lostProgressReply = false;
+    let failedChallenge: Awaited<ReturnType<typeof act>> | undefined;
+    db.batch = async (statements) => {
+      const result = await originalBatch(statements);
+      if (!lostProgressReply) {
+        lostProgressReply = true;
+        throw new Error("Fixture recovery progress reply lost after commit");
+      }
+      return result;
+    };
+    try {
+      failedChallenge = await act(OWNER, second, "recover-payment", {
+        confirmation: true,
+        idempotencyKey: recoveryKey,
+      });
+    } finally {
+      db.batch = originalBatch;
+    }
+    assert.equal(lostProgressReply, true);
+    assert(failedChallenge);
+    assert.equal(failedChallenge.status, 500);
+    const retainedProgress = sqlite
+      .query(
+        "SELECT case_revision,detail FROM security_case_events WHERE case_id=? AND kind='recover-payment' ORDER BY case_revision",
+      )
+      .all(second);
+    assert.ok(retainedProgress.length > 0);
+    const revisionAfterLoss = sqlite
+      .query<{ revision: number }, [string]>(
+        "SELECT revision FROM security_cases WHERE id=?",
+      )
+      .get(second)?.revision;
+    assert.ok(revisionAfterLoss !== undefined);
     const challenge = await act(OWNER, second, "recover-payment", {
       confirmation: true,
+      idempotencyKey: recoveryKey,
     });
+    assert.equal(challenge.body.case.revision, revisionAfterLoss);
+    assert.deepEqual(
+      sqlite
+        .query(
+          "SELECT case_revision,detail FROM security_case_events WHERE case_id=? AND kind='recover-payment' ORDER BY case_revision",
+        )
+        .all(second),
+      retainedProgress,
+    );
+    assert.equal(challenge.body.case.settlement.generation, 0);
     console.log(
       JSON.stringify({
         scenario,
