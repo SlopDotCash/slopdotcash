@@ -9,7 +9,7 @@ export function encodeBase64(bytes: Uint8Array): string {
 }
 
 /** Bytes of standard base64, with the platform `atob` acceptance rules. */
-export function decodeBase64(value: string): Uint8Array {
+export function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 }
 

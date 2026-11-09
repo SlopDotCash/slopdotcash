@@ -1,3 +1,4 @@
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
 import type { EvidenceClient } from "./value-evidence";
 
@@ -39,9 +40,7 @@ export function valueFileReader(client: EvidenceClient, repository: string) {
       return null;
     let bytes: Uint8Array;
     try {
-      bytes = Uint8Array.from(atob(file.content.replace(/\s+/gu, "")), (c) =>
-        c.charCodeAt(0),
-      );
+      bytes = decodeBase64(file.content.replace(/\s+/gu, ""));
     } catch {
       return null;
     }

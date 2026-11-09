@@ -1,5 +1,5 @@
 import { githubAppJwt, githubHeaders } from "../../backend/github";
-import { bytesToHex } from "../../src/lib/byte-encoding";
+import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
 import { constantTimeEqual } from "../identity/crypto";
 
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
@@ -170,10 +170,7 @@ export class GitHubClient {
       // An existing unreadable file must not be mistaken for absent policy.
       return { text: "", truncated: true };
     }
-    const bytes = Uint8Array.from(
-      atob(file.content.replace(/\s+/gu, "")),
-      (c) => c.charCodeAt(0),
-    );
+    const bytes = decodeBase64(file.content.replace(/\s+/gu, ""));
     const truncated = bytes.length > maxBytes;
     return {
       text: new TextDecoder().decode(

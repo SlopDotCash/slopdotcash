@@ -1,4 +1,5 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
 import { valueFileReader } from "./value-blob";
 import type {
@@ -34,12 +35,6 @@ const validPath = (path: string) =>
   !path.split("/").some((part) => !part || part === "." || part === "..");
 const keys =
   "baseSha,baseTreeSha,blobSha,contentBase64,contentReview,headSha,headTreeSha,mode,path,schemaVersion,sha256,size";
-
-function encode(bytes: Uint8Array): string {
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text);
-}
 
 function binary(bytes: Uint8Array): boolean {
   // A Git LFS pointer describes other bytes and is never the media itself.
@@ -129,7 +124,7 @@ export function addedBinaryRecovery(
         mode: "100644",
         size: blob.bytes.length,
         ...(await identities(blob.bytes)),
-        contentBase64: encode(blob.bytes),
+        contentBase64: encodeBase64(blob.bytes),
         contentReview: "unviewed",
       };
     }
@@ -171,12 +166,10 @@ export async function validAddedBinaryProof(
   )
     return false;
   try {
-    const bytes = Uint8Array.from(atob(proof.contentBase64), (value) =>
-      value.charCodeAt(0),
-    );
+    const bytes = decodeBase64(proof.contentBase64);
     if (
       bytes.length !== proof.size ||
-      encode(bytes) !== proof.contentBase64 ||
+      encodeBase64(bytes) !== proof.contentBase64 ||
       !binary(bytes)
     )
       return false;

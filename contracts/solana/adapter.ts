@@ -5,7 +5,6 @@ import {
   encodeBase58Bytes as base58,
   decodeBase58Bytes,
 } from "../../src/lib/base58";
-import { bytesToHex as hex } from "../../src/lib/byte-encoding";
 import {
   acceptsPayoutFee,
   type PayoutPolicy,
@@ -19,7 +18,11 @@ import {
 
 export { SOLANA_NATIVE_ASSET, SOLANA_NATIVE_DECIMALS } from "./native";
 
-import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
+import {
+  decodeBase64,
+  encodeBase64,
+  bytesToHex as hex,
+} from "../../src/lib/byte-encoding";
 import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 import {
   readTokenAccount,

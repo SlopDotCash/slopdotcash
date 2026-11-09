@@ -1,3 +1,4 @@
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
 import type { EvidenceClient, FileChange } from "./value-evidence";
 
@@ -137,10 +138,7 @@ export function addedValuePatchRecovery(
         let bytes: Uint8Array;
         let text: string;
         try {
-          bytes = Uint8Array.from(
-            atob(source.content.replace(/\s+/gu, "")),
-            (c) => c.charCodeAt(0),
-          );
+          bytes = decodeBase64(source.content.replace(/\s+/gu, ""));
           totalBytes += bytes.length;
           text = new TextDecoder("utf-8", {
             fatal: true,
