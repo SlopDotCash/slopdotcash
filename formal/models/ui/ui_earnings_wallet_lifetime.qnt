@@ -3,6 +3,9 @@
 // @evidence tests/e2e/payout-wallet-picker.spec.ts
 // Source-only refinement: API acceptance and UI ownership are separate.
 // Every named scenario is unexecuted. Two operations and two family chains.
+// depart denotes the committed layout cleanup. The separate
+// ui_earnings_actor_binding model refines nested helper-return consumption and
+// cancellation of a captured account read before publication.
 module ui_earnings_wallet_lifetime {
   type Operation = { phase: str, instance: int, chain: int }
   type State = { instance: int, mounted: bool, current: int, busy: int,

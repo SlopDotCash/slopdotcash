@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "9adf1137db733cd420bd6614223e2621841fe40589d48d2dba947e7daa3620ae",
+  "inventorySha256": "2fc7f29ed537d435b0eb5266ff117485c811ef8e26766c056062afa38fccd282",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -309,7 +309,8 @@
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt"
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
@@ -330,7 +331,8 @@
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt"
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
       "review": "candidate-only"

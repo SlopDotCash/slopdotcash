@@ -301,6 +301,72 @@ test("account change during a message prompt cannot submit cached proof under th
   ).toBeNull();
 });
 
+test("a newer case revision refreshes recovery before signing and retries with its revision", async ({
+  page,
+}) => {
+  const flow = await setup(page);
+  await flow.connect();
+  flow.record.revision += 1;
+  await flow.check();
+  await expect(
+    page.getByRole("button", {
+      name: "Connect History-only wallet",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check expired payment", exact: true }),
+  ).toBeDisabled();
+  expect(flow.signed).toHaveLength(0);
+  expect(flow.posted).toHaveLength(0);
+  await flow.connect();
+  await flow.check();
+  await expect.poll(() => flow.posted.length).toBe(1);
+  expect(flow.posted[0]).toMatchObject({
+    action: "recover-payment",
+    expectedRevision: flow.record.revision,
+  });
+  expect(flow.signed).toHaveLength(1);
+});
+
+test("a refreshed case revision keeps valid cached history proof for the next attempt", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowResponse(
+    503,
+    "POST",
+    `/api/v1/security-cases/${snapshot.case.id}/actions`,
+  );
+  const flow = await setup(page);
+  await flow.connect();
+  flow.setFailure(true);
+  await flow.check();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "History verification unavailable." }),
+  ).toBeVisible();
+  expect(flow.signed).toHaveLength(1);
+  expect(flow.posted).toHaveLength(1);
+  flow.record.revision += 1;
+  flow.setFailure(false);
+  await flow.check();
+  await expect(
+    page.getByRole("button", {
+      name: "Connect History-only wallet",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(flow.posted).toHaveLength(1);
+  await flow.connect();
+  await flow.check();
+  await expect.poll(() => flow.posted.length).toBe(2);
+  expect(flow.posted[1]).toMatchObject({
+    action: "recover-payment",
+    expectedRevision: flow.record.revision,
+  });
+  expect(flow.signed).toHaveLength(1);
+});
+
 test("an invalid wallet signature is not cached and a retry can repair it", async ({
   page,
 }) => {
