@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "b905ee7e692b808ebf0213d72b5f50b201513e22d31077317e9f7de4dc475ea7",
+  "inventorySha256": "81c139e443ef21a9a3e56c141f2e17a52e3e1dc85b69681d4dd1ab2541b0b3ce",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3524,7 +3524,10 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
-      "models": ["formal/models/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting_clustered_flag.qnt",
+        "formal/models/vetting_disposition.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "cdata",
         "comment",
