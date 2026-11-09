@@ -105,10 +105,11 @@ test("admin search finds a project by name or repository and Keep listed leaves 
   const revisions = await adminFixture(page, () => [first, second]);
   const sent = writes(page);
   const delists: Record<string, unknown>[] = [];
+  const delistMethods: string[] = [];
   await page.route(
     `**/api/v1/admin/projects/${second.id}/manifest`,
     (route) => {
-      expect(route.request().method()).toBe("PUT");
+      delistMethods.push(route.request().method());
       const body = route.request().postDataJSON();
       delists.push(body);
       second = body.manifest;
@@ -174,7 +175,7 @@ test("admin search finds a project by name or repository and Keep listed leaves 
   ).toHaveCount(0);
   await expect(delist).toBeVisible();
   expect(sent).toHaveLength(0);
-  expect(delists).toHaveLength(0);
+  expect(delistMethods).toHaveLength(0);
 
   // Confirming afterwards still sends exactly one retiring revision.
   await delist.click();
@@ -182,7 +183,7 @@ test("admin search finds a project by name or repository and Keep listed leaves 
     .getByRole("button", { name: "Delist project", exact: true })
     .click();
   await expect(page.getByRole("status")).toContainText("Saved.");
-  expect(delists).toHaveLength(1);
+  expect(delistMethods).toEqual(["PUT"]);
   expect(delists[0]).toMatchObject({
     expectedRevision: 1,
     reason: "Delisted by an admin",

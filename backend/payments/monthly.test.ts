@@ -3526,8 +3526,9 @@ test("an allocation queued across its automatic cutoff cannot change the propose
     .toISOString()
     .slice(0, 7);
   const end = Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1);
-  const deadline = Math.ceil(Date.now() / 1000) * 1000 + 1000;
   const local = await createMonthlyAllocationFixture({ deployment, period });
+  // Measured after the fixture, so its setup time never eats the margin.
+  const deadline = Math.ceil(Date.now() / 1000) * 1000 + 1000;
   const prepare = local.db.prepare.bind(local.db);
   let queued = false;
   local.db.prepare = (query) => {

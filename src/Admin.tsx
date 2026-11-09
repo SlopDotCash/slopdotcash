@@ -53,6 +53,7 @@ import {
   type ContributionField,
   PROJECT_SKILL_TEMPLATES,
 } from "./lib/project-schema.mjs";
+import { CANONICAL_UINT, isRecord } from "./lib/record-validation.mjs";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -1129,13 +1130,60 @@ type FeeConversionReport = {
   }[];
 };
 
-const loadFeeConversions = async () => {
-  const { routes, totals } = await projectApiRequest<FeeConversionReport>(
-    "GET",
-    "admin/fee-conversions",
+const INVALID_FEE_CONVERSIONS = "The fee conversion report is invalid.";
+
+function feeConversionRecords<T>(
+  value: unknown,
+  keys: readonly string[],
+  valid: (row: Record<string, unknown>) => boolean,
+): T[] {
+  if (!Array.isArray(value)) throw new TypeError(INVALID_FEE_CONVERSIONS);
+  for (const row of value) {
+    if (
+      !isRecord(row) ||
+      Object.keys(row).sort().join("\0") !== [...keys].sort().join("\0") ||
+      !valid(row)
+    )
+      throw new TypeError(INVALID_FEE_CONVERSIONS);
+  }
+  return value as T[];
+}
+
+const nonEmptyText = (value: unknown) =>
+  typeof value === "string" && value.length > 0;
+
+/** Strict reader: a malformed report is a load error, never a render crash. */
+function parseFeeConversionReport(value: unknown): FeeConversionReport {
+  if (!isRecord(value)) throw new TypeError(INVALID_FEE_CONVERSIONS);
+  const routes = feeConversionRecords<FeeConversionReport["routes"][number]>(
+    value.routes,
+    ["network", "targetToken", "status"],
+    (row) =>
+      nonEmptyText(row.network) &&
+      ((row.status === "usdc" && nonEmptyText(row.targetToken)) ||
+        (row.status === "not_converted" && row.targetToken === null)),
+  );
+  const totals = feeConversionRecords<FeeConversionReport["totals"][number]>(
+    value.totals,
+    ["network", "token", "targetToken", "conversions", "amountIn", "amountOut"],
+    (row) =>
+      nonEmptyText(row.network) &&
+      nonEmptyText(row.token) &&
+      nonEmptyText(row.targetToken) &&
+      Number.isSafeInteger(row.conversions) &&
+      (row.conversions as number) > 0 &&
+      typeof row.amountIn === "string" &&
+      CANONICAL_UINT.test(row.amountIn) &&
+      typeof row.amountOut === "string" &&
+      CANONICAL_UINT.test(row.amountOut),
   );
   return { routes, totals };
-};
+}
+
+const loadFeeConversions = async () =>
+  parseFeeConversionReport(
+    await projectApiRequest<unknown>("GET", "admin/fee-conversions"),
+  );
 
 function networkName(network: string): string {
   return Object.hasOwn(NETWORK_NAMES, network)

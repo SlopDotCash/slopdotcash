@@ -21,25 +21,28 @@ test("an owner changes a vault review and starts over after a failed creation", 
   diagnostics.allowPreviewApiMisses();
   diagnostics.allowCanceledBackgroundReads();
   // An active project whose Base vault is configured but not yet created,
-  // so its owner sees vault setup.
+  // so its owner sees vault setup. The Base network stablecoin replaces any
+  // registered reward asset, so the case does not depend on which registry
+  // snapshot the run uses.
   const registered = PROJECTS.find((entry) => entry.id === "eliza");
   if (!registered) throw new Error("Missing fixture project");
   const project = {
     ...registered,
+    rewardAsset: undefined,
     escrow: {
-      schemaVersion: "1" as const,
       effectiveCycle: "2026-10",
+      ...registered.escrow,
+      schemaVersion: "1" as const,
       chain: "base" as const,
       feeBasisPoints: registered.reward.feeBasisPoints,
       withdrawalFeeBasisPoints: 200,
       feeMode: "deduct-from-gross" as const,
-      ...registered.escrow,
       deployments: [],
     },
   } as typeof registered;
   const network = "base-sepolia" as const;
   const policy = ESCROW_NETWORKS[network];
-  const asset = project.rewardAsset?.address ?? policy.asset;
+  const asset = policy.asset;
   const failed = diagnostics.allowResponse(
     409,
     "POST",
@@ -157,9 +160,11 @@ test("an owner changes a vault review and starts over after a failed creation", 
   ).toBeVisible();
   expect(posts).toHaveLength(1);
 
+  // The options render afresh, so the recovery disclosure starts collapsed.
+  await expect(recover).toBeHidden();
+
   // A failed creation keeps its saved request until the owner starts over.
-  if (!(await recover.isVisible()))
-    await setup.getByText("Recover an existing vault", { exact: true }).click();
+  await setup.getByText("Recover an existing vault", { exact: true }).click();
   await recover.click();
   await hash.fill(HASH);
   await setup
