@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2fe7c0524689f3588c7425284c583be20a1d2190c47226ae1df9666d96e4a23f",
+  "inventorySha256": "a030966942dfe5f392d8cbbf50f0bbef4bad79e0d5f2d2fa6fe01c7f4edfeea1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3194,14 +3194,11 @@
       ],
       "models": [
         "formal/models/api/api_identity_admission.qnt",
-        "formal/models/api/identity_rate_gate.qnt"
+        "formal/models/api/identity_intake_renewal.qnt",
+        "formal/models/api/identity_rate_gate.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "malformed",
-        "rate-limited",
-        "unauthorized",
-        "unreachable"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
