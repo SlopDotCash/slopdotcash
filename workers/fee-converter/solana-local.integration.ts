@@ -29,6 +29,7 @@ import {
 } from "../../contracts/solana/transactions";
 import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
@@ -168,7 +169,7 @@ function tokenAccount(mint: string, owner: string, amount: bigint): string {
   data.set(decodeBase58Bytes(owner), 32);
   new DataView(data.buffer).setBigUint64(64, amount, true);
   data[108] = 1; // initialized
-  return btoa(String.fromCharCode(...data));
+  return encodeBase64(data);
 }
 
 const seed = crypto.getRandomValues(new Uint8Array(32));

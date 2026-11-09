@@ -14,6 +14,7 @@
  * the live approved mint and one of its token accounts on Solana mainnet.
  */
 
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import {
   decodeTokenExtensions,
   type ExtensionRecord,
@@ -56,8 +57,6 @@ const list = (value: unknown): unknown[] => {
   if (!Array.isArray(value)) throw new Error("Invalid RPC list");
   return value;
 };
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 
 export interface TokenAccountReading {
   /** The owning token program: classic SPL Token or Token-2022. */
@@ -82,7 +81,7 @@ function tokenProgramData(value: unknown): {
     throw new Error("Not a supported token program account");
   const data = list(info.data);
   if (data[1] !== "base64") throw new Error("Wrong account encoding");
-  return { program, bytes: decode(string(data[0])) };
+  return { program, bytes: decodeBase64(string(data[0])) };
 }
 
 /**

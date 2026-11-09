@@ -13,6 +13,7 @@ import {
 } from "../../contracts/solana/token";
 import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
+import { decodeBase64 } from "./byte-encoding";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
 import type { VaultConnection, VaultOperation } from "./evm-vault-actions";
 import {
@@ -28,8 +29,6 @@ import { assertUnsignedSolanaWire } from "./solana-wire";
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
 >;
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 function fundingConfig(deployment: EscrowDeployment) {
   if (!deployment.programId || !deployment.projectPda)
     throw new Error("The Solana vault configuration is incomplete.");
@@ -190,7 +189,7 @@ export async function sendSolanaWalletTransaction(
   ];
   if (!chain) throw new Error("Unsupported Solana network.");
   const signature = await wallet.solanaSend(
-    decode(transaction),
+    decodeBase64(transaction),
     chain,
     beforeSend,
   );

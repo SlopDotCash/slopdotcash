@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { encodeBase58Bytes } from "./lib/base58";
+import { decodeBase64 } from "./lib/byte-encoding";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
@@ -73,9 +74,7 @@ export function SolanaBountyRecovery({
             ? saved[message.messageId].signature
             : null;
         if (!signature) {
-          const bytes = Uint8Array.from(atob(message.message), (character) =>
-            character.charCodeAt(0),
-          );
+          const bytes = decodeBase64(message.message);
           signature = encodeBase58Bytes(await wallet.solanaSignMessage(bytes));
           saved[message.messageId] = { message: message.message, signature };
           sessionStorage.setItem(key, JSON.stringify(saved));

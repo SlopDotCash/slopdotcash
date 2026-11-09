@@ -11,6 +11,7 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type {
   GithubActor,
   ProjectRecord,
@@ -113,7 +114,7 @@ function base64Bytes(value: string): Uint8Array | null {
   const normal = value.trim().replaceAll("-", "+").replaceAll("_", "/");
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(normal)) return null;
   try {
-    return Uint8Array.from(atob(normal), (char) => char.charCodeAt(0));
+    return decodeBase64(normal);
   } catch {
     return null;
   }

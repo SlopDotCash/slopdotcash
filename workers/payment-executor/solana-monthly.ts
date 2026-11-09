@@ -29,6 +29,7 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   acceptsPayoutFee,
   ordinaryFee,
@@ -135,7 +136,7 @@ async function submit(
     const candidate: Attempt = {
       fingerprint,
       transactionId: solanaBase58(signature),
-      raw: btoa(String.fromCharCode(...raw)),
+      raw: encodeBase64(raw),
       lastValidBlockHeight: latest.value.lastValidBlockHeight,
       generation: (existing?.generation ?? 0) + 1,
     };

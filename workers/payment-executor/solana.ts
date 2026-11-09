@@ -36,6 +36,7 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import {
@@ -399,7 +400,7 @@ async function send(
         network: input.network,
         vault: input.vault,
         fingerprint,
-        raw: btoa(String.fromCharCode(...raw)),
+        raw: encodeBase64(raw),
         transactionId: solanaBase58(signature),
         lastValidBlockHeight: latest.value.lastValidBlockHeight,
         generation: latest.value.lastValidBlockHeight,
@@ -493,8 +494,8 @@ export async function completeSolanaBinding(
   if (!attempt.cosigner) return broadcastSolanaTransaction(ctx, attempt);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(transaction))
     throw new Error("Invalid signed transaction encoding");
-  const signed = Uint8Array.from(atob(transaction), (c) => c.charCodeAt(0));
-  const prepared = Uint8Array.from(atob(attempt.raw), (c) => c.charCodeAt(0));
+  const signed = decodeBase64(transaction);
+  const prepared = decodeBase64(attempt.raw);
   const msg = prepared.slice(129);
   if (
     signed.length !== prepared.length ||
@@ -522,7 +523,7 @@ export async function completeSolanaBinding(
     if (!current.cosigner) return current;
     const next: Attempt = {
       ...current,
-      raw: btoa(String.fromCharCode(...signed)),
+      raw: encodeBase64(signed),
     };
     delete next.cosigner;
     await store.put(key, next);

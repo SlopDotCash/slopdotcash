@@ -13,6 +13,7 @@ import {
   solanaBase58,
 } from "../../contracts/solana/adapter";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type { Network } from "./config";
 import type {
   ConversionRow,
@@ -121,7 +122,7 @@ export class D1ConversionStore implements ConversionStore {
     if (!reserved || !rawTx)
       throw new Error("Native reservation lacks its signed intent");
     if (reserved.network === "solana") {
-      const raw = Uint8Array.from(atob(rawTx), (c) => c.charCodeAt(0));
+      const raw = decodeBase64(rawTx);
       const parsed = parseSolanaTransaction(raw);
       if (
         !parsed.legacy ||
