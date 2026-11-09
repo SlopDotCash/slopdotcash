@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8ede4cb2c095a2289b8407c599b2e0f44ecbbf6b9d5969b43a194f6d6aa8a789",
+  "inventorySha256": "160484e31e8574d6bc0b8b5e7a8bb4602a77e0d15a4350a3b80660b75585c183",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3299,7 +3299,10 @@
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -3709,6 +3712,7 @@
       ],
       "models": [
         "formal/models/api/api_incomplete_assessments.qnt",
+        "formal/models/api/incomplete_assessment_queries.qnt",
         "formal/models/slopbot/bot_value_attempt_recovery.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_value_request.qnt"

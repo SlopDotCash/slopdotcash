@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { networkLabel } from "./lib/network-names";
@@ -90,13 +90,17 @@ export function ReferralClaims() {
   const action = useRef(0);
   const latestData = useRef(data);
   latestData.current = data;
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       action.current += 1;
     };
   }, []);
+  const readController = useRef<AbortController | null>(null);
+  // Retire the previous read at commit, before a granted Web Lock can resume
+  // its automatic pending-record cleanup. Fetch and display updates stay passive.
+  useLayoutEffect(() => () => readController.current?.abort(), [revision]);
   const pendingIntent = useRef<{
     key: string;
     value: Pending | null | undefined;
@@ -114,6 +118,7 @@ export function ReferralClaims() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: user refresh rechecks the cached record.
   useEffect(() => {
     const controller = new AbortController();
+    readController.current = controller;
     setError("");
     setReview(null);
     fetch("/api/v1/referrals/me", {

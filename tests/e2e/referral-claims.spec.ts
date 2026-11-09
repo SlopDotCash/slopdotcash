@@ -12,6 +12,11 @@ import {
 } from "../../src/lib/referral-claims";
 import { buildTree } from "../../workers/referral-accrual/merkle";
 import { expect, expectAccessible, test } from "./fixtures";
+import {
+  holdVaultWalletPreflight,
+  leaveWithVaultPreflight,
+  releaseVaultPreflight,
+} from "./vault-request-fixture";
 
 const unit = 10n ** 18n;
 const wallet = "0x1111111111111111111111111111111111111111";
@@ -225,6 +230,92 @@ function pause() {
   return { promise, release };
 }
 const claimKey = `slop:referral-claim:robinhood-testnet:${distributor}:${wallet}`;
+
+test("a referral identity reply at committed removal cannot prompt the wallet", async ({ page }) => {
+  const h = await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Review with MetaMask" }).click();
+  await expect(page.getByRole("region", { name: "Review referral claim" })).toBeVisible();
+  await holdVaultWalletPreflight(page, ".referral-claims");
+  await page.evaluate(() => {
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  try {
+    await leaveWithVaultPreflight(page);
+    expect(h.calls).not.toContain("eth_sendTransaction");
+    expect(await page.evaluate((key) => localStorage.getItem(key), claimKey)).toBeNull();
+  } finally {
+    await releaseVaultPreflight(page);
+  }
+});
+
+test("a granted referral cleanup lock cannot clear storage after committed removal", async ({ page }) => {
+  const h = await setup(page);
+  await page.goto("/earnings", { waitUntil: "networkidle" });
+  const pending = JSON.stringify({
+    attemptId: "11111111-1111-4111-8111-111111111111",
+    hash: null,
+    cumulative: (100n * unit).toString(),
+  });
+  await page.evaluate(({ key, value }) => localStorage.setItem(key, value), {
+    key: claimKey, value: pending,
+  });
+  const settled = record();
+  settled.claimedBase = (100n * unit).toString();
+  settled.claimableBase = "0";
+  settled.claim = null;
+  h.set(settled);
+  await page.evaluate(() => {
+    const request = navigator.locks.request.bind(navigator.locks);
+    const state = { waiting: false, removed: false, release: () => {} };
+    const observer = new MutationObserver(() => {
+      if (state.waiting && !document.querySelector(".referral-claims")) {
+        state.removed = true;
+        state.release();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    Object.defineProperty(navigator, "locks", { configurable: true, value: {
+      request: (name: string, options: LockOptions, callback: (lock: Lock | null) => unknown) =>
+        request(name, options, async (lock) => {
+          if (lock && name.startsWith("slop:referral-claim:")) {
+            state.waiting = true;
+            await new Promise<void>((resolve) => {
+              state.release = () => { observer.disconnect(); resolve(); };
+            });
+          }
+          return callback(lock);
+        }),
+    } });
+    Object.assign(window, { heldReferralLock: state });
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  try {
+    await page.getByRole("button", { name: "Refresh record" }).click();
+    await page.waitForFunction(() => (window as unknown as {
+      heldReferralLock: { waiting: boolean };
+    }).heldReferralLock.waiting);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/how-it-works$/u);
+    await page.waitForFunction(() => (window as unknown as {
+      heldReferralLock: { removed: boolean };
+    }).heldReferralLock.removed);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    expect(await page.evaluate((key) => localStorage.getItem(key), claimKey)).toBe(pending);
+    expect(h.calls).not.toContain("eth_sendTransaction");
+  } finally {
+    await page.evaluate(() => (window as unknown as {
+      heldReferralLock?: { release(): void };
+    }).heldReferralLock?.release());
+  }
+});
 
 test("a departed preflight cannot prompt and another view cannot overlap it", async ({
   page,

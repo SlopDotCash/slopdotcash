@@ -266,7 +266,8 @@
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/inbox_mark_read.qnt",
-        "formal/models/api/inbox_queries.qnt"
+        "formal/models/api/inbox_queries.qnt",
+        "formal/models/api/incomplete_assessment_queries.qnt"
       ],
       "candidateLines": [61, 68, 69, 135, 168, 202, 206, 267, 300, 319, 320],
       "review": "mapped-abstraction"
@@ -274,7 +275,10 @@
     {
       "path": "backend/notifications/incomplete-assessments.ts",
       "sha256": "ca59dbc3f8ba434beb3e3559a66e3c1066dea959ed5ddb1e33cb191ffa2df11a",
-      "models": ["formal/models/api/api_incomplete_assessments.qnt"],
+      "models": [
+        "formal/models/api/api_incomplete_assessments.qnt",
+        "formal/models/api/incomplete_assessment_queries.qnt"
+      ],
       "candidateLines": [71, 162, 218],
       "review": "mapped-abstraction"
     },
@@ -3116,7 +3120,10 @@
     {
       "path": "migrations/0115_incomplete_value_inbox.sql",
       "sha256": "a9442a305799f09dcfa26af352e8f04f4a7b5eb0828a5cb5f847be818bd18bbe",
-      "models": ["formal/models/api/api_incomplete_assessments.qnt"],
+      "models": [
+        "formal/models/api/api_incomplete_assessments.qnt",
+        "formal/models/api/incomplete_assessment_queries.qnt"
+      ],
       "candidateLines": [1, 3],
       "review": "mapped-abstraction"
     },
@@ -3791,7 +3798,10 @@
     {
       "path": "scripts/payment-keeper/budget.ts",
       "sha256": "4e94ae2f6cdbea21d8dcb9148c66d1d70dc8895b5e21a0c009d02fa5c77ca253",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
+      ],
       "candidateLines": [
         30, 84, 116, 154, 181, 231, 235, 245, 251, 289, 290, 293, 305, 327, 353,
         358, 363, 367, 371, 376, 387, 427, 430, 432, 436, 437, 438, 439, 441,
@@ -3804,6 +3814,7 @@
       "sha256": "188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
@@ -3823,14 +3834,20 @@
     {
       "path": "scripts/payment-keeper/signer.ts",
       "sha256": "2345d4dbd8bf677d817725f8994b389cec504b531496d2edd8f4ce871942cf7f",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/payment-keeper/storage.ts",
       "sha256": "e35ee7f391fb65cbda40d088f4d47e2d8958305e6ae70c8651d66dc557d8e6e1",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
+      ],
       "candidateLines": [72],
       "review": "mapped-abstraction"
     },
@@ -4707,6 +4724,7 @@
       "sha256": "dcf3a37c36fa83c27b51c393f4cddec3582ebe1cfad1256523e285512aa64078",
       "models": [
         "formal/models/ui/solana_wallet_provider.qnt",
+        "formal/models/ui/ui_contributor_allocation.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_earnings_wallet_lifetime.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -5218,15 +5236,16 @@
     },
     {
       "path": "src/ReferralClaims.tsx",
-      "sha256": "172f3bf2cd764d430725589f847b13fdacac79a93b6ae7270b4f3b5e05f85c4e",
+      "sha256": "f518566692a78d19bd270f2ec8e9781ae44a37b39686ec94caf257e1135fa7f2",
       "models": [
         "formal/models/ui/ui_referral_claim_lifetime.qnt",
+        "formal/models/ui/ui_referral_read_ownership.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 11, 24, 32, 34, 42, 79, 80, 81, 82, 83, 84, 88, 93, 102, 105, 108,
-        115, 127, 190, 215, 225, 231, 275, 282, 292, 321, 363, 399, 422, 430,
-        431, 440, 441, 443, 444, 451, 452, 454, 455, 471, 472, 473, 475, 566
+        1, 11, 24, 32, 34, 42, 79, 80, 81, 82, 83, 84, 88, 102, 106, 109, 112,
+        119, 132, 195, 220, 230, 236, 280, 287, 297, 326, 368, 404, 427, 435,
+        436, 445, 446, 448, 449, 456, 457, 459, 460, 476, 477, 478, 480, 571
       ],
       "review": "mapped-abstraction"
     },
@@ -5927,6 +5946,7 @@
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
         "formal/models/ui/ui_referral_claim_lifetime.qnt",
+        "formal/models/ui/ui_referral_read_ownership.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt"
       ],
       "candidateLines": [44, 68],
@@ -6562,7 +6582,10 @@
     {
       "path": "src/lib/verified-frontend.ts",
       "sha256": "b451d8e4be7ece5d92d7e2098386e044b53f50e40dc260c093afe1b24956d95e",
-      "models": ["formal/models/ui/ui_identity_poll_protocol.qnt"],
+      "models": [
+        "formal/models/ui/ui_contributor_allocation.qnt",
+        "formal/models/ui/ui_identity_poll_protocol.qnt"
+      ],
       "candidateLines": [
         26, 28, 29, 30, 43, 47, 49, 50, 52, 54, 70, 74, 76, 81, 82, 83, 84
       ],
@@ -7201,7 +7224,10 @@
     {
       "path": "workers/operator-keeper/index.ts",
       "sha256": "4ae322244318e22e4d233adcd5183464e9be1eaa4a1d628ac1c2e00926414fb3",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
+      ],
       "candidateLines": [62, 65, 93, 94, 103, 111, 136, 137],
       "review": "mapped-abstraction"
     },
@@ -7210,7 +7236,8 @@
       "sha256": "df4a4af5f015790d922ea44e3bed0e3ee364c2a0d818a536a45825b4dfdaf652",
       "models": [
         "formal/models/fees/native_budget.qnt",
-        "formal/models/payments/operator_keeper.qnt"
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8103,6 +8130,7 @@
       "sha256": "4a6bfc9ba153c0878963915c84a13fdaa3cac2c87e2653dc04c575218e79aeb4",
       "models": [
         "formal/models/api/api_incomplete_assessments.qnt",
+        "formal/models/api/incomplete_assessment_queries.qnt",
         "formal/models/slopbot/bot_value_attempt_recovery.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_value_request.qnt"
@@ -9972,6 +10000,41 @@
         "resolvedKindDoesNotEscapeStoredRoleRestrictionTest",
         "revokedRoleAndAppellantExceptionFilterBothQueriesTest",
         "textDescendingAndKeyAscendingPageTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/incomplete_assessment_queries.qnt",
+      "sha256": "39652147e2706cda5d18a4216c1bdf34bd72ade88ed019c59b65f5b760a062e8",
+      "sources": [
+        "backend/notifications/handler.ts",
+        "backend/notifications/incomplete-assessments.ts",
+        "migrations/0115_incomplete_value_inbox.sql",
+        "workers/slopbot/value-processing.ts"
+      ],
+      "scenarios": [
+        "adminBypassesRemoteOutageTest",
+        "bundledAuthorityOutageKeepsOrdinaryNoticeTest",
+        "bundledManifestChangeKeepsOrdinaryNoticeTest",
+        "changedRepositoryIdentityIsUnavailableTest",
+        "completionAfterRowsDoesNotRewriteSnapshotTest",
+        "deniedMaintainerGetsVerifiedEmptyQueueTest",
+        "directAuthorityOutageIsNotEmptyTest",
+        "equalTimestampCompletionHidesGapTest",
+        "exhaustedGapRemainsVisibleTest",
+        "expectedActorMismatchRefusesWholeRequestTest",
+        "gapNewerThanCompletionReturnsTest",
+        "malformedCursorIsUnavailableOnlyForBundledQueueTest",
+        "manifestChangeAfterAccessRefusesQueueTest",
+        "markReadDoesNotResolveAssessmentTest",
+        "missingInstallationIsUnavailableTest",
+        "numericContinuationVisitsRemainingPrTest",
+        "observedPermissionDoesNotPromiseContinuousAuthorityTest",
+        "oneGroupForTwoDeliveriesTest",
+        "resolvingSiblingHidesOlderExhaustedGapTest",
+        "rowReadFailureDoesNotPublishEmptyQueueTest",
+        "runningSiblingKeepsEarliestWaitingRetryTest",
+        "signedOutRequestRefusesBeforeQueueTest",
+        "unrelatedActorGetsVerifiedEmptyQueueTest"
       ]
     },
     {
@@ -11870,6 +11933,43 @@
         "offNoWorkTest",
         "overlapNoSecondJournalTest",
         "restartRetainsLiabilityTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/operator_keeper_lifecycle.qnt",
+      "sha256": "4ed4dedca4c6c5acab0833e2bda97244c7e36d34a2a0da38f04822b99b70f073",
+      "sources": [
+        "scripts/payment-keeper/budget.ts",
+        "scripts/payment-keeper/keeper.ts",
+        "scripts/payment-keeper/signer.ts",
+        "scripts/payment-keeper/storage.ts",
+        "workers/operator-keeper/index.ts",
+        "workers/operator-keeper/storage.ts"
+      ],
+      "scenarios": [
+        "changedProjectSelectionKeepsSameLiabilityTest",
+        "changedRegistryCannotReuseJournalTest",
+        "committedAttemptSurvivesRestartTest",
+        "directOffTickReturnsEmptyResultTest",
+        "dryRunCannotPrepareSignedAttemptTest",
+        "dryRunMayPersistReadStateWithoutSigningTest",
+        "exactGasEvidenceReleasesOnlyGasLiabilityTest",
+        "failedTransactionRollsBackNonceAndLiabilityTest",
+        "instanceLossDiscardsOnlyUncommittedAttemptTest",
+        "invalidCronConfigurationStartsNoObjectWorkTest",
+        "invalidDirectConfigurationIsRedacted503Test",
+        "lostResponseDoesNotUndoSignedAttemptTest",
+        "offCronDoesNotValidateConfigurationTest",
+        "overlappingRequestsShareOneCoreRunTest",
+        "partialFailureIsHttp200ButScheduledFailureTest",
+        "publicRouteCannotReachKeeperTest",
+        "settledPromiseDoesNotWaitForResponseDeliveryTest",
+        "settledResponseCanArriveAfterInstanceReplacementTest",
+        "stagedSigningDoesNotAuthorizeBroadcastTest",
+        "stoppingNewInstanceKeepsUnknownAttemptTest",
+        "unavailableGasEvidenceKeepsLiabilityTest",
+        "unknownSendReusesJournalAfterRestartTest",
+        "wrongInternalRouteDoesNoWorkTest"
       ]
     },
     {
@@ -15084,18 +15184,43 @@
     },
     {
       "path": "formal/models/ui/ui_contributor_allocation.qnt",
-      "sha256": "a78c4db8aac66bd191646e35aff8cbd4a40167b9319533ddeb6df0ff321aa60f",
+      "sha256": "fddc77e84ee9c680094568f8a1f794787ab3cc25588ba0fca527fdcc6b1c49e7",
       "sources": [
         "src/ContributorAllocation.tsx",
+        "src/Earnings.tsx",
         "src/lib/contributor-allocation.ts",
-        "src/lib/use-time-boundary.ts"
+        "src/lib/use-time-boundary.ts",
+        "src/lib/verified-frontend.ts"
       ],
       "scenarios": [
+        "actorChangesAfterReadSelectCurrentRowTest",
+        "actorChangesDuringReadSelectCurrentRowTest",
+        "bodyTimeoutIsErrorTest",
+        "closedFileOverridesOnTimeWalletTest",
+        "deadlineNeedsRenderObservationTest",
         "deadlineTest",
+        "delayedTimerInstallationRefreshesDeadlineTest",
+        "exactCutoffRegistrationIsLateTest",
+        "httpFailureIsErrorTest",
+        "initialReadIsHiddenTest",
+        "invalidFileIsErrorTest",
         "lateWalletTest",
+        "missingRegistrationTimeCannotScheduleTest",
         "noRecipientTest",
+        "oldBodyCannotPublishIntoRemountTest",
+        "oldFailureCannotReplaceNewRowTest",
         "onTimeWalletTest",
-        "sentTest"
+        "oneEligibleWalletAmongOthersSchedulesTest",
+        "otherAccountsTransferNeverAppearsTest",
+        "remountObservesNewSenderPublicationTest",
+        "retryCanLoadPublishedRowTest",
+        "retryRetainsErrorUntilEffectTest",
+        "revokedWalletStopsSchedulingTest",
+        "sentTest",
+        "transferOverridesMissingWalletAndDeadlineTest",
+        "unauthorizedWalletCannotScheduleTest",
+        "validNullFileIsHiddenTest",
+        "wrongChainCannotScheduleTest"
       ]
     },
     {
@@ -16340,16 +16465,21 @@
     },
     {
       "path": "formal/models/ui/ui_referral_claim_lifetime.qnt",
-      "sha256": "552b000c3b961446aef3fe572a9fb59471e684d23e34b12f8b23f36d0113c42f",
+      "sha256": "b92883855d74009971ab4e5d25a1d49b1485ebc0905124e0f504ed9533d09a36",
       "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
       "scenarios": [
         "activeWalletBlocksResetTest",
         "activeWalletResetRefusesTest",
         "changedBytesRejectLateDeclineTest",
+        "competingLockGrantRefusesWithoutReleasingOwnerTest",
+        "departedBeforeLockGrantNeverStartsPreflightTest",
+        "departedObservedPreflightCannotDispatchTest",
         "departedPreflightCannotPromptTest",
         "departedPreflightPromptRefusesTest",
+        "departedReturnedPreflightCannotDispatchTest",
         "failedHashWriteRetainsCapturedMarkerTest",
         "failedInitialStorageCannotPromptTest",
+        "historicalPassiveRemovalCouldPromptTest",
         "insufficientClaimedAmountCannotClearTest",
         "lateDeclineClearsOwnMarkerTest",
         "lateOwnedHashPersistsTest",
@@ -16363,6 +16493,30 @@
         "unreadableMarkerCannotStartSendTest",
         "unreadableMarkerRequiresExplicitResetTest",
         "unsupportedLocksRefuseMutationTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_referral_read_ownership.qnt",
+      "sha256": "5436fa69340a3e13c2159ee391a33236561ddb04f7414931609769cf64db8c94",
+      "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
+      "scenarios": [
+        "changedSnapshotBeforeLockGrantCannotClearTest",
+        "committedClearSurvivesDepartureBeforeStatusTest",
+        "committedDepartureAfterGrantCannotClearTest",
+        "committedDepartureBeforeGrantCannotClearTest",
+        "committedDepartureBeforeReplyCannotStartCleanupTest",
+        "failedStorageKeepsPendingTest",
+        "historicalPassiveRemovalCouldClearTest",
+        "laterReadMayClearItsOwnLargerSnapshotTest",
+        "lowerTotalKeepsPendingTest",
+        "missingPendingNeedsNoLockTest",
+        "oldErrorCannotReplaceNewLifetimeTest",
+        "refreshRetiresOldGrantedReadTest",
+        "refusedLockKeepsVerifiedEvidenceSeparateTest",
+        "secondReadNeedsRefreshOrRemountTest",
+        "unavailableResponseRetainsPendingTest",
+        "unreadableSnapshotNeverAutoClearsTest",
+        "verifiedTotalClearsExactSnapshotTest"
       ]
     },
     {

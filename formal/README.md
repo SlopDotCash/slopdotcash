@@ -1009,6 +1009,31 @@ durable run creation and lost responses. Reauthentication can retrieve the
 same run; it does not imply trace finalization. Neither refinement introduces
 a template freshness gate or changes the application protocol.
 
+The referral view now retires both action ownership and pending read cleanup
+at committed removal. A late wallet preflight cannot open a new prompt, and
+an already-granted Web Lock cannot clear its old local marker after the read
+is retired. The models separate lock request/grant, callback storage changes
+and later UI publication; a clear committed before departure remains durable.
+Two browser regression definitions cover these boundaries. Referrals remain
+disabled under the existing product decision; this changes no activation rule.
+
+Contributor allocation modeling now includes public-file loading, retry,
+current-account row selection, wallet eligibility and deadline rendering.
+The read is shared public data and makes no payment or parent mutation; source
+review justified no runtime change. The keeper host model separately covers
+coalesced requests, promise settlement, HTTP delivery, scheduled partial
+failures and restart with durable attempts. Its two-lifetime/two-run bound
+assumes the Durable Object host and transaction contracts; it does not prove
+provider or chain behavior.
+
+Incomplete-assessment query modeling covers grouped delivery history,
+captured access observations, final manifest comparison and pagination.
+A resolving sibling hides older unresolved rows at the source's inclusive
+timestamp boundary. Completion after a row read does not rewrite that
+snapshot. A dedicated query failure differs from an empty queue; a bundled
+Inbox response retains ordinary notices and returns a null queue on failure.
+These additions and all new scenarios remain unexecuted.
+
 The current continuation also merges development `da1a618e` (PR
 [#2442](https://github.com/SlopDotCash/slopdotcash/pull/2442)). Extracted
 submission and wallet helpers retain the state fixes above. Shared pending
