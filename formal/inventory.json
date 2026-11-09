@@ -4105,7 +4105,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "5a9dc2cc9b4618c67a7a7e6ed59096c43c02da1aa5663e66f4d5e8f7a3dd8e90",
+      "sha256": "a6988788f864937dc502dbf48ade679d93892cc5f07a78aff1848efc2c86c33b",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -4642,11 +4642,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "307594044925bdc4e690b30e0e5f02cadfcf03e3dd478c9b30845e5bec2c9df8",
+      "sha256": "19feb9729c8b55c028e2b2f88153ea3dc4b619f1473183f65e4ab727a19b5d41",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        209, 233, 244, 274, 275, 277, 278, 311, 313, 324, 473, 474, 476, 477,
-        518, 608
+        207, 231, 242, 272, 273, 275, 276, 309, 320, 466, 467, 469, 470, 511,
+        601
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -5697,9 +5697,9 @@
     },
     {
       "path": "src/lib/standings.ts",
-      "sha256": "ea6111140c737ac7d5a1977f8df5bb0eb09d3cc284ffa4a16fd513d989f67d7e",
+      "sha256": "f47934f45b577cb2454d0bf11f896fca1be2ce62edf25cfcd4f81ba55b767f73",
       "models": [],
-      "candidateLines": [147],
+      "candidateLines": [162],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure derivation and validation of the published standings from a supplied snapshot and cycle index; no retained state, I/O, lifecycle or mutation. The browser read cache is modeled in ui_snapshot_cache."
     },
@@ -5960,9 +5960,9 @@
     },
     {
       "path": "src/lib/who-builds.ts",
-      "sha256": "9c073d68ac55a58d6780584d41f76c072b5947470e7f9865bcbc59da2ba32013",
+      "sha256": "dd31598c76526484c00ccc93f97300914d612b52d66d6a56b193327bc2b28763",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [96],
+      "candidateLines": [94],
       "review": "mapped-abstraction"
     },
     {
