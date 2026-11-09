@@ -13,6 +13,7 @@ import {
   TOKEN_PROGRAM,
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import {
   assertJupiterRoute,
   type JupiterRouteExpectation,
@@ -183,11 +184,7 @@ export async function reviewSolanaRouteAccounts(
           executable: state?.executable ?? null,
           lamports: state ? String(state.lamports) : null,
           dataLength: state?.data.length ?? 0,
-          dataSha256: state
-            ? [...sha256(state.data)]
-                .map((byte) => byte.toString(16).padStart(2, "0"))
-                .join("")
-            : null,
+          dataSha256: state ? bytesToHex(sha256(state.data)) : null,
           slot: response.context.slot,
         });
       });

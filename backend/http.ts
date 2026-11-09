@@ -88,6 +88,18 @@ export async function readJsonObject(
     : null;
 }
 
+/** A bounded JSON object body; anything else refuses the request with 400. */
+export async function requireJsonObject(
+  request: Request,
+  maximum: number,
+  label: string,
+): Promise<Record<string, unknown>> {
+  const value = await readJsonObject(request, maximum, label);
+  if (value === null)
+    fail(400, "invalid_request", "Request body must be a JSON object");
+  return value;
+}
+
 /**
  * Splits values into `IN (...)` batches. D1 allows 100 bound parameters per
  * statement, so callers keep a margin.

@@ -1,3 +1,4 @@
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 // Operator receipts are evidence, not model output or contributor test claims.
 // The signing key and approved VM profile are configured outside repositories.
 
@@ -44,7 +45,7 @@ function requireFact(ok: unknown): asserts ok {
   if (!ok) throw new Error("Unverified quality evidence");
 }
 function bytes(value: string, length: number) {
-  const result = Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+  const result = decodeBase64(value);
   requireFact(result.length === length);
   return result;
 }

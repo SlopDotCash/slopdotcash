@@ -30,6 +30,7 @@ import { apiRequest } from "./project-api";
 import type { ProjectDefinition } from "./projects.mjs";
 import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export interface MonthlySetting {
   /** Token base units as decimal text. */
@@ -247,18 +248,11 @@ export function verifySolanaMonthlyPlan(
     enabled: target.enabled,
     blockhash: transaction.blockhash,
   });
-  const wire = Uint8Array.from(atob(transaction.transaction), (c) =>
-    c.charCodeAt(0),
+  assertUnsignedSolanaWire(
+    transaction.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed setting.",
   );
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => byte !== wire[index + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed setting.",
-    );
   return msg;
 }
 async function solanaRequest(

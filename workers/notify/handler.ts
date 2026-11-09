@@ -1,4 +1,5 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -167,9 +168,7 @@ function parseNotice(
 }
 
 function base64Utf8(encoder: TextEncoder, value: string): string {
-  let binary = "";
-  for (const byte of encoder.encode(value)) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  return encodeBase64(encoder.encode(value));
 }
 
 function isAscii(value: string): boolean {

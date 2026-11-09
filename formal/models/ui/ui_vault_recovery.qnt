@@ -1,4 +1,6 @@
 // @source src/VaultActions.tsx
+// @source src/OwnerPresentation.tsx
+// @source src/lib/use-pending-wallet-attempt.ts
 // @source src/lib/solana-vault-actions.ts
 // @source contracts/solana/wallet-transactions.ts
 // @evidence tests/e2e/solana-vault-actions.spec.ts

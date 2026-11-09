@@ -23,6 +23,7 @@ import {
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { projectVaultSnapshots } from "../../backend/payments/vault-snapshots";
 import type { VaultTotals } from "../../contracts/vault-totals";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -31,18 +32,22 @@ import {
 import { fundingAssetForNetwork } from "../../src/lib/funding-address.mjs";
 import { reservedGross } from "../../src/lib/payments/contracts";
 import {
+  shiftPeriod,
+  utcPeriodOf,
+} from "../../src/lib/payments/monthly-allocation";
+import {
   assertProjectDefinition,
   CONTRIBUTION_FIELDS,
   PROJECT_SKILL_TEMPLATES,
 } from "../../src/lib/project-schema.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/core";
 import paymentsWorker, {
   type PaymentDeployment,
   type PaymentsWorkerEnvironment,
 } from "../../workers/payments/index";
+import { sqliteJournalStore } from "../payment-keeper/store";
 
 export const EVIDENCE_SCHEMA = "slop-escrow-acceptance:v1";
 /** The runner stops with this exit code when it must wait for a delay or finality. */
@@ -426,52 +431,6 @@ export class RpcError extends Error {
   }
 }
 
-/** A durable executor journal, as the hosted Durable Object storage keeps it. */
-function journalStore(file: string): JournalStore {
-  const database = new Database(file);
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS journal(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
-  );
-  let gate = Promise.resolve();
-  const store: JournalStore = {
-    async get<T>(key: string) {
-      const row = database
-        .query<{ value: string }, [string]>(
-          "SELECT value FROM journal WHERE key=?",
-        )
-        .get(key);
-      return row ? (JSON.parse(row.value) as T) : undefined;
-    },
-    async put<T>(key: string, value: T) {
-      database
-        .prepare(
-          "INSERT INTO journal VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        )
-        .run(key, JSON.stringify(value));
-    },
-    async transaction<T>(callback: (txn: JournalStore) => Promise<T>) {
-      const previous = gate;
-      let unlock = () => {};
-      gate = new Promise<void>((done) => {
-        unlock = done;
-      });
-      await previous;
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        const result = await callback(store);
-        database.exec("COMMIT");
-        return result;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      } finally {
-        unlock();
-      }
-    },
-  };
-  return store;
-}
-
 export interface Fetcher {
   fetch(request: Request): Promise<Response>;
 }
@@ -667,7 +626,9 @@ export class Projection {
     this.sqlite = sqlite;
   }
   journal(role: string): JournalStore {
-    return journalStore(join(this.directory, `journal-${role}.sqlite`));
+    return sqliteJournalStore(
+      new Database(join(this.directory, `journal-${role}.sqlite`)),
+    );
   }
   /** A signed-in test member: the account API reads sessions from these tables. */
   private async session(actor: TestActor): Promise<string> {
@@ -1347,12 +1308,7 @@ export function scenarioActor(scenario: number, n: number): TestActor {
  */
 export function openMonthlyPeriod(now: bigint) {
   const date = new Date(Number(now) * 1000);
-  const shift = (months: number) => {
-    const d = new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1),
-    );
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-  };
+  const shift = (months: number) => shiftPeriod(utcPeriodOf(date), months);
   const monthStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
   const back = date.getTime() < monthStart + 72 * 3_600_000 ? 2 : 1;
   return {

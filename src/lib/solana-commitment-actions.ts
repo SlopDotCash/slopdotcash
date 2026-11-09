@@ -10,6 +10,7 @@ import { isAssetDecimals } from "./payments/contracts";
 import { apiRequest } from "./project-api";
 import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export type SolanaCommitmentPlan = Awaited<
   ReturnType<typeof prepareSolanaCommitment>
@@ -54,18 +55,11 @@ export function verifySolanaCommitmentPlan(
     },
     transaction,
   );
-  const wire = Uint8Array.from(atob(transaction.transaction), (c) =>
-    c.charCodeAt(0),
+  assertUnsignedSolanaWire(
+    transaction.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed award.",
   );
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => byte !== wire[index + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed award.",
-    );
   return msg;
 }
 async function request(

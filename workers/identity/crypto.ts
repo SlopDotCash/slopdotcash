@@ -1,7 +1,5 @@
 import { encodeBase64Url, ownedBuffer } from "../../src/lib/byte-encoding";
 
-export { sha256Hex } from "../../src/lib/async-sha256.mjs";
-
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 

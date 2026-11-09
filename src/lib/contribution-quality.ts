@@ -2,6 +2,7 @@
 import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
+import { compareActors } from "./github-actor";
 import { allocateWeightedRows } from "./weighted-allocation";
 
 export const QUALITY_TIERS = {
@@ -221,17 +222,11 @@ export function allocateQualityWeights(
     cap,
     rows,
     (row) => row.weight,
-    (a, b) => {
-      const left = actorLogins.get(a.id) ?? a.id,
-        right = actorLogins.get(b.id) ?? b.id;
-      const leftLogin = left.toLocaleLowerCase("en"),
-        rightLogin = right.toLocaleLowerCase("en");
-      return (
-        leftLogin.localeCompare(rightLogin, "en") ||
-        left.localeCompare(right, "en") ||
-        a.id.localeCompare(b.id, "en")
-      );
-    },
+    (a, b) =>
+      compareActors(
+        { id: a.id, login: actorLogins.get(a.id) ?? a.id },
+        { id: b.id, login: actorLogins.get(b.id) ?? b.id },
+      ),
   );
   return new Map(
     allocated.map(({ row, amount }) => [row.id, amount.toString()]),

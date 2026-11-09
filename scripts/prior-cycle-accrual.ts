@@ -6,6 +6,7 @@ import {
   allocationFundingMinor,
   LAST_LEGACY_CAP_CYCLE,
 } from "../src/lib/allocation-funding";
+import { shiftPeriod } from "../src/lib/payments/monthly-allocation";
 import type { ProjectId } from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
@@ -58,9 +59,7 @@ export function previousCycleId(cycleId: string): string {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError("Cycle id must be YYYY-MM");
   }
-  const [year, month] = cycleId.split("-").map(Number);
-  const previous = new Date(Date.UTC(year, month - 2, 1));
-  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+  return shiftPeriod(cycleId, -1);
 }
 
 async function readManifest(

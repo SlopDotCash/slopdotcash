@@ -1,24 +1,12 @@
-import { encodeBase64Url } from "../../src/lib/byte-encoding";
+import { githubAppJwt, githubHeaders } from "../../backend/github";
+import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
+import { constantTimeEqual } from "../identity/crypto";
 
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
 // the few REST calls Slopbot is allowed to make (BOT-01, slopbot-v2 permissions).
 
 const API = "https://api.github.com";
 const encoder = new TextEncoder();
-
-function hex(bytes: ArrayBuffer): string {
-  return [...new Uint8Array(bytes)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1)
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 export async function verifyWebhookSignature(
   secret: string,
@@ -33,43 +21,21 @@ export async function verifyWebhookSignature(
     false,
     ["sign"],
   );
-  const expected = `sha256=${hex(await crypto.subtle.sign("HMAC", key, body))}`;
-  return timingSafeEqual(expected, header);
-}
-
-function base64url(input: ArrayBuffer | string): string {
-  const bytes =
-    typeof input === "string" ? encoder.encode(input) : new Uint8Array(input);
-  return encodeBase64Url(bytes);
+  const expected = `sha256=${bytesToHex(new Uint8Array(await crypto.subtle.sign("HMAC", key, body)))}`;
+  return constantTimeEqual(expected, header);
 }
 
 // GitHub issues PKCS#1 keys; Workers WebCrypto imports PKCS#8 only. The secret
 // must be converted once with `openssl pkcs8 -topk8 -nocrypt` (README).
-export async function appJwt(appId: string, pkcs8Pem: string): Promise<string> {
+export async function appJwt(
+  appId: string,
+  pkcs8Pem: string,
+  now: Date = new Date(),
+): Promise<string> {
   if (!pkcs8Pem.includes("-----BEGIN PRIVATE KEY-----")) {
     throw new Error("SLOPBOT_APP_PRIVATE_KEY must be a PKCS#8 PEM");
   }
-  const der = Uint8Array.from(
-    atob(pkcs8Pem.replace(/-----[^-]+-----/gu, "").replace(/\s+/gu, "")),
-    (c) => c.charCodeAt(0),
-  );
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    der,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const now = Math.floor(Date.now() / 1000);
-  const unsigned = `${base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64url(
-    JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId }),
-  )}`;
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    key,
-    encoder.encode(unsigned),
-  );
-  return `${unsigned}.${base64url(signature)}`;
+  return githubAppJwt(appId, pkcs8Pem, now);
 }
 
 export class GitHubError extends Error {
@@ -204,10 +170,7 @@ export class GitHubClient {
       // An existing unreadable file must not be mistaken for absent policy.
       return { text: "", truncated: true };
     }
-    const bytes = Uint8Array.from(
-      atob(file.content.replace(/\s+/gu, "")),
-      (c) => c.charCodeAt(0),
-    );
+    const bytes = decodeBase64(file.content.replace(/\s+/gu, ""));
     const truncated = bytes.length > maxBytes;
     return {
       text: new TextDecoder().decode(
@@ -219,12 +182,7 @@ export class GitHubClient {
 }
 
 function headers(token: string): Record<string, string> {
-  return {
-    accept: "application/vnd.github+json",
-    authorization: `Bearer ${token}`,
-    "user-agent": "slopbot",
-    "x-github-api-version": "2022-11-28",
-  };
+  return githubHeaders(token, "slopbot");
 }
 
 export type Exemption = "exempt" | "not-exempt" | "unknown";

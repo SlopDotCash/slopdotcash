@@ -6,9 +6,9 @@ import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 
 const ORIGIN = "https://slop.cash";
 const API = "https://api.github.com";

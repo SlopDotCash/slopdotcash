@@ -2,6 +2,7 @@
 // @source src/lib/monthly-commitment-actions.ts
 // @source src/lib/evm-vault-actions.ts
 // @source src/OwnerPresentation.tsx
+// @source src/lib/use-pending-wallet-attempt.ts
 // @evidence tests/e2e/vault-actions.spec.ts
 // @evidence tests/e2e/solana-vault-actions.spec.ts
 // One recorded monthly-setting request, one wallet, and four evidence classes:

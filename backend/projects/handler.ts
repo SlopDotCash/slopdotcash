@@ -1,6 +1,10 @@
 import type { SolanaEscrowConfig } from "../../contracts/solana/adapter";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import {
+  shiftPeriod,
+  utcPeriodOf,
+} from "../../src/lib/payments/monthly-allocation";
 import { assertPayoutExclusionTransition } from "../../src/lib/payout-exclusions.mjs";
 import type {
   EnforcementAction,
@@ -57,7 +61,7 @@ import {
 } from "../http";
 import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
-import { readJsonObject } from "../trace/validation";
+import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
   PROJECT_API_CONTRACT_VERSION,
@@ -458,12 +462,10 @@ async function ownerSecurityProgram(
 /** Every UTC month from the reward start through `last`, in order. */
 function monthsThrough(rewardStartAt: string, last: string): string[] {
   const months: string[] = [];
-  const month = new Date(`${rewardStartAt.slice(0, 7)}-01T00:00:00Z`);
   for (
-    let id = month.toISOString().slice(0, 7);
+    let id = utcPeriodOf(new Date(`${rewardStartAt.slice(0, 7)}-01T00:00:00Z`));
     id <= last;
-    month.setUTCMonth(month.getUTCMonth() + 1),
-      id = month.toISOString().slice(0, 7)
+    id = shiftPeriod(id, 1)
   )
     months.push(id);
   return months;
@@ -580,7 +582,7 @@ function prospectiveFinancialChange(
       "financial_change_restricted",
       "Only the monthly amount, network and asset change through owner self-service",
     );
-  const cycleId = now.toISOString().slice(0, 7);
+  const cycleId = utcPeriodOf(now);
   if (assetChanged) {
     // Old caps remain in immutable revisions of the old asset. The new
     // asset starts next month: every month from the reward start through
@@ -1217,7 +1219,7 @@ async function createProject(
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["manifest"], ["referrer", "monthlyAmount", "bountyAmount"]);
   const { manifest, text } = canonicalManifest(
     await verifiedBountyAmount(
@@ -1384,7 +1386,7 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     ["step", "expectedRevision", "network", "claimId", "automatic"],
@@ -1520,11 +1522,7 @@ async function ownerVault(
     current,
     actor,
     manifest: bounty
-      ? attachBountyVault(
-          current.manifest,
-          deployment,
-          deps.now().toISOString().slice(0, 7),
-        )
+      ? attachBountyVault(current.manifest, deployment, utcPeriodOf(deps.now()))
       : attachOrdinaryVault(current.manifest, deployment),
     ownerParticipation: true,
     reason:
@@ -1566,7 +1564,7 @@ async function publishOwnerRevision(
 ): Promise<Response> {
   const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = stored?.body ?? (await readJsonObject(request));
+  const body = stored?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
     ["manifest", "expectedRevision"],
@@ -1812,7 +1810,7 @@ async function checkSetup(
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, [], ["requestScan"]);
   if (body.requestScan !== undefined && typeof body.requestScan !== "boolean")
     fail(400, "invalid_request", "Invalid requestScan");
@@ -1840,7 +1838,7 @@ async function publishPendingApplication(
   const session = await requireSession(request, deps);
   if (!APPLICATION_ID.test(applicationId))
     fail(404, "not_found", "Application not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, []);
   const application = await deps.persistence.getApplication(applicationId);
   if (
@@ -1961,7 +1959,7 @@ async function replaceProjectManifest(
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["manifest", "expectedRevision", "reason"], ["bountyAmount"]);
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -2268,7 +2266,7 @@ async function enforceProject(
 ): Promise<Response> {
   const session = await requireModerator(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     [
@@ -2391,7 +2389,7 @@ async function requestReinstatement(
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     ["projectId", "reason", "evidenceReference"],

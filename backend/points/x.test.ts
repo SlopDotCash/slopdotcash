@@ -1,8 +1,8 @@
 // PRD section 3: run the real OAuth routes and database, with controlled X responses.
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { handlePointsApi, type PointsDependencies } from "./handler";
 
 test("X connection and reconnect reserve identity without granting points", async () => {

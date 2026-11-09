@@ -84,6 +84,23 @@ export function periodEnd(period: string): Date {
   return new Date(Date.UTC(year, month, 1));
 }
 
+/** The UTC calendar month (YYYY-MM) that contains `date`. */
+export function utcPeriodOf(date: Date): string {
+  return date.toISOString().slice(0, 7);
+}
+
+/** The UTC calendar month `delta` months from a YYYY-MM period. Callers validate the period. */
+export function shiftPeriod(period: string, delta: number): string {
+  const [year, month] = period.split("-").map(Number);
+  return utcPeriodOf(new Date(Date.UTC(year, month - 1 + delta, 1)));
+}
+
+/** A YYYY-MM period as [from, to) UTC milliseconds. Callers validate the period. */
+export function periodBounds(period: string): { from: number; to: number } {
+  const [year, month] = period.split("-").map(Number);
+  return { from: Date.UTC(year, month - 1, 1), to: Date.UTC(year, month, 1) };
+}
+
 /** The automatic cutoff of a month, or null when the month is outside the schedule. */
 export function monthlyCutoff(
   schedule: MonthlySchedule,
