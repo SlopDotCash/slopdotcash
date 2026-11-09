@@ -168,7 +168,6 @@ function SecuritySettingsEditor({
   return (
     <div className="security-owner-settings">
       <SecurityProgramEditor
-        embedded
         actor={actor}
         key={`${current.project.id}:${current.revision}`}
         onPublished={(result) => {

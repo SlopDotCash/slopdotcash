@@ -4750,14 +4750,14 @@
     },
     {
       "path": "src/ProjectSecuritySettings.tsx",
-      "sha256": "09d1f37da36cfa21f58b93af2d76079cca8de7dd897af99309cc66873168dee7",
+      "sha256": "8035a4e37bb4d8564d6b9000845186993e4f9e99b705918359cb69d28a6025db",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_project_setup.qnt"
       ],
       "candidateLines": [
         1, 22, 25, 26, 27, 28, 30, 31, 66, 87, 91, 118, 119, 120, 121, 122, 123,
-        124, 126, 133, 139, 148, 149, 150, 153, 163, 164, 165, 175
+        124, 126, 133, 139, 148, 149, 150, 153, 163, 164, 165, 174
       ],
       "review": "mapped-abstraction"
     },
@@ -4865,11 +4865,11 @@
     },
     {
       "path": "src/SecurityProgramEditor.tsx",
-      "sha256": "4037eef2908511f925c6e37569246c9dcd7a5d55d4a33f5cec9a79bc3769b8cd",
+      "sha256": "71d72ca979c17941eb324b54950dcd0b53f2970f3d418191e31c58b0babe3205",
       "models": ["formal/models/ui/ui_project_setup.qnt"],
       "candidateLines": [
-        1, 50, 81, 82, 83, 85, 92, 102, 103, 108, 113, 120, 132, 170, 181, 182,
-        230, 247, 256, 321, 323, 324, 327, 331, 334, 335, 497, 532, 538
+        1, 50, 79, 80, 82, 89, 99, 100, 105, 110, 117, 129, 167, 178, 179, 227,
+        244, 253, 301, 303, 304, 306, 309, 312, 313, 468, 503, 508
       ],
       "review": "mapped-abstraction"
     },
