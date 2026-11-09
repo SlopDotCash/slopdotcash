@@ -53,6 +53,7 @@ method shareScoreThirds(total: int, actors: int, minimumPerActor: int) returns (
   assert total == base * actors + extra && 0 <= extra < actors by {
     assert total >= 0;
   }
+  assert base >= 0 by {}
   return shares;
 }
 
