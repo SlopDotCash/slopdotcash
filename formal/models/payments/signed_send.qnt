@@ -7,7 +7,9 @@
 // @source workers/fee-converter/verified-arithmetic.ts
 // Same-nonce EVM fee replacement: payment-executor nextReplacementFees and
 // fee-converter evm.ts replace(). Every attempt keeps the original nonce,
-// recipient, calldata, value and gas; only the fee fields change. Each
+// recipient, calldata, value and gas; only the fee fields change. Those
+// carried fields are not modelled: the shared nonce appears only as the
+// rule that at most one broadcast attempt can be mined (finalize, revert). Each
 // replacement is journaled before broadcast, and a missing receipt keeps the
 // bytes. Binding cancellation (a different, zero-value transfer) is modelled
 // in binding_cancellation; the referral poster never replaces a send.
@@ -24,7 +26,7 @@
 // geometrically below a fixed cap, so the attempt list is finite.
 module signed_send {
   type S = { phase: str, fees: List[int], broadcast: Set[int], winner: int,
-    nonce: int, ceiling: int, refused: bool }
+    ceiling: int, refused: bool }
   var s: S
   pure def ceilPercent(v: int, p: int): int = (v * p + 99) / 100
   pure def capOf(st: S): int = {
@@ -36,7 +38,7 @@ module signed_send {
   pure def admissible(st: S): bool =
     nextFee(st) >= ceilPercent(st.fees[st.fees.length() - 1], 110)
   action initWith(original: int, ceiling: int): bool = s' = { phase: "empty", fees: [original],
-    broadcast: Set(), winner: -1, nonce: 1, ceiling: ceiling, refused: false }
+    broadcast: Set(), winner: -1, ceiling: ceiling, refused: false }
   action init = { nondet o = Set(8, 3).oneOf()
     nondet c = Set(1000, 20).oneOf()
     initWith(o, c) }
@@ -57,7 +59,7 @@ module signed_send {
   action step = any { sign, replace, refuseAtCap,
     nondet i = 0.to(6).oneOf()
     any { send(i), finalize(i), revert(i) }, s' = s }
-  val invariant = all { s.nonce == 1,
+  val invariant = all {
     s.broadcast.forall(i => i < s.fees.length()),
     s.winner >= 0 implies s.broadcast.contains(s.winner),
     s.refused implies not(admissible(s)),

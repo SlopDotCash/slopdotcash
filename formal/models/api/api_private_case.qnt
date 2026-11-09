@@ -19,14 +19,16 @@
 // (ineligible) back into pending, so a capacity wait survives.
 // Independence (priorCaseDecider): an appeal or related-party reviewer never
 // made a decide, award, related-party or appeal decision on this case; the
-// journal keeps every earlier decider. Paid terms are assumed present; funding
+// journal keeps every earlier decider. Independence is the decideRelated and
+// decideAppeal guards; the *MustBeIndependent and *CannotDecideAppeal
+// scenarios show each refusal. Paid terms are assumed present; funding
 // shortfall is the nondeterministic `short` award. Bounds: three human actors,
 // three technical decisions, two appeals. Roles and CAS are refined by
 // api_private_case_roles and api_private_case_transaction.
 module api_private_case {
   type Case = { receipt: str, award: str, related: bool, relatedReview: str,
     appeal: str, from: str, deciders: Set[int], decisions: int, appeals: int,
-    conflicted: bool, remediation: str, redaction: int, disclosed: int }
+    remediation: str, redaction: int, disclosed: int }
   var s: Case
   val actors = Set(1, 2, 3)
   val openReceipt = Set("received", "needs-information", "triaging")
@@ -38,7 +40,7 @@ module api_private_case {
 
   action init = s' = { receipt: "received", award: "pending", related: false,
     relatedReview: "not-applicable", appeal: "none", from: "none", deciders: Set(),
-    decisions: 0, appeals: 0, conflicted: false, remediation: "investigating", redaction: 0, disclosed: 0 }
+    decisions: 0, appeals: 0, remediation: "investigating", redaction: 0, disclosed: 0 }
 
   action requestInformation = all { openReceipt.contains(s.receipt), s' = s.with("receipt", "needs-information") }
   // planDecision: open receipt only; an accepted obligation is never reduced.
@@ -65,7 +67,7 @@ module api_private_case {
     s' = (if (uphold) s.with("appeal", "upheld").with("receipt", s.from)
       else s.with("appeal", "returned").with("receipt", "triaging")
         .with("award", if (s.award == "ineligible") "pending" else s.award))
-      .with("deciders", s.deciders.union(Set(a))).with("conflicted", s.conflicted or s.deciders.contains(a)) }
+      .with("deciders", s.deciders.union(Set(a))) }
   action resolve = s' = s.with("remediation", "resolved")
   action mitigate = all { s.remediation == "resolved", s' = s.with("remediation", "mitigation-verified") }
   action approveRedaction = s' = s.with("redaction", 1)
@@ -92,7 +94,6 @@ module api_private_case {
     s.award == "approved" implies (s.receipt == "confirmed" and s.appeal != "open"
       and (not(s.related) or s.relatedReview == "approved")),
     s.relatedReview == "pending" implies (s.related and s.award == "pending"),
-    not(s.conflicted),
     s.disclosed != 0 implies s.disclosed == s.redaction,
   }
 
