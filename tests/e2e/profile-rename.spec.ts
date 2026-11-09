@@ -777,6 +777,148 @@ async function serveProfileSite(page: Page) {
   return site;
 }
 
+async function serveEmptyPoints(page: Page, generatedAt: string) {
+  const body = "[]";
+  const digest = createHash("sha256").update(body).digest("hex");
+  await page.route("**/data/points.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        ruleVersion: "slop-points-v1",
+        generatedAt,
+        coverage: [],
+        revisionCount: 0,
+        shards: Array.from({ length: 16 }, (_, index) => ({
+          path: `/data/points/${index.toString(16)}.json`,
+          sha256: digest,
+          count: 0,
+        })),
+      },
+    }),
+  );
+  await page.route("**/data/points/*.json", (route) =>
+    route.fulfill({ contentType: "application/json", body }),
+  );
+}
+
+test.describe("failed warm profile census", () => {
+  test.use({ video: "on" });
+
+  for (const scenario of ["missing", "conflicting"] as const) {
+    test(`a ${scenario} cached identity stays unavailable until the fresh census recovers`, async ({
+      page,
+      diagnostics,
+    }, info) => {
+      const site = await serveProfileSite(page);
+      const { current, archived, profiles, walletRequests } =
+        await profileRecords(page, { directoryOnly: true });
+      diagnostics.allow(
+        /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )https:\/\/[^ ]+\/data\/profiles\.json$/u,
+      );
+      if (scenario === "missing")
+        profiles.people = profiles.people.filter(
+          (person) => person.id !== archived.id,
+        );
+      let unavailable = false;
+      let replacementPublished = false;
+      const replacement = {
+        actor: { id: "MDQ6VXNlcjM=", login: archived.login },
+        joinedAt: "2026-10-17T00:00:00.000Z",
+        public: true,
+        welcome: 5,
+      };
+      await page.route("**/data/profiles.json", (route) =>
+        unavailable
+          ? route.fulfill({ status: 503, body: "Unavailable" })
+          : route.fulfill({ json: profiles }),
+      );
+      await page.route(`${site}/api/v1/points/**`, (route) => {
+        const url = new URL(route.request().url());
+        return route.fulfill({
+          json:
+            scenario === "conflicting" &&
+            replacementPublished &&
+            url.pathname.endsWith("/member") &&
+            url.searchParams.get("login") === archived.login
+              ? replacement
+              : null,
+        });
+      });
+      await page.route(`${site}/api/v1/project-session`, (route) =>
+        route.fulfill({ json: { session: null } }),
+      );
+      await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+        route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+      );
+      await serveEmptyPoints(page, new Date().toISOString());
+      await page.goto(`${site}/contributors/${current.login}`, {
+        waitUntil: "networkidle",
+      });
+      await expect(page.locator("main.profile-page")).toBeVisible();
+      // Keep the same JS module/cache while changing the normalized route key.
+      await page
+        .getByRole("banner")
+        .getByRole("link", { name: "Slop home", exact: true })
+        .click();
+      walletRequests.length = 0;
+      if (scenario === "missing") {
+        profiles.people.push({
+          ...archived,
+          avatarUrl: "https://avatars.githubusercontent.com/u/2?v=4",
+          repositories: [],
+        });
+      } else {
+        const old = profiles.people.find((person) => person.id === archived.id);
+        if (!old) throw new Error("Missing cached identity fixture");
+        old.login = `${archived.login}-renamed`;
+        profiles.people.push({
+          ...replacement.actor,
+          avatarUrl: "https://avatars.githubusercontent.com/u/3?v=4",
+          repositories: [],
+        });
+      }
+      assertProfiles(profiles);
+      replacementPublished = true;
+      unavailable = true;
+      await page.evaluate((login) => {
+        history.pushState({}, "", `/contributors/${encodeURIComponent(login)}`);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }, archived.login);
+      await expect(
+        page.getByText("Contributor records are unavailable.", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "No Slop contributor with this login" }),
+      ).toHaveCount(0);
+      expect(walletRequests).toEqual([]);
+      await expect(
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      ).toHaveCount(0);
+      await page.screenshot({
+        path: info.outputPath(`warm-census-${scenario}-unavailable.png`),
+        fullPage: true,
+      });
+      unavailable = false;
+      await page
+        .getByRole("button", { name: "Retry profile", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: archived.login, exact: true }),
+      ).toBeVisible();
+      await expect.poll(() => walletRequests).toEqual([
+        `/api/v1/wallet-claims/actors/${scenario === "missing" ? "2" : "3"}/current`,
+      ]);
+      await expect(
+        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      ).toHaveCount(scenario === "missing" ? 1 : 0);
+      await page.screenshot({
+        path: info.outputPath(`warm-census-${scenario}-recovered.png`),
+        fullPage: true,
+      });
+    });
+  }
+});
+
 test.describe("profile review deadlines", () => {
   test.use({ video: "on" });
 
@@ -817,27 +959,7 @@ test.describe("profile review deadlines", () => {
       route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
     );
     // Keep this clock regression independent of the production Points journal.
-    const emptyShard = "[]";
-    const digest = createHash("sha256").update(emptyShard).digest("hex");
-    await page.route("**/data/points.json", (route) =>
-      route.fulfill({
-        json: {
-          schemaVersion: "1",
-          ruleVersion: "slop-points-v1",
-          generatedAt: start.toISOString(),
-          coverage: [],
-          revisionCount: 0,
-          shards: Array.from({ length: 16 }, (_, index) => ({
-            path: `/data/points/${index.toString(16)}.json`,
-            sha256: digest,
-            count: 0,
-          })),
-        },
-      }),
-    );
-    await page.route("**/data/points/*.json", (route) =>
-      route.fulfill({ contentType: "application/json", body: emptyShard }),
-    );
+    await serveEmptyPoints(page, start.toISOString());
     let reads = 0;
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;

@@ -59,6 +59,8 @@ export function ProfilePage({
       membership.sessionStatus === "loading";
     const unavailable =
       profiles.state.status === "error" ||
+      (profiles.state.status === "ready" &&
+        profiles.state.refreshError !== undefined) ||
       membership.joinStatus === "unavailable" ||
       membership.sessionStatus === "error";
     if (!checking && !unavailable) return <UnknownContributor login={login} />;

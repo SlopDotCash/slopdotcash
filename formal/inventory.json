@@ -511,6 +511,7 @@
       "path": "backend/points/handler.ts",
       "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
       "models": [
+        "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/points/pr_review_identities.qnt",
@@ -2057,6 +2058,7 @@
       "path": "migrations/0008_points.sql",
       "sha256": "7daa14a2720f271daee8a9abdfd6c92e6bfa65808f31db4fda6896c349e50cd9",
       "models": [
+        "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/api_identity.qnt"
       ],
@@ -2068,7 +2070,10 @@
     {
       "path": "migrations/0009_points_social.sql",
       "sha256": "08dd3dac71e3476ac7b2e9aecaf8a76a9f2402eb980b11dd70d1e4dfefed7cc1",
-      "models": ["formal/models/api/api_x_connection.qnt"],
+      "models": [
+        "formal/models/api/account_session_publication.qnt",
+        "formal/models/api/api_x_connection.qnt"
+      ],
       "candidateLines": [5, 6, 12, 13, 23],
       "review": "mapped-abstraction"
     },
@@ -2521,7 +2526,10 @@
     {
       "path": "migrations/0056_points_telegram.sql",
       "sha256": "7c6d398149847b450ff3e1556407c97fa4b1f6a4ec483fb1b95d1ab0eecbed86",
-      "models": ["formal/models/api/api_accounts.qnt"],
+      "models": [
+        "formal/models/api/account_session_publication.qnt",
+        "formal/models/api/api_accounts.qnt"
+      ],
       "candidateLines": [11, 12, 22],
       "review": "mapped-abstraction"
     },
@@ -2606,6 +2614,7 @@
       "path": "migrations/0063_account_closure_notification_events.sql",
       "sha256": "893e5d11e5b43bef1bb261bdfc0187dfe187269abb2f26352dae6d4eacb80db0",
       "models": [
+        "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/notification_escalation.qnt",
@@ -2929,7 +2938,10 @@
     {
       "path": "migrations/0095_fee_solana_expiry.sql",
       "sha256": "0edd12c4bb830200f91a933100ceca613df7eed39b1515388a410d8c691dba9d",
-      "models": ["formal/models/fees/solana_expiry.qnt"],
+      "models": [
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
+        "formal/models/fees/solana_expiry.qnt"
+      ],
       "candidateLines": [
         3, 14, 16, 18, 20, 22, 24, 47, 52, 54, 55, 58, 62, 64, 68
       ],
@@ -3160,6 +3172,7 @@
       "path": "migrations/0116_email_preference_revision.sql",
       "sha256": "5c94ab94eaa6a6918535ff9fdbb73b84bcc1c6ded1d6e33600c72dace57a36b1",
       "models": [
+        "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
         "formal/models/api/email_unsubscribe_capability.qnt",
@@ -5041,6 +5054,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_session.qnt"
@@ -5124,17 +5138,18 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
+      "sha256": "d64df8116a57d1a5542f1f96fd7ce8e2be390e45928763630b4191f672a01e31",
       "models": [
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 69, 74, 81, 82, 85, 98, 99, 100,
-        105, 110, 122, 129, 136, 140, 145, 148, 155, 158, 168, 267, 269, 272,
-        291, 292, 295, 307, 328, 346, 347, 362, 364, 368, 371, 374, 387, 397,
-        418, 425, 434, 435, 441, 442, 443, 444
+        1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 62, 63, 71, 76, 83, 84, 87, 100,
+        101, 102, 107, 112, 124, 131, 138, 142, 147, 150, 157, 160, 170, 269,
+        271, 274, 293, 294, 297, 309, 330, 348, 349, 364, 366, 370, 373, 376,
+        389, 399, 420, 427, 436, 437, 443, 444, 445, 446
       ],
       "review": "mapped-abstraction"
     },
@@ -5143,6 +5158,7 @@
       "sha256": "76e67b953cc2c26dff4f6050afa6c18ec065c4824a0727eb96cc53f951e8d654",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resources.qnt"
@@ -5501,6 +5517,7 @@
       "models": [
         "formal/models/api/trace_object_storage.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_transport.qnt",
         "formal/models/ui/ui_vetting_reader.qnt"
       ],
@@ -6023,7 +6040,10 @@
     {
       "path": "src/lib/profiles.ts",
       "sha256": "3cc4ed403b2baf0c3d55f015cd46887aa8d1f82bfd2f0874987d9cbf63f55230",
-      "models": ["formal/models/ui/ui_profile_history.qnt"],
+      "models": [
+        "formal/models/ui/ui_profile_census_cache.qnt",
+        "formal/models/ui/ui_profile_history.qnt"
+      ],
       "candidateLines": [49, 55, 196, 242, 249, 261, 263, 265, 269, 272],
       "review": "mapped-abstraction"
     },
@@ -6491,6 +6511,7 @@
       "sha256": "7a8c29f1d339e971e21e5e7d2182a669a32e8ddd3ac04f7ef935d1d8802d6533",
       "models": [
         "formal/models/ui/ui_admin_resource_identity.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resource_deadline.qnt",
         "formal/models/ui/ui_resources.qnt"
@@ -6800,6 +6821,7 @@
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
@@ -6864,6 +6886,7 @@
       "sha256": "679554e7a6445e5ebda44d017d7fb418514e99afbd411f0236ea171efd01d79e",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/payment_worker_run.qnt"
       ],
@@ -6905,6 +6928,7 @@
       "path": "workers/fee-converter/native-gas.ts",
       "sha256": "9949cfe0f4a32a841b40ff2c778f4ac810360d5580bc090db24fa22215c54e71",
       "models": [
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
@@ -6929,6 +6953,7 @@
       "path": "workers/fee-converter/solana-expiry.ts",
       "sha256": "f83c189758694048c045147134ddd34d82141109f67760f4dccf42d73edd4380",
       "models": [
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
         "formal/models/fees/solana_expiry.qnt",
         "formal/models/payments/solana_history_retirement.qnt"
       ],
@@ -6982,6 +7007,7 @@
       "sha256": "16666bdd253ff34574254aaca4f4f10b17dfdef284f0e356b0509a8fdb7f3d0e",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
@@ -7001,6 +7027,7 @@
         "formal/models/fees/earned_fee_history.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/native_budget.qnt"
@@ -7026,7 +7053,10 @@
     {
       "path": "workers/fee-converter/verified-expiry.ts",
       "sha256": "4c57516608636d009854016a2def8ecd4666dfc4490cbeef1278f058a827c04d",
-      "models": ["formal/models/fees/solana_expiry.qnt"],
+      "models": [
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
+        "formal/models/fees/solana_expiry.qnt"
+      ],
       "candidateLines": [73],
       "review": "mapped-abstraction"
     },
@@ -8774,6 +8804,41 @@
   ],
   "models": [
     {
+      "path": "formal/models/api/account_session_publication.qnt",
+      "sha256": "e536893a0333aac9fdb58fc87fadaf1e4e98a912855cdfee6626ffd974be9567",
+      "sources": [
+        "backend/points/handler.ts",
+        "migrations/0008_points.sql",
+        "migrations/0009_points_social.sql",
+        "migrations/0056_points_telegram.sql",
+        "migrations/0063_account_closure_notification_events.sql",
+        "migrations/0116_email_preference_revision.sql"
+      ],
+      "scenarios": [
+        "alreadyAdmittedClosureCanCloseAnExplicitReopenTest",
+        "closeAfterJoinViewDoesNotRewriteSnapshotTest",
+        "closeBeforeJoinViewReturnsAlreadyInvalidCookieTest",
+        "closeBetweenJoinReadAndBatchRefusesSessionTest",
+        "closedPrivateTriggerRefusesStaleVisibilityTest",
+        "closurePreservesIdentityClaimsAndHistoryTest",
+        "concurrentFirstNodeSpellingsFailClosedTest",
+        "concurrentSameActorJoinsKeepBothSessionsTest",
+        "explicitReopenCapturedBeforeClosureMayCommitAfterTest",
+        "explicitReopenNeverRecreatesDisconnectedLinkTest",
+        "failedClosureBatchLeavesAccountStateTest",
+        "failedJoinBatchLeavesPrivateStateTest",
+        "historicalPrivateReadDoesNotPublishTest",
+        "lateClosureCookieCanClearReopenedBrowserCookieTest",
+        "laterSessionExpiryDoesNotEraseMembershipTest",
+        "lostClosureBatchReplyKeepsAccountClosedTest",
+        "lostJoinBatchReplyKeepsUndisclosedSessionTest",
+        "memberReadFailureDoesNotUndoPublicationTest",
+        "ordinarySignInCannotReopenTest",
+        "repeatedAdmittedClosuresReportSameClosureTest",
+        "signInPublishesExistingMembershipAndLinkTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_accounts.qnt",
       "sha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
       "sources": [
@@ -8787,9 +8852,30 @@
     },
     {
       "path": "formal/models/api/api_advisory_census.qnt",
-      "sha256": "9a028551db2b3a60ef9d8c16841710e2f3eb78417f2f85b9e6b4c7874b391b6d",
+      "sha256": "c27ab433e341339767f56bcea047e3238d79917c3d33f42fe01644b5bf6bded5",
       "sources": ["backend/security/advisories.ts"],
-      "scenarios": ["partialIsUnavailableTest", "verifiedEmptyTest"]
+      "scenarios": [
+        "boundedJsonFailureDoesNotPublishEarlierRowsTest",
+        "completionAtPageCapIsAllowedTest",
+        "duplicatesAreNotInventedOrRemovedTest",
+        "exactSingleReportCanCompleteTest",
+        "foreignLinkCannotReceiveTokenTest",
+        "furtherPageAtCapRefusesWholeListTest",
+        "invalidListConfigurationThrowsBeforeTokenTest",
+        "invalidRepositoryDoesNotRequestTokenTest",
+        "invalidSingleConfigurationIsCaughtTest",
+        "invalidSingleIdentifierIsUnavailableTest",
+        "malformedUrlIsUnavailableTest",
+        "missingTokenOwnsNoRequestTest",
+        "noPartialPublicationBetweenPagesTest",
+        "nonqualifyingRecordsCanYieldVerifiedEmptyTest",
+        "nonqualifyingSingleReportStaysUnavailableTest",
+        "onePageCanCompleteTest",
+        "partialIsUnavailableTest",
+        "redirectOrHttpRefusalIsNotAnEmptyListTest",
+        "tokenRejectionOwnsNoRequestTest",
+        "verifiedEmptyTest"
+      ]
     },
     {
       "path": "formal/models/api/api_award_recovery.qnt",
@@ -11615,6 +11701,35 @@
       ]
     },
     {
+      "path": "formal/models/fees/fee_expiry_scan_protocol.qnt",
+      "sha256": "4723512d49b09e4211ac117072afffae8216a3a589481cdcd31253c15a548e70",
+      "sources": [
+        "migrations/0095_fee_solana_expiry.sql",
+        "workers/fee-converter/native-gas.ts",
+        "workers/fee-converter/solana-expiry.ts",
+        "workers/fee-converter/solana.ts",
+        "workers/fee-converter/verified-expiry.ts"
+      ],
+      "scenarios": [
+        "changedReadbackRefusesProofTest",
+        "completeMatchingCoverageReleasesAtomicallyTest",
+        "expiryAndAbsentStatusAloneKeepHoldTest",
+        "failedRetainedReadDoesNotReleaseLocalProofTest",
+        "firstProviderPageSurvivesSecondRpcFailureTest",
+        "invalidLinkKeepsUnsavedPageNonDurableTest",
+        "leaseLossRefusesPendingPageTest",
+        "lostLeaseCannotCommitUnknownPageTest",
+        "lostLeaseRefusesAtomicZeroCostResolutionTest",
+        "lostPageReplyRetainsCommittedCursorTest",
+        "lostProofReplyDoesNotUndoResolutionTest",
+        "partialPagesResumeAcrossCallsTest",
+        "rejectedReplyMayPrecedePageCommitTest",
+        "rejectedWriteDoesNotAdvanceCheckpointTest",
+        "signatureFoundInHistoryKeepsHoldTest",
+        "slowerSecondProviderCannotInventCommonHorizonTest"
+      ]
+    },
+    {
       "path": "formal/models/fees/fee_lease_journal.qnt",
       "sha256": "e157a7450b5500933309e4e7c66718add7451f924e6a80820613292ed8be433e",
       "sources": [
@@ -11665,6 +11780,35 @@
         "workers/fee-converter/verified-jupiter-policy.ts"
       ],
       "scenarios": ["acceptableTest", "dustPendingTest", "routeRefusedTest"]
+    },
+    {
+      "path": "formal/models/fees/fee_run_orchestration.qnt",
+      "sha256": "8c81c4ff8c64d66f6b731a98c0030c8760023145e17dfbf5e47af33c72233af1",
+      "sources": [
+        "workers/fee-converter/core.ts",
+        "workers/fee-converter/index.ts",
+        "workers/fee-converter/store.ts"
+      ],
+      "scenarios": [
+        "capturedModeSurvivesDeploymentChangeTest",
+        "definiteReleaseRefusalKeepsLeaseRowTest",
+        "delayedReleaseCannotDeleteSuccessorTest",
+        "delayedReleaseUsesCapturedTimeForOwnRowTest",
+        "invalidConfigurationStopsBeforeNetworksTest",
+        "lostAcquireReplyLeavesLeaseForRecoveryTest",
+        "lostReleaseReplyKeepsCommittedDeletionTest",
+        "lostRenewalEndsCandidateLoopTest",
+        "nativeFailureStillVisitsSecondNetworkTest",
+        "noTargetReconcilesWithoutCandidateReadTest",
+        "observedLeaseCanExpireDuringBalanceTest",
+        "offDoesNotAcquireTest",
+        "receiptsTriggerSkipsVaultReadTest",
+        "recoveryTriggerReadsVaultsTest",
+        "releaseFailureOverridesEarlierExceptionTest",
+        "restartDoesNotDiscardEarlierLeaseTest",
+        "rowErrorBlocksOnlyItsTokenTest",
+        "tokenErrorCanReturnRanTest"
+      ]
     },
     {
       "path": "formal/models/fees/fee_schema_upgrade.qnt",
@@ -16566,6 +16710,45 @@
         "collapseClearsFocusTest",
         "keyboardScrollsOverflowingReportTest",
         "returnToStartTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_profile_census_cache.qnt",
+      "sha256": "ab8221a7646c9b80274320589a1b46c8b81aa15c41b6f83bad1720d2ada62ec6",
+      "sources": [
+        "src/Points.tsx",
+        "src/ProfilePage.tsx",
+        "src/Profiles.tsx",
+        "src/lib/browser-json.ts",
+        "src/lib/profiles.ts",
+        "src/lib/use-public-resource.ts"
+      ],
+      "scenarios": [
+        "abortBeforeBodyCannotValidateTest",
+        "cacheWritePrecedesLocalSuccessTest",
+        "coldFailureIsUnavailableTest",
+        "coldMountDoesNotUseUnverifiedCacheTest",
+        "compatibleCachedProfileRemainsVisibleTest",
+        "completeBodyCanValidateAfterDepartureTest",
+        "currentMemberMayUseNonconflictingCachedDirectoryTest",
+        "deadlineRefusesLocalLateSuccessTest",
+        "departedValidatedReadMayOnlySeedGlobalCacheTest",
+        "departedViewNeverPublishesLocallyTest",
+        "elapsedClockDoesNotExpireModuleCacheTest",
+        "failedViewReadsChangedCacheOnlyOnRenderTest",
+        "lateCacheWriteDoesNotChangeAReadyViewTest",
+        "nextMountStillRequiresFreshReadTest",
+        "oldWarmConflictInventedAbsenceTest",
+        "oldWarmMissingFallbackInventedAbsenceTest",
+        "retryCanConfirmActualAbsenceTest",
+        "retryHidesFallbackUntilItsResultTest",
+        "retryRecoversMissingIdentityTest",
+        "successfulEmptyDirectoryCanEstablishAbsenceTest",
+        "successfulReadNamesCurrentActorTest",
+        "unrelatedRenderCanObserveValidatedFallbackTest",
+        "validationIsNotViewPublicationTest",
+        "warmConflictWithCurrentMemberIsUnavailableTest",
+        "warmMissingIdentityIsUnavailableTest"
       ]
     },
     {

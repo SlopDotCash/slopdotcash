@@ -1009,6 +1009,29 @@ tested or verified here:
   the existing clock hook. The clock regression definition checks the exact
   midday label change without a refetch or changed money total. Its video and
   before/after captures remain unexecuted, as do the required UI checks.
+- `ui_profile_census_cache` separates directory validation, global cache writes,
+  local request ownership and rendering. A failed refresh with a cached missing
+  or conflicting identity now remains unavailable with retry, rather than
+  presenting that old directory as proof of absence. Compatible cached profiles
+  remain visible. The model does not invent a cache TTL or monotonic-version
+  policy. Two browser regression definitions warm the cache and exercise failed
+  reads followed by recovery; their before/after and video evidence is pending.
+- `account_session_publication` separates canonical identity lookup, atomic
+  join/closure writes, reply loss, response reads and cookie delivery. A cookie
+  can arrive after its session was closed; a previously admitted closure can
+  close a reopened account. These are source behaviors, not new guarantees.
+  The four handler/SQLite regression definitions retain those distinctions.
+- `api_advisory_census` models list and single-report reads, token acquisition,
+  HTTP/JSON failure, qualifying-record filtering, duplicate retention, sorting
+  and same-origin pagination. The model uses a two-page quotient of the actual
+  twenty-page cap; the transport regression definitions exercise twenty pages.
+  A partial private list is never a successful empty result. Provider identity
+  and rejected-response disposal remain separate assumptions and review work.
+- `fee_run_orchestration` models per-network invocation, captured configuration,
+  observed versus current lease ownership, caught row/token failures, aggregate
+  failures and release. `fee_expiry_scan_protocol` separates provider horizon,
+  local scan pages, committed checkpoints, readback and atomic native-hold
+  release. These additions refine model coverage without changing runtime code.
 
 ## Acceptance requirements and limits
 

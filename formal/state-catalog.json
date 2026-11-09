@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "797d8811ba97098cf51b37f5e0b7b4fe86e99bfd55d812334119aaeaa3ca767c",
+  "inventorySha256": "59f9cf7865b87f3f4b107cfbcedb26ce48b416ff53a69392fd738b6f9be822a5",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -513,6 +513,7 @@
         "pending"
       ],
       "models": [
+        "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/api_identity.qnt"
       ],
@@ -529,7 +530,10 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["pending", "processing"],
-      "models": ["formal/models/api/api_x_connection.qnt"],
+      "models": [
+        "formal/models/api/account_session_publication.qnt",
+        "formal/models/api/api_x_connection.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1028,7 +1032,10 @@
       "name": "status",
       "kind": "sql-check",
       "values": ["pending", "processing"],
-      "models": ["formal/models/api/api_accounts.qnt"],
+      "models": [
+        "formal/models/api/account_session_publication.qnt",
+        "formal/models/api/api_accounts.qnt"
+      ],
       "lexicallyUnmentionedValues": ["pending", "processing"],
       "review": "candidate-only"
     },
@@ -2236,6 +2243,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_session.qnt"
@@ -2255,11 +2263,12 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_session.qnt"
       ],
-      "lexicallyUnmentionedValues": ["unavailable"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2274,6 +2283,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_session.qnt"
@@ -2894,7 +2904,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "OPEN"],
-      "models": ["formal/models/ui/ui_profile_history.qnt"],
+      "models": [
+        "formal/models/ui/ui_profile_census_cache.qnt",
+        "formal/models/ui/ui_profile_history.qnt"
+      ],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
       "review": "candidate-only"
     },
@@ -3180,6 +3193,7 @@
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
@@ -3199,6 +3213,7 @@
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
@@ -3218,12 +3233,13 @@
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
+        "formal/models/fees/fee_run_orchestration.qnt",
         "formal/models/fees/fee_value_caps.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
-      "lexicallyUnmentionedValues": ["locked", "not_converted", "ran"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -3233,6 +3249,7 @@
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
       "models": [
+        "formal/models/fees/fee_expiry_scan_protocol.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_value_journal_reply.qnt",
