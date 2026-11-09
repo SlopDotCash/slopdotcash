@@ -1240,6 +1240,39 @@ tested or verified here:
   changes no interface or runtime code and delegates transaction evidence to
   the existing payment models.
 
+- `evm_scan_checkpoint` now distinguishes one inclusive range per invocation,
+  origin/head refusal, ordered and duplicate callbacks, partial callback effects,
+  checkpoint writes and lost write replies in 20 scenarios. Overlapping callers
+  can deliver the same event; the canonical-decimal cursor update prevents an
+  older completion from rewinding progress. Fifteen added native-D1 workflow
+  cases exercise range and callback/checkpoint boundaries. Successful requests
+  do not prove that an RPC provider delivered every event, and callback receipt
+  verification remains the ledger's contract. No cases were executed.
+- `solana_scan_checkpoint` now separates discovery, oldest-page processing,
+  individual instruction effects, per-transaction checkpoints, generation and
+  revision fences in 23 scenarios. A failed or stale caller can leave indexed
+  effects, and a committed batch can survive a lost reply. Seven real-scanner,
+  migrated-SQLite regression cases are unexecuted. Provider ordering/completeness
+  and D1 batch atomicity remain assumptions; SQLite evidence would not establish
+  native D1 or live-chain behavior.
+- The read-only referral verifier is split into `referral_file_watch` (21
+  scenarios), `referral_chain_watch` (23) and `referral_watch_cli` (11). They
+  cover cumulative file/cap/wallet continuity, canonical posted/void evidence,
+  pending observations, final hash/count rechecks, sanitized reporting and
+  output failures. Eighteen public-file/config regression cases are unexecuted;
+  they do not exercise a live chain. The script is one-shot, never posts roots,
+  and does not activate referrals. Its public-body limit is checked after
+  reading text; these models do not claim a streaming byte bound or prove RPC
+  delivery, cryptography or provider honesty.
+- `ui_owner_awards` now distinguishes two saved rows from their drafts, captured
+  response values, pruning on refreshed base values, parse failures, cutoff and
+  manual-mode eligibility in 27 scenarios. A save committed before the cutoff
+  can still be applied when its successful response arrives later. Finalization
+  uses saved values, and a saved notice does not imply that later edits are
+  saved. Two browser regression definitions are unexecuted; identity/request
+  retirement and calendar navigation retain separate models. This batch changes
+  no runtime or interface code.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

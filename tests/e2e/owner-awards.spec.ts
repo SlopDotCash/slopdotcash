@@ -1127,3 +1127,76 @@ for (const operation of ["read", "save"] as const) {
     }
   });
 }
+
+test("an accepted allocation response still applies after the automatic cutoff", async ({ page }) => {
+  const { value } = await ownedNovember(page);
+  const response = structuredClone(value);
+  response.proposal.allocationSequence += 1;
+  response.proposal.allocations[0].grossBase = "1800000000";
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  await page.route("**/api/v1/payments/projects/eliza/monthly/2026-11/allocations", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      githubUserId: "1", grossBase: "1800000000", expectedSequence: 0,
+    });
+    entered();
+    await held;
+    await route.fulfill({ json: response });
+  });
+  const awards = page.locator("#monthly-awards");
+  const first = awards.getByLabel("Award for first-contributor");
+  const second = awards.getByLabel("Award for second-contributor");
+  await first.fill("1.8");
+  await second.fill("2.4");
+  try {
+    await awards.getByRole("button", { name: "Save first-contributor", exact: true }).click();
+    await started;
+    await expect(first).toBeDisabled();
+    await page.clock.setFixedTime(new Date("2026-12-04T00:00:01.000Z"));
+    release();
+    await expect(awards.getByRole("status").filter({ hasText: "Allocation saved privately." })).toBeVisible();
+    await expect(awards).toContainText("Cutoff passed");
+    await expect(first).toHaveValue("1.8");
+    await expect(first).toBeDisabled();
+    // The reply clears only the saved row's draft. The unchanged second row
+    // keeps its unsaved value even though the cutoff now disables its control.
+    await expect(second).toHaveValue("2.4");
+    await expect(second).toBeDisabled();
+    await expect(awards.getByRole("list", { name: "Allocations", exact: true })
+      .locator("li").filter({ has: page.getByRole("heading", { name: "first-contributor", exact: true }) }))
+      .toContainText("1.764 TEST");
+    await expect(awards.getByRole("button", { name: "Finalize awards", exact: true })).toBeEnabled();
+    await expect(awards).not.toContainText("This month's awards are final.");
+  } finally {
+    release();
+  }
+});
+
+test("an invalid allocation amount keeps its draft without issuing a private write", async ({ page }) => {
+  const { value } = await ownedNovember(page);
+  let writes = 0;
+  await page.route("**/api/v1/payments/projects/eliza/monthly/2026-11/allocations", (route) => {
+    writes += 1;
+    const response = structuredClone(value);
+    response.proposal.allocationSequence += 1;
+    response.proposal.allocations[0].grossBase = "1800000000";
+    return route.fulfill({ json: response });
+  });
+  const awards = page.locator("#monthly-awards");
+  const input = awards.getByLabel("Award for first-contributor");
+  const save = awards.getByRole("button", { name: "Save first-contributor", exact: true });
+  await input.fill("not-an-amount");
+  await save.click();
+  await expect(awards.getByRole("alert")).toContainText("Enter a positive amount using digits and a decimal point.");
+  await expect(input).toHaveValue("not-an-amount");
+  await expect(input).toBeEnabled();
+  expect(writes).toBe(0);
+  await input.fill("1.8");
+  await save.click();
+  await expect(awards).toContainText("Allocation saved privately.");
+  await expect(save).toBeDisabled();
+  await expect(awards.getByRole("alert")).toHaveCount(0);
+  expect(writes).toBe(1);
+});

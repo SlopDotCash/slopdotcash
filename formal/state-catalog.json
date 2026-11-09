@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "04586593c77883ff42174a0a1ca19d9f892641f7d4838782c8830fb9c9a11f0b",
+  "inventorySha256": "9978ee84738461b7c2de85a40322cd6b74668464c6aafa2ec0a4d8a6f91b56d8",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3401,6 +3401,7 @@
       ],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [
@@ -3421,6 +3422,7 @@
       "values": ["dry_run", "live"],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -3434,6 +3436,7 @@
       "values": ["locked", "ran"],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["locked", "ran"],
@@ -3447,6 +3450,7 @@
       "values": ["accrued", "pool_cap", "project_cap"],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["pool_cap", "project_cap"],
@@ -3460,6 +3464,7 @@
       "values": ["failed", "finalized", "submitted", "unknown", "voided"],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -3483,6 +3488,7 @@
       ],
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "lexicallyUnmentionedValues": ["precheck_failed"],

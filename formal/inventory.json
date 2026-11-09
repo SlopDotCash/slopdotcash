@@ -1386,6 +1386,7 @@
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/evm_binding_consent_api.qnt",
         "formal/models/referrals/referral_cache_projection.qnt",
+        "formal/models/referrals/referral_chain_watch.qnt",
         "formal/models/rewards/monthly_release_check.qnt"
       ],
       "candidateLines": [
@@ -3393,7 +3394,12 @@
     {
       "path": "scripts/check-referral-roots.ts",
       "sha256": "4c6ac67749717b151294d63b2b30aa6c8bef3113932d41cda4b379bbdc1f8e62",
-      "models": ["formal/models/payments/chain_range_scan.qnt"],
+      "models": [
+        "formal/models/payments/chain_range_scan.qnt",
+        "formal/models/referrals/referral_chain_watch.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
+        "formal/models/referrals/referral_watch_cli.qnt"
+      ],
       "candidateLines": [
         48, 381, 383, 443, 448, 461, 480, 493, 504, 521, 525, 526, 536, 540, 556
       ],
@@ -7738,7 +7744,10 @@
     {
       "path": "workers/referral-accrual/config.ts",
       "sha256": "cd32c8196ef0566e0f7f6a7fd8656cba996c92cb5a650647490677fb29d97a5f",
-      "models": ["formal/models/referrals/referral_accrual.qnt"],
+      "models": [
+        "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_watch_cli.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7747,6 +7756,7 @@
       "sha256": "08ba97e99e1b6a19f847b39a2469b89b524c7348e904780e793370ca1848c9ea",
       "models": [
         "formal/models/referrals/referral_accrual.qnt",
+        "formal/models/referrals/referral_file_watch.qnt",
         "formal/models/referrals/referral_posting.qnt"
       ],
       "candidateLines": [
@@ -7783,7 +7793,10 @@
     {
       "path": "workers/referral-accrual/merkle.ts",
       "sha256": "126d17070016922b3229d96cd3adb74446ade2b584965236986cff8f70272d40",
-      "models": ["formal/models/referrals/referral_account_read.qnt"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_file_watch.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure deterministic Merkle leaf/tree/proof calculation over supplied amounts and addresses; no external state or root posting. This classification does not claim cryptographic correctness or replace the distributor state machine."
@@ -12565,11 +12578,29 @@
     },
     {
       "path": "formal/models/payments/evm_scan_checkpoint.qnt",
-      "sha256": "f17322b471f58ce94beb019972f5bda5171c7523e116a791f4db1f9ea6e63b1c",
+      "sha256": "2ff34207b57a9abe641b208248d92ec9fa553bc36fe938209524ed362a6e1852",
       "sources": ["workers/payments/scanner.ts"],
       "scenarios": [
+        "callbackFailureKeepsEarlierEffectTest",
+        "callbackMayCommitBeforeRejectionTest",
+        "caughtUpMakesNoLogRequestTest",
+        "duplicateResponseIsDeliveredTwiceTest",
+        "emptyResponseCanAdvanceWithoutEventEvidenceTest",
         "failedPageCannotAdvanceTest",
-        "oldCompletionCannotRewindTest"
+        "invalidArrayDoesNotCheckpointTest",
+        "invalidConfigPrecedesCursorReadTest",
+        "laterUnexpectedTopicKeepsEarlierEffectTest",
+        "lostWriteReplyKeepsCursorTest",
+        "missingOriginRefusedTest",
+        "oldCompletionCannotRewindTest",
+        "originStartsInclusiveTest",
+        "readFailureReturnsNoCompletionTest",
+        "retryRedeliversCompletedPrefixTest",
+        "reversedResponseIndexedInCanonicalOrderTest",
+        "revertedOriginRefusedTest",
+        "sortFailurePrecedesIndexTest",
+        "tailClampedToFinalizedHeadTest",
+        "unavailableHeadRefusedTest"
       ]
     },
     {
@@ -13318,16 +13349,35 @@
     },
     {
       "path": "formal/models/payments/solana_scan_checkpoint.qnt",
-      "sha256": "e177ef84b4944110ba13d2e745bfdc497e176e3f3fb163aeb79e5c25fa3d7a89",
+      "sha256": "0f5ee866cf2192e45ca4a498a26bb1309983bd1f7fa2dbe4db342ffd37b17d22",
       "sources": [
         "migrations/0012_solana_scan_backlog.sql",
         "workers/payments/scanner.ts"
       ],
       "scenarios": [
+        "closeRequiresLaterCallAfterLastCheckpointTest",
         "discoveryBeforeProcessingTest",
+        "emptyDiscoveryMarksReadyWithoutExtraPageTest",
+        "failedSignatureAdvancesWithoutIndexTest",
+        "failureBeforeCheckpointKeepsIndexedPrefixTest",
+        "fullPageNeedsLaterDiscoveryCallTest",
         "laterArrivalOutsideIntervalTest",
+        "lostCheckpointReplyKeepsAtomicProgressTest",
+        "lostCloseReplyStillClosesGenerationTest",
+        "lostDiscoveryReplyKeepsCommittedPageTest",
+        "lostIndexReplyDoesNotAdvanceCursorTest",
+        "nextGenerationReadsLaterArrivalTest",
+        "oldestPageReadFirstTest",
+        "pageCompletionDeletesOnlyOldestPageTest",
+        "partialIndexSurvivesLaterCallbackFailureTest",
         "restartKeepsVerifiedPrefixTest",
-        "staleCheckpointCannotRewindTest"
+        "retryRechecksWholeTransactionTest",
+        "staleCallerMayIndexBeforeFenceTest",
+        "staleCheckpointCannotRewindTest",
+        "staleCloseCannotDeleteNextGenerationTest",
+        "staleDiscoveryCannotReplacePagesTest",
+        "unavailableTransactionRetainsPageTest",
+        "unrelatedProjectAdvancesWithoutIndexTest"
       ]
     },
     {
@@ -13795,6 +13845,39 @@
       ]
     },
     {
+      "path": "formal/models/referrals/referral_chain_watch.qnt",
+      "sha256": "50e140dc35d75edd6bd0cf63fa5fc7cc2c0845c847c380ee06c61fbea1b6b958",
+      "sources": [
+        "contracts/evm/adapter.ts",
+        "scripts/check-referral-roots.ts"
+      ],
+      "scenarios": [
+        "absentPostedRootsRemainPendingTest",
+        "awaitingFilingRemainsPendingTest",
+        "codeMismatchRefusedTest",
+        "completeCanonicalRootsVerifiedTest",
+        "countCannotHideMissingEventTest",
+        "countRecheckRefusesLaterRootTest",
+        "deploymentAfterFinalizedHeadRefusedTest",
+        "eitherLogScanFailureRefusesReportTest",
+        "fileFailurePrecedesRpcTest",
+        "finalityRecheckRefusesStagedMappingsTest",
+        "latestUnfinalizedPostPendingTest",
+        "observedEpochVoidFlagMustMatchLogsTest",
+        "postedEpochOrderMustMatchCandidateOrderTest",
+        "postedReceiptMustBeCanonicalTest",
+        "postedRootNeedsPublicFileTest",
+        "repeatedVoidEpochRefusedTest",
+        "tipRecheckRefusesStagedMappingsTest",
+        "tokenMismatchRefusedTest",
+        "unfinalizedVoidKeepsWholeReportPendingTest",
+        "voidOutsideCountRefusedTest",
+        "voidReceiptMustBeCanonicalTest",
+        "voidRootNeedsMatchingFileTest",
+        "wrongChainRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/referrals/referral_claim_cache.qnt",
       "sha256": "b39bef93f2fc3b5f448efd4372d1949439b68808a7f172af6e2f408dc7c22b23",
       "sources": [
@@ -13853,6 +13936,38 @@
       ]
     },
     {
+      "path": "formal/models/referrals/referral_file_watch.qnt",
+      "sha256": "d144442b4b5b90f77140e199e08c83697e2c81a7bc4753019bf1e102f483a568",
+      "sources": [
+        "scripts/check-referral-roots.ts",
+        "workers/referral-accrual/core.ts",
+        "workers/referral-accrual/merkle.ts"
+      ],
+      "scenarios": [
+        "arithmeticMismatchRefusedTest",
+        "capsAccumulateAcrossFilesTest",
+        "emptyBeforeFirstClosedMonthTest",
+        "exactBodyAndHeaderDigestRequiredTest",
+        "excludedAmountsMustBeZeroTest",
+        "filingGraceAllowsPendingMonthTest",
+        "graceExpiryRefusesMissingFileTest",
+        "identityMismatchRefusedTest",
+        "indexFailureReturnsNoFilesTest",
+        "laterFileCannotResetLifetimeCapTest",
+        "missingCumulativeReferrerRefusedTest",
+        "openMonthFileRefusedTest",
+        "overCapDeclarationRefusedTest",
+        "pinnedWalletCannotChangeTest",
+        "pinnedWalletCannotDisappearTest",
+        "proofBytesMismatchRefusedTest",
+        "repeatedObligationAcrossMonthsRefusedTest",
+        "treeSummaryMismatchRefusedTest",
+        "walletCannotMoveToOtherActorTest",
+        "walletlessCannotPublishLeafTest",
+        "walletlessCarriesIntoLaterRootTest"
+      ]
+    },
+    {
       "path": "formal/models/referrals/referral_posting.qnt",
       "sha256": "0d82c6b78a7651a7e6a7b98ef6a5b35e499e68fa99d35a7d1c49e546b1cd10f7",
       "sources": [
@@ -13881,6 +13996,27 @@
         "spacingFollowsLatestLiveTimeTest",
         "voidFirstRestoresEmptyMarksTest",
         "voidedEpochKeepsSlotAndCanonicalFieldsTest"
+      ]
+    },
+    {
+      "path": "formal/models/referrals/referral_watch_cli.qnt",
+      "sha256": "698c7cdd983630a116d648404f7ac621df5d0be66f52f4e36bf24a53f2f4ea07",
+      "sources": [
+        "scripts/check-referral-roots.ts",
+        "workers/referral-accrual/config.ts"
+      ],
+      "scenarios": [
+        "configurationReadFailureIsSanitizedTest",
+        "configuredOffStillObservesWithoutActivationTest",
+        "failedErrorSummaryCanPrecedeExplicitExitCodeTest",
+        "inactiveDoesNotQualifyOrActivateTest",
+        "localCategoryPreservedTest",
+        "malformedConfigDoesNotObserveTest",
+        "outputFailureDoesNotImplyReportedSuccessTest",
+        "pendingReportExitsSuccessfullyTest",
+        "providerDetailNotPrintedTest",
+        "summaryFailureKeepsEarlierPrintedResultTest",
+        "summaryRecordedAfterResultTest"
       ]
     },
     {
@@ -17427,16 +17563,36 @@
     },
     {
       "path": "formal/models/ui/ui_owner_awards.qnt",
-      "sha256": "440cb6098293fa700b81662982f663562ee4892245b0f04bf81946b2dce79ac2",
+      "sha256": "20c31f1c7725acead46d0cd60db9aff8bb8b64181992c28f7930c2e90f87392f",
       "sources": ["src/OwnerAwards.tsx", "src/lib/use-time-boundary.ts"],
       "scenarios": [
+        "absentProposalDropsDraftsAndControlsTest",
+        "busyControlsRejectFurtherEditsTest",
+        "cutoffBeforeServerAdmissionRefusesSaveTest",
         "cutoffTest",
+        "equalBaseDraftSurvivesSequenceChangeTest",
+        "failedSaveKeepsDraftAndSavedAmountsTest",
+        "finalizedMonthCannotBeReopenedByManualModeTest",
+        "invalidInputCanBeCorrectedAndSavedTest",
+        "invalidInputKeepsDraftWithoutServerWriteTest",
+        "lostFinalizationReplyDoesNotInventPaymentTest",
+        "lostSaveReplyKeepsCommittedAmountUntilRefreshTest",
         "maintainerCannotChangeModeTest",
         "maintainerCannotEditTest",
         "maintainerCannotFinalizeTest",
+        "manualFinalizationRemainsAvailableAfterCutoffTest",
         "manualTest",
+        "newerReadDropsChangedBaseDraftTest",
+        "newerReadDropsRemovedRowDraftTest",
+        "refreshFailureHidesAmountsAndRetainsDraftTest",
+        "returnedSnapshotDoesNotReadLaterServerValuesTest",
+        "sameGrossSuccessfulSaveStillClearsDraftTest",
+        "saveRemovesOnlyItsOwnUnchangedBaseDraftTest",
+        "savedNoticeDoesNotMeanLaterEditsAreSavedTest",
         "savedOnlyTest",
-        "staleSaveTest"
+        "savedResponseAfterCutoffStillAppliesTest",
+        "staleSaveTest",
+        "toggleRetainsDraftAndDoesNotAcceptNewRowsTest"
       ]
     },
     {
