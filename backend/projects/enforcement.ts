@@ -34,6 +34,7 @@ import {
   planFlagScanReinstatement,
   selectActiveBanIndices,
   selectProjectAppeals,
+  pausedByFlagsOnly as verifiedPausedByFlagsOnly,
 } from "./verified-enforcement";
 
 export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
@@ -505,13 +506,10 @@ const SCAN_REINSTATEMENT_RULE = "clean-fresh-scan-after-flags";
  * every other restriction.
  */
 export function pausedByFlagsOnly(restriction: ProjectRestriction): boolean {
-  if (restriction.state !== "quarantined") return false;
-  for (let index = restriction.records.length - 1; index >= 0; index -= 1) {
-    const record = restriction.records[index];
-    if (record.action === "quarantine" || record.action === "ban")
-      return record.actorRole === "contributor-flags";
-  }
-  return false;
+  return verifiedPausedByFlagsOnly(
+    restrictionHistory(restriction.records),
+    restriction.state,
+  );
 }
 
 /**
