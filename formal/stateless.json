@@ -61,7 +61,6 @@
   "src/lib/notifications.ts": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state.",
   "src/lib/payments/vault-amount.ts": "Pure decimal-string to bounded base-unit parsing. No mutable lifecycle; transaction amount and asset identities remain governed by their payment models.",
   "src/lib/penalty-guide.ts": "Static guide rows derived from the canonical Slopbot penalty table. This projection has no state transition; penalty application, reversal and funded-award preservation remain modeled elsewhere.",
-  "src/lib/platform-fee-recipients.mjs": "One immutable configured recipient constant; no state transition.",
   "src/lib/points-summary.ts": "Pure structural and total/order validation of a supplied summary object; no publication or journal mutation. Points journal and source publication state remain separate models.",
   "src/lib/profile-activity.ts": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation.",
   "src/lib/project-capabilities.mjs": "Pure capability/reason projection from supplied registration, restriction, funding and retired facts. No authority-grant mutation; owning API gates are modeled separately.",
