@@ -207,6 +207,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Payment-wallet registration and activation | `payment_wallet_registration`, `payment_wallet_activation`, `api_payment_wallet_protocol` | `backend/payments/wallet-registration.ts`, `backend/payments/handler.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `backend/payments/wallet-replacement.test.ts` |
 | EVM binding consent and broadcast authority | `evm_binding_consent_api`, `binding_consent_renewal`, `stored_binding_broadcast_authority` | `backend/payments/handler.ts`, `backend/payments/possession.ts`, `workers/payment-executor/core.ts`, `backend/payments/evm.integration.ts`, `workers/payment-executor/binding-nonce-limit.integration.ts` |
 | Solana signed journal and binding completion | `solana_executor_journal`, `solana_binding_completion` | `workers/payment-executor/solana.ts`, `contracts/solana/transactions.ts`, `contracts/solana/integration/executor.e2e.mjs` |
+| Payout consent UI and Solana account API | `ui_payout_consent_lifetime`, `ui_payout_consent`, `solana_binding_api` | `src/PayoutConsent.tsx`, `src/Earnings.tsx`, `backend/payments/handler.ts`, `tests/e2e/payout-consent.spec.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -455,6 +456,32 @@ separately from wall-clock submission expiry. Neither model proves provider
 truth, global journal-history retention, cryptographic correctness, or atomic
 authority across D1 and chain submission. The models and new regression cases
 remain unexecuted here.
+
+Payout consent now owns each asynchronous operation for its committed account,
+claim and payment context. Leaving the view, changing that context or explicit
+sign-out invalidates its continuations. Fresh session reads precede wallet
+prompts, API writes and success feedback; writes also carry the expected actor.
+An observed account change clears the private payout view and aborts its pending
+account refresh so an older read cannot restore it. Already admitted server
+effects remain separate from local cancellation. The browser regressions hold
+a connection across navigation and a signature across an account change.
+They have not been run, and updated browser, accessibility and video evidence
+for this UI change remains outstanding under the current skip-checks direction.
+
+The lifetime model bounds two operations, two review contexts and actors, and
+one concurrent parent read. It treats prepared-message and signature checks as
+predicates. The Solana API model bounds two requests, two claim/attempt snapshots
+and ordinary/private ledger scopes. It preserves ordinary lookup precedence,
+reporter ownership and audit-before-private-read, captured context, opaque late
+worker effects and current response-envelope rules. It does not strengthen the
+trusted worker's string checks or turn a missing context dependency into a new
+API refusal. Both models are source-only and unexecuted.
+
+[React documents effect cleanup across changed dependencies and unmount](https://react.dev/reference/react/useEffect).
+The consent controller uses [layout-effect cleanup](https://react.dev/reference/react/useLayoutEffect)
+at the committed-context boundary, before a stale dialog can remain visible
+through a paint. These lifecycle controls do not cancel an external wallet's
+already displayed prompt or prove continuous session authority between reads.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
