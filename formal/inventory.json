@@ -11120,7 +11120,7 @@
     },
     {
       "path": "formal/models/contributor/contributor_lock_publication.qnt",
-      "sha256": "f21dd51d49167d1fb495cebc3727a77868f6ef5612685dd0cc8fa8360a198d76",
+      "sha256": "82bc2f7875cc05faddb0f50d148b9e8bd94bf4ff63ac3f2945b75308c0866db4",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
@@ -11140,11 +11140,14 @@
         "preparationCleanupPreservesFirstErrorTest",
         "releaseCleanupFailureStillClosesHandleTest",
         "releaseGuardFailureBlocksSuccessorAndRetryTest",
+        "releaseGuardFailureBlocksSuccessorTest",
         "releaseRetryCannotTouchSuccessorTest",
         "repeatedReleaseCleanupFailureKeepsSuccessorTest",
         "rollbackCandidateCleanupKeepsOriginalErrorTest",
         "rollbackPermitsSameCallerRetryTest",
-        "staleCleanupSuccessPublishesHandleTest"
+        "staleCleanupSuccessPublishesHandleTest",
+        "stoppedOwnerAllowsManualGuardRecoveryTest",
+        "successorAfterManualRecoveryRetainsDebrisTest"
       ]
     },
     {
@@ -11930,7 +11933,7 @@
     },
     {
       "path": "formal/models/payments/operator_keeper_lifecycle.qnt",
-      "sha256": "4ed4dedca4c6c5acab0833e2bda97244c7e36d34a2a0da38f04822b99b70f073",
+      "sha256": "d3fe8c45e8ba0d8b3a1ecfcf9720f46a666f69c9e73a9f176d2fc84794fb277d",
       "sources": [
         "scripts/payment-keeper/budget.ts",
         "scripts/payment-keeper/keeper.ts",
@@ -13960,7 +13963,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_dispute_read.qnt",
-      "sha256": "1f4b67f61f95863ed56d0e1a4b7fc9ab8f4f1562f3837a09714c4dc7f1faec59",
+      "sha256": "406d6447249ddc6a2ba1fa5bd30d54b1445b2cc66ad37b032c0a861825aa386a",
       "sources": [
         "workers/slopbot/persistence.ts",
         "workers/slopbot/review.ts",
@@ -14256,7 +14259,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "e83e9f035994fe449a2fca64c733d2b86e34ffe5d9b8ea43bbe4cac875524a8e",
+      "sha256": "6ac25853c3ea9fda64176dae0da31ede00cf0557a09e2c244c39ebf4f99c0c63",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -14436,7 +14439,7 @@
     },
     {
       "path": "formal/models/tooling/evidence_capture.qnt",
-      "sha256": "fcef98e2112e3c9d266a7404e6dd2b5b8ebe3137af6ecc24e17d6e53a44dc5e6",
+      "sha256": "29de841b532b05a8322d7a03ae0139acc13bdd90f57352b29037a49dd9055624",
       "sources": [
         "scripts/evidence-bundle.mjs",
         "scripts/evidence-contract.mjs",
@@ -14459,6 +14462,7 @@
         "firstBundleNeedsNoPreviousBackupTest",
         "interruptedSwapIsExplicitTest",
         "invalidBundleCannotPublishTest",
+        "invalidBundleFinalizesFailureTest",
         "postCommitPreviewFailureCannotLogSuccessTest",
         "previewFailureStillAbortsStagingTest",
         "protectedAbortDoesNotDeletePublishedBundleTest",
@@ -14756,7 +14760,7 @@
     },
     {
       "path": "formal/models/ui/evm_wallet_discovery.qnt",
-      "sha256": "f6cb22c3d75c2a205b158649ac4691ed489d719e14849a29ada0217d22b782eb",
+      "sha256": "2c5a2cc8d35a4242c65425ae6b546219b53f58e688e1725836f3ae280302bd28",
       "sources": ["src/lib/use-payout-wallets.ts"],
       "scenarios": [
         "changedMetadataBlocksSameProviderTest",
@@ -15177,7 +15181,7 @@
     },
     {
       "path": "formal/models/ui/ui_contributor_allocation.qnt",
-      "sha256": "fddc77e84ee9c680094568f8a1f794787ab3cc25588ba0fca527fdcc6b1c49e7",
+      "sha256": "0e0a3b32ee3482532ee395c17bc9f10593511fa0df0a2545387ff24cb2a3de6a",
       "sources": [
         "src/ContributorAllocation.tsx",
         "src/Earnings.tsx",
@@ -15218,7 +15222,7 @@
     },
     {
       "path": "formal/models/ui/ui_cycle_archive.qnt",
-      "sha256": "8723f28c9ac507c1f1bcb5ce7a0ab0800579a3afbcc546ecda69d318d5522d44",
+      "sha256": "32c836414be57af07ebebcb97d18f99bd0f361d75baf9466f9426d0cccdbb8a7",
       "sources": [
         "src/App.tsx",
         "src/CyclePages.tsx",
@@ -16034,7 +16038,7 @@
     },
     {
       "path": "formal/models/ui/ui_payout_consent_lifetime.qnt",
-      "sha256": "e03995a9ee258ecaa6a5cea9a29a331de18080c4e9440a10d70dc1aa0091021f",
+      "sha256": "677719f7f972975a71f0e991878c95ccfb7a84c6adfe622cde2db43bbf11bb76",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",
@@ -16490,7 +16494,7 @@
     },
     {
       "path": "formal/models/ui/ui_referral_claim_lifetime.qnt",
-      "sha256": "b92883855d74009971ab4e5d25a1d49b1485ebc0905124e0f504ed9533d09a36",
+      "sha256": "1b83a07c18f915cfa1ec19742b4040a6827fc781d485dd171b654a01ab29d316",
       "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
       "scenarios": [
         "activeWalletBlocksResetTest",
@@ -16499,6 +16503,7 @@
         "competingLockGrantRefusesWithoutReleasingOwnerTest",
         "departedBeforeLockGrantNeverStartsPreflightTest",
         "departedObservedPreflightCannotDispatchTest",
+        "departedObservedPreflightReleasesReservationTest",
         "departedPreflightCannotPromptTest",
         "departedPreflightPromptRefusesTest",
         "departedReturnedPreflightCannotDispatchTest",
@@ -16786,7 +16791,7 @@
     },
     {
       "path": "formal/models/ui/ui_solana_history_recovery.qnt",
-      "sha256": "5c69a9d58fc19586f78b104445cf1f663c46b102d2ddfc010892e36940dfbf29",
+      "sha256": "c619c6fa6a26f5b30382ff087de096eb9e231ef14cd8ae9789a34455c6d71a1f",
       "sources": [
         "backend/security/handler.ts",
         "src/SecurityBounty.tsx",
@@ -17682,7 +17687,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_generation_storage.qnt",
-      "sha256": "f406afa50d096cfc56ae861f8bfff1dca7847c88a3288d082c899e41bd9a3a1d",
+      "sha256": "6736c7665d0ec7e415f9319f97bc9cfd81b13a8975a0a5de57c5c114f3be27b4",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence-storage.ts",
@@ -17718,6 +17723,7 @@
         "retiringGenerationReadCanReturnExistingBytesTest",
         "unavailableCurrentTargetDoesNotRepairTest",
         "unknownPutReplyDoesNotInventCommittedBytesTest",
+        "unpublishedTargetsRetireAfterMarkerTest",
         "unpublishedTargetsStillNeedRetirementTest",
         "validExistingTargetSkipsReservationTest",
         "winnerCorruptionAfterPublicationRefusesTest"

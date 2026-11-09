@@ -33,14 +33,14 @@ module operator_keeper_lifecycle {
   val ids = Set(1, 2, 3)
   val runIds = Set(1, 2)
   val modes = Set("off", "dry_run", "execute", "invalid")
-  type Request = { phase: str, caller: str, instance: int, run: int, http: int, result: str }
+  type Request = { phase: str, caller: str, instance: int, runId: int, http: int, result: str }
   type Run = { phase: str, instance: int, mode: str, registry: int,
     configValid: bool, projects: int, staged: bool, attempted: bool, itemError: bool, outcome: str }
   type State = { instance: int, mode: str, configValid: bool, registry: int, projects: int,
     active: int, count: int, runs: int -> Run, requests: int -> Request,
     journalRegistry: int, indexed: bool, signed: bool, nonce: bool, liability: bool,
     settledGas: bool, broadcasts: int, safeSigning: bool }
-  val unusedRequest: Request = { phase: "unused", caller: "direct", instance: 0, run: 0, http: 0, result: "none" }
+  val unusedRequest: Request = { phase: "unused", caller: "direct", instance: 0, runId: 0, http: 0, result: "none" }
   val unusedRun: Run = { phase: "unused", instance: 0, mode: "off", registry: 1,
     configValid: true, projects: 1, staged: false, attempted: false, itemError: false, outcome: "none" }
   var s: State
@@ -73,89 +73,89 @@ module operator_keeper_lifecycle {
       s' = s.with("active", key).with("count", if (fresh) key else s.count)
         .with("runs", if (fresh) s.runs.set(key, unusedRun.with("phase", "mode").with("instance", s.instance)
           .with("mode", s.mode).with("configValid", s.configValid).with("registry", s.registry).with("projects", s.projects)) else s.runs)
-        .with("requests", s.requests.set(id, r.with("phase", "waiting").with("instance", s.instance).with("run", key))) }
+        .with("requests", s.requests.set(id, r.with("phase", "waiting").with("instance", s.instance).with("runId", key))) }
   }
-  action select(id: int): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "mode",
-      s' = if (run.mode == "off") settle(id, "off")
-        else if (run.mode == "invalid" or not(run.configValid)) settle(id, "throw")
-        else s.with("runs", s.runs.set(id, run.with("phase", "identity"))) }
+  action selectMode(id: int): bool = {
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "mode",
+      s' = if (activeRun.mode == "off") settle(id, "off")
+        else if (activeRun.mode == "invalid" or not(activeRun.configValid)) settle(id, "throw")
+        else s.with("runs", s.runs.set(id, activeRun.with("phase", "identity"))) }
   }
   action identity(id: int, storageWorks: bool): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "identity",
-      s' = if (not(storageWorks) or (s.journalRegistry != 0 and s.journalRegistry != run.registry)) settle(id, "throw")
-        else s.with("journalRegistry", run.registry).with("runs", s.runs.set(id, run.with("phase", "core"))) }
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "identity",
+      s' = if (not(storageWorks) or (s.journalRegistry != 0 and s.journalRegistry != activeRun.registry)) settle(id, "throw")
+        else s.with("journalRegistry", activeRun.registry).with("runs", s.runs.set(id, activeRun.with("phase", "core"))) }
   }
   action indexReads(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", s' = s.with("indexed", true) }
   action stageAttempt(id: int): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "core", run.mode == "execute", not(s.signed), not(run.attempted),
-      s' = s.with("runs", s.runs.set(id, run.with("staged", true).with("attempted", true))) }
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "core", activeRun.mode == "execute", not(s.signed), not(activeRun.attempted),
+      s' = s.with("runs", s.runs.set(id, activeRun.with("staged", true).with("attempted", true))) }
   }
   action commitAttempt(id: int, valid: bool): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "core", run.staged,
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "core", activeRun.staged,
       s' = s.with("signed", s.signed or valid).with("nonce", s.nonce or valid).with("liability", s.liability or valid)
-        .with("safeSigning", s.safeSigning and (not(valid) or run.mode == "execute"))
-        .with("runs", s.runs.set(id, run.with("staged", false).with("itemError", run.itemError or not(valid)))) }
+        .with("safeSigning", s.safeSigning and (not(valid) or activeRun.mode == "execute"))
+        .with("runs", s.runs.set(id, activeRun.with("staged", false).with("itemError", activeRun.itemError or not(valid)))) }
   }
   action broadcast(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", s.runs.get(id).mode == "execute",
     s.signed, s.nonce, s.liability, not(s.settledGas), s.broadcasts < 2,
     s' = s.with("broadcasts", s.broadcasts + 1) }
   action gasEvidence(id: int, valid: bool): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "core", s.signed,
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "core", s.signed,
       s' = if (valid) s.with("liability", false).with("settledGas", true)
-        else s.with("runs", s.runs.set(id, run.with("itemError", true))) }
+        else s.with("runs", s.runs.set(id, activeRun.with("itemError", true))) }
   }
   action itemFailure(id: int): bool = {
-    val run = s.runs.get(id)
-    all { s.active == id, run.phase == "core", s' = s.with("runs", s.runs.set(id, run.with("itemError", true))) }
+    val activeRun = s.runs.get(id)
+    all { s.active == id, activeRun.phase == "core", s' = s.with("runs", s.runs.set(id, activeRun.with("itemError", true))) }
   }
   action finish(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", not(s.runs.get(id).staged),
     s' = settle(id, if (s.runs.get(id).itemError) "partial" else "ok") }
   action fatal(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", s' = settle(id, "throw") }
   action deliver(id: int, received: bool): bool = {
     val request = s.requests.get(id)
-    val run = if (request.run > 0) s.runs.get(request.run) else unusedRun
-    val http = if (run.outcome == "throw") 503 else 200
-    all { request.phase == "waiting", run.phase == "settled",
+    val activeRun = if (request.runId > 0) s.runs.get(request.runId) else unusedRun
+    val http = if (activeRun.outcome == "throw") 503 else 200
+    all { request.phase == "waiting", activeRun.phase == "settled",
       s' = s.with("requests", s.requests.set(id,
         if (not(received)) request.with("phase", "done").with("result", "response-lost")
         else request.with("http", http).with("phase", if (request.caller == "cron" and http == 200) "body" else "done")
-          .with("result", if (http == 503) "redacted-failure" else if (request.caller == "cron") "pending" else run.outcome))) }
+          .with("result", if (http == 503) "redacted-failure" else if (request.caller == "cron") "pending" else activeRun.outcome))) }
   }
   action inspectScheduled(id: int, bodyValid: bool): bool = {
     val request = s.requests.get(id)
-    val run = if (request.run > 0) s.runs.get(request.run) else unusedRun
+    val activeRun = if (request.runId > 0) s.runs.get(request.runId) else unusedRun
     all { request.phase == "body", request.caller == "cron",
       s' = s.with("requests", s.requests.set(id, request.with("phase", "done")
-        .with("result", if (not(bodyValid)) "response-error" else if (run.outcome == "partial") "unavailable-work" else "success"))) }
+        .with("result", if (not(bodyValid)) "response-error" else if (activeRun.outcome == "partial") "unavailable-work" else "success"))) }
   }
   action restart(mode: str, valid: bool, registry: int, projects: int): bool = all {
     s.instance == 1, modes.contains(mode), Set(1, 2).contains(registry), Set(1, 2).contains(projects),
     s' = s.with("instance", 2).with("mode", mode).with("configValid", valid).with("registry", registry).with("projects", projects).with("active", 0)
       .with("runs", runIds.mapBy(id => {
-        val run = s.runs.get(id)
-        if (run.phase == "settled" or run.phase == "unused") run else run.with("phase", "lost").with("staged", false)
+        val activeRun = s.runs.get(id)
+        if (activeRun.phase == "settled" or activeRun.phase == "unused") activeRun else activeRun.with("phase", "lost").with("staged", false)
       }))
       .with("requests", ids.mapBy(id => {
         val request = s.requests.get(id)
-        if (request.phase == "waiting" and request.run > 0 and s.runs.get(request.run).phase != "settled")
+        if (request.phase == "waiting" and request.runId > 0 and s.runs.get(request.runId).phase != "settled")
           request.with("phase", "done").with("result", "interrupted") else request
       })) }
   action step = {
     nondet id = ids.oneOf()
-    nondet run = runIds.oneOf()
+    nondet activeRun = runIds.oneOf()
     nondet caller = Set("public", "wrong-route", "direct", "cron").oneOf()
     nondet mode = modes.oneOf()
     nondet yes = Set(false, true).oneOf()
     nondet registry = Set(1, 2).oneOf()
     nondet projects = Set(1, 2).oneOf()
-    any { configure(mode, yes, registry), request(id, caller), dispatch(id), select(run), identity(run, yes), indexReads(run),
-      stageAttempt(run), commitAttempt(run, yes), broadcast(run), gasEvidence(run, yes), itemFailure(run), finish(run), fatal(run),
+    any { configure(mode, yes, registry), request(id, caller), dispatch(id), selectMode(activeRun), identity(activeRun, yes), indexReads(activeRun),
+      stageAttempt(activeRun), commitAttempt(activeRun, yes), broadcast(activeRun), gasEvidence(activeRun, yes), itemFailure(activeRun), finish(activeRun), fatal(activeRun),
       deliver(id, yes), inspectScheduled(id, yes), restart(mode, yes, registry, projects), s' = s }
   }
   val invariant = all { s.count <= 2, s.instance <= 2, s.safeSigning,
@@ -165,23 +165,23 @@ module operator_keeper_lifecycle {
       and not(Set("settled", "unused", "lost").contains(s.runs.get(s.active).phase)),
     ids.forall(id => {
       val request = s.requests.get(id)
-      request.http == 200 implies request.run > 0 and s.runs.get(request.run).phase == "settled"
+      request.http == 200 implies request.runId > 0 and s.runs.get(request.runId).phase == "settled"
     }) }
-  action core(id: int): bool = select(id).then(identity(id, true))
+  action core(id: int): bool = selectMode(id).then(identity(id, true))
   action executing = configure("execute", true, 1).then(request(1, "direct")).then(dispatch(1)).then(core(1))
   action committed = executing.then(stageAttempt(1)).then(commitAttempt(1, true))
   run publicRouteCannotReachKeeperTest = init.then(request(1, "public")).expect(s.count == 0 and s.requests.get(1).http == 404 and invariant)
   run wrongInternalRouteDoesNoWorkTest = init.then(request(1, "wrong-route")).expect(s.count == 0 and invariant)
   run offCronDoesNotValidateConfigurationTest = init.then(configure("off", false, 1)).then(request(1, "cron"))
     .expect(s.requests.get(1).result == "success" and s.count == 0 and s.journalRegistry == 0 and invariant)
-  run directOffTickReturnsEmptyResultTest = init.then(request(1, "direct")).then(dispatch(1)).then(select(1)).then(deliver(1, true))
+  run directOffTickReturnsEmptyResultTest = init.then(request(1, "direct")).then(dispatch(1)).then(selectMode(1)).then(deliver(1, true))
     .expect(s.requests.get(1).http == 200 and s.requests.get(1).result == "off" and invariant)
   run invalidCronConfigurationStartsNoObjectWorkTest = init.then(configure("execute", false, 1)).then(request(1, "cron"))
     .expect(s.count == 0 and s.requests.get(1).result == "configuration-error" and invariant)
-  run invalidDirectConfigurationIsRedacted503Test = init.then(configure("invalid", true, 1)).then(request(1, "direct")).then(dispatch(1)).then(select(1)).then(deliver(1, true))
+  run invalidDirectConfigurationIsRedacted503Test = init.then(configure("invalid", true, 1)).then(request(1, "direct")).then(dispatch(1)).then(selectMode(1)).then(deliver(1, true))
     .expect(s.requests.get(1).http == 503 and s.requests.get(1).result == "redacted-failure" and invariant)
   run overlappingRequestsShareOneCoreRunTest = init.then(executing).then(request(2, "cron")).then(dispatch(2)).then(indexReads(1)).then(finish(1)).then(deliver(1, true)).then(deliver(2, true)).then(inspectScheduled(2, true))
-    .expect(s.count == 1 and s.requests.get(1).run == s.requests.get(2).run and s.requests.get(2).result == "success" and invariant)
+    .expect(s.count == 1 and s.requests.get(1).runId == s.requests.get(2).runId and s.requests.get(2).result == "success" and invariant)
   run settledPromiseDoesNotWaitForResponseDeliveryTest = init.then(executing).then(finish(1)).then(request(2, "direct")).then(dispatch(2)).then(core(2))
     .expect(s.count == 2 and s.requests.get(1).phase == "waiting" and s.active == 2 and invariant)
   run dryRunMayPersistReadStateWithoutSigningTest = init.then(configure("dry_run", true, 1)).then(request(1, "cron")).then(dispatch(1)).then(core(1)).then(indexReads(1)).then(finish(1)).then(deliver(1, true)).then(inspectScheduled(1, true))
@@ -198,7 +198,7 @@ module operator_keeper_lifecycle {
     .expect(s.broadcasts == 2 and s.liability and invariant)
   run changedProjectSelectionKeepsSameLiabilityTest = init.then(committed).then(restart("execute", true, 1, 2)).then(request(2, "direct")).then(dispatch(2)).then(core(2))
     .expect(s.projects == 2 and s.journalRegistry == 1 and s.liability and invariant)
-  run changedRegistryCannotReuseJournalTest = init.then(committed).then(restart("execute", true, 2, 1)).then(request(2, "direct")).then(dispatch(2)).then(select(2)).then(identity(2, true)).then(deliver(2, true))
+  run changedRegistryCannotReuseJournalTest = init.then(committed).then(restart("execute", true, 2, 1)).then(request(2, "direct")).then(dispatch(2)).then(selectMode(2)).then(identity(2, true)).then(deliver(2, true))
     .expect(s.requests.get(2).http == 503 and s.journalRegistry == 1 and s.liability and invariant)
   run stoppingNewInstanceKeepsUnknownAttemptTest = init.then(committed).then(broadcast(1)).then(restart("off", true, 1, 1)).then(request(2, "cron"))
     .expect(s.count == 1 and s.liability and s.requests.get(2).result == "success" and invariant)

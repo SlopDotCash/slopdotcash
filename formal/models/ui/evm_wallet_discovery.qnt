@@ -154,7 +154,7 @@ module evm_wallet_discovery {
     .expect(s.calls.get(1).result == "returned" and invariant)
   run changingLegacyGlobalDoesNotRevokeCapturedWrapperTest = init.then(legacy(Set(2))).then(selectLegacy(2)).then(legacy(Set()))
     .then(connect(false)).then(accountReply(true)).expect(s.addressReady and invariant)
-  run cleanupStopsAnnouncementsTest = selected.then(cleanup).then(announce(1, 2, 1, true).fail()).expect(s.blockedProviders == Set() and invariant)
+  run cleanupStopsAnnouncementsTest = selected.then(cleanup).expect(s.blockedProviders == Set() and invariant).then(announce(1, 2, 1, true).fail())
   run cleanupDoesNotCancelProviderPromiseTest = connected.then(invoke(1, "rpc")).then(cleanup).then(reply(1, true, false))
     .expect(s.calls.get(1).result == "returned" and invariant)
 }

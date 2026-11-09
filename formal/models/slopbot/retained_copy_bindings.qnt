@@ -155,7 +155,7 @@ module retained_copy_bindings {
   run referenceLookupRejectsWithoutReturningPartialMapTest = init.then(oneIntegration("original", "comment")).then(matched("exact"))
     .then(begin("original")).then(referenceFailure).expect(s.owners.get(1) == 1 and not(s.returned) and invariant)
   run cleanResultStillNeedsOtherPublicationChecksTest = init.then(oneIntegration("original", "comment")).then(matched("exact"))
-    .then(skipLast).then(downstream(false).fail()).expect(not(s.published) and invariant)
+    .then(skipLast).expect(not(s.published) and invariant).then(downstream(false).fail())
   run ignoringPartialResultLimitationsNegativeControlTest = init.then(oneIntegration("original", "comment")).then(matched("exact"))
     .then(oneIntegration("original", "comment")).then(fileEvidence(false)).then(returnResult).then(oldIgnoreLimitations)
     .expect(not(invariant))

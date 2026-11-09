@@ -634,6 +634,10 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
   const held = gate();
+  let delivered!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    delivered = resolve;
+  });
   let postflight = false;
   await page.route(
     `${origins.site}/api/v1/notifications/email`,
@@ -657,6 +661,7 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
     await route.fulfill({
       json: { session: { githubId: SECOND, githubLogin: "second" } },
     });
+    delivered();
   });
   try {
     await preferences
@@ -674,11 +679,10 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
       .click();
     await input.fill("new-mounted-draft@example.test");
     const reads = state.preferenceReads;
-    const response = page.waitForResponse(
-      (reply) => new URL(reply.url()).pathname === "/api/v1/project-session",
-    );
+    // Departure can abort the old request before a browser response event.
+    // Wait for the held authority to finish, then inspect the remounted view.
     held.release();
-    await response;
+    await finished;
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {

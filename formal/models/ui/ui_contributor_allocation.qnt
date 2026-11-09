@@ -44,20 +44,20 @@ module ui_contributor_allocation {
     wallets: ids.mapBy(_ => Set("none")), nowExpired: false, renderedExpired: false,
     boundaryInstalled: false, boundaryArmed: false,
     publishedBy: 0, publishedLife: 0, requests: ids.mapBy(_ => empty) }
-  pure def contains(mask: int, actor: int): bool = actor > 0 and
+  pure def maskContains(mask: int, actor: int): bool = actor > 0 and
     (mask == 3 or mask == actor)
   pure def subset(transfers: int, recipients: int): bool =
-    ids.forall(actor => contains(transfers, actor) implies contains(recipients, actor))
+    ids.forall(actor => maskContains(transfers, actor) implies maskContains(recipients, actor))
   def owns(id: int): bool = s.mounted and s.active == id and
     s.requests.get(id).life == s.life
   val eligibleWallet = if (s.actor > 0) s.wallets.get(s.actor).contains("on-time") else false
   val hasRow = s.mounted and not(s.error) and s.document == "published" and
-    contains(s.recipients, s.actor)
+    maskContains(s.recipients, s.actor)
   val rowActor = if (hasRow) s.actor else 0
   val displayedAmount = rowActor
   val state = if (not(s.mounted)) "hidden" else if (s.error) "error"
     else if (not(hasRow)) "hidden"
-    else if (contains(s.transfers, s.actor)) "sent"
+    else if (maskContains(s.transfers, s.actor)) "sent"
     else if (s.closed) "unclaimed"
     else if (eligibleWallet) "scheduled"
     else if (s.renderedExpired) "unclaimed" else "awaiting-wallet"
@@ -140,7 +140,7 @@ module ui_contributor_allocation {
   val invariant = all { s.life >= 1, s.life <= 2, actors.contains(s.actor),
     masks.contains(s.recipients), masks.contains(s.transfers), subset(s.transfers, s.recipients),
     rowActor > 0 implies rowActor == s.actor and displayedAmount == s.actor,
-    state == "sent" iff hasRow and contains(s.transfers, s.actor),
+    state == "sent" iff hasRow and maskContains(s.transfers, s.actor),
     state == "scheduled" implies hasRow and eligibleWallet and not(s.closed),
     transferLink implies not(registrationLink),
     s.document == "published" implies s.publishedLife == s.life and s.publishedBy > 0,
