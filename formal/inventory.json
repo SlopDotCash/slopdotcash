@@ -287,17 +287,18 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "d88a63a760037ea70703fc161daa5a5d0983779ac0b8fdc104557da50dc58bff",
+      "sha256": "0981be82762924d6df6e2c4e81ef1c93b2e5fffd2ef2f79feaed784e13485097",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
+        "formal/models/payments/payment_dispatch.qnt",
         "formal/models/payments/payment_history.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt"
       ],
       "candidateLines": [
         107, 212, 279, 323, 328, 375, 397, 403, 426, 448, 619, 640, 654, 774,
-        830, 868, 877, 888, 1027, 1090, 1107, 1197, 1198, 1252
+        830, 868, 877, 892, 1031, 1094, 1111, 1201, 1202, 1256
       ],
       "review": "mapped-abstraction"
     },
@@ -807,7 +808,10 @@
     {
       "path": "backend/security/payment-database.ts",
       "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
-      "models": ["formal/models/api/api_award_recovery.qnt"],
+      "models": [
+        "formal/models/api/api_award_recovery.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -2262,7 +2266,10 @@
     {
       "path": "migrations/0057_private_security_payments.sql",
       "sha256": "99bfc406d747e486db01f59ce9456a958dcbf56322dbf34903e6939c9bfc0026",
-      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
       "candidateLines": [
         13, 20, 57, 88, 94, 96, 98, 101, 104, 105, 110, 113, 117, 137, 139, 150,
         152
@@ -9445,7 +9452,7 @@
     },
     {
       "path": "formal/models/payments/binding_cancellation.qnt",
-      "sha256": "9503d81d700ea9327f8db0d01b3cfd04e522688fc782294d4ea0195bed68ce9d",
+      "sha256": "e5c0ee67f703412e0be79bcbac8c6abe99151cd1f5a5fcbc66974bc6a4aef08b",
       "sources": [
         "workers/payment-executor/binding-recovery.ts",
         "workers/payment-executor/binding-shared.ts",
@@ -9456,7 +9463,9 @@
         "codeAccountRefusedTest",
         "noReceiptStillHeldTest",
         "obsoleteOnlyTest",
-        "originalWinsAfterCancelTest"
+        "originalRevertedClearsPointerTest",
+        "originalWinsAfterCancelTest",
+        "supersededClearsPointerTest"
       ]
     },
     {
@@ -9477,7 +9486,7 @@
     },
     {
       "path": "formal/models/payments/bounty_payment.qnt",
-      "sha256": "85fa4b7aba4200aa746dde1acace2af81989b17f341199e7879c9570d6b9abad",
+      "sha256": "5bc0044fef8ea9114b6ed8da08c5dae5caa8db683ef18f736317c52a4efc0888",
       "sources": [
         "backend/security/direct-payments.ts",
         "backend/security/verified-direct-recovery.ts",
@@ -9490,11 +9499,12 @@
         "cancelledResearcherRequestPaysNewWalletOnceTest",
         "completeTest",
         "feeLegCannotRedirectTest",
-        "lowerNonceBlocksFeeCancellationTest",
+        "lowerNonceBlocksResearcherCancellationTest",
         "noResendAfterPaidTest",
         "paidResearcherLegNotReissuedTest",
         "partialRemainsUnpaidTest",
         "researcherSuccessorAfterCancellationTest",
+        "researcherWaitsForFeeNonceTest",
         "successorWithoutCancellationRefusedTest",
         "unpaidFeeLegSuccessorTest",
         "unverifiedLandedLegBlocksSuccessorTest"
@@ -9589,7 +9599,7 @@
     },
     {
       "path": "formal/models/payments/direct_payer_nonce.qnt",
-      "sha256": "7efdb9f6324627a9940495713ac4f725a55fc80441951a53888a85dd1d18c397",
+      "sha256": "29d61f2772a7e214ffad7826366d2e98cbacd49189567e9b38d197a5c3d6c169",
       "sources": [
         "backend/security/direct-payments.ts",
         "migrations/0112_direct_payment_recovery.sql",
@@ -9778,30 +9788,37 @@
     },
     {
       "path": "formal/models/payments/payment_dispatch.qnt",
-      "sha256": "6f3a3c3f6b9ee355da51f017d5be962fa8001d6a951c57d8a2de64c297c04cd6",
+      "sha256": "ce74d4658ec2030dcde4c7127ec0c91f410dcd10168731ad6e9bd35ab1899149",
       "sources": [
         "backend/payments/dispatch.ts",
+        "backend/payments/handler.ts",
         "backend/payments/ledger.ts",
         "backend/payments/verified-evidence.ts",
+        "backend/security/payment-database.ts",
         "migrations/0011_payments.sql",
         "migrations/0017_robinhood_chain.sql",
         "migrations/0021_multi_asset_vault_snapshots.sql",
+        "migrations/0057_private_security_payments.sql",
         "workers/payments/reconcile.ts",
         "workers/payments/scanner.ts",
         "workers/security-payments/index.ts"
       ],
       "scenarios": [
+        "ambiguousCannotSubmitTest",
+        "ambiguousClearsLeaseTest",
         "ambiguousRetryTest",
         "conflictingResponseTest",
         "externalPaidBesideRecordedTxTest",
         "externalPaidWithoutRecordedTxTest",
+        "guardedReleaseKeepsUncertainHoldTest",
         "lateOriginalAfterWalletReplacementTest",
         "noResponseAfterPaidTest",
         "noSecondReceiptAfterExternalPaidTest",
         "paidIsAbsorbingTest",
         "staleConflictCannotHoldCompletedTest",
         "staleFailurePreservesSubmittedSuccessorTest",
-        "staleLeaseRefusedTest"
+        "staleLeaseRefusedTest",
+        "unguardedReleaseIsReparkedTest"
       ]
     },
     {

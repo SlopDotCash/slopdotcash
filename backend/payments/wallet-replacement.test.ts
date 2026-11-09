@@ -515,3 +515,46 @@ test("unsigned registration cannot retire an old attempt, but a signed descendan
     f.sqlite.close();
   }
 });
+
+test("authorizing a replacement keeps a hold parked under another claim's uncertain attempt", async () => {
+  const f = await fixture();
+  const states = () =>
+    Object.fromEntries(
+      (
+        f.sqlite
+          .query("SELECT obligation_id id,state FROM payment_outbox ORDER BY 1")
+          .all() as { id: string; state: string }[]
+      ).map((row) => [row.id, row.state]),
+    );
+  try {
+    const a = await f.register(first);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(a, first))).status,
+    ).toBe(200);
+    f.award("uncertain");
+    f.award("free");
+    f.sqlite
+      .query(
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES('attempt','uncertain',?,?,'unknown')",
+      )
+      .run(a, now.toISOString());
+    f.sqlite.query("UPDATE payment_outbox SET state='held'").run();
+    const b = await f.register(second);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(b, second))).status,
+    ).toBe(200);
+    // The unrelated hold is released. The hold under claim a's uncertain
+    // attempt waits for recovery instead of flickering back through ready.
+    expect(states()).toEqual({ free: "ready", uncertain: "held" });
+    f.sqlite
+      .query("UPDATE payment_attempts SET state='failed' WHERE id='attempt'")
+      .run();
+    const c = await f.register(third);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(c, third))).status,
+    ).toBe(200);
+    expect(states()).toEqual({ free: "ready", uncertain: "ready" });
+  } finally {
+    f.sqlite.close();
+  }
+});
