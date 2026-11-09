@@ -304,8 +304,6 @@ export function projectSetupStatus(input: {
   clearance: VettingClearance | { state: "unavailable"; message: string };
   scanRequest: ScanRequest | null;
   activatedRevision: number | null;
-  /** False after an owner revision: a routine edit never resumes a pause. */
-  activationAllowed?: boolean;
   checkedAt: string;
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
@@ -381,15 +379,14 @@ export function projectSetupStatus(input: {
       "Contributors can find this project and its skills.",
     );
   } else if (scan.state === "cleared" && project.status === "paused") {
-    // Every check passed, so no scan is pending: the project is paused only
-    // until its generated skills are publishable and a setup check runs.
+    // Every check passed, so no scan is pending. runSetupCheck activates
+    // under these same checks unless an owner revision disallowed it, so a
+    // paused project with complete skill fields was kept paused by an edit.
     state = "action_required";
     nextAction = publishesGeneratedSkills(manifest)
       ? action(
           "activate_project",
-          input.activationAllowed === false
-            ? `${scan.message} Your edit kept the project paused. Check again to activate it.`
-            : `${scan.message} Check again to activate the project.`,
+          `${scan.message} Your edit kept the project paused. Check again to activate it.`,
         )
       : action(
           "complete_skill_fields",

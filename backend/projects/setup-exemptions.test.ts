@@ -585,7 +585,7 @@ describe("paused project with a cleared scan", () => {
     assessment: null,
     grandfathered: true,
   };
-  function paused(withSkillFields: boolean, activationAllowed: boolean) {
+  function paused(withSkillFields: boolean) {
     const manifest = applicationManifest("paused-test", "example/paused-test", {
       status: "paused",
     }) as unknown as ProjectDefinition & { contribution?: unknown };
@@ -612,13 +612,12 @@ describe("paused project with a cleared scan", () => {
       clearance: cleared,
       scanRequest: null,
       activatedRevision: null,
-      activationAllowed,
       checkedAt: at,
     });
   }
 
   test("an owner revision that kept the pause asks for a setup check, not a scan", () => {
-    const result = paused(true, false);
+    const result = paused(true);
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("activate_project");
     expect(result.nextAction.message).toContain("Check again to activate it.");
@@ -626,13 +625,11 @@ describe("paused project with a cleared scan", () => {
   });
 
   test("a manifest without generated skill fields asks the owner to complete them", () => {
-    for (const allowed of [true, false]) {
-      const result = paused(false, allowed);
-      expect(result.state).toBe("action_required");
-      expect(result.nextAction.kind).toBe("complete_skill_fields");
-      expect(result.nextAction.message).toContain(
-        "contributor guide and skill fields are complete",
-      );
-    }
+    const result = paused(false);
+    expect(result.state).toBe("action_required");
+    expect(result.nextAction.kind).toBe("complete_skill_fields");
+    expect(result.nextAction.message).toContain(
+      "contributor guide and skill fields are complete",
+    );
   });
 });

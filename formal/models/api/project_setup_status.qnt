@@ -1,6 +1,6 @@
 // @source backend/projects/setup.ts
-// @source backend/projects/handler.ts
-// runSetupCheck (handler.ts) and projectSetupStatus (setup.ts): each check
+// runSetupCheck (backend/projects/handler.ts) and projectSetupStatus
+// (setup.ts): each check
 // reads restriction, Slopbot installation, current GitHub authority, scan
 // clearance, project status and whether the manifest publishes generated
 // skills. An open, verified project with an unscanned or stale revision
