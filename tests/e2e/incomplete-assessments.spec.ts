@@ -77,6 +77,13 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     "GET",
     "/api/v1/notifications/incomplete-assessments",
   );
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    `/api/v1/notifications/incomplete-assessments?after=${encodeURIComponent(
+      JSON.stringify([project.id, Number(project.authority.repositoryId), 25]),
+    )}`,
+  );
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
