@@ -101,6 +101,16 @@ async function serve(page: Page) {
       return route.fulfill({ json: { routes: [], totals: [] } });
     if (path === "/api/v1/project-appeals")
       return route.fulfill({ json: { appeals: [] } });
+    if (path === "/api/v1/notifications/email")
+      return route.fulfill({
+        json: {
+          enabled: false,
+          securityEnabled: false,
+          enrollmentAvailable: false,
+          pending: null,
+          availability: "unverified",
+        },
+      });
     if (path === "/api/v1/notifications")
       return route.fulfill({
         json: {

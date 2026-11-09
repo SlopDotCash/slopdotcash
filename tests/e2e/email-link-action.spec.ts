@@ -65,7 +65,7 @@ async function serveDepartingEmailAction(page: Page) {
   ).toBeVisible();
   await expect(page.locator(".inbox-empty")).toBeVisible();
   await expect(
-    page.getByText("You have no private security cases.", { exact: true }),
+    page.getByText("You have no private reports yet.", { exact: true }),
   ).toBeVisible();
   await page.waitForLoadState("networkidle");
   return posts;

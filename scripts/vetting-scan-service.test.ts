@@ -1511,7 +1511,7 @@ for (const kind of [
         ) as EvidenceStorageRow;
       const key = await new EvidenceStorage(
         retained.evidence.deps.db,
-        retained.bucket,
+        retained.evidence.deps.bucket!,
         () => clock,
         () => crypto.randomUUID(),
       ).partKey(row);
@@ -1714,7 +1714,7 @@ test("scan reuse requires the original report to remain in private R2", async ()
     .get(original.id) as EvidenceStorageRow;
   const key = await new EvidenceStorage(
     retained.evidence.deps.db,
-    retained.bucket,
+    retained.evidence.deps.bucket!,
     () => clock,
     () => crypto.randomUUID(),
   ).partKey(object);
