@@ -9,6 +9,11 @@ named scenarios and five regression definitions are unexecuted. The earlier
 passing results recorded below do not validate these modified model/source
 bytes.
 
+The subsequent [startup follow-up](contributor-startup-ownership-audit.md)
+models the helper's unpublished-child crash and acquisition handoff, plus
+request/report cleanup results. These newer model and source changes are also
+unexecuted; the older simulation results below do not cover them.
+
 | Source | Model / review |
 | --- | --- |
 | `skills/project-contributor-template/scripts/live-report.mjs` | `contributor_review_epoch`: deterministic cutoff and finite frontier, exact-head terminal disposition, deferred arrivals, one lower-tier permit. `contributor_discovery_lock`: process birth identity, owner token, atomic transition guard, live-child retention, stale-owner reclamation. `contributor_discovery_snapshot`: two full-read attempts, independent inventory/activity, failure without empty-success publication. |

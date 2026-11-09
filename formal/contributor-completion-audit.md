@@ -6,6 +6,10 @@ parser, browser or verifier was executed. The three refined models contain
 `contributor_discovery_lock` 8. Five regression definitions were added; two
 process/signal cases are explicitly skipped on Windows.
 
+The later [startup ownership follow-up](contributor-startup-ownership-audit.md)
+revises the lock model and closes the helper-crash and handoff gaps listed here.
+Counts and limits in this document describe the earlier `c42c7de07` checkpoint.
+
 ## Local receipt correction
 
 `run-receipt.mjs` permitted completion up to five minutes before the recorded

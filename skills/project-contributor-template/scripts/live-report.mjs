@@ -69,7 +69,6 @@ export class LiveInventoryChangedError extends Error {
 const LIVE_REPORT_LOCK_DIRECTORY = "slop-live-report-locks-v2";
 const LIVE_REPORT_LOCK_OWNER_FILE = "owner.json";
 const LIVE_REPORT_LOCK_COMMAND_DIRECTORY = "commands";
-const LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS = 5 * 60 * 1_000;
 const LIVE_REPORT_LOCKED_GH_ARGUMENT = "--slop-internal-locked-gh-v1";
 const LIVE_REPORT_PROCESS_IDENTITY_RE = /^[a-f0-9]{64}$/u;
 const LIVE_REPORT_TOKEN_RE = /^[a-f0-9]{32}$/u;
@@ -1721,12 +1720,12 @@ function liveReportCommandIsActive(lease, ownerToken) {
   }
   if (processLeaseIsActive(lease.helper)) return true;
   if (lease.child !== null && processLeaseIsActive(lease.child)) return true;
-  // Only an unpublished child needs a grace period. A recorded birth identity
-  // proves a known child is gone, so recovery need not wait for that period.
-  return (
-    lease.child === null &&
-    Date.now() - lease.startedAtMs < LIVE_REPORT_ORPHAN_COMMAND_GRACE_MS
-  );
+  if (lease.child === null) {
+    throw new LiveReportLockContentionError(
+      "live report lock contention: a stopped helper left an unpublished GitHub child identity; elapsed time cannot prove the child stopped. Stop all local discovery processes before manually removing this lock",
+    );
+  }
+  return false;
 }
 
 function liveReportHasActiveCommand(lockPath, ownerToken) {
@@ -1750,9 +1749,14 @@ function liveReportHasActiveCommand(lockPath, ownerToken) {
       throw new TypeError("live report command directory is invalid");
     }
     if (!/^lease-[a-f0-9]{32}\.json$/u.test(entry.name)) continue;
-    const lease = readLiveReportCommandLease(
-      join(commandDirectory, entry.name),
-    );
+    let lease;
+    try {
+      lease = readLiveReportCommandLease(join(commandDirectory, entry.name));
+    } catch (error) {
+      // A helper removes its lease only after its child has closed.
+      if (fileSystemErrorCode(error) === "ENOENT") continue;
+      throw error;
+    }
     if (liveReportCommandIsActive(lease, ownerToken)) return true;
   }
   return false;
@@ -1762,9 +1766,9 @@ function assertLiveReportLockDirectory(lockPath) {
   assertLiveReportPrivatePath(lockPath, "live report lock", "directory");
 }
 
-function withLiveReportLockTransition(lockPath, operation) {
+function enterLiveReportLockTransition(lockPath) {
   const transitionPath = `${lockPath}.transition`;
-  // Every lock-path mutation participates in this atomic mkdir guard. Never
+  // Ownership changes and command startup share this atomic mkdir guard. Never
   // reclaim the guard: checking a token or dead PID before renaming it would
   // recreate the same ABA race that this guard prevents for the report lock.
   // A crash here requires manual recovery after all local reports are stopped.
@@ -1776,10 +1780,56 @@ function withLiveReportLockTransition(lockPath, operation) {
       `live report lock contention: transition guard exists at ${transitionPath}; retry after the other report finishes. If it persists, stop all local reports before manually removing this guard`,
     );
   }
+  return transitionPath;
+}
+
+function cleanupPreservingFailure(cleanup, failed, context) {
   try {
-    return operation();
+    cleanup();
+  } catch (error) {
+    if (!failed) throw error;
+    // error-policy:J6 Cleanup cannot replace the operation's primary failure.
+    const detail = error instanceof Error ? error.message : String(error);
+    try {
+      writeProcessDescriptor(
+        2,
+        Buffer.from(`${context} also failed: ${detail}\n`),
+      );
+    } catch {
+      // The primary failure still wins if its secondary diagnostic cannot write.
+    }
+  }
+}
+
+function withLiveReportLockTransition(lockPath, operation) {
+  const transitionPath = enterLiveReportLockTransition(lockPath);
+  let failed = true;
+  try {
+    const result = operation();
+    failed = false;
+    return result;
   } finally {
-    rmdirSync(transitionPath);
+    cleanupPreservingFailure(
+      () => rmdirSync(transitionPath),
+      failed,
+      "Slop lock transition cleanup",
+    );
+  }
+}
+
+async function withLiveReportLockTransitionAsync(lockPath, operation) {
+  const transitionPath = enterLiveReportLockTransition(lockPath);
+  let failed = true;
+  try {
+    const result = await operation();
+    failed = false;
+    return result;
+  } finally {
+    cleanupPreservingFailure(
+      () => rmdirSync(transitionPath),
+      failed,
+      "Slop lock transition cleanup",
+    );
   }
 }
 
@@ -1856,22 +1906,32 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
     throw new RangeError("live report gh command maxBuffer is invalid");
   }
   const commandToken = randomBytes(16).toString("hex");
-  assertLiveReportPrivatePath(
-    liveReportCommandDirectory(lockPath),
-    "live report command directory",
-    "directory",
-  );
   const requestPath = join(
     liveReportCommandDirectory(lockPath),
     `request-${commandToken}.json`,
   );
-  writeFileSync(
-    requestPath,
-    `${JSON.stringify({ args, maxBuffer, ownerToken, schemaVersion: 1 })}\n`,
-    { flag: "wx", mode: 0o600 },
-  );
+  withLiveReportLockTransition(lockPath, () => {
+    const owner = readLiveReportLockOwner(lockPath);
+    if (owner === null || owner.ownerToken !== ownerToken) {
+      throw new Error(
+        "live report lock ownership changed before command request",
+      );
+    }
+    assertLiveReportPrivatePath(
+      liveReportCommandDirectory(lockPath),
+      "live report command directory",
+      "directory",
+    );
+    writeFileSync(
+      requestPath,
+      `${JSON.stringify({ args, maxBuffer, ownerToken, schemaVersion: 1 })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+  });
+  let result;
+  let failed = true;
   try {
-    return spawnSync(
+    result = spawnSync(
       process.execPath,
       [
         fileURLToPath(import.meta.url),
@@ -1887,8 +1947,24 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
         windowsHide: true,
       },
     );
+    failed = false;
+    return result;
   } finally {
-    rmSync(requestPath, { force: true });
+    if (failed) {
+      cleanupPreservingFailure(
+        () => rmSync(requestPath, { force: true }),
+        true,
+        "Slop command request cleanup",
+      );
+    } else {
+      try {
+        rmSync(requestPath, { force: true });
+      } catch (error) {
+        if (!result.error && result.status === 0) throw error;
+        const detail = error instanceof Error ? error.message : String(error);
+        result.stderr = `${result.stderr ?? ""}Slop command request cleanup also failed: ${detail}\n`;
+      }
+    }
   }
 }
 
@@ -1943,6 +2019,7 @@ export function acquireLiveReportLock(identity, options = {}) {
   let released = false;
   return {
     spawn(command, args, options) {
+      if (released) throw new Error("live report lock was already released");
       return spawnLockedGh(lockPath, ownerToken, command, args, options);
     },
     release() {
@@ -1959,7 +2036,8 @@ export function acquireLiveReportLock(identity, options = {}) {
         }
         // An interrupted helper can return before its GitHub child exits. Keep
         // the owner and command leases so a replacement scan still sees it;
-        // normal stale-owner recovery can reclaim the lock after the child exits.
+        // Recorded child identities permit stale-owner recovery after exit.
+        // Unknown child identities require explicit stopped-process recovery.
         if (liveReportHasActiveCommand(lockPath, ownerToken)) return;
         const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
         renameSync(lockPath, releasedPath);
@@ -2051,8 +2129,6 @@ function collectBoundedGhChild(child, maxBuffer) {
       }
       chunks.push(value);
     };
-    child.stdout.on("data", (chunk) => collect(stdout, chunk, "stdout"));
-    child.stderr.on("data", (chunk) => collect(stderr, chunk, "stderr"));
     child.once("error", (error) => {
       spawnError = error;
     });
@@ -2066,6 +2142,10 @@ function collectBoundedGhChild(child, maxBuffer) {
         stdout: Buffer.concat(stdout),
       });
     });
+    // Failed spawn can lack streams. Still observe its error and close before
+    // releasing startup ownership; do not reject the collector prematurely.
+    child.stdout?.on("data", (chunk) => collect(stdout, chunk, "stdout"));
+    child.stderr?.on("data", (chunk) => collect(stderr, chunk, "stderr"));
   });
 }
 
@@ -2095,39 +2175,67 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
     helper: { pid: process.pid, processIdentity: helperIdentity },
     child: null,
   };
-  writeLiveReportCommandLease(leasePath, lease);
   let result;
   let child;
   let childResult;
   let primaryFailure;
   let cleanupFailure;
-  try {
-    const currentOwner = readLiveReportLockOwner(lockPath);
-    if (currentOwner === null || currentOwner.ownerToken !== ownerToken) {
-      throw new Error(
-        "live report lock ownership changed while starting GitHub command",
-      );
+  const stopOwnedChild = async () => {
+    if (childResult === undefined || result !== undefined) return;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Termination failure cannot replace the original startup error.
     }
-    child = spawn("gh", request.args, {
-      env: { ...process.env, GH_HOST: "github.com" },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    childResult = collectBoundedGhChild(child, request.maxBuffer);
-    if (Number.isInteger(child.pid) && child.pid > 0) {
-      const childIdentity = readLiveReportProcessIdentity(child.pid);
-      if (childIdentity !== null) {
-        writeLiveReportCommandLease(
-          leasePath,
-          {
-            ...lease,
-            child: { pid: child.pid, processIdentity: childIdentity },
-          },
-          true,
+    try {
+      result = await childResult;
+    } catch {
+      // Preserve the first failure after the owned child has settled.
+    }
+  };
+  try {
+    await withLiveReportLockTransitionAsync(lockPath, async () => {
+      const currentOwner = readLiveReportLockOwner(lockPath);
+      if (currentOwner === null || currentOwner.ownerToken !== ownerToken) {
+        throw new Error(
+          "live report lock ownership changed while starting GitHub command",
         );
       }
-    }
-    result = await childResult;
+      writeLiveReportCommandLease(leasePath, lease);
+      try {
+        child = spawn("gh", request.args, {
+          env: { ...process.env, GH_HOST: "github.com" },
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        childResult = collectBoundedGhChild(child, request.maxBuffer);
+        let published = false;
+        if (Number.isInteger(child.pid) && child.pid > 0) {
+          const childIdentity = readLiveReportProcessIdentity(child.pid);
+          if (childIdentity !== null) {
+            writeLiveReportCommandLease(
+              leasePath,
+              {
+                ...lease,
+                child: { pid: child.pid, processIdentity: childIdentity },
+              },
+              true,
+            );
+            published = true;
+          }
+        }
+        // Release startup ownership only with a recorded child identity or
+        // a positive close observation. A clock interval is not such evidence.
+        if (!published) result = await childResult;
+      } catch (error) {
+        // This await must remain inside the transition guard. If the helper
+        // dies first, the persistent guard requires explicit stopped-process
+        // recovery rather than allowing a successor to race an unknown child.
+        await stopOwnedChild();
+        throw error;
+      }
+    });
+    if (result === undefined) result = await childResult;
     if (result.error) throw result.error;
     if (result.overflow !== null) {
       throw new RangeError(
@@ -2139,21 +2247,7 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
     }
   } catch (error) {
     primaryFailure = error;
-    if (childResult !== undefined && result === undefined) {
-      // A launched child still belongs to this helper even if reading its
-      // birth identity or publishing that identity failed. Keep the helper
-      // lease until close; deleting it early would permit stale-owner reuse.
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Termination failure cannot replace the original bookkeeping error.
-      }
-      try {
-        await childResult;
-      } catch {
-        // Preserve the first failure after the owned child has settled.
-      }
-    }
+    await stopOwnedChild();
   } finally {
     for (const path of [leasePath, request.requestPath]) {
       try {
@@ -3741,6 +3835,7 @@ export function main(args = process.argv.slice(2)) {
   }
   const authenticatedIdentity = readGhAuthenticatedIdentity();
   const liveReportLock = acquireLiveReportLock(authenticatedIdentity);
+  let discoveryFailed = true;
   try {
     let rateLimits = { preflight: true };
     const { report } = retryChangedLiveInventory(
@@ -3795,8 +3890,13 @@ export function main(args = process.argv.slice(2)) {
           ? `${JSON.stringify(report, null, 2)}\n`
           : renderMarkdown(report),
     );
+    discoveryFailed = false;
   } finally {
-    liveReportLock.release();
+    cleanupPreservingFailure(
+      () => liveReportLock.release(),
+      discoveryFailed,
+      "Slop live report lock release",
+    );
   }
 }
 

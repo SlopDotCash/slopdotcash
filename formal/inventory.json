@@ -4037,21 +4037,22 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/live-report.mjs",
-      "sha256": "b4a0ade82000f51688e32b929cc6e1d404293b906f7daca577feb1bbb2dc0ef6",
+      "sha256": "83d851328e5122bf235b35b9a1266a6002635ef77f2138dcb6d22bc246beb8f7",
       "models": [
+        "formal/models/contributor_command_completion.qnt",
         "formal/models/contributor_discovery_lock.qnt",
         "formal/models/contributor_discovery_snapshot.qnt",
         "formal/models/contributor_review_epoch.qnt"
       ],
       "candidateLines": [
-        6, 107, 111, 115, 569, 570, 571, 576, 578, 705, 709, 769, 794, 833, 915,
-        953, 1015, 1044, 1094, 1186, 1216, 1222, 1327, 1375, 1416, 1471, 1533,
-        1572, 1591, 1616, 1617, 1618, 1628, 1682, 1685, 1690, 1695, 1700, 1713,
-        1718, 1719, 1720, 1722, 1723, 1727, 1728, 1752, 1753, 1756, 1776, 1810,
-        1814, 1816, 1824, 1833, 2059, 2064, 2085, 2091, 2098, 2123, 2137, 2145,
-        2167, 2181, 2218, 2281, 2603, 2792, 2802, 2809, 2826, 2842, 2852, 2895,
-        2899, 2908, 3035, 3038, 3046, 3070, 3117, 3118, 3330, 3334, 3338, 3462,
-        3537, 3538, 3549, 3706
+        6, 106, 110, 114, 568, 569, 570, 575, 577, 704, 708, 768, 793, 832, 914,
+        952, 1014, 1043, 1093, 1185, 1215, 1221, 1326, 1374, 1415, 1470, 1532,
+        1571, 1590, 1615, 1616, 1617, 1627, 1681, 1684, 1689, 1694, 1699, 1712,
+        1717, 1718, 1719, 1721, 1722, 1723, 1751, 1752, 1754, 1756, 1760, 1780,
+        1860, 1864, 1866, 1874, 1883, 1963, 2135, 2140, 2165, 2171, 2204, 2219,
+        2245, 2261, 2275, 2312, 2375, 2697, 2886, 2896, 2903, 2920, 2936, 2946,
+        2989, 2993, 3002, 3129, 3132, 3140, 3164, 3211, 3212, 3424, 3428, 3432,
+        3556, 3631, 3632, 3643, 3800
       ],
       "review": "mapped-abstraction"
     },
@@ -9348,8 +9349,25 @@
       ]
     },
     {
+      "path": "formal/models/contributor_command_completion.qnt",
+      "sha256": "04ea7cf17a4dee2c2dd71ccde0f019a40337258fd672ef188690a5743afef9df",
+      "sources": [
+        "skills/project-contributor-template/scripts/live-report.mjs"
+      ],
+      "scenarios": [
+        "bothCleanupsPreserveCommandFailureTest",
+        "cleanSuccessTest",
+        "earlierCleanupErrorSurvivesReleaseTest",
+        "nonzeroCommandSurvivesRequestCleanupTest",
+        "primaryDiscoveryErrorSurvivesReleaseTest",
+        "successfulCommandFailsOnRequestCleanupTest",
+        "successfulReportFailsOnReleaseTest",
+        "thrownCommandSurvivesRequestCleanupTest"
+      ]
+    },
+    {
       "path": "formal/models/contributor_discovery_lock.qnt",
-      "sha256": "b3e2c14ff2f093e1be311a7ba928fc5c5f15f7301b20f98cda65effd1ef8298f",
+      "sha256": "8ccc6a554fdce4467181de88164ffe62ef0726315b89c28cba673fd8aed6c754",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
@@ -9359,9 +9377,23 @@
         "cleanupDoesNotReplacePrimaryBookkeepingFailureTest",
         "closedChildStillHasLiveHelperUntilCleanupTest",
         "crashedGuardRequiresInterventionTest",
+        "delayedOldHelperRefusedAfterReclaimTest",
         "failedBookkeepingWaitsBeforeLeaseCleanupTest",
+        "failedSpawnCloseReleasesStartupTest",
+        "failedSpawnStillWaitsForCloseTest",
         "helperBeforeSpawnBlocksReclaimTest",
-        "staleOwnerCanBeReclaimedTest"
+        "helperCrashBeforePublicationRetainsGuardTest",
+        "manualRecoveryRequiresStoppedChildTest",
+        "parentDeathBeforeStartupCanStillFinishTest",
+        "publishedChildOutlivesHelperTest",
+        "publishedDeadChildAllowsReclaimTest",
+        "reclaimScanBlocksLateStartupTest",
+        "releasedHandleCannotPublishRequestTest",
+        "staleHandleCannotPublishSuccessorRequestTest",
+        "staleOwnerCanBeReclaimedTest",
+        "stoppedCrashMayBeRecoveredExplicitlyTest",
+        "timeDoesNotReleaseLegacyUnknownLiveChildTest",
+        "timeDoesNotReleaseLegacyUnknownStoppedChildTest"
       ]
     },
     {

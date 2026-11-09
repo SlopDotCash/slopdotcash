@@ -409,3 +409,21 @@ particular, expiry after request admission does not cancel an admitted upload.
 The runtime was unchanged by that refinement; see
 `trace-upload-lifecycle-audit.md`. Neither model mapping nor these source
 corrections establish absence of other application state errors.
+
+## Discovery startup and cleanup ownership
+
+The follow-up resolves the previously documented helper-crash gap. The old
+five-minute timeout could permit reclamation while an unpublished child still
+ran. A separate startup race let an old helper create its lease after a
+successor's empty-lease observation. Request publication and startup now use the
+same ownership guard as acquisition; startup retains the guard through child
+identity publication or observed close on failure. Ambiguous legacy child
+records require explicit stopped-process recovery instead of expiring.
+
+Request cleanup and outer lock release also preserve an existing command or
+discovery failure and its output. A successful operation still fails when its
+required cleanup fails. The revised lock model and new command-completion
+model distinguish these states, including complete report output followed by
+a failed release. See `contributor-startup-ownership-audit.md`. All added
+scenarios and native regression definitions are unexecuted. Post-rename
+acquisition and release diagnostics remain separate review work.

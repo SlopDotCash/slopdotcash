@@ -176,62 +176,65 @@ test.skipIf(process.platform === "win32")("a launched GitHub child stays leased 
   }
 }, 30_000);
 
-test.skipIf(process.platform === "win32")("a failed GitHub command retains its output and exit status when lease cleanup also fails", () => {
-  const root = mkdtempSync(join(tmpdir(), "slop-discovery-exit-"));
-  try {
-    const scripts = join(root, "scripts");
-    const bin = join(root, "bin");
-    mkdirSync(scripts);
-    mkdirSync(bin);
-    for (const name of ["live-report.mjs", "run-receipt.mjs"])
-      copyFileSync(
-        resolve("skills/project-contributor-template/scripts", name),
-        join(scripts, name),
+for (const record of ["lease", "request"] as const) {
+  test.skipIf(process.platform === "win32")(`a failed GitHub command retains its output and exit status when ${record} cleanup also fails`, () => {
+    const root = mkdtempSync(join(tmpdir(), "slop-discovery-exit-"));
+    try {
+      const scripts = join(root, "scripts");
+      const bin = join(root, "bin");
+      mkdirSync(scripts);
+      mkdirSync(bin);
+      for (const name of ["live-report.mjs", "run-receipt.mjs"])
+        copyFileSync(
+          resolve("skills/project-contributor-template/scripts", name),
+          join(scripts, name),
+        );
+      writeFileSync(
+        join(root, "project.json"),
+        JSON.stringify({ repositoryId: "example/project" }),
       );
-    writeFileSync(
-      join(root, "project.json"),
-      JSON.stringify({ repositoryId: "example/project" }),
-    );
-    writeFileSync(
-      join(bin, "gh"),
-      "#!/usr/bin/env node\nprocess.stdout.write('fixture output\\n'); process.stderr.write('fixture failure\\n'); process.exitCode = 7;\n",
-      { mode: 0o700 },
-    );
-    const preload = join(root, "cleanup-failure.mjs");
-    writeFileSync(preload, `
-      import fs from 'node:fs';
-      import { syncBuiltinESMExports } from 'node:module';
-      const remove = fs.rmSync;
-      fs.rmSync = (path, options) => {
-        if (String(path).includes('/lease-') && String(path).endsWith('.json'))
-          throw new Error('synthetic lease cleanup failure');
-        return remove(path, options);
-      };
-      syncBuiltinESMExports();
-    `);
-    const runner = join(root, "owner.mjs");
-    writeFileSync(runner, `
-      import { acquireLiveReportLock } from ${JSON.stringify(pathToFileURL(join(scripts, "live-report.mjs")).href)};
-      const lock = acquireLiveReportLock({id:42,login:'fixture',host:'github.com'}, {rootPath:${JSON.stringify(join(root, "locks"))}});
-      const result = lock.spawn('gh', ['api', 'repos/example/project/issues']);
-      lock.release();
-      process.stdout.write(JSON.stringify({status:result.status,stdout:result.stdout,stderr:result.stderr}));
-    `);
-    const result = spawnSync("node", [runner], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH ?? ""}`,
-        NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
-      },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const command = JSON.parse(result.stdout);
-    expect(command.status).toBe(7);
-    expect(command.stdout).toContain("fixture output");
-    expect(command.stderr).toContain("fixture failure");
-    expect(command.stderr).toContain("synthetic lease cleanup failure");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      writeFileSync(
+        join(bin, "gh"),
+        "#!/usr/bin/env node\nprocess.stdout.write('fixture output\\n'); process.stderr.write('fixture failure\\n'); process.exitCode = 7;\n",
+        { mode: 0o700 },
+      );
+      const preload = join(root, "cleanup-failure.mjs");
+      writeFileSync(preload, `
+        import fs from 'node:fs';
+        import { syncBuiltinESMExports } from 'node:module';
+        const remove = fs.rmSync;
+        fs.rmSync = (path, options) => {
+          if (String(path).includes('/${record}-') && String(path).endsWith('.json'))
+            throw new Error('synthetic ${record} cleanup failure');
+          return remove(path, options);
+        };
+        syncBuiltinESMExports();
+      `);
+      const runner = join(root, "owner.mjs");
+      writeFileSync(runner, `
+        import { acquireLiveReportLock } from ${JSON.stringify(pathToFileURL(join(scripts, "live-report.mjs")).href)};
+        const lock = acquireLiveReportLock({id:42,login:'fixture',host:'github.com'}, {rootPath:${JSON.stringify(join(root, "locks"))}});
+        const result = lock.spawn('gh', ['api', 'repos/example/project/issues']);
+        lock.release();
+        process.stdout.write(JSON.stringify({status:result.status,stdout:result.stdout,stderr:result.stderr}));
+      `);
+      const result = spawnSync("node", [runner], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const command = JSON.parse(result.stdout);
+      expect(command.status).toBe(7);
+      expect(command.stdout).toContain("fixture output");
+      expect(command.stderr).toContain("fixture failure");
+      expect(command.stderr).toContain(`synthetic ${record} cleanup failure`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+}

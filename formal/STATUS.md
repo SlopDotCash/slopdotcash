@@ -187,6 +187,19 @@ The function census contains 9,970 bodies in 687 files, with 168 selected
 contracts. It does not prove the other bodies. Abrupt loss of a discovery helper
 before its child identity is published remains a separate crash-window review.
 
+The following discovery-startup batch addresses that crash window and the
+related helper/acquirer handoff. Startup and request publication now share the
+ownership transition guard; uncertain children do not expire into permission
+to reclaim a lock. Known child exits retain automatic recovery. The report and
+request cleanup paths preserve primary failures, and failed spawn still waits
+for its close event. See `contributor-startup-ownership-audit.md` for source,
+research, finite assumptions and the remaining post-rename cleanup review.
+One new model and the revised lock model add 22 named scenarios. Six native
+regression definitions were added; all new and changed models/tests remain
+unexecuted. The metadata census now contains 843 sources, 359 models, 2,304
+scenarios and 9,980 function bodies in 687 files. The 168 selected contracts
+and zero unmapped source paths remain accounting, not full refinement proof.
+
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
 924 normal model stages and 168 selected function proofs in 33 modules. These
