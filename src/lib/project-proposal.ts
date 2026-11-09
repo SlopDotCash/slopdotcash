@@ -317,5 +317,12 @@ export async function lookupGitHubRepository(
     throw new Error(
       "The repository branch commits are unavailable. Try again.",
     );
-  return repositoryFacts;
+  // Branch names such as "constructor" are valid Git refs. A missing head
+  // must stay missing, including in partial responses from older servers.
+  return commits === undefined
+    ? repositoryFacts
+    : {
+        ...repositoryFacts,
+        branchCommits: Object.assign(Object.create(null), commits),
+      };
 }

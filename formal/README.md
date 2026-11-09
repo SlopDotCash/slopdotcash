@@ -1362,6 +1362,29 @@ tested or verified here:
   persistence/handler regression definitions are unexecuted. Auth, policy,
   clearance predicates and D1 transaction semantics retain their stated bounds.
 
+- `ui_project_lookup_response` adds 18 scenarios for client response handling,
+  optional/partial branch-commit maps, HTTP failures and lookup refusal. Provided
+  commit maps and the form's absent-map fallback now use a null prototype, so
+  an absent `constructor` or `__proto__` head cannot become an inherited value.
+  Nineteen helper cases and two browser definitions are unexecuted. Provider
+  identity and the response's other fields retain their separate contracts.
+- `proposal_amount_display` and `proposal_reward_fields` add 16 and 12
+  scenarios for amount parsing, unknown token precision, display and uncommitted
+  reward construction. The helpers deliberately have different validation
+  responsibilities: custom-token fields remain unverified until the server
+  handles them, and standalone formatting does not enforce the funding cap.
+  Thirty-six pure-helper regression cases are unexecuted; no policy changed.
+- `ui_project_draft_decode` adds 27 scenarios for independently retained fields,
+  text/image length bounds, legacy step coercion, nested wrappers and referrer
+  precedence. Six browser definitions are unexecuted. Draft slots, locks,
+  persistence acknowledgements and publication ownership remain separate models.
+- `vetting_flagger_standing` adds 20 scenarios for immutable actor resolution,
+  exact repository deduplication, ordered paging, early accepted-work witnesses
+  and read failures. A merge timestamp must now be a parseable string before it
+  grants accepted-contribution standing. Twenty-four regression cases are
+  unexecuted. Account age, membership and maintainer eligibility are checked by
+  the caller; the reader neither files a flag nor establishes provider honesty.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

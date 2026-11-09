@@ -90,9 +90,11 @@ export function githubFlaggerStanding(input: {
               user?: { id?: unknown };
               pull_request?: { merged_at?: unknown };
             };
+            const mergedAt = entry.pull_request?.merged_at;
             return (
               String(entry.user?.id) === actor.githubId &&
-              typeof entry.pull_request?.merged_at === "string"
+              typeof mergedAt === "string" &&
+              Number.isFinite(Date.parse(mergedAt))
             );
           })
         )

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "3b1aa362210a8d9e2fdebac08739e9abd998fcc1ec7baa4f2c6e93d19ad236ea",
+  "inventorySha256": "494e77e00ae0d42134f0847d0b2e15c11b9b39209bfafd729ebb635554e41e18",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2404,6 +2404,8 @@
         "formal/models/ui/ui_image_decode.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_draft_decode.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
@@ -2426,6 +2428,8 @@
         "formal/models/ui/ui_image_decode.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_draft_decode.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
@@ -2448,6 +2452,8 @@
         "formal/models/ui/ui_image_decode.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_draft_decode.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
@@ -3079,10 +3085,13 @@
       "values": ["monthly", "none"],
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
+        "formal/models/rewards/proposal_amount_display.qnt",
+        "formal/models/rewards/proposal_reward_fields.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
-      "lexicallyUnmentionedValues": ["monthly"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

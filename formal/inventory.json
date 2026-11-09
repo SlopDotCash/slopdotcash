@@ -628,7 +628,8 @@
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/github_lookup_actor.qnt",
         "formal/models/api/github_lookup_owned.qnt",
-        "formal/models/api/github_lookup_repository.qnt"
+        "formal/models/api/github_lookup_repository.qnt",
+        "formal/models/vetting/vetting_flagger_standing.qnt"
       ],
       "candidateLines": [29, 62, 63, 75, 86, 209, 254, 335, 649],
       "review": "mapped-abstraction"
@@ -1271,8 +1272,11 @@
     },
     {
       "path": "backend/vetting/flagger-standing.ts",
-      "sha256": "c2a014843f813422a877ece87d7d6b9caaf9fea31595e6cb9df1679243bf7db1",
-      "models": ["formal/models/vetting/vetting_flag_admission.qnt"],
+      "sha256": "b99b6fd5cc4c0e25d74426c278dacc0f47036fb42461bb9c7513660771621b9d",
+      "models": [
+        "formal/models/vetting/vetting_flag_admission.qnt",
+        "formal/models/vetting/vetting_flagger_standing.qnt"
+      ],
       "candidateLines": [74, 78, 79],
       "review": "mapped-abstraction"
     },
@@ -5303,7 +5307,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "0861f7c8d2dc2be41bd81d86f557c9e2cbe4c268ebae9b034164483d9000f13d",
+      "sha256": "54e12cab5b74943fe55c29cac9ec6d4f252b384ad60c57dd263ef9335e34f215",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -5312,6 +5316,8 @@
         "formal/models/ui/ui_image_decode.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_draft_decode.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
@@ -5592,9 +5598,9 @@
     {
       "path": "src/lib/base-units.mjs",
       "sha256": "eab6b304575022289ae632e679bc70546609a82edd37a9c2ad9923e992bc1f45",
-      "models": [],
+      "models": ["formal/models/rewards/proposal_amount_display.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure decimal text and bigint formatting/parsing helpers with no I/O, storage or lifecycle. These functions do not establish whether any amount is funded or paid."
     },
     {
@@ -6233,7 +6239,8 @@
       "models": [
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
-        "formal/models/ui/ui_project_draft.qnt"
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_draft_decode.qnt"
       ],
       "candidateLines": [
         1, 40, 141, 176, 182, 185, 186, 187, 188, 190, 200, 205, 218
@@ -6257,9 +6264,12 @@
     },
     {
       "path": "src/lib/project-proposal.ts",
-      "sha256": "4ce010721eccf91f50da5c26e0ae5ec32c042088ce64bd5d08eb5c4b11dda923",
+      "sha256": "bec76d460f258019e7056a0b120aacd8f3c8907afde4e690f0cf6478d9883aa9",
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
+        "formal/models/rewards/proposal_amount_display.qnt",
+        "formal/models/rewards/proposal_reward_fields.qnt",
+        "formal/models/ui/ui_project_lookup_response.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
@@ -6309,6 +6319,8 @@
       "models": [
         "formal/models/payments/payout_readiness.qnt",
         "formal/models/rewards/funding_routes.qnt",
+        "formal/models/rewards/proposal_amount_display.qnt",
+        "formal/models/rewards/proposal_reward_fields.qnt",
         "formal/models/slopbot/reporting_refresh_job.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
@@ -6422,6 +6434,7 @@
       "sha256": "3572d0036b49f94c08dabb61d0840769440d0dc64187c1a2266fed63be697c8e",
       "models": [
         "formal/models/rewards/funding_address_validation.qnt",
+        "formal/models/rewards/proposal_reward_fields.qnt",
         "formal/models/ui/ui_project_setup.qnt"
       ],
       "candidateLines": [],
@@ -15252,6 +15265,56 @@
       ]
     },
     {
+      "path": "formal/models/rewards/proposal_amount_display.qnt",
+      "sha256": "c05cd8bab691abbbc5f8797f605f9f962d1f99c6c56c32c40507143da05c8efc",
+      "sources": [
+        "src/lib/base-units.mjs",
+        "src/lib/project-proposal.ts",
+        "src/lib/project-schema.mjs"
+      ],
+      "scenarios": [
+        "emptyInputGetsPositiveAmountMessageTest",
+        "excessPrecisionOnZeroKeepsPositiveMessageTest",
+        "knownTokenNormalizesDisplayTest",
+        "knownTokenOverflowReturnsInvalidTest",
+        "nonCentUsdFormatterFailureReturnsInvalidTest",
+        "ordinaryParseErrorUsesUsdMessageTest",
+        "standaloneFormattingCanExceedU128Test",
+        "standaloneInvalidPrecisionRefusedTest",
+        "standaloneNoncanonicalIntegerRefusedTest",
+        "standaloneZeroAndSymbolAreNotFundingApprovalTest",
+        "symbolValidityIsNotCheckedHereTest",
+        "tokenParseErrorKeepsHelperMessageTest",
+        "unknownPrecisionDoesNotRunKnownAmountFormatterTest",
+        "unknownPrecisionKeepsRawTextAndZeroCapTest",
+        "usdStagesPositiveUnitsTest",
+        "zeroIsNotValidFundingTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/proposal_reward_fields.qnt",
+      "sha256": "9e98122f43247f63fba39aa50453959097aacd51da34efe0ab39804d007ee3a4",
+      "sources": [
+        "src/lib/project-proposal.ts",
+        "src/lib/project-schema.mjs",
+        "src/lib/reward-asset.mjs"
+      ],
+      "scenarios": [
+        "badCustomTokenMetadataIsNotValidatedHereTest",
+        "customTokenHasZeroUntilMetadataTest",
+        "invalidAmountStagesZeroWithoutThrowingTest",
+        "invalidDateRejectsAfterAssetPreparationTest",
+        "nativeStagesNativeAmountTest",
+        "stablecoinStagesParsedAmountTest",
+        "stagedManifestNeverCommitsFundsTest",
+        "unfundedIgnoresNetworkAndAssetInputTest",
+        "unfundedStillRequiresValidDateTest",
+        "unsupportedCustomTokenNetworkIsCallerGateTest",
+        "unsupportedNativeNetworkThrowsTest",
+        "unsupportedStablecoinNetworkThrowsTest"
+      ]
+    },
+    {
       "path": "formal/models/rewards/review_credit.qnt",
       "sha256": "ddfd8bf2b074b3a7580dbe9066776a2140ce29c7f70cb606ac987c762816c3d9",
       "sources": [
@@ -18642,6 +18705,43 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_project_draft_decode.qnt",
+      "sha256": "80c3772f07e38761a5d3fb4541aad858171a5690325e3cb9bb9d5b2b62197049",
+      "sources": [
+        "src/ProjectProposalPage.tsx",
+        "src/lib/project-draft-store.ts"
+      ],
+      "scenarios": [
+        "SavedReferrerIsNotTrimmedTest",
+        "absentLegacyDraftAndReferrerSkipsImportTest",
+        "emptyEnumStringOverridesItsDefaultTest",
+        "emptyObjectIsStillALegacyDraftTest",
+        "imageAt16384UnitsIsRetainedTest",
+        "invalidButNonemptyLegacyReferrerKeepsCandidateTest",
+        "invalidLinkFallsBackToSavedReferrerTest",
+        "invalidNestedProposalDoesNotDiscardStepOrReferrerTest",
+        "legacyFractionalStepDoesNotBecomeValidIndexTest",
+        "legacyModernEmptyStepWinsTest",
+        "legacyNegativeStepClampsToZeroTest",
+        "legacyNonfiniteStepSerializesAsNullTest",
+        "legacyOneBasedStepIsConvertedTest",
+        "legacyStorageFailureReturnsDefaultInputTest",
+        "linkReferrerIsTrimmedTest",
+        "locationFailureDoesNotUseSavedReferrerTest",
+        "malformedWrapperUsesDefaultsTest",
+        "nonStringTextIsIgnoredTest",
+        "oversizedImageIsIndependentlyIgnoredTest",
+        "oversizedTextIsIgnoredRatherThanTruncatedTest",
+        "textAt4000UnitsIsRetainedTest",
+        "unknownEnumStringIsPreservedForValidationTest",
+        "unknownKeysNeverEnterDraftTest",
+        "validLinkOverridesSavedReferrerTest",
+        "validWrapperRetainsIndependentValuesTest",
+        "wrapperOutOfRangeStepDefaultsTest",
+        "wrapperStringStepIsNotCoercedTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_project_images.qnt",
       "sha256": "36d984324f683993357029d320414f316d13d2d2c17f0751b10ae6c717c7e5a8",
       "sources": ["src/App.tsx"],
@@ -18651,6 +18751,31 @@
         "ownerFailureUsesInitialTest",
         "priorCustomFailureIsRetainedTest",
         "projectReplacementResetsErrorsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_project_lookup_response.qnt",
+      "sha256": "6cc6b6a9e04065a3cad2bc6bb6f5d84d6c8c6c7ea7c519886b8827aa091c1949",
+      "sources": ["src/ProjectProposalPage.tsx", "src/lib/project-proposal.ts"],
+      "scenarios": [
+        "absentDefaultBranchRefusedTest",
+        "absentOptionalMapRemainsMissingTest",
+        "allReturnedCommitEntriesCanBeSelectedTest",
+        "arrayCommitMapRefusedTest",
+        "bodyFailureOverridesHttpStatusTest",
+        "entryForUnlistedBranchRefusedTest",
+        "fetchFailurePreventsBodyTest",
+        "invalidPathDoesNotFetchTest",
+        "malformedBranchListRefusedTest",
+        "malformedCommitValueRefusedTest",
+        "missingRepositoryRefusedTest",
+        "nonspecificHttpFailureUsesGenericMessageTest",
+        "nullCommitMapRefusedTest",
+        "oldFallbackCounterexampleTest",
+        "ownPrototypeNameCommitSurvivesTest",
+        "partialMapDoesNotInheritMissingBranchTest",
+        "suppliedErrorMessageSurvivesTest",
+        "unauthorizedUsesSignInMessageTest"
       ]
     },
     {
@@ -20066,6 +20191,36 @@
         "stalePinStillResolvesCapturedFlagsTest",
         "unavailablePinDefersOnlyReinstatementTest",
         "withdrawalDoesNotReinstateTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_flagger_standing.qnt",
+      "sha256": "4e227ab2aa0f27dcb8d9bac8675109a426f4dacd0491fdab12a4d017717bec85",
+      "sources": [
+        "backend/projects/github-lookup.ts",
+        "backend/vetting/flagger-standing.ts"
+      ],
+      "scenarios": [
+        "emptyRegistryReturnsKnownNegativeTest",
+        "exactDuplicateRepositoryIsNotFetchedAgainTest",
+        "firstWitnessStopsBeforeLaterRepositoryTest",
+        "fullPageContinuesWithinSameRepositoryTest",
+        "httpFailureDoesNotBecomeNegativeTest",
+        "inFlightPageMakesNoStandingClaimTest",
+        "invalidAccountStopsBeforeRegistryTest",
+        "invalidNameAfterEarlierScanRefusesWholeAnswerTest",
+        "invalidNameAfterWitnessIsNotReadTest",
+        "malformedEntryDoesNotReturnPartialStandingTest",
+        "malformedMergedTimestampDoesNotGrantStandingTest",
+        "missingRepositoryIsSkippedTest",
+        "registryFailureReturnsNoPartialAnswerTest",
+        "repositoryOrderIsPreservedTest",
+        "shortPagesFinishEveryRepositoryTest",
+        "tenthFullPageRefusesInsteadOfNegativeTest",
+        "tenthPageWitnessQualifiesTest",
+        "unreadableBodyDoesNotBecomeNegativeTest",
+        "validWitnessAfterInvalidTimestampStillQualifiesTest",
+        "wrongAuthorIsNotAcceptedWorkTest"
       ]
     },
     {

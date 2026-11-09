@@ -5,6 +5,102 @@ import { expect, expectAccessible, test } from "./fixtures";
 import { readProjectDraft } from "./project-draft-fixture";
 
 const DRAFT_KEY = "slop:project-update:v2:eliza";
+const PROPOSAL_KEY = "slop:project-proposal:v1";
+const DECODE_PROPOSAL = {
+  name: "Restored project", repository: "example/restored-project",
+  repositoryNumericId: "123", repositoryNodeId: "R_fixture",
+  integrationBranch: "main", stewardLogin: "example", stewardActorId: "456",
+  stewardNodeId: "U_fixture", headline: "A valid restored project headline",
+  goal: "A sufficiently detailed goal for the restored project draft.",
+  criteria: "Useful bounded changes with evidence.",
+};
+async function signedOutDraft(context: BrowserContext) {
+  await context.route("**/api/v1/project-session", (route) =>
+    route.fulfill({ json: { session: null } }),
+  );
+}
+
+test("legacy proposal decoding filters each field and takes the trimmed current referrer", async ({ page, context, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowCanceledBackgroundReads();
+  await signedOutDraft(context);
+  await page.addInitScript(({ key, proposal }) => {
+    localStorage.setItem(key, JSON.stringify(proposal));
+    localStorage.setItem(`${key}:step`, "3");
+    localStorage.setItem(`${key}:step:v2`, "");
+    localStorage.setItem("slop:project-referrer:v1", "saved-referrer");
+  }, { key: PROPOSAL_KEY, proposal: {
+    ...DECODE_PROPOSAL, headline: 55, goal: "g".repeat(4000),
+    image: "x".repeat(16385), automaticClosure: false, unknownField: "ignored",
+  } });
+  await page.goto("/projects/new?ref=%20current-referrer%20", { waitUntil: "networkidle" });
+  await expect(page.getByLabel("Project name", { exact: true })).toHaveValue(DECODE_PROPOSAL.name);
+  await expect(page.getByLabel("Short description", { exact: true })).toHaveValue("");
+  const saved = await readProjectDraft(page, PROPOSAL_KEY);
+  expect(saved.step).toBe(0);
+  expect(saved.referrer).toBe("current-referrer");
+  expect(saved.proposal.goal).toBe("g".repeat(4000));
+  expect(saved.proposal.image).toBe("");
+  expect(saved.proposal.automaticClosure).toBe("true");
+  expect(saved.proposal).not.toHaveProperty("unknownField");
+});
+
+for (const format of ["legacy-one-based", "wrapper-string"] as const) {
+  test(`proposal step decoding distinguishes ${format}`, async ({ page, context, diagnostics }) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allowCanceledBackgroundReads();
+    await signedOutDraft(context);
+    await page.addInitScript(({ key, proposal, format }) => {
+      if (format === "legacy-one-based") {
+        localStorage.setItem(key, JSON.stringify(proposal));
+        localStorage.setItem(`${key}:step`, "3");
+      } else {
+        const prefix = `slop:project-draft:v3:${encodeURIComponent(key)}:`;
+        const slot = `${prefix}slot:decoder-fixture`;
+        localStorage.setItem(slot, JSON.stringify({ revision: "1", value: JSON.stringify({ proposal, step: "2", referrer: null }) }));
+        localStorage.setItem(`${prefix}imported`, "1");
+        sessionStorage.setItem(`${prefix}tab`, slot);
+      }
+    }, { key: PROPOSAL_KEY, proposal: DECODE_PROPOSAL, format });
+    await page.goto("/projects/new", { waitUntil: "networkidle" });
+    const expectedStep = format === "legacy-one-based" ? 2 : 0;
+    const label = expectedStep === 2 ? "Review" : "Project";
+    await expect(page.getByRole("navigation", { name: "Setup steps" }).getByRole("button", { name: label, exact: true }))
+      .toHaveAttribute("aria-current", "step");
+    expect((await readProjectDraft(page, PROPOSAL_KEY)).step).toBe(expectedStep);
+  });
+}
+
+test("present empty modern legacy step takes precedence over the older one-based step", async ({ page, context, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowCanceledBackgroundReads();
+  await signedOutDraft(context);
+  await page.addInitScript(({ key, proposal }) => {
+    localStorage.setItem(key, JSON.stringify(proposal));
+    localStorage.setItem(`${key}:step`, "3");
+    localStorage.setItem(`${key}:step:v2`, "");
+  }, { key: PROPOSAL_KEY, proposal: DECODE_PROPOSAL });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await expect(page.getByLabel("Project name", { exact: true })).toBeVisible();
+  expect((await readProjectDraft(page, PROPOSAL_KEY)).step).toBe(0);
+});
+
+for (const savedReferrer of ["saved-referrer", " saved-referrer "]) {
+  test(`invalid current referral uses only a canonical stored login (${JSON.stringify(savedReferrer)})`, async ({ page, context, diagnostics }) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allowCanceledBackgroundReads();
+    await signedOutDraft(context);
+    await page.addInitScript(({ key, proposal, savedReferrer }) => {
+      localStorage.setItem(key, JSON.stringify(proposal));
+      localStorage.setItem("slop:project-referrer:v1", savedReferrer);
+    }, { key: PROPOSAL_KEY, proposal: DECODE_PROPOSAL, savedReferrer });
+    await page.goto("/projects/new?ref=invalid%2Flogin", { waitUntil: "networkidle" });
+    await expect(page.getByLabel("Project name", { exact: true })).toBeVisible();
+    expect((await readProjectDraft(page, PROPOSAL_KEY)).referrer)
+      .toBe(savedReferrer.trim() === savedReferrer ? savedReferrer : null);
+  });
+}
+
 async function serveEditor(context: BrowserContext, delay = false) {
   const project = PROJECTS.find((p) => p.id === "eliza");
   if (!project) throw new Error("Missing fixture");

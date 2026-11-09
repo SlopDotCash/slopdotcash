@@ -1794,3 +1794,30 @@ test("a restored invalid assignment date remains editable before project creatio
   expect(writes).toBe(1);
   expect(signedAt).toBe(expected);
 });
+
+for (const commits of ["omitted", "partial"] as const) {
+  test(`missing ${commits} branch commit cannot become an inherited object value`, async ({ page }) => {
+    await routeGitHub(page);
+    await page.route("**/api/v1/project-github/repositories/example/open-protein", (route) =>
+      route.fulfill({ json: { repository: {
+        repository: "example/open-protein",
+        description: "Reproducible protein-folding benchmarks for open research.",
+        numericId: "123456789", nodeId: "R_example", defaultBranch: "trunk",
+        branches: ["trunk", "constructor"],
+        ...(commits === "partial" ? { branchCommits: { trunk: COMMIT } } : {}),
+        owner: { login: "example", actorId: "123", nodeId: "U_example", kind: "individual" },
+        license: { state: "unknown", reason: "No detected license" },
+      } } }),
+    );
+    await page.goto("/projects/new", { waitUntil: "networkidle" });
+    await enterRepository(page, "example/open-protein");
+    const branch = page.getByLabel("Integration branch");
+    await expect(branch).toHaveValue("trunk");
+    await branch.selectOption("constructor");
+    await expect.poll(async () => (await readProposalDraft(page))?.sourceCommit).toBe("");
+    expect((await readProposalDraft(page)).integrationBranch).toBe("constructor");
+    await branch.selectOption("trunk");
+    await expect.poll(async () => (await readProposalDraft(page))?.sourceCommit)
+      .toBe(commits === "partial" ? COMMIT : "");
+  });
+}

@@ -936,7 +936,7 @@ function ProjectProposalForm({
           setBranchChoices({
             repository: facts.repository,
             names: facts.branches,
-            commits: facts.branchCommits ?? {},
+            commits: facts.branchCommits ?? Object.create(null),
           });
           setProposal((current) => {
             if (
