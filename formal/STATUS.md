@@ -70,7 +70,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-844 production sources, 366 finite models and 2,500 named scenarios, with zero
+844 production sources, 367 finite models and 2,530 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -103,6 +103,22 @@ this pass, so application code and executable tests are unchanged. All new and
 revised scenarios remain unexecuted. See `inbox-backend-state-audit.md` and
 `inbox-read-state-audit.md`; the function census remains 10,031 bodies in 688
 files, with 168 selected contracts.
+
+The identity-admission batch adds one model and refines the counter model,
+adding 30 named scenarios. The gate separates edge and exact admission from
+later identity validation. The counter keeps captured request time distinct
+from SQL/reply order, including cleanup, rollover, denied increments and a
+committed count followed by an invalid or missing database result. Existing
+clock policy is unchanged. Direct rate-counter and gate execution evidence
+was not found; the existing maintenance test covers cleanup wiring only.
+All new and revised scenarios are unexecuted. See
+`identity-admission-state-audit.md` for the finite bounds and policy limits.
+
+Development has since advanced to `82477b08` with a model-directory and
+documentation reorganization. This source-only checkpoint still retains its
+`69229342` base and must be aligned with that newer tree before PR review. The
+separate completion PR is being reconciled by its owners; its exact-head
+validation does not cover this later model batch.
 
 The wallet source-only batch adds four models and 64 unexecuted scenarios.
 Earnings now stops departed wallet continuations, binds each wallet action to

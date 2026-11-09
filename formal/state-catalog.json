@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "f098a78540f2b35c2435f4e1c85ca82da62054c13eda889fbc446fb875e0c509",
+  "inventorySha256": "938747c16c6954b67573c2a34ef34e630cc90b688aa046559d1eb35c6e874402",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3192,11 +3192,13 @@
         "unauthorized",
         "unreachable"
       ],
-      "models": ["formal/models/api_identity_admission.qnt"],
+      "models": [
+        "formal/models/api_identity_admission.qnt",
+        "formal/models/identity_rate_gate.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "malformed",
         "rate-limited",
-        "rejected",
         "unauthorized",
         "unreachable"
       ],

@@ -6464,7 +6464,10 @@
     {
       "path": "workers/identity/index.ts",
       "sha256": "8a0e3ac108b97bfec933e77dc2cda6fd7fcb162da7411c7e42f4f1edc77300fe",
-      "models": ["formal/models/api_identity_admission.qnt"],
+      "models": [
+        "formal/models/api_identity_admission.qnt",
+        "formal/models/identity_rate_gate.qnt"
+      ],
       "candidateLines": [
         27, 52, 58, 93, 95, 97, 103, 123, 128, 142, 147, 311, 352, 356, 358,
         367, 370, 378, 384, 388, 414, 426, 429, 435, 445, 446, 447, 499
@@ -6484,7 +6487,10 @@
     {
       "path": "workers/identity/rate-limit.ts",
       "sha256": "807e247b1f0c69247efe4221241828ab6e524b7865079eb88052a2190306cab7",
-      "models": ["formal/models/api_identity_admission.qnt"],
+      "models": [
+        "formal/models/api_identity_admission.qnt",
+        "formal/models/identity_rate_gate.qnt"
+      ],
       "candidateLines": [43, 46, 85],
       "review": "mapped-abstraction"
     },
@@ -8080,13 +8086,31 @@
     },
     {
       "path": "formal/models/api_identity_admission.qnt",
-      "sha256": "656f34d6b8e8d2d9dd3469a18d6d5cfcc2dfcea3c3816e66dde238b63225e198",
+      "sha256": "fde006323051feb58a9bd2ba6479117e89abe7bdfa33998bcc247c83b22400db",
       "sources": [
         "migrations/0004_identity_rate_limits.sql",
         "workers/identity/index.ts",
         "workers/identity/rate-limit.ts"
       ],
-      "scenarios": ["failedClosedTest", "fixedWindowTest"]
+      "scenarios": [
+        "cleanupAtExpiryDeletesTheRowTest",
+        "cleanupDoesNotInvalidateReturnedSnapshotTest",
+        "cleanupFailurePreservesCounterTest",
+        "cleanupPreservesRenewalCommittedAfterCaptureTest",
+        "concurrentExactCallsReceiveDistinctCountsTest",
+        "delayedCapturedRequestCanRecreateExpiredRowTest",
+        "deniedCallsStillIncrementWithoutExtendingWindowTest",
+        "failedClosedTest",
+        "firstTouchCreatesWindowAtCapturedStampTest",
+        "fixedWindowTest",
+        "hashingFailureConsumesNoExactQuotaTest",
+        "invalidResultDoesNotUndoCommittedCountTest",
+        "laterRequestCanRecoverAfterStorageFailureTest",
+        "replyUsesCapturedClockAfterLiveExpiryTest",
+        "retryAfterUnknownReplyConsumesAnotherCountTest",
+        "separateDigestKeyKeepsIndependentCounterTest",
+        "staleRequestAfterRenewalCanHaveLongerRetryAfterTest"
+      ]
     },
     {
       "path": "formal/models/api_inbox.qnt",
@@ -10358,6 +10382,31 @@
         "belowMinimumRefusedTest",
         "historicalFinalizeTest",
         "lapsedRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/identity_rate_gate.qnt",
+      "sha256": "75161eb524c18ee3e8ffacdba5af271587fa60d3f1b7971379b1c4da6e7f8615",
+      "sources": [
+        "workers/identity/index.ts",
+        "workers/identity/rate-limit.ts"
+      ],
+      "scenarios": [
+        "admittedRequestCanFailLaterIdentityChecksTest",
+        "clockFailureStopsBeforeHashAndSqlTest",
+        "distinctPrincipalsHaveSeparateExactKeysTest",
+        "edgeDenialDoesNotTouchExactCounterTest",
+        "edgeFailureDoesNotForwardTest",
+        "exactDenialDoesNotForwardTest",
+        "hashFailureStopsBeforeSqlTest",
+        "nonmatchingOriginOrMethodBypassesOnlyTheLimiterTest",
+        "oauthAndLocalPollShareExactScopeTest",
+        "oauthAndLocalStartShareExactScopeTest",
+        "otherPathBypassesOnlyTheLimiterTest",
+        "postcommitFailureCanConsumeQuotaWithoutForwardingTest",
+        "precommitFailureDoesNotConsumeQuotaTest",
+        "startAndPollHaveSeparateExactScopesTest",
+        "unattributedRequestsShareFallbackKeyTest"
       ]
     },
     {
