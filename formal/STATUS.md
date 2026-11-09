@@ -43,12 +43,12 @@ explicit and implicit state transitions. The current global inventory contains
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
-The journal safety-view follow-up keeps the full journal model unchanged and
-binds one reviewed TLC projection to exact source, generated TLA and adapter
-hashes. Lightweight binding/config tests and the toolchain-model typecheck pass.
-The new quotient, real-TLC counterexample control and six toolchain binding
-scenarios have not run. Earlier 180-second and 600-second full-state journal
-runs remain incomplete; see `tlc-safety-view-audit.md`.
+The version-2 journal safety view keeps the full model unchanged and binds a
+projection to exact source, original/view TLA and adapter hashes. It retains
+the real-state fields plus the ownership and frame clauses separately.
+Lightweight checks pass; version-2 quotient and negative controls have not run.
+Earlier full-state and version-1 quotient timeouts remain incomplete. See
+`tlc-safety-view-audit.md`; prior source-bound checks do not certify this version.
 
 ## Integrated corrections
 

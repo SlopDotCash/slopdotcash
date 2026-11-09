@@ -22,6 +22,23 @@ const adapterSource = readFileSync(adapter, "utf8");
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 
+function fixtureBinding(tlaCode: string) {
+  const expressions = [
+    ...view.fields.map((field: string) => `s.${field}`),
+    ...view.clauses.map((clause: { expression: string }) => clause.expression),
+  ];
+  const definition = `${view.operator} ==\n  <<${expressions.join(", ")}>>\n\n`;
+  const expected = tlaCode.replace("====\n", `${definition}====\n`);
+  return {
+    expected,
+    binding: {
+      ...view,
+      translatedSha256: sha256(tlaCode),
+      viewTlaSha256: sha256(expected),
+    },
+  };
+}
+
 test("journal view binds the reviewed model bytes and refuses other requests", () => {
   expect(bindSafetyView(manifest, view.id, view.model, source)).toEqual(view);
   expect(() => bindSafetyView(manifest, "unknown", view.model, source)).toThrow(
@@ -45,7 +62,7 @@ test("journal view binds the reviewed model bytes and refuses other requests", (
 
 test("view insertion preserves the complete TLA body and rejects drift", () => {
   const tlaCode = "---- MODULE direct_bounty_journal ----\nVARIABLE s\n====\n";
-  const binding = { ...view, translatedSha256: sha256(tlaCode) };
+  const { binding, expected } = fixtureBinding(tlaCode);
   const config = {
     moduleName: view.module,
     hasInvariant: true,
@@ -53,14 +70,12 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
     tlaCode,
   };
   const result = applySafetyView(binding, config);
-  expect(result.tlaCode).toBe(
-    tlaCode.replace(
-      "====\n",
-      `${view.operator} ==\n  <<${view.fields.map((field: string) => `s.${field}`).join(", ")}>>\n\n====\n`,
-    ),
-  );
-  expect(result.slopSafetyView).toBe("SlopJournalSafetyView");
+  expect(result.tlaCode).toBe(expected);
+  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV2");
   expect(result.viewEvidence.viewTlaSha256).toBe(sha256(result.tlaCode));
+  expect(
+    result.viewEvidence.clauses.map((clause: { name: string }) => clause.name),
+  ).toEqual(["ownership", "frame"]);
   expect(() =>
     applySafetyView(binding, { ...config, hasTemporal: true }),
   ).toThrow("property differs");
@@ -73,6 +88,15 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   expect(() =>
     applySafetyView(binding, { ...config, tlaCode: `${tlaCode}\n` }),
   ).toThrow("generated TLA changed");
+  expect(() =>
+    applySafetyView({ ...binding, viewTlaSha256: "0".repeat(64) }, config),
+  ).toThrow("projection changed");
+  expect(() =>
+    applySafetyView(
+      { ...binding, clauses: binding.clauses.slice(0, 1) },
+      config,
+    ),
+  ).toThrow("property differs");
 });
 
 test("pinned official runner changes only the config VIEW emission", () => {
@@ -109,30 +133,42 @@ test("pinned Node loads official runner exports through unchanged dependency res
   });
 });
 
-test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
-  "the real TLC view runner still reports a retained-field counterexample",
-  async () => {
-    // A tiny test-only TLA input exercises the real official runner. It is not
-    // added to the production allowlist and proves no application behavior.
-    const tla = `---- MODULE direct_bounty_journal ----
-EXTENDS Naturals
+for (const [kind, update] of [
+  ["retained-field", "!.used = {4}"],
+  ["ownership-only", "!.wrote = TRUE, !.expected = 1, !.observed = 2"],
+  ["frame-only", "!.touched = 1, !.before[2] = [empty EXCEPT !.request = 1]"],
+] as const) {
+  test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+    `the real TLC view runner reports the ${kind} counterexample`,
+    async () => {
+      // A tiny test-only TLA input exercises the real official runner. It is not
+      // added to the production allowlist and proves no application behavior.
+      const tla = `---- MODULE direct_bounty_journal ----
+EXTENDS Naturals, FiniteSets
 VARIABLE s
-q_init == s = [store |-> 0, memory |-> 0, held |-> 0, used |-> 0,
- mounted |-> 0, before |-> 0, touched |-> 0, observed |-> 0, expected |-> 0,
- wrote |-> 0, warning |-> 0, checked |-> 0, emptyInput |-> 0]
-q_step == s' = [s EXCEPT !.store = 1]
-q_inv == s.store = 0
+empty == [request |-> 0, transaction |-> 0, hash |-> 0, candidate |-> 0]
+q_init == s = [store |-> [n \\in {1,2} |-> empty],
+ memory |-> [q \\in {1,2} |-> [n \\in {1,2} |-> empty]],
+ held |-> [q \\in {1,2} |-> [nonce |-> 0, request |-> 0, transaction |-> 0]],
+ used |-> {}, mounted |-> [q \\in {1,2} |-> TRUE],
+ before |-> [n \\in {1,2} |-> empty], touched |-> 0,
+ observed |-> 0, expected |-> 0, wrote |-> FALSE,
+ warning |-> [q \\in {1,2} |-> FALSE], checked |-> [q \\in {1,2} |-> 0],
+ emptyInput |-> [q \\in {1,2} |-> {}]]
+q_step == s' = [s EXCEPT ${update}]
+q_inv == s.used \\subseteq {1,2,3}
+ /\\ ${view.clauses.map((clause: { expression: string }) => clause.expression).join("\n /\\ ")}
 ====
 `;
-    const probe = `
+      const { binding } = fixtureBinding(tla);
+      const probe = `
       import {readFileSync} from 'node:fs';
-      import {createHash} from 'node:crypto';
       import {createRequire} from 'node:module';
       import {applySafetyView,loadSafetyViewTlc,readSafetyViews} from './scripts/quint-safety-view.mjs';
       const require=createRequire(import.meta.url);
       const manifest=readSafetyViews(process.cwd());
       const tla=${JSON.stringify(tla)};
-      const view={...manifest.views[0],translatedSha256:createHash('sha256').update(tla).digest('hex')};
+      const view=${JSON.stringify(binding)};
       const prepared=applySafetyView(view,{moduleName:view.module,tlaCode:tla,hasInvariant:true,hasTemporal:false});
       const runner=loadSafetyViewTlc(require.resolve('@informalsystems/quint/dist/src/tlc.js'),manifest);
       const result=await runner.verify(prepared,'0.62.4',JSON.parse(readFileSync('formal/tlc.json','utf8')),3);
@@ -140,25 +176,26 @@ q_inv == s.store = 0
       console.log('VIEW_COUNTEREXAMPLE_CONFIRMED');
       process.exit(1);
     `;
-    let output = "";
-    const status = await runE2ePhase({
-      label: "tlc-safety-view-counterexample",
-      command: "node",
-      args: ["--input-type=module", "-e", probe],
-      cwd: root,
-      env: process.env,
-      timeoutMs: 170_000,
-      onStdout: (text: string) => {
-        output += text;
-      },
-      onStderr: (text: string) => {
-        output += text;
-      },
-    });
-    expect(status).toBe(1);
-    expect(output).toContain("Invariant q_inv is violated");
-    expect(output).toContain("VIEW_COUNTEREXAMPLE_CONFIRMED");
-    expect(output).not.toContain("No error has been found");
-  },
-  180_000,
-);
+      let output = "";
+      const status = await runE2ePhase({
+        label: "tlc-safety-view-counterexample",
+        command: "node",
+        args: ["--input-type=module", "-e", probe],
+        cwd: root,
+        env: process.env,
+        timeoutMs: 170_000,
+        onStdout: (text: string) => {
+          output += text;
+        },
+        onStderr: (text: string) => {
+          output += text;
+        },
+      });
+      expect(status).toBe(1);
+      expect(output).toContain("Invariant q_inv is violated");
+      expect(output).toContain("VIEW_COUNTEREXAMPLE_CONFIRMED");
+      expect(output).not.toContain("No error has been found");
+    },
+    180_000,
+  );
+}

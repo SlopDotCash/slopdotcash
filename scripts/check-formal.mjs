@@ -201,9 +201,12 @@ models: for (const file of files) {
         appliedView?.sourceSha256 === testedSha256 &&
         appliedView?.translatedSha256 === safetyView.translatedSha256 &&
         appliedView?.operator === safetyView.operator &&
+        appliedView?.viewTlaSha256 === safetyView.viewTlaSha256 &&
         appliedView?.adapterSha256 === safetyViews.quintAdapterSha256 &&
         JSON.stringify(appliedView?.fields) ===
-          JSON.stringify(safetyView.fields));
+          JSON.stringify(safetyView.fields) &&
+        JSON.stringify(appliedView?.clauses) ===
+          JSON.stringify(safetyView.clauses));
     const passed = status === 0 && !error && stable && viewApplied;
     results.push({
       model: input,

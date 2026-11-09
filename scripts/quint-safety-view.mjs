@@ -7,17 +7,17 @@ import { join } from "node:path";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const identifier = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const digest = /^[0-9a-f]{64}$/u;
-const fields = [
-  "store",
-  "memory",
-  "held",
-  "used",
-  "mounted",
-  "before",
-  "touched",
-  "observed",
-  "expected",
-  "wrote",
+const fields = ["store", "memory", "held", "used", "mounted"];
+const clauses = [
+  {
+    name: "ownership",
+    expression: "((s.wrote /\\ s.expected > 0) => s.observed = s.expected)",
+  },
+  {
+    name: "frame",
+    expression:
+      "(s.touched > 0 => (\\A n \\in {1, 2} \\ {s.touched}: s.store[n] = s.before[n]))",
+  },
 ];
 
 export function readSafetyViews(root) {
@@ -36,14 +36,16 @@ export function readSafetyViews(root) {
   const view = manifest.views[0];
   if (
     Object.keys(view).sort().join(",") !==
-      "fields,id,model,module,operator,sourceSha256,translatedSha256" ||
-    view.id !== "direct-bounty-journal-safety-v1" ||
+      "clauses,fields,id,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
+    view.id !== "direct-bounty-journal-safety-v2" ||
     view.model !== "formal/models/direct_bounty_journal.qnt" ||
     view.module !== "direct_bounty_journal" ||
-    view.operator !== "SlopJournalSafetyView" ||
+    view.operator !== "SlopJournalSafetyViewV2" ||
     !digest.test(view.sourceSha256) ||
     !digest.test(view.translatedSha256) ||
-    JSON.stringify(view.fields) !== JSON.stringify(fields)
+    !digest.test(view.viewTlaSha256) ||
+    JSON.stringify(view.fields) !== JSON.stringify(fields) ||
+    JSON.stringify(view.clauses) !== JSON.stringify(clauses)
   )
     throw new Error("Unreviewed TLC safety-view definition");
   return manifest;
@@ -68,8 +70,9 @@ export function applySafetyView(view, config) {
     !config.hasInvariant ||
     config.hasTemporal ||
     !identifier.test(view.operator) ||
-    view.operator !== "SlopJournalSafetyView" ||
-    JSON.stringify(view.fields) !== JSON.stringify(fields)
+    view.operator !== "SlopJournalSafetyViewV2" ||
+    JSON.stringify(view.fields) !== JSON.stringify(fields) ||
+    JSON.stringify(view.clauses) !== JSON.stringify(clauses)
   )
     throw new Error("TLC safety-view module or property differs");
   if (hash(config.tlaCode) !== view.translatedSha256)
@@ -77,8 +80,14 @@ export function applySafetyView(view, config) {
   const end = config.tlaCode.match(/^={4,}[ \t]*$/gmu);
   if (end?.length !== 1 || !config.tlaCode.endsWith(`${end[0]}\n`))
     throw new Error("TLC safety-view module terminator differs");
-  const definition = `${view.operator} ==\n  <<${view.fields.map((field) => `s.${field}`).join(", ")}>>\n\n`;
+  const expressions = [
+    ...view.fields.map((field) => `s.${field}`),
+    ...view.clauses.map((clause) => clause.expression),
+  ];
+  const definition = `${view.operator} ==\n  <<${expressions.join(", ")}>>\n\n`;
   const tlaCode = `${config.tlaCode.slice(0, -end[0].length - 1)}${definition}${end[0]}\n`;
+  if (hash(tlaCode) !== view.viewTlaSha256)
+    throw new Error("TLC safety-view projection changed; review it again");
   return {
     ...config,
     tlaCode,
@@ -90,6 +99,7 @@ export function applySafetyView(view, config) {
       translatedSha256: view.translatedSha256,
       operator: view.operator,
       fields: view.fields,
+      clauses: view.clauses,
       viewTlaSha256: hash(tlaCode),
     },
   };
