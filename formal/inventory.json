@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "2608e824a9b415792fef7c3c25bea41df3fb340a3716a7834db08c5af408ca70",
+      "sha256": "6f8b360cfd3607da62da5eb84fc30194b96b9ca43b75ddb4ab6c347d5fceadff",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,20 +23,21 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 438, 503, 504, 518, 528, 593, 823,
-        851, 889, 905, 915, 916, 1005, 1105, 1107, 1108, 1272, 1355, 1508, 1510,
-        1540, 1636, 1658, 1729, 1740, 1765, 1834, 1847, 1860, 1869, 1870, 1871
+        27, 59, 154, 186, 191, 192, 240, 291, 365, 446, 511, 512, 526, 537, 602,
+        832, 860, 898, 914, 924, 925, 1014, 1114, 1116, 1117, 1281, 1364, 1517,
+        1519, 1549, 1645, 1667, 1738, 1749, 1774, 1843, 1856, 1869, 1878, 1879,
+        1880
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "ca875cfffd5407058841351f8472a5bed412098370a3490a93574302b1a6eeae",
+      "sha256": "8d9add688e30575e90f7a2e5c84fba466af66ef4b0569d48062907d423986dcc",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [186],
+      "candidateLines": [187],
       "review": "mapped-abstraction"
     },
     {
