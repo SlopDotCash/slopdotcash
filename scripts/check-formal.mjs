@@ -201,6 +201,7 @@ models: for (const file of files) {
         appliedView?.sourceSha256 === testedSha256 &&
         appliedView?.translatedSha256 === safetyView.translatedSha256 &&
         appliedView?.operator === safetyView.operator &&
+        appliedView?.hashMode === safetyView.hashMode &&
         appliedView?.viewTlaSha256 === safetyView.viewTlaSha256 &&
         appliedView?.adapterSha256 === safetyViews.quintAdapterSha256 &&
         JSON.stringify(appliedView?.fields) ===

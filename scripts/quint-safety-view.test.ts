@@ -24,7 +24,7 @@ const sha256 = (text: string) =>
 
 function fixtureBinding(tlaCode: string) {
   const expressions = [
-    ...view.fields.map((field: string) => `s.${field}`),
+    ...view.fields.map((field: { expression: string }) => field.expression),
     ...view.clauses.map((clause: { expression: string }) => clause.expression),
   ];
   const definition = `${view.operator} ==\n  <<${expressions.join(", ")}>>\n\n`;
@@ -71,7 +71,8 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   };
   const result = applySafetyView(binding, config);
   expect(result.tlaCode).toBe(expected);
-  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV2");
+  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV3");
+  expect(result.viewEvidence.hashMode).toBe("entry-hash-zero-or-positive");
   expect(result.viewEvidence.viewTlaSha256).toBe(sha256(result.tlaCode));
   expect(
     result.viewEvidence.clauses.map((clause: { name: string }) => clause.name),
@@ -81,6 +82,9 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   ).toThrow("property differs");
   expect(() =>
     applySafetyView({ ...binding, operator: "Unknown" }, config),
+  ).toThrow("property differs");
+  expect(() =>
+    applySafetyView({ ...binding, hashMode: "unreviewed" }, config),
   ).toThrow("property differs");
   expect(() =>
     applySafetyView(binding, { ...config, moduleName: "other" }),
@@ -133,10 +137,32 @@ test("pinned Node loads official runner exports through unchanged dependency res
   });
 });
 
-for (const [kind, update] of [
-  ["retained-field", "!.used = {4}"],
-  ["ownership-only", "!.wrote = TRUE, !.expected = 1, !.observed = 2"],
-  ["frame-only", "!.touched = 1, !.before[2] = [empty EXCEPT !.request = 1]"],
+for (const [kind, update, initialHash, hashInvariant] of [
+  ["retained-field", "!.used = {4}", 0, "TRUE"],
+  [
+    "ownership-only",
+    "!.wrote = TRUE, !.expected = 1, !.observed = 2",
+    0,
+    "TRUE",
+  ],
+  [
+    "frame-only",
+    "!.touched = 1, !.before[2] = [s.store[2] EXCEPT !.hash = 2]",
+    0,
+    "TRUE",
+  ],
+  [
+    "zero-to-positive hash",
+    "!.store[1].hash = 1, !.before = s.store, !.touched = 1",
+    0,
+    "s.store[1].hash = 0",
+  ],
+  [
+    "positive-to-zero hash",
+    "!.store[1].hash = 0, !.before = s.store, !.touched = 1",
+    1,
+    "s.store[1].hash > 0",
+  ],
 ] as const) {
   test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     `the real TLC view runner reports the ${kind} counterexample`,
@@ -146,18 +172,20 @@ for (const [kind, update] of [
       const tla = `---- MODULE direct_bounty_journal ----
 EXTENDS Naturals, FiniteSets
 VARIABLE s
-empty == [request |-> 0, transaction |-> 0, hash |-> 0, candidate |-> 0]
-q_init == s = [store |-> [n \\in {1,2} |-> empty],
- memory |-> [q \\in {1,2} |-> [n \\in {1,2} |-> empty]],
+entry(n) == [request |-> n, transaction |-> n, hash |-> ${initialHash}, candidate |-> 0]
+initialStore == [n \\in {1,2} |-> entry(n)]
+q_init == s = [store |-> initialStore,
+ memory |-> [q \\in {1,2} |-> initialStore],
  held |-> [q \\in {1,2} |-> [nonce |-> 0, request |-> 0, transaction |-> 0]],
- used |-> {}, mounted |-> [q \\in {1,2} |-> TRUE],
- before |-> [n \\in {1,2} |-> empty], touched |-> 0,
+ used |-> {1,2}, mounted |-> [q \\in {1,2} |-> TRUE],
+ before |-> initialStore, touched |-> 0,
  observed |-> 0, expected |-> 0, wrote |-> FALSE,
  warning |-> [q \\in {1,2} |-> FALSE], checked |-> [q \\in {1,2} |-> 0],
  emptyInput |-> [q \\in {1,2} |-> {}]]
 q_step == s' = [s EXCEPT ${update}]
 q_inv == s.used \\subseteq {1,2,3}
  /\\ ${view.clauses.map((clause: { expression: string }) => clause.expression).join("\n /\\ ")}
+ /\\ (${hashInvariant})
 ====
 `;
       const { binding } = fixtureBinding(tla);

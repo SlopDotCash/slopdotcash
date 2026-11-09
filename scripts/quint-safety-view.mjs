@@ -7,7 +7,22 @@ import { join } from "node:path";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const identifier = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const digest = /^[0-9a-f]{64}$/u;
-const fields = ["store", "memory", "held", "used", "mounted"];
+const hashMode = "entry-hash-zero-or-positive";
+const fields = [
+  {
+    name: "store",
+    expression:
+      "[n \\in DOMAIN s.store |-> [s.store[n] EXCEPT !.hash = IF s.store[n].hash = 0 THEN 0 ELSE 1]]",
+  },
+  {
+    name: "memory",
+    expression:
+      "[q \\in DOMAIN s.memory |-> [n \\in DOMAIN s.memory[q] |-> [s.memory[q][n] EXCEPT !.hash = IF s.memory[q][n].hash = 0 THEN 0 ELSE 1]]]",
+  },
+  { name: "held", expression: "s.held" },
+  { name: "used", expression: "s.used" },
+  { name: "mounted", expression: "s.mounted" },
+];
 const clauses = [
   {
     name: "ownership",
@@ -36,11 +51,12 @@ export function readSafetyViews(root) {
   const view = manifest.views[0];
   if (
     Object.keys(view).sort().join(",") !==
-      "clauses,fields,id,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
-    view.id !== "direct-bounty-journal-safety-v2" ||
+      "clauses,fields,hashMode,id,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
+    view.id !== "direct-bounty-journal-safety-v3" ||
     view.model !== "formal/models/direct_bounty_journal.qnt" ||
     view.module !== "direct_bounty_journal" ||
-    view.operator !== "SlopJournalSafetyViewV2" ||
+    view.operator !== "SlopJournalSafetyViewV3" ||
+    view.hashMode !== hashMode ||
     !digest.test(view.sourceSha256) ||
     !digest.test(view.translatedSha256) ||
     !digest.test(view.viewTlaSha256) ||
@@ -70,7 +86,8 @@ export function applySafetyView(view, config) {
     !config.hasInvariant ||
     config.hasTemporal ||
     !identifier.test(view.operator) ||
-    view.operator !== "SlopJournalSafetyViewV2" ||
+    view.operator !== "SlopJournalSafetyViewV3" ||
+    view.hashMode !== hashMode ||
     JSON.stringify(view.fields) !== JSON.stringify(fields) ||
     JSON.stringify(view.clauses) !== JSON.stringify(clauses)
   )
@@ -81,7 +98,7 @@ export function applySafetyView(view, config) {
   if (end?.length !== 1 || !config.tlaCode.endsWith(`${end[0]}\n`))
     throw new Error("TLC safety-view module terminator differs");
   const expressions = [
-    ...view.fields.map((field) => `s.${field}`),
+    ...view.fields.map((field) => field.expression),
     ...view.clauses.map((clause) => clause.expression),
   ];
   const definition = `${view.operator} ==\n  <<${expressions.join(", ")}>>\n\n`;
@@ -98,6 +115,7 @@ export function applySafetyView(view, config) {
       sourceSha256: view.sourceSha256,
       translatedSha256: view.translatedSha256,
       operator: view.operator,
+      hashMode: view.hashMode,
       fields: view.fields,
       clauses: view.clauses,
       viewTlaSha256: hash(tlaCode),
