@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2fc7f29ed537d435b0eb5266ff117485c811ef8e26766c056062afa38fccd282",
+  "inventorySha256": "e979e5de5e7e48fd61fcf9d8d4e40cd2a3b86e2709dfdbd43fcd3d9823616ead",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -163,21 +163,27 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 34,
+      "line": 35,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/project_skill_publication.qnt"
+      ],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
       "review": "candidate-only"
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 46,
+      "line": 47,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/project_skill_publication.qnt"
+      ],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
       "review": "candidate-only"
     },
@@ -447,6 +453,7 @@
       "kind": "string-union",
       "values": ["conflict", "recorded"],
       "models": [
+        "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
@@ -531,6 +538,7 @@
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -545,6 +553,7 @@
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -559,14 +568,10 @@
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "failed",
-        "finalized",
-        "prepared",
-        "unknown"
-      ],
+      "lexicallyUnmentionedValues": ["finalized", "prepared", "unknown"],
       "review": "candidate-only"
     },
     {
@@ -2061,12 +2066,13 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 446,
+      "line": 449,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
+        "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -2084,12 +2090,13 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1084,
+      "line": 1087,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
+        "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -3481,6 +3488,7 @@
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
       "lexicallyUnmentionedValues": ["ok"],
@@ -3508,6 +3516,8 @@
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_provider_cost_history.qnt",
         "formal/models/slopbot/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": ["active"],
@@ -3525,6 +3535,8 @@
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_provider_cost_history.qnt",
         "formal/models/slopbot/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -3540,9 +3552,11 @@
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
-        "formal/models/slopbot/bot_moderation.qnt"
+        "formal/models/slopbot/bot_moderation.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
-      "lexicallyUnmentionedValues": ["category", "confidence"],
+      "lexicallyUnmentionedValues": ["category"],
       "review": "candidate-only"
     },
     {
@@ -3555,9 +3569,11 @@
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
-        "formal/models/slopbot/bot_moderation.qnt"
+        "formal/models/slopbot/bot_moderation.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
-      "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
+      "lexicallyUnmentionedValues": ["escalation", "resolution"],
       "review": "candidate-only"
     },
     {
@@ -3570,9 +3586,11 @@
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
-        "formal/models/slopbot/bot_moderation.qnt"
+        "formal/models/slopbot/bot_moderation.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
-      "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
+      "lexicallyUnmentionedValues": ["escalation", "resolution"],
       "review": "candidate-only"
     },
     {

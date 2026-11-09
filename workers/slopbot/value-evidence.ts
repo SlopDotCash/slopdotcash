@@ -581,15 +581,19 @@ async function pages<T>(client: EvidenceClient, path: string): Promise<T[]> {
 }
 /** The PR commits route stops at 250. The immutable comparison paginates the
  * complete range; reconcile it with both the reported count and observed IDs.
+ * Callers without a later PR-change fence require that range even when the
+ * mutable PR listing has the expected number of commits.
  */
-async function pullCommits(
+export async function pullCommits(
   client: EvidenceClient,
   root: string,
   path: string,
-  pull: Pull,
+  pull: { commits: number; base: { sha: string }; head: { sha: string } },
+  options: { requireImmutableRange?: boolean } = {},
 ): Promise<Commit[]> {
   const observed = await pages<Commit>(client, `${path}/commits`);
-  if (observed.length >= pull.commits) return observed;
+  if (!options.requireImmutableRange && observed.length >= pull.commits)
+    return observed;
   const complete: Commit[] = [];
   const ids = new Set<string>();
   for (let page = 1; page <= Math.ceil(pull.commits / 100); page++) {

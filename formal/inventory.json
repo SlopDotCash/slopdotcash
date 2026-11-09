@@ -257,7 +257,10 @@
     {
       "path": "backend/pages.ts",
       "sha256": "37678f7eb78b893313c5d40eacba0ef49551508556f1db845f5ed4441a6f6990",
-      "models": ["formal/models/api/api_request_composition.qnt"],
+      "models": [
+        "formal/models/api/api_request_composition.qnt",
+        "formal/models/api/project_skill_publication.qnt"
+      ],
       "candidateLines": [99],
       "review": "mapped-abstraction"
     },
@@ -306,6 +309,7 @@
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
+        "formal/models/payments/received_totals.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
@@ -385,7 +389,10 @@
     {
       "path": "backend/payments/public-records.ts",
       "sha256": "420289fc912f34fc39d1e6da7c4c92c272823b2e0a794cdd206a4896e4586b84",
-      "models": ["formal/models/payments/payment_history.qnt"],
+      "models": [
+        "formal/models/payments/payment_history.qnt",
+        "formal/models/payments/received_totals.qnt"
+      ],
       "candidateLines": [24, 63, 81, 88, 173, 210, 214, 222, 245, 246],
       "review": "mapped-abstraction"
     },
@@ -509,7 +516,10 @@
     {
       "path": "backend/projects/edge-cache.ts",
       "sha256": "5b51c883a9f8a0e00bda1e0d96cde539c9df6c9748d694e5b6fed6d1464ed998",
-      "models": ["formal/models/api/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/payments/received_totals.qnt"
+      ],
       "candidateLines": [3, 13, 65, 70, 75, 82, 102],
       "review": "mapped-abstraction"
     },
@@ -587,10 +597,13 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "sha256": "ead86b008c0c4b908f886a656f6099a58539e631aa8a67ceda644ae755158022",
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "sha256": "c4de162e6cc56f97c83e4b2e7b9a62eef89642ea447cd64920cc5e313aad3059",
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/project_skill_publication.qnt"
+      ],
       "candidateLines": [
-        138, 140, 150, 175, 193, 203, 230, 233, 241, 259, 264, 300
+        140, 142, 152, 177, 195, 205, 232, 235, 243, 261, 266, 302
       ],
       "review": "mapped-abstraction"
     },
@@ -1115,6 +1128,7 @@
       "path": "backend/vetting/persistence.ts",
       "sha256": "ae3406f7085a386e5ca8b3dccb2aec5168149a2bd6ca117565168dfb01b2c2b1",
       "models": [
+        "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
@@ -1779,9 +1793,9 @@
     {
       "path": "functions/[[path]].ts",
       "sha256": "652bd21eb8008890191ec89c2f22f7942605539b92d42df6c320fe32661aab7a",
-      "models": [],
+      "models": ["formal/models/api/project_skill_publication.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Re-exports the stateless response middleware; no independent transition."
     },
     {
@@ -1903,6 +1917,7 @@
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt"
       ],
       "candidateLines": [
@@ -2554,6 +2569,7 @@
       "path": "migrations/0081_monthly_asset_amount_range.sql",
       "sha256": "895cd8b735be25c32232770e07ff3445c7a669c3935784be7778f4265e9a20bd",
       "models": [
+        "formal/models/payments/payment_history.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt"
       ],
@@ -3688,7 +3704,10 @@
     {
       "path": "scripts/prepare-site.mjs",
       "sha256": "e6896b1f0612b15d8be7c89fe2446511305a25a57a4ce5899edff7fb42643500",
-      "models": ["formal/models/release/release_publication.qnt"],
+      "models": [
+        "formal/models/api/project_skill_publication.qnt",
+        "formal/models/release/release_publication.qnt"
+      ],
       "candidateLines": [215, 298],
       "review": "mapped-abstraction"
     },
@@ -4299,9 +4318,10 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "a91f9fe74de73e11cf01c7e45798302ad0a9873cc8e838f0dc033502f235e609",
+      "sha256": "a277900dda99040ad4c7b6840f13616d56f36623e7561843eb9eb52145961943",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
+        "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -4315,12 +4335,13 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
-        445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 1014,
-        1029, 1043, 1053, 1083, 1086, 1148, 1151, 1153, 1157, 1158, 1166, 1186,
-        1194, 1195, 1202, 1238, 1282, 1285, 1302, 1303, 1346, 1348, 1368, 1370,
-        1425, 1426, 1429, 1430, 1433, 1434, 1449, 1453, 1458, 1460, 1464, 1465,
-        1516, 1548, 1550, 1575, 1576, 1593, 1594, 1602, 1603, 1614, 1617, 1628
+        13, 15, 284, 294, 304, 315, 324, 325, 326, 327, 328, 330, 331, 392, 447,
+        448, 449, 452, 475, 542, 573, 610, 650, 654, 656, 697, 754, 807, 1017,
+        1032, 1046, 1056, 1086, 1089, 1151, 1154, 1156, 1160, 1161, 1169, 1189,
+        1197, 1198, 1205, 1241, 1285, 1288, 1305, 1306, 1349, 1351, 1371, 1373,
+        1428, 1429, 1432, 1433, 1436, 1437, 1452, 1456, 1461, 1463, 1467, 1468,
+        1526, 1536, 1567, 1569, 1594, 1595, 1612, 1613, 1624, 1626, 1639, 1642,
+        1653
       ],
       "review": "mapped-abstraction"
     },
@@ -4371,17 +4392,20 @@
     },
     {
       "path": "src/CyclePages.tsx",
-      "sha256": "c7dba4a30a056a94005fd1c4772cdd991774b33297c5a1719965d262ce479eec",
+      "sha256": "e4bb170386d7d8a65fbf7cd52ff321008d201c19d72d2ba42e7f266332c10870",
       "models": [
+        "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_cycle_publication.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        2, 44, 45, 49, 50, 54, 55, 64, 81, 84, 87, 93, 95, 97, 116, 128, 134,
-        136, 166, 174, 176, 183, 197, 232, 244, 255, 278, 303, 376, 393, 394,
-        431, 435, 449, 454, 455, 457, 458, 461, 462, 468, 469, 474, 478, 480,
-        490, 498, 506, 507, 508, 514, 516, 522, 523, 525, 554, 564, 575, 600
+        2, 45, 46, 52, 53, 62, 72, 73, 79, 81, 82, 88, 105, 110, 113, 114, 117,
+        119, 127, 129, 132, 134, 156, 168, 174, 176, 206, 214, 216, 223, 239,
+        245, 281, 293, 304, 329, 353, 354, 427, 444, 445, 482, 486, 500, 505,
+        506, 508, 509, 512, 513, 519, 520, 533, 538, 547, 549, 553, 560, 562,
+        566, 567, 571, 583, 591, 592, 593, 599, 601, 607, 608, 610, 639, 649,
+        660, 685
       ],
       "review": "mapped-abstraction"
     },
@@ -5795,14 +5819,20 @@
     {
       "path": "src/lib/project-skill-publication.mjs",
       "sha256": "f1b7c14b1ce736414001646ddb425c494283f638f4acf79176fb129805c4f13d",
-      "models": ["formal/models/contributor/skill_installation.qnt"],
+      "models": [
+        "formal/models/api/project_skill_publication.qnt",
+        "formal/models/contributor/skill_installation.qnt"
+      ],
       "candidateLines": [33, 279, 292],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/lib/project-skill.mjs",
       "sha256": "0eefe09b1f59a0547c0261a33500c927cb32b897932ef4460b9f0a430133d2e7",
-      "models": ["formal/models/contributor/skill_installation.qnt"],
+      "models": [
+        "formal/models/api/project_skill_publication.qnt",
+        "formal/models/contributor/skill_installation.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5823,9 +5853,9 @@
     {
       "path": "src/lib/received-totals.ts",
       "sha256": "624c336aa5bb46df86d14fc4ce02300d7ab6f95fa16758eb35a92b8fa6db9738",
-      "models": [],
+      "models": ["formal/models/payments/received_totals.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure supplied-response shape/arithmetic validator and reviewed USD-asset predicate. No fetch, mutable cache or payment transition; actual receipt indexing and public aggregation remain payment ledger responsibilities."
     },
     {
@@ -6048,7 +6078,10 @@
     {
       "path": "src/lib/use-cycle-index.ts",
       "sha256": "31cd6ad61e097b13adffe5e7d2d5330ecfd8727a1b702858f4ba8bf1c324e003",
-      "models": ["formal/models/ui/ui_resources.qnt"],
+      "models": [
+        "formal/models/ui/ui_cycle_archive.qnt",
+        "formal/models/ui/ui_resources.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6056,6 +6089,7 @@
       "path": "src/lib/use-direct-transfers.ts",
       "sha256": "0c27ab70453ce5d4129143ba6e410879a02454910dc2071099bed0e0c0f46c3c",
       "models": [
+        "formal/models/payments/payment_history.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
@@ -6109,6 +6143,7 @@
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_contributor_allocation.qnt",
+        "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_time_boundary.qnt"
@@ -6120,6 +6155,7 @@
       "path": "src/lib/use-vault-payments.ts",
       "sha256": "b2b8de8c5fc18545f814951adedd277553b2d0f59b2f52113f076239dc26f3e8",
       "models": [
+        "formal/models/payments/payment_history.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
@@ -7239,6 +7275,7 @@
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
       "candidateLines": [79, 83, 88, 173, 195, 196, 318, 320],
@@ -7260,6 +7297,8 @@
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_provider_cost_history.qnt",
         "formal/models/slopbot/bot_review_lease.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
@@ -7343,7 +7382,9 @@
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
-        "formal/models/slopbot/bot_moderation.qnt"
+        "formal/models/slopbot/bot_moderation.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
         3, 153, 267, 282, 291, 301, 304, 496, 650, 799, 828, 838, 973, 978, 983,
@@ -7467,17 +7508,25 @@
     },
     {
       "path": "workers/slopbot/value-disputes.ts",
-      "sha256": "2a6bd2dcc402ae5d8f00ba7678179ad19567746a08eea054a8403196254696b4",
-      "models": ["formal/models/slopbot/bot_value_dispute_binding.qnt"],
+      "sha256": "fa64b169356ec73ccb7e9ade35a9b91a6c8648da93c1ff97bb91c271cd1c9d9c",
+      "models": [
+        "formal/models/slopbot/bot_value_dispute_actor.qnt",
+        "formal/models/slopbot/bot_value_dispute_binding.qnt",
+        "formal/models/slopbot/bot_value_dispute_draft.qnt",
+        "formal/models/slopbot/bot_value_dispute_read.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "c06f19d8aa30ca72aba0ac63727cdf6112f4098ddd056395ae1f6240ce9f24c3",
-      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "sha256": "f7589a64292a7ce74f0b38c5331dcae6009ae4823f6d87f08b06eac7758a4a91",
+      "models": [
+        "formal/models/slopbot/bot_evidence_integrity.qnt",
+        "formal/models/slopbot/bot_value_dispute_actor.qnt"
+      ],
       "candidateLines": [
-        76, 95, 110, 156, 167, 176, 190, 664, 684, 727, 736, 755, 1096, 1115
+        76, 95, 110, 156, 167, 176, 190, 668, 688, 731, 740, 759, 1100, 1119
       ],
       "review": "mapped-abstraction"
     },
@@ -9291,6 +9340,53 @@
       "scenarios": ["completeTest", "decryptFailureTest", "expireTest"]
     },
     {
+      "path": "formal/models/api/project_skill_publication.qnt",
+      "sha256": "36090536f834f5051abd0c2c2d8a2e8c4c5002b445216ff8d342097921dcb6be",
+      "sources": [
+        "backend/pages.ts",
+        "backend/projects/skill-publication.ts",
+        "backend/vetting/persistence.ts",
+        "functions/[[path]].ts",
+        "scripts/prepare-site.mjs",
+        "src/lib/project-skill-publication.mjs",
+        "src/lib/project-skill.mjs"
+      ],
+      "scenarios": [
+        "caughtHeadFailureRetainsFunctionLevelTextBodyTest",
+        "changedAssetDigestFailsPublicationTest",
+        "completeArtifactUsesOneCapturedRevisionTest",
+        "discoveryExcludesPausedProjectTest",
+        "discoveryFiltersReturnedUnverifiedEvidenceTest",
+        "emptyDiscoveryAfterSuccessfulReadsIs200Test",
+        "emptyDiscoveryStillLoadsTemplateTest",
+        "lateRestrictionDoesNotRewriteCapturedAdmissionTest",
+        "laterRequestReadsNewRevisionTest",
+        "laterTemplateDeploymentCannotMixHashedFilesTest",
+        "lookupFailureDoesNotFabricateEmptyIndexTest",
+        "lostReplyDoesNotTurnCompletedArtifactIntoFailureTest",
+        "malformedIndexFailsBeforeFileReadsTest",
+        "missingFileFailsPublicationTest",
+        "missingProjectReturns404Test",
+        "nextRequestObservesRestrictionTest",
+        "normalAdmissionSurvivesLivePinChangeTest",
+        "ordinaryHeadHasNoBodyTest",
+        "otherClearanceRefusesArtifactWith404Test",
+        "pausedClearedArtifactRemainsInspectableTest",
+        "rendererFailureDoesNotExposeFilesTest",
+        "restrictionPrecedesRetirementTest",
+        "retiredProjectReturns404Test",
+        "reviewerFailureDoesNotExposeEarlierContributorTest",
+        "revisionChangesDoNotMixCapturedRoleInputsTest",
+        "termsBypassTemplateAndClearanceTest",
+        "thrownDiscoveryClearanceFailsWholeResponseTest",
+        "unknownMatchedFilenameNeedsCompletedPublicationTest",
+        "unpublishedProjectReturns404BeforeTemplateTest",
+        "unrelatedPathFallsThroughTest",
+        "unsupportedMethodFallsThroughWithoutLookupTest",
+        "unverifiedArtifactReturns503Test"
+      ]
+    },
+    {
       "path": "formal/models/api/trace_bearer_tokens.qnt",
       "sha256": "1c73ce136a5be42bc6963f5ef657332f3b1c055eb8d3e4eba077c1230f3e661f",
       "sources": [
@@ -10763,15 +10859,42 @@
     },
     {
       "path": "formal/models/payments/payment_history.qnt",
-      "sha256": "493c0d93eb635a4e745ef58783a3feadba7b080f2e03e59dbee4cd174630bd6a",
+      "sha256": "dfb8c1e9964e52c5402c9694d3671f1f64ef5bf046cf98fb49eab83ec0fe9cf2",
       "sources": [
         "backend/payments/direct-history.ts",
         "backend/payments/handler.ts",
-        "backend/payments/public-records.ts"
+        "backend/payments/public-records.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0081_monthly_asset_amount_range.sql",
+        "src/lib/use-direct-transfers.ts",
+        "src/lib/use-vault-payments.ts"
       ],
       "scenarios": [
+        "afterBeyondThroughIsRejectedTest",
+        "afterWithoutThroughIsRejectedTest",
         "appendDoesNotMoveReadBoundaryTest",
-        "freshReadFindsLaterTest"
+        "disclosedDirectRowsRemainPublicDespiteHiddenMembershipTest",
+        "failedSecondQueryNeverPublishesPartialHistoryTest",
+        "freshReadFindsLaterTest",
+        "hiddenActorLooksLikeEmptyHistoryTest",
+        "invalidDirectRowIsRefusedAtClientBoundaryTest",
+        "invalidLookaheadWaitsUntilSelectedNextPageTest",
+        "laterMonthlyJoinDoesNotRewriteEarlierPageTest",
+        "missingPaidTransactionJoinExcludesRowTest",
+        "missingWorkMonthIsNullAtObservationTest",
+        "monthPresentBeforePageIsIncludedTest",
+        "newAppendBetweenPagesRemainsOutsideBoundaryTest",
+        "privacyChangeAfterReadDoesNotRevokeReturnedSnapshotTest",
+        "privateTableDoesNotMoveOrdinaryBoundaryTest",
+        "productionFilterExcludesTestnetAndReservedRowsTest",
+        "projectScopeMatchesOnlyItsRowsTest",
+        "selectedInvalidEvidenceFailsRatherThanEmptySuccessTest",
+        "stagingRetainsTestnetRowsTest",
+        "throughBeyondCurrentBoundaryIsRejectedTest",
+        "twoPagesPublishOnlyCompleteCollectionTest",
+        "unknownOrNoncanonicalCursorIsRejectedTest",
+        "visibilityChangeBetweenCountAndPageCanFailClientTest",
+        "visibilityChangeBetweenPagesCanChangeTotalTest"
       ]
     },
     {
@@ -10879,6 +11002,42 @@
         "exactProbeReadyTest",
         "wrongChainRefusedTest",
         "wrongRegistryRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/received_totals.qnt",
+      "sha256": "d4e4a0392ef3317c028d165c06cd8e59731438377c5b2b337f2b0e4c5d947c2e",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/public-records.ts",
+        "backend/projects/edge-cache.ts",
+        "src/lib/received-totals.ts"
+      ],
+      "scenarios": [
+        "absentMemberStillHasPublicVaultHistoryTest",
+        "appendedDirectAfterItsBoundaryIsExcludedTest",
+        "cacheWriteFailureKeepsSuccessfulBuildTest",
+        "closedMemberAlsoHidesOnlyVaultTest",
+        "corruptExcludedTestnetStillRefusesAggregateTest",
+        "directOverTwentyThousandRefusesAfterVaultScanTest",
+        "emptyAggregateIsSuccessfulTest",
+        "exactIntegerReferenceAmountsTest",
+        "exactlyTwentyThousandPerTableIsAllowedTest",
+        "invalidDirectRecordRefusesWholeAggregateTest",
+        "laterCacheHitDoesNotRecheckMembershipTest",
+        "laterDirectMemberLoginWinsEarlierVaultObservationTest",
+        "lostResponseMayLeaveSuccessfulCacheEntryTest",
+        "membershipWithdrawalBeforePageHidesOnlyVaultTest",
+        "missingLaterPageRefusesPartialScanTest",
+        "otherAssetIsNotConvertedToUsdTest",
+        "privateDirectRecipientUsesDisclosedLoginTest",
+        "productionValidatesThenExcludesTestnetTest",
+        "stagingIncludesReferenceTestnetAmountTest",
+        "unmatchedNonpaidRowRaisesBoundaryWithoutReceiptTest",
+        "vaultAndDirectCaptureSeparateAppendBoundariesTest",
+        "vaultOverTwentyThousandRefusesBeforeDirectScanTest",
+        "visibilityAcrossPagesIsNotOneSnapshotTest",
+        "withdrawalAfterVaultPageDoesNotRetractSnapshotTest"
       ]
     },
     {
@@ -12436,10 +12595,101 @@
       ]
     },
     {
+      "path": "formal/models/slopbot/bot_value_dispute_actor.qnt",
+      "sha256": "2706d0c8f605ec098a72a114b6cc67ec63d77dc051433e748a4020a660bd98f1",
+      "sources": [
+        "workers/slopbot/value-disputes.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "absentCommitAuthorDoesNotQualifyTest",
+        "changedHeadSkipsCommitAuthorsTest",
+        "changedMetadataHeadRefusesAtObservationTest",
+        "changedSameCountCommitSetRefusesTest",
+        "completeComparisonOwnsFinalAuthorObservationTest",
+        "completeComparisonWithoutAuthorRefusesTest",
+        "completeMutableListStillNeedsComparisonTest",
+        "fullLastReviewPageMatchSucceedsTest",
+        "fullLastReviewPageWithoutMatchIsIncompleteTest",
+        "invalidCompleteComparisonFailsTest",
+        "invalidMetadataRefusesBeforeCommitListTest",
+        "matchingHeadMayCheckCommitAuthorsTest",
+        "matchingPrefixCannotHideIncompleteComparisonTest",
+        "oldMutableListNegativeControlTest",
+        "oldShortPageNegativeControlTest",
+        "retainedJointClaimNeedsNoLiveHeadTest",
+        "retainedReviewedSourceQualifiesTest",
+        "singleClaimCannotBypassReviewsTest",
+        "truncatedCommitListUsesCompleteComparisonTest",
+        "unavailableActorLookupThrowsTest",
+        "unavailableCommitListingFailsTest",
+        "unavailableComparisonFailsTest",
+        "unavailableReviewsDoNotFallBackToCommitsTest",
+        "unknownActorIsNotAffectedTest",
+        "unreviewedCommentDoesNotQualifyTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_value_dispute_binding.qnt",
-      "sha256": "a5f42b27623566b00cd07696bd7e244bf8f9e63d3dd11173d972c10c44b25234",
+      "sha256": "87745e22358108750272a70dc67524b78b0ac35017ac110bfc0c8f64f84c2709",
       "sources": ["workers/slopbot/value-disputes.ts"],
       "scenarios": ["correctionDoesNotRetargetAppealTest"]
+    },
+    {
+      "path": "formal/models/slopbot/bot_value_dispute_draft.qnt",
+      "sha256": "8d9d1f0f86296e37c99961f5584ccfef80dbbcfae4195959401ba73ffd2efdcc",
+      "sources": [
+        "workers/slopbot/models.ts",
+        "workers/slopbot/persistence.ts",
+        "workers/slopbot/review.ts",
+        "workers/slopbot/value-disputes.ts"
+      ],
+      "scenarios": [
+        "authorityIsAnObservationNotContinuousLockTest",
+        "completeSourceKeepsHighConfidenceTest",
+        "denyDraftCanBeReturnedTest",
+        "exhaustedRoutesRecordBothFailuresTest",
+        "fallbackAuthorityExceptionStillRecordsFirstCallTest",
+        "fallbackDeniedAuthorityStillRecordsFirstCallTest",
+        "initialDeniedAuthorityCallsNoProviderTest",
+        "invalidOutputUsesSecondRouteTest",
+        "lostFinalUsageReplyKeepsCommittedRowWithoutVerdictTest",
+        "lowConfidenceIsNotRaisedTest",
+        "multiSourceJointCapsConfidenceTest",
+        "partialUsagePrefixSurvivesFailureTest",
+        "providerBudgetStopsFallbackTest",
+        "sourceGapCapsConfidenceTest",
+        "usageCannotBeSkippedBeforeReturnTest",
+        "usageFailurePreventsVerdictReturnTest",
+        "wrongServedModelCannotSupplyVerdictTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_value_dispute_read.qnt",
+      "sha256": "a29b3994df846a5c11b92945dea07aaf4493e5a0d1b2a5769df4ff9af961d82a",
+      "sources": [
+        "workers/slopbot/persistence.ts",
+        "workers/slopbot/review.ts",
+        "workers/slopbot/value-disputes.ts"
+      ],
+      "scenarios": [
+        "capturedCurrentRowSurvivesLaterCorrectionTest",
+        "correctionDoesNotRetargetRetainedReadTest",
+        "currentQueryFailureTest",
+        "currentSingleTest",
+        "firstDeliveryBindingWinsTest",
+        "invalidHeadFailsTest",
+        "invalidJointDoesNotFallBackTest",
+        "invalidJsonFailsAfterDigestTest",
+        "jointTakesPrecedenceTest",
+        "jointWithoutItemSourceFailsTest",
+        "malformedBindingFailsBeforeQueryTest",
+        "missingCurrentIsNullTest",
+        "missingRetainedRowFailsTest",
+        "oldRetargetNegativeControlTest",
+        "retainedNumberMismatchFailsTest",
+        "wrongProjectFailsTest"
+      ]
     },
     {
       "path": "formal/models/slopbot/bot_value_freshness.qnt",
@@ -13541,6 +13791,44 @@
         "noRecipientTest",
         "onTimeWalletTest",
         "sentTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_cycle_archive.qnt",
+      "sha256": "8723f28c9ac507c1f1bcb5ce7a0ab0800579a3afbcc546ecda69d318d5522d44",
+      "sources": [
+        "src/App.tsx",
+        "src/CyclePages.tsx",
+        "src/lib/use-cycle-index.ts",
+        "src/lib/use-time-boundary.ts"
+      ],
+      "scenarios": [
+        "combinedValidFiltersCanHaveNoMatchesTest",
+        "delayedTimerCatchesAllBoundariesTest",
+        "emptyIndexClearsSelectionTest",
+        "failedIndexCannotUseLiveSnapshotTest",
+        "failedLiveFallbackStaysErrorTest",
+        "firstReviewDeadlineTest",
+        "indexRetryRestoresRecordTest",
+        "invalidFilterNormalizesTest",
+        "knownMissingRecordAllowsLiveFallbackTest",
+        "listedRecordKeepsProjectLinkTest",
+        "loadingPreservesRequestedFilterTest",
+        "oldNoTimerNegativeControlTest",
+        "oldRetiredAndSnapshotDependencyNegativeControlTest",
+        "oldUnknownFilterMismatchNegativeControlTest",
+        "publicationDuringLiveFallbackKeepsFrozenRecordTest",
+        "recordNeedsNoSnapshotTest",
+        "recordReplacesFailedLiveFallbackTest",
+        "refreshRemovesMissingSelectionTest",
+        "retiredMissingRecordWaitsForSnapshotTest",
+        "retiredRecordLinkResolvesTest",
+        "retirementDoesNotRestoreProjectPageTest",
+        "staleIndexReplyRefusesTest",
+        "staleThenSecondReviewDeadlineTest",
+        "timerCannotFireAfterDepartureTest",
+        "unknownRouteStillTriggersMissingIndexSnapshotTest",
+        "validMonthSurvivesOtherInvalidFiltersTest"
       ]
     },
     {
@@ -14805,7 +15093,7 @@
     },
     {
       "path": "formal/models/ui/ui_risk_flag.qnt",
-      "sha256": "df405917441468890387f91a4c033171fb459eda83e9e428e8e3a59bd75b9d9d",
+      "sha256": "be0871487ae330578cc4d65a0c6c3d2eb6874bc37e0ea5a5a183f5dfce054099",
       "sources": ["src/ProjectRiskFlag.tsx"],
       "scenarios": ["pauseSurvivesWithdrawalTest", "signedOutTest"]
     },
