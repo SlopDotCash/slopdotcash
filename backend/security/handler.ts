@@ -2138,11 +2138,14 @@ async function createCase(
     const existing = await loadCase(deps, linked.case_id);
     if (existing && existing.reporter_github_id === reporter.githubId) {
       const roles = await caseRoles(deps, existing, actor);
-      if (roles.size)
+      if (roles.size) {
+        // A replay discloses the full case, so it records a read.
+        await accessLog(deps, existing.id, actor, roles, "read").run();
         return json(200, {
           replayed: true,
           case: await caseView(deps, existing, roles, true),
         });
+      }
     }
     fail(
       409,
@@ -2225,11 +2228,14 @@ async function createCase(
             .first<{ ok: number }>()) !== null);
       if (replayed) {
         const roles = await caseRoles(deps, existing, actor);
-        if (roles.size > 0)
+        if (roles.size > 0) {
+          // A replay discloses the full case, so it records a read.
+          await accessLog(deps, existing.id, actor, roles, "read").run();
           return json(200, {
             replayed: true,
             case: await caseView(deps, existing, roles, true),
           });
+        }
       } else if (existing.submission_state === "claimed") {
         fail(
           409,
@@ -3882,6 +3888,8 @@ async function actOnCase(
   if (replay !== null) {
     if (replay.kind !== action || replay.actor_github_id !== actor.githubId)
       fail(409, "idempotency_conflict", "That request key was already used");
+    // A replay discloses the full case, so it records a read.
+    await accessLog(deps, row.id, actor, roles, "read").run();
     return json(200, {
       replayed: true,
       case: await caseView(deps, row, roles, true),

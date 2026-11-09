@@ -605,6 +605,13 @@ describe("automatic private intake", () => {
       receivedAtSource: "maintainer-attested",
       awardState: "pending",
     });
+    const reads = () =>
+      env.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM security_case_access_log WHERE action = 'read' AND case_id = ? AND actor_github_id = ?",
+        )
+        .get(verifiedId, MAINTAINER.githubId) as { n: number };
+    const readsBeforeReplay = reads().n;
     const replay = await env.call(
       MAINTAINER,
       "POST",
@@ -615,6 +622,8 @@ describe("automatic private intake", () => {
       replayed: true,
       case: { revision: 2 },
     });
+    // The replay returns the full case, so it is audited like any read.
+    expect(reads().n).toBe(readsBeforeReplay + 1);
     expect(
       (await env.act(MAINTAINER, verifiedId, verification)).body.error,
     ).toBe("action_not_allowed");
