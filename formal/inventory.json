@@ -8608,10 +8608,10 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "12e1ccf0ba6c81120f8c43a91d40b6173794da1e7f4e08311001166602ad7c52",
+      "sha256": "e5fc59de42693dc6c5885acc46dfa36a70b162d68b218413fd73cc8a18928732",
       "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "candidateLines": [
-        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050
+        245, 253, 254, 1708, 1709, 1890, 1950, 1971, 2038, 2054
       ],
       "review": "mapped-abstraction"
     },
