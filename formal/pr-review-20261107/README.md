@@ -52,10 +52,12 @@ nonnegative receipts; they do not prove machine-number bounds or billing totals.
 The recovery model omits transport payloads but preserves every source identity.
 
 The run-identity row has no TLC state count: `formal:verify` does not complete on
-the review machine, so only `formal:check` covers that model. Its invariant is
-deliberately weak, so the named scenarios carry the refusal evidence; deleting
-either half of the `accepted` guard fails `unknownProjectRefusedTest` or
-`foreignRepositoryRefusedTest`.
+the review machine, so only `formal:check` covers that model. Its invariant states
+the property twice: once through `accepted` and once from the branch that created
+the run, so redefining the guard cannot satisfy both at the same time. Setting
+`accepted` to always true, or to `kind > 0` without `reg`, fails the model check.
+The named scenarios carry the refusal evidence besides that: deleting either half
+of the guard fails `unknownProjectRefusedTest` or `foreignRepositoryRefusedTest`.
 
 The accepted set has three members: the id, the aliases and the current path. The
 last is redundant while `project-schema.mjs` requires `githubUrl` to equal a

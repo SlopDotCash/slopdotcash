@@ -4,14 +4,17 @@
 // path, else 422. A refusal creates nothing, so the created identity is kept
 // untouched. Kind: 0 foreign, 1 canonical, 2 alias.
 module run_identity {
-  var s: { registered: bool, kind: int, runs: int, refused: int }
-  action init = s' = { registered: false, kind: 0, runs: 0, refused: 0 }
+  var s: { registered: bool, kind: int, runs: int, refused: int,
+    createdRegistered: bool, createdKind: int }
+  action init = s' = { registered: false, kind: 0, runs: 0, refused: 0,
+    createdRegistered: false, createdKind: 0 }
   def accepted(reg: bool, kind: int): bool = reg and kind > 0
   // The same action covers both outcomes, so weakening the guard changes state
   // instead of only disabling a step.
   action create(reg: bool, kind: int): bool =
     s' = if(accepted(reg, kind))
       s.with("registered", true).with("kind", kind).with("runs", s.runs + 1)
+        .with("createdRegistered", reg).with("createdKind", kind)
     else
       s.with("refused", s.refused + 1)
   action step = {
@@ -19,9 +22,12 @@ module run_identity {
     nondet kind = Set(0, 1, 2).oneOf()
     create(reg, kind)
   }
+  // The second clause is written from the branch that created the run, not from
+  // `accepted`, so redefining the guard cannot satisfy both at once: a guard
+  // that admits everything creates a run with kind 0 and breaks it.
   val invariant = all {
     s.runs == 0 or accepted(s.registered, s.kind),
-    s.runs == s.runs,
+    s.runs == 0 or (s.createdRegistered and s.createdKind.in(Set(1, 2))),
     s.refused >= 0 }
   run unknownProjectRefusedTest = init.then(create(false, 1))
     .expect(s.runs == 0 and s.refused == 1)
