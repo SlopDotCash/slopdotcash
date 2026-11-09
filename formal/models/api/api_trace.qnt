@@ -13,6 +13,10 @@
 // twice. Exact intent creation/renewal is in api_trace_intent_admission.
 // A digest represents matching bytes, size and media type. Crypto, body parsing
 // and R2 verification are predicates, not implementation-refinement proofs.
+// The finite step applies five reviewed reductions (parameter scoping, the
+// intake toggle read at validation, the write-only removed-route counter,
+// first-use labels for keys, digests and slots, and resetting checked done
+// requests); each argument is written beside step.
 module api_trace {
   type Intent = { exists: bool, digest: int, live: bool, spent: bool }
   type Request = { stage: str, key: int, digest: int, inTime: bool,
@@ -77,9 +81,10 @@ module api_trace {
   }
   // Collapses the early ban/intake checks and exact bounded body validation.
   // The later reservation SQL still observes a ban or finalization after it.
-  action validateUpload(slot: int, validBytes: bool): bool = {
+  action validateUpload(slot: int, validBytes: bool): bool = validateUploadWith(slot, validBytes, s.intakeReady)
+  action validateUploadWith(slot: int, validBytes: bool, intakeReady: bool): bool = {
     val request = s.requests.get(slot)
-    val accepted = not(s.banned) and s.intakeReady and validBytes
+    val accepted = not(s.banned) and intakeReady and validBytes
     all { ids.contains(slot), request.stage == "validate",
       s' = s.with("requests", s.requests.set(slot,
         if (accepted) request.with("stage", "reserve")
@@ -163,17 +168,50 @@ module api_trace {
   // Historical grant/audit rows remain, but their old routes return 404.
   action removedRoute = all { s.removedRequests < 2,
     s' = s.with("removedRequests", s.removedRequests + 1) }
+  // Finite-step reductions. Direct actions and named scenarios keep the exact
+  // behavior; this is reviewed reasoning, not a machine-checked equivalence.
+  // 1. Each disjunct binds only its own parameters, so TLC does not enumerate
+  //    unrelated parameter products for every action.
+  // 2. intakeReady is read only by validateUpload, and verifyIntake and
+  //    disableIntake are always enabled and touch nothing else. step keeps the
+  //    initial value and lets each validation observe either value; every
+  //    other field reaches exactly the original values.
+  // 3. removedRequests is write-only: removedRoute reads it only for its own
+  //    bound and changes nothing else, and no other guard or invariant reads
+  //    it. step omits removedRoute; retiredGrantAndReadRemainUnavailableTest
+  //    keeps it.
+  // 4. Capability keys, digests and request slots are interchangeable labels:
+  //    each is compared only for equality (digest 0 means none) and the
+  //    invariant treats every value alike. step issues the smallest unissued
+  //    key, uses digest 2 only after some intent names digest 1, and
+  //    dispatches slot 2 only after slot 1. Relabelling any full trace by first
+  //    use gives a canonical trace reaching a relabelled state with the same
+  //    invariant truth.
+  // 5. A "done" request is read only for its attempt count, by dispatch,
+  //    which treats "idle" and "done" alike; result and responsePhase are
+  //    write-only. After a done state is reached and checked, step resets the
+  //    record to idle with the same attempt count before any other step.
+  action retire(slot: int): bool = all { s.requests.get(slot).stage == "done",
+    s' = s.with("requests", s.requests.set(slot, idle.with("attempts", s.requests.get(slot).attempts))) }
   action step = {
     nondet slot = ids.oneOf()
-    nondet key = ids.oneOf()
-    nondet digest = ids.oneOf()
-    nondet successful = Set(false, true).oneOf()
-    any { verifyIntake, disableIntake, ban, reinstate, issueIntent(key, digest),
-      expire(key), dispatch(slot, key), readCapability(slot),
-      validateUpload(slot, successful), reserveInsert(slot), readReservation(slot),
-      putBytes(slot, successful), verifyObject(slot, successful),
-      attach(slot, successful), reply(slot), loseAttachmentReply(slot),
-      finalize, event, removedRoute, s' = s }
+    if (ids.exists(other => s.requests.get(other).stage == "done")) retire(slot)
+    else any { ban, reinstate,
+      { nondet key = ids.oneOf() nondet digest = ids.oneOf()
+        all { ids.forall(other => other < key implies s.intents.get(other).exists),
+          digest == 1 or ids.exists(other => s.intents.get(other).exists and s.intents.get(other).digest == 1),
+          issueIntent(key, digest) } },
+      { nondet key = ids.oneOf() expire(key) },
+      { nondet key = ids.oneOf() all { slot == 1 or s.requests.get(1).attempts > 0, dispatch(slot, key) } },
+      readCapability(slot),
+      { nondet successful = Set(false, true).oneOf() nondet intake = Set(false, true).oneOf()
+        validateUploadWith(slot, successful, intake) },
+      reserveInsert(slot), readReservation(slot),
+      { nondet successful = Set(false, true).oneOf() putBytes(slot, successful) },
+      { nondet successful = Set(false, true).oneOf() verifyObject(slot, successful) },
+      { nondet successful = Set(false, true).oneOf() attach(slot, successful) },
+      reply(slot), loseAttachmentReply(slot),
+      finalize, event, s' = s }
   }
   val invariant = all {
     s.reservation == s.reservationWitness,

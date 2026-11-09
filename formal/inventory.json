@@ -9355,7 +9355,7 @@
     },
     {
       "path": "formal/models/api/api_project_setup_check.qnt",
-      "sha256": "5e3213d62610489d8bbfb11968f533eccd23812ff4447e9ad18040eadcebecc5",
+      "sha256": "149f2c0afe28304992a4f06fd621b5ef4918aafca6d440c5c89f8ea4c060c37d",
       "sources": [
         "backend/projects/handler.ts",
         "backend/projects/setup.ts",
@@ -9506,7 +9506,7 @@
     },
     {
       "path": "formal/models/api/api_trace.qnt",
-      "sha256": "7d8a676efb1587ab2d8aa6a33e788f0c4e4611002dad9dcdbc8a8a86bb5efb1f",
+      "sha256": "bb747c44af9dae3de0e5ea27fb183292924ea569cc094265c0dbd5ae9d4b0d52",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/cloudflare-persistence.ts",
@@ -9758,7 +9758,7 @@
     },
     {
       "path": "formal/models/api/github_lookup_repository.qnt",
-      "sha256": "3510c4122ec967125a2beac688a0cf07dd70666f4b123155c64dbbe85e1ab75d",
+      "sha256": "b986e3e86ca085997158bc89b977399072b56c8e9e45f05bc4da76b39c8fcb50",
       "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
       "scenarios": [
         "absentBranchTargetCannotReuseEarlierCommitTest",
@@ -9800,7 +9800,7 @@
     },
     {
       "path": "formal/models/api/identity_assertion_lifecycle.qnt",
-      "sha256": "26599aa5264231f2af01efd87eb0e514fbb0b35b206b1af8c515b793a74216d8",
+      "sha256": "106b553659fd0c0d78b475f5fc7a20c42ca355a92e0f443f6c726029c7fa7d24",
       "sources": [
         "workers/identity/contracts.ts",
         "workers/identity/crypto.ts",
@@ -9843,7 +9843,7 @@
     },
     {
       "path": "formal/models/api/identity_callback_completion.qnt",
-      "sha256": "ce64d2c0e5fea1535521edaabe9b9b3f956ba31e45699f3b69d7897f32c56de6",
+      "sha256": "50b8b99a981a24827f2eb9a0af5ba4f15d5e3a2f6888668088b33d742d895681",
       "sources": [
         "migrations/0108_identity_failed_callback.sql",
         "workers/identity/contracts.ts",

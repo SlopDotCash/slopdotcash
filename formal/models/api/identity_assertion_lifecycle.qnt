@@ -51,12 +51,16 @@ module identity_assertion_lifecycle {
   val unusedConsume: Consume = { phase: "unused", stamp: -1, tokenMatches: false,
     audience: false, accepted: false, generation: 0, response: "none" }
   var s: State
-  action init = s' = { configured: false, local: false, node: true, now: 0,
+  val initial: State = { configured: false, local: false, node: true, now: 0,
     flowPresent: true, flowStatus: "callback_complete", marks: 0, tokenKnown: false, localHandoffs: 0,
     assertionPresent: false, generations: 0, assertionGeneration: 0,
     assertionCreated: -1, assertionExpiry: -1, assertionConsumed: false,
     consumeCommits: 0, usedGenerations: Set(), cleanupPhase: "idle", cleanupStamp: -1,
     polls: ids.mapBy(_ => unusedPoll), consumers: ids.mapBy(_ => unusedConsume) }
+  action init = s' = initial
+  // Scenario prefixes start from initState; TLC accepts init only as the
+  // initial predicate (Quint QNT409).
+  action initState = s' = initial
   action configure(local: bool, node: bool, status: str, existing: bool): bool = all {
     not(s.configured), statuses.contains(status), existing implies not(local) and status == "callback_complete",
     s' = s.with("configured", true).with("local", local).with("node", node).with("flowStatus", status)
@@ -215,19 +219,22 @@ module identity_assertion_lifecycle {
   action cleanupAssertion = all { s.cleanupPhase == "assertions",
     s' = s.with("cleanupPhase", "done")
       .with("assertionPresent", s.assertionPresent and s.cleanupStamp < s.assertionExpiry) }
+  // Each disjunct binds only its own parameters, so TLC does not enumerate the
+  // product of unrelated parameters for every action. The successor set is
+  // unchanged.
   action step = {
     nondet id = ids.oneOf()
     nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet status = statuses.oneOf()
-    nondet reply = insertReplies.oneOf()
-    nondet mark = markReplies.oneOf()
-    nondet input = consumeInputs.oneOf()
-    any { configure(yes, other, status, false), configure(false, yes, "callback_complete", true), tick,
-      beginPoll(id, yes, true, true, other), beginPoll(id, true, false, true, other), beginPoll(id, true, true, false, other),
-      flowHash(id, yes), readFlow(id), derive(id, yes), assertionHash(id, yes), insertAssertion(id), insertReply(id, reply),
-      readAssertion(id, yes), validateAssertion(id, yes), issueClock(id), issueWrite(id), issueReply(id, mark), pollFailure(id),
-      finishPoll(id, yes), beginConsume(id, input), consumeHash(id, yes), consumeWrite(id), consumeFailure(id), consumeReply(id, yes),
+    any { { nondet other = Set(false, true).oneOf() nondet status = statuses.oneOf() configure(yes, other, status, false) },
+      configure(false, yes, "callback_complete", true), tick,
+      { nondet other = Set(false, true).oneOf()
+        any { beginPoll(id, yes, true, true, other), beginPoll(id, true, false, true, other), beginPoll(id, true, true, false, other) } },
+      flowHash(id, yes), readFlow(id), derive(id, yes), assertionHash(id, yes), insertAssertion(id),
+      { nondet reply = insertReplies.oneOf() insertReply(id, reply) },
+      readAssertion(id, yes), validateAssertion(id, yes), issueClock(id), issueWrite(id),
+      { nondet mark = markReplies.oneOf() issueReply(id, mark) }, pollFailure(id),
+      finishPoll(id, yes), { nondet input = consumeInputs.oneOf() beginConsume(id, input) },
+      consumeHash(id, yes), consumeWrite(id), consumeFailure(id), consumeReply(id, yes),
       beginCleanup, cleanupFlow, cleanupAssertion, s' = s }
   }
   val tokenOnce = s.consumeCommits <= 1
@@ -248,7 +255,7 @@ module identity_assertion_lifecycle {
         call.response == "200" implies call.accepted }
     }) }
 
-  action browser = init.then(configure(false, true, "callback_complete", false))
+  action browser = initState.then(configure(false, true, "callback_complete", false))
   action pollSnapshot(id: int): bool = beginPoll(id, true, true, true, false).then(flowHash(id, true)).then(readFlow(id))
   action insertionReady(id: int): bool = pollSnapshot(id).then(derive(id, true)).then(assertionHash(id, true))
   action stored(id: int): bool = insertionReady(id).then(insertAssertion(id)).then(insertReply(id, "ok"))
@@ -283,17 +290,17 @@ module identity_assertion_lifecycle {
   run consumeFailureBeforeCommitCanRetryTest = browser.then(stored(1)).then(issue(1))
     .then(beginConsume(1, "valid")).then(consumeHash(1, true)).then(consumeFailure(1)).then(consume(2))
     .expect(s.consumers.get(2).response == "200" and invariant)
-  run localPollReturnsIdentityWithoutPlatformAssertionTest = init.then(configure(true, true, "callback_complete", false))
+  run localPollReturnsIdentityWithoutPlatformAssertionTest = initState.then(configure(true, true, "callback_complete", false))
     .then(beginPoll(1, true, true, true, true)).then(flowHash(1, true)).then(readFlow(1)).then(issue(1))
     .expect(s.polls.get(1).response == "local-200" and s.generations == 0 and not(s.tokenKnown) and invariant)
-  run localPollRequiresNodeIdentityTest = init.then(configure(true, false, "callback_complete", false))
+  run localPollRequiresNodeIdentityTest = initState.then(configure(true, false, "callback_complete", false))
     .then(beginPoll(1, true, true, true, true)).then(flowHash(1, true)).then(readFlow(1)).then(finishPoll(1, true))
     .expect(s.polls.get(1).response == "502" and s.marks == 0 and invariant)
-  run wrongPollModeCannotIssueTest = init.then(configure(true, true, "callback_complete", false))
+  run wrongPollModeCannotIssueTest = initState.then(configure(true, true, "callback_complete", false))
     .then(pollSnapshot(1)).then(finishPoll(1, true)).expect(s.polls.get(1).response == "403" and invariant)
-  run pendingCallbackReturnsPendingTest = init.then(configure(false, true, "callback_processing", false))
+  run pendingCallbackReturnsPendingTest = initState.then(configure(false, true, "callback_processing", false))
     .then(pollSnapshot(1)).then(finishPoll(1, true)).expect(s.polls.get(1).response == "202" and s.generations == 0 and invariant)
-  run failedCallbackCannotIssueTest = init.then(configure(false, true, "callback_failed", false))
+  run failedCallbackCannotIssueTest = initState.then(configure(false, true, "callback_failed", false))
     .then(pollSnapshot(1)).then(finishPoll(1, true)).expect(s.polls.get(1).response == "410" and invariant)
   run conflictingInsertReusesOriginalTimestampsTest = browser.then(stored(1)).then(tick).then(stored(2))
     .expect(s.generations == 1 and s.polls.get(2).readCreated == 0 and s.polls.get(2).readExpiry == 2 and invariant)
@@ -308,10 +315,10 @@ module identity_assertion_lifecycle {
   run consumedReadbackCannotRearmExistingRowTest = browser.then(insertionReady(2)).then(stored(1)).then(issue(1)).then(consume(1))
     .then(insertAssertion(2)).then(insertReply(2, "ok")).then(readAssertion(2, true)).then(finishPoll(2, true))
     .expect(s.polls.get(2).response == "503" and s.assertionConsumed and invariant)
-  run expiredOrphanIsNotRefreshedByConflictTest = init.then(configure(false, true, "callback_complete", true))
+  run expiredOrphanIsNotRefreshedByConflictTest = initState.then(configure(false, true, "callback_complete", true))
     .then(tick).then(tick).then(stored(1)).then(finishPoll(1, true))
     .expect(s.polls.get(1).response == "503" and s.assertionExpiry == 2 and invariant)
-  run parentCanRecreateExpiredUnissuedAssertionAfterCleanupTest = init.then(configure(false, true, "callback_complete", true))
+  run parentCanRecreateExpiredUnissuedAssertionAfterCleanupTest = initState.then(configure(false, true, "callback_complete", true))
     .then(tick).then(tick).then(clean).then(stored(1))
     .expect(s.generations == 2 and s.assertionCreated == 2 and s.assertionExpiry == 4 and invariant)
   run missingIssueCountKeepsCommittedIssuedStateTest = browser.then(stored(1)).then(issueClock(1)).then(issueWrite(1))

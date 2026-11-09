@@ -41,10 +41,14 @@ module identity_callback_completion {
     rowStatus: str, cipher: bool, iv: bool, claimedBy: int, claims: int,
     completedBy: int, completions: int, storedNode: bool, completedAt: int,
     requests: int -> Callback }
-  action init = s' = { configured: false, points: false, now: 0, present: true,
+  val initial = { configured: false, points: false, now: 0, present: true,
     rowStatus: "pending", cipher: true, iv: true, claimedBy: 0, claims: 0,
     completedBy: 0, completions: 0, storedNode: false, completedAt: -1,
     requests: ids.mapBy(_ => unused) }
+  action init = s' = initial
+  // Scenario prefixes start from initState; TLC accepts init only as the
+  // initial predicate (Quint QNT409).
+  action initState = s' = initial
   action configure(points: bool, cipher: bool, iv: bool): bool = all {
     not(s.configured), s' = s.with("configured", true).with("points", points)
       .with("cipher", cipher).with("iv", iv) }
@@ -169,16 +173,20 @@ module identity_callback_completion {
         .with("verifierHeld", false).with("response", response)
         .with("clearCookieHeader", response == "html-200"))) }
   }
+  // Each disjunct binds only its own parameters, so TLC does not enumerate the
+  // product of unrelated parameters for every action. The successor set is
+  // unchanged.
   action step = {
     nondet id = ids.oneOf()
     nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet identity = identities.oneOf()
-    any { configure(yes, other, third), tick, cleanup, begin(id, yes, other),
-      hashReply(id, yes), claimRead(id), claimWrite(id), claimReply(id, yes, other),
-      decrypt(id, yes), resolve(id, identity), failureWrite(id), failureReply(id, yes),
-      completionClock(id), completeWrite(id), completeReply(id, yes, other),
+    any { { nondet other = Set(false, true).oneOf() nondet third = Set(false, true).oneOf() configure(yes, other, third) },
+      tick, cleanup,
+      { nondet other = Set(false, true).oneOf() begin(id, yes, other) },
+      hashReply(id, yes), claimRead(id), claimWrite(id),
+      { nondet other = Set(false, true).oneOf() claimReply(id, yes, other) },
+      decrypt(id, yes), { nondet identity = identities.oneOf() resolve(id, identity) }, failureWrite(id), failureReply(id, yes),
+      completionClock(id), completeWrite(id),
+      { nondet other = Set(false, true).oneOf() completeReply(id, yes, other) },
       awaitFailure(id), finish(id, yes), s' = s }
   }
   val invariant = all {
@@ -201,8 +209,8 @@ module identity_callback_completion {
     }) }
 
   // Small compositional traces retain each await boundary in step.
-  action ready = init.then(configure(false, true, true))
-  action pointsReady = init.then(configure(true, true, true))
+  action ready = initState.then(configure(false, true, true))
+  action pointsReady = initState.then(configure(true, true, true))
   action claimed(id: int): bool = begin(id, true, false).then(hashReply(id, true))
     .then(claimRead(id)).then(claimWrite(id)).then(claimReply(id, true, true))
   action resolved(id: int, identity: str): bool = claimed(id).then(decrypt(id, true)).then(resolve(id, identity))
@@ -272,9 +280,9 @@ module identity_callback_completion {
   run secondCallbackCannotRecoverConsumedClaimTest = ready.then(claimed(1)).then(decrypt(1, false)).then(awaitFailure(1))
     .then(finish(1, true)).then(begin(2, true, false)).then(hashReply(2, true)).then(claimRead(2)).then(finish(2, true))
     .expect(s.claims == 1 and s.requests.get(2).response == "html-410" and invariant)
-  run absentStoredCipherReturnsGoneAfterClaimTest = init.then(configure(false, false, true))
+  run absentStoredCipherReturnsGoneAfterClaimTest = initState.then(configure(false, false, true))
     .then(claimed(1)).then(finish(1, true)).expect(s.rowStatus == "callback_processing" and s.requests.get(1).response == "html-410" and invariant)
-  run absentStoredIvReturnsGoneAfterClaimTest = init.then(configure(false, true, false))
+  run absentStoredIvReturnsGoneAfterClaimTest = initState.then(configure(false, true, false))
     .then(claimed(1)).then(finish(1, true)).expect(s.rowStatus == "callback_processing" and s.requests.get(1).response == "html-410" and invariant)
   run failureNoopAfterCleanupStillReturnsRefusalTest = ready.then(resolved(1, "null")).then(tick).then(tick).then(cleanup)
     .then(failureWrite(1)).then(failureReply(1, true)).then(finish(1, true))

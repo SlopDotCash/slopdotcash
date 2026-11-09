@@ -158,6 +158,27 @@ reasoning, not a machine-checked equivalence theorem.
 - `referral_root_history` stores a voided epoch in one fixed form. Nothing
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
+- `api_trace` reads the free `intakeReady` toggle as a choice at validation
+  (its only reader), omits the write-only `removedRoute` counter, issues keys,
+  digests and slots in first-use order (they are compared only for
+  equality), and resets a checked "done" request to idle with its attempt
+  count, which is all `dispatch` reads.
+
+### Scoped nondeterministic parameters
+
+A `nondet` bound at the top of `step` is enumerated by TLC for every
+disjunct, including actions that never read it. Models whose `step` binds
+each parameter inside the disjunct that uses it (`api_project_setup_check`,
+`api_trace`, `github_lookup_repository`, `identity_callback_completion`,
+`identity_assertion_lifecycle`) keep the same successor set, including any
+original shared choice, and only stop generating duplicate successors.
+
+### Initial action reuse
+
+TLC accepts `init` only as the initial predicate (Quint QNT409). Models whose
+scenarios start from a composed prefix use an `initState` action with the same
+state as `init` (`identity_callback_completion`,
+`identity_assertion_lifecycle`).
 
 ## Inventory and review
 
