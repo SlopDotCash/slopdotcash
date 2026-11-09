@@ -960,10 +960,16 @@ async function signAndSubmit(
       return { transactionId };
     }
   }
-  await beforeBroadcast?.(attempt);
   if (env.FEE_BUMP)
-    return replaceUnderpricedAttempt(env, env.FEE_BUMP, config, key, attempt);
-  await broadcast(config, attempt, attempt, env.JOURNAL);
+    return replaceUnderpricedAttempt(
+      env,
+      env.FEE_BUMP,
+      config,
+      key,
+      attempt,
+      beforeBroadcast,
+    );
+  await broadcast(config, attempt, attempt, env.JOURNAL, beforeBroadcast);
   return { transactionId: attempt.transactionId };
 }
 
@@ -981,6 +987,8 @@ async function broadcast(
   signed: { rawTransaction: Hex; transactionId: Hex },
   original: Attempt,
   journal: JournalStore,
+  beforeBroadcast?: (attempt: Attempt) => Promise<void>,
+  ignoreSendFailure = false,
 ) {
   assertSignedNativeCost(config, signed.rawTransaction, original);
   await assertBindingConsentCandidate(
@@ -989,6 +997,9 @@ async function broadcast(
     original,
     parseTransaction(signed.rawTransaction),
   );
+  // Budget reads can yield while the effective wallet changes. Authorize the
+  // exact bytes after those reads, directly before offering them to the node.
+  await beforeBroadcast?.({ ...original, ...signed });
   try {
     const sent = await rpc(config, "eth_sendRawTransaction", [
       signed.rawTransaction,
@@ -996,8 +1007,14 @@ async function broadcast(
     if (sent !== signed.transactionId)
       throw new Error("Transaction hash mismatch");
   } catch (error) {
-    if (!(await observedEvmTransaction(config, signed.transactionId)))
-      throw error;
+    try {
+      if (!(await observedEvmTransaction(config, signed.transactionId)))
+        throw error;
+    } catch (unobserved) {
+      // Only the fee-wait fallback suppresses send uncertainty. Validation
+      // and authorization failures above always remain visible to its caller.
+      if (!ignoreSendFailure) throw unobserved;
+    }
   }
 }
 
@@ -1140,6 +1157,7 @@ async function replaceUnderpricedAttempt(
   config: Deployment,
   key: string,
   attempt: Attempt,
+  beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   const recordKey = feeReplacementKey(attempt);
   let record = await env.JOURNAL.get<FeeReplacements>(recordKey);
@@ -1164,8 +1182,13 @@ async function replaceUnderpricedAttempt(
   } = await verifiedReplacements(env, config, attempt, record);
   // Report a wait after the latest verified bytes were offered again.
   const waiting = async (reason: string): Promise<never> => {
-    await broadcast(config, latest, attempt, env.JOURNAL).catch(
-      () => undefined,
+    await broadcast(
+      config,
+      latest,
+      attempt,
+      env.JOURNAL,
+      beforeBroadcast,
+      true,
     );
     throw new Error(reason);
   };
@@ -1186,7 +1209,7 @@ async function replaceUnderpricedAttempt(
     baseFee <= latest.maxFeePerGas ||
     now.getTime() - Date.parse(latest.signedAt) < FEE_BUMP_POLICY.waitMs
   ) {
-    await broadcast(config, latest, attempt, env.JOURNAL);
+    await broadcast(config, latest, attempt, env.JOURNAL, beforeBroadcast);
     return { transactionId: latest.transactionId };
   }
   const fees = nextReplacementFees(originalFees, latest);
@@ -1280,7 +1303,7 @@ async function replaceUnderpricedAttempt(
       `Fee replacement waits: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  await broadcast(config, replacement, attempt, env.JOURNAL);
+  await broadcast(config, replacement, attempt, env.JOURNAL, beforeBroadcast);
   return { transactionId: replacement.transactionId };
 }
 
