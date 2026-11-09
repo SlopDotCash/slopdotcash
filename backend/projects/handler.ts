@@ -2076,10 +2076,15 @@ async function appendRevision(
     !sameValue(current.manifest.repositories, manifest.repositories) ||
     !sameValue(current.manifest.skill, manifest.skill) ||
     !sameValue(current.manifest.reviewSkill, manifest.reviewSkill);
+  let expectedClearanceGeneration: string | undefined;
   if (
     manifest.status === "active" &&
     (current.status !== "active" || changesExecutable)
   ) {
+    // Read the generation first: an assessment or exemption change that
+    // lands after it makes the guarded append below a conflict.
+    expectedClearanceGeneration =
+      await deps.persistence.clearanceGeneration(projectId);
     const vetting = await deps.vettingClearance(
       projectId,
       manifest,
@@ -2097,6 +2102,9 @@ async function appendRevision(
       projectId,
       applicationId: input.applicationId,
       expectedRevision: current.revision,
+      ...(expectedClearanceGeneration === undefined
+        ? {}
+        : { expectedClearanceGeneration }),
       manifest,
       manifestText: text,
       manifestSha256: await sha256Hex(new TextEncoder().encode(text)),

@@ -20,6 +20,22 @@ import {
   notifyReinstatementReviewers,
 } from "../notifications/events";
 import type { NewProjectInput, ProjectPersistence } from "./contracts";
+
+/**
+ * Every input of admission clearance that the registry stores and can change:
+ * each assessment and its state, and each exemption with its revocation.
+ * Enforcement records are fenced separately by the enforcement generation;
+ * grandfathered projects are a frozen migration set. Binds the project id
+ * twice.
+ */
+const CLEARANCE_GENERATION = `json_array(
+  (SELECT json_group_array(json_array(id, state)) FROM
+    (SELECT id, state FROM vetting_assessments WHERE project_id = ? ORDER BY rowid)),
+  (SELECT json_group_array(json_array(id, revoked)) FROM
+    (SELECT g.id AS id, r.exemption_id IS NOT NULL AS revoked
+       FROM vetting_admission_exemptions g
+       LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id
+      WHERE g.project_id = ? ORDER BY g.rowid)))`;
 export type ProjectD1Database = D1TransactionalDatabase<D1Statement>;
 
 type ProjectRow = {
@@ -513,14 +529,24 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
     const nextRevision = input.expectedRevision + 1;
     // The revision applies only while no enforcement record has landed since
     // the caller read the restrictions it checked.
+    // An activation checked against admission clearance applies only while
+    // no assessment or exemption of the project has changed since that read,
+    // so a revocation or investigation during the check cannot be overtaken.
+    const fenced = input.expectedClearanceGeneration !== undefined;
     const unrestricted =
       "(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?" +
       (input.applicationId
         ? " AND EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending' AND expected_revision = ?)"
-        : "");
-    const applicationBindings = input.applicationId
-      ? [input.applicationId, input.expectedRevision]
-      : [];
+        : "") +
+      (fenced ? ` AND ${CLEARANCE_GENERATION} = ?` : "");
+    const applicationBindings = [
+      ...(input.applicationId
+        ? [input.applicationId, input.expectedRevision]
+        : []),
+      ...(fenced
+        ? [input.projectId, input.projectId, input.expectedClearanceGeneration]
+        : []),
+    ];
     const current = `EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ?) AND ${unrestricted}`;
     try {
       const results = await this.db.batch([
@@ -700,6 +726,16 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           banEnforcementId: release.ban_enforcement_id,
         })),
     }));
+  }
+
+  async clearanceGeneration(projectId: string): Promise<string> {
+    const row = await this.db
+      .prepare(`SELECT ${CLEARANCE_GENERATION} AS generation`)
+      .bind(projectId, projectId)
+      .first<{ generation: string }>();
+    if (row === null || typeof row.generation !== "string")
+      throw new Error("Clearance generation is unavailable");
+    return row.generation;
   }
 
   async enforcementGeneration(): Promise<number> {

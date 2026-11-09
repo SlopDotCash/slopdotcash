@@ -3019,3 +3019,65 @@ test("both project revision routes reject overlapping aliases of one excluded Gi
     );
   }
 });
+
+// PRD section 8: activation requires current admission clearance. An
+// investigation or exemption revocation that lands after the activation check
+// fences the guarded write, so the project stays paused.
+test("an admission investigation queued during the activation check prevents activation", async () => {
+  const t = registry();
+  await t.create("clearance-race", "example/clearance-race");
+  const project = await t.persistence.getProject("clearance-race");
+  if (!project) throw new Error("Project required");
+  let calls = 0;
+  t.deps.vettingClearance = async () => {
+    calls += 1;
+    // The second read is the guarded revision's own gate. The investigation
+    // lands right after it answers with the earlier clean result.
+    if (calls === 2)
+      t.sqlite
+        .prepare(
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        )
+        .run(
+          "vet_00000000000000000000000000000099",
+          project.id,
+          project.revision,
+          project.manifestSha256,
+          "c".repeat(64),
+          "a".repeat(40),
+          "d".repeat(64),
+          ADMIN,
+          "admin",
+          NOW,
+          "Explicit security investigation",
+        );
+    return CLEARED;
+  };
+  const result = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(calls).toBe(2);
+  expect(result.status).toBe(409);
+  expect(result.body.error).toBe("stale_revision");
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 1,
+    status: "paused",
+  });
+  // Without a change after the check, the same activation applies.
+  t.deps.vettingClearance = async () => CLEARED;
+  const retried = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(retried.status).toBe(200);
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 2,
+    status: "active",
+  });
+});

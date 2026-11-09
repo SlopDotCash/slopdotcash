@@ -63,6 +63,12 @@ export interface ProjectPersistence {
     input: ProjectRevisionInput,
     expectedEnforcementGeneration: number,
   ): Promise<"updated" | "conflict">;
+  /**
+   * Changes whenever an admission assessment of the project is created or
+   * changes state, or an admission exemption is granted or revoked. A revision
+   * that carries it applies only while it is unchanged.
+   */
+  clearanceGeneration(projectId: string): Promise<string>;
   /** Every enforcement record, oldest first per project. */
   listEnforcements(): Promise<ProjectEnforcement[]>;
   /** Changes on every enforcement record; it keys the public edge cache. */
