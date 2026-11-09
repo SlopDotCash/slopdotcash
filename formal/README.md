@@ -206,6 +206,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Wallet-claim publication and possession evidence | `wallet_claim_publication`, `wallet_possession_completion` | `backend/trace/handler.ts`, `backend/trace/cloudflare-persistence.ts`, `src/lib/wallet-possession.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `scripts/wallet-possession.test.ts` |
 | Payment-wallet registration and activation | `payment_wallet_registration`, `payment_wallet_activation`, `api_payment_wallet_protocol` | `backend/payments/wallet-registration.ts`, `backend/payments/handler.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `backend/payments/wallet-replacement.test.ts` |
 | EVM binding consent and broadcast authority | `evm_binding_consent_api`, `binding_consent_renewal`, `stored_binding_broadcast_authority` | `backend/payments/handler.ts`, `backend/payments/possession.ts`, `workers/payment-executor/core.ts`, `backend/payments/evm.integration.ts`, `workers/payment-executor/binding-nonce-limit.integration.ts` |
+| Solana signed journal and binding completion | `solana_executor_journal`, `solana_binding_completion` | `workers/payment-executor/solana.ts`, `contracts/solana/transactions.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -429,6 +430,31 @@ binding runs do not enable keeper fee replacement. This change closes the
 identified ordering gap; the registry read and network send are not an atomic
 transaction, and it does not guarantee unchanged authority at chain inclusion.
 These models and the new regression have not been executed in this lane.
+
+Solana binding completion and reuse now repeat the current-wallet check after
+the final signature-status read, immediately before an actual send. The earlier
+check could become stale while that RPC awaited. The existing executor workflow
+now includes both completion and prepare-retry races with signed successor
+claims, retaining the completed bytes while refusing submission. Its fixture
+savepoints isolate the temporary successors from the later payment flow.
+
+The journal model bounds two requests, one role/key, three expiry-height classes
+and finalized height 0–6. It distinguishes retained bytes from replies, exact
+expiry from strict expiry, overlapping quotes and admission, and archiving the
+current co-signed row. A finalized failed keeper transaction has a separate
+replacement path; attester and relayer failures require reconciliation. The
+completion model bounds two calls and two generations. It preserves exact
+message and authority bytes, first committed wallet signature, stale-generation
+refusal, observed-signature recovery and independent clock/height expiry.
+
+[Solana's RPC documentation](https://solana.com/docs/rpc/http/sendtransaction)
+distinguishes an accepted send from confirmation. The models preserve that
+distinction, use the [status history lookup](https://solana.com/docs/rpc/http/getsignaturestatuses),
+and represent the [last valid block height](https://solana.com/docs/rpc/http/getlatestblockhash)
+separately from wall-clock submission expiry. Neither model proves provider
+truth, global journal-history retention, cryptographic correctness, or atomic
+authority across D1 and chain submission. The models and new regression cases
+remain unexecuted here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

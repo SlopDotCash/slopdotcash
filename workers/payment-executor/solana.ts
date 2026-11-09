@@ -280,6 +280,7 @@ async function send(
   instructions: Instruction[],
   refresh: () => Promise<Context>,
   cosigner?: string,
+  beforeBroadcast?: () => Promise<void>,
 ): Promise<PreparedBinding> {
   const key = `solana:${role}:${input.network}:${input.idempotencyKey}`,
     fingerprint = bytesToHex(
@@ -403,7 +404,7 @@ async function send(
   }
   if (attempt.cosigner)
     return { transactionId: attempt.transactionId, transaction: attempt.raw };
-  return broadcastSolanaTransaction(ctx, attempt);
+  return broadcastSolanaTransaction(ctx, attempt, beforeBroadcast);
 }
 /** An observed signature is submission evidence, never proof of payment finality. */
 export async function solanaTransactionStatus(
@@ -446,9 +447,13 @@ async function observedTransaction(
 export async function broadcastSolanaTransaction(
   ctx: Pick<Context, "config">,
   attempt: Pick<Attempt, "transactionId" | "raw">,
+  beforeBroadcast?: () => Promise<void>,
 ): Promise<{ transactionId: string }> {
   if (await observedTransaction(ctx, attempt))
     return { transactionId: attempt.transactionId };
+  // The status read can yield while a signed successor replaces the wallet.
+  // Recheck only before an actual send; an observed signature still reconciles.
+  await beforeBroadcast?.();
   let result: unknown;
   try {
     result = await solanaRpc(ctx.config, "sendTransaction", [
@@ -482,7 +487,11 @@ export async function completeSolanaBinding(
   const attempt = await env.JOURNAL.get<Attempt>(key);
   if (!attempt || attempt.obligationId !== input.obligationId)
     throw new Error("No prepared binding for this attempt");
-  if (!attempt.cosigner) return broadcastSolanaTransaction(ctx, attempt);
+  const beforeBroadcast = async () => {
+    await authorizeRegistry(env, input, "solana");
+  };
+  if (!attempt.cosigner)
+    return broadcastSolanaTransaction(ctx, attempt, beforeBroadcast);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(transaction))
     throw new Error("Invalid signed transaction encoding");
   const signed = Uint8Array.from(atob(transaction), (c) => c.charCodeAt(0));
@@ -520,7 +529,7 @@ export async function completeSolanaBinding(
     await store.put(key, next);
     return next;
   });
-  return broadcastSolanaTransaction(ctx, completed);
+  return broadcastSolanaTransaction(ctx, completed, beforeBroadcast);
 }
 /** Prepares and half-signs a binding; the destination wallet must co-sign the same bytes. */
 export function createSolanaAttester(env: SolanaExecutorEnvironment): {
@@ -574,6 +583,9 @@ export function createSolanaAttester(env: SolanaExecutorEnvironment): {
         [ix],
         () => authorized(env, input),
         input.destination,
+        async () => {
+          await authorizeRegistry(env, input, "solana");
+        },
       );
     },
   };

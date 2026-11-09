@@ -304,6 +304,7 @@
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
+        "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt"
       ],
@@ -1589,6 +1590,7 @@
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/payments/authority_rotation.qnt",
+        "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
       "candidateLines": [33, 1047],
@@ -1722,7 +1724,10 @@
     {
       "path": "contracts/solana/transactions.ts",
       "sha256": "d3e031297fa43a1aa4c5f1392e5e58425f66910e71db82462cb33e6d418930f9",
-      "models": ["formal/models/fees/solana_route.qnt"],
+      "models": [
+        "formal/models/fees/solana_route.qnt",
+        "formal/models/payments/solana_executor_journal.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6775,6 +6780,7 @@
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
+        "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
@@ -6793,7 +6799,10 @@
     {
       "path": "workers/payment-executor/entrypoint.ts",
       "sha256": "331682fd24f4da18573910de610f8752b475c97556224feee0228991a3dd6c57",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "models": [
+        "formal/models/payments/payment_worker_run.qnt",
+        "formal/models/payments/solana_binding_completion.qnt"
+      ],
       "candidateLines": [17, 33, 58],
       "review": "mapped-abstraction"
     },
@@ -6802,6 +6811,7 @@
       "sha256": "c06068dedf97c2755a661743b4df0fb2ff3e70a8df20cb3f4fd48bb19db0f40f",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
+        "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt"
       ],
       "candidateLines": [
@@ -6884,12 +6894,16 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "fb9400eff63250ae519c475f80d90251b77ec78ce68c907b5f04772b0d078c0b",
-      "models": ["formal/models/payments/payment_binding.qnt"],
+      "sha256": "8b9b2d23ce0b935f83763431a0f1922cd11c9df26a1ec92d5620ca637da2de90",
+      "models": [
+        "formal/models/payments/payment_binding.qnt",
+        "formal/models/payments/solana_binding_completion.qnt",
+        "formal/models/payments/solana_executor_journal.qnt"
+      ],
       "candidateLines": [
-        143, 179, 233, 308, 309, 311, 312, 314, 317, 320, 322, 330, 339, 348,
-        412, 422, 423, 424, 426, 427, 428, 429, 431, 433, 434, 441, 442, 443,
-        444, 464, 513, 519, 622, 633, 643, 711, 712, 726, 739, 750
+        143, 179, 233, 309, 310, 312, 313, 315, 318, 321, 323, 331, 340, 349,
+        413, 423, 424, 425, 427, 428, 429, 430, 432, 434, 435, 442, 443, 444,
+        445, 454, 469, 522, 528, 634, 645, 655, 723, 724, 738, 751, 762
       ],
       "review": "mapped-abstraction"
     },
@@ -10840,6 +10854,84 @@
         "missingReceiptKeepsBytesTest",
         "originalCanWinTest",
         "replacementWinsTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/solana_binding_completion.qnt",
+      "sha256": "c252954040cf1c11bcd9cb455f96e6e88847873bf2470d226bf98ce855adff98",
+      "sources": [
+        "backend/payments/handler.ts",
+        "contracts/solana/programs/slop-escrow/src/lib.rs",
+        "workers/payment-executor/core.ts",
+        "workers/payment-executor/entrypoint.ts",
+        "workers/payment-executor/index.ts",
+        "workers/payment-executor/solana.ts"
+      ],
+      "scenarios": [
+        "changedAuthoritySignatureRefusesBeforeCompletionTest",
+        "changedGenerationRefusesCapturedCompletionTest",
+        "changedLengthRefusesBeforeCompletionTest",
+        "changedMessageRefusesBeforeCompletionTest",
+        "changedSignatureCountRefusesBeforeCompletionTest",
+        "committedCompletionSurvivesRejectedJournalReplyTest",
+        "completedRetryUsesStoredBytesWithoutNewWalletValidationTest",
+        "completionDoesNotRefreshExpiredBytesTest",
+        "concurrentCompletionsRetainFirstWalletSignatureTest",
+        "finalAuthorizationFailureDoesNotEnterRecoveryStatusTest",
+        "finalAuthorizationIsSnapshotNotAtomicSendGuardTest",
+        "foreignCosignerRefusesBeforeCompletionTest",
+        "initialAuthorizationRefusesObsoleteClaimTest",
+        "invalidContextRefusesBeforeJournalTest",
+        "invalidEncodingRefusesBeforeCompletionTest",
+        "invalidWalletSignatureRefusesBeforeCompletionTest",
+        "knownFailureDoesNotBroadcastAgainTest",
+        "knownSubmissionReconcilesAfterClaimChangesTest",
+        "lateClaimChangeDuringJournalAwaitRefusesSendTest",
+        "lateClaimChangeDuringStatusAwaitRefusesSendTest",
+        "lostHttpReplyDoesNotUndoFullJournalTest",
+        "lostSendReplyRecoversKnownSignatureTest",
+        "oldCompletionCanSendAfterClaimChangesNegativeControlTest",
+        "prepareFullRowReuseAlsoRechecksAuthorityTest",
+        "prepareReusesHalfSignedBytesWithoutBroadcastTest",
+        "priorGenerationBytesDoNotCompleteNewGenerationTest",
+        "statusFailureRetainsCompletedBytesTest",
+        "unknownSendFailureRetainsCompletedBytesTest",
+        "walletSlotCompletionPreservesGenerationTest",
+        "wrongReturnedSignatureIsNotSubmissionProofTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/solana_executor_journal.qnt",
+      "sha256": "b3abe0b639ae149b821d2b3b51ea945d6576add75368b99b3b4cbd89d3245b63",
+      "sources": [
+        "contracts/solana/transactions.ts",
+        "workers/payment-executor/solana.ts"
+      ],
+      "scenarios": [
+        "capturedPaidAwardRefusesFreshSigningTest",
+        "concurrentExpiryReplacementsReuseWinnerTest",
+        "concurrentFreshQuotesReuseFirstCommittedWinnerTest",
+        "currentFingerprintCollisionRefusesTest",
+        "exactLastValidHeightReusesOriginalTest",
+        "failedAttesterCannotReplaceEvenAfterExpiryTest",
+        "finalizedKeeperFailureMayReplaceBeforeExpiryTest",
+        "freshBindingReturnsPartialBytesTest",
+        "freshPaymentHandsOffDurableFullBytesTest",
+        "heightBeyondBoundAllowsRefreshedReplacementTest",
+        "invalidHeightRefusesTest",
+        "invalidQuoteRefusesTest",
+        "invalidSignerOrPacketRollsBackArchiveTest",
+        "knownSignatureReturnsBeforeExpiryReadTest",
+        "laterRetirementDoesNotEraseExistingSignedBytesTest",
+        "lostCommitReplyRetainsSignedBytesTest",
+        "pendingFailureCannotReplaceKeeperTest",
+        "quoteMayExpireBeforeCommitTest",
+        "refreshedMatchingBindingRefusesReplacementTest",
+        "refreshedPaidAwardRefusesReplacementTest",
+        "replacementArchivesCurrentCosignedRowTest",
+        "retiredBeforeAdmissionCannotSignTest",
+        "reuseCanReturnEarlierPartialSnapshotTest",
+        "reusedWinnerCanLoseTransactionReplyTest"
       ]
     },
     {
