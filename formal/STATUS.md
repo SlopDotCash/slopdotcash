@@ -70,7 +70,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-842 production sources, 355 finite models and 2,138 named scenarios, with zero
+842 production sources, 356 finite models and 2,175 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 239 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -149,6 +149,16 @@ All added scenarios and browser/SQLite definitions remain unexecuted. See
 `security-settings-lifetime-audit.md`, `email-preference-requests-audit.md`,
 `value-precall-authority-audit.md` and `inference-attempt-accounting-audit.md`.
 The aligned function census has 9,960 bodies in 686 files and 168 selected contracts.
+
+The image, escalation and profile batch adds one model and 37 scenarios across
+new and refined models. Image decoding uses the latest committed draft callback;
+decode failure and retry are now explicit. Backup notification insertion rechecks
+current delivery failure or overdue acknowledgment instead of a prepared trigger.
+The new profile model captures identity-source conflicts and current-wallet key
+ownership. Added regression definitions and all new scenarios are unexecuted.
+See `image-parent-callback-audit.md`, `notification-escalation-current-state-audit.md`
+and `profile-identity-audit.md`. The current function census has 9,961 bodies in
+686 files with the same 168 selected contracts.
 
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,

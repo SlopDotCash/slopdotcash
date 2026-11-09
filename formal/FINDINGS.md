@@ -337,3 +337,23 @@ unfinished capacity stays reserved and retryable; completed non-free exhaustion
 rechecks retained results. Historical completion is not inferred or backfilled.
 The four new models and 59 scenario additions, plus their browser/SQLite
 definitions, are unexecuted source-review evidence.
+
+## Image callbacks and current escalation triggers
+
+An image decode retained its initial parent callback. After a successful
+project revision, that callback could place the image in a draft based on the
+previous revision. The field now calls the latest committed parent callback
+and ends its lifetime during layout cleanup. Decoding, bitmap disposal and
+retry are represented explicitly; leaving the wizard step still discards its
+pending selection under the existing behavior.
+
+A prepared backup escalation could survive reconciliation that removed its
+trigger. The final INSERT now requires a current delivery failure or an overdue
+action notice. A delivered informational receipt does not qualify. The model
+retains the eligibility recorded at creation, because later delivery does not
+erase a backup already committed.
+
+The public profile identity selector and wallet lookup gained a dedicated
+source model. No profile runtime defect was established in this pass. The
+new model and added image/escalation regression definitions remain unexecuted;
+their source mapping does not establish complete implementation refinement.

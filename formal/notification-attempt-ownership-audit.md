@@ -61,6 +61,8 @@ observation, not an atomic database fact or a new authority guarantee.
   stop the INSERT. A later external access change does not erase the prior
   observation. The revoked-backup scenario now uses scheduled escalation from
   `bounced`, where backup access is the reason for refusal.
+  The later source-only current-eligibility correction preserves these ten and
+  adds six scenarios; see `notification-escalation-current-state-audit.md`.
 - `api_email_consent`: seven scenarios with one token and three preference
   revisions. The revision is captured at Verify admission, matching
   `verifyEmail`, rather than when the email is requested. An intervening opt-out

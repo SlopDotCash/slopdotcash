@@ -308,7 +308,11 @@ function mime(
 }
 
 /** A backup gets only a generic notice and must currently have access to this case. */
-async function escalate(deps: SecurityMailDependencies, row: Delivery) {
+async function escalate(
+  deps: SecurityMailDependencies,
+  row: Delivery,
+  acknowledgeHours: number,
+) {
   if (row.escalation_of || row.acknowledged_at) return;
   const backupId =
     deps.config.recipients[row.recipient_github_id]?.backupGithubId;
@@ -333,13 +337,27 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
     return;
   }
   const at = deps.now().toISOString();
+  const overdueBefore =
+    acknowledgeHours > 0
+      ? new Date(Date.parse(at) - acknowledgeHours * 3600_000).toISOString()
+      : null;
   const eventKey = `security-escalation:${row.id}`;
+  // Delivery evidence can change while backup access is pending. Re-evaluate
+  // the current failure or actionable deadline when committing the notice.
   await deps.db.batch([
     deps.db
       .prepare(`INSERT INTO notifications(event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
       SELECT ?, ?, 'security_case', ?, NULL, ?, ?, ?
-      WHERE EXISTS (SELECT 1 FROM security_notification_outbox
-        WHERE id = ? AND acknowledged_at IS NULL AND escalation_of IS NULL)
+      WHERE EXISTS (SELECT 1 FROM security_notification_outbox primary_notice
+        WHERE id = ? AND acknowledged_at IS NULL AND escalation_of IS NULL
+        AND (state IN ('ambiguous','exhausted','bounced')
+          OR (state='suppressed' AND EXISTS (
+            SELECT 1 FROM security_notification_delivery_events e
+            WHERE e.delivery_id=primary_notice.id AND e.state='suppressed'
+              AND e.evidence_reference IS NOT NULL))
+          OR (? IS NOT NULL AND template_version<>?
+            AND state IN ('provider-accepted','delivered')
+            AND julianday(created_at)<=julianday(?))))
       AND NOT EXISTS (SELECT 1 FROM security_notification_outbox WHERE escalation_of = ?)
       ON CONFLICT(event_key, recipient_github_id) DO NOTHING`)
       .bind(
@@ -350,6 +368,9 @@ async function escalate(deps: SecurityMailDependencies, row: Delivery) {
         at,
         at,
         row.id,
+        overdueBefore,
+        RECEIPT_TEMPLATE,
+        overdueBefore,
         row.id,
       ),
     deps.db
@@ -453,14 +474,16 @@ export async function dispatchSecurityMail(
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
       const state = await retryWithoutProviderCall(deps, row);
-      if (state === "exhausted") await escalate(deps, row);
+      if (state === "exhausted")
+        await escalate(deps, row, access.acknowledgeHours);
       continue;
     }
     if (destinationNotYetInEffect) {
       // A verified record not yet in effect made no provider call; retry it
       // on the bounded schedule.
       const state = await retryWithoutProviderCall(deps, row);
-      if (state === "exhausted") await escalate(deps, row);
+      if (state === "exhausted")
+        await escalate(deps, row, access.acknowledgeHours);
       continue;
     }
     let unsubscribeToken: string | undefined;
@@ -478,7 +501,8 @@ export async function dispatchSecurityMail(
     } catch {
       // Preparation failed before any provider call; no reconciliation is needed.
       const state = await retryWithoutProviderCall(deps, row);
-      if (state === "exhausted") await escalate(deps, row);
+      if (state === "exhausted")
+        await escalate(deps, row, access.acknowledgeHours);
       continue;
     }
     try {
@@ -490,12 +514,13 @@ export async function dispatchSecurityMail(
     } catch (error) {
       if (retryableEmailRejection(error)) {
         const state = await retryWithoutProviderCall(deps, row);
-        if (state === "exhausted") await escalate(deps, row);
+        if (state === "exhausted")
+          await escalate(deps, row, access.acknowledgeHours);
         continue;
       }
       // The binding has no definitive non-acceptance receipt. A thrown send is ambiguous.
       if (await recordDelivery(deps, row, "ambiguous"))
-        await escalate(deps, row);
+        await escalate(deps, row, access.acknowledgeHours);
       continue;
     }
     await recordDelivery(deps, row, "provider-accepted");
@@ -542,7 +567,7 @@ export async function dispatchSecurityMail(
       overdue ||
       ["bounced", "suppressed", "exhausted", "ambiguous"].includes(row.state)
     )
-      await escalate(deps, row);
+      await escalate(deps, row, access.acknowledgeHours);
   }
 }
 

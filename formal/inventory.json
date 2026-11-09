@@ -4517,6 +4517,7 @@
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -4602,6 +4603,7 @@
       "path": "src/ProfilePage.tsx",
       "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
       "models": [
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_resources.qnt"
       ],
@@ -4618,6 +4620,7 @@
       "sha256": "1d6e2c473618ca40ca9d3c53f744c4b1e373b499784793f5aaee28a69b0755f9",
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_resources.qnt"
       ],
       "candidateLines": [
@@ -4638,9 +4641,9 @@
     },
     {
       "path": "src/ProjectImageField.tsx",
-      "sha256": "4a55f75ef6c8f7989f86fd2c48331b0d626b3c158ebbf84d34552f969985a29a",
+      "sha256": "8f8caba393986640eb0e42f984cf62f81339d792b707b738b564ceabd36fc923",
       "models": ["formal/models/ui_image_decode.qnt"],
-      "candidateLines": [2, 21, 22, 24, 128, 153],
+      "candidateLines": [2, 21, 22, 133, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -6495,7 +6498,7 @@
     },
     {
       "path": "workers/notify/security.ts",
-      "sha256": "89c93cf387aab32c58bd058c40e33e160ad7f349696d9a694c11786e36b37524",
+      "sha256": "b6e06b02b6fc4959918a6e608c1eacb8b19399a404fc6e9486d4720880880f48",
       "models": [
         "formal/models/api_mail_delivery.qnt",
         "formal/models/notification_attempt_ownership.qnt",
@@ -6504,9 +6507,9 @@
       ],
       "candidateLines": [
         51, 146, 147, 150, 152, 156, 160, 161, 204, 213, 215, 218, 220, 234,
-        250, 258, 269, 273, 274, 339, 356, 431, 432, 438, 454, 455, 456, 460,
-        462, 463, 480, 481, 492, 493, 507, 508, 509, 516, 543, 586, 600, 601,
-        609, 615, 617
+        250, 258, 269, 273, 274, 345, 349, 353, 354, 356, 359, 377, 452, 453,
+        459, 475, 476, 477, 482, 484, 485, 503, 504, 516, 517, 532, 533, 534,
+        541, 568, 611, 625, 626, 634, 640, 642
       ],
       "review": "mapped-abstraction"
     },
@@ -10489,7 +10492,7 @@
     },
     {
       "path": "formal/models/notification_escalation.qnt",
-      "sha256": "fd7ffe3446136256bb0e084ee94d6f2b2046359c20ffb68659e128e8e456016b",
+      "sha256": "cc29be970097cc2653fe6676a713d3a720dacb149f6916fcff66bc7cb57fdb74",
       "sources": [
         "backend/security/handler.ts",
         "migrations/0030_security_notification_outbox.sql",
@@ -10499,12 +10502,18 @@
       "scenarios": [
         "acknowledgmentAfterImmediateReadRefusesTest",
         "acknowledgmentAfterScheduledReadRefusesTest",
+        "committedBackupSurvivesLaterDeliveryTest",
+        "earlyActionDeliveredDuringPreparationRefusesTest",
         "failedReceiptEscalatesTest",
         "laterAccessChangeDoesNotEraseObservedGrantTest",
         "oneBackupOnlyTest",
+        "overdueActionStillEscalatesAfterDeliveryTest",
         "readIsNotAcknowledgeTest",
+        "receiptDeliveredDuringPreparationRefusesTest",
         "receiptDoesNotEscalateForTimeTest",
+        "reconciledFailureStillEscalatesTest",
         "restoredRoleDoesNotRearmWithheldMailTest",
+        "retryingReceiptDuringPreparationRefusesTest",
         "revokedBackupCannotReceiveTest",
         "withheldMailDoesNotEscalateTest"
       ]
@@ -12117,13 +12126,24 @@
     },
     {
       "path": "formal/models/ui_image_decode.qnt",
-      "sha256": "1d7b3aa689936fdb5ec830e84355ebc6965b1e6c36f60ea7c6e565c49afdc740",
+      "sha256": "62432a2a103a20bbdf6e83ab05dc905e9233d810ac25ea782dfa72534eab0694",
       "sources": ["src/ProjectImageField.tsx", "src/ProjectProposalPage.tsx"],
       "scenarios": [
+        "busyFieldRefusesSecondSelectionTest",
+        "decodeRejectionRetriesTest",
+        "departedDecodeRejectionDoesNotChangeNewFieldTest",
         "discardedDecodeTest",
+        "encodingFailureRetriesTest",
+        "imageEditedDuringSaveRemainsDraftTest",
         "invalidDecodeClosesTest",
+        "invalidTypeRetriesTest",
+        "laterImageCanPublishWithoutArtificialConflictTest",
         "overlappingGenerationsTest",
-        "successfulDecodeTest"
+        "publishedParentUsesCurrentCallbackTest",
+        "rejectedDecodeHasNoBitmapTest",
+        "removalKeepsCurrentDraftBaseTest",
+        "successfulDecodeTest",
+        "wizardDepartureStillDiscardsPendingSelectionTest"
       ]
     },
     {
@@ -12599,6 +12619,33 @@
         "reopenTest",
         "retirementTest",
         "unflaggedHistoryTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_profile_identity.qnt",
+      "sha256": "a648b1cf30c8c91dc5356ff450753f8b6ccd9e1dabacb7408b068c3f28dc788e",
+      "sources": ["src/Points.tsx", "src/ProfilePage.tsx", "src/Profiles.tsx"],
+      "scenarios": [
+        "absentContributorStaysAbsentTest",
+        "ambiguousDirectoryDoesNotChooseTest",
+        "changedActorHidesCachedWalletBeforeEffectTest",
+        "compatibleSourcesSelectMemberTest",
+        "conflictingSourcesVetoMemberTest",
+        "currentWalletMatchesSelectedIdentityTest",
+        "departedWalletReplyCannotShowTest",
+        "directoryDoesNotRequirePrivateMembershipTest",
+        "directoryOnlyIdentityTest",
+        "directoryRenameVetoesLedgerTest",
+        "knownRenameVetoesDirectoryFallbackTest",
+        "malformedWalletRemainsErrorTest",
+        "missingWalletRemainsNoneTest",
+        "oldPendingWalletCannotReplaceCurrentRequestTest",
+        "ownMemberBypassesOnlyMemberLookupTest",
+        "pendingDirectoryCannotNameActorTest",
+        "pendingMemberLookupBlocksFallbackTest",
+        "pendingSessionStillBlocksOwnMemberTest",
+        "remountedLookupOwnsItsWalletTest",
+        "unavailableLedgerCannotNameActorTest"
       ]
     },
     {

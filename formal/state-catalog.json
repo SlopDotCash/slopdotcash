@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "78dfeb0e8015b5614d4b9d5caf1f5952703caf0965d908e5f918a44fb51381d7",
+  "inventorySha256": "68f7a852a2d694a5c296b3f7e958fff9b4bed0773f2ae46a48bf4baf83df94de",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2185,6 +2185,7 @@
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -2202,6 +2203,7 @@
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
@@ -2219,6 +2221,7 @@
         "formal/models/ui_email_parent.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
+        "formal/models/ui_profile_identity.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],

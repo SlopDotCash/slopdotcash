@@ -300,6 +300,110 @@ test("acknowledgment during a failed send prevents a later backup notice", async
   }
 });
 
+test.each([
+  { receipt: true, overdue: false, outcome: "delivered", backupCount: 0 },
+  { receipt: false, overdue: false, outcome: "delivered", backupCount: 0 },
+  { receipt: false, overdue: true, outcome: "delivered", backupCount: 1 },
+  { receipt: true, overdue: false, outcome: "not-accepted", backupCount: 0 },
+  { receipt: true, overdue: false, outcome: "suppressed", backupCount: 1 },
+] as const)(
+  "reconciliation $outcome during backup access keeps current eligibility (receipt=$receipt, overdue=$overdue)",
+  async ({ receipt, overdue, outcome, backupCount }) => {
+    const h = await setup();
+    let entered = () => {};
+    let release = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dispatch: Promise<void> | undefined;
+    try {
+      if (receipt) {
+        h.sqlite
+          .query(
+            "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+          )
+          .run(at, at, owner.githubId, h.caseId);
+        await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+      }
+      const primaryId = receipt ? reporter.githubId : owner.githubId;
+      const primary = h
+        .rows()
+        .find((row) => row.recipient_github_id === primaryId);
+      if (!primary) throw new Error("Primary notice missing");
+      const backupId = h.deps.config.recipients[primaryId].backupGithubId;
+      h.sqlite
+        .query(
+          "UPDATE security_notification_outbox SET state='suppressed' WHERE id<>?",
+        )
+        .run(primary.id);
+      if (overdue) h.advance(2 * 3600_000);
+      let holdAccess = false;
+      h.deps.db = {
+        ...h.db,
+        prepare(query: string) {
+          const statement = h.db.prepare(query);
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async first<T>() {
+                  if (
+                    holdAccess &&
+                    query.startsWith("SELECT login FROM (") &&
+                    values[0] === backupId
+                  ) {
+                    holdAccess = false;
+                    entered();
+                    await held;
+                  }
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      };
+      h.deps.sendEmail = async () => {
+        holdAccess = true;
+        throw new Error("Unknown provider result");
+      };
+      dispatch = dispatchSecurityMail(h.deps);
+      await waiting;
+      const delivery = h.sqlite
+        .query(
+          "SELECT attempts,destination_digest FROM security_notification_outbox WHERE id=?",
+        )
+        .get(primary.id) as { attempts: number; destination_digest: string };
+      expect(
+        await reconcileSecurityMail(h.deps, {
+          deliveryId: primary.id,
+          attempt: delivery.attempts,
+          destinationDigest: delivery.destination_digest,
+          outcome,
+          evidenceReference: `current-escalation-${receipt}-${overdue}-${outcome}`,
+        }),
+      ).toBe(true);
+      release();
+      await dispatch;
+      expect(h.rows().find((row) => row.id === primary.id)?.state).toBe(
+        outcome === "not-accepted" ? "retrying" : outcome,
+      );
+      expect(
+        h.rows().filter((row) => row.escalation_of === primary.id),
+      ).toHaveLength(backupCount);
+    } finally {
+      release();
+      await dispatch?.catch(() => {});
+      h.sqlite.close();
+    }
+  },
+);
+
 test.each(["destination", "final check"] as const)(
   "a security attempt retired before its %s does not send",
   async (stage) => {
