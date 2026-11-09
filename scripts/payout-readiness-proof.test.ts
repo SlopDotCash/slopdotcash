@@ -1,9 +1,43 @@
 /** Real RPC transport exercises the release readiness proof boundary. */
 import { expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { paymentDeploymentRecord } from "../src/lib/escrow-policy.mjs";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { findProject } from "../src/lib/projects.mjs";
 import { payoutReadiness, probeRpc, type ReadinessInput } from "./check-payout-readiness";
+import { childEnvironment } from "./child-environment.mjs";
+
+/** Executes the real CLI entrypoint; only the registry fixture is preloaded. */
+async function readinessCli(args: string[], environment: Record<string, string> = {}) {
+  const repository = resolve(import.meta.dir, "..");
+  const child = Bun.spawn([
+    process.execPath,
+    "--no-env-file",
+    "--preload",
+    join(repository, "tests", "registry-preload.ts"),
+    join(repository, "scripts", "check-payout-readiness.ts"),
+    ...args,
+  ], {
+    cwd: repository,
+    env: childEnvironment(process.env, environment),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timeout = setTimeout(() => child.kill(), 10_000);
+  try {
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { code, stdout, stderr };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function readinessFixture(): ReadinessInput {
   const base = findProject("asi");
@@ -181,3 +215,154 @@ for (const scenario of [
     }
   });
 }
+
+for (const scenario of [
+  { args: ["--unknown"], error: "Usage:" },
+  { args: ["--config"], error: "Usage:" },
+  { args: ["--config", "--probe"], error: "Usage:" },
+  { args: ["--require", "base-sepolia"], error: "--require needs --probe" },
+  { args: ["--probe", "--require", "unregistered-network"], error: "Unknown registry network" },
+  { args: ["--registry-origin", "https://first.invalid", "--registry-origin", "https://second.invalid"], error: "Give --registry-origin once" },
+]) {
+  test(`CLI refuses ${scenario.args.join(" ")} before producing a report`, async () => {
+    const result = await readinessCli(scenario.args);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(scenario.error);
+  }, 15_000);
+}
+
+test("CLI prints a complete not-ready report without requiring a network", async () => {
+  const result = await readinessCli([]);
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  const lines = result.stdout.trim().split("\n");
+  const report = JSON.parse(lines.at(-1)!);
+  expect(report.schemaVersion).toBe("1");
+  expect(report.networks.length).toBeGreaterThan(0);
+  expect(lines.slice(0, -1)).toHaveLength(report.networks.length);
+  expect(report.networks.every((row: { ready: boolean }) => !row.ready)).toBe(true);
+}, 15_000);
+
+test("CLI requirement failure follows the complete machine-readable report", async () => {
+  const result = await readinessCli(["--probe", "--require", "base-sepolia"]);
+  expect(result.code).toBe(1);
+  const report = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  expect(report.networks.find((row: { network: string }) => row.network === "base-sepolia"))
+    .toMatchObject({ ready: false, rpc: "missing" });
+  expect(result.stderr).toContain("payout readiness refused: base-sepolia not ready");
+}, 15_000);
+
+test("CLI rejects malformed config JSON before parsing the RPC map", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "slop-readiness-cli-"));
+  try {
+    const good = join(directory, "good.json");
+    const bad = join(directory, "bad.json");
+    await writeFile(good, "{}");
+    await writeFile(bad, "{");
+    const result = await readinessCli(["--config", good, "--config", bad], {
+      PAYMENT_RPC_URLS: "[]",
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("payout readiness check failed");
+    expect(result.stderr).not.toContain("PAYMENT_RPC_URLS must be a JSON object");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 15_000);
+
+test("CLI rejects a non-object RPC map without producing a report", async () => {
+  const result = await readinessCli(["--probe"], { PAYMENT_RPC_URLS: "[]" });
+  expect(result.code).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("PAYMENT_RPC_URLS must be a JSON object");
+}, 15_000);
+
+test("CLI probes eligible RPC entries sequentially and skips unknown or non-string entries", async () => {
+  const calls: string[] = [];
+  let releaseFirst!: () => void;
+  let enteredFirst!: () => void;
+  const gate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const entered = new Promise<void>((resolve) => { enteredFirst = resolve; });
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      const { method } = await request.json();
+      calls.push(`${path}:${method}`);
+      if (path === "/first" && method === "eth_chainId") {
+        enteredFirst();
+        await gate;
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: method === "eth_chainId"
+          ? path === "/first" ? "0x2105" : "0x14a34"
+          : { number: "0x1", hash: `0x${"1".repeat(64)}` },
+      });
+    },
+  });
+  const origin = `http://127.0.0.1:${server.port}`;
+  const operation = readinessCli(["--probe"], {
+    PAYMENT_RPC_URLS: JSON.stringify({
+      unknown: `${origin}/ignored`,
+      "base-mainnet": `${origin}/first`,
+      "ethereum-mainnet": 7,
+      "base-sepolia": `${origin}/second`,
+    }),
+  });
+  try {
+    await Promise.race([
+      entered,
+      operation.then(() => { throw new Error("CLI ended before its first RPC"); }),
+    ]);
+    expect(calls).toEqual(["/first:eth_chainId"]);
+    releaseFirst();
+    const result = await operation;
+    expect(result.code).toBe(0);
+    expect(calls).toEqual([
+      "/first:eth_chainId",
+      "/first:eth_getBlockByNumber",
+      "/second:eth_chainId",
+      "/second:eth_getBlockByNumber",
+    ]);
+    JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+  } finally {
+    releaseFirst();
+    try {
+      await operation;
+    } finally {
+      server.stop(true);
+    }
+  }
+}, 15_000);
+
+test("CLI parses the Solana genesis map after optional probes and before output", async () => {
+  const methods: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const { method } = await request.json();
+      methods.push(method);
+      return Response.json({
+        jsonrpc: "2.0", id: 1,
+        result: method === "eth_chainId" ? "0x2105"
+          : { number: "0x1", hash: `0x${"1".repeat(64)}` },
+      });
+    },
+  });
+  try {
+    const result = await readinessCli(["--probe"], {
+      PAYMENT_RPC_URLS: JSON.stringify({ "base-mainnet": `http://127.0.0.1:${server.port}` }),
+      PAYMENT_SOLANA_GENESIS: "[]",
+    });
+    expect(methods).toEqual(["eth_chainId", "eth_getBlockByNumber"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("PAYMENT_SOLANA_GENESIS must be a JSON object");
+  } finally {
+    server.stop(true);
+  }
+}, 15_000);

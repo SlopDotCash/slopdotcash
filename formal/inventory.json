@@ -746,6 +746,7 @@
       "path": "backend/referrals/cache.ts",
       "sha256": "c26f507982db6597162a74b3986b4ef34f1a27b0356ed2862cd52065125c14f3",
       "models": [
+        "formal/models/referrals/referral_account_read.qnt",
         "formal/models/referrals/referral_cache_projection.qnt",
         "formal/models/referrals/referral_cache_write_order.qnt",
         "formal/models/referrals/referral_claim_cache.qnt",
@@ -761,6 +762,7 @@
       "path": "backend/referrals/claims.ts",
       "sha256": "724dbca6f6d24057f2ea49afbf138901bc2a42370a61c94a71531aca147b662c",
       "models": [
+        "formal/models/referrals/referral_account_read.qnt",
         "formal/models/referrals/referral_cache_write_order.qnt",
         "formal/models/referrals/referral_claim_cache.qnt",
         "formal/models/referrals/referral_distribution.qnt"
@@ -2876,7 +2878,10 @@
     {
       "path": "migrations/0086_referral_accruals.sql",
       "sha256": "dcc18fd9ace4774eed286943d0bb2cc435497a6d87b1e1dda54508437b03a209",
-      "models": ["formal/models/referrals/referral_accrual.qnt"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_accrual.qnt"
+      ],
       "candidateLines": [2, 45, 47, 71, 73, 76, 98, 103, 124, 126],
       "review": "mapped-abstraction"
     },
@@ -3369,6 +3374,7 @@
       "sha256": "c297c168fcd28959844343156482caa7f10aeb6de83a7d72c9aa912398238685",
       "models": [
         "formal/models/payments/payout_readiness.qnt",
+        "formal/models/payments/payout_readiness_cli.qnt",
         "formal/models/payments/payout_rpc_probe.qnt"
       ],
       "candidateLines": [4, 45, 47, 49, 173, 253, 261, 262, 266, 268, 269],
@@ -3763,9 +3769,11 @@
       "path": "scripts/generate-leaderboard.ts",
       "sha256": "17d6bb93762ab3b42368dcc75772cf38fb207c8136010685602d61384976881b",
       "models": [
+        "formal/models/points/generation_cutoff.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/rewards/evaluated_award_window.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "candidateLines": [
@@ -4470,7 +4478,10 @@
     {
       "path": "scripts/sync-project-registry.mjs",
       "sha256": "02904d4a9eacb0b1bedf544e9dabb19067cf43848507b4af9dca470e284c86e6",
-      "models": ["formal/models/release/registry_snapshot_publication.qnt"],
+      "models": [
+        "formal/models/payments/payout_readiness_cli.qnt",
+        "formal/models/release/registry_snapshot_publication.qnt"
+      ],
       "candidateLines": [
         11, 39, 156, 162, 221, 238, 247, 258, 267, 270, 281, 284, 333, 343, 344
       ],
@@ -4903,22 +4914,23 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "52a5f9519b5071f53f527c5d1e643170e4ab335fa7e3c921d99548820c5ade6c",
+      "sha256": "52afcdddf6df100ebbc159cafb84946677ee361f03dc51fe7f4d5d8163c54e1a",
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_focus_lifetime.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_email_preference_requests.qnt",
         "formal/models/ui/ui_explicit_signout.qnt"
       ],
       "candidateLines": [
-        6, 9, 24, 30, 39, 40, 41, 42, 53, 54, 55, 56, 57, 59, 62, 91, 92, 96,
-        97, 98, 127, 129, 138, 143, 155, 162, 176, 178, 181, 183, 199, 204, 208,
-        214, 225, 233, 251, 253, 259, 265, 266, 297, 298, 302, 304, 335, 337,
-        340, 343, 346, 354, 365, 371, 379, 381, 382, 385, 386, 395, 396, 419,
-        421, 432, 447, 449, 451, 458, 464, 471, 479, 481, 482, 497, 514, 516,
-        517, 558, 560, 561, 563, 565, 568, 650, 664, 701, 742, 743, 744, 757,
-        769, 789, 820, 863, 884, 893, 912, 926, 929
+        6, 10, 25, 31, 40, 41, 42, 43, 54, 55, 56, 57, 58, 60, 63, 92, 93, 97,
+        98, 99, 134, 136, 145, 150, 162, 169, 183, 185, 188, 190, 206, 211, 215,
+        221, 245, 256, 258, 264, 270, 271, 302, 303, 307, 309, 340, 342, 345,
+        348, 351, 359, 370, 376, 384, 386, 387, 390, 391, 400, 401, 424, 426,
+        437, 452, 454, 456, 463, 469, 476, 484, 486, 487, 502, 519, 521, 522,
+        563, 565, 566, 568, 570, 573, 655, 669, 706, 747, 748, 749, 762, 774,
+        794, 825, 868, 889, 898, 917, 931, 934
       ],
       "review": "mapped-abstraction"
     },
@@ -5866,11 +5878,11 @@
     {
       "path": "src/lib/leaderboard-types.ts",
       "sha256": "c7962ed31958c9e2e99799451093993e24224cfe25df4036d76141d79867350e",
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "candidateLines": [
         71, 76, 269, 291, 339, 371, 429, 490, 498, 505, 545, 645, 676, 738, 765
       ],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
@@ -6313,7 +6325,10 @@
     {
       "path": "src/lib/referral-claims.ts",
       "sha256": "22d987f01e76e454b47fb4fc1dca8fd67675f9efd9ed82aabe38a2eac0b5bf8f",
-      "models": ["formal/models/referrals/referral_claim_review.qnt"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_claim_review.qnt"
+      ],
       "candidateLines": [36, 66, 80, 117, 125, 137, 239],
       "review": "mapped-abstraction"
     },
@@ -7659,7 +7674,8 @@
       "sha256": "3b78cec84306e6e6de8a6cffa09e88cee51def8c48f17e624ed8f2b6756764d0",
       "models": [
         "formal/models/payments/payment_worker_run.qnt",
-        "formal/models/payments/payout_readiness.qnt"
+        "formal/models/payments/payout_readiness.qnt",
+        "formal/models/payments/payout_readiness_cli.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7737,9 +7753,9 @@
     {
       "path": "workers/referral-accrual/merkle.ts",
       "sha256": "126d17070016922b3229d96cd3adb74446ade2b584965236986cff8f70272d40",
-      "models": [],
+      "models": ["formal/models/referrals/referral_account_read.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure deterministic Merkle leaf/tree/proof calculation over supplied amounts and addresses; no external state or root posting. This classification does not claim cryptographic correctness or replace the distributor state machine."
     },
     {
@@ -12814,6 +12830,36 @@
       ]
     },
     {
+      "path": "formal/models/payments/payout_readiness_cli.qnt",
+      "sha256": "6b0074e3fc12cad07cfa7a9dcac6ec266457e9bba1434d02ce8dd29f06e8c8bb",
+      "sources": [
+        "scripts/check-payout-readiness.ts",
+        "scripts/sync-project-registry.mjs",
+        "workers/payments/registry-database.mjs"
+      ],
+      "scenarios": [
+        "backpressureDoesNotActAsARefusalTest",
+        "databaseFailureComesAfterProbeTest",
+        "duplicateOriginRefusesWithoutFetchingEitherTest",
+        "failedParallelConfigDoesNotCancelSiblingTest",
+        "firstProbeFailureStillPermitsSecondProbeTest",
+        "genesisMapFailureComesAfterDatabaseReadTest",
+        "jsonWriteErrorDoesNotEraseHumanRowsTest",
+        "liveRegistryFailurePrecedesConfigReadsTest",
+        "malformedRpcMapStopsBeforeProbesTest",
+        "missingFlagValueCannotConsumeNextFlagTest",
+        "noRequirementsCanReturnNotReadyReportTest",
+        "repeatedProbeAndRequirementAreAcceptedTest",
+        "reportValidationRefusalPrintsNoRowsTest",
+        "requireWithoutProbeStopsBeforeRegistryTest",
+        "requiredFailureFollowsCompleteJsonTest",
+        "rowWriteErrorKeepsOnlyCompletedPrefixTest",
+        "secondProcessDoesNotInheritProbeResultsTest",
+        "unknownAndNonStringEntriesAreSkippedTest",
+        "unknownRequiredNetworkStopsBeforeRegistryTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/payout_rpc_probe.qnt",
       "sha256": "f6607a087fdaf52eb889239ca939bda6b9d36dce896ee4fb1c58121eeaebbded",
       "sources": [
@@ -13284,6 +13330,22 @@
       ]
     },
     {
+      "path": "formal/models/points/generation_cutoff.qnt",
+      "sha256": "459e632a2d507fe3a2c4032e2dc4097e1d6b9cc05855ee3cb5eebb9abd344f35",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "exactCurrentSecondAcceptedTest",
+        "extraOrUnsupportedArgumentsRefusedTest",
+        "fractionalCurrentSecondDoesNotPermitLaterCutoffTest",
+        "invalidCalendarTimestampRefusedTest",
+        "noArgumentsDoNotInspectInvalidClockTest",
+        "noArgumentsDoNotInventCutoffTest",
+        "noncanonicalTimestampRefusedBeforeClockTest",
+        "pastFractionalCutoffReturnedUnchangedTest",
+        "validCutoffNeedsValidClockTest"
+      ]
+    },
+    {
       "path": "formal/models/points/github_census.qnt",
       "sha256": "0fd9f48ead1f892db6ea92777ee5693c9c65110d805fde0d15489829eef51bbf",
       "sources": [
@@ -13458,6 +13520,45 @@
       "sha256": "fc4eb45346ada970828ac4912549a7523b5c3696cd58722003bcf149b50dab5b",
       "sources": ["scripts/benchmark-points-snapshot.ts"],
       "scenarios": ["nondeterministicReplayRefusedTest", "warmupExcludedTest"]
+    },
+    {
+      "path": "formal/models/referrals/referral_account_read.qnt",
+      "sha256": "d007648f309ac5f7087538bb66c0cea974c244abb1160d066387f57ba6f01d8f",
+      "sources": [
+        "backend/referrals/cache.ts",
+        "backend/referrals/claims.ts",
+        "migrations/0086_referral_accruals.sql",
+        "src/lib/referral-claims.ts",
+        "workers/referral-accrual/merkle.ts"
+      ],
+      "scenarios": [
+        "absentLeafCreatesNoClaimTest",
+        "allVoidedRootsSkipFileAndKeepAccruedPendingTest",
+        "alreadyClaimedCumulativeLeafCreatesNoClaimTest",
+        "amountsBeyondAccrualRefuseResponseTest",
+        "bodylessCacheKeepsAmountsUnknownTest",
+        "cookieChangeDoesNotRetargetAdmittedReadTest",
+        "exactAgeBoundaryRemainsReadyTest",
+        "invalidMerkleProofRefusesWholeResponseTest",
+        "lateCacheReplacementCannotMixClaimedTotalsTest",
+        "latestFileAppendDoesNotReplaceCapturedAccrualTest",
+        "latestPausePreventsReviewWithoutErasingClaimTest",
+        "missingCacheHidesProgramTest",
+        "missingLiveFileHidesProgramTest",
+        "missingMatchingRootFileRefusesResponseTest",
+        "movingClockDoesNotMatureUnrefreshedRootTest",
+        "olderFinalizedClockAloneMakesResponseStaleTest",
+        "olderObservedClockAloneMakesResponseStaleTest",
+        "pausedEndedStaleEvidenceStillDisplaysProofTest",
+        "readyResponseConservesAmountsTest",
+        "responseMayAgeAfterCapturedFreshnessCheckTest",
+        "secondActorOnlyReceivesItsOwnPinnedLeafTest",
+        "signedOutReadRefusesBeforePrivateCacheTest",
+        "unmatchedActorWalletRecordCreatesNoClaimTest",
+        "voidedLatestFallsBackToOlderRootTest",
+        "walletlessAccrualHasNoAddressInferenceTest",
+        "wrongMethodRefusesBeforeSessionTest"
+      ]
     },
     {
       "path": "formal/models/referrals/referral_accrual.qnt",
@@ -14000,6 +14101,28 @@
         "reviewCannotPrecedeContributionTest",
         "reviewerPullPairRejectsDifferentReviewFragmentsTest",
         "secondInvalidManifestNeverReturnsFirstPrefixTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/evaluated_award_window.qnt",
+      "sha256": "25b831b9d30cb64c3441883462db0b1f3bb0f3d23d999502190eb654ce8c6242",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "src/lib/leaderboard-types.ts"
+      ],
+      "scenarios": [
+        "actualClockFloorsBeforeFutureCheckTest",
+        "correctedRetryDoesNotRetainAcceptedPrefixTest",
+        "emptyValidWindowReturnsEmptyTest",
+        "equalFlooredBoundsAreEmptyTest",
+        "fractionalEventInsideWindowIsRetainedTest",
+        "futureEventOutsideWindowStillRefusesTest",
+        "futureWindowRefusesBeforeEventsTest",
+        "inclusiveStartExclusiveEndTest",
+        "inputOrderAndDuplicateIdentitiesArePreservedTest",
+        "invalidDateRefusesBeforeRangeCheckTest",
+        "invalidOutsideWindowEventStillRefusesBatchTest",
+        "malformedTimestampOutsideWindowStillRefusesTest"
       ]
     },
     {
@@ -16442,9 +16565,34 @@
     },
     {
       "path": "formal/models/ui/ui_email.qnt",
-      "sha256": "61f08c34ad3389623fe38662562fb4ae885553b41661558f1137b1273deb9b1f",
+      "sha256": "4fa1fe851728a307bc37859d9e5a659c2a7a6a2eac40b8147f7b682726472eae",
       "sources": ["src/InboxEmail.tsx"],
-      "scenarios": ["accountChangeTest", "unsubscribeTest", "verifyTest"]
+      "scenarios": [
+        "acceptedReplayCanReturnUnknownDeliveryTest",
+        "acceptedSnapshotCanReflectCompletedVerificationTest",
+        "actorChangeDropsDraftAndKeyTest",
+        "backgroundCheckPreservesEditableDraftTest",
+        "backgroundCheckStillAllowsCancelTest",
+        "cancelKeepsPendingReceiptTest",
+        "changedConsentGetsNewKeyTest",
+        "delayedEnrollmentCanAlreadyBeSentTest",
+        "destinationConflictRequiresFreshReadTest",
+        "eachSwitchKeepsTheOtherChoiceTest",
+        "editedAddressGetsNewKeyTest",
+        "enrollmentUnavailableHidesEditorTest",
+        "noLocalExpiryRepaintClaimTest",
+        "pendingAddressPrefillsEditorTest",
+        "preferenceFailureKeepsPriorFlagsTest",
+        "queuedDoesNotActivateConsentTest",
+        "refreshedExpiryChangesOnlyReceiptTest",
+        "sameFailedRequestReusesKeyTest",
+        "turningBothOffNeedsNoVersionTest",
+        "turningOneOffRetainsVersionForOtherOnTest",
+        "unavailableDestinationCannotOptInTest",
+        "unavailableDestinationStillAllowsOptOutTest",
+        "unverifiedStartsWithEnrollmentTest",
+        "verifiedAddressPrefillsWithoutPendingTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_email_actions.qnt",
@@ -16491,6 +16639,24 @@
         "unsubscribeIgnoresSessionEventTest",
         "unsubscribeNeedsNoSessionTest",
         "unsubscribeSessionEventIsDisabledTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_email_focus_lifetime.qnt",
+      "sha256": "3a756c53f1fa9cb5638bf32bac6193295023398cf872fe7d0845f2d7214978f3",
+      "sources": ["src/InboxEmail.tsx"],
+      "scenarios": [
+        "busyMutationIgnoresFocusTest",
+        "capturedCallbackAfterDepartureCannotLoadTest",
+        "committedOwnerStartsPassiveInitialTest",
+        "currentFocusAfterReplacementCanLoadTest",
+        "departureAbortsCurrentReadTest",
+        "departureRemovesListenerBeforeFocusTest",
+        "focusRefreshStartsOwnedReadTest",
+        "oldListenerCouldRestartAfterRemovalNegativeControlTest",
+        "oldLoadAfterContextReplacementCannotLoadTest",
+        "oldPassiveInitialCannotLoadReplacementTest",
+        "passiveInitialNeedsCommittedOwnerTest"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1a2e28962a0b2fd957e6d202c44576c1363d62e68637f60edaf8a8456ceeda2d",
+  "inventorySha256": "009dab1483d360abb260aa2813b15eda34e0a00d2eb3a6c0b2a887856887bb9f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1450,7 +1450,10 @@
         "referrer_excluded",
         "window_closed"
       ],
-      "models": ["formal/models/referrals/referral_accrual.qnt"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_accrual.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "asset_not_eligible",
         "held",
@@ -1467,7 +1470,10 @@
       "name": "mode",
       "kind": "sql-check",
       "values": ["dry_run", "live"],
-      "models": ["formal/models/referrals/referral_accrual.qnt"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_accrual.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -1972,9 +1978,11 @@
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/generation_cutoff.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/rewards/evaluated_award_window.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged", "open"],
@@ -1992,9 +2000,11 @@
         "resolved-issues"
       ],
       "models": [
+        "formal/models/points/generation_cutoff.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/rewards/evaluated_award_window.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": [
@@ -2012,9 +2022,11 @@
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/generation_cutoff.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/rewards/evaluated_award_window.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged"],
@@ -2027,9 +2039,11 @@
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/generation_cutoff.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
+        "formal/models/rewards/evaluated_award_window.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
@@ -2172,51 +2186,48 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 24,
+      "line": 25,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_focus_lifetime.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_email_preference_requests.qnt",
         "formal/models/ui/ui_explicit_signout.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "expired",
-        "queued",
-        "sending",
-        "sent",
-        "unknown"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 37,
+      "line": 38,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_focus_lifetime.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_email_preference_requests.qnt",
         "formal/models/ui/ui_explicit_signout.qnt"
       ],
-      "lexicallyUnmentionedValues": ["unavailable", "unverified"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 40,
+      "line": 41,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
+        "formal/models/ui/ui_email_focus_lifetime.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_email_preference_requests.qnt",
         "formal/models/ui/ui_explicit_signout.qnt"
@@ -2745,7 +2756,7 @@
         "DISMISSED",
         "PENDING"
       ],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": [
         "APPROVED",
         "CHANGES_REQUESTED",
@@ -2761,7 +2772,7 @@
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
       "review": "candidate-only"
     },
@@ -2771,7 +2782,7 @@
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["APPROVED", "CHANGES_REQUESTED"],
       "review": "candidate-only"
     },
@@ -2781,7 +2792,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["claimed", "unclaimed"],
       "review": "candidate-only"
     },
@@ -2791,7 +2802,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["complete", "missing", "partial"],
       "review": "candidate-only"
     },
@@ -2801,7 +2812,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["candidate", "excluded"],
       "review": "candidate-only"
     },
@@ -2811,7 +2822,7 @@
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": ["complete", "suppressed-limit"],
       "review": "candidate-only"
     },
@@ -2821,7 +2832,7 @@
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
-      "models": [],
+      "models": ["formal/models/rewards/evaluated_award_window.qnt"],
       "lexicallyUnmentionedValues": [
         "history",
         "latestDigest",
@@ -3108,8 +3119,11 @@
       "name": "status",
       "kind": "string-union",
       "values": ["ready", "stale", "unknown"],
-      "models": ["formal/models/referrals/referral_claim_review.qnt"],
-      "lexicallyUnmentionedValues": ["ready", "stale"],
+      "models": [
+        "formal/models/referrals/referral_account_read.qnt",
+        "formal/models/referrals/referral_claim_review.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

@@ -110,6 +110,7 @@ async function serveAccount(page: Page) {
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       state: "sent",
     } as { email: string; expiresAt: string; state: string } | null,
+    verificationStatus: 202 as 202 | 429 | 503,
     requests: [] as { body: Record<string, unknown>; actor?: string }[],
   };
   const preference = () => ({
@@ -157,6 +158,14 @@ async function serveAccount(page: Page) {
         body: request.postDataJSON(),
         actor: request.headers()["x-slop-expected-github-id"],
       });
+      if (state.verificationStatus !== 202)
+        return route.fulfill({
+          status: state.verificationStatus,
+          json:
+            state.verificationStatus === 429
+              ? { retryAfter: 1 }
+              : { error: "temporarily_unavailable" },
+        });
       state.pending = {
         email: request.postDataJSON().email,
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -263,3 +272,87 @@ test("Change email replaces a pending verification address", async ({
   ).toBeVisible();
   await expectAccessible(page);
 });
+
+test("verification retries reuse an unchanged request key and edited choices start a new request", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowCanceledBackgroundReads();
+  diagnostics.allowResponse(
+    429, "POST", "/api/v1/notifications/email/verification",
+  );
+  diagnostics.allowResponse(
+    503, "POST", "/api/v1/notifications/email/verification",
+  );
+  const state = await serveAccount(page);
+  await page.goto(`${origins.site}/account#notifications`, {
+    waitUntil: "networkidle",
+  });
+  const preferences = page.getByRole("region", {
+    name: "Email preferences", exact: true,
+  });
+  await preferences
+    .getByRole("button", { name: "Change email", exact: true }).click();
+  await preferences
+    .getByRole("textbox", { name: "Email address", exact: true })
+    .fill("retry@example.test");
+  const send = preferences.getByRole("button", {
+    name: "Send verification", exact: true,
+  });
+  state.verificationStatus = 429;
+  await send.click();
+  await expect(preferences.getByRole("alert")).toHaveText(
+    "Try again in 1 seconds.",
+  );
+  state.verificationStatus = 503;
+  await send.click();
+  await expect(preferences.getByRole("alert")).toHaveText(
+    "The verification email could not be requested. Retry.",
+  );
+  expect(state.requests).toHaveLength(2);
+  expect(state.requests[1].body).toEqual(state.requests[0].body);
+  expect(state.pending?.email).toBe("first@example.test");
+  await preferences
+    .getByRole("checkbox", { name: "Security email", exact: true }).check();
+  state.verificationStatus = 202;
+  await send.click();
+  await expect(preferences.getByRole("status")).toContainText(
+    "Verification requested: retry@example.test",
+  );
+  expect(state.requests).toHaveLength(3);
+  expect(state.requests[2].body.idempotencyKey).not.toBe(
+    state.requests[0].body.idempotencyKey,
+  );
+  expect(state.requests[2]).toMatchObject({
+    actor: ACTOR,
+    body: { email: "retry@example.test", enabled: false, securityEnabled: true },
+  });
+  await expect(
+    preferences.getByRole("switch", { name: "Activity email", exact: true }),
+  ).not.toBeChecked();
+  await expect(
+    preferences.getByRole("switch", { name: "Security email", exact: true }),
+  ).not.toBeChecked();
+});
+
+for (const [stateName, label] of [
+  ["unknown", "Verification delivery not confirmed"],
+  ["expired", "Verification expired"],
+] as const)
+  test(`${stateName} verification remains editable without implying a verified destination`, async ({ page, diagnostics }) => {
+    diagnostics.allowCanceledBackgroundReads();
+    const state = await serveAccount(page);
+    if (!state.pending) throw new Error("Missing pending fixture");
+    state.pending.state = stateName;
+    if (stateName === "expired")
+      state.pending.expiresAt = new Date(Date.now() - 1000).toISOString();
+    await page.goto(`${origins.site}/account#notifications`, { waitUntil: "networkidle" });
+    const preferences = page.getByRole("region", { name: "Email preferences", exact: true });
+    await expect(preferences.getByRole("status")).toContainText(`${label}: first@example.test`);
+    await expect(preferences.getByRole("switch", { name: "Activity email", exact: true })).toBeDisabled();
+    await preferences.getByRole("button", { name: "Change email", exact: true }).click();
+    await expect(preferences.getByRole("textbox", { name: "Email address", exact: true })).toHaveValue("first@example.test");
+    await preferences.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(preferences.getByRole("status")).toContainText(`${label}: first@example.test`);
+    expect(state.requests).toEqual([]);
+  });

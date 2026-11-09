@@ -1144,7 +1144,37 @@ tested or verified here:
   positive Solana slots. Seventeen new configuration/RPC regression cases are
   defined but unexecuted. Endpoint observations establish neither provider
   honesty nor contract deployment, signer custody or permission to activate.
-  CLI argument/file/output-process composition remains a separate audit boundary.
+  `payout_readiness_cli` covers argument/file/output-process composition separately.
+- `payout_readiness_cli` now covers that command composition in 19 scenarios:
+  argument consumption, local/live registry selection, parallel configuration
+  reads, map validation, sequential probes, complete report output and the later
+  required-network exit. Failed output can retain a prefix; backpressure is not
+  delivery proof. Twelve real-entrypoint regression definitions use a clean
+  child environment and local fixtures. These were not executed.
+- `evaluated_award_window` and `generation_cutoff` add 12 and 9 scenarios for
+  historical window selection and explicit cutoff parsing. Date inputs floor
+  to whole seconds, while exact event and supplied cutoff timestamps retain
+  their fractions. The window is start-inclusive/end-exclusive and preserves
+  input order and duplicates. Every event is validated before a result returns,
+  including events outside the window; a later failure exposes no accepted
+  prefix. Thirteen pure-function regression cases are defined but unexecuted.
+- `referral_account_read` adds 26 scenarios for the captured actor, cache,
+  latest filed accrual, wallet pin, matching root file and validated response.
+  A stale, paused or ended response can retain historical amounts and its proof
+  for display; claim review has independent refusal gates. Missing bodies keep
+  amounts unknown rather than zero, and the exact 48-hour age is still fresh.
+  Five API/SQLite regression definitions cover those boundaries without
+  activating referrals or executing providers.
+- `ui_email` now models settings and enrollment snapshots, saved consent flags,
+  independent channels, request-key reuse/reset and pending verification states
+  in 24 scenarios. It no longer conflates settings with verification-link
+  consumption. `ui_email_focus_lifetime` adds 11 scenarios for the listener's
+  entry into the existing request-ownership model. The component now retires
+  its focus listener during layout cleanup and rejects a captured inactive
+  load context before allocating a generation or starting an account read.
+  This fixes a focus event restarting private reads after removal. Four browser
+  regression cases are defined; execution, before/after video and the required
+  UI checks remain outstanding. Existing layout, labels and controls are intact.
 
 ## Acceptance requirements and limits
 

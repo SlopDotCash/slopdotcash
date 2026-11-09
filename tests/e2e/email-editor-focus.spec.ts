@@ -259,6 +259,61 @@ async function serveAccount(
 
 test.use({ video: "on" });
 
+test("focus at committed email removal cannot restart its private preference read", async ({
+  page,
+  context,
+}) => {
+  const { preferences } = await serveAccount(page, context);
+  await page.evaluate((actor) => {
+    const fetch = window.fetch.bind(window);
+    const state = { removed: false, emailReads: 0 };
+    Object.assign(window, { retiredEmailFocus: state });
+    window.fetch = (input, init) => {
+      const path = new URL(
+        input instanceof Request ? input.url : String(input),
+        location.href,
+      ).pathname;
+      // Keep the fixture's known actor, with a fully available body, so the
+      // old callback's awaited identity check cannot hide a late email GET.
+      if (path === "/api/v1/project-session")
+        return Promise.resolve(
+          Response.json({
+            session: {
+              githubId: actor,
+              githubLogin: `member-${actor}`,
+              admin: false,
+            },
+          }),
+        );
+      if (path === "/api/v1/notifications/email") state.emailReads++;
+      return fetch(input, init);
+    };
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector(".inbox-email-settings")) {
+        state.removed = true;
+        window.dispatchEvent(new Event("focus"));
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { subtree: true, childList: true });
+    history.pushState({}, "", "/how-it-works");
+    dispatchEvent(new PopStateEvent("popstate"));
+  }, FIRST);
+  await expect(preferences).toHaveCount(0);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }),
+  );
+  expect(
+    await page.evaluate(() => (
+      window as typeof window & {
+        retiredEmailFocus: { removed: boolean; emailReads: number };
+      }
+    ).retiredEmailFocus),
+  ).toEqual({ removed: true, emailReads: 0 });
+});
+
 test("same-account focus keeps the email draft editable while send is blocked", async ({
   page,
   context,

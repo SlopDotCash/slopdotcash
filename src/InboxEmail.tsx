@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -115,8 +116,14 @@ export function InboxEmail({
     resetEditor();
     actorRef.current = null;
   }, [resetEditor]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each load context needs its own revocable ownership token.
+  const loadOwner = useMemo(
+    () => ({ active: false }),
+    [accountActor, resetIdentity, setError],
+  );
   const load = useCallback(
     (background = false) => {
+      if (!loadOwner.active) return;
       const current = ++generation.current;
       controllerRef.current?.abort();
       const controller = new AbortController();
@@ -218,27 +225,25 @@ export function InboxEmail({
       })();
       return () => controller.abort();
     },
-    [accountActor, resetIdentity, setError],
+    [accountActor, loadOwner, resetIdentity, setError],
   );
   // Retire request ownership in the removal commit, before a resolved actor
-  // check can resume. Loading and focus subscriptions remain passive.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
-  useLayoutEffect(
-    () => () => {
-      generation.current += 1;
-      controllerRef.current?.abort();
-    },
-    [load],
-  );
-  useEffect(() => {
-    load();
+  // check or a captured focus callback can resume. Initial loading stays passive.
+  useLayoutEffect(() => {
+    loadOwner.active = true;
     const refresh = () => {
       if (!busyRef.current) load(true);
     };
     window.addEventListener("focus", refresh);
     return () => {
+      loadOwner.active = false;
+      generation.current += 1;
+      controllerRef.current?.abort();
       window.removeEventListener("focus", refresh);
     };
+  }, [load, loadOwner]);
+  useEffect(() => {
+    load();
   }, [load]);
 
   async function checkActor(actor: string, expectedGeneration: number) {
