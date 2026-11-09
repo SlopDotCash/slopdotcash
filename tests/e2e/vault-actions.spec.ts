@@ -41,6 +41,17 @@ import {
   test,
 } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
+import {
+  holdVaultWalletPreflight,
+  leaveWithVaultPreflight,
+  releaseVaultPreflight,
+  waitForVaultPreflight,
+} from "./vault-request-fixture";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -411,6 +422,27 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     path: info.outputPath("deposit-review.png"),
     fullPage: true,
   });
+  // A final identity reply at committed departure must not open a new wallet
+  // request or create its pending record. Real Anvil review calls ran above.
+  const pendingKey = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  await holdVaultWalletPreflight(page, ".vault-actions");
+  await page.evaluate(() => {
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  await actions.getByRole("button", { name: "Approve exact token amount in wallet" }).click();
+  try {
+    await leaveWithVaultPreflight(page);
+    expect(sends).toEqual([]);
+    expect(await page.evaluate((key) => sessionStorage.getItem(key), pendingKey)).toBeNull();
+  } finally {
+    await releaseVaultPreflight(page);
+  }
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await actions.getByRole("button", { name: "Connect MetaMask", exact: true }).click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("10");
+  await actions.getByRole("button", { name: "Review deposit", exact: true }).click();
   rejected = true;
   await actions
     .getByRole("button", { name: "Approve exact token amount in wallet" })
@@ -2272,6 +2304,33 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
+    // A capability refresh can finish while the final wallet identity check
+    // waits. The old click must use the newly committed deposit restriction.
+    await funding.getByLabel("Deposit tokens").check();
+    await funding.getByLabel("Token amount").fill("1");
+    await funding.getByRole("button", { name: "Review deposit", exact: true }).click();
+    const sentBeforeRestriction = sends.length;
+    const bountyPendingKey = `slop:vault-action:v1:${created.network}:${created.vault}:${created.asset}`;
+    await holdVaultWalletPreflight(page);
+    await funding.getByRole("button", { name: "Approve exact token amount in wallet" }).click();
+    try {
+      await waitForVaultPreflight(page);
+      await page.request.post(`${origin}/__fixture`, { data: { privateReadUnavailable: true } });
+      const restricted = page.waitForResponse((response) => response.url() === privateUrl && response.status() === 503);
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await restricted;
+      await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
+      await releaseVaultPreflight(page);
+      expect(sends).toHaveLength(sentBeforeRestriction);
+      expect(await page.evaluate((key) => sessionStorage.getItem(key), bountyPendingKey)).toBeNull();
+      await expect(funding.getByRole("alert")).toContainText("New deposits are currently unavailable");
+    } finally {
+      await releaseVaultPreflight(page);
+    }
+    await page.request.post(`${origin}/__fixture`, { data: { privateReadUnavailable: false } });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
+    await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
@@ -2286,8 +2345,8 @@ test("owner registers a separate bounty vault through the API and funds it priva
       await page.request.get(`${origin}/api/v1/projects/${id}`)
     ).text();
     expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
-    expect(failed).toEqual([`503 ${privateUrl}`]);
-    expect(expectedPrivateErrors).toBe(1);
+    expect(failed).toEqual([`503 ${privateUrl}`, `503 ${privateUrl}`]);
+    expect(expectedPrivateErrors).toBe(2);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -2298,6 +2357,26 @@ test("owner registers a separate bounty vault through the API and funds it priva
       path: info.outputPath("bounty-vault-funded-open.png"),
       fullPage: true,
     });
+    // The old private read must not start after its owner view has gone.
+    let departedPrivateReads = 0;
+    await page.route(privateUrl, (route) => {
+      departedPrivateReads += 1;
+      return route.fallback();
+    });
+    await holdProjectSessionUntilUnmount(page, '[aria-label="Bounty funds"]');
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    try {
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await leaveEditorWithHeldSession(page);
+      expect(departedPrivateReads).toBe(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+      await page.unroute(privateUrl);
+    }
     await page.goto(`${origin}/projects/${project.slug}/manage`, {
       waitUntil: "networkidle",
     });
@@ -2338,8 +2417,8 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(bountyFunds).toContainText(
       "Available for new awards: 10 USDC",
     );
-    expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
-    expect(expectedPrivateErrors).toBe(2);
+    expect(failed).toEqual([`503 ${privateUrl}`, `503 ${privateUrl}`, `403 ${privateUrl}`]);
+    expect(expectedPrivateErrors).toBe(3);
     let releasePrivateRead = () => {},
       privateReadStarted = () => {};
     const privateReadWaiting = new Promise<void>((resolve) => {

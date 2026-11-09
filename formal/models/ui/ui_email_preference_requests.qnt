@@ -3,7 +3,9 @@
 // @evidence tests/e2e/email-editor-focus.spec.ts
 // Unexecuted request-ownership projection for InboxEmail, not InboxEmailAction.
 // Two requests, two component lifetimes, two actors, two draft identities.
-// Provider observations and a mutation's captured cookie remain separate.
+// Provider observations, nested helper return, caller use and a mutation's
+// captured cookie remain separate. Layout cleanup invalidates generation at
+// the committed removal; fetch/status effects stay passive.
 module ui_email_preference_requests {
   type Request = { kind: str, phase: str, generation: int, actor: int,
     cookie: int, status: int, accepted: bool, target: bool, observedActor: int }
@@ -61,9 +63,15 @@ module ui_email_preference_requests {
       s.requests.set(id, s.requests.get(id).with("phase", "pre-wait"))) }
   // -1 is an unreadable session; 0 is a confirmed signed-out response. A
   // session reply is an observation, not a synchronous view of the cookie.
-  action preflightReply(id: int, observed: int): bool = {
+  action preflightObserve(id: int, observed: int): bool = all {
+    s.requests.get(id).phase == "pre-wait", observedActors.contains(observed),
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "pre-observed").with("observedActor", observed))) }
+  action preflightReturn(id: int): bool = all { s.requests.get(id).phase == "pre-observed",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "pre-returned"))) }
+  action preflightUse(id: int, observed: int): bool = {
     val r = s.requests.get(id)
-    all { r.phase == "pre-wait", observedActors.contains(observed),
+    all { r.phase == "pre-returned", observed == r.observedActor, observedActors.contains(observed),
       s' = if (not(owns(id))) done(s, id)
       else if (r.kind == "read" and observed == 0)
         s.with("view", "loading").with("draft", 0).with("editing", false).with("key", false)
@@ -71,6 +79,8 @@ module ui_email_preference_requests {
       else if (observed != r.actor) lost(s, id, observed)
       else s.with("requests", s.requests.set(id, r.with("phase", "dispatch"))) }
   }
+  action preflightReply(id: int, observed: int): bool = preflightObserve(id, observed)
+    .then(preflightReturn(id)).then(preflightUse(id, observed))
   action dispatch(id: int): bool = {
     val r = s.requests.get(id)
     all { owns(id), r.phase == "dispatch",
@@ -117,12 +127,18 @@ module ui_email_preference_requests {
     owns(id), s.requests.get(id).phase == "post",
     s' = s.with("sessionReads", s.sessionReads + 1).with("requests",
       s.requests.set(id, s.requests.get(id).with("phase", "post-wait"))) }
-  action postflightReply(id: int, observed: int): bool = {
+  action postflightObserve(id: int, observed: int): bool = all {
+    s.requests.get(id).phase == "post-wait", observedActors.contains(observed),
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "post-observed").with("observedActor", observed))) }
+  action postflightReturn(id: int): bool = all { s.requests.get(id).phase == "post-observed",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "post-returned"))) }
+  action postflightUse(id: int, observed: int): bool = {
     val r = s.requests.get(id)
     val finished = done(s, id).with("busy", false).with("requests",
       s.requests.set(id, r.with("phase", "done").with("observedActor", observed)))
     val published = finished.with("publication", id).with("publicationGeneration", s.generation)
-    all { r.phase == "post-wait", observedActors.contains(observed),
+    all { r.phase == "post-returned", observed == r.observedActor, observedActors.contains(observed),
       s' = if (not(owns(id))) done(s, id)
       else if (observed != r.actor) lost(s, id, observed)
       else if (r.kind == "read") published.with("view", "ready").with("checking", false)
@@ -131,6 +147,8 @@ module ui_email_preference_requests {
         .with("editing", false).with("key", false)
       else s.with("requests", s.requests.set(id, r.with("phase", "failure"))) }
   }
+  action postflightReply(id: int, observed: int): bool = postflightObserve(id, observed)
+    .then(postflightReturn(id)).then(postflightUse(id, observed))
   action requestFailure(id: int): bool = all {
     Set("dispatch", "http", "body").contains(s.requests.get(id).phase),
     s' = if (not(owns(id))) done(s, id)
@@ -140,13 +158,21 @@ module ui_email_preference_requests {
     owns(id), s.requests.get(id).phase == "failure",
     s' = s.with("sessionReads", s.sessionReads + 1).with("requests",
       s.requests.set(id, s.requests.get(id).with("phase", "failure-wait"))) }
-  action failureCheckReply(id: int, observed: int): bool = {
+  action failureCheckObserve(id: int, observed: int): bool = all {
+    s.requests.get(id).phase == "failure-wait", observedActors.contains(observed),
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("phase", "failure-observed").with("observedActor", observed))) }
+  action failureCheckReturn(id: int): bool = all { s.requests.get(id).phase == "failure-observed",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "failure-returned"))) }
+  action failureCheckUse(id: int, observed: int): bool = {
     val r = s.requests.get(id)
-    all { r.phase == "failure-wait", observedActors.contains(observed),
+    all { r.phase == "failure-returned", observed == r.observedActor, observedActors.contains(observed),
       s' = if (not(owns(id))) done(s, id)
       else if (observed != r.actor) lost(s, id, observed)
       else done(s, id).with("busy", false).with("error", if (r.status == 429) "rate-limit" else "request") }
   }
+  action failureCheckReply(id: int, observed: int): bool = failureCheckObserve(id, observed)
+    .then(failureCheckReturn(id)).then(failureCheckUse(id, observed))
   action depart = all { s.mounted,
     s' = s.with("mounted", false).with("generation", s.generation + 1)
       .with("publication", 0).with("view", "departed") }
@@ -160,9 +186,9 @@ module ui_email_preference_requests {
     nondet valid = Set(false, true).oneOf()
     any { cookieChanges(0), cookieChanges(1), cookieChanges(2), editDraft(id),
       beginAction(id, "save"), beginAction(id, "verify"), beginRead(id, valid),
-      preflightStart(id), preflightReply(id, observed), dispatch(id), accepted(id),
-      httpReply(id, status), bodyReply(id, valid), postflightStart(id), postflightReply(id, observed),
-      requestFailure(id), failureCheckStart(id), failureCheckReply(id, observed), depart, remount, s' = s }
+      preflightStart(id), preflightObserve(id, observed), preflightReturn(id), preflightUse(id, observed), dispatch(id), accepted(id),
+      httpReply(id, status), bodyReply(id, valid), postflightStart(id), postflightObserve(id, observed), postflightReturn(id), postflightUse(id, observed),
+      requestFailure(id), failureCheckStart(id), failureCheckObserve(id, observed), failureCheckReturn(id), failureCheckUse(id, observed), depart, remount, s' = s }
   }
   val invariant = all { s.generation >= 1, s.generation <= 6,
     s.posts <= 2, s.reads <= 2, s.reloads <= 2, s.sessionReads <= 6,
@@ -218,4 +244,20 @@ module ui_email_preference_requests {
     .expect(s.key and s.draft == 1 and s.error == "rate-limit")
   run unacceptedSaveCannotPublishTest = init.then(sendSave).then(httpReply(1, 200).fail())
   run unacceptedVerificationCannotPublishTest = init.then(sendVerification).then(httpReply(1, 202).fail())
+  run departedObservedPreflightCannotPostTest = init.then(beginAction(1, "verify"))
+    .then(preflightStart(1)).then(preflightObserve(1, 1)).then(depart)
+    .then(preflightReturn(1)).then(preflightUse(1, 1)).then(dispatch(1).fail())
+  run departedReturnedPostflightCannotPublishTest = init.then(sendSave).then(accepted(1))
+    .then(httpReply(1, 200)).then(bodyReply(1, true)).then(postflightStart(1))
+    .then(postflightObserve(1, 1)).then(postflightReturn(1)).then(depart).then(remount)
+    .then(postflightUse(1, 1)).expect(s.publication == 0 and s.draft == 2)
+  run departedObservedFailureCannotPublishErrorTest = init.then(sendSave).then(requestFailure(1))
+    .then(failureCheckStart(1)).then(failureCheckObserve(1, 1)).then(depart).then(remount)
+    .then(failureCheckReturn(1)).then(failureCheckUse(1, 1)).expect(s.error == "none")
+  // Historical passive cleanup left generation current after DOM removal.
+  // Excluded from step: demonstrates why the committed layout fence matters.
+  action oldPassiveCommit = s' = s.with("view", "departed")
+  run oldPassiveCommitCouldDispatchVerificationTest = init.then(beginAction(1, "verify"))
+    .then(preflightStart(1)).then(preflightObserve(1, 1)).then(oldPassiveCommit)
+    .then(preflightReturn(1)).then(preflightUse(1, 1)).then(dispatch(1)).expect(s.posts == 1)
 }

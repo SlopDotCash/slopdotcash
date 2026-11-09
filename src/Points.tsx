@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -743,7 +744,7 @@ function JoinPoints({
   const [message, setMessage] = useState("");
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
-  useEffect(() => () => active.current?.abort(), []);
+  useLayoutEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     if (!me)
       setMessage((current) =>

@@ -6,14 +6,18 @@
 // @evidence tests/e2e/points-disputes.spec.ts
 // Two component lifetimes/actors, two read callbacks and two mutation callbacks.
 // Request/result grammar and backend decisions are external predicates.
-// No mutex or mutation-generation fence is assumed. Authored without execution.
+// No mutex or mutation-generation fence is assumed. Committed layout cleanup
+// retires component and read ownership; HTTP/session observations are inputs,
+// not continuous cookie truth. Authored without execution.
 module ui_points_disputes {
+  type Observation = {outcome:int,payload:int,draft:bool,decider:bool,actor:int,refused:bool}
   type Request = {epoch:int,actor:int,target:int,kind:str,phase:str}
   type State = {mounted:bool,epoch:int,actor:int,cookie:int,parent:str,url:int,keyTarget:int,
     selected:int,cursor:int,page:int,nextPage:bool,detail:int,detailId:int,privateOwner:int,
     draft:bool,mayDecide:bool,award:int,reason:bool,decision:bool,
     busy:bool,error:str,reload:bool,activeRead:int,reads:int->Request,
-    mutations:int->Request,accepted:Set[int],parentNotifications:int}
+    mutations:int->Request,accepted:Set[int],parentNotifications:int,
+    readObservations:int->Observation,mutationObservations:int->Observation}
   pure val ids=Set(1,2)
   pure val unused={epoch:0,actor:0,target:0,kind:"none",phase:"unused"}
   var s:State
@@ -22,7 +26,9 @@ module ui_points_disputes {
     draft:false,mayDecide:false,award:0,reason:false,decision:false,
     busy:false,error:"none",reload:true,activeRead:0,
     reads:ids.mapBy(_=>unused),mutations:ids.mapBy(_=>unused),
-    accepted:Set(),parentNotifications:0}
+    accepted:Set(),parentNotifications:0,
+    readObservations:ids.mapBy(_=>{outcome:0,payload:1,draft:false,decider:false,actor:0,refused:false}),
+    mutationObservations:ids.mapBy(_=>{outcome:0,payload:1,draft:false,decider:false,actor:0,refused:false})}
   def clearPrivate(value:State):State=value.with("page",0).with("nextPage",false)
     .with("detail",0).with("detailId",0).with("draft",false).with("mayDecide",false)
     .with("award",0).with("reason",false).with("decision",false).with("privateOwner",0)
@@ -73,16 +79,32 @@ module ui_points_disputes {
   // outcome: 0 same-actor transport failure; 1 accepted JSON; 2 authority
   // refusal after body; 3 session unavailable. A refused HTTP response cannot
   // become a successful payload because the later session happens to match.
-  action readReply(id:int,outcome:int,payload:int,draft:bool,decider:bool):bool={
+  // The helper's session observation does not own the later caller callback.
+  // Committed removal aborts the read before either can invalidate its parent.
+  action observeRead(id:int,outcome:int,payload:int,draft:bool,decider:bool):bool={
     val request=s.reads.get(id)
-    val current=owns(request) and s.activeRead==id
-    val invalid=request.phase=="refused-session" or outcome==3 or s.cookie!=request.actor
-    val changedIdentity=outcome!=3 and s.cookie!=request.actor
-    val finished=s.with("reads",s.reads.set(id,request.with("phase","done")))
     all{Set("pending","refused-session").contains(request.phase),
       outcome>=0,outcome<=3,payload>=1,payload<=3,
       request.phase!="pending" or outcome!=2,
       request.phase!="refused-session" or outcome!=1,
+      s'=s.with("reads",s.reads.set(id,request.with("phase","session-observed")))
+        .with("readObservations",s.readObservations.set(id,{outcome:outcome,payload:payload,
+          draft:draft,decider:decider,actor:s.cookie,refused:request.phase=="refused-session"}))}
+  }
+  action returnRead(id:int):bool=all{s.reads.get(id).phase=="session-observed",
+    s'=s.with("reads",s.reads.set(id,s.reads.get(id).with("phase","session-returned")))}
+  action useRead(id:int):bool={
+    val observation=s.readObservations.get(id)
+    val outcome=observation.outcome
+    val payload=observation.payload
+    val draft=observation.draft
+    val decider=observation.decider
+    val request=s.reads.get(id)
+    val current=owns(request) and s.activeRead==id
+    val invalid=observation.refused or outcome==3 or observation.actor!=request.actor
+    val changedIdentity=outcome!=3 and observation.actor!=request.actor
+    val finished=s.with("reads",s.reads.set(id,request.with("phase","done")))
+    all{request.phase=="session-returned",
       s'=if(not(current))finished
       else if(invalid)clearPrivate(finished).with("busy",false).with("error","identity")
         .with("parent","loading").with("parentNotifications",s.parentNotifications+1)
@@ -93,6 +115,8 @@ module ui_points_disputes {
       else finished.with("busy",false).with("detail",payload).with("detailId",request.target)
         .with("draft",draft).with("mayDecide",payload==2 and decider).with("privateOwner",s.actor)}
   }
+  action readReply(id:int,outcome:int,payload:int,draft:bool,decider:bool):bool=
+    observeRead(id,outcome,payload,draft,decider).then(returnRead(id)).then(useRead(id))
   action retryRead=all{visible,s.error!="none",s'=s.with("reload",true)}
   action olderRecords=all{visible,not(s.busy),view=="list",s.nextPage,s.cursor==0,
     s'=s.with("cursor",1).with("reload",true)}
@@ -130,15 +154,26 @@ module ui_points_disputes {
     all{Set("pending","refused-body").contains(request.phase),
       s'=if(owns(request))clearPrivate(waiting) else waiting}
   }
-  action mutationReply(id:int,outcome:int):bool={
+  action observeMutation(id:int,outcome:int):bool={
     val request=s.mutations.get(id)
-    val invalid=request.phase=="refused-session" or outcome==3 or s.cookie!=request.actor
-    val changedIdentity=outcome!=3 and s.cookie!=request.actor
-    val finished=s.with("mutations",s.mutations.set(id,request.with("phase","done")))
     all{Set("pending","refused-session").contains(request.phase),outcome>=0,outcome<=3,
       request.phase!="pending" or outcome!=2,
       request.phase!="refused-session" or outcome!=1,
       outcome!=1 or s.accepted.contains(id),
+      s'=s.with("mutations",s.mutations.set(id,request.with("phase","session-observed")))
+        .with("mutationObservations",s.mutationObservations.set(id,{outcome:outcome,payload:1,
+          draft:false,decider:false,actor:s.cookie,refused:request.phase=="refused-session"}))}
+  }
+  action returnMutation(id:int):bool=all{s.mutations.get(id).phase=="session-observed",
+    s'=s.with("mutations",s.mutations.set(id,s.mutations.get(id).with("phase","session-returned")))}
+  action useMutation(id:int):bool={
+    val observation=s.mutationObservations.get(id)
+    val outcome=observation.outcome
+    val request=s.mutations.get(id)
+    val invalid=observation.refused or outcome==3 or observation.actor!=request.actor
+    val changedIdentity=outcome!=3 and observation.actor!=request.actor
+    val finished=s.with("mutations",s.mutations.set(id,request.with("phase","done")))
+    all{request.phase=="session-returned",
       s'=if(not(owns(request)))finished
       else if(invalid)clearPrivate(finished).with("busy",false).with("error","identity")
         .with("parent","loading").with("parentNotifications",s.parentNotifications+1)
@@ -148,15 +183,17 @@ module ui_points_disputes {
         .with("selected",request.target).with("url",request.target)
         .with("busy",false).with("reload",true).with("parent","loading")}
   }
+  action mutationReply(id:int,outcome:int):bool=observeMutation(id,outcome)
+    .then(returnMutation(id)).then(useMutation(id))
   action step={nondet id=ids.oneOf() nondet actor=Set(0,1,2).oneOf()
     nondet target=Set(0,1,2).oneOf() nondet outcome=Set(0,1,2,3).oneOf()
     nondet payload=Set(1,2,3).oneOf() nondet yes=Set(false,true).oneOf()
     nondet draft=Set(false,true).oneOf() nondet decider=Set(false,true).oneOf()
     nondet kind=Set("create","decision","retry").oneOf()
     any{parentLoads,parentSameActor,parentUnavailableSameActor,remount(1,target),remount(2,target),depart,cookieChanges(actor),
-      startRead(id),refusedReadHeaders(id),refusedReadBody(id),readReply(id,outcome,payload,draft,decider),retryRead,olderRecords,
+      startRead(id),refusedReadHeaders(id),refusedReadBody(id),observeRead(id,outcome,payload,draft,decider),returnRead(id),useRead(id),retryRead,olderRecords,
       chooseAward(id),editReason(yes),editDecision(yes),back,beginMutation(id,kind),
-      acceptMutation(id),refusedMutationHeaders(id),refusedMutationBody(id),mutationReply(id,outcome),s'=s}}
+      acceptMutation(id),refusedMutationHeaders(id),refusedMutationBody(id),observeMutation(id,outcome),returnMutation(id),useMutation(id),s'=s}}
   val invariant=all{s.epoch>=1,s.epoch<=2,s.cursor>=0,s.cursor<=1,
     s.page>=0,s.page<=2,s.detail>=0,s.detail<=3,s.accepted.subseteq(ids),
     s.mayDecide implies s.detail==2,
@@ -239,4 +276,17 @@ module ui_points_disputes {
     .then(refusedMutationBody(1))
     .expect(s.mutations.get(1).phase=="refused-session" and s.award==0 and s.busy and s.parentNotifications==0)
     .then(mutationReply(1,1).fail())
+  run departedObservedReadCannotNotifyParentTest=init.then(startRead(1)).then(cookieChanges(2))
+    .then(observeRead(1,1,2,false,false)).then(depart).then(returnRead(1)).then(useRead(1))
+    .expect(s.parentNotifications==0 and s.page==0)
+  run departedReturnedMutationCannotRewriteUrlTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
+    .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create")).then(acceptMutation(1))
+    .then(observeMutation(1,1)).then(returnMutation(1)).then(remount(1,2)).then(useMutation(1))
+    .expect(s.url==2 and s.selected==2 and s.parentNotifications==0)
+  // Historical passive cleanup leaves the stale callback's guard live; outside step.
+  action oldPassiveCommit=s'=s.with("parent","gone").with("url",2)
+  run oldPassiveCompletionCouldReplaceDestinationTest=init.then(startRead(1)).then(readReply(1,1,2,false,false))
+    .then(chooseAward(1)).then(editReason(true)).then(beginMutation(1,"create")).then(acceptMutation(1))
+    .then(observeMutation(1,1)).then(returnMutation(1)).then(oldPassiveCommit).then(useMutation(1))
+    .expect(s.url==1 and s.parent=="loading")
 }

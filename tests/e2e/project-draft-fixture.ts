@@ -4,8 +4,9 @@ import { expect, type Page } from "@playwright/test";
 export async function holdProjectSessionUntilUnmount(
   page: Page,
   selector: string,
+  pathSuffix = "/api/v1/project-session",
 ) {
-  await page.evaluate((selector) => {
+  await page.evaluate(({ selector, pathSuffix }) => {
     const state = {
       waiting: false,
       removed: false,
@@ -16,7 +17,7 @@ export async function holdProjectSessionUntilUnmount(
     const readJson = Response.prototype.json;
     Response.prototype.json = async function (this: Response) {
       const value = await readJson.call(this);
-      if (!state.waiting && this.url.endsWith("/api/v1/project-session")) {
+      if (!state.waiting && this.url.endsWith(pathSuffix)) {
         state.waiting = true;
         await new Promise<void>((resolve) => {
           state.release = () => {
@@ -37,7 +38,7 @@ export async function holdProjectSessionUntilUnmount(
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
-  }, selector);
+  }, { selector, pathSuffix });
 }
 
 export async function leaveEditorWithHeldSession(page: Page) {

@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -110,12 +110,16 @@ export function VaultActions({
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
   const mounted = useRef(true);
-  useEffect(() => {
+  const depositAllowed = useRef(canDeposit);
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
+  useLayoutEffect(() => {
+    depositAllowed.current = canDeposit;
+  }, [canDeposit]);
   const [saved] = useState(() => {
     let raw: string | null = null;
     try {
@@ -260,6 +264,8 @@ export function VaultActions({
             throw new Error(
               "The wallet view was closed. Review before sending.",
             );
+          if (operation === "deposit" && !depositAllowed.current)
+            throw new Error("New deposits are currently unavailable.");
           if (!remember(intent))
             throw new Error(
               "The saved request changed. Reload before continuing.",

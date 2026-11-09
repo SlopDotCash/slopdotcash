@@ -926,6 +926,43 @@ complete per-run backup/deletion receipt. The new D1/R2/API workflow is wired
 into the integration runner, but it and the authored route regressions have
 not run. No new model has been parsed, simulated or verified in this lane.
 
+Email preferences, incomplete assessments, Points disputes, sign-in, owner
+awards and bounty-fund reads retire their request ownership during layout
+cleanup. Fetches and ordinary status updates remain in passive effects. The
+refined models separate a session observation, its helper's return and the
+caller's continuation. A committed removal must prevent a new private request,
+parent invalidation or URL rewrite; it cannot undo an already accepted write.
+Source-authored browser regressions hold those replies through DOM removal.
+They have not run.
+
+`ui_vault_prompt_ownership` separates wallet preparation from the final
+`beforeSend` callback. That callback now checks both the initiating component's
+lifetime and the current deposit permission before saving a pending request
+or opening the wallet. A later deposit restriction leaves withdrawals and
+already-open wallet recovery available. Its 18 scenarios bound one invocation,
+two lifetimes and one retained slot with a competing view. Account/network
+validation, exact transaction contents, chain finality and monetary rules
+remain separate models and conformance boundaries.
+
+`email_verification_completion` has 24 scenarios over one issued token, two
+verification requests and bounded preference revisions. It separates captured
+expiry and preference observations from atomic token/destination/consent
+commit, batch reply, later view reads and failure. A lost reply or later
+opt-out cannot reverse an earlier committed verification. No backend change
+was justified by this source review; real SQL and HTTP conformance remain
+unexecuted for the new model.
+
+`skill_install_process` has 16 scenarios over two installer processes, two
+attempts each and two retained versions. Wrapper death, Python death, kernel
+lock release, staged artifacts, activation commit, readback and cleanup are
+distinct. It assumes the operating system's lock and rename contracts, and
+does not model power-loss durability. `contributor_session_exchange` has 20
+scenarios over two CLI invocations, actors and payload classes. It separates
+one-time OAuth/assertion consumption, session issuance, in-memory credentials,
+durable run creation and lost responses. Reauthentication can retrieve the
+same run; it does not imply trace finalization. Neither refinement introduces
+a template freshness gate or changes the application protocol.
+
 This branch includes the changes from merged PRs
 [#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) and
 [#2433](https://github.com/SlopDotCash/slopdotcash/pull/2433) through development

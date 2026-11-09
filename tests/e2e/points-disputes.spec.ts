@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
 import { pointRevisionId } from "../../src/lib/points";
 import { expect, expectAccessible, test } from "./fixtures";
+import { holdProjectSessionUntilUnmount, releaseHeldEditorSession } from "./project-draft-fixture";
 
 test("a manual Points award reaches private Inbox review and an independent moderator @registry", async ({
   page,
@@ -280,9 +281,34 @@ test("a manual Points award reaches private Inbox review and an independent mode
       await expect(moderator.getByLabel("Decision reason")).toHaveValue(
         "The retained source needs a date correction. Preserve the award until it is appended.",
       );
+      await holdProjectSessionUntilUnmount(moderator, "#points-decision");
     } finally {
       releaseDecision();
     }
+    await moderator.waitForFunction(() => (window as typeof window & {
+      heldEditorSession: { waiting: boolean };
+    }).heldEditorSession.waiting);
+    // The real POST has committed. Its final session is parsed but held until
+    // query navigation removes the old decision component from the live Inbox.
+    await moderator.evaluate(() => {
+      window.history.pushState(null, "", "/inbox?points");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await moderator.waitForFunction(() => {
+      const value = (window as typeof window & {
+        heldEditorSession: { removed: boolean; released: boolean };
+      }).heldEditorSession;
+      return value.removed && value.released;
+    });
+    await moderator.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect(moderator).toHaveURL(/\/inbox\?points$/u);
+    await expect(moderator.getByLabel("Decision reason")).toHaveCount(0);
+    await moderator.evaluate((key) => {
+      window.history.pushState(null, "", `/inbox?pointsDispute=${encodeURIComponent(key)}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, key);
     await expect(
       moderator.getByText("Dispute upheld", { exact: true }),
     ).toBeVisible();
@@ -303,6 +329,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
       page.getByRole("button", { name: "Uphold dispute", exact: true }),
     ).toHaveCount(0);
   } finally {
+    await releaseHeldEditorSession(moderator);
     await context.close();
   }
 });

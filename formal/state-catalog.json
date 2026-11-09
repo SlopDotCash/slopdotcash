@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "eb5cd8d3bc280af6867d43461c82d02acbf6e125054de75587e5e6ecb8e84050",
+  "inventorySha256": "8f1558c1463c790a230d47a0c5fbb61f289050d49e15cc8f53d1a0019b2a959e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1801,6 +1801,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_verification_completion.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -2168,7 +2169,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 23,
+      "line": 24,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
@@ -2190,7 +2191,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 36,
+      "line": 37,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
@@ -2206,7 +2207,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 39,
+      "line": 40,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
@@ -2236,7 +2237,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 212,
+      "line": 213,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2255,7 +2256,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 536,
+      "line": 537,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2274,7 +2275,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1486,
+      "line": 1487,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],

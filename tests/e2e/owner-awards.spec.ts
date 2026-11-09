@@ -8,6 +8,7 @@ import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { holdProjectSessionUntilUnmount, leaveEditorWithHeldSession, releaseHeldEditorSession } from "./project-draft-fixture";
 
 test.beforeEach(async ({ diagnostics }) => {
   diagnostics.allowPreviewApiMisses();
@@ -1023,3 +1024,39 @@ test("a stale public cycle does not lock the review month or discard its draft",
     fullPage: true,
   });
 });
+
+for (const operation of ["read", "save"] as const) {
+  test(`committed owner-awards departure refuses a resolved ${operation} preflight`, async ({ page }) => {
+    const fixture = await ownedNovember(page);
+    await page.waitForLoadState("networkidle");
+    let reads = 0;
+    let writes = 0;
+    await page.route("**/api/v1/payments/projects/eliza/monthly/2026-11", (route) => {
+      reads++;
+      return route.fallback();
+    });
+    await page.route("**/api/v1/payments/projects/eliza/monthly/2026-11/allocations", (route) => {
+      writes++;
+      return route.fulfill({ json: fixture.value });
+    });
+    if (operation === "save") await page.getByLabel("Award for first-contributor").fill("1.8");
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    await holdProjectSessionUntilUnmount(page, ".owner-awards");
+    try {
+      await page.getByRole("button", {
+        name: operation === "read" ? "Refresh awards" : "Save first-contributor",
+        exact: true,
+      }).click();
+      await leaveEditorWithHeldSession(page);
+      expect(reads).toBe(0);
+      expect(writes).toBe(0);
+      await expect(page.locator(".owner-awards")).toHaveCount(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+    }
+  });
+}

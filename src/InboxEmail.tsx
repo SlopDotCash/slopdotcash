@@ -4,6 +4,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -219,6 +220,12 @@ export function InboxEmail({
     },
     [accountActor, resetIdentity, setError],
   );
+  // Retire request ownership in the removal commit, before a resolved actor
+  // check can resume. Loading and focus subscriptions remain passive.
+  useLayoutEffect(() => () => {
+    generation.current += 1;
+    controllerRef.current?.abort();
+  }, [load]);
   useEffect(() => {
     load();
     const refresh = () => {
@@ -226,8 +233,6 @@ export function InboxEmail({
     };
     window.addEventListener("focus", refresh);
     return () => {
-      generation.current += 1;
-      controllerRef.current?.abort();
       window.removeEventListener("focus", refresh);
     };
   }, [load]);

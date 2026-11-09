@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import {
   parseIncompleteAssessments,
@@ -24,6 +24,11 @@ export default function IncompleteAssessments({
   const [refresh, setRefresh] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
   const [previous, setPrevious] = useState<(string | null)[]>([]);
+  const readController = useRef<AbortController | null>(null);
+  // Retire the old page in the committed replacement/removal, while keeping
+  // the existing fetch and loading updates in their passive effect.
+  useLayoutEffect(() => () => readController.current?.abort(),
+    [actorId, cursor, refresh, initial, onChange, onIdentityChange]);
   useEffect(() => {
     setPage(initial);
     setError(initial === null);
@@ -38,6 +43,7 @@ export default function IncompleteAssessments({
       return;
     }
     const controller = new AbortController();
+    readController.current = controller;
     setPage(null);
     setError(false);
     const load = async () => {

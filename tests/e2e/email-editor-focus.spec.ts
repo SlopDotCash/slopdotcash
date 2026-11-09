@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { BrowserContext, Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
+import { holdProjectSessionUntilUnmount, leaveEditorWithHeldSession, releaseHeldEditorSession } from "./project-draft-fixture";
 
 const origins = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -25,6 +26,7 @@ async function serveAccount(
   context: BrowserContext,
   memberInitially = false,
   verifiedDestination = false,
+  enterFromOverview = false,
 ) {
   const state = {
     actor: FIRST as string | null,
@@ -190,8 +192,12 @@ async function serveAccount(
       `Unexpected account API in fixture: ${request.method()} ${path}`,
     );
   });
-  await page.goto(`${origins.site}/account#notifications`, {
+  await page.goto(`${origins.site}${enterFromOverview ? "/how-it-works" : "/account#notifications"}`, {
     waitUntil: "networkidle",
+  });
+  if (enterFromOverview) await page.evaluate(() => {
+    window.history.pushState(null, "", "/account#notifications");
+    window.dispatchEvent(new PopStateEvent("popstate"));
   });
   const preferences = page.getByRole("region", {
     name: "Email preferences",
@@ -730,3 +736,21 @@ test("a current destination conflict keeps explicit feedback and the editable dr
   expect(versions).toEqual(["a".repeat(64), "b".repeat(64)]);
   await expect(input).toHaveValue("retained-before-check@example.test");
 });
+
+for (const operation of ["save", "verify"] as const) {
+  test(`committed email departure cancels a resolved ${operation} preflight before POST`, async ({ page, context }) => {
+    const { state, preferences } = await serveAccount(page, context, true, operation === "save", true);
+    if (operation === "save") await preferences.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.waitForLoadState("networkidle");
+    await holdProjectSessionUntilUnmount(page, ".email-card");
+    try {
+      if (operation === "save") await preferences.getByRole("switch", { name: "Activity email", exact: true }).click();
+      else await preferences.getByRole("button", { name: "Send verification", exact: true }).click();
+      await leaveEditorWithHeldSession(page);
+      expect(state.posts).toEqual([]);
+      await expect(preferences).toHaveCount(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+    }
+  });
+}

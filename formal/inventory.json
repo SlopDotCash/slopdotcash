@@ -173,6 +173,7 @@
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_request_composition.qnt",
+        "formal/models/api/email_verification_completion.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt",
@@ -199,7 +200,8 @@
       "sha256": "0ae7a1d11ea5c66c179bc6fb29f7fcded38b02e6d3d8ca343aacace8b08084bf",
       "models": [
         "formal/models/api/api_accounts.qnt",
-        "formal/models/api/identity_consumer_exchange.qnt"
+        "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/contributor/contributor_session_exchange.qnt"
       ],
       "candidateLines": [32],
       "review": "mapped-abstraction"
@@ -207,7 +209,10 @@
     {
       "path": "backend/notifications/email-destinations.ts",
       "sha256": "f5eecf42a601af2ff9d9322b5f47bd9dd0267f6bfde2a84c1ec8cfd0c4f39c4e",
-      "models": ["formal/models/api/api_email_consent.qnt"],
+      "models": [
+        "formal/models/api/api_email_consent.qnt",
+        "formal/models/api/email_verification_completion.qnt"
+      ],
       "candidateLines": [121],
       "review": "mapped-abstraction"
     },
@@ -216,7 +221,8 @@
       "sha256": "4407051c3087756a75cd3ff182bdcdce23b597e5fdeef7514413a696aed4e484",
       "models": [
         "formal/models/api/api_email_consent.qnt",
-        "formal/models/api/email_enrollment_delivery.qnt"
+        "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_verification_completion.qnt"
       ],
       "candidateLines": [
         79, 81, 101, 102, 192, 213, 214, 239, 266, 268, 271, 272, 279, 281, 282,
@@ -1024,6 +1030,7 @@
         "formal/models/api/trace_run_creation.qnt",
         "formal/models/api/wallet_claim_publication.qnt",
         "formal/models/api/wallet_possession_completion.qnt",
+        "formal/models/contributor/contributor_session_exchange.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
         "formal/models/vetting/vetting_upload_completion.qnt"
       ],
@@ -1063,7 +1070,8 @@
         "formal/models/api/trace_route_authorization.qnt",
         "formal/models/api/trace_run_creation.qnt",
         "formal/models/api/wallet_claim_publication.qnt",
-        "formal/models/api/wallet_possession_completion.qnt"
+        "formal/models/api/wallet_possession_completion.qnt",
+        "formal/models/contributor/contributor_session_exchange.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
@@ -2969,6 +2977,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_verification_completion.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
       "candidateLines": [22, 40, 42, 46, 48, 55, 58, 59, 60, 61, 63, 66],
@@ -3018,7 +3027,8 @@
       "sha256": "5c94ab94eaa6a6918535ff9fdbb73b84bcc1c6ded1d6e33600c72dace57a36b1",
       "models": [
         "formal/models/api/api_email_consent.qnt",
-        "formal/models/api/email_enrollment_delivery.qnt"
+        "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_verification_completion.qnt"
       ],
       "candidateLines": [5, 6, 8],
       "review": "mapped-abstraction"
@@ -4336,7 +4346,10 @@
     {
       "path": "skills/project-contributor-template/scripts/run-receipt.mjs",
       "sha256": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
-      "models": ["formal/models/contributor/skill_run_local.qnt"],
+      "models": [
+        "formal/models/contributor/contributor_session_exchange.qnt",
+        "formal/models/contributor/skill_run_local.qnt"
+      ],
       "candidateLines": [
         139, 163, 188, 238, 327, 520, 592, 607, 614, 621, 647, 697, 755, 758,
         759, 766, 771, 777, 781, 784, 790, 812, 835, 892, 908, 914, 915, 922,
@@ -4357,7 +4370,10 @@
     {
       "path": "skills/project-contributor-template/scripts/skill-authority.mjs",
       "sha256": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
-      "models": ["formal/models/contributor/skill_source_authority.qnt"],
+      "models": [
+        "formal/models/contributor/skill_install_process.qnt",
+        "formal/models/contributor/skill_source_authority.qnt"
+      ],
       "candidateLines": [73, 97, 116, 247, 249, 250, 277, 503, 519, 524, 546],
       "review": "mapped-abstraction"
     },
@@ -4622,7 +4638,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "bfac9d78bee06647be33ff16bf5a11af20dd6951db2120327e0cc7de080c3345",
+      "sha256": "0245600e195a4f0a007532c41b7126ed27c32ba35b67619dcb936fa4c15cac2f",
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
@@ -4631,24 +4647,24 @@
         "formal/models/ui/ui_explicit_signout.qnt"
       ],
       "candidateLines": [
-        6, 8, 23, 29, 38, 39, 40, 41, 52, 53, 54, 55, 56, 58, 61, 90, 91, 95,
-        96, 97, 126, 128, 137, 142, 154, 161, 175, 177, 180, 182, 198, 203, 207,
-        213, 222, 242, 244, 250, 256, 257, 288, 289, 293, 295, 326, 328, 331,
-        334, 337, 345, 356, 362, 370, 372, 373, 376, 377, 386, 387, 410, 412,
-        423, 438, 440, 442, 449, 455, 462, 470, 472, 473, 488, 505, 507, 508,
-        549, 551, 552, 554, 556, 559, 641, 655, 692, 733, 734, 735, 738, 750,
-        768, 799, 842, 863, 872, 889, 903, 906
+        6, 9, 24, 30, 39, 40, 41, 42, 53, 54, 55, 56, 57, 59, 62, 91, 92, 96,
+        97, 98, 127, 129, 138, 143, 155, 162, 176, 178, 181, 183, 199, 204, 208,
+        214, 229, 247, 249, 255, 261, 262, 293, 294, 298, 300, 331, 333, 336,
+        339, 342, 350, 361, 367, 375, 377, 378, 381, 382, 391, 392, 415, 417,
+        428, 443, 445, 447, 454, 460, 467, 475, 477, 478, 493, 510, 512, 513,
+        554, 556, 557, 559, 561, 564, 646, 660, 697, 738, 739, 740, 743, 755,
+        773, 804, 847, 868, 877, 894, 908, 911
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/IncompleteAssessments.tsx",
-      "sha256": "45e9a2ae387c65c2e83795cb198786842d38e1c8711934a18f5a4bb5c7d3a04c",
+      "sha256": "5f15708e9ddc2e066836e9cabc00647435a76e56bfea0f88ec59dae0758a6928",
       "models": [
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_incomplete_assessments.qnt"
       ],
-      "candidateLines": [1, 22, 23, 24, 25, 26, 27, 34, 59, 103, 127],
+      "candidateLines": [1, 22, 23, 24, 25, 26, 32, 39, 65, 109, 133],
       "review": "mapped-abstraction"
     },
     {
@@ -4683,7 +4699,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "d26c52b192a54beef1083c30bfc3ea5db8b50a6030b3fdfefe2f6c8b3cbe8d5f",
+      "sha256": "5d8320dc2960557534e525e982edde6daddf70b7ed8615b0f46fb0da644affbd",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -4693,24 +4709,25 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        3, 72, 105, 107, 110, 117, 118, 126, 127, 131, 138, 141, 142, 143, 144,
-        145, 148, 149, 198, 258, 260, 268, 286, 379, 404, 451, 474, 484, 540,
-        563, 610, 727, 728, 755, 756, 760, 765, 771, 788
+        3, 72, 105, 107, 110, 117, 118, 126, 127, 138, 141, 142, 143, 144, 145,
+        148, 149, 198, 258, 260, 268, 286, 379, 404, 451, 474, 484, 540, 563,
+        610, 727, 728, 755, 756, 760, 765, 771, 788
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/OwnerBountyVault.tsx",
-      "sha256": "d0f49fa776a21ca1436d0da51b56bf9c6f3a72276507abdf864c262802ac77dd",
+      "sha256": "99d1f76cd183f2da6a17774ba353de82729daebd57a4ac2d41992ff40b6ead62",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_private_requests.qnt",
-        "formal/models/ui/ui_transaction.qnt"
+        "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt"
       ],
       "candidateLines": [
-        1, 93, 94, 95, 97, 103, 104, 106, 109, 111, 122, 124, 145, 147, 157,
-        164, 167, 170, 185, 186, 188, 189, 191, 193, 194, 200, 208, 213, 214,
-        216, 219, 220, 224, 232, 241
+        1, 93, 94, 95, 97, 103, 104, 113, 118, 120, 131, 133, 154, 156, 166,
+        173, 176, 179, 194, 195, 197, 198, 200, 202, 203, 209, 217, 222, 223,
+        225, 228, 229, 233, 241, 250
       ],
       "review": "mapped-abstraction"
     },
@@ -4817,7 +4834,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "e6b5dd270a5925f70afb4d97b78853651f82d1fd992c21f4dc0865686b5415d1",
+      "sha256": "056742fc4136b711b03708193e67c1647f3dc7e972adc01f2e7f30b484276aa8",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -4829,35 +4846,34 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 18, 86, 101, 102, 103, 105, 111, 121, 130, 133, 141, 142, 144, 145,
-        161, 163, 210, 211, 212, 215, 216, 217, 218, 235, 241, 248, 256, 266,
-        273, 280, 294, 314, 331, 349, 350, 351, 356, 380, 381, 386, 389, 390,
-        391, 392, 393, 395, 396, 413, 419, 476, 477, 482, 484, 514, 515, 516,
-        518, 520, 523, 532, 534, 536, 538, 540, 543, 544, 548, 550, 552, 562,
-        563, 568, 570, 582, 583, 613, 617, 618, 628, 629, 640, 642, 649, 653,
-        658, 659, 683, 689, 741, 742, 743, 744, 746, 747, 759, 833, 846, 851,
-        860, 930, 968, 974, 984, 993, 998, 1000, 1003, 1009, 1010, 1021, 1030,
-        1038, 1040, 1041, 1049, 1052, 1053, 1054, 1055, 1057, 1058, 1061, 1062,
-        1073, 1082, 1106, 1110, 1119, 1141, 1142, 1143, 1152, 1236, 1246, 1251,
-        1269, 1271, 1273, 1276, 1277, 1278, 1280, 1348, 1352, 1454, 1455, 1456,
-        1486, 1487, 1526, 1528, 1529, 1530, 1532, 1539, 1541, 1545, 1547, 1549,
-        1558, 1559, 1565, 1571, 1576, 1585, 1586, 1587, 1588, 1590, 1591, 1594,
-        1595, 1597, 1598, 1602, 1610, 1611, 1612, 1613, 1616, 1620, 1631, 1632,
-        1637
+        14, 19, 87, 102, 103, 104, 106, 112, 122, 131, 134, 142, 143, 145, 146,
+        162, 164, 211, 212, 213, 216, 217, 218, 219, 236, 242, 249, 257, 267,
+        274, 281, 295, 315, 332, 350, 351, 352, 357, 381, 382, 387, 390, 391,
+        392, 393, 394, 396, 397, 414, 420, 477, 478, 483, 485, 515, 516, 517,
+        519, 521, 524, 533, 535, 537, 539, 541, 544, 545, 549, 551, 553, 563,
+        564, 569, 571, 583, 584, 614, 618, 619, 629, 630, 641, 643, 650, 654,
+        659, 660, 684, 690, 742, 743, 744, 745, 748, 760, 834, 847, 852, 861,
+        931, 969, 975, 985, 994, 999, 1001, 1004, 1010, 1011, 1022, 1031, 1039,
+        1041, 1042, 1050, 1053, 1054, 1055, 1056, 1058, 1059, 1062, 1063, 1074,
+        1083, 1107, 1111, 1120, 1142, 1143, 1144, 1153, 1237, 1247, 1252, 1270,
+        1272, 1274, 1277, 1278, 1279, 1281, 1349, 1353, 1455, 1456, 1457, 1487,
+        1488, 1527, 1529, 1530, 1531, 1533, 1540, 1542, 1546, 1548, 1550, 1559,
+        1560, 1566, 1572, 1577, 1586, 1587, 1588, 1589, 1591, 1592, 1595, 1596,
+        1598, 1599, 1603, 1611, 1612, 1613, 1614, 1617, 1621, 1632, 1633, 1638
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/PointsDisputes.tsx",
-      "sha256": "d17dbc5b80f138c1af5a1f6f03e6c5a4cce456b4fbfa53abdedbc47aa3f9c2b5",
+      "sha256": "46d1b35be8755206efacf0a58cc011a3a5bd891672069c9846de85a609b371d9",
       "models": [
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_points_disputes.qnt"
       ],
       "candidateLines": [
-        1, 10, 28, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 58, 96, 97, 98, 99,
-        103, 109, 136, 137, 159, 166, 178, 180, 188, 205, 209, 222, 277, 284,
-        289
+        1, 10, 28, 44, 45, 46, 47, 51, 52, 53, 54, 55, 56, 68, 101, 102, 103,
+        104, 108, 114, 141, 142, 165, 172, 184, 186, 194, 211, 215, 228, 283,
+        290, 295
       ],
       "review": "mapped-abstraction"
     },
@@ -5172,18 +5188,19 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "f7603edcf33a12d5d5fad43e29a2d8a18839374621c1f1f6b526eef1c36eb060",
+      "sha256": "b68cffca45df9c8b9fd367a5767f8738d229dc0abf4e111d11831a1b978b7c74",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 31, 48, 61, 63, 113, 119, 123, 126, 132, 133, 134, 135, 138, 139,
-        141, 142, 143, 144, 150, 159, 177, 179, 183, 220, 242, 291, 323, 330,
-        337, 338, 339, 346, 347, 349, 353, 354, 355, 356, 378, 379, 380, 389,
-        397, 410, 424, 451, 477, 482, 485, 486, 492, 496, 502, 521, 526, 672
+        2, 31, 48, 61, 63, 123, 127, 130, 136, 137, 138, 139, 142, 143, 145,
+        146, 147, 148, 154, 163, 181, 183, 187, 224, 246, 297, 329, 336, 343,
+        344, 345, 352, 353, 355, 359, 360, 361, 362, 384, 385, 386, 395, 403,
+        416, 430, 457, 483, 488, 491, 492, 498, 502, 508, 527, 532, 678
       ],
       "review": "mapped-abstraction"
     },
@@ -5415,7 +5432,8 @@
       "sha256": "30e3fb68c1006efc4fc5029333fb361f4b01f419d3525a7625226f46ad6f6623",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
-        "formal/models/ui/ui_monthly_setting_recovery.qnt"
+        "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt"
       ],
       "candidateLines": [
         260, 287, 308, 314, 331, 333, 334, 337, 338, 347, 348, 349, 350, 351
@@ -5531,7 +5549,10 @@
     {
       "path": "src/lib/install-command.ts",
       "sha256": "f76f8b1b417f43aba55689f86453861ff270cbaf8e5ba9f05d9925e0ab1e9485",
-      "models": ["formal/models/contributor/skill_installation.qnt"],
+      "models": [
+        "formal/models/contributor/skill_install_process.qnt",
+        "formal/models/contributor/skill_installation.qnt"
+      ],
       "candidateLines": [931],
       "review": "mapped-abstraction"
     },
@@ -6155,6 +6176,7 @@
         "formal/models/contracts/solana_owner_action.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [96, 99, 235, 236, 237, 239, 240],
@@ -9167,6 +9189,43 @@
       ]
     },
     {
+      "path": "formal/models/api/email_verification_completion.qnt",
+      "sha256": "c37fb6c8c2e3fe687a95c2d8a00955730994d700027d8b2db68afcf351280dd2",
+      "sources": [
+        "backend/http.ts",
+        "backend/notifications/email-destinations.ts",
+        "backend/notifications/email.ts",
+        "migrations/0111_verified_notification_email.sql",
+        "migrations/0116_email_preference_revision.sql"
+      ],
+      "scenarios": [
+        "activityAndSecurityConsentStayDistinctTest",
+        "anonymousRequestNeverReadsTokenTest",
+        "cancellationDuringHashAwaitRefusesTest",
+        "capturedTimeBeforeExpiryCanCommitLaterTest",
+        "concurrentVerificationCommitsOnlyOnceTest",
+        "crossOriginWriteRefusesBeforeBatchTest",
+        "equalityAtExpiryRefusesTest",
+        "expectedActorMismatchRefusesBeforeBatchTest",
+        "firstOptOutFencesAbsentPreferenceSnapshotTest",
+        "freshVerifyAfterOptOutIsNewConsentTest",
+        "laterOptOutCanAppearInSuccessfulVerificationViewTest",
+        "laterViewQueryFailurePreservesCommittedRowsTest",
+        "lostBatchReplyDoesNotUndoCommittedConsentTest",
+        "malformedTokenBodyNeverConsumesTest",
+        "missingChangeCountDoesNotUndoCommittedConsentTest",
+        "missingTransactionalBindingRefusesBeforeConsumptionTest",
+        "optOutAfterViewReadCanPrecedeSuccessfulReplyTest",
+        "otherSignedInActorCannotUseTokenTest",
+        "precommitFailureLeavesTokenRecoverableTest",
+        "repeatedOptOutFencesExistingRevisionTest",
+        "responseFailureCannotMakeTokenReusableTest",
+        "sameActorCommitsAllThreeRowsTest",
+        "verifiedAddressCanKeepBothPreferencesDisabledTest",
+        "viewReadFailurePreservesCommittedRowsTest"
+      ]
+    },
+    {
       "path": "formal/models/api/github_identity_exchange.qnt",
       "sha256": "1e0896728e432f72e0ad57ca6a279c4d39134df9d31b1605b49616e239168c35",
       "sources": ["workers/identity/handler.ts", "workers/identity/index.ts"],
@@ -10675,6 +10734,38 @@
       ]
     },
     {
+      "path": "formal/models/contributor/contributor_session_exchange.qnt",
+      "sha256": "d1f8d91764f7ec142af6d6e7b4c3a9830e87eadd68553e9bf531232ebee8587e",
+      "sources": [
+        "backend/identity-assertion.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/handler.ts",
+        "skills/project-contributor-template/scripts/run-receipt.mjs"
+      ],
+      "scenarios": [
+        "assertionCanExpireBeforeExchangeTest",
+        "authorizationObservationCanPrecedeExpiryTest",
+        "changedPayloadUsesDifferentIdempotencyKeyTest",
+        "differentAuthenticatedActorHasIndependentRunTest",
+        "expiredAssertionResponseIsLocallyRefusedTest",
+        "expiredReturnedSessionFailsAtServerAuthenticationTest",
+        "expiredStartResponseDoesNotBeginPollingTest",
+        "failedInsertionDoesNotInventRunTest",
+        "lostCompletedPollDoesNotUndoFlowConsumptionTest",
+        "lostRunReplyRetainsDurableRowTest",
+        "lostSessionResponseLeavesConsumedAssertionTest",
+        "lostStartResponseDoesNotCreateRunTest",
+        "pendingPollWaitsAgainTest",
+        "processDeathBeforeWriteNeedsFreshAuthenticationTest",
+        "processDeathForgetsSecretsButPreservesWriteTest",
+        "retryCanObserveAlreadyFinalizedRunTest",
+        "successfulExchangeDoesNotFinalizeTraceTest",
+        "tokenSigningFailureKeepsAssertionConsumedTest",
+        "userRetryReauthenticatesAndReusesSameRunTest",
+        "waitMayCrossExpiryButServerRefusesTest"
+      ]
+    },
+    {
       "path": "formal/models/contributor/contributor_terms_preflight.qnt",
       "sha256": "04f8a6ff73f30e63fb946acd3e9caa701287113921f7398a45ded426c59a7672",
       "sources": [
@@ -10706,8 +10797,34 @@
       ]
     },
     {
+      "path": "formal/models/contributor/skill_install_process.qnt",
+      "sha256": "8efeacb769a4c4ac82e02ce272d6637745ef12ffc7d7b48b05ac34b40c15bc9d",
+      "sources": [
+        "skills/project-contributor-template/scripts/skill-authority.mjs",
+        "src/lib/install-command.ts"
+      ],
+      "scenarios": [
+        "cleanupFailureCanFollowSuccessOutputTest",
+        "competingPythonCannotAcquireTest",
+        "currentRestrictionRefusesVerificationTest",
+        "failedActivationLeavesOldVersionTest",
+        "laterRestrictionDoesNotRetroactivelyChangeObservationTest",
+        "ordinaryRevisionDowngradeStillRefusesTest",
+        "postCommitCrashRetainsNewActivationTest",
+        "preCommitCrashKeepsTemporaryLinkTest",
+        "pythonDeathReleasesInertLockTest",
+        "readbackFailureDoesNotRevertCommitTest",
+        "retainedCrashKeepsBothVersionsTest",
+        "retryAfterCommittedCrashReadsExistingVersionTest",
+        "rollbackCrashKeepsRollbackCommitTest",
+        "stagedCrashLeavesPriorActivationTest",
+        "successorNeverCleansOldInvocationArtifactsTest",
+        "wrapperDeathDoesNotReleasePythonLockTest"
+      ]
+    },
+    {
       "path": "formal/models/contributor/skill_installation.qnt",
-      "sha256": "438d092248e1947f9fd465c84e8a4d282d331bec6ef4aec27df416c9b8bdd8bb",
+      "sha256": "73e896274d801ebdfad25f12fac81c8a6844ebfad3e3f0e378cfe82acb34215d",
       "sources": [
         "src/lib/install-command.ts",
         "src/lib/project-skill-publication.mjs",
@@ -10733,7 +10850,7 @@
     },
     {
       "path": "formal/models/contributor/skill_run_local.qnt",
-      "sha256": "25a7741ca2b897e3ac44ee54b6655de0984bcbe99b0bf758995a012db781e435",
+      "sha256": "277df1836250e1bdf4e1ad2e278e31921383d37f7bdf07721c65ea72be789b64",
       "sources": [
         "skills/project-contributor-template/scripts/run-receipt.mjs",
         "src/lib/run-receipts.ts"
@@ -14634,7 +14751,7 @@
     },
     {
       "path": "formal/models/ui/ui_email_preference_requests.qnt",
-      "sha256": "c93604e1820a1068bfb6dc1b390d7e842fe1b8e729ec4db435b9bd7304263982",
+      "sha256": "ab01b26e0f8aafcd2970457e844e01e45907b1a7e978c6385cbd44c2418d24a7",
       "sources": ["src/InboxEmail.tsx", "src/lib/project-api.ts"],
       "scenarios": [
         "backgroundReadRetainsEditedDraftTest",
@@ -14649,7 +14766,11 @@
         "departedBodyCannotStartPostflightTest",
         "departedFailureCannotStartCheckTest",
         "departedMismatchCannotReloadTest",
+        "departedObservedFailureCannotPublishErrorTest",
+        "departedObservedPreflightCannotPostTest",
         "departedPostflightCannotResetNewDraftTest",
+        "departedReturnedPostflightCannotPublishTest",
+        "oldPassiveCommitCouldDispatchVerificationTest",
         "sameActorFailurePreservesDraftTest",
         "unacceptedSaveCannotPublishTest",
         "unacceptedVerificationCannotPublishTest",
@@ -14752,7 +14873,7 @@
     },
     {
       "path": "formal/models/ui/ui_identity_poll_protocol.qnt",
-      "sha256": "fd340aafbf7393befc1b10831ea32ad294d22a40878c311c1b8ced5f0ce8b52a",
+      "sha256": "510d009745668ed4ce5fb0afa8d34a497504d0c359909282acfe9313187152a9",
       "sources": [
         "src/Points.tsx",
         "src/lib/identity-flow.ts",
@@ -14767,6 +14888,8 @@
         "authorizationHookFailureRetainsOnlyIntentTest",
         "clearHookFailureDoesNotReturnAssertionTest",
         "clearHookMaySynchronouslyCancelParentTest",
+        "committedDepartureAfterAssertionRefusesJoinTest",
+        "committedDepartureDuringHelperRefusesJoinTest",
         "excessiveStartExpiryFailsTest",
         "expiredStartFailsTest",
         "expiryCheckDoesNotBoundCallerHookDurationTest",
@@ -14781,6 +14904,7 @@
         "malformedPollStopsWithoutClearingAuthorizationTest",
         "noStorageHookDoesNotClaimErasureTest",
         "nonRecordResumeFailsBeforeHooksTest",
+        "oldPassiveDepartureCouldJoinTest",
         "pendingPrefixDoesNotInventApplicationRetryLimitTest",
         "pendingReplySchedulesAnotherDelayTest",
         "pollRequestFailureDoesNotAssumeServerRollbackTest",
@@ -14891,7 +15015,7 @@
     },
     {
       "path": "formal/models/ui/ui_incomplete_assessments.qnt",
-      "sha256": "223d74289ec2d7a6ecead565e47dce5510b9351be5c770605b66b4aa16aa033a",
+      "sha256": "cabeceeb7dbb7f40ecca281efebec9513f33cf753ede7bc25c7ef76527899db1",
       "sources": [
         "src/Inbox.tsx",
         "src/IncompleteAssessments.tsx",
@@ -14899,11 +15023,14 @@
         "src/lib/notifications.ts"
       ],
       "scenarios": [
+        "commitAfterSessionObservationCannotNotifyParentTest",
         "departedReplyCannotNotifyReplacementTest",
         "matchingNextPageTest",
         "newerPageOwnsCompletionTest",
+        "oldPassiveCleanupCouldInvalidateParentTest",
         "refusalAfterSwapCannotRetainParentTest",
         "refusedSameActorReloadsParentTest",
+        "replacementAfterSessionReturnOwnsPageTest",
         "sameActorOutageKeepsParentTest",
         "sessionOutageHidesParentTest",
         "signOutClearsParentTest",
@@ -15040,7 +15167,7 @@
     },
     {
       "path": "formal/models/ui/ui_owner_private_requests.qnt",
-      "sha256": "1491d3cf8c982971b1ecd9ceb6a3313505cfa808e5453238a548ceae1d0faaaf",
+      "sha256": "91a3aa8b2c14952ec494ca6587ddbb8dd51d69e80c269ada53ba00b010d7055c",
       "sources": [
         "backend/http.ts",
         "src/OwnerAwards.tsx",
@@ -15048,16 +15175,23 @@
       ],
       "scenarios": [
         "acceptedWriteSurvivesChangedActorTest",
+        "awardsObservedPreflightCannotWriteAfterCommittedRemovalTest",
+        "awardsReturnedPreflightCannotReadAfterCommittedRemovalTest",
         "detachedAcceptedWriteCannotPublishTest",
+        "detachedIdentityFailureCannotClearReplacementReadTest",
         "fundsChangedActorCannotPublishOldResponseTest",
         "fundsMalformedResponseDoesNotRetainBalanceTest",
+        "fundsObservedPreflightCannotReadAfterCommittedRemovalTest",
         "fundsRefusalRemovesChildBeforeRecheckTest",
+        "fundsReturnedPreflightCannotReadAfterCommittedRemovalTest",
         "fundsSameActorOutageRetainsChildTest",
         "fundsUnknownSessionCannotRetainStaleDataTest",
+        "historicalPassiveCleanupCouldStartPrivateReadTest",
         "mutationErrorRechecksChangedActorTest",
         "mutationRefusalClearsBeforeRecheckTest",
         "newReadActorDropsOldDraftTest",
         "sameActorMutationOutageRetainsDraftTest",
+        "sessionObservationIsNotDispatchAuthorityTest",
         "supersededReadCannotPublishTest",
         "swapAfterDispatchKeepsOriginalAdmissionTest",
         "swapBeforeDispatchFailsAdmissionTest",
@@ -15248,7 +15382,7 @@
     },
     {
       "path": "formal/models/ui/ui_points_disputes.qnt",
-      "sha256": "07faf605b83d0427dfbe3c009d08fca168c55f08e1321403a4d423e19ec6c76e",
+      "sha256": "6947791a0912ee5b681fdacb3eab75245de8fde98beacac5798a1e59fe2ebf42",
       "sources": [
         "src/App.tsx",
         "src/Inbox.tsx",
@@ -15262,6 +15396,8 @@
         "accountMismatchClearsOldFormTest",
         "departedIdentityFailureCannotNotifyNewParentTest",
         "departedMutationCannotRewriteNavigationTest",
+        "departedObservedReadCannotNotifyParentTest",
+        "departedReturnedMutationCannotRewriteUrlTest",
         "emptyListTest",
         "firstCompletionDoesNotOwnOtherBusyRequestTest",
         "forbiddenReadClearsOldListTest",
@@ -15271,6 +15407,7 @@
         "listThenFormTest",
         "moderatorCanReviewWithoutMachineDraftTest",
         "oldListRemainsDuringPageLoadTest",
+        "oldPassiveCompletionCouldReplaceDestinationTest",
         "parentFailureKeepsRevalidatedSameActorChildTest",
         "queryNavigationIgnoresOldReadTest",
         "refusedMutationClearsBeforeSessionRecheckTest",
@@ -16129,6 +16266,36 @@
       "sha256": "81ac338b14423f7e132db94de0f5716bccfde4f3223d04416b8215e153f82a48",
       "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
       "scenarios": ["bodyTimeoutTest", "invalidTest", "validTest"]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_prompt_ownership.qnt",
+      "sha256": "ea7a6b867abe024ee3c3f6cf3ea2dab2019bb9fef958bb2315381415964c4988",
+      "sources": [
+        "src/OwnerBountyVault.tsx",
+        "src/VaultActions.tsx",
+        "src/lib/evm-vault-actions.ts",
+        "src/lib/solana-vault-actions.ts"
+      ],
+      "scenarios": [
+        "currentDepositRecordsBeforePromptTest",
+        "currentWithdrawalRecordsBeforePromptTest",
+        "declinedWalletClearsOnlyItsSlotTest",
+        "departedOpenWalletMayRetainItsHashTest",
+        "departedPreparationCannotPromptTest",
+        "departedReturnedReviewCannotPromptTest",
+        "depositCapabilityLostAfterReturnedReviewRefusesTest",
+        "depositCapabilityLostDuringPreparationRefusesTest",
+        "historicalCapabilitySnapshotAllowedRestrictedPromptTest",
+        "historicalPassiveCleanupAllowedDepartedPromptTest",
+        "invalidReviewCannotReachPromptTest",
+        "laterRestrictionDoesNotEraseOpenWalletTest",
+        "oldWalletCannotReplaceNewSlotTest",
+        "replacementLifetimeCannotAdoptOldPreparationTest",
+        "returnedHashCannotRecreateClearedSlotTest",
+        "storageFailureStartsNoWalletTest",
+        "unknownWalletKeepsRecoverySlotTest",
+        "withdrawalSurvivesDepositRestrictionTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_vault_recovery.qnt",
