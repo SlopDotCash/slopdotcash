@@ -7467,7 +7467,10 @@
     {
       "path": "workers/vetting/bounded-scan.ts",
       "sha256": "36e6a77140e5c1d0b2a4a03762812112d2849769778bcb84b62a8e0fb1e86678",
-      "models": ["formal/models/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting_credential_store.qnt",
+        "formal/models/vetting_disposition.qnt"
+      ],
       "candidateLines": [
         241, 249, 250, 1705, 1706, 1887, 1947, 1968, 2035, 2051
       ],
@@ -11941,6 +11944,16 @@
         "noConcurrentCycleTest",
         "replayDoesNotAdvanceCursorTest",
         "restoreVerifiedChainTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_credential_store.qnt",
+      "sha256": "ff000f9c7c973c1189a740d3f05907f61416a2f3017516ea1ed819594dfa9f87",
+      "sources": ["workers/vetting/bounded-scan.ts"],
+      "scenarios": [
+        "mentionWithoutReadTest",
+        "readOutsideInstallTest",
+        "ssmReadInPostinstallTest"
       ]
     },
     {
