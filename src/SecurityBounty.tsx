@@ -3435,11 +3435,14 @@ function CaseDetail({
     record.settlement?.generation !== undefined &&
     typeof directRequest?.solana?.transaction === "string" &&
     typeof directRequest.solana.messageId === "string";
-  /** Refuses a recovery signature once the request shown has changed. */
-  const stillRecoverable = async (
-    request: (
-      recovery: NonNullable<SecurityCase["settlement"]>["recovery"],
-    ) => unknown,
+  /**
+   * Re-reads the case before a wallet step. When the action is no longer
+   * allowed or the shown request has changed, shows the current case and
+   * refuses with `message`; otherwise returns the current case.
+   */
+  const currentCase = async (
+    action: "recover-payment" | "verify-payment",
+    same: (next: SecurityCase, previous: SecurityCase) => boolean,
     message: string,
   ) => {
     const current = await privateRequest<{ case: SecurityCase }>(
@@ -3447,50 +3450,65 @@ function CaseDetail({
       `security-cases/${encodeURIComponent(record.id)}`,
     );
     if (
-      !current.case.allowedActions.includes("recover-payment") ||
-      current.case.settlement?.recovery?.generation !==
-        record.settlement?.recovery?.generation ||
-      JSON.stringify(request(current.case.settlement?.recovery)) !==
-        JSON.stringify(request(record.settlement?.recovery))
+      !current.case.allowedActions.includes(action) ||
+      !same(current.case, record)
     ) {
       replace(current);
       onChanged();
       throw new Error(message);
     }
+    return current.case;
   };
-  const authorizeExistingPayment = async () => {
-    const current = await privateRequest<{ case: SecurityCase }>(
-      "GET",
-      `security-cases/${encodeURIComponent(record.id)}`,
+  /** The wallet-step guard form of currentCase. */
+  const requireCurrent = async (
+    ...args: Parameters<typeof currentCase>
+  ): Promise<void> => {
+    await currentCase(...args);
+  };
+  const sameSettlementGeneration = (
+    next: SecurityCase,
+    previous: SecurityCase,
+  ) => next.settlement?.generation === previous.settlement?.generation;
+  const sameRecoveryGeneration = (next: SecurityCase, previous: SecurityCase) =>
+    next.settlement?.recovery?.generation ===
+    previous.settlement?.recovery?.generation;
+  /** Whether both cases hold the same JSON at `select`. */
+  const sameJson = (
+    next: SecurityCase,
+    previous: SecurityCase,
+    select: (value: SecurityCase) => unknown,
+  ) => JSON.stringify(select(next)) === JSON.stringify(select(previous));
+  /** Refuses a recovery signature once the request shown has changed. */
+  const stillRecoverable = (
+    request: (
+      recovery: NonNullable<SecurityCase["settlement"]>["recovery"],
+    ) => unknown,
+    message: string,
+  ) =>
+    requireCurrent(
+      "recover-payment",
+      (next, previous) =>
+        sameRecoveryGeneration(next, previous) &&
+        sameJson(next, previous, (value) =>
+          request(value.settlement?.recovery),
+        ),
+      message,
     );
-    if (
-      !current.case.allowedActions.includes("verify-payment") ||
-      current.case.settlement?.generation !== record.settlement?.generation
-    ) {
-      replace(current);
-      onChanged();
-      throw new Error("The payment state changed. Review the current case.");
-    }
-  };
+  const paymentChanged = "The payment state changed. Review the current case.";
+  const authorizeExistingPayment = () =>
+    requireCurrent("verify-payment", sameSettlementGeneration, paymentChanged);
   const verifyExistingPayment = async (hashes: string[]) => {
-    const current = await privateRequest<{ case: SecurityCase }>(
-      "GET",
-      `security-cases/${encodeURIComponent(record.id)}`,
+    const current = await currentCase(
+      "verify-payment",
+      sameSettlementGeneration,
+      paymentChanged,
     );
-    if (
-      !current.case.allowedActions.includes("verify-payment") ||
-      current.case.settlement?.generation !== record.settlement?.generation
-    ) {
-      replace(current);
-      onChanged();
-      throw new Error("The payment state changed. Review the current case.");
-    }
     const response = await privateRequest<{ case: SecurityCase }>(
       "POST",
       `security-cases/${encodeURIComponent(record.id)}/actions`,
       {
         action: "verify-payment",
-        expectedRevision: current.case.revision,
+        expectedRevision: current.revision,
         idempotencyKey: requestKey(),
         transactionIds: hashes,
         confirmation: true,
@@ -3792,32 +3810,23 @@ function CaseDetail({
                         "The recovery request changed. Refresh the case before signing.",
                       )
                     }
-                    authorizeVerification={async () => {
-                      const current = await privateRequest<{
-                        case: SecurityCase;
-                      }>(
-                        "GET",
-                        `security-cases/${encodeURIComponent(record.id)}`,
-                      );
-                      const previous = record.settlement?.recovery;
-                      const next = current.case.settlement?.recovery;
-                      if (
-                        !current.case.allowedActions.includes(
-                          "recover-payment",
-                        ) ||
-                        next?.generation !== previous?.generation ||
-                        next?.legIndex !== previous?.legIndex ||
-                        (next?.cancellationRequest?.nonce ??
-                          next?.retirementNonce) !==
-                          previous?.cancellationRequest?.nonce
-                      ) {
-                        replace(current);
-                        onChanged();
-                        throw new Error(
-                          "The recovery changed. Review its current state.",
-                        );
-                      }
-                    }}
+                    authorizeVerification={() =>
+                      requireCurrent(
+                        "recover-payment",
+                        (current, shown) => {
+                          const next = current.settlement?.recovery;
+                          const previous = shown.settlement?.recovery;
+                          return (
+                            next?.generation === previous?.generation &&
+                            next?.legIndex === previous?.legIndex &&
+                            (next?.cancellationRequest?.nonce ??
+                              next?.retirementNonce) ===
+                              previous?.cancellationRequest?.nonce
+                          );
+                        },
+                        "The recovery changed. Review its current state.",
+                      )
+                    }
                     verify={async (hashes) => {
                       if (hashes.length !== 1)
                         throw new Error(
@@ -3881,31 +3890,20 @@ function CaseDetail({
                     record.settlement.ownerRequest
                       .transactions as DirectEvmTransaction[]
                   }
-                  authorize={async () => {
-                    const current = await privateRequest<{
-                      case: SecurityCase;
-                    }>(
-                      "GET",
-                      `security-cases/${encodeURIComponent(record.id)}`,
-                    );
-                    if (
-                      !current.case.allowedActions.includes("verify-payment") ||
-                      current.case.settlement?.generation !==
-                        record.settlement?.generation ||
-                      JSON.stringify(
-                        current.case.settlement?.ownerRequest?.transactions,
-                      ) !==
-                        JSON.stringify(
-                          record.settlement?.ownerRequest?.transactions,
-                        )
-                    ) {
-                      replace(current);
-                      onChanged();
-                      throw new Error(
-                        "The payment request changed. Refresh the case before signing.",
-                      );
-                    }
-                  }}
+                  authorize={() =>
+                    requireCurrent(
+                      "verify-payment",
+                      (next, previous) =>
+                        sameSettlementGeneration(next, previous) &&
+                        sameJson(
+                          next,
+                          previous,
+                          (value) =>
+                            value.settlement?.ownerRequest?.transactions,
+                        ),
+                      "The payment request changed. Refresh the case before signing.",
+                    )
+                  }
                   authorizeVerification={authorizeExistingPayment}
                   verify={verifyExistingPayment}
                 />
@@ -3927,29 +3925,19 @@ function CaseDetail({
                         .ownerRequest as unknown as DirectOwnerRequest
                     ).solana as DirectSolanaPlan
                   }
-                  authorize={async () => {
-                    const current = await privateRequest<{
-                      case: SecurityCase;
-                    }>(
-                      "GET",
-                      `security-cases/${encodeURIComponent(record.id)}`,
-                    );
-                    if (
-                      !current.case.allowedActions.includes("verify-payment") ||
-                      current.case.settlement?.generation !==
-                        record.settlement?.generation ||
-                      JSON.stringify(
-                        current.case.settlement?.ownerRequest?.solana,
-                      ) !==
-                        JSON.stringify(record.settlement?.ownerRequest?.solana)
-                    ) {
-                      replace(current);
-                      onChanged();
-                      throw new Error(
-                        "The payment request changed. Review its current state before signing.",
-                      );
-                    }
-                  }}
+                  authorize={() =>
+                    requireCurrent(
+                      "verify-payment",
+                      (next, previous) =>
+                        sameSettlementGeneration(next, previous) &&
+                        sameJson(
+                          next,
+                          previous,
+                          (value) => value.settlement?.ownerRequest?.solana,
+                        ),
+                      "The payment request changed. Review its current state before signing.",
+                    )
+                  }
                   authorizeVerification={authorizeExistingPayment}
                   verify={(signature) => verifyExistingPayment([signature])}
                 />
