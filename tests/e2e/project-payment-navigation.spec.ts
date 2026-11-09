@@ -3,7 +3,11 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
-import { cycleIndexFixture, snapshotFixture } from "../fixtures";
+import {
+  cycleIndexFixture,
+  publishedStandings,
+  snapshotFixture,
+} from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const site = deploymentOrigins(
@@ -53,8 +57,8 @@ async function fixtures(page: Page) {
           ),
         }),
   );
-  await page.route("**/data/leaderboard.json?**", (route) =>
-    route.fulfill({ json: snapshotFixture() }),
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: publishedStandings(snapshotFixture()) }),
   );
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),

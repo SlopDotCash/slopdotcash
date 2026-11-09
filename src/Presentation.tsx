@@ -19,7 +19,7 @@ import {
   monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
-import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
+import { SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -228,11 +228,21 @@ export function MetricTile({
   );
 }
 
+/** The read states every published public record shares with the snapshot. */
+export type NoticeState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | {
+      status: "ready";
+      snapshot: Pick<LeaderboardSnapshot, "generatedAt">;
+      refreshError?: string;
+    };
+
 export function DataNotice({
   state,
   retry,
 }: {
-  state: DataState;
+  state: NoticeState;
   retry: () => void;
 }) {
   if (state.status === "loading") {

@@ -1,4 +1,5 @@
 // @source src/lib/use-snapshot.ts
+// @source src/lib/use-standings.ts
 // Two consumers and two reads; a third acquire is represented by rejoining.
 // Per-consumer bindings model effect active guards; cache identity is separate.
 // Models cache ownership, not JSON/scoring validity (ui_snapshot_contract).

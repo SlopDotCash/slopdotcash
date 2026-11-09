@@ -24,6 +24,7 @@ const stages = [
       ...(currentProfiles ? ["--current"] : []),
     ],
   ],
+  ["bun", ["scripts/generate-standings.ts"]],
   [process.execPath, ["scripts/prepare-leaderboard-transport.mjs"]],
 ];
 for (const [command, args] of stages) {
