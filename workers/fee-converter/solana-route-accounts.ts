@@ -17,11 +17,11 @@ import {
   assertJupiterRoute,
   type JupiterRouteExpectation,
 } from "./jupiter-route";
-import type { ParsedTransaction } from "./solana";
 import {
   associatedAccountCreations,
   type SolanaAccountProof,
 } from "./solana-accounts";
+import type { ParsedTransaction } from "./solana-transaction";
 
 const SYSTEM = "11111111111111111111111111111111";
 const MAX_ACCOUNT_BYTES = 1024 * 1024;

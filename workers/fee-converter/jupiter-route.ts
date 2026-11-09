@@ -1,11 +1,11 @@
 import { ata } from "../../contracts/solana/transactions";
 import { decodeJupiterRoute } from "./jupiter-wire";
-import type { ParsedTransaction } from "./solana";
 import {
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
 import { assertNativeWrap } from "./solana-native-route";
+import type { ParsedTransaction } from "./solana-transaction";
 import {
   invalidRouteRole,
   routeAmountsMatch,

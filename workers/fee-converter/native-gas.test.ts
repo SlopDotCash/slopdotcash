@@ -27,9 +27,9 @@ import { type ConversionRow, runNetwork } from "./core";
 import { createEvmClient } from "./evm";
 import { chainClient, runOnce } from "./index";
 import { NativeGasJournal, type NativeGasLimits } from "./native-gas";
-import { parseTransaction as parseSolanaWire } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
 import { proveSolanaExpiry, type RecoveryRpc } from "./solana-expiry";
+import { parseTransaction as parseSolanaWire } from "./solana-transaction";
 import { D1ConversionStore, LOCK_MS } from "./store";
 
 const token = `0x${"2".repeat(40)}`;

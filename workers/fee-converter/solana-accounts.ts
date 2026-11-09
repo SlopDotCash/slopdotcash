@@ -7,8 +7,8 @@ import {
 import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { JupiterRouteExpectation } from "./jupiter-route";
-import type { ParsedTransaction } from "./solana";
 import type { RouteAccountObservation } from "./solana-route-accounts";
+import type { ParsedTransaction } from "./solana-transaction";
 export const LOOKUP_TABLE_PROGRAM =
   "AddressLookupTab1e1111111111111111111111111";
 type Rpc = <T>(method: string, params: unknown[]) => Promise<T>;

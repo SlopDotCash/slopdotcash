@@ -22,14 +22,14 @@ import type {
 } from "./core";
 import { assertJupiterRoute } from "./jupiter-route";
 import {
-  JUPITER_PROGRAM,
-  parseTransaction as parseSolanaTransaction,
-} from "./solana";
-import {
   retainedRouteExpectation,
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
+import {
+  JUPITER_PROGRAM,
+  parseTransaction as parseSolanaTransaction,
+} from "./solana-transaction";
 import {
   type NativeFeeEarning,
   type NativeLiabilityEntry,

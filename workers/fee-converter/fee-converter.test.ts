@@ -28,7 +28,8 @@ import {
 import { createEvmClient, usdMicro } from "./evm";
 import worker, { runOnce } from "./index";
 import { NativeGasJournal } from "./native-gas";
-import { createSolanaClient, parseTransaction } from "./solana";
+import { createSolanaClient } from "./solana";
+import { parseTransaction } from "./solana-transaction";
 import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
 
 const TOKEN = "0x1111111111111111111111111111111111111111";

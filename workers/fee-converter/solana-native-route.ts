@@ -9,11 +9,11 @@ import {
 } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { JupiterRouteExpectation } from "./jupiter-route";
-import type { ParsedTransaction } from "./solana";
 import {
   associatedAccountCreations,
   type SolanaAccountProof,
 } from "./solana-accounts";
+import type { ParsedTransaction } from "./solana-transaction";
 
 export const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
 const ASSOCIATED = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
