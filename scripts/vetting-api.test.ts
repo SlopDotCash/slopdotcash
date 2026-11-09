@@ -1135,7 +1135,7 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   const replies = await Promise.all([request(token), request(token)]);
   expect(replies.map((r) => r.status).sort()).toEqual([200, 403]);
   const accepted = replies.find((r) => r.status === 200)!;
-  expect(accepted.headers.get("set-cookie")).toContain("Max-Age=0");
+  expect(accepted.headers.has("set-cookie")).toBe(false);
   const reader = accepted.body!.getReader(),
     streamed = createHash("sha256");
   let size = 0,
@@ -1541,6 +1541,96 @@ test("a reservation whose reply is lost is still read as present by the next run
   expect(await nextRun.has(id)).toBe(true);
 }, 60_000);
 
+test("a delayed native download response cannot clear a newer same-object grant", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "download-cookie-ownership";
+  await retained.retain(id, runId);
+  const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+  const grant = async () => {
+    const response = await retained.evidence.handle(
+      new Request(`${ORIGIN}${path}/download-grant`, {
+        method: "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/json",
+          "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+        },
+        body: JSON.stringify({
+          reason: "Inspect retained download retry evidence",
+        }),
+      }),
+    );
+    expect(response?.status).toBe(201);
+    const cookie = response?.headers.get("set-cookie")?.split(";")[0];
+    if (!cookie) throw new Error("Missing synthetic download grant");
+    return cookie;
+  };
+  const download = (cookie: string) =>
+    retained.evidence.handle(
+      new Request(`${ORIGIN}${path}/download`, {
+        headers: {
+          cookie,
+          "sec-fetch-site": "same-origin",
+          "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+        },
+      }),
+    );
+  let started: () => void = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let resume: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const audit = retained.evidence.audit.bind(retained.evidence);
+  let holdFirst = true;
+  retained.evidence.audit = async (...args) => {
+    if (args[1] === "download-authorized" && holdFirst) {
+      holdFirst = false;
+      started();
+      await gate;
+    }
+    return audit(...args);
+  };
+  let oldResponse: Promise<Response | null> | undefined;
+  try {
+    const oldCookie = await grant();
+    oldResponse = download(oldCookie);
+    await waiting;
+    // The browser has already accepted this newer Set-Cookie when the first
+    // response finally arrives. Only issuance may mutate that cookie slot.
+    const newCookie = await grant();
+    expect(newCookie).not.toBe(oldCookie);
+    resume();
+    const old = await oldResponse;
+    expect(old?.status).toBe(200);
+    expect(old?.headers.has("set-cookie")).toBe(false);
+    await old?.body?.cancel();
+    const current = await download(newCookie);
+    expect(current?.status).toBe(200);
+    expect(await current?.text()).toBe(VETTING_TRACE_BODY);
+    expect(current?.headers.has("set-cookie")).toBe(false);
+    const replay = await download(newCookie);
+    expect(replay?.status).toBe(403);
+    expect(replay?.headers.has("set-cookie")).toBe(false);
+    expect(
+      sqlite
+        .query(
+          "SELECT COUNT(*) n FROM vetting_evidence_grants WHERE consumed_at IS NOT NULL",
+        )
+        .get(),
+    ).toEqual({ n: 2 });
+  } finally {
+    resume();
+    await oldResponse
+      ?.then((response) => response?.body?.cancel())
+      .catch(() => undefined);
+    retained.evidence.audit = audit;
+  }
+}, 30000);
+
 // PRD8: cancellation while the final audit is pending is one terminal stream
 // outcome. It must not append both a cancelled and a finished receipt.
 test("download cancellation during final audit records one terminal outcome", async () => {
@@ -1616,6 +1706,141 @@ test("download cancellation during final audit records one terminal outcome", as
     .all(id, runId);
   expect(outcomes).toHaveLength(1);
 }, 30000);
+
+for (const boundary of ["r2", "read-audit"] as const) {
+  test(`buffered evidence refuses a session revoked during ${boundary}`, async () => {
+    await listPausedProject();
+    const id = await queueScan();
+    const runId = `buffered-session-revoked-${boundary}`;
+    await retained.retain(id, runId);
+    const token = `buffered_evidence_session_${boundary}_${"a".repeat(40)}`;
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const actorId = `buffered-evidence-operator-${boundary}`;
+    sqlite.run(
+      "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)",
+      [
+        actorId,
+        EVIDENCE_OWNER_GITHUB_ID,
+        "fixture-operator",
+        new Date().toISOString(),
+      ],
+    );
+    sqlite.run(
+      "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
+      [tokenHash, actorId, new Date(Date.now() + 3600000).toISOString()],
+    );
+    const storage = retained.evidence.deps.bucket;
+    if (!storage) throw new Error("Missing local R2 storage");
+    const db = retained.evidence.deps.db;
+    const prepare = db.prepare.bind(db);
+    let hold = false;
+    let signalStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    let resume: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    db.prepare = (sql) => {
+      const statement = prepare(sql);
+      if (!sql.startsWith("INSERT INTO vetting_evidence_audit"))
+        return statement;
+      const bind = statement.bind.bind(statement);
+      statement.bind = (...values) => {
+        const bound = bind(...values);
+        if (values[2] !== "read") return bound;
+        const run = bound.run.bind(bound);
+        bound.run = async () => {
+          if (hold && boundary === "read-audit") {
+            signalStarted();
+            await gate;
+          }
+          return run();
+        };
+        return bound;
+      };
+      return statement;
+    };
+    const env = {
+      SLOP_DB: db,
+      TRACE_AUTH_SECRET: "test-only-trace-rate-limit-secret-long-enough",
+      VETTING_EVIDENCE: {
+        head: storage.head.bind(storage),
+        put: storage.put.bind(storage),
+        async get(key: string) {
+          if (hold && boundary === "r2") {
+            signalStarted();
+            await gate;
+          }
+          return storage.get(key);
+        },
+      },
+    } as unknown as Parameters<typeof onRequest>[0]["env"];
+    const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+    const cookie = `__Host-slop_points=${token}`;
+    let reading: Promise<Response> | undefined;
+    try {
+      const grant = await onRequest({
+        env,
+        request: new Request(`${ORIGIN}${path}/grant`, {
+          method: "POST",
+          headers: {
+            origin: ORIGIN,
+            "content-type": "application/json",
+            cookie,
+          },
+          body: JSON.stringify({
+            reason: "Check buffered private read ownership",
+          }),
+        }),
+      });
+      expect(grant.status).toBe(201);
+      const granted = (await grant.json()) as { grant: string };
+      hold = true;
+      reading = onRequest({
+        env,
+        request: new Request(`${ORIGIN}${path}/body`, {
+          headers: { cookie, "x-vetting-read-grant": granted.grant },
+        }),
+      });
+      await started;
+      const signout = await onRequest({
+        env,
+        request: new Request(`${ORIGIN}/api/v1/points/signout`, {
+          method: "POST",
+          headers: {
+            origin: ORIGIN,
+            "content-type": "application/json",
+            cookie,
+          },
+          body: "{}",
+        }),
+      });
+      expect(signout.status).toBe(200);
+      expect(
+        sqlite
+          .query("SELECT COUNT(*) n FROM points_sessions WHERE token_hash=?")
+          .get(tokenHash),
+      ).toEqual({ n: 0 });
+      resume();
+      const response = await reading;
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain(VETTING_TRACE_BODY);
+      expect(
+        sqlite
+          .query(
+            "SELECT consumed_at IS NOT NULL AS used FROM vetting_evidence_grants",
+          )
+          .get(),
+      ).toEqual({ used: 1 });
+    } finally {
+      resume();
+      await reading?.catch(() => undefined);
+      db.prepare = prepare;
+    }
+  }, 30000);
+}
 
 // EVIDENCE.md requires current authorization for each streamed part. Use the
 // real Pages session resolver and signout mutation while a local R2 read waits.
@@ -1809,6 +2034,113 @@ for (const changed of [false, true]) {
     } finally {
       releaseFirst();
       db.batch = batch;
+    }
+  }, 30000);
+}
+
+// The real evidence route owns an R2 response even when its metadata or
+// stream fails. Inject faults around the local R2 body after granting access;
+// never replace the stored evidence or bypass the one-use grant/audit flow.
+for (const failure of ["metadata", "overflow", "read"] as const) {
+  test(`evidence ${failure} refusal releases its body and preserves the original error`, async () => {
+    await listPausedProject();
+    const id = await queueScan();
+    const runId = `reader-cleanup-${failure}`;
+    await retained.retain(id, runId);
+    const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+    const request = (suffix: string, grant?: string) =>
+      new Request(`${ORIGIN}${path}/${suffix}`, {
+        method: grant ? "GET" : "POST",
+        headers: {
+          origin: ORIGIN,
+          "content-type": "application/json",
+          "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+          ...(grant ? { "x-vetting-read-grant": grant } : {}),
+        },
+        ...(grant ? {} : { body: JSON.stringify({ reason: "Verify evidence reader cleanup" }) }),
+      });
+    const granted = await retained.evidence.handle(request("grant"));
+    expect(granted?.status).toBe(201);
+    const { grant } = await granted!.json();
+    const bucket = retained.evidence.deps.bucket!;
+    let body: ReadableStream<Uint8Array> | undefined;
+    let bodyPulls = 0;
+    let bodyCancels = 0;
+    let nativeReleased = false;
+    const readError = Object.assign(new Error("Injected evidence read failure"), {
+      status: 409,
+      code: "evidence_read_fixture",
+    });
+    retained.evidence.deps.bucket = {
+      ...bucket,
+      get: async (key) => {
+        const object = await bucket.get(key);
+        if (!object) return null;
+        const reader = object.body.getReader();
+        const release = () => {
+          if (!nativeReleased) {
+            reader.releaseLock();
+            nativeReleased = true;
+          }
+        };
+        body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            bodyPulls++;
+            if (failure === "read") {
+              try {
+                await reader.cancel();
+              } finally {
+                release();
+              }
+              controller.error(readError);
+              return;
+            }
+            const part = await reader.read();
+            if (part.done) {
+              release();
+              controller.close();
+            } else if (failure === "overflow") {
+              controller.enqueue(new Uint8Array(object.size + 1));
+            } else controller.enqueue(part.value);
+          },
+          async cancel() {
+            bodyCancels++;
+            try {
+              await reader.cancel();
+            } finally {
+              release();
+            }
+            throw new Error("Injected cleanup failure must not replace refusal");
+          },
+        }, { highWaterMark: 0 });
+        return {
+          ...object,
+          size: failure === "metadata" ? object.size + 1 : object.size,
+          body,
+        };
+      },
+    };
+    try {
+      const response = await retained.evidence.handle(request("body", grant));
+      expect(response?.status).toBe(409);
+      const result = await response!.json();
+      expect(result.error).toBe(failure === "read" ? "evidence_read_fixture" : "evidence_corrupt");
+      expect(JSON.stringify(result)).not.toContain(VETTING_TRACE_BODY);
+      expect(body?.locked).toBe(false);
+      expect(nativeReleased).toBe(true);
+      expect(bodyPulls).toBe(failure === "metadata" ? 0 : 1);
+      // An already errored stream rejects cancel without invoking its source.
+      expect(bodyCancels).toBe(failure === "read" ? 0 : 1);
+      const replay = await retained.evidence.handle(request("body", grant));
+      expect(replay?.status).toBe(403);
+      const actions = sqlite.query(
+        "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=?",
+      ).all(id, runId) as { action: string }[];
+      expect(actions.filter((row) => row.action === "read-attempt")).toHaveLength(1);
+      expect(actions.some((row) => row.action === "read")).toBe(false);
+    } finally {
+      retained.evidence.deps.bucket = bucket;
+      if (body && !body.locked) await body.cancel().catch(() => {});
     }
   }, 30000);
 }

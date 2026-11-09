@@ -190,6 +190,9 @@ Operator authorization, policy currency, expiry and complete bytes are checked
 again at read time. Audit rows retain the actor, reason and action. Grants and
 bodies use no-store; bodies use attachment, nosniff and a restrictive CSP. Text
 is escaped. Binary downloads never execute.
+Buffered responses refresh retention and recheck the same current operator
+after storage and the read audit complete. A read audit records verified bytes
+prepared for access, not proof that the client received them.
 
 Large downloads use a dedicated JSON POST `/:sha256/download-grant`. It returns
 no token in JSON or a URL. The server sets `__Secure-vetting-read-grant` as a
@@ -197,7 +200,10 @@ Secure, HttpOnly, SameSite=Strict, host-only cookie with the exact native downlo
 path and the same configured read-grant lifetime. The browser follows `/:sha256/download` as an
 attachment. GET requires `Sec-Fetch-Site: same-origin`, current session/operator
 policy and the actor/object-bound single-use grant. Duplicate grant cookies,
-ranges and HEAD are refused. The cookie is cleared on a native download attempt.
+ranges and HEAD are refused. Download responses do not change the grant cookie:
+a delayed response must not clear a newer same-object grant. The spent cookie
+may remain until its original 900-second expiry or a later grant overwrites it;
+the consumed D1 row prevents reuse.
 The site's CSP stays unchanged. Small text inspection keeps the existing header
 grant and bounded client digest check.
 

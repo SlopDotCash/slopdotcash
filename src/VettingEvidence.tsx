@@ -3,6 +3,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -15,7 +16,6 @@ import {
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
-import { useAction } from "./lib/use-action";
 import { CopyIdentifier } from "./Operations";
 import { RoutePageHeader, SignInPanel, StatusBadge } from "./Presentation";
 import "./operations-design.css";
@@ -348,25 +348,33 @@ function EvidenceItem({
   const [reason, setReason] = useState(""),
     [content, setContent] = useState<string | null>(null),
     [status, setStatus] = useState("");
-  const { busy, error, run: act } = useAction();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
   const attempt = useRef(0);
+  const inFlight = useRef<number | null>(null);
   const bodyRead = useRef<AbortController | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       attempt.current += 1;
+      inFlight.current = null;
       bodyRead.current?.abort();
     };
   }, []);
   function inspect(event: FormEvent) {
     event.preventDefault();
+    if (!mounted.current || inFlight.current !== null) return;
     const currentAttempt = ++attempt.current;
+    inFlight.current = currentAttempt;
     bodyRead.current?.abort();
     const controller = new AbortController();
     bodyRead.current = controller;
-    const current = () => mounted.current && attempt.current === currentAttempt;
+    const current = () =>
+      mounted.current &&
+      attempt.current === currentAttempt &&
+      inFlight.current === currentAttempt;
     let invalidated = false;
     const requireActor = async () => {
       if (!current()) return false;
@@ -387,10 +395,24 @@ function EvidenceItem({
     };
     setContent(null);
     setStatus("");
-    void act(
+    setBusy(true);
+    setError(null);
+    const perform = async (action: () => Promise<void>) => {
+      try {
+        await action();
+      } catch (cause) {
+        if (current()) setError(errorMessage(cause, "Evidence read failed"));
+      } finally {
+        if (current()) {
+          inFlight.current = null;
+          setBusy(false);
+        }
+      }
+    };
+    void perform(
       async () => {
         try {
-          if (!(await requireActor())) return;
+          if (!(await requireActor()) || !current()) return;
           const base = `operator/vetting-evidence/${encodeURIComponent(run.assessmentId)}/${encodeURIComponent(run.runId)}/${object.sha256}`;
           if (object.streamed) {
             await projectApiRequest(
@@ -399,7 +421,7 @@ function EvidenceItem({
               { reason },
               { expectedActorGithubId: actorId },
             );
-            if (!(await requireActor())) return;
+            if (!(await requireActor()) || !current()) return;
             const link = document.createElement("a");
             link.href = `/api/v1/${base}/download`;
             link.download = `${object.sha256}.bin`;
@@ -415,7 +437,7 @@ function EvidenceItem({
             { reason },
             { expectedActorGithubId: actorId },
           );
-          if (!(await requireActor())) return;
+          if (!(await requireActor()) || !current()) return;
           const response = await fetchWithDeadline(`/api/v1/${base}/body`, {
             credentials: "same-origin",
             cache: "no-store",
@@ -444,7 +466,7 @@ function EvidenceItem({
             throw new Error(
               "Evidence digest differs from the immutable inventory.",
             );
-          if (!(await requireActor())) return;
+          if (!(await requireActor()) || !current()) return;
           if (object.contentType !== "application/octet-stream")
             setContent(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
           else {
@@ -475,11 +497,10 @@ function EvidenceItem({
           }
           // A failure can also complete after the account silently changes.
           // Keep its error only after another current-actor observation.
-          if (!(await requireActor())) return;
+          if (!(await requireActor()) || !current()) return;
           throw cause;
         }
       },
-      (e) => errorMessage(e, "Evidence read failed"),
     );
   }
   return (

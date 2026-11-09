@@ -720,6 +720,35 @@ rewrite the candidate cache or start verification. Solana history recovery
 uses the same parent gate. A request already sent remains a backend operation;
 view departure prevents later work and publication, not its committed effects.
 
+The evidence reader now retires its active attempt in layout cleanup and checks
+that ownership after each awaited identity helper. A departed object cannot
+start a grant, body read or download, or replace a newer error/busy state.
+Native and buffered download regression definitions hold the final session
+response until the object's committed removal. A native click still means
+only that a download was requested; it does not prove saved bytes.
+
+Buffered evidence delivery rechecks the current run and operator after storage
+and the final read audit, immediately before constructing the body response.
+Revoked sessions and expired retention refuse delivery while the consumed grant
+and durable audit rows remain. Native streaming checks each part separately;
+cancellation prevents later enqueue without claiming that an in-flight bounded
+R2 read was aborted. Neither path provides continuous authority after dispatch.
+
+Verified part reads own the R2 body before inspecting its metadata. Every later
+failure attempts cancellation and releases the reader; a cleanup rejection
+preserves the original read or integrity error. Only complete, length-checked
+and digest-checked parts feed the ordered whole-file hash. Releasing a reader
+does not prove that a failed underlying cancellation closed its source. The
+model bounds one part or two ordered parts; hash and storage contracts remain
+assumptions, and actual workflow regression definitions are unexecuted.
+
+Native download responses no longer change the grant cookie, so a delayed old
+response cannot clear a newer same-object grant. [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265#section-4.1.1)
+describes the concurrent-response cookie race. The cookie keeps its original
+15-minute maximum lifetime or is replaced by a new grant; D1 consumption,
+actor/object binding and expiry still refuse replay. The browser regression
+keeps the exact saved-byte check and separately expects replay refusal.
+
 Project creation and revision editors now retire publication ownership in
 layout cleanup. A session preflight that completes after committed departure
 cannot start a write for the departed form. The publication model separates
