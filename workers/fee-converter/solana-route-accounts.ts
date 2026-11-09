@@ -52,7 +52,7 @@ interface Holding {
   wallet: string;
   amount: bigint;
 }
-export interface ReviewedRouteAccounts {
+interface ReviewedRouteAccounts {
   source: Holding | null;
   sourceAddress: string;
   destination: Holding | null;

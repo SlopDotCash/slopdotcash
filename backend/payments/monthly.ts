@@ -273,8 +273,6 @@ async function loadRun(
     : null;
 }
 
-export type { MonthlyAwardState };
-
 /** Chain evidence sets reserved/paid only when it is this exact award; any other
  * obligation under the source is a conflict. The recorded ban decision sets excluded. */
 async function awardStates(

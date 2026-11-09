@@ -48,8 +48,8 @@ import {
   recoverableIntakeScreening,
 } from "./verified-intake";
 
-export type IntakeState = IntakeScreeningState;
-export type StoredIntake = {
+type IntakeState = IntakeScreeningState;
+type StoredIntake = {
   submission_id: string;
   case_id: string;
   received_at: string;
@@ -186,7 +186,7 @@ export async function storedIntake(
     .bind(id)
     .first<StoredIntake>();
 }
-export function intakeQualified(row: StoredIntake): boolean {
+function intakeQualified(row: StoredIntake): boolean {
   return qualifiedIntake({
     review: intakeReviewState(row.review_decision),
     screening: row.screening_state,
@@ -545,7 +545,7 @@ async function routedNotice(
 }
 
 /** Called only after persisted receipt; failures leave a visible, retryable state. */
-export async function screenStoredReport(
+async function screenStoredReport(
   deps: SecurityApiDependencies,
   id: string,
   timeoutMs = ANALYSIS_TIMEOUT_MS,

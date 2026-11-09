@@ -6,7 +6,7 @@ import type {
 } from "./security-bounty.mjs";
 
 /** Display variants derive only from the registry's reward policy. */
-export type ProjectRewardSummary =
+type ProjectRewardSummary =
   | {
       kind: "monthly-pool";
       amount: string;

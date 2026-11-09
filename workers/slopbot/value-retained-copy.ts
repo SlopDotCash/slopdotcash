@@ -118,7 +118,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
-export async function retainedCopySources(
+async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
 ): Promise<WorkUnitSource[]> {
@@ -170,7 +170,7 @@ export async function retainedCopySources(
  * hunk offsets may change when other accepted fixes precede a copied commit.
  * This identifies exact retained edits for review, not their semantic value.
  */
-export function retainedEditIdentity(file: FileChange): string | null {
+function retainedEditIdentity(file: FileChange): string | null {
   if (
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||

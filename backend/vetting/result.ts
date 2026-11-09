@@ -17,10 +17,7 @@ const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";
 /** Results carry summaries and digests; the full trace stays with the VM operator. */
 export const MAX_VETTING_RESULT_BYTES = 256 * 1024;
 
-export {
-  VETTING_DISPOSITIONS,
-  type VettingDisposition,
-} from "../../src/lib/vetting-contracts";
+export { type VettingDisposition } from "../../src/lib/vetting-contracts";
 
 /** Telemetry channels VET-03 requires; each must be complete for "clean". */
 export const TELEMETRY_CHANNELS = [
@@ -146,7 +143,7 @@ export type VettingResult = {
   } | null;
 };
 
-export class VettingResultError extends Error {
+class VettingResultError extends Error {
   readonly status = 422;
   readonly code = "invalid_vetting_result";
 }

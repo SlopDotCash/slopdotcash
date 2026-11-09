@@ -18,7 +18,7 @@ import {
   storedBindingAbi,
 } from "./core";
 
-export interface BindingRecoveryInput {
+interface BindingRecoveryInput {
   network: string;
   vault: string;
   originalTransactionId: string;

@@ -7,7 +7,7 @@ export interface ValueBranchPolicy {
   text: string;
 }
 
-export function declaredIntegrationBranch(text: string): string | null {
+function declaredIntegrationBranch(text: string): string | null {
   // Recognize an explicit policy sentence, not examples in fenced code blocks.
   const branches = new Set<string>();
   let fence: { marker: string; length: number } | null = null;

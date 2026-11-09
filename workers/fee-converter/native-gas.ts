@@ -19,7 +19,7 @@ export interface NativeGasLimits {
   perDay: string;
   additionalFeeReserve: string;
 }
-export function nativeInteger(value: string): bigint {
+function nativeInteger(value: string): bigint {
   if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,77})$/u.test(value))
     throw new Error("Native fee must be an exact non-negative integer");
   return BigInt(value);
@@ -33,7 +33,7 @@ export function validateNativeLimits(limits: NativeGasLimits) {
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );
 }
-export interface NativeAttempt {
+interface NativeAttempt {
   id: string;
   network: Network;
   fee_wallet: string;
@@ -56,7 +56,7 @@ export interface RecordedNativeSend {
   feeWallet: string;
   nonce: number | null;
 }
-export interface NativeReceiptCost {
+interface NativeReceiptCost {
   txId: string;
   actualWei: string;
   blockHash: string;

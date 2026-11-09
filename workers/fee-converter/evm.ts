@@ -200,7 +200,7 @@ export const KYBER_ROUTER_ABI = [
 
 type Fetch = typeof fetch;
 
-export interface EvmClientOptions {
+interface EvmClientOptions {
   config: NetworkConfig;
   limits: Limits;
   kyberClientId: string;

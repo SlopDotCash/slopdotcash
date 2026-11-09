@@ -7,8 +7,6 @@ import {
   keeperStorage,
 } from "./storage";
 
-export type { KeeperStore } from "./storage";
-
 /** One process owns this signer journal. SQLite releases the lock after a crash. */
 export function openKeeperStore(file: string) {
   const lock = new Database(`${file}.lock`, { create: true });

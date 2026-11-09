@@ -7,7 +7,7 @@ import { closureAllowed } from "../verified-policy";
 import type { Exemption } from "./github";
 import type { D1Database } from "./persistence";
 
-export type ClosureEvidence = {
+type ClosureEvidence = {
   itemKind: "issue" | "pull_request";
   exemption: Exemption;
   /** A slop.cash member record matched by the author's immutable GitHub ID. */

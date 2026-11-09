@@ -144,9 +144,7 @@ export function addedBinaryRecovery(
 
 /** Validate retained bodies before a private assessment can use them. Import
  * also regenerates the tree/byte proof through the authenticated collector. */
-export async function validAddedBinaryProof(
-  file: FileChange,
-): Promise<boolean> {
+async function validAddedBinaryProof(file: FileChange): Promise<boolean> {
   const proof = file.addedBinary;
   if (
     !proof ||
@@ -193,7 +191,7 @@ export async function validAddedBinaryProof(
   }
 }
 
-export function sameAddedBinary(left: FileChange, right: FileChange): boolean {
+function sameAddedBinary(left: FileChange, right: FileChange): boolean {
   const a = left.addedBinary;
   const b = right.addedBinary;
   return (

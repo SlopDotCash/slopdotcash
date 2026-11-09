@@ -55,7 +55,7 @@ export interface EvmMonthlyReservation {
   count: number;
   sourceSequence: string;
 }
-export interface EvmAllocationNode {
+interface EvmAllocationNode {
   hash: Hex;
   total: bigint;
 }
@@ -287,7 +287,7 @@ export async function readEvmMonthlyReserve(
 }
 
 /** A retained admission's complete ordered tree, not a collection of failed proofs. */
-export interface EvmMonthlyReleaseCapture {
+interface EvmMonthlyReleaseCapture {
   allocationDigest: string;
   entries: readonly MonthlyAllocationEntry[];
 }
@@ -392,7 +392,7 @@ export async function inspectEvmMonthlyWrongSum(
   };
 }
 
-export type EvmWrongSumEvidence = Extract<
+type EvmWrongSumEvidence = Extract<
   Awaited<ReturnType<typeof inspectEvmMonthlyWrongSum>>,
   { status: "provably-unsettleable" }
 >;

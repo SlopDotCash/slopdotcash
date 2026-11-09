@@ -4,7 +4,7 @@ import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
 import { allocateWeightedRows } from "./weighted-allocation";
 
-export const QUALITY_TIERS = {
+const QUALITY_TIERS = {
   micro: 1,
   small: 3,
   medium: 9,
@@ -12,7 +12,7 @@ export const QUALITY_TIERS = {
   xl: 45,
   exceptional: 75,
 } as const;
-export type QualityTier = keyof typeof QUALITY_TIERS;
+type QualityTier = keyof typeof QUALITY_TIERS;
 export interface QualityEvent {
   id: string;
   actorId: string;
@@ -382,7 +382,7 @@ export function calculateQualityReview(
 }
 
 /** Explicit draft only; unmerged submissions already have zero implementation credit. */
-export interface QualityBurdenDecision {
+interface QualityBurdenDecision {
   actorId: string;
   closedPrIds: string[];
   deductionBasisPoints: number;

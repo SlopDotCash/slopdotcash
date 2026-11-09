@@ -267,7 +267,7 @@ interface Attempt {
   /** Set while the destination wallet's signature is still missing from raw. */
   cosigner?: string;
 }
-export interface PreparedBinding {
+interface PreparedBinding {
   transactionId: string;
   /** Base64 transaction carrying the identity signature and an empty slot for the destination wallet. */
   transaction?: string;

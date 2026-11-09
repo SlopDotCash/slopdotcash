@@ -59,7 +59,7 @@ const list = (value: unknown): unknown[] => {
 const decode = (value: string) =>
   Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 
-export interface TokenAccountReading {
+interface TokenAccountReading {
   /** The owning token program: classic SPL Token or Token-2022. */
   program: string;
   raw: Uint8Array;

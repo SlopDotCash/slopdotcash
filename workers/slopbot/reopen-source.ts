@@ -11,7 +11,7 @@ export type ReopenItem = {
   body?: string | null;
   head?: { sha: string };
 };
-export type ReopenSource = {
+type ReopenSource = {
   installationId: number;
   repositoryId: number;
   itemKind: "issue" | "pull_request";

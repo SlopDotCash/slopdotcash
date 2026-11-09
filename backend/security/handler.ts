@@ -237,7 +237,7 @@ type ReservationRow = {
   reserved_at: string;
 };
 
-export type FrozenTerms = {
+type FrozenTerms = {
   /** Verified asset identity at receipt; legacy USD/USDC cases omit it. */
   asset?: RewardAsset;
   grossMinor: string;
@@ -275,7 +275,7 @@ const GROSS_MINOR = /^[1-9]\d{0,38}$/u;
 const GITHUB_VERIFIER = "github";
 const RECEIVED_AT_SOURCE = "maintainer-attested";
 /** A browser that kept an older readiness answer must check again. */
-export const INTAKE_READINESS_TTL_SECONDS = 30;
+const INTAKE_READINESS_TTL_SECONDS = 30;
 
 export function json(
   status: number,
@@ -3990,12 +3990,8 @@ async function actOnCase(
   });
 }
 
-export type PvrState = "ready" | "disabled" | "forbidden" | "unavailable";
-export type AutomaticIntake =
-  | "ready"
-  | "app-not-installed"
-  | "unavailable"
-  | "off";
+type PvrState = "ready" | "disabled" | "forbidden" | "unavailable";
+type AutomaticIntake = "ready" | "app-not-installed" | "unavailable" | "off";
 
 /** Sensitive requests recheck GitHub even when public observations are stale. */
 export async function pvrState(

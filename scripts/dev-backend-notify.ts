@@ -18,7 +18,7 @@ export type LocalCapturedEmail = {
   to: string;
   mime: string;
 };
-export type LocalNotifyOptions = {
+type LocalNotifyOptions = {
   db: SecurityD1Database;
   now: () => Date;
   inboxUrl: string;

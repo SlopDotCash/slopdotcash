@@ -99,7 +99,7 @@ const ALLOWED_PROGRAMS = new Set([
 
 type Fetch = typeof fetch;
 
-export interface SolanaClientOptions {
+interface SolanaClientOptions {
   config: NetworkConfig;
   limits: Limits;
   jupiterApiUrl: string;
@@ -135,7 +135,7 @@ const CLAIM_POLL_MS = 2_000;
  * escrow config. A missing or malformed field refuses the claim; the cluster
  * genesis comes from the escrow network registry, never from the record.
  */
-export function solanaEscrowConfig(
+function solanaEscrowConfig(
   entry: FeeVault,
   rpcUrl: string,
 ): SolanaEscrowConfig {
@@ -289,7 +289,7 @@ function nativeInteger(value: unknown): bigint {
   return BigInt(value);
 }
 
-export function solanaNativeCost(
+function solanaNativeCost(
   meta: {
     fee: number;
     preBalances: number[];

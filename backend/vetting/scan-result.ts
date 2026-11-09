@@ -202,7 +202,7 @@ function review(value: unknown, name: string): ScanReview {
 }
 
 /** Parses a bounded scan result exactly; unknown or missing fields refuse it. */
-export function parseVettingScanResult(value: unknown): VettingScanResult {
+function parseVettingScanResult(value: unknown): VettingScanResult {
   const body = object(value, "result", [
     "schemaVersion",
     "assessmentId",

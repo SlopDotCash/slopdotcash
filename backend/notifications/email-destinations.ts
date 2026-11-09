@@ -2,7 +2,7 @@ import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import type { NotificationsDependencies } from "./handler";
 
 export type MailService = { fetch(request: Request): Promise<Response> };
-export type EnrolledDestination = {
+type EnrolledDestination = {
   email: string;
   destinationVersion: string;
   verifiedAt: string;

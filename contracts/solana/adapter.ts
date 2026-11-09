@@ -16,7 +16,7 @@ import {
   SOLANA_NATIVE_DECIMALS,
 } from "./native";
 
-export { SOLANA_NATIVE_ASSET, SOLANA_NATIVE_DECIMALS } from "./native";
+export { SOLANA_NATIVE_ASSET } from "./native";
 
 import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 import {
@@ -409,7 +409,7 @@ export async function verifySolanaDeployment(
   return project;
 }
 
-export interface SolanaAuthorityRotation {
+interface SolanaAuthorityRotation {
   identityAuthority: string;
   /** Null when no rotation is proposed. */
   pendingIdentityAuthority: string | null;
@@ -437,7 +437,7 @@ export function solanaAuthorityRotation(
 
 /** The program's project purpose for a payout policy: 0 ordinary awards, 1 private bounties. It
  * is the last project PDA seed: ["project", owner, project ID, purpose]. */
-export function solanaProjectPurpose(policy: PayoutPolicy = "ordinary") {
+function solanaProjectPurpose(policy: PayoutPolicy = "ordinary") {
   return policy === "security-bounty" ? 1 : 0;
 }
 
@@ -594,7 +594,7 @@ export function solanaAwardId(
   );
 }
 
-export interface EscrowInvocation {
+interface EscrowInvocation {
   /** Position in the transaction's flattened instruction list. */
   index: number;
   kind: "reserved" | "paid";
