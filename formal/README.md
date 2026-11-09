@@ -981,6 +981,17 @@ parent invalidation or URL rewrite; it cannot undo an already accepted write.
 Source-authored browser regressions hold those replies through DOM removal.
 They have not run.
 
+Email-link actions also retire at committed removal. Both asynchronous actor
+checks and still-attached hash/session listeners must respect that lifetime
+before writing the retained token, changing history or starting verification.
+Errors publish synchronously under the action generation guard; a later shared
+hook catch cannot overwrite a replacement link's feedback. Verification still
+requires its observed actor and backend admission, while an explicitly chosen
+unsubscribe uses its capability without a sign-in requirement. The expanded
+model separates storage failures, backend acceptance, response consumption and
+shared busy release. Its 34 scenarios and three new browser definitions remain
+unexecuted.
+
 `ui_vault_prompt_ownership` separates wallet preparation from the final
 `beforeSend` callback. That callback now checks both the initiating component's
 lifetime and the current deposit permission before saving a pending request

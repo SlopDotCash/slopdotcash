@@ -4804,7 +4804,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "0245600e195a4f0a007532c41b7126ed27c32ba35b67619dcb936fa4c15cac2f",
+      "sha256": "75cba44aded0e4e37d92ace5c4bdafb041af79d628243691daf94d247f637b10",
       "models": [
         "formal/models/ui/ui_email.qnt",
         "formal/models/ui/ui_email_actions.qnt",
@@ -4818,8 +4818,8 @@
         214, 229, 247, 249, 255, 261, 262, 293, 294, 298, 300, 331, 333, 336,
         339, 342, 350, 361, 367, 375, 377, 378, 381, 382, 391, 392, 415, 417,
         428, 443, 445, 447, 454, 460, 467, 475, 477, 478, 493, 510, 512, 513,
-        554, 556, 557, 559, 561, 564, 646, 660, 697, 738, 739, 740, 743, 755,
-        773, 804, 847, 868, 877, 894, 908, 911
+        554, 556, 557, 559, 561, 564, 646, 660, 697, 738, 739, 740, 753, 765,
+        785, 816, 859, 880, 889, 908, 922, 925
       ],
       "review": "mapped-abstraction"
     },
@@ -5995,6 +5995,7 @@
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt",
+        "formal/models/ui/ui_email_actions.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_email_preference_requests.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -6380,6 +6381,7 @@
       "sha256": "2ab920b0a8d22dcea44e6a544556775a44559d81989788fcf2a407f01e1dae64",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_email_actions.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_inbox_mutation_focus.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
@@ -15387,14 +15389,47 @@
     },
     {
       "path": "formal/models/ui/ui_email_actions.qnt",
-      "sha256": "0976eab826135ba2ba75a2fbba32697a80c967aea947169bb0ad3f4b34e97431",
-      "sources": ["src/InboxEmail.tsx"],
+      "sha256": "2da44163d030e381be6f54e00e4c10c3082372adca13414fee28f34bf2b0f00c",
+      "sources": [
+        "src/InboxEmail.tsx",
+        "src/lib/project-api.ts",
+        "src/lib/use-action.ts"
+      ],
       "scenarios": [
-        "actorChangeRefusesCompletionTest",
-        "discardedLinkStaysDiscardedTest",
+        "acceptedEffectSurvivesDepartureTest",
+        "capturedFragmentIsScrubbedWithoutSubmittingTest",
+        "changedCookieFailsExpectedActorAdmissionTest",
+        "changedPostflightActorRefusesLocalSuccessTest",
+        "changedPreflightActorStartsNoPostTest",
+        "currentVerificationCompletesTest",
+        "decodedPreflightCannotPostAfterDepartureTest",
+        "departedCaptureHasNoSideEffectsTest",
+        "departedInitialCheckCannotOverwriteStoredReplacementTest",
+        "departedSessionListenerHasNoSideEffectsTest",
+        "dismissRemovesCurrentActionTest",
+        "errorPublishedBeforeReplacementIsClearedByNewLinkTest",
+        "expiredStoredLinkIsNotActionableTest",
+        "failedDismissLeavesNoLocalActionTest",
+        "failedInitialStorageStillAllowsCurrentLinkTest",
+        "failedInvalidStoredRemovalRemainsNonActionableTest",
+        "failedSuccessRemovalMayRetainUsedTokenTest",
+        "historicalRethrowCanPublishAfterReplacementTest",
+        "initialAccountCheckBindsStorageOnlyTest",
+        "initialAccountCheckCanRetryTest",
+        "initialBindingFailureKeepsPageUsableTest",
+        "invalidTokenCannotSubmitTest",
+        "malformedBodyLeavesLinkRetryableTest",
         "newLinkCompletesTest",
-        "oldFailureLeavesNewLinkTest",
-        "oldSuccessLeavesNewLinkTest"
+        "oldFinallyReleasesSharedBusyForNewLinkTest",
+        "oldResponseCannotConfirmReplacementTest",
+        "postflightSnapshotIsNotContinuousAuthorityTest",
+        "replacementAfterHeadersSkipsOldBodyTest",
+        "replacementBeforeInnerCatchSuppressesOldErrorTest",
+        "replacementRetiresInitialAccountCheckTest",
+        "restoredDifferentActorRefusesInitialCheckTest",
+        "signOutRetiresPostflightAndRetainsLinkTest",
+        "unsubscribeIgnoresSessionEventTest",
+        "unsubscribeNeedsNoSessionTest"
       ]
     },
     {
