@@ -1,6 +1,6 @@
 import { CircleDot, GitPullRequest } from "lucide-react";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import type { DataState } from "./lib/use-snapshot";
+import type { StandingsState } from "./lib/use-standings";
 import { ExternalLinkAnchor, formatDateTime, stale } from "./Presentation";
 
 /** Public snapshot suggestions; GitHub remains the authority for taking work. */
@@ -10,7 +10,7 @@ export function ProjectWork({
   retry,
 }: {
   project: ProjectDefinition;
-  state: DataState;
+  state: StandingsState;
   retry: () => void;
 }) {
   if (project.status !== "active") return null;
@@ -19,16 +19,7 @@ export function ProjectWork({
   const repositories = new Set(project.repositories.map(({ id }) => id));
   const items =
     state.status === "ready"
-      ? [
-          state.snapshot.workQueue.issues,
-          state.snapshot.workQueue.pullRequests,
-        ].flatMap((queue) =>
-          queue.filter(
-            (item) =>
-              repositories.has(item.repository) &&
-              item.selection.status === "candidate",
-          ),
-        )
+      ? state.snapshot.work.filter((item) => repositories.has(item.repository))
       : [];
   return (
     <section className="section project-work" aria-label="Suggested work">

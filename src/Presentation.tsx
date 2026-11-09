@@ -19,7 +19,7 @@ import {
   monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
-import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
+import { SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
 

@@ -11,6 +11,7 @@ import {
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import { createProjectView } from "../src/lib/project-view";
+import { PROJECTS } from "../src/lib/projects.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import {
   assertPublishedStandings,
@@ -121,6 +122,50 @@ test("the published standings carry exactly what the pages derived from the full
   expect(standings.actors.length).toBe(pairs.size);
 });
 
+test("the published standings list the same suggested work the project page derived from the full snapshot", () => {
+  const snapshot = snapshotFixture();
+  const blocked = structuredClone(snapshot.workQueue.issues[0]);
+  blocked.id = "I_blocked";
+  blocked.number = 17328;
+  blocked.selection = { status: "excluded", reasons: ["blocked"] };
+  snapshot.workQueue.issues.push(blocked);
+  const standings = createPublishedStandings(
+    snapshot,
+    cycleIndexFixture(),
+    sha256Hex(JSON.stringify(snapshot)),
+  );
+  assertPublishedStandings(JSON.parse(JSON.stringify(standings)));
+  const projects = PROJECTS.filter((project) => project.status === "active");
+  expect(projects.length).toBeGreaterThan(0);
+  for (const project of projects) {
+    const repositories = new Set(project.repositories.map(({ id }) => id));
+    const derived = [
+      snapshot.workQueue.issues,
+      snapshot.workQueue.pullRequests,
+    ].flatMap((queue) =>
+      queue.filter(
+        (item) =>
+          repositories.has(item.repository) &&
+          item.selection.status === "candidate",
+      ),
+    );
+    expect(
+      standings.work.filter((item) => repositories.has(item.repository)),
+    ).toEqual(
+      derived.map(({ id, kind, number, title, url, repository }) => ({
+        id,
+        kind,
+        number,
+        title,
+        url,
+        repository,
+      })),
+    );
+  }
+  expect(standings.work.some((item) => item.id === blocked.id)).toBe(false);
+  expect(standings.work.length).toBeGreaterThan(0);
+});
+
 test("the standings validator refuses records a page cannot trust", () => {
   const standings = createPublishedStandings(
     snapshotFixture(),
@@ -166,6 +211,9 @@ test("the standings validator refuses records a page cannot trust", () => {
           appliedThirds: 4,
         }),
     ],
+    ["work item key", (v) => (v.work[0].selection = { status: "candidate" })],
+    ["duplicate work item", (v) => v.work.push(v.work[0])],
+    ["work item kind", (v) => (v.work[0].kind = "discussion")],
   ];
   for (const [label, mutate] of cases) {
     const broken = JSON.parse(JSON.stringify(standings));

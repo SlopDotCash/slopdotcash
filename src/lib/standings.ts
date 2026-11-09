@@ -15,6 +15,7 @@ import {
   type GitHubActor,
   type LeaderboardSnapshot,
   type PublishedPenalty,
+  type WorkItem,
 } from "./leaderboard-types";
 import { createProjectView, projectCycleHasOpened } from "./project-view";
 import { PROJECTS } from "./projects.mjs";
@@ -48,6 +49,12 @@ export interface StandingsPenalty extends PublishedPenalty {
   appliedThirds: number;
 }
 
+/** A work-queue candidate the project page lists, in the snapshot's order. */
+export type StandingsWorkItem = Pick<
+  WorkItem,
+  "id" | "kind" | "number" | "title" | "url" | "repository"
+>;
+
 export interface PublishedStandings {
   format: typeof STANDINGS_FORMAT;
   generatedAt: string;
@@ -61,6 +68,8 @@ export interface PublishedStandings {
   /** Actors with a cumulative cross-project leader row. */
   globalLeaderIds: string[];
   penalties: StandingsPenalty[];
+  /** Issues, then pull requests, whose selection decision is candidate. */
+  work: StandingsWorkItem[];
 }
 
 const DIGEST = /^[a-f0-9]{64}$/u;
@@ -133,6 +142,17 @@ export function createPublishedStandings(
       ...penalty,
       appliedThirds: deductions.byPenalty.get(penalty.id) ?? 0,
     })),
+    work: [snapshot.workQueue.issues, snapshot.workQueue.pullRequests]
+      .flat()
+      .filter((item) => item.selection.status === "candidate")
+      .map(({ id, kind, number, title, url, repository }) => ({
+        id,
+        kind,
+        number,
+        title,
+        url,
+        repository,
+      })),
   };
 }
 
@@ -248,6 +268,22 @@ function isPenalty(value: unknown): value is StandingsPenalty {
   );
 }
 
+function isWorkItem(value: unknown): value is StandingsWorkItem {
+  return (
+    isRecord(value) &&
+    exactKeys(value, ["id", "kind", "number", "title", "url", "repository"]) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    (value.kind === "issue" || value.kind === "pull-request") &&
+    Number.isSafeInteger(value.number) &&
+    (value.number as number) > 0 &&
+    typeof value.title === "string" &&
+    typeof value.url === "string" &&
+    typeof value.repository === "string" &&
+    value.repository.length > 0
+  );
+}
+
 /** Rejects any published standings that do not match this build's contract. */
 export function assertPublishedStandings(
   value: unknown,
@@ -264,6 +300,7 @@ export function assertPublishedStandings(
       "projects",
       "globalLeaderIds",
       "penalties",
+      "work",
     ]) ||
     !isIso(value.generatedAt) ||
     typeof value.snapshotDigest !== "string" ||
@@ -289,7 +326,10 @@ export function assertPublishedStandings(
     !Array.isArray(value.penalties) ||
     !value.penalties.every(isPenalty) ||
     new Set(value.penalties.map((penalty) => penalty.id)).size !==
-      value.penalties.length
+      value.penalties.length ||
+    !Array.isArray(value.work) ||
+    !value.work.every(isWorkItem) ||
+    new Set(value.work.map((item) => item.id)).size !== value.work.length
   )
     throw new Error("Invalid published standings");
 }

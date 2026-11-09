@@ -63,7 +63,7 @@ import { profileCounts } from "./lib/profiles";
 import { useProjectSession } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
-import { type DataState, useSnapshot } from "./lib/use-snapshot";
+import { useSnapshot } from "./lib/use-snapshot";
 import { useUtcDay } from "./lib/use-time-boundary";
 import {
   Avatar,
@@ -230,6 +230,8 @@ export function PointsProvider({
   /** The record this page needs; none loads only on request. */
   source: PointsSource | null;
 }) {
+  // A new UTC month rereads a journal older than a minute, as on navigation.
+  const utcMonth = useUtcDay().slice(0, 7);
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
   const [session, setSession] = useState<"loading" | "ready" | "error">(
@@ -304,7 +306,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [read, attempt, sessionAttempt]);
+  }, [read, attempt, sessionAttempt, utcMonth]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();
