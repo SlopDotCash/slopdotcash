@@ -28,6 +28,11 @@ module formal_process {
     s'=s.with("acknowledged",true).with("captured",s.captured or s.external)}
   action invalidCheckpoint = all {s.phase=="running",s.requiresHandshake,
     s'=s.with("failed",true)}
+  // Filesystem failure does not abandon the live launcher's descendants.
+  // A separate process-table read may or may not retain their ownership.
+  action checkpointIoFailure(observed:bool):bool = all {s.phase=="running",s.requiresHandshake,
+    s'=s.with("phase","cleanup").with("failed",true)
+      .with("captured",s.captured or (s.external and observed and s.sameOwner))}
   action cancel = all {Set("running","cleanup").contains(s.phase),
     s'=s.with("phase","cleanup").with("failed",true)}
   // Playwright owns web servers in separate process groups. On cancellation or
@@ -50,13 +55,17 @@ module formal_process {
   action drain = all {not(s.launcher),not(s.child),s'=s.with("pipes",true)}
   action cleanup = all {s.phase=="cleanup",s.pipes,not(s.child),not(s.external),
     s'=s.with("phase","done").with("temporary",false)}
+  // Removal failure still settles exactly one failed result; retained files
+  // are not falsely modeled as gone and cannot overwrite an earlier failure.
+  action temporaryRemovalFailure = all {s.phase=="cleanup",s.pipes,not(s.child),not(s.external),
+    s'=s.with("phase","done").with("failed",true)}
   action cleanupDeadline = all {s.phase=="cleanup",
     s'=s.with("phase","done").with("failed",true).with("temporary",false)}
   action report = all {s.phase=="done",s'=s.with("result",if(s.failed) "fail" else "pass")}
   action step = {nondet ok=Set(false,true).oneOf()
-    any {start,startBrowser,launcherExit(ok),exitCheckpoint,invalidCheckpoint,cancel,managedServer,captureManaged,changedOwner,
+    any {start,startBrowser,launcherExit(ok),exitCheckpoint,invalidCheckpoint,checkpointIoFailure(ok),cancel,managedServer,captureManaged,changedOwner,
       managedServerClosed,interrupt,cooperativeExit,
-      interruptDeadline,killGroup,killManaged,drain,cleanup,cleanupDeadline,report,s'=s}}
+      interruptDeadline,killGroup,killManaged,drain,cleanup,temporaryRemovalFailure,cleanupDeadline,report,s'=s}}
   val invariant = all {s.result=="pass" implies all {not(s.failed),not(s.launcher),
     not(s.child),not(s.external),s.pipes,not(s.temporary),
     s.requiresHandshake implies s.acknowledged},s.failed implies s.result!="pass"}
@@ -103,4 +112,15 @@ module formal_process {
   run changedNormalExitOwnerRefusesSuccessTest = init.then(startBrowser).then(managedServer)
     .then(exitCheckpoint).then(changedOwner).then(launcherExit(true))
     .then(cleanupDeadline).then(report).expect(s.result=="fail" and s.external)
+  run ownershipReadFailureStillClosesObservedServerTest = init.then(startBrowser).then(managedServer)
+    .then(checkpointIoFailure(true)).then(killManaged).then(killGroup)
+    .then(drain).then(cleanup).then(report).expect(s.result=="fail" and not(s.external))
+  run ownershipReadFailureDoesNotAcquireUnknownServerTest = init.then(startBrowser).then(managedServer)
+    .then(checkpointIoFailure(false)).then(killManaged.fail())
+  run temporaryRemovalFailureStillReportsTest = init.then(startBrowser).then(exitCheckpoint)
+    .then(launcherExit(true)).then(killGroup).then(drain).then(temporaryRemovalFailure)
+    .then(report).expect(s.result=="fail" and s.temporary)
+  run earlierFailureSurvivesTemporaryRemovalFailureTest = init.then(startBrowser).then(exitCheckpoint)
+    .then(launcherExit(false)).then(killGroup).then(drain).then(temporaryRemovalFailure)
+    .then(report).expect(s.result=="fail" and s.temporary)
 }

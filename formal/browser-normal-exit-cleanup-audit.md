@@ -84,7 +84,7 @@ false-success missing-handshake result. Every control cleans up its own recorded
 server in a `finally` block. Exact source hashes, command results and logs are
 retained under ignored `evidence/normal-exit-cleanup/`.
 
-The final Node 24.15.0 / Bun 1.3.14 run of the runner and LemmaScript-cancellation
+The `3ff8b8be7` Node 24.15.0 / Bun 1.3.14 run of the runner and LemmaScript-cancellation
 files passes all 20 tests and 71 assertions. A separate pinned run of the final
 test bytes against the original supervisor fails all five selected controls:
 four listeners remain bound and missing ownership still returns zero. The
@@ -112,8 +112,54 @@ is retained. One inventory refresh also stalled in its formatter; the exact owne
 processes were stopped, and the direct canonical retry passed. Neither attempt
 is reported as successful.
 
-The refreshed inventory has 843 sources, 318 models and 1,577 named scenarios.
+That checkpoint's inventory has 843 sources, 318 models and 1,577 named scenarios.
 LemmaScript accounts for 687 files, 9,876 function bodies, 168 selected contracts
 and 9,708 unproved bodies. Real Playwright acceptance and combined-head checks
 remain parent-run gates; these subprocess and finite-model results do not prove
 browser or arbitrary-process coverage.
+
+## I/O error completion follow-up
+
+Review of `3ff8b8be7` identified two exceptions that escaped the intended failure
+path. A failed `readdirSync` occurred outside the ownership callback's `try`
+block and could crash the supervisor before stopping its children. A failed
+final `rmSync` occurred after the phase had marked itself settled and cleared
+its timers; the exception left its promise unresolved. The real controls
+reproduce a supervisor exit without the post-await completion receipt.
+
+Ownership-directory reads now belong to the same error boundary as identity
+capture. Any failure becomes sticky and stops the phase. While the launcher is
+still alive, cleanup separately attempts to capture its current descendants;
+a failed filesystem checkpoint does not abandon that ownership opportunity.
+Unknown groups still receive no signal. Final directory removal errors are
+reported and recorded before the phase resolves once, using its original
+nonzero status or failure one after an otherwise successful exit. The private
+directory may remain for inspection; its deletion is never claimed successful.
+
+The added real-I/O tests replace the protocol directory with a regular file
+while a detached TCP server is running, and create an unreadable nonempty nested
+directory before exits zero and seven. They require a receipt written after
+awaiting the phase, verify the exact result and one launcher-exit callback, and
+check the detached server's port is reusable. Test cleanup restores permissions
+only in its retained private fixture directory. Depending on the platform,
+recursive removal reports EACCES or ENOTEMPTY. Both are real removal failures.
+The original three failures and the initial overly specific error-code assertion
+are retained. These checks run with Node 24.15.0 and Bun 1.3.14; Windows and root
+user permission cases are explicitly skipped.
+
+The combined subprocess run passes all 23 tests and 83 assertions, including
+the existing normal-exit, cancellation, worker-thread and unrelated-process
+controls. A separate run of the final I/O test bytes against `3ff8b8be7` fails
+all three cases at the supervisor-exit check. Evidence is retained under ignored
+`evidence/browser-io-cleanup/`; the test subprocesses clean up their own retained
+processes and permission changes.
+
+The model adds ownership-I/O failure with observed versus unknown descendants,
+and a final removal failure that retains the temporary-directory state while
+still reaching a failed result. All 21 scenarios and the 500 seeded simulations
+pass. The pinned finite check completed in 4,397 ms with 4,625 generated states,
+472 distinct states, zero queued states and depth 11; inputs remained unchanged.
+An initial typecheck rejected the added typed action's missing return annotation;
+the corrected check passes and the failed receipt remains retained. Earlier
+model counts certify only the preceding checkpoint. The complete inventory now
+has 1,581 scenarios, with the same source, model and LemmaScript target counts.

@@ -194,11 +194,11 @@ export function runE2ePhase({
     };
     const captureOwnership = () => {
       if (!ownershipDirectory || settled || cleaningUp) return;
-      const requests = readdirSync(ownershipDirectory).filter(
-        (name) => name.endsWith(".request") && !handledRequests.has(name),
-      );
-      if (!requests.length) return;
       try {
+        const requests = readdirSync(ownershipDirectory).filter(
+          (name) => name.endsWith(".request") && !handledRequests.has(name),
+        );
+        if (!requests.length) return;
         const rows = processTable();
         const owned = new Set();
         const launcher = rows.get(child.pid);
@@ -256,6 +256,18 @@ export function runE2ePhase({
         }
       } catch (error) {
         cleanupError(error.message);
+        // The protocol directory can fail while the launcher is still alive.
+        // Capture its current descendants before stopping it; do not abandon
+        // owned servers merely because the filesystem checkpoint failed.
+        if (child.pid && !launcherExited) {
+          try {
+            for (const [group, members] of descendantGroups(child.pid))
+              detachedGroups.set(group, members);
+          } catch (captureError) {
+            cleanupError(captureError.message);
+          }
+        }
+        stopProcessTree(1);
       }
     };
     if (ownershipDirectory) ownershipPoll = setInterval(captureOwnership, 10);
@@ -268,8 +280,12 @@ export function runE2ePhase({
       clearTimeout(interruptTimer);
       clearInterval(ownershipPoll);
       signal?.removeEventListener("abort", onAbort);
-      if (ownershipDirectory)
-        rmSync(ownershipDirectory, { recursive: true, force: true });
+      try {
+        if (ownershipDirectory)
+          rmSync(ownershipDirectory, { recursive: true, force: true });
+      } catch (error) {
+        cleanupError(error.message);
+      }
       resolvePhase(
         timedOut || aborted ? 1 : ownershipFailed ? status || 1 : status,
       );

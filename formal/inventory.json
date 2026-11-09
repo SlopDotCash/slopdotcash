@@ -3718,16 +3718,16 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "a0d4e5375c988400fc1b58557ef24382441b5bb8dcdc9ab9bea10bae3656f5ad",
+      "sha256": "b99cc33a3d7a52de078e577f250002fed67d6ce3dd8e6931939b03116209e091",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/formal_process.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
-        22, 29, 34, 43, 121, 124, 131, 134, 135, 139, 205, 215, 250, 261, 262,
-        274, 293, 295, 315, 322, 348, 369, 371, 375, 378, 380, 382, 394, 398,
-        405, 410
+        22, 29, 34, 43, 121, 124, 131, 134, 135, 139, 205, 215, 250, 273, 274,
+        290, 309, 311, 331, 338, 364, 385, 387, 391, 394, 396, 398, 410, 414,
+        421, 426
       ],
       "review": "mapped-abstraction"
     },
@@ -9555,7 +9555,7 @@
     },
     {
       "path": "formal/models/formal_process.qnt",
-      "sha256": "5c740c489aaacf2b51dda1e0dd8256c6c3c2ba428df369243748de2866b8b2aa",
+      "sha256": "390abc8665a410b1af333c29c3349d9840ca21c03db0e291dc666970a429beb5",
       "sources": [
         "scripts/browser-process-ownership.mjs",
         "scripts/check-formal.mjs",
@@ -9571,13 +9571,17 @@
         "cleanSuccessTest",
         "cleanupFailureIsExplicitTest",
         "cooperativeBrowserInterruptClosesServerTest",
+        "earlierFailureSurvivesTemporaryRemovalFailureTest",
         "exitedLauncherStillOwnsChildTest",
         "failureCannotPublishSuccessTest",
         "forcedBrowserCleanupStopsCapturedGroupTest",
         "missingExitCheckpointCannotPassTest",
         "normalBrowserClosesManagedServerTest",
         "normalExitCheckpointRetainsDetachedServerTest",
+        "ownershipReadFailureDoesNotAcquireUnknownServerTest",
+        "ownershipReadFailureStillClosesObservedServerTest",
         "refusedCheckpointCannotPassTest",
+        "temporaryRemovalFailureStillReportsTest",
         "timeoutKillsDescendantTest",
         "uncooperativeBrowserCannotClaimCleanupTest",
         "unknownGroupCannotBeKilledTest"
