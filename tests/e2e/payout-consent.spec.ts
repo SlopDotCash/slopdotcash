@@ -612,6 +612,11 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
   signed.set(ed25519.sign(msg, new Uint8Array(32).fill(2)), 65);
   await page.addInitScript(
     ({ address, pub, prepared, signed }) => {
+      const providerState = {
+        returned: null as Uint8Array | null,
+        mutated: false,
+      };
+      Object.assign(window, { solanaBindingProvider: providerState });
       const account = {
         address,
         publicKey: Uint8Array.from(pub),
@@ -648,7 +653,10 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
                 transaction.some((b, i) => b !== prepared[i])
               )
                 throw new Error("Wrong transaction");
-              return [{ signedTransaction: Uint8Array.from(signed) }];
+              // A conforming wallet may sign the supplied bytes in place.
+              transaction.set(signed);
+              providerState.returned = transaction;
+              return [{ signedTransaction: transaction }];
             },
           },
         },
@@ -665,11 +673,21 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     },
   );
   let completed = 0;
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({
+  await page.route("**/api/v1/project-session", async (route) => {
+    await page.evaluate(() => {
+      const state = (window as Window & {
+        solanaBindingProvider: { returned: Uint8Array | null; mutated: boolean };
+      }).solanaBindingProvider;
+      if (state.returned && !state.mutated) {
+        // The caller must already own its verified result before this await.
+        state.returned.fill(0);
+        state.mutated = true;
+      }
+    });
+    await route.fulfill({
       json: { session: { githubId: "123", githubLogin: "qa", admin: false } },
-    }),
-  );
+    });
+  });
   await page.route("**/api/v1/project-appeals", (route) =>
     route.fulfill({ json: { appeals: [] } }),
   );
@@ -740,6 +758,10 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     page.getByRole("status").filter({ hasText: "Binding submitted" }),
   ).toBeVisible();
   expect(completed).toBe(1);
+  expect(await page.evaluate(() =>
+    (window as Window & { solanaBindingProvider: { mutated: boolean } })
+      .solanaBindingProvider.mutated,
+  )).toBe(true);
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
 });
 

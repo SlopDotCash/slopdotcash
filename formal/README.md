@@ -208,6 +208,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | EVM binding consent and broadcast authority | `evm_binding_consent_api`, `binding_consent_renewal`, `stored_binding_broadcast_authority` | `backend/payments/handler.ts`, `backend/payments/possession.ts`, `workers/payment-executor/core.ts`, `backend/payments/evm.integration.ts`, `workers/payment-executor/binding-nonce-limit.integration.ts` |
 | Solana signed journal and binding completion | `solana_executor_journal`, `solana_binding_completion` | `workers/payment-executor/solana.ts`, `contracts/solana/transactions.ts`, `contracts/solana/integration/executor.e2e.mjs` |
 | Payout consent UI and Solana account API | `ui_payout_consent_lifetime`, `ui_payout_consent`, `solana_binding_api` | `src/PayoutConsent.tsx`, `src/Earnings.tsx`, `backend/payments/handler.ts`, `tests/e2e/payout-consent.spec.ts`, `contracts/solana/integration/executor.e2e.mjs` |
+| Wallet-provider calls and mutable signing bytes | `evm_wallet_discovery`, `solana_wallet_provider`, `solana_binding_wire`, `solana_message_buffers` | `src/lib/use-payout-wallets.ts`, `src/lib/payout-consent.ts`, `src/PayoutConsent.tsx`, `tests/e2e/payout-wallet-picker.spec.ts`, `tests/e2e/payout-consent.spec.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -482,6 +483,37 @@ The consent controller uses [layout-effect cleanup](https://react.dev/reference/
 at the committed-context boundary, before a stale dialog can remain visible
 through a paint. These lifecycle controls do not cancel an external wallet's
 already displayed prompt or prove continuous session authority between reads.
+
+Wallet discovery now rechecks EVM provider conflicts after the connection
+promise returns. Solana text consent uses the same current-wallet checks as
+byte-message signing, including a fresh legacy-wallet address observation.
+Previously the text wrapper bypassed those checks. The browser fixture now
+publishes its connected Wallet Standard account and tests withdrawal before
+the consent prompt, rather than relying on that bypass.
+
+Signing keeps private copies of the reviewed Solana transaction, the returned
+transaction, and message/signature buffers. A wallet can sign in place or retain
+its buffers without changing the bytes checked or later submitted by the page.
+The message helper compares echoed bytes against a private original, not against
+the mutable array passed to the provider. The transaction regression mutates
+the returned array during the later session check; another fixture changes and
+echoes its message input. These cases remain unexecuted.
+
+The provider models bound two UUIDs and three EVM providers, one connection and
+two subsequent calls; Solana uses one connection and two calls across two
+account/chain representatives. The wire model uses one signing call and two
+valid message identities. These are predicate abstractions of validation and
+buffer ownership, not cryptographic proofs. Wallet requests already started
+can finish after provider withdrawal. A returned signature or transaction ID
+is not proof of finality, and the legacy interface has no signed-message echo.
+
+[EIP-6963](https://eips.ethereum.org/EIPS/eip-6963) specifies provider discovery;
+its self-reported names and domains do not authenticate a wallet. The
+[EIP-1193 request contract](https://eips.ethereum.org/EIPS/eip-1193) defines
+asynchronous results and refusals. The reviewed, lockfile-pinned Wallet Standard
+interfaces expose mutable byte arrays, so the models distinguish provider-owned
+arrays from the application's snapshots. Browser and UI video evidence for
+these changes is still outstanding under the skip-checks instruction.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

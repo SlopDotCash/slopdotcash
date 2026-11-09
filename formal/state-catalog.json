@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a14abd3c77661000b0dc03a9a8756c61ad16635703538cf8a96884170b6bb33f",
+  "inventorySha256": "67856772d96440e0008181341bc01dcb235011e01dc5e2edc73bb9e821036930",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -273,7 +273,8 @@
       "values": ["expiry-required", "history-check"],
       "models": [
         "formal/models/api/api_award_recovery.qnt",
-        "formal/models/payments/direct_solana_retirement.qnt"
+        "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/ui/solana_message_buffers.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
