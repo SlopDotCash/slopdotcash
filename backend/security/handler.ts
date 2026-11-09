@@ -634,6 +634,21 @@ function frozenTerms(row: CaseRow): FrozenTerms | null {
   return row.terms === null ? null : (JSON.parse(row.terms) as FrozenTerms);
 }
 
+/**
+ * No full-award payment path is approved and released yet (PRD section 8,
+ * "Award, payment, and disclosure"; section 11 activation gates). A
+ * full-award case stays a chosen, unpayable award: it never enters the
+ * direct rail, and no consent or payment plan is issued for it.
+ */
+function refuseFullAwardPayment(terms: FrozenTerms | null): void {
+  if (isFullAwardSplit(terms?.split))
+    fail(
+      409,
+      "full_award_unpayable",
+      "No full-award payment path is approved yet; the award stays chosen and unpaid",
+    );
+}
+
 function advisoryUrl(row: CaseRow): string | null {
   if (row.advisory_ghsa === null) return null;
   return `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}`;
@@ -999,8 +1014,9 @@ async function caseView(
         )
         .bind(row.id)
         .first<ReservationRow>();
+  const fullAward = isFullAwardSplit(terms?.split);
   const directNetworks =
-    terms && deps.directPayments
+    terms && deps.directPayments && !fullAward
       ? directPaymentNetworks(terms, deps.directPayments)
       : [];
   const railAvailable =
@@ -1031,17 +1047,22 @@ async function caseView(
           "verify-payment",
           "recover-payment",
         ].includes(action) ||
-        (action === "recover-payment"
-          ? recovery !== null &&
-            !["legacy-manual", "wallet-required"].includes(recovery.mode)
-          : action === "consent-payment" && recovery
-            ? !recovery.consented
-            : action === "verify-payment"
-              ? directSettlement?.state === "awaiting-external-payment"
-              : action === "prepare-payment" &&
-                  directSettlement?.state === "awaiting-external-payment"
-                ? !directSettlement.walletReviewRequired
-                : !settlement && railAvailable),
+        // A full-award case may still verify transfers already sent, but it
+        // gets no consent, plan or recovery request.
+        (fullAward
+          ? action === "verify-payment" &&
+            directSettlement?.state === "awaiting-external-payment"
+          : action === "recover-payment"
+            ? recovery !== null &&
+              !["legacy-manual", "wallet-required"].includes(recovery.mode)
+            : action === "consent-payment" && recovery
+              ? !recovery.consented
+              : action === "verify-payment"
+                ? directSettlement?.state === "awaiting-external-payment"
+                : action === "prepare-payment" &&
+                    directSettlement?.state === "awaiting-external-payment"
+                  ? !directSettlement.walletReviewRequired
+                  : !settlement && railAvailable),
     ),
     nextStep: directSettlement?.walletReviewRequired
       ? payer
@@ -2700,6 +2721,7 @@ async function planChange(
     case "consent-payment": {
       exactKeys(body, [...common, "network", "confirmation"]);
       requireAction(row, roles, action);
+      refuseFullAwardPayment(frozenTerms(row));
       if (body.confirmation !== true)
         fail(
           400,
@@ -2783,6 +2805,7 @@ async function planChange(
     case "prepare-payment": {
       exactKeys(body, [...common, "network", "confirmation"]);
       requireAction(row, roles, action);
+      refuseFullAwardPayment(frozenTerms(row));
       if (body.confirmation !== true)
         fail(
           400,
@@ -2933,6 +2956,7 @@ async function planChange(
         ["cancellationTransactionId", "signatures"],
       );
       requireAction(row, roles, action);
+      refuseFullAwardPayment(frozenTerms(row));
       if (body.confirmation !== true || !deps.directPayments)
         fail(
           400,
@@ -3603,7 +3627,8 @@ async function awardReservation(
     );
   });
   if (
-    (!compatibleVault || isFullAwardSplit(terms.split)) &&
+    !compatibleVault &&
+    !isFullAwardSplit(terms.split) &&
     deps.directPayments &&
     directPaymentNetworks(terms, deps.directPayments).length
   ) {
