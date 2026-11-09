@@ -507,12 +507,22 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     address: `${actor.role}-bounty-flow@example.com`,
   }));
   try {
+    const enrolledPages = new Map<Page, string>();
     for (const actor of emailActors) {
       await enrollSecurityEmail(actor.page, request, actor.role, actor.address);
       console.info(
         `[bounty-full-flow] ${suffix}: ${actor.role} email verified`,
       );
+      // Completed setup pages must not keep polling while the next actor's
+      // email enrollment writes through the separate local notify Worker.
+      await actor.page.waitForLoadState("networkidle");
+      enrolledPages.set(actor.page, actor.page.url());
+      await actor.page.goto("about:blank");
     }
+    // Restore the product origin before api() reads it and before any of the
+    // actual report, review, or payment workflows start.
+    for (const [page, url] of enrolledPages)
+      await page.goto(url, { waitUntil: "networkidle" });
     const notifyOrigin = process.env.SLOP_E2E_NOTIFY_ORIGIN as string;
     const previousEmails = new Set<string>(
       (await capturedNotifyEmails(notifyOrigin)).map(
@@ -627,6 +637,9 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     });
     expect(updated.status(), await updated.text()).toBe(200);
 
+    // Activate the reporter before navigation; a first input must not also
+    // focus a restored background tab and replace its resolved form target.
+    await researcher.bringToFront();
     await researcher.goto(`/projects/${id}/security`, {
       waitUntil: "networkidle",
     });
@@ -703,6 +716,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect(firstAnalysis?.advisoryDigest).toMatch(/^[a-f0-9]{64}$/u);
     expect(firstAnalysis?.proposedSeverity).toBe("high");
     expect(firstAnalysis?.potentialLoss).toBe("unlikely");
+    await maintainer.bringToFront();
     await maintainer.goto(
       `/security?case=${caseId}&submission=${submissionId}`,
       { waitUntil: "networkidle" },
@@ -729,6 +743,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
         "Please add the two local account roles and the exact denied-versus-leaked response.",
       );
     await submitAction(maintainer, "request-information");
+    await researcher.bringToFront();
     await researcher.reload({ waitUntil: "networkidle" });
     const researcherReport = researcher.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
@@ -763,6 +778,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       firstAnalysis?.advisoryDigest,
     );
     console.info(`[bounty-full-flow] ${suffix}: requested evidence received`);
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     await expect(assessment).toContainText(
       "Fixture assessment: account B reads account A's private report title without a project role.",
@@ -805,6 +821,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect((await submitAction(maintainer, "prepare-payment", 409)).error).toBe(
       "payment_consent_required",
     );
+    await researcher.bringToFront();
     await researcher.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
@@ -813,6 +830,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
     await submitAction(researcher, "consent-payment");
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     form = await action(maintainer, "prepare-payment");
     await form.getByLabel(/^I approve .* on this network/u).check();
@@ -863,6 +881,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       (await readCase("security")).settlement?.confirmedTransactionIds,
     ).toHaveLength(0);
     await rotateReporterWallet(chain.recoveryAddress);
+    await researcher.bringToFront();
     await researcher.reload({ waitUntil: "networkidle" });
     expect((await readCase("security")).settlement?.recovery?.mode).toBe(
       "consent-required",
@@ -872,6 +891,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
     await submitAction(researcher, "consent-payment");
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     expect((await readCase("security")).settlement?.recovery?.mode).toBe(
       "fee-pending",
@@ -909,6 +929,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     );
     expect(walletSends[0].transaction).toEqual(copied.transactions[feeIndex]);
     const feeTransaction = walletSends[0].hash;
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     const savedFee = maintainer.getByRole("region", {
       name: "Submitted payment recovery",
@@ -937,6 +958,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .click();
     expect((await rejectedHash).status()).toBe(409);
     await expect(recoveredHash).toHaveValue(wrongHash);
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     await expect(recoveredHash).toHaveValue(wrongHash);
     expect(walletSends).toHaveLength(1);
@@ -983,6 +1005,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .click();
     await expect(savedFee.getByRole("alert")).toBeVisible();
     await maintainer.unroute(`**/api/v1/security-cases/${caseId}/actions`);
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     await expect(
       maintainer.getByText("Partly paid", { exact: true }).first(),
@@ -994,6 +1017,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     expect(partial.settlement?.remainingTransfers).toHaveLength(1);
     console.info(`[bounty-full-flow] ${suffix}: partial payment recovered`);
     expect((await readCase("reporter-a")).settlement?.ownerRequest).toBeNull();
+    await researcher.bringToFront();
     await researcher.reload({ waitUntil: "networkidle" });
     const reporterRecovery = researcher.getByRole("group", {
       name: "Payment recovery",
@@ -1151,10 +1175,13 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       (gross * 3n) / 4n,
     );
     expect((await balance(chain.fee)) - beforeFee).toBe(gross / 4n);
+    await researcher.bringToFront();
     await researcher.reload({ waitUntil: "networkidle" });
+    await finance.bringToFront();
     await finance.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
+    await otherMaintainer.bringToFront();
     await otherMaintainer.goto(`/inbox`, { waitUntil: "networkidle" });
     for (const role of ["reporter-a", "finance", "security-b"]) {
       const notices = await api<{
@@ -1230,6 +1257,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     });
     // A second finding exercises a same-generation journal with a credited
     // fee and a sent researcher transfer whose recipient then changes.
+    await researcher.bringToFront();
     await researcher.goto(`/projects/${id}/security`, {
       waitUntil: "networkidle",
     });
@@ -1283,6 +1311,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
           `security-cases/${secondCaseId}`,
         )
       ).body.case;
+    await maintainer.bringToFront();
     await maintainer.goto(`/security?case=${secondCaseId}`, {
       waitUntil: "networkidle",
     });
@@ -1307,6 +1336,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByLabel(/^Private reason/u)
       .fill("Approve the published award for the separate qualifying finding.");
     await submitAction(maintainer, "award");
+    await researcher.bringToFront();
     await researcher.goto(`/security?case=${secondCaseId}`, {
       waitUntil: "networkidle",
     });
@@ -1315,6 +1345,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
     await submitAction(researcher, "consent-payment");
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     form = await action(maintainer, "prepare-payment");
     await form.getByLabel(/^I approve .* on this network/u).check();
@@ -1380,6 +1411,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     ).toHaveCount(0);
     await payerControls.getByRole("textbox").fill(secondResearcher);
     await rotateReporterWallet(chain.reporter);
+    await maintainer.bringToFront();
     await maintainer.reload({ waitUntil: "networkidle" });
     const savedPayments = maintainer.getByRole("region", {
       name: "Submitted payment recovery",
@@ -1460,6 +1492,7 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
       )
       .find(Boolean);
     expect(unsubscribe).toBeTruthy();
+    await page.bringToFront();
     await page.goto(`/inbox#unsubscribe-email=${unsubscribe}`, {
       waitUntil: "networkidle",
     });

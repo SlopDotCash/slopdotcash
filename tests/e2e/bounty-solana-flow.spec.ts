@@ -296,6 +296,9 @@ async function exerciseNativeSolana(
       { manifest, bountyAmount: "0.04" },
     );
     expect(created.status, JSON.stringify(created.body)).toBe(201);
+    // Focus before navigation so the session recheck cannot replace the first
+    // input or action target after Playwright has resolved it.
+    await reporter.page.bringToFront();
     await reporter.page.goto(`/projects/${id}/security`, {
       waitUntil: "networkidle",
     });
@@ -344,6 +347,7 @@ async function exerciseNativeSolana(
       "POST",
       `/api/v1/security-cases/${caseId}/actions`,
     );
+    await owner.page.bringToFront();
     await owner.page.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
@@ -374,6 +378,7 @@ async function exerciseNativeSolana(
         "Approve the published native SOL award for this qualifying finding.",
       );
     await submit(owner.page, "award");
+    await reporter.page.bringToFront();
     await reporter.page.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
@@ -382,6 +387,7 @@ async function exerciseNativeSolana(
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
     await submit(reporter.page, "consent-payment");
+    await owner.page.bringToFront();
     await owner.page.reload({ waitUntil: "networkidle" });
     form = await action(owner.page, "prepare-payment");
     await form.getByLabel(/^I approve .* on this network/u).check();

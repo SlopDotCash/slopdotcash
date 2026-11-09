@@ -172,13 +172,13 @@ deadline can leave the private directory behind, and a removed directory does
 not prove that child processes stopped. Ownership checkpoints remain active
 during the interrupt grace period; each completion path retains its failures.
 
-## Open work and assumptions
+## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one
   combined revision. Earlier per-checkpoint passes do not certify a later head.
-- Finish the private Anvil and Solana browser lanes and the repeated wallet
-  matrix. Local Solana acceptance must reach a passing finalized run; a newly
-  compiled native program needs its own native evidence.
+- Payment acceptance includes the private Anvil and Solana browser lanes and
+  the repeated wallet matrix. Local Solana acceptance must reach a passing
+  finalized run; a newly compiled native program needs its own native evidence.
 - LemmaScript proofs cover only the selected `verified-*` modules; other
   runtime functions remain unproved.
 - Finite models, lexical state discovery, selected function proofs and passing
