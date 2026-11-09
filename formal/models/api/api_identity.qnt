@@ -6,6 +6,7 @@
 // @source workers/identity/handler.ts
 // @source workers/identity/persistence.ts
 // @source workers/identity/crypto.ts
+// @source backend/http.ts
 module api_identity {
   var s: {phase: str, now: int, local: bool, pkce: bool, verified: bool, assertion: bool, consumed: int, assertionExpiry: int}
   action init = s' = {phase: "pending", now: 0, local: false, pkce: true, verified: false, assertion: false, consumed: 0, assertionExpiry: 0}
