@@ -26,6 +26,7 @@ import {
   readEvmBindingVersion,
   verifyBinding,
 } from "../../contracts/evm/adapter";
+import { sqliteJournalStore } from "../../scripts/payment-keeper/store";
 import { sha256Hex } from "../../workers/identity/crypto";
 import {
   assertEvmMonthlySources,
@@ -63,47 +64,7 @@ const journalHandles: Database[] = [];
 function journal(role: string): JournalStore {
   const database = new Database(join(journalDirectory, `${role}.sqlite`));
   journalHandles.push(database);
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS journal(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
-  );
-  let gate = Promise.resolve();
-  const store: JournalStore = {
-    async get<T>(key: string) {
-      const row = database
-        .query<{ value: string }, [string]>(
-          "SELECT value FROM journal WHERE key=?",
-        )
-        .get(key);
-      return row ? (JSON.parse(row.value) as T) : undefined;
-    },
-    async put<T>(key: string, value: T) {
-      database
-        .prepare(
-          "INSERT INTO journal VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        )
-        .run(key, JSON.stringify(value));
-    },
-    async transaction<T>(callback: (txn: JournalStore) => Promise<T>) {
-      const previous = gate;
-      let unlock!: () => void;
-      gate = new Promise<void>((resolve) => {
-        unlock = resolve;
-      });
-      await previous;
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        const result = await callback(store);
-        database.exec("COMMIT");
-        return result;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      } finally {
-        unlock();
-      }
-    },
-  };
-  return store;
+  return sqliteJournalStore(database);
 }
 function statement(
   query: string,

@@ -43,6 +43,7 @@ import paymentsWorker, {
   type PaymentDeployment,
   type PaymentsWorkerEnvironment,
 } from "../../workers/payments/index";
+import { sqliteJournalStore } from "../payment-keeper/store";
 
 export const EVIDENCE_SCHEMA = "slop-escrow-acceptance:v1";
 /** The runner stops with this exit code when it must wait for a delay or finality. */
@@ -426,52 +427,6 @@ export class RpcError extends Error {
   }
 }
 
-/** A durable executor journal, as the hosted Durable Object storage keeps it. */
-function journalStore(file: string): JournalStore {
-  const database = new Database(file);
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS journal(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
-  );
-  let gate = Promise.resolve();
-  const store: JournalStore = {
-    async get<T>(key: string) {
-      const row = database
-        .query<{ value: string }, [string]>(
-          "SELECT value FROM journal WHERE key=?",
-        )
-        .get(key);
-      return row ? (JSON.parse(row.value) as T) : undefined;
-    },
-    async put<T>(key: string, value: T) {
-      database
-        .prepare(
-          "INSERT INTO journal VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        )
-        .run(key, JSON.stringify(value));
-    },
-    async transaction<T>(callback: (txn: JournalStore) => Promise<T>) {
-      const previous = gate;
-      let unlock = () => {};
-      gate = new Promise<void>((done) => {
-        unlock = done;
-      });
-      await previous;
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        const result = await callback(store);
-        database.exec("COMMIT");
-        return result;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      } finally {
-        unlock();
-      }
-    },
-  };
-  return store;
-}
-
 export interface Fetcher {
   fetch(request: Request): Promise<Response>;
 }
@@ -667,7 +622,9 @@ export class Projection {
     this.sqlite = sqlite;
   }
   journal(role: string): JournalStore {
-    return journalStore(join(this.directory, `journal-${role}.sqlite`));
+    return sqliteJournalStore(
+      new Database(join(this.directory, `journal-${role}.sqlite`)),
+    );
   }
   /** A signed-in test member: the account API reads sessions from these tables. */
   private async session(actor: TestActor): Promise<string> {
