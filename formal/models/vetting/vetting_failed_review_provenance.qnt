@@ -1,3 +1,4 @@
+// @source workers/vetting/verified-review-batches.ts
 // @source workers/vetting/review-plan.ts
 // Three batches, at most two concurrent calls, then one synthesis. Completed
 // outcomes can be cache hits; active calls finish after another call fails.

@@ -1,7 +1,10 @@
 // @source src/lib/scoring-policy.ts
-// @source src/lib/verified-review-allocation.ts
+// @source src/lib/verified-allocation.ts
+// @source src/lib/verified-selection.ts
+// @source src/lib/verified-reviewers.ts
 // @source src/lib/leaderboard.ts
 // @source src/lib/points.ts
+// @source src/lib/verified-aggregation.ts
 // Seven formal reviews, six actors, one optional repeated review. Two equal-time review
 // IDs vary lexical order; A's later band is 1 or 3. Pool size 0,1,3,9. The first
 // review may fall outside the acceptance-anchored allocation window. Current

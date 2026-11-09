@@ -1,4 +1,5 @@
 // @source workers/fee-converter/store.ts
+// @source workers/fee-converter/verified-native-liability.ts
 // @source workers/fee-converter/direct-fees-fixture.ts
 // Verified historical direct fees remain discoverable after offer replacement.
 // Wallet topups add no earned credit. EVM replacement liabilities share a nonce;

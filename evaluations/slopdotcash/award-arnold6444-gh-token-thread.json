@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1",
+  "kind": "evaluated-contribution",
+  "id": "award_arnold6444_gh_token_thread",
+  "projectId": "slopdotcash",
+  "repository": "SlopDotCash/slopdotcash",
+  "actor": {
+    "id": "U_kgDOCKrpmQ",
+    "login": "arnold6444",
+    "avatarUrl": "https://avatars.githubusercontent.com/u/145418649?v=4",
+    "url": "https://github.com/arnold6444",
+    "kind": "User"
+  },
+  "occurredAt": "2026-10-21T10:27:37.000Z",
+  "points": 2,
+  "source": {
+    "id": "external-4a50e997f39afd77bc075f477a1ecfc8c500ba79ed413e29476547fb2eda8a68",
+    "kind": "external",
+    "platform": "x",
+    "title": "Thread (Korean): GH_TOKEN set but gh authentication is unavailable, the loader order fixed in PR #770",
+    "url": "https://x.com/arnold6444/status/2112853304040702301",
+    "evidence": {
+      "archiveUrl": "https://archive.ph/aKOEe",
+      "contentSha256": "260268254317697f861a4603b9e8cd4b1089301af08adeca05c2b1c7b248dcc9",
+      "capturedAt": "2026-10-21T10:41:40.000Z"
+    }
+  },
+  "reason": "A four-post Korean explainer of the ingestion credential bug fixed in SlopDotCash/slopdotcash#770: the loader skipped GH_TOKEN and fell straight to the GitHub CLI, so a machine without gh could not start even with a valid token. It lists the corrected read order (trimmed GITHUB_TOKEN, then GH_TOKEN, then gh), the four isolated regression cases, and the boundary of what the public PR proved (config loading up to the GraphQL request, not live authentication). It separates a token error from a loader error for readers hitting the same message, and it is separate from the merged PR, which already scored on its own.",
+  "review": {
+    "reviewer": "drew-dot-com",
+    "reviewedAt": "2026-10-28T13:50:00.000Z",
+    "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/pull/1679"
+  }
+}

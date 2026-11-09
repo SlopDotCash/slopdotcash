@@ -1,3 +1,5 @@
+// @source workers/vetting/verified-text-parts.ts
+// @source backend/vetting/verified-reuse.ts
 // @source backend/vetting/result.ts
 // @source backend/vetting/scan-result.ts
 // @source workers/vetting/bounded-scan.ts

@@ -61,7 +61,7 @@ function files(path) {
   );
 }
 
-async function run(command, label, cwd = sandbox) {
+async function run(command, label, cwd = sandbox, timeoutMs = 180_000) {
   const started = Date.now();
   const result = await new Promise((resolveResult) => {
     const child = spawn(command[0], command.slice(1), {
@@ -86,7 +86,10 @@ async function run(command, label, cwd = sandbox) {
         if (killError.code !== "ESRCH") error += `; ${killError.message}`;
       }
     };
-    const timer = setTimeout(() => stop("Verifier exceeded 180000ms"), 180_000);
+    const timer = setTimeout(
+      () => stop(`Verifier exceeded ${timeoutMs}ms`),
+      timeoutMs,
+    );
     const collect = (chunk) => {
       bytes += chunk.length;
       if (bytes > 16 * 1024 * 1024)
@@ -119,6 +122,7 @@ async function run(command, label, cwd = sandbox) {
     exitCode: result.status,
     signal: result.signal,
     durationMs: Date.now() - started,
+    timeoutMs,
     log,
     sha256: hash(output),
     error: result.error,
@@ -191,6 +195,8 @@ try {
       "lemmascript.json",
       "package.json",
       "bun.lock",
+      "biome.json",
+      ".gitignore",
     ]),
   ].sort();
   for (const file of inputs) {
@@ -208,6 +214,11 @@ try {
   const dafnyVersion = await run(["dafny", "--version"], "dafny-version");
   if (!/^4\.11\.0(?:\+|\s|$)/.test(dafnyVersion.trim()))
     throw new Error("Expected Dafny 4.11.0");
+
+  await run(
+    [process.execPath, "scripts/generate-jupiter-decoder.mjs", "--check"],
+    "jupiter-generation-freshness",
+  );
 
   for (const file of manifest) {
     const label = file.replaceAll("/", "-").replace(/\.ts$/, "");
@@ -236,6 +247,12 @@ try {
         file,
       ],
       label,
+      sandbox,
+      // The complete 239-constructor parser has 15,551 isolated obligations.
+      // Its measured full run took 1,136s; all other modules keep 180s.
+      file === "workers/fee-converter/verified-jupiter-wire.ts"
+        ? 3_600_000
+        : 180_000,
     );
     if (!/finished with [1-9][0-9]* verified, 0 errors/.test(output)) {
       throw new Error(

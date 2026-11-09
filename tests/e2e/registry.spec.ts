@@ -2803,7 +2803,7 @@ for (const assetCase of [
     slop: "25%",
   },
 ] as const) {
-  test(`an owner creates a private bounty in ${assetCase.id} and opens its generic private report form @registry`, async ({
+  test(`an owner creates a private bounty in ${assetCase.id} and opens its generic private report form @registry @private-intake`, async ({
     browser,
   }) => {
     test.skip(

@@ -4,12 +4,12 @@ import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
 import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
-import { weightedShare } from "./verified-money";
 import {
   isWalletAddress,
   isWalletChain,
   WALLET_CLAIM_REPOSITORY,
 } from "./wallets";
+import { allocateWeightedRows } from "./weighted-allocation";
 
 export interface FundingPreparationContributor {
   actor: ActorRef;
@@ -261,30 +261,21 @@ function allocateFundingReview(
   total: bigint,
   rows: FundingPreparationContributor[],
 ): Map<string, string> {
-  const sum = rows.reduce((s, r) => s + BigInt(r.weight), 0n);
   if (total < 0n) throw new TypeError("Negative allocation");
-  const ranked = rows.map((r) => ({
-    r,
-    ...(sum
-      ? weightedShare(total, BigInt(r.weight), sum)
-      : { amount: 0n, remainder: 0n }),
-  }));
-  ranked.sort(
+  const allocated = allocateWeightedRows(
+    total,
+    rows,
+    (row) => BigInt(row.weight),
     (a, b) =>
-      (a.remainder === b.remainder ? 0 : a.remainder > b.remainder ? -1 : 1) ||
-      a.r.actor.login
+      a.actor.login
         .toLocaleLowerCase("en")
-        .localeCompare(b.r.actor.login.toLocaleLowerCase("en"), "en") ||
-      a.r.actor.login.localeCompare(b.r.actor.login, "en") ||
-      a.r.actor.id.localeCompare(b.r.actor.id, "en"),
+        .localeCompare(b.actor.login.toLocaleLowerCase("en"), "en") ||
+      a.actor.login.localeCompare(b.actor.login, "en") ||
+      a.actor.id.localeCompare(b.actor.id, "en"),
   );
-  let remaining = sum ? total - ranked.reduce((s, r) => s + r.amount, 0n) : 0n;
-  for (const r of ranked) {
-    if (remaining === 0n) break;
-    r.amount++;
-    remaining--;
-  }
-  return new Map(ranked.map((r) => [r.r.actor.id, r.amount.toString()]));
+  return new Map(
+    allocated.map(({ row, amount }) => [row.actor.id, amount.toString()]),
+  );
 }
 export function createFundingReview(input: FundingPreparation): FundingReview {
   const preparation = assertFundingPreparation(input);

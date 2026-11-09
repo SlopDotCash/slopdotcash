@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { positiveBudgetFits } from "../verified-budget";
 import type { Network } from "./config";
 import type { SolanaAccountProof } from "./solana-accounts";
 import {
@@ -8,6 +9,10 @@ import {
   matchingCompletedCoverage,
 } from "./solana-expiry";
 import type { FeeD1Database } from "./store";
+import {
+  type NativeLiabilityEntry,
+  nativeDailyLiability,
+} from "./verified-native-liability";
 
 export interface NativeGasLimits {
   perTransaction: string;
@@ -23,7 +28,7 @@ export function validateNativeLimits(limits: NativeGasLimits) {
   const transaction = nativeInteger(limits.perTransaction);
   const day = nativeInteger(limits.perDay);
   const additional = nativeInteger(limits.additionalFeeReserve);
-  if (transaction === 0n || day < transaction || additional >= transaction)
+  if (!positiveBudgetFits(transaction, day) || additional >= transaction)
     throw new Error(
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );
@@ -189,26 +194,51 @@ export class NativeGasJournal {
     )
       throw new Error("Native gas nonce is already reserved");
     const day = this.now().toISOString().slice(0, 10);
-    let spent = 0n;
-    const pending = new Map<string, bigint>();
+    const entries: NativeLiabilityEntry[] = [];
+    const buckets = new Map<string, number>();
+    const bucketFor = (feeWallet: string, nonce: number) => {
+      const key = `${feeWallet}:${nonce}`;
+      let bucket = buckets.get(key);
+      if (bucket === undefined) {
+        bucket = buckets.size;
+        buckets.set(key, bucket);
+      }
+      return bucket;
+    };
     for (const row of rows) {
-      if (row.state === "abandoned") continue;
+      if (row.state === "abandoned") {
+        entries.push({ kind: "abandoned" });
+        continue;
+      }
       if (row.actual_wei !== null) {
         const actual = nativeInteger(row.actual_wei);
         if (actual > nativeInteger(row.maximum_wei))
           throw new Error(
             "A finalized native fee exceeded its reserved maximum; signing is held",
           );
-        if (row.settled_day === day) spent += actual;
+        entries.push({
+          kind: "actual",
+          settlement:
+            row.settled_day === null
+              ? { kind: "undated" }
+              : { kind: "dated", day: row.settled_day },
+          amount: actual,
+        });
       } else {
-        const key = `${row.fee_wallet}:${row.nonce}`;
         const value = nativeInteger(row.maximum_wei);
-        if ((pending.get(key) ?? 0n) < value) pending.set(key, value);
+        entries.push({
+          kind: "unsettled",
+          bucket: bucketFor(row.fee_wallet, row.nonce),
+          maximum: value,
+        });
       }
     }
-    const key = `${this.feeWallet}:${input.nonce}`;
-    if ((pending.get(key) ?? 0n) < maximum) pending.set(key, maximum);
-    for (const value of pending.values()) spent += value;
+    entries.push({
+      kind: "unsettled",
+      bucket: bucketFor(this.feeWallet, input.nonce),
+      maximum,
+    });
+    const spent = nativeDailyLiability(buckets.size, entries, day);
     if (spent > nativeInteger(this.limits.perDay))
       throw new Error(
         "Native daily budget reached; unknown sends stay reserved",

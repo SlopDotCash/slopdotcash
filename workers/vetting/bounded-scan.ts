@@ -37,6 +37,7 @@ import {
   SCAN_REVIEW_AREAS,
   type ScannerEvidence,
 } from "./scanners";
+import { textPartEnds } from "./verified-text-parts";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /**
@@ -997,14 +998,7 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
   if (bytes.length <= size) return [text];
   const parts: string[] = [];
   let start = 0;
-  while (start < bytes.length) {
-    let end = Math.min(start + size, bytes.length);
-    if (end < bytes.length) {
-      const newline = bytes.lastIndexOf(10, end - 1);
-      if (newline > start) end = newline + 1;
-      // Never split inside a UTF-8 sequence.
-      while (end > start + 1 && (bytes[end] & 0xc0) === 0x80) end -= 1;
-    }
+  for (const end of textPartEnds(bytes, size)) {
     parts.push(bytes.subarray(start, end).toString("utf8"));
     start = end;
   }

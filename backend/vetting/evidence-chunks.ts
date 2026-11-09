@@ -1,5 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import {
+  partitionCount,
+  partitionSize,
+} from "../../src/lib/verified-partition";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
 
 /** Every upload, read and backup request handles at most one part this size. */
@@ -43,7 +47,8 @@ export function chunkLayout(value: unknown, size: number): EvidenceChunk[] {
     size <= EVIDENCE_CHUNK_BYTES ||
     !Number.isSafeInteger(size) ||
     !Array.isArray(value) ||
-    value.length !== Math.ceil(size / EVIDENCE_CHUNK_BYTES)
+    value.length !==
+      Number(partitionCount(BigInt(size), BigInt(EVIDENCE_CHUNK_BYTES)))
   )
     throw new Error("Invalid bounded evidence chunk layout");
   return value.map((part, index) => {
@@ -55,7 +60,13 @@ export function chunkLayout(value: unknown, size: number): EvidenceChunk[] {
       typeof part.sha256 !== "string" ||
       !/^[a-f0-9]{64}$/u.test(part.sha256) ||
       part.sizeBytes !==
-        Math.min(EVIDENCE_CHUNK_BYTES, size - index * EVIDENCE_CHUNK_BYTES)
+        Number(
+          partitionSize(
+            BigInt(size),
+            BigInt(EVIDENCE_CHUNK_BYTES),
+            BigInt(index),
+          ),
+        )
     )
       throw new Error("Invalid ordered evidence chunk");
     return { index, sha256: part.sha256, sizeBytes: part.sizeBytes };

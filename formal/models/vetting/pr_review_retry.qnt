@@ -1,3 +1,4 @@
+// @source workers/vetting/verified-review-batches.ts
 // @source workers/vetting/review-plan.ts
 // Three sequential attempts. Receipt values are abstract nonnegative 0 or 1;
 // observed subtotals and complete totals are separate. A failed terminal
