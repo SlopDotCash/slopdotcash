@@ -23,6 +23,7 @@ import {
 import { parseVaultAmount } from "./payments/vault-amount";
 import { apiRequest, projectApiRequest } from "./project-api";
 import { CANONICAL_UINT } from "./record-validation.mjs";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
@@ -54,16 +55,11 @@ function planMessage(deployment: EscrowDeployment, plan: SolanaFundingPlan) {
     { ...fundingConfig(deployment), tokenProgram: plan.tokenProgram },
     plan,
   );
-  const wire = decode(plan.transaction);
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => byte !== wire[index + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed vault action.",
-    );
+  assertUnsignedSolanaWire(
+    plan.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed vault action.",
+  );
   return msg;
 }
 async function request(

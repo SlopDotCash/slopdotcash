@@ -42,6 +42,7 @@
     "src/lib/security-program-draft.ts",
     "src/lib/vault-setup.ts",
     "src/lib/byte-encoding.ts",
+    "src/lib/solana-wire.ts",
     "src/lib/canonical-json.ts",
     "src/lib/project-revision-changes.ts",
     "src/lib/points.ts",
