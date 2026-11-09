@@ -81,6 +81,11 @@ by repeating the exact idempotent request for the same run, digest, size, and
 content type; mismatched retries fail closed. Finalization fails closed unless
 the trace is attached.
 
+Intent creation and renewal check the current run owner, non-finalized state
+and compatible attached digest in the database write. Existing-intent reads
+and renewal readback apply the same guard. An already authorized read can
+finish after another request finalizes the run, but cannot change its intent.
+
 The public contribution receipt keeps its client `run_id` and includes the
 private join fields `server_run_id`, trace object ID, authority, and digest.
 Ingestion must join those fields to a finalized D1 run and verify the GitHub

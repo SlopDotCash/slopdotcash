@@ -357,3 +357,24 @@ The public profile identity selector and wallet lookup gained a dedicated
 source model. No profile runtime defect was established in this pass. The
 new model and added image/escalation regression definitions remain unexecuted;
 their source mapping does not establish complete implementation refinement.
+
+## Trace admission and private report receipt recovery
+
+A trace intent could be created or renewed after a concurrent request finalized
+the run. The intent writes now check the current owner, run state and digest;
+existing-intent lookups use the same admission predicate. The upload route
+already prevented a finalized trace overwrite. This correction prevents the
+stale intent admission without inventing a disclosure claim.
+
+An accepted private report could navigate under a later browser account.
+The form now preserves its receipt and verifies the current actor before
+navigation. Unknown identity hides the body while keeping the original
+uncertain payload/key for session-only recovery. Late cleanup and validation
+correction require exact ownership of the stored draft bytes.
+
+Installer activation could commit before later verification or cleanup failed,
+yet its diagnostic described a refused operation. Diagnostics now name the
+commit boundary and preserve primary errors. Static and generated skill-role
+admission are represented separately in the source-authority model. One new
+model and 51 additional scenarios, plus all added regression definitions,
+remain unexecuted source-review evidence.

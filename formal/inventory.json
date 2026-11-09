@@ -846,7 +846,8 @@
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/api_private_intake.qnt",
         "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api_submission_recovery.qnt",
+        "formal/models/ui_private_intake.qnt"
       ],
       "candidateLines": [
         80, 117, 144, 163, 168, 198, 205, 222, 229, 269, 378, 385, 473, 515,
@@ -927,42 +928,47 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "d40607d1d94f188ba74b9fe7b916c426bf2255f81c83043c761b5a2b2ce1318e",
+      "sha256": "407dff02c04a1c6be83974961bd0d6137fc87c395a31ee4f31d79fcb0f65281c",
       "models": [
         "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt",
         "formal/models/api_wallet_claims.qnt",
         "formal/models/operator_intake_renewal.qnt"
       ],
       "candidateLines": [
-        61, 156, 294, 305, 310, 333, 371, 384, 387, 409, 410, 415, 418, 448,
-        449, 452, 453, 469, 472, 494, 521, 528, 531, 535, 554, 582, 616, 617,
-        618, 652, 679, 690, 696, 698, 708, 716, 730, 731, 736, 741, 761, 765,
-        767, 789, 798, 803, 818, 826, 827, 833, 834, 840, 860, 866, 868, 962,
-        990, 1018, 1033, 1034, 1036, 1054, 1068, 1073, 1076, 1137, 1138, 1145,
-        1148, 1150
+        61, 156, 279, 280, 283, 301, 312, 317, 340, 378, 391, 394, 416, 417,
+        422, 425, 455, 456, 459, 460, 476, 479, 501, 528, 535, 538, 542, 561,
+        589, 623, 624, 625, 659, 686, 697, 703, 705, 715, 723, 737, 738, 743,
+        748, 768, 772, 774, 813, 818, 834, 842, 843, 849, 850, 856, 881, 887,
+        889, 983, 1011, 1039, 1054, 1055, 1057, 1075, 1089, 1094, 1097, 1158,
+        1159, 1166, 1169, 1171
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/contracts.ts",
       "sha256": "b14e2d0bb714baccceda657eeb0dd61dce7e5c344f338547a23d1e8283c0d6fd",
-      "models": ["formal/models/api_trace.qnt"],
+      "models": [
+        "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt"
+      ],
       "candidateLines": [16, 17, 26, 40, 84, 140, 171, 172, 173],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/handler.ts",
-      "sha256": "08d1215a3e66112359d1c7e6d9e35145c59659d8708d2db258f5f1678e72433c",
+      "sha256": "d2408d8e52bf8e087b23425375531d7888a9b820e553cc5be48d176e2266cfb6",
       "models": [
         "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt",
         "formal/models/api_wallet_claims.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
-        628, 636, 773, 776, 847, 851, 854, 894, 895, 941, 945, 981, 1039, 1040,
-        1063, 1067, 1073, 1094, 1099, 1101, 1105, 1106, 1107, 1108, 1121, 1157,
-        1161, 1228, 1236, 1244, 1410, 1541
+        628, 636, 773, 776, 847, 851, 854, 894, 895, 941, 944, 945, 950, 986,
+        1044, 1045, 1068, 1072, 1078, 1099, 1104, 1106, 1110, 1111, 1112, 1113,
+        1126, 1162, 1166, 1233, 1241, 1249, 1415, 1546
       ],
       "review": "mapped-abstraction"
     },
@@ -1737,7 +1743,10 @@
     {
       "path": "migrations/0001_private_trace_backend.sql",
       "sha256": "947da3f407ce20472a8a1be34bb5b6c2c3f2ccff117b32bd1ff6f6fe9c9a5f04",
-      "models": ["formal/models/api_trace.qnt"],
+      "models": [
+        "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt"
+      ],
       "candidateLines": [17, 24, 125, 126, 131, 132],
       "review": "mapped-abstraction"
     },
@@ -4580,11 +4589,11 @@
     },
     {
       "path": "src/PrivateReportForm.tsx",
-      "sha256": "9cac77c221d29d39c912cf26ff372f83091eb840ad456c1e35d3653a51b84936",
+      "sha256": "dd447d3d49539e0616135cc9efa7078d0722f959b4000e49f44fcbff5c5e349f",
       "models": ["formal/models/ui_private_intake.qnt"],
       "candidateLines": [
-        4, 6, 30, 31, 32, 40, 90, 91, 92, 93, 94, 98, 111, 124, 152, 206, 314,
-        337
+        4, 7, 32, 33, 34, 42, 92, 93, 94, 95, 96, 97, 98, 99, 108, 160, 176,
+        257, 297, 343, 349, 380, 525, 548
       ],
       "review": "mapped-abstraction"
     },
@@ -4592,7 +4601,6 @@
       "path": "src/PrivateReportSummary.tsx",
       "sha256": "e3539cbfcb5c4d00dabd3cc465dcd1891c009cffa918761273604342fbe056df",
       "models": [
-        "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
@@ -5212,9 +5220,9 @@
     },
     {
       "path": "src/lib/install-command.ts",
-      "sha256": "2b27f336f4b538b7f448fcaae6678d4c025ccbb5fb8344456f6f1db192420e1e",
+      "sha256": "f76f8b1b417f43aba55689f86453861ff270cbaf8e5ba9f05d9925e0ab1e9485",
       "models": ["formal/models/skill_installation.qnt"],
-      "candidateLines": [911],
+      "candidateLines": [931],
       "review": "mapped-abstraction"
     },
     {
@@ -8417,6 +8425,32 @@
       ]
     },
     {
+      "path": "formal/models/api_trace_intent_admission.qnt",
+      "sha256": "c7e35bed3ae07a3b41f07ed3dd2d75ef44c121823b20e74128407d1f9a06b085",
+      "sources": [
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/contracts.ts",
+        "backend/trace/handler.ts",
+        "migrations/0001_private_trace_backend.sql"
+      ],
+      "scenarios": [
+        "banDuringPreparationRefusesWriteTest",
+        "exactExpiredIntentRenewsSameIdentityTest",
+        "exactUnexpiredReplayDoesNotRenewTest",
+        "finalizationBeforeExistingReadRefusesReplayTest",
+        "matchingAttachedDigestStillAllowsIntentTest",
+        "metadataMismatchCannotReuseKeyTest",
+        "newIntentAfterCapturedReadCannotMutateFinalizedRunTest",
+        "newIntentRefusesDifferentConcurrentAttachmentTest",
+        "readOnlyReplayDoesNotChangeConcurrentFinalizationTest",
+        "renewalAfterCapturedReadCannotMutateFinalizedRunTest",
+        "renewalCanCommitBeforeFinalizedReadbackRefusesTest",
+        "renewalRefusesDifferentConcurrentAttachmentTest",
+        "usedCapabilityReplayDoesNotRenewTest",
+        "wrongActorCannotBeginTest"
+      ]
+    },
+    {
       "path": "formal/models/api_wallet_claims.qnt",
       "sha256": "6d2e370e70413fa061f597f930835966004a4d098e91f2177502e4320bb7a7ef",
       "sources": [
@@ -11267,16 +11301,28 @@
     },
     {
       "path": "formal/models/skill_installation.qnt",
-      "sha256": "dc529e054d6cfa2e00b50097f9badb485d4704d362f198314eb833daf165bc93",
+      "sha256": "438d092248e1947f9fd465c84e8a4d282d331bec6ef4aec27df416c9b8bdd8bb",
       "sources": [
         "src/lib/install-command.ts",
         "src/lib/project-skill-publication.mjs",
         "src/lib/project-skill.mjs"
       ],
       "scenarios": [
+        "cleanupFailureAfterCommitTest",
+        "cleanupFailurePreservesEarlierErrorTest",
+        "cleanupFailureThenSameVersionRetryTest",
         "explicitRollbackTest",
+        "failedTemporaryLinkCleanupRetainsOnlyOwnedArtifactsTest",
         "interruptedActivationTest",
-        "olderTemplateNewerPolicyTest"
+        "noChangeCleanupFailureDoesNotClaimNewActivationTest",
+        "olderTemplateNewerPolicyTest",
+        "readbackAndCleanupFailureKeepsPrimaryTest",
+        "readbackFailureLeavesCommittedTargetTest",
+        "readbackFailureThenVerifiedRetryTest",
+        "refusalBeforeStagingCreatesNoTemporaryArtifactsTest",
+        "retryReusesRetainedVersionTest",
+        "rollbackReadbackFailureKeepsRollbackCommitTest",
+        "unchangedBytesKeepOriginalIdentityTest"
       ]
     },
     {
@@ -11293,15 +11339,22 @@
     },
     {
       "path": "formal/models/skill_source_authority.qnt",
-      "sha256": "ad09d9b32c8b72e4a4f21c6ebb2baf4c8c442c362451b3df25549f12217ed923",
+      "sha256": "4c20ea7d5da237fe314dad25e4d0ba9b8216b477b8c736d209b75af0886b054c",
       "sources": [
         "scripts/skill-source-matches-commit.mjs",
         "skills/project-contributor-template/scripts/skill-authority.mjs"
       ],
       "scenarios": [
+        "contributorNeedsBindingTest",
         "digestFailureCannotRetryTest",
         "extraFileRefusedTest",
         "pausedProjectRefusedTest",
+        "reviewerDoesNotRequireOpenProjectTest",
+        "reviewerNeedsBindingTest",
+        "reviewerStillNeedsManifestTest",
+        "staticSkillNeedsNoRegistryTest",
+        "staticSkillRejectsRegistryBindingTest",
+        "staticSkillStillNeedsExactBytesTest",
         "transientMayRetryTest"
       ]
     },
@@ -12565,14 +12618,36 @@
     },
     {
       "path": "formal/models/ui_private_intake.qnt",
-      "sha256": "9135168b1c4ed1fc9462c6177e2c8a812f65fde96e15f9b2ebb111852854fb4f",
+      "sha256": "efc5e724121e6d62882a88641624e6d4d1c20acb240e3a628ac7da9fabc49b7a",
       "sources": [
+        "backend/security/report-intake.ts",
         "src/PrivateReportForm.tsx",
-        "src/PrivateReportSummary.tsx",
         "src/SecurityBounty.tsx",
         "src/lib/intake-drafts.ts"
       ],
-      "scenarios": ["acceptedTest", "accountChangeTest", "uncertainRetryTest"]
+      "scenarios": [
+        "acceptedSessionFailureKeepsReceiptTest",
+        "acceptedTest",
+        "acceptedThenChangedActorCannotNavigateTest",
+        "accountChangeTest",
+        "changedActorCannotClearReplacementBytesTest",
+        "departedAcceptedResponseCannotPublishTest",
+        "departedPostflightCannotClearOrNavigateTest",
+        "failedAttemptWriteCanClearCapturedPriorDraftTest",
+        "lostReceiptAndIdentityLossHidePrivateDraftTest",
+        "malformedReceiptRetainsOriginalRetryTest",
+        "oldFinallyCannotReleaseNewActionTest",
+        "receiptRetryDoesNotDispatchAgainTest",
+        "replacementBytesSurviveAcceptedCompletionTest",
+        "sessionRecoveryIdentityChangeCannotClearReplacementTest",
+        "silentCookieSwapDoesNotPretendImmediateUnmountTest",
+        "swappedDispatchCannotBeAcceptedForOriginalActorTest",
+        "uncertainRetryTest",
+        "unknownFailureHidesOriginalWithoutLosingRetryIdentityTest",
+        "unknownPreflightHidesDraftUntilSessionOnlyRetryTest",
+        "validationRefusalCanCorrectPayloadTest",
+        "validationRefusalCannotOverwriteReplacementTest"
+      ]
     },
     {
       "path": "formal/models/ui_private_report_identity.qnt",

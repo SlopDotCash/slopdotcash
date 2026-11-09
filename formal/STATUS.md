@@ -70,7 +70,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-842 production sources, 356 finite models and 2,175 named scenarios, with zero
+842 production sources, 357 finite models and 2,226 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 239 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -159,6 +159,18 @@ ownership. Added regression definitions and all new scenarios are unexecuted.
 See `image-parent-callback-audit.md`, `notification-escalation-current-state-audit.md`
 and `profile-identity-audit.md`. The current function census has 9,961 bodies in
 686 files with the same 168 selected contracts.
+
+The trace, installer and private-report batch adds one model and 51 scenarios
+across new and refined models. Trace intent writes and replay reads use current
+run-state admission. Private report acceptance is separate from session-bound
+navigation and uncertain-payload recovery. Installer diagnostics distinguish a
+committed activation from failed readback or cleanup and preserve primary
+errors. Skill source authority now distinguishes static, contributor and
+reviewer roles. All added scenarios and regression definitions are unexecuted.
+See `trace-intent-admission-audit.md`, `private-intake-completion-audit.md`,
+`skill-installation-completion-audit.md` and `skill-role-authority-audit.md`.
+The current function census contains 9,967 bodies in 686 files and 168 selected
+contracts.
 
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,

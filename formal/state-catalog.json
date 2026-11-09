@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "68f7a852a2d694a5c296b3f7e958fff9b4bed0773f2ae46a48bf4baf83df94de",
+  "inventorySha256": "407d0119337729c64f1db0d1113156cef77530399e0d2c7b422fe1e8f2d50467",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -354,7 +354,8 @@
         "formal/models/api_private_case_transaction.qnt",
         "formal/models/api_private_intake.qnt",
         "formal/models/api_report_forward_revision.qnt",
-        "formal/models/api_submission_recovery.qnt"
+        "formal/models/api_submission_recovery.qnt",
+        "formal/models/ui_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -409,7 +410,10 @@
       "name": "RunState",
       "kind": "string-union",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
-      "models": ["formal/models/api_trace.qnt"],
+      "models": [
+        "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -448,7 +452,10 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["awaiting_trace", "finalized", "trace_uploaded"],
-      "models": ["formal/models/api_trace.qnt"],
+      "models": [
+        "formal/models/api_trace.qnt",
+        "formal/models/api_trace_intent_admission.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2256,7 +2263,6 @@
         "uncertain"
       ],
       "models": [
-        "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
@@ -2277,7 +2283,6 @@
         "unavailable"
       ],
       "models": [
-        "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
@@ -2291,7 +2296,6 @@
       "kind": "string-union",
       "values": ["pending", "routed"],
       "models": [
-        "formal/models/ui_private_intake.qnt",
         "formal/models/ui_private_report_projection.qnt",
         "formal/models/ui_record_deadlines.qnt"
       ],
