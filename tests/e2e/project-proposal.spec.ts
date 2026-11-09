@@ -20,7 +20,13 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
-import { patchProposalDraft, readProposalDraft } from "./project-draft-fixture";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  patchProposalDraft,
+  readProposalDraft,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -231,6 +237,33 @@ async function prepareCreationReview(page: Page) {
   await page.getByRole("button", { name: "Next: Review" }).click();
   await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
 }
+
+test("committed proposal unmount retires creation before dispatch", async ({
+  page,
+}) => {
+  let writes = 0;
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  await holdProjectSessionUntilUnmount(page, ".proposal-form");
+  await page.evaluate(() => {
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", "/projects/new");
+  });
+  try {
+    await page.getByRole("button", { name: "Create project", exact: true }).click();
+    await leaveEditorWithHeldSession(page);
+    await expect(page.locator(".proposal-form")).toHaveCount(0);
+    expect(writes).toBe(0);
+  } finally {
+    await releaseHeldEditorSession(page);
+  }
+});
 
 test("project creation refuses a silent account change before dispatch", async ({
   page,

@@ -708,6 +708,45 @@ claim. Registry attachment, continuous wallet authority and chain truth remain
 separate boundaries. The EVM and Solana API/adapter regression definitions are
 unexecuted.
 
+Project lookup now has separate models for its authenticated routes and cache,
+actor resolution, owned-repository pagination, and repository/branch/license
+reads. Cache hits still require a current site session; owned lists use the
+captured actor ID as their cache key. A returned list is discovery data, not
+proof of present repository authority. Failed pages never publish a partial
+list. Unknown license facts stay distinct from a failed repository lookup,
+and strict branch-head reads never guess a commit. The models represent two
+actors, two repositories and representative first/final page classes rather
+than every provider record or real clock.
+
+The repository lookup model also records an unresolved consistency defect:
+metadata captures an immutable repository ID, but later branch and license
+reads use its mutable name. A rename and name reuse can mix those observations.
+`consistentNamedReads` is deliberately a separate, unmet property; the model's
+structural invariant is not a claim that the returned bundle is coherent.
+Later authority checks do not repair the earlier lookup result. A supported
+identity-bound transport still needs implementation and conformance evidence.
+
+Repository authority reads now request an installation token scoped to the
+expected immutable repository ID, with metadata read permission only. A name
+reused by another repository in the same installation cannot supply its
+collaborator permission through that token. GitHub documents both
+[token repository and permission limits](https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-an-installation-access-token-for-an-app)
+and the [metadata permission for collaborator reads](https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#get-repository-permissions-for-a-user).
+These are provider assumptions; the authored internal-route regression does
+not establish live enforcement. This change does not alter the separate
+public-content relay, whose metadata-publicness check and resource read are
+still separate observations. Identity and visibility changes across those
+reads remain open review work.
+
+Project creation and revision editors now retire publication ownership in
+layout cleanup. A session preflight that completes after committed departure
+cannot start a write for the departed form. The publication model separates
+session observation, helper return and caller consumption, including successful
+and failed responses. The server's expected-actor check remains necessary
+because a browser cookie may change after its earlier observation. The two
+authored browser regressions hold a parsed session response until DOM removal;
+they have not run.
+
 Private authorization now keeps a callback from deleting a newer flow cookie.
 The encrypted flow retains its original ten-minute expiry; state, PKCE, account
 and grant binding remain required. One-use provider codes are an external OAuth

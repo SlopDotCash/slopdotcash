@@ -7,24 +7,27 @@
 // Browser ownership for create/revision publication. Backend actor/revision
 // admission is a boundary; full manifest/funding/activation rules live elsewhere.
 // Two requests and lifetimes, two actors, three draft identities. Unexecuted.
+// Layout cleanup retires each committed editor before promise continuations.
+// Session observation, helper return and caller consumption are separate steps;
+// an observed actor is not a promise that the next request has the same cookie.
 module ui_project_publication_lifetime {
   type Request = { phase: str, actor: int, cookie: int, lifetime: int,
     draft: int, draftEpoch: int, referrer: bool, expected: int, admitted: bool, accepted: bool,
-    resultRevision: int, outcome: str }
-  type State = { mode: str, mounted: bool, lifetime: int, actor: int, cookie: int,
+    resultRevision: int, outcome: str, observedActor: int }
+  type State = { mode: str, present: bool, mounted: bool, lifetime: int, actor: int, cookie: int,
     active: int, draft: int, draftEpoch: int, referrer: bool, base: int, draftBase: int,
     stored: int, storedBase: int, storedReferrer: bool, storageError: bool,
     serverRevision: int, serverDraft: int, accepted: Set[int], view: str,
     publication: int, error: str, requests: int -> Request }
   val ids = Set(1, 2)
   var s: State
-  action init = s' = { mode: "revision", mounted: true, lifetime: 1, actor: 1, cookie: 1,
+  action init = s' = { mode: "revision", present: true, mounted: true, lifetime: 1, actor: 1, cookie: 1,
     active: 0, draft: 1, draftEpoch: 0, referrer: true, base: 1, draftBase: 1,
     stored: 1, storedBase: 1, storedReferrer: true, storageError: false,
     serverRevision: 1, serverDraft: 0, accepted: Set(), view: "editor", publication: 0,
     error: "none", requests: ids.mapBy(_ => { phase: "unused", actor: 0, cookie: 0,
       lifetime: 1, draft: 0, draftEpoch: 0, referrer: false, expected: 0, admitted: false,
-      accepted: false, resultRevision: 0, outcome: "none" }) }
+      accepted: false, resultRevision: 0, outcome: "none", observedActor: -1 }) }
   action createMode = all { s.active == 0, s.accepted == Set(),
     ids.forall(id => s.requests.get(id).phase == "unused"),
     s' = s.with("mode", "create").with("base", 0).with("draftBase", 0)
@@ -52,16 +55,32 @@ module ui_project_publication_lifetime {
     s' = s.with("active", id).with("error", "none")
       .with("requests", s.requests.set(id, { phase: "preflight", actor: s.actor,
         cookie: 0, lifetime: s.lifetime, draft: s.draft, draftEpoch: s.draftEpoch, referrer: s.referrer,
-        expected: s.base, admitted: false, accepted: false, resultRevision: 0, outcome: "none" })) }
-  action preflight(id: int, available: bool): bool = {
+        expected: s.base, admitted: false, accepted: false, resultRevision: 0,
+        outcome: "none", observedActor: -1 })) }
+  action observePreflight(id: int, available: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "preflight",
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "preflight-observed")
+        .with("observedActor", if (available) s.cookie else -1))) }
+  }
+  action returnPreflight(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "preflight-observed",
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "preflight-returned"))) }
+  }
+  action consumePreflight(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "preflight-returned",
       s' = if (not(owns(id))) done(s, id)
-      else if (not(available)) s.with("requests", s.requests.set(id,
+      else if (r.observedActor == -1) s.with("requests", s.requests.set(id,
         r.with("phase", "failure-check").with("outcome", "identity-unavailable")))
-      else if (s.cookie != r.actor) failed(done(s, id), "identity")
+      else if (r.observedActor != r.actor) failed(done(s, id), "identity")
       else s.with("requests", s.requests.set(id, r.with("phase", "dispatch"))) }
   }
+  // Convenience sequences retain earlier scenarios. Exploration uses the
+  // individual boundaries, allowing departure between observation and use.
+  action preflight(id: int, available: bool): bool = observePreflight(id, available)
+    .then(returnPreflight(id)).then(consumePreflight(id))
   action dispatch(id: int): bool = {
     val r = s.requests.get(id)
     all { owns(id), r.phase == "dispatch",
@@ -98,35 +117,61 @@ module ui_project_publication_lifetime {
       s' = if (not(owns(id))) done(received, id)
       else if (outcome == "access") failed(done(received, id), "identity") else received }
   }
-  action successCheck(id: int, available: bool): bool = {
+  action observeSuccess(id: int, available: bool): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "success-check",
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "success-observed")
+        .with("observedActor", if (available) s.cookie else -1))) }
+  }
+  action returnSuccess(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "success-observed",
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "success-returned"))) }
+  }
+  action consumeSuccess(id: int): bool = {
     val r = s.requests.get(id)
     val completed = done(s, id).with("active", 0).with("error", "none").with("publication", id)
     val sameDraft = s.draft == r.draft and
       (if (s.mode == "revision") s.draftEpoch == r.draftEpoch else s.referrer == r.referrer)
-    all { r.phase == "success-check",
+    all { r.phase == "success-returned",
       s' = if (not(owns(id))) done(s, id)
-      else if (not(available)) s.with("requests", s.requests.set(id,
+      else if (r.observedActor == -1) s.with("requests", s.requests.set(id,
         r.with("phase", "failure-check").with("outcome", "identity-unavailable")))
-      else if (s.cookie != r.actor) failed(done(s, id), "identity")
+      else if (r.observedActor != r.actor) failed(done(s, id), "identity")
       else if (s.mode == "create") completed.with("view", "created")
         .with("referrer", if (sameDraft) false else s.referrer)
       else completed.with("view", "published").with("base", r.resultRevision)
         .with("draftBase", r.resultRevision).with("draft", if (sameDraft) 0 else s.draft) }
   }
+  action successCheck(id: int, available: bool): bool = observeSuccess(id, available)
+    .then(returnSuccess(id)).then(consumeSuccess(id))
   // The current implementation retains the local editor if even this
   // error-path identity read is unavailable. It cannot publish success.
-  action failureCheck(id: int, available: bool): bool = {
+  action observeFailure(id: int, available: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "failure-check",
-      s' = if (not(owns(id))) done(s, id)
-      else if (available and s.cookie != r.actor) failed(done(s, id), "identity")
-      else failed(done(s, id), if (available) "request" else "identity-unavailable") }
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "failure-observed")
+        .with("observedActor", if (available) s.cookie else -1))) }
   }
+  action returnFailure(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "failure-observed",
+      s' = s.with("requests", s.requests.set(id, r.with("phase", "failure-returned"))) }
+  }
+  action consumeFailure(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "failure-returned",
+      s' = if (not(owns(id))) done(s, id)
+      else if (r.observedActor != -1 and r.observedActor != r.actor) failed(done(s, id), "identity")
+      else failed(done(s, id), if (r.observedActor != -1) "request" else "identity-unavailable") }
+  }
+  action failureCheck(id: int, available: bool): bool = observeFailure(id, available)
+    .then(returnFailure(id)).then(consumeFailure(id))
   action depart = all { s.mounted,
-    s' = s.with("mounted", false).with("active", 0).with("publication", 0) }
+    s' = s.with("present", false).with("mounted", false).with("active", 0).with("publication", 0) }
   action remount(actor: int): bool = all { not(s.mounted), s.lifetime == 1,
     Set(1, 2).contains(actor),
-    s' = s.with("mounted", true).with("lifetime", 2).with("actor", actor)
+    s' = s.with("present", true).with("mounted", true).with("lifetime", 2).with("actor", actor)
       .with("draft", s.stored).with("draftBase", s.storedBase).with("referrer", s.storedReferrer)
       .with("base", s.serverRevision).with("view", "editor").with("error", "none") }
   action step = {
@@ -135,11 +180,15 @@ module ui_project_publication_lifetime {
     nondet draft = Set(1, 2, 3).oneOf()
     nondet works = Set(false, true).oneOf()
     nondet outcome = Set("success", "temporary", "access").oneOf()
-    any { createMode, cookieChanges(actor), edit(draft), persist(works), begin(id), preflight(id, works),
-      dispatch(id), admit(id), serverResult(id, works), response(id, outcome), successCheck(id, works),
-      failureCheck(id, works), depart, remount(actor), s' = s }
+    any { createMode, cookieChanges(actor), edit(draft), persist(works), begin(id),
+      observePreflight(id, works), returnPreflight(id), consumePreflight(id),
+      dispatch(id), admit(id), serverResult(id, works), response(id, outcome),
+      observeSuccess(id, works), returnSuccess(id), consumeSuccess(id),
+      observeFailure(id, works), returnFailure(id), consumeFailure(id),
+      depart, remount(actor), s' = s }
   }
   val invariant = all { s.accepted.subseteq(ids), s.serverRevision >= 0, s.serverRevision <= 3,
+    not(s.present) implies not(s.mounted),
     if (s.publication == 0) true else s.requests.get(s.publication).accepted,
     ids.forall(id => s.requests.get(id).admitted implies
       s.requests.get(id).cookie == s.requests.get(id).actor) }
@@ -192,4 +241,32 @@ module ui_project_publication_lifetime {
     .then(successCheck(1, true)).then(persist(false))
     .expect(s.draft == 2 and s.stored == 1 and s.storageError and s.serverDraft == 1)
   run busyEditorRefusesSecondSubmissionTest = init.then(begin(1)).then(begin(2).fail())
+  run departedObservedPreflightCannotDispatchTest = init.then(createMode).then(begin(1))
+    .then(observePreflight(1, true)).then(depart).then(returnPreflight(1))
+    .then(consumePreflight(1)).then(dispatch(1).fail())
+  run departedReturnedPreflightCannotDispatchTest = init.then(begin(1))
+    .then(observePreflight(1, true)).then(returnPreflight(1)).then(depart)
+    .then(consumePreflight(1)).expect(s.requests.get(1).phase == "done" and s.serverRevision == 1)
+  run remountedEditorRejectsOldReturnedPreflightTest = init.then(begin(1))
+    .then(observePreflight(1, true)).then(returnPreflight(1)).then(depart).then(remount(2))
+    .then(begin(2)).then(consumePreflight(1)).expect(s.active == 2 and s.publication == 0)
+  run departureAfterSuccessHelperCannotPublishTest = init.then(begin(1)).then(preflight(1, true))
+    .then(dispatch(1)).then(admit(1)).then(serverResult(1, true)).then(response(1, "success"))
+    .then(observeSuccess(1, true)).then(returnSuccess(1)).then(depart).then(consumeSuccess(1))
+    .expect(s.serverRevision == 2 and s.publication == 0 and s.stored == 1)
+  run departedFailureHelperCannotReplaceNewStatusTest = init.then(begin(1)).then(preflight(1, true))
+    .then(dispatch(1)).then(admit(1)).then(serverResult(1, false)).then(response(1, "temporary"))
+    .then(observeFailure(1, true)).then(returnFailure(1)).then(depart).then(remount(2))
+    .then(begin(2)).then(consumeFailure(1)).expect(s.active == 2 and s.error == "none")
+  run cookieChangeAfterObservationStillNeedsServerFenceTest = init.then(createMode).then(begin(1))
+    .then(observePreflight(1, true)).then(cookieChanges(2)).then(returnPreflight(1))
+    .then(consumePreflight(1)).then(dispatch(1)).then(admit(1)).then(serverResult(1, true))
+    .expect(s.serverRevision == 0 and s.accepted == Set())
+  // Historical negative control only: a passive cleanup leaves the old mounted
+  // ref true after DOM removal. It is deliberately excluded from step.
+  action oldPassiveDepart = s' = s.with("present", false)
+  run oldPassiveCleanupCanStartCreateTest = init.then(createMode).then(begin(1))
+    .then(observePreflight(1, true)).then(oldPassiveDepart).then(returnPreflight(1))
+    .then(consumePreflight(1)).then(dispatch(1))
+    .expect(not(s.present) and s.requests.get(1).phase == "admission")
 }

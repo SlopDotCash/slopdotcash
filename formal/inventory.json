@@ -158,15 +158,20 @@
     {
       "path": "backend/github.ts",
       "sha256": "9fbc50d22eed9db799629469d05c3d1c13df27669313d3e8da561afb08b5bfac",
-      "models": [],
+      "models": [
+        "formal/models/api/github_lookup_actor.qnt",
+        "formal/models/api/github_lookup_owned.qnt",
+        "formal/models/api/github_lookup_repository.qnt"
+      ],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure URL/header/Link parsing and cryptographic JWT construction from explicit inputs. No cached credential or persisted OAuth flow is held here; token validity and use belong to identity callers."
     },
     {
       "path": "backend/http.ts",
       "sha256": "e651ccb0701b9d09071310442b0a37b34f0aff6740a7ce02c3e465c97b05b6c0",
       "models": [
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_request_composition.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -520,6 +525,7 @@
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
       "candidateLines": [3, 13, 65, 70, 75, 82, 102],
@@ -541,7 +547,13 @@
     {
       "path": "backend/projects/github-lookup.ts",
       "sha256": "3015ffdfbc08a2b7c201578c021eb6540ce9d40d4f455bbffc08355651974215",
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "models": [
+        "formal/models/api/api_project_lookup_routes.qnt",
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/github_lookup_actor.qnt",
+        "formal/models/api/github_lookup_owned.qnt",
+        "formal/models/api/github_lookup_repository.qnt"
+      ],
       "candidateLines": [29, 62, 63, 75, 86, 209, 254, 474],
       "review": "mapped-abstraction"
     },
@@ -551,6 +563,7 @@
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
@@ -582,7 +595,10 @@
     {
       "path": "backend/projects/repository-access.ts",
       "sha256": "5f0595bdb6157ba1f83aeeb0d3b16569a68fae9e3f233a04df79112e3bd72b95",
-      "models": ["formal/models/api/api_project_registry.qnt"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "candidateLines": [30],
       "review": "mapped-abstraction"
     },
@@ -4886,7 +4902,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "5898467f1e94c3d44711bc4f531c9e919272e51cf44994824343742fbd464bf3",
+      "sha256": "bb63428200af2a69cc77d20a43561903d7570bd602ba7324262bfd9ce6cde8ed",
       "models": [
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
@@ -4904,16 +4920,15 @@
       "candidateLines": [
         10, 127, 442, 445, 446, 447, 448, 449, 450, 451, 453, 456, 460, 465,
         481, 492, 500, 501, 518, 534, 538, 556, 564, 572, 579, 582, 602, 617,
-        618, 793, 804, 805, 809, 815, 826, 829, 834, 837, 846, 849, 850, 852,
-        853, 858, 886, 890, 893, 903, 904, 963, 965, 969, 974, 983, 993, 998,
-        1052, 1065, 1073, 1076, 1083, 1152, 1177, 1185, 1186, 1188, 1193, 1197,
-        1206, 1221, 1228, 1318, 1319, 1320, 1322, 1328, 1338, 1345, 1361, 1374,
-        1406, 1416, 1423, 1428, 1431, 1442, 1464, 1465, 1467, 1468, 1558, 1561,
-        1588, 1936, 1938, 2000, 2003, 2009, 2010, 2012, 2022, 2024, 2028, 2039,
-        2053, 2065, 2082, 2086, 2092, 2096, 2097, 2100, 2103, 2104, 2105, 2106,
-        2107, 2108, 2109, 2168, 2178, 2190, 2221, 2460, 2484, 2501, 2522, 2525,
-        2530, 2674, 2682, 2683, 2694, 2732, 2737, 2741, 2754, 2755, 2768, 2793,
-        2794, 2795
+        618, 793, 804, 805, 815, 826, 829, 834, 837, 846, 849, 850, 852, 853,
+        858, 886, 890, 893, 903, 904, 963, 965, 969, 974, 983, 993, 998, 1052,
+        1065, 1073, 1076, 1083, 1152, 1177, 1185, 1186, 1188, 1193, 1197, 1206,
+        1221, 1228, 1318, 1319, 1320, 1322, 1328, 1338, 1345, 1361, 1374, 1406,
+        1416, 1423, 1428, 1431, 1442, 1464, 1465, 1467, 1468, 1558, 1561, 1588,
+        1936, 1938, 2000, 2003, 2009, 2010, 2012, 2022, 2024, 2028, 2039, 2053,
+        2065, 2082, 2092, 2096, 2097, 2100, 2103, 2104, 2105, 2106, 2107, 2108,
+        2109, 2168, 2178, 2190, 2221, 2460, 2484, 2501, 2522, 2525, 2530, 2674,
+        2682, 2683, 2694, 2732, 2737, 2741, 2754, 2755, 2768, 2793, 2794, 2795
       ],
       "review": "mapped-abstraction"
     },
@@ -5760,12 +5775,12 @@
     {
       "path": "src/lib/project-contracts.ts",
       "sha256": "13ba85f93d980366cb676c9a50df621f309fc807339f4c44d8046a41d5b70151",
-      "models": [],
+      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "candidateLines": [
         10, 30, 31, 44, 159, 185, 186, 197, 198, 306, 307, 308, 322, 331, 332,
         337, 341, 356, 365, 405, 406
       ],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
     },
     {
@@ -5799,6 +5814,7 @@
       "path": "src/lib/project-proposal.ts",
       "sha256": "4ce010721eccf91f50da5c26e0ae5ec32c042088ce64bd5d08eb5c4b11dda923",
       "models": [
+        "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
@@ -7409,11 +7425,14 @@
     },
     {
       "path": "workers/slopbot/repository-access.ts",
-      "sha256": "761ae561af8c809a03e1232abec4d7e7065d8fb4fef0414a90d11685855ec596",
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "sha256": "4854f880c2cf6d5b24f0b65be4e6fde2cb8b86bb88647b7177f8d828e96ca75d",
+      "models": [
+        "formal/models/slopbot/bot_repository_access.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "candidateLines": [
-        27, 28, 30, 59, 61, 76, 87, 112, 113, 131, 132, 134, 207, 228, 267, 276,
-        278, 279, 286, 287, 289, 300, 306, 307, 310, 319
+        27, 28, 30, 72, 74, 89, 91, 109, 135, 136, 154, 155, 157, 230, 251, 290,
+        299, 301, 302, 309, 310, 312, 323, 329, 330, 333, 342
       ],
       "review": "mapped-abstraction"
     },
@@ -8706,6 +8725,45 @@
       "scenarios": ["accountSeparationTest", "flagsTest"]
     },
     {
+      "path": "formal/models/api/api_project_lookup_routes.qnt",
+      "sha256": "24e5a21a42e05d7d68dd6dcdd0e488cabe824bb4030efecd5e39357f8f8a340a",
+      "sources": [
+        "backend/http.ts",
+        "backend/projects/edge-cache.ts",
+        "backend/projects/github-lookup.ts",
+        "backend/projects/handler.ts",
+        "src/lib/project-proposal.ts"
+      ],
+      "scenarios": [
+        "absentCacheReturnsBuiltResponseWithoutBufferingTest",
+        "accountRenameUsesImmutableActorThenCurrentLoginTest",
+        "backgroundCachePutCanSettleAfterResponseTest",
+        "cachePutFailureKeepsSuccessfulResponseTest",
+        "cacheReadFailureFallsBackToProviderTest",
+        "canonicalRepositoryKeySharesFactsAcrossActorsTest",
+        "expectedActorMismatchPrecedesCacheTest",
+        "invalidRepositoryRefusesOnMissTest",
+        "knownSelectionHandsOffWithoutInventingAnEnforcementResultTest",
+        "latePublicCacheWriteCanOverwriteNewerSnapshotTest",
+        "malformedExpectedActorIs400Test",
+        "missingOwnedActorIsUnavailableNotEmptySuccessTest",
+        "missingRepositoryIs404AndNotCachedTest",
+        "missingSelectedActorIs409Test",
+        "moderatorSelectionUsesExpectedImmutableIdTest",
+        "organizationSelectionKeeps422Test",
+        "ownedCacheIsPartitionedByImmutableActorTest",
+        "providerFailureCanRetryAfterNoCacheWriteTest",
+        "repositorySuccessCachesPublicFactsAndReturnsPrivatePolicyTest",
+        "sessionSwitchAfterCaptureDoesNotRewriteRequestTest",
+        "signedOutCannotReadAnExistingPublicFactCacheTest",
+        "signedOutLookupNeverReadsCacheTest",
+        "signedOutSessionStatusIs200NullTest",
+        "synchronousCachePutMustSettleBeforeResponseTest",
+        "unknownProjectLookupRouteReturns404WithoutSessionTest",
+        "wrongOriginWriteRefusesBeforeSessionTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_project_registry.qnt",
       "sha256": "07af97bcf98c9d086bae7e1919d9529db5f9c4728701010063ebca953e5f5196",
       "sources": [
@@ -9061,6 +9119,82 @@
         "unsupportedTokenTypeReturnsNullTest",
         "userBodyFailureOccursAfterLocalClearTest",
         "userFetchFailureKeepsLocalTokenUntilFinallyTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/github_lookup_actor.qnt",
+      "sha256": "f4bbe4c6dda264e5f86194f5c9eb110b21cca7a5486d7c8132c25c3f68a48305",
+      "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
+      "scenarios": [
+        "abortedReadReturnsNoActorTest",
+        "idLookupFollowsRenamedAccountTest",
+        "idMismatchNeverReturnsReplacementOwnerTest",
+        "invalidLoginMakesNoRequestTest",
+        "loginCaseDoesNotChangeIdentityTest",
+        "matchingLoginAcceptsCurrentOwnerTest",
+        "missingAccountIsNullTest",
+        "missingTypeIsIncompleteFactsTest",
+        "nameMismatchNeverReturnsActorTest",
+        "ordinary403IsUpstreamFailureTest",
+        "organizationRefusesBeforeShapeValidationTest",
+        "unfollowedRedirectIsNotIdentityTest",
+        "zeroRemaining403IsRateLimitedTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/github_lookup_owned.qnt",
+      "sha256": "603c17d8b97950984c90e300ffe8548bcf9ce206698a937b841e2b9f31a8306a",
+      "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
+      "scenarios": [
+        "duplicateOnLaterPageDoesNotReplaceFirstTest",
+        "eligibleAndForkRepositoriesRemainTest",
+        "emptyOrOverlongDescriptionBecomesNullTest",
+        "exactCaseKeysRemainDistinctTest",
+        "firstExactNameWinsTest",
+        "invalidLoginFailsBeforeFetchTest",
+        "laterBodyFailureDoesNotReturnEarlierRowsTest",
+        "laterRateLimitDoesNotReturnEarlierRowsTest",
+        "malformedNextPartRefusesTest",
+        "malformedRowsDoNotFillFactsTest",
+        "nextAfterTwentiethPageRefusesTest",
+        "nextOtherPathIsNotFollowedTest",
+        "ownedRepository404IsAnErrorTest",
+        "privateAndArchivedRowsAreSkippedTest",
+        "twentiethPageMayFinishTest",
+        "wrongOriginRefusesPartialListTest",
+        "wrongPageRefusesPartialListTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/github_lookup_repository.qnt",
+      "sha256": "6ef283a5921099e67b9adc1697e4ae072ce1f4e92fe43b06dc8ea7cf11b34639",
+      "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
+      "scenarios": [
+        "absentDefaultBranchRefusesBeforeLicenseTest",
+        "absentRepositoryIs404Test",
+        "completeRepositoryLicenseUsesPinnedCommitTest",
+        "credentialBearingBranchLinkRefusesTest",
+        "defaultHeadMayAdvanceAfterBranchListTest",
+        "extraBranchLinkParameterRefusesTest",
+        "incompleteMetadataDoesNotExposeFactsTest",
+        "invalidBranchCommitRefusesWholeLookupTest",
+        "invalidBranchNameRefusesWholeLookupTest",
+        "invalidLicenseBytesDoNotBecomeVerifiedTest",
+        "invalidRepositorySyntaxMakesNoReadTest",
+        "laterPageFailureDoesNotExposeEarlierBranchesTest",
+        "laterPresentCommitWinsDuplicateNameTest",
+        "licenseRateLimitKeepsKnownBranchesTest",
+        "missingLicenseKeepsRepositoryFactsTest",
+        "numericIdBranchLinkStillUsesNamedReadTest",
+        "optionalMissingCommitDoesNotEraseEarlierShaTest",
+        "renameReuseCanMixNamedBranchFactsTest",
+        "strictHeadLookupReturnsExactShaTest",
+        "strictHeadMissingCommitThrowsTest",
+        "strictHeadRateLimitThrowsTest",
+        "strictHeadTransportCannotGuessTest",
+        "twentiethPageWithNextRefusesPartialBranchesTest",
+        "wrongLicensePathRemainsUnknownTest",
+        "wrongPathBranchLinkRefusesTest"
       ]
     },
     {
@@ -12791,6 +12925,37 @@
       "scenarios": ["livePermissionTest", "reusedLoginIsNotAuthorityTest"]
     },
     {
+      "path": "formal/models/slopbot/bot_repository_authority_scope.qnt",
+      "sha256": "422a79a00ccc36b2a6d0a9f9ee822fbf79fa38678f7d28d8ef7ebf5a4f444ebc",
+      "sources": [
+        "backend/projects/repository-access.ts",
+        "src/lib/project-contracts.ts",
+        "workers/slopbot/repository-access.ts"
+      ],
+      "scenarios": [
+        "failedPermissionReadDoesNotClaimNoneTest",
+        "failedTokenDoesNotReadRepositoryTest",
+        "invalidInstallationIsUnavailableTest",
+        "invalidPermissionLevelIsUnavailableTest",
+        "laterRevocationDoesNotRewriteObservedPermissionTest",
+        "malformedRouteRequestsNoTokenTest",
+        "matchingRepositoryRetainsPermissionTest",
+        "mismatchedRepositoryIdStillRefusesTest",
+        "missingCollaboratorIsNoPermissionTest",
+        "missingInstallationReturnsMissingTest",
+        "oldInstallationWideTokenLendsReplacementPermissionNegativeControlTest",
+        "omittedFullFactsStillChecksRepositoryIdTest",
+        "pathReuseBeforeFactsCannotPassIdentityTest",
+        "pathReuseBetweenReadsCannotLendPermissionTest",
+        "requestedFullFactsRemainValidatedTest",
+        "restoredPathAllowsIndependentRetryTest",
+        "reusedLoginStillFailsActorIdentityTest",
+        "suspendedInstallationRequestsNoTokenTest",
+        "tokenHasOnlyExpectedRepositoryAndMetadataTest",
+        "unsafeNumericIdRequestsNoTokenTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_retained_acceptance.qnt",
       "sha256": "5ac35b804a04da83e1487a8621d50311039633f07b3b072697712406f6c8d496",
       "sources": [
@@ -15230,7 +15395,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_publication_lifetime.qnt",
-      "sha256": "5933203d338c589514260c62570854e3bb5fb75ca713a1270de41b2e7ed65ed1",
+      "sha256": "d8c6b0a5d2c76cde6b043da0cf950e089973155232f7496938e022606ef45c2e",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -15239,18 +15404,25 @@
       ],
       "scenarios": [
         "busyEditorRefusesSecondSubmissionTest",
+        "cookieChangeAfterObservationStillNeedsServerFenceTest",
         "createEditedPayloadKeepsReferrerTest",
         "createUnchangedPayloadClearsReferrerTest",
+        "departedFailureHelperCannotReplaceNewStatusTest",
+        "departedObservedPreflightCannotDispatchTest",
         "departedPreflightStartsNoWriteTest",
         "departedReplyPreservesNewDraftTest",
+        "departedReturnedPreflightCannotDispatchTest",
+        "departureAfterSuccessHelperCannotPublishTest",
         "detachedCreateCannotClearNewReferrerTest",
         "differentActorReplyPreservesAcceptedWriteTest",
         "editDuringSaveIsRebasedTest",
         "editedDraftCanPublishNextRevisionTest",
         "failurePathActorChangeRechecksGateTest",
         "lostReplyDoesNotUndoAcceptedRevisionTest",
+        "oldPassiveCleanupCanStartCreateTest",
         "persistenceFailureKeepsCurrentDraftTest",
         "preDispatchActorSwapCannotWriteTest",
+        "remountedEditorRejectsOldReturnedPreflightTest",
         "retypedRevisionStillKeepsItsNewObjectTest",
         "unavailableIdentityKeepsDraftWithoutSuccessTest",
         "unchangedRevisionClearsDraftTest"
@@ -15380,12 +15552,34 @@
     },
     {
       "path": "formal/models/ui/ui_repository_lookup.qnt",
-      "sha256": "b5af43b23a1c332738c8fc89ba7a8c53aa307d719d697ecf65d3c5201fa4a00d",
+      "sha256": "85710ac2778364d0af3dd223b5b2f4fb00e72cdfa56ab9aacedd0af81358a4d4",
       "sources": ["src/ProjectProposalPage.tsx", "src/lib/project-proposal.ts"],
       "scenarios": [
+        "absentCommitMapDoesNotInventEvidenceTest",
+        "authoredTextSurvivesChangedRepositoryTest",
+        "branchChoiceBindsItsOwnCommitTest",
+        "changedBeforeDebounceStartsNoRequestTest",
+        "clearedBeforeDebounceStartsNoRequestTest",
+        "clearedTextTakesNewSuggestionTest",
         "currentFactsTest",
+        "departedDebounceCannotDispatchTest",
+        "departedResponseCannotPublishTest",
+        "failedLookupRetriesWithNewControllerTest",
+        "failedLookupStaysEditableTest",
+        "failedRestoredLookupCannotValidateBranchTest",
         "invalidInputCancelsTest",
+        "invalidInputStartsNoLookupTest",
+        "newSuccessSurvivesOldFailureTest",
         "obsoleteFactsTest",
+        "oldFailureCannotReplaceNewLoadingTest",
+        "oldUnguardedResponseMixesIdentityTest",
+        "receivedOldFactsCannotPublishAfterEditTest",
+        "rejectedLookupDoesNotFillFactsTest",
+        "removedRestoredBranchCanRecoverTest",
+        "removedRestoredBranchRequiresChoiceTest",
+        "restoredDraftWaitsForFreshBranchesTest",
+        "restoredValidBranchIsPreservedTest",
+        "suggestedTextTracksChangedRepositoryTest",
         "typedDescriptionSurvivesTest"
       ]
     },

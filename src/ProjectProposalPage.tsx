@@ -7,7 +7,7 @@ import {
   Shield,
   Wallet,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   type ProjectDraftStore,
   useProjectDraftSave,
@@ -806,7 +806,7 @@ function ProjectProposalForm({
   const projectSession = useProjectSession(sessionRevision);
   const mounted = useRef(true);
   const submitInFlight = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -2083,7 +2083,7 @@ function ProjectUpdateForm({
   const session = useProjectSession();
   const mounted = useRef(true);
   const publishInFlight = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

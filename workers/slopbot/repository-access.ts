@@ -42,9 +42,20 @@ async function repositoryInstallation(
   owner: string,
   repo: string,
   fetcher: typeof fetch,
+  expectedRepositoryId?: number,
 ): Promise<Installation> {
+  if (
+    expectedRepositoryId !== undefined &&
+    (!Number.isSafeInteger(expectedRepositoryId) || expectedRepositoryId < 1)
+  )
+    throw new Error("Repository id is invalid");
   const jwt = await appJwt(env.SLOPBOT_APP_ID, env.SLOPBOT_APP_PRIVATE_KEY);
-  const call = (path: string, token: string, method = "GET") =>
+  const call = (
+    path: string,
+    token: string,
+    method = "GET",
+    body?: Record<string, unknown>,
+  ) =>
     fetcher(`https://api.github.com${path}`, {
       method,
       headers: {
@@ -52,7 +63,9 @@ async function repositoryInstallation(
         authorization: `Bearer ${token}`,
         "user-agent": "slopbot",
         "x-github-api-version": "2022-11-28",
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "manual",
     });
   const found = await call(`/repos/${owner}/${repo}/installation`, jwt);
@@ -74,10 +87,19 @@ async function repositoryInstallation(
     installation.suspended_at !== undefined
   )
     return { state: "suspended", installationId: installation.id };
+  // Authority reads bind every later path lookup to the expected immutable
+  // repository. A rename/reused path cannot borrow another installed repo's
+  // permissions. The public-content caller keeps its separate read mode.
   const issued = await call(
     `/app/installations/${installation.id}/access_tokens`,
     jwt,
     "POST",
+    expectedRepositoryId === undefined
+      ? undefined
+      : {
+          repository_ids: [expectedRepositoryId],
+          permissions: { metadata: "read" },
+        },
   );
   if (!issued.ok) throw new Error("Installation token request failed");
   const { token } = (await issued.json()) as { token?: unknown };
@@ -108,6 +130,7 @@ export async function readRepositoryAccess(
     query.owner,
     query.repo,
     fetcher,
+    Number(query.repositoryId),
   );
   if (installation.state === "missing") return { installation: "missing" };
   if (installation.state === "suspended")
