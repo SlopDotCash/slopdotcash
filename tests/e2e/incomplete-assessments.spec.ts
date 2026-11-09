@@ -72,10 +72,19 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     .bind(at, at)
     .run();
   diagnostics.allowCanceledBackgroundReads();
+  // The deliberate account swap can also reject the parent Inbox refresh.
+  diagnostics.allowResponse(403, "GET", "/api/v1/notifications");
   diagnostics.allowResponse(
     403,
     "GET",
     "/api/v1/notifications/incomplete-assessments",
+  );
+  diagnostics.allowResponse(
+    403,
+    "GET",
+    `/api/v1/notifications/incomplete-assessments?after=${encodeURIComponent(
+      JSON.stringify([project.id, Number(project.authority.repositoryId), 25]),
+    )}`,
   );
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
