@@ -1228,6 +1228,7 @@
       "path": "contracts/evm/monthly-reserve.ts",
       "sha256": "e0508db9544286bba4a3339738422d1839ef5dc418b7d5eba121a81f9b69eee2",
       "models": [
+        "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1313,6 +1314,7 @@
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/evm_factory_authority.qnt",
+        "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/contracts/evm_proxy_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
         "formal/models/payments/authority_rotation.qnt",
@@ -1517,7 +1519,10 @@
     {
       "path": "contracts/solana/monthly-commitment.ts",
       "sha256": "d8907d3546117dc0f9cd604237d70583e4483d526225c5110dd378f63abadccb",
-      "models": ["formal/models/rewards/monthly_reserve.qnt"],
+      "models": [
+        "formal/models/contracts/solana_monthly_allocation.qnt",
+        "formal/models/rewards/monthly_reserve.qnt"
+      ],
       "candidateLines": [92, 102, 115, 140, 152],
       "review": "mapped-abstraction"
     },
@@ -1525,6 +1530,7 @@
       "path": "contracts/solana/monthly-reserve.ts",
       "sha256": "543d4ca777266b3209b3ecf18ec142b194d251331dfd84e970df61ce10306059",
       "models": [
+        "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1575,6 +1581,7 @@
       "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
+        "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
@@ -8791,6 +8798,27 @@
       ]
     },
     {
+      "path": "formal/models/contracts/evm_monthly_reserve.qnt",
+      "sha256": "3175fa5e6d7d2eccd32bc00f07dbb0632b41dc4e27b82d8614ee30199f8ff8e1",
+      "sources": [
+        "contracts/evm/monthly-reserve.ts",
+        "contracts/evm/src/ProjectEscrow.sol"
+      ],
+      "scenarios": [
+        "closedWindowRefusedTest",
+        "duplicateSourceAcrossPeriodsTest",
+        "leafSurvivesOptOutAndWindowTest",
+        "otherPeriodLeafRevertsReservationTest",
+        "partialReleaseThenFittingLeafTest",
+        "pendingBlocksManualAwardTest",
+        "reattestedReservationLandsTest",
+        "reservationNeedsFreeBalanceTest",
+        "sequenceChangeRevertsReservationTest",
+        "staleExpectedReleaseRefusedTest",
+        "wholeUntouchedReleaseTest"
+      ]
+    },
+    {
       "path": "formal/models/contracts/evm_owner_action.qnt",
       "sha256": "c399c3a041b18a241503278684ae39827c8de3df45635b724e8dd5116602e75c",
       "sources": ["src/lib/evm-vault-actions.ts"],
@@ -8938,6 +8966,29 @@
         "existingConfigReusedTest",
         "initializeConfirmReadTest",
         "wrongFixtureRolesRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/solana_monthly_allocation.qnt",
+      "sha256": "8fd954a8d9126c8c53311e731604f1bc9556f1db114a00296e41ea8d939c7164",
+      "sources": [
+        "contracts/solana/monthly-commitment.ts",
+        "contracts/solana/monthly-reserve.ts",
+        "contracts/solana/programs/slop-escrow/src/lib.rs"
+      ],
+      "scenarios": [
+        "actorZeroReleasesTest",
+        "commitThenPayTest",
+        "eachSourceSettlesOnceTest",
+        "legacyExpiredMonthKeepsOutstandingTest",
+        "migratedPrincipalStaysReservedTest",
+        "otherActorAfterFreezeStaysReservedTest",
+        "otherActorBeforeFreezeReleasesTest",
+        "outstandingBlocksHandCommitTest",
+        "partialReserveReleaseThenFittingLeafTest",
+        "sameAwardReleasesTest",
+        "smallerAwardAfterFreezeStaysReservedTest",
+        "staleExpectedReserveReleaseTest"
       ]
     },
     {
