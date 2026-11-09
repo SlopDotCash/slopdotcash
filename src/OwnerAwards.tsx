@@ -1,6 +1,6 @@
 import "./owner-review.css";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
@@ -10,9 +10,12 @@ import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
 import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
-import { apiRequest } from "./lib/project-api";
+import {
+  apiRequest,
+  currentProjectSession,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import { useAction } from "./lib/use-action";
 import { useTimeBoundary, useUtcDay } from "./lib/use-time-boundary";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease, {
@@ -121,16 +124,23 @@ export default function OwnerAwards({
   }));
   const { period } = monthRequest;
   const [view, setView] = useState<MonthlyOwnerView | null>(null);
+  const [viewActor, setViewActor] = useState<string | null>(null);
+  const knownActor = useRef<string | null>(null);
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, []);
   const [drafts, setDrafts] = useState<
     Record<string, Record<string, { value: string; base: string }>>
   >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
-  const {
-    busy: actionBusy,
-    error: actionError,
-    setError: setActionError,
-    run: act,
-  } = useAction();
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const busy = loading || actionBusy;
@@ -146,7 +156,7 @@ export default function OwnerAwards({
       : `${formatBaseUnits(value, decimals)}${symbol ? ` ${symbol}` : ""}`;
 
   const accept = useCallback(
-    (body: MonthlyOwnerView, month: string) => {
+    (body: MonthlyOwnerView, month: string, actorId: string) => {
       if (
         body.projectId !== project.id ||
         body.period !== month ||
@@ -156,6 +166,8 @@ export default function OwnerAwards({
       )
         throw new Error("The award response could not be verified.");
       setView(body);
+      setViewActor(actorId);
+      knownActor.current = actorId;
       setDrafts((previous) => {
         const rows = new Map(
           body.proposal?.allocations.map((row) => [
@@ -175,38 +187,101 @@ export default function OwnerAwards({
     },
     [project.id],
   );
+  const clearPrivate = useCallback(() => {
+    setView(null);
+    setViewActor(null);
+    knownActor.current = null;
+    setSelectedActor(null);
+    setDrafts({});
+    setNotice("");
+  }, []);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        generation.current += 1;
+        clearPrivate();
+        setSignedOut(true);
+        setLoading(false);
+        setActionBusy(false);
+        setActionError(null);
+        setLoadError(null);
+      }),
+    [clearPrivate],
+  );
   const call = useCallback(
     async (
       path: string,
       request: unknown,
       label: string,
+      expectedActor: string | null,
+      owns: () => boolean,
       signal?: AbortSignal,
     ) => {
-      const response = await apiRequest(`${base}${path}`, {
-        body: request,
-        timeoutMs: 120_000,
-        signal,
-      });
+      const current = () => mounted.current && owns() && !signal?.aborted;
+      if (!current()) return null;
+      const checkSession = async () => {
+        try {
+          return await currentProjectSession();
+        } catch {
+          if (current()) clearPrivate();
+          throw new Error(
+            "Your private session could not be checked. Refresh awards.",
+          );
+        }
+      };
+      const session = await checkSession();
+      if (!current()) return null;
       if (
-        !signal?.aborted &&
-        (response.status === 401 || response.status === 403)
-      )
-        setDrafts({});
-      const body = (await readBoundedJson(
-        response,
-        8 * 1024 * 1024,
-        label,
-      )) as Record<string, unknown> & { message?: string };
-      if (signal?.aborted) return null;
-      if (response.status === 401) {
-        setSignedOut(true);
+        !session ||
+        (expectedActor !== null && session.githubId !== expectedActor)
+      ) {
+        clearPrivate();
+        setSignedOut(session === null);
+        if (session) throw new Error("Your account changed. Refresh awards.");
         return null;
       }
-      if (!response.ok)
-        throw new Error(body.message ?? "Awards are unavailable. Retry.");
-      return body;
+      if (
+        knownActor.current !== null &&
+        knownActor.current !== session.githubId
+      )
+        clearPrivate();
+      let body: (Record<string, unknown> & { message?: string }) | null = null;
+      let failure: unknown;
+      let failed = false;
+      try {
+        const response = await apiRequest(`${base}${path}`, {
+          body: request,
+          timeoutMs: 120_000,
+          signal,
+          headers: { "x-slop-expected-github-id": session.githubId },
+        });
+        if (current() && [401, 403, 404, 410].includes(response.status)) {
+          clearPrivate();
+          setSignedOut(response.status === 401);
+        }
+        body = (await readBoundedJson(
+          response,
+          8 * 1024 * 1024,
+          label,
+        )) as Record<string, unknown> & { message?: string };
+        if (!response.ok)
+          throw new Error(body.message ?? "Awards are unavailable. Retry.");
+      } catch (cause) {
+        failed = true;
+        failure = cause;
+      }
+      if (!current()) return null;
+      const after = await checkSession();
+      if (!current()) return null;
+      if (after?.githubId !== session.githubId) {
+        clearPrivate();
+        setSignedOut(after === null);
+        throw new Error("Your account changed. Refresh awards.");
+      }
+      if (failed) throw failure;
+      return { body, actorId: session.githubId };
     },
-    [base],
+    [base, clearPrivate],
   );
   useEffect(() => {
     if (!opened) return;
@@ -214,6 +289,7 @@ export default function OwnerAwards({
     setSelectedActor(null);
     setLoadError(null);
     setActionError(null);
+    setActionBusy(false);
     setNotice("");
     setSignedOut(false);
     setLoading(false);
@@ -223,33 +299,50 @@ export default function OwnerAwards({
       return;
     }
     const controller = new AbortController();
+    const current = ++generation.current;
+    const owns = () => mounted.current && generation.current === current;
     setLoading(true);
     void call(
       `/monthly/${month}`,
       undefined,
       "Monthly awards",
+      null,
+      owns,
       controller.signal,
     )
-      .then((body) => {
-        if (!controller.signal.aborted && body)
-          accept(body as unknown as MonthlyOwnerView, month);
+      .then((result) => {
+        if (owns() && !controller.signal.aborted && result?.body)
+          accept(
+            result.body as unknown as MonthlyOwnerView,
+            month,
+            result.actorId,
+          );
       })
       .catch((reason) => {
-        if (!controller.signal.aborted)
+        if (owns() && !controller.signal.aborted)
           setLoadError(errorMessage(reason, "Awards are unavailable."));
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (owns() && !controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
   }, [accept, call, monthRequest, opened, setActionError]);
-  function run(action: () => Promise<void>) {
+  async function run(action: (owns: () => boolean) => Promise<void>) {
+    if (!mounted.current) return;
+    const current = ++generation.current;
+    const owns = () => mounted.current && generation.current === current;
     setNotice("");
     setLoadError(null);
     setSignedOut(false);
-    return act(action, (reason) =>
-      errorMessage(reason, "Awards are unavailable."),
-    );
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await action(owns);
+    } catch (reason) {
+      if (owns()) setActionError(errorMessage(reason, "Awards are unavailable."));
+    } finally {
+      if (owns()) setActionBusy(false);
+    }
   }
   function load(event: FormEvent) {
     event.preventDefault();
@@ -259,7 +352,7 @@ export default function OwnerAwards({
     }));
   }
   const save = (githubUserId: string) =>
-    run(async () => {
+    run(async (owns) => {
       if (!view?.proposal) return;
       const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
@@ -271,9 +364,15 @@ export default function OwnerAwards({
           expectedSequence: view.proposal.allocationSequence,
         },
         "Monthly allocation",
+        viewActor,
+        owns,
       );
-      if (body) {
-        accept(body as unknown as MonthlyOwnerView, view.period);
+      if (body?.body && owns()) {
+        accept(
+          body.body as unknown as MonthlyOwnerView,
+          view.period,
+          body.actorId,
+        );
         setDrafts((previous) => {
           const next = { ...previous };
           const month = { ...(next[view.period] ?? {}) };
@@ -285,15 +384,21 @@ export default function OwnerAwards({
       }
     });
   const finalize = () =>
-    run(async () => {
+    run(async (owns) => {
       if (!view?.proposal) return;
       const body = await call(
         `/monthly/${view.period}/finalize`,
         { expectedSequence: view.proposal.allocationSequence },
         "Monthly finalization",
+        viewActor,
+        owns,
       );
-      if (body) {
-        accept(body as unknown as MonthlyOwnerView, view.period);
+      if (body?.body && owns()) {
+        accept(
+          body.body as unknown as MonthlyOwnerView,
+          view.period,
+          body.actorId,
+        );
         setDrafts((previous) => {
           const next = { ...previous };
           delete next[view.period];
@@ -303,15 +408,17 @@ export default function OwnerAwards({
       }
     });
   const toggleAutomatic = () =>
-    run(async () => {
+    run(async (owns) => {
       if (!view) return;
       const body = await call(
         "/monthly-settings",
         { automatic: !view.automatic },
         "Monthly finalization setting",
+        viewActor,
+        owns,
       );
-      if (body && typeof body.automatic === "boolean")
-        setView({ ...view, automatic: body.automatic });
+      if (owns() && body?.body && typeof body.body.automatic === "boolean")
+        setView({ ...view, automatic: body.body.automatic });
     });
 
   useTimeBoundary(
@@ -363,14 +470,15 @@ export default function OwnerAwards({
         <CalendarDays size={22} aria-hidden="true" /> Monthly awards
       </h2>
       {recovery.error && <p role="alert">{recovery.error}</p>}
-      {recovery.pending.map((entry) => (
-        <OwnerCommitment
-          key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
-          projectId={project.id}
-          cycleId={entry.cycleId}
-          expected={entry.expected}
-        />
-      ))}
+      {!signedOut &&
+        recovery.pending.map((entry) => (
+          <OwnerCommitment
+            key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
+            projectId={project.id}
+            cycleId={entry.cycleId}
+            expected={entry.expected}
+          />
+        ))}
       {!opened ? (
         <>
           <p>Review allocations and reserve finalized awards.</p>

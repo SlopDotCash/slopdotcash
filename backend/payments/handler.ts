@@ -31,10 +31,12 @@ import {
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import {
+  apiErrorResponse,
   cookieValue,
   isSameOriginJsonWrite,
   json,
   readJsonObject,
+  requireActor,
 } from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
@@ -531,6 +533,13 @@ export async function handlePaymentsApi(
           ? "session_expired"
           : "not_signed_in",
       });
+    // Bind optional UI account snapshots before any authenticated read or
+    // mutation. The header narrows this session; it never selects an actor.
+    try {
+      await requireActor(request, { sessionActor: async () => member });
+    } catch (caught) {
+      return apiErrorResponse(caught, { label: "payments account refusal" });
+    }
     const solanaCommitmentRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/solana-commitment$/.exec(
         path,

@@ -671,6 +671,10 @@ export function SecurityProgramPage({
     revision: number;
   } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
+  const refreshIdentity = useCallback(
+    () => setSessionEpoch((value) => value + 1),
+    [],
+  );
   const session = useProjectSession(sessionEpoch);
   usePrivateDraftSession(session);
   useEffect(() => {
@@ -700,6 +704,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -873,6 +878,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -3365,13 +3371,17 @@ function CaseDetail({
   const recoveryAction = useAction();
   const [state, reload, replaceData] = useSecurityData<{
     case: SecurityCase;
-  }>(`security-cases/${encodeURIComponent(caseId)}`);
+  }>(
+    `security-cases/${encodeURIComponent(caseId)}`,
+  );
   const replace = useCallback(
     (value: { case: SecurityCase }) =>
-      replaceData(value, (previous) =>
-        value.case.revision === previous.case.revision
-          ? "refresh"
-          : value.case.revision > previous.case.revision,
+      replaceData(
+        value,
+        (previous) =>
+          value.case.revision === previous.case.revision
+            ? "refresh"
+            : value.case.revision > previous.case.revision,
       ),
     [replaceData],
   );

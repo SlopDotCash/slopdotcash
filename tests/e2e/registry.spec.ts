@@ -2253,6 +2253,43 @@ test("an applicant publishes an application stored before self-service setup wit
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   const entry = page.getByTestId(`pending-application-${applicationId}`);
   await expect(entry).toContainText(project.name);
+  // Hold the actual account inventory after D1 returned A's application.
+  // Changing the cookie alone does not deliver a focus/session event.
+  let releaseInventory = () => {};
+  let inventoryReceived = () => {};
+  const inventoryHeld = new Promise<void>((resolve) => {
+    releaseInventory = resolve;
+  });
+  const inventoryReady = new Promise<void>((resolve) => {
+    inventoryReceived = resolve;
+  });
+  const inventoryRoute = "**/api/v1/project-setup";
+  await page.route(inventoryRoute, async (route) => {
+    const response = await route.fetch();
+    inventoryReceived();
+    await inventoryHeld;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await inventoryReady;
+    await page.evaluate((token) => {
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+    }, APPLICANT_TOKEN);
+    releaseInventory();
+    await expect(entry).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Pending applications" }),
+    ).toContainText("Your account changed");
+  } finally {
+    releaseInventory();
+    await page.unroute(inventoryRoute);
+  }
+  await page.evaluate((token) => {
+    document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+  }, OWNER_TOKEN);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(entry).toContainText(project.name);
   await expect(entry.locator("details")).toHaveCount(0);
   await expect(page.getByLabel("Project name")).toHaveValue("");
   await expectAccessible(page, { include: ".setup-pending-applications" });

@@ -9,10 +9,12 @@ import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
+  mkdtemp,
   readdir,
   readFile,
   rename,
   rm,
+  rmdir,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -821,37 +823,156 @@ export async function syncCycleIndex(
         "Bundled project history is stale; run bun run cycles:sync",
       );
     }
-  } else {
-    await writeFile(promotionPath, promotionBytes);
+    return index;
   }
-  if (!options.checkOnly) {
-    const temporaryRoot = `${PUBLIC_CYCLES_ROOT}.${process.pid}.${Date.now()}.tmp`;
-    await rm(temporaryRoot, { force: true, recursive: true });
-    try {
-      await mkdir(temporaryRoot, { recursive: true });
-      for (const build of builds) {
-        const destination = join(
-          temporaryRoot,
-          build.entry.projectId,
-          build.entry.cycleId,
-        );
-        await mkdir(destination, { recursive: true });
-        await Promise.all(
-          [...build.files.entries()].map(([name, bytes]) =>
-            writeFile(join(destination, name), bytes),
-          ),
+  // Build outputs share a publication guard. A crashed publisher leaves it for
+  // explicit recovery; elapsed time does not prove a pending rename stopped.
+  await mkdir(dirname(PUBLIC_CYCLES_ROOT), { recursive: true });
+  const guard = `${PUBLIC_CYCLES_ROOT}.publication-lock`;
+  try {
+    await mkdir(guard);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+    throw new Error(
+      `Cycle publication could not acquire ${guard}; let another publisher finish, or stop all publishers before recovering a retained guard`,
+      { cause },
+    );
+  }
+  let temporaryRoot: string | undefined;
+  let promotionRoot: string | undefined;
+  let previousTree: string | undefined;
+  let previousPromotion: string | undefined;
+  let treePublished = false;
+  let committed = false;
+  let failed = false;
+  let recoveryIncomplete = false;
+  let failure: unknown;
+  const cleanupFailures: unknown[] = [];
+  const describe = (cause: unknown) =>
+    cause instanceof Error ? cause.message : String(cause);
+  const exists = async (path: string) =>
+    lstat(path).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      },
+    );
+  try {
+    temporaryRoot = await mkdtemp(`${PUBLIC_CYCLES_ROOT}.staging-`);
+    promotionRoot = await mkdtemp(
+      join(dirname(promotionPath), ".cycle-promotion-"),
+    );
+    const stagedPromotion = join(promotionRoot, "next.json");
+    for (const build of builds) {
+      const destination = join(
+        temporaryRoot,
+        build.entry.projectId,
+        build.entry.cycleId,
+      );
+      await mkdir(destination, { recursive: true });
+      // Drain all launched writes before any cleanup or publication. A rejected
+      // sibling must not still be writing into a directory being removed.
+      const writes = await Promise.allSettled(
+        [...build.files.entries()].map(([name, bytes]) =>
+          writeFile(join(destination, name), bytes),
+        ),
+      );
+      const rejected = writes.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (rejected) throw rejected.reason;
+    }
+    await writeFile(
+      join(temporaryRoot, "index.json"),
+      `${JSON.stringify(index, null, 2)}\n`,
+    );
+    await writeFile(stagedPromotion, promotionBytes);
+    if (await exists(PUBLIC_CYCLES_ROOT)) {
+      const backup = `${temporaryRoot}.previous`;
+      await rename(PUBLIC_CYCLES_ROOT, backup);
+      previousTree = backup;
+    }
+    if (await exists(promotionPath)) {
+      const backup = join(promotionRoot, "previous.json");
+      await rename(promotionPath, backup);
+      previousPromotion = backup;
+    }
+    await rename(temporaryRoot, PUBLIC_CYCLES_ROOT);
+    treePublished = true;
+    await rename(stagedPromotion, promotionPath);
+    committed = true;
+  } catch (cause) {
+    failed = true;
+    failure = cause;
+    const recoveryFailures: unknown[] = [];
+    const recover = async (operation: () => Promise<void>) => {
+      try {
+        await operation();
+      } catch (error) {
+        recoveryFailures.push(error);
+      }
+    };
+    if (treePublished && temporaryRoot) {
+      await recover(() => rename(PUBLIC_CYCLES_ROOT, temporaryRoot!));
+    }
+    if (previousPromotion) {
+      await recover(() => rename(previousPromotion!, promotionPath));
+    }
+    if (previousTree) {
+      await recover(() => rename(previousTree!, PUBLIC_CYCLES_ROOT));
+    }
+    if (recoveryFailures.length > 0) {
+      recoveryIncomplete = true;
+      failure = new AggregateError(
+        [cause, ...recoveryFailures],
+        `Cycle publication failed: ${describe(cause)}; recovery is incomplete: ${recoveryFailures.map(describe).join("; ")}. Preserve ${guard}, ${temporaryRoot ?? "the tree staging path"} and ${promotionRoot ?? "the promotion staging path"} for operator recovery`,
+      );
+    }
+  } finally {
+    // Do not erase the only recoverable version, or release a guard, after a
+    // failed restoration. The original and every recovery error remain joined.
+    if (!recoveryIncomplete) {
+      const cleanup = async (operation: () => Promise<void>) => {
+        try {
+          await operation();
+        } catch (error) {
+          cleanupFailures.push(error);
+        }
+      };
+      if (temporaryRoot) {
+        await cleanup(() =>
+          rm(temporaryRoot!, { force: true, recursive: true }),
         );
       }
-      await writeFile(
-        join(temporaryRoot, "index.json"),
-        `${JSON.stringify(index, null, 2)}\n`,
-      );
-      await rm(PUBLIC_CYCLES_ROOT, { force: true, recursive: true });
-      await mkdir(dirname(PUBLIC_CYCLES_ROOT), { recursive: true });
-      await rename(temporaryRoot, PUBLIC_CYCLES_ROOT);
-    } finally {
-      await rm(temporaryRoot, { force: true, recursive: true });
+      if (committed && previousTree) {
+        await cleanup(() =>
+          rm(previousTree!, { force: true, recursive: true }),
+        );
+      }
+      if (promotionRoot) {
+        await cleanup(() =>
+          rm(promotionRoot!, { force: true, recursive: true }),
+        );
+      }
+      await cleanup(() => rmdir(guard));
     }
+  }
+  if (failed) {
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [failure, ...cleanupFailures],
+        `Cycle publication failed: ${describe(failure)}; cleanup also failed: ${cleanupFailures.map(describe).join("; ")}`,
+      );
+    }
+    throw failure;
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      `${committed ? "Cycle index and promotion were published, but cleanup failed" : "Cycle publication cleanup failed"}: ${cleanupFailures.map(describe).join("; ")}`,
+    );
   }
   return index;
 }

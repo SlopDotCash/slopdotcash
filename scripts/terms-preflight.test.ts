@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   handleProjectArtifactRequest,
   type SkillPublicationDependencies,
@@ -89,4 +91,114 @@ test("acknowledges the terms.json slop.cash serves for a project without a bount
     inboundTermsSha256: null,
     prizeRulesSha256: null,
   });
+});
+
+test("a verified immutable cache remains usable when closing its read handle reports an error", async () => {
+  const policy = await servedTerms();
+  const document = Buffer.from("Synthetic immutable license document.\n");
+  const sha = (value: string | Buffer) =>
+    createHash("sha256").update(value).digest("hex");
+  const expected = sha(document);
+  const source = `https://raw.githubusercontent.com/example/project/${"a".repeat(40)}/LICENSE`;
+  const terms = policy.terms as Record<string, unknown>;
+  policy.terms = {
+    ...terms,
+    repositoryLicense: {
+      ...(terms.repositoryLicense as Record<string, unknown>),
+      state: "verified",
+      url: source,
+      fileSha256: expected,
+    },
+  };
+  const cacheHome = join(authority, "cache-close");
+  const cache = join(cacheHome, "slop", "policy-documents-v1");
+  mkdirSync(cache, { recursive: true });
+  writeFileSync(join(cache, `${sha(`${source}\0${expected}`)}.bin`), document);
+  const moduleUrl = new URL(
+    "../skills/project-contributor-template/scripts/terms-preflight.mjs",
+    import.meta.url,
+  ).href;
+  const probe = `
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    const [url, policyJson, projectId] = process.argv.slice(1);
+    const nativeOpen = fs.open;
+    let closed = 0;
+    fs.open = async (...args) => {
+      const handle = await nativeOpen(...args);
+      return {
+        stat: () => handle.stat(),
+        readFile: () => handle.readFile(),
+        close: async () => {
+          await handle.close();
+          closed++;
+          throw new Error('synthetic cache-close failure');
+        },
+      };
+    };
+    syncBuiltinESMExports();
+    const reads = [];
+    globalThis.fetch = async (input) => {
+      reads.push(String(input));
+      if (String(input) !== 'https://slop.cash/projects/' + projectId + '/terms.json')
+        throw new Error('verified cache unexpectedly required a document download');
+      return new Response(policyJson, { status: 200 });
+    };
+    const { preflight } = await import(url);
+    const result = await preflight(projectId);
+    process.stdout.write(JSON.stringify({ result, reads, closed }));
+  `;
+  const result = spawnSync(
+    "node",
+    [
+      "--input-type=module",
+      "--eval",
+      probe,
+      moduleUrl,
+      JSON.stringify(policy),
+      PROJECT_ID,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, XDG_CACHE_HOME: cacheHome },
+    },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    result: { licenseSha256: expected },
+    reads: [`https://slop.cash/projects/${PROJECT_ID}/terms.json`],
+    closed: 1,
+  });
+});
+
+test("the terms CLI verifies a paused project's documents without announcing work admission", async () => {
+  const policy = { ...(await servedTerms()), status: "paused" };
+  const script = fileURLToPath(
+    new URL(
+      "../skills/project-contributor-template/scripts/terms-preflight.mjs",
+      import.meta.url,
+    ),
+  );
+  const probe = `
+    import { pathToFileURL } from 'node:url';
+    const [script, policyJson, projectId] = process.argv.slice(1);
+    globalThis.fetch = async () => new Response(policyJson, { status: 200 });
+    process.argv = [process.execPath, script, '--project', projectId];
+    await import(pathToFileURL(script).href);
+  `;
+  const result = spawnSync(
+    "node",
+    [
+      "--input-type=module",
+      "--eval",
+      probe,
+      script,
+      JSON.stringify(policy),
+      PROJECT_ID,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("Project policy documents verified:");
+  expect(result.stdout).not.toContain("contributions open");
 });

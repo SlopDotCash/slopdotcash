@@ -16,6 +16,7 @@
 // no balance response grants signing authority or proves a transaction.
 // App project keys and SecuritySettingsEditor project:actor keys remount the
 // owner subtree. The compact page also unmounts it during maintainer recheck.
+// Pre/post session observations and detached callbacks: ui_owner_private_requests.
 module ui_owner_bounty_funds {
   var s:{project:int,actor:int,gate:bool,deployed:bool,status:str,
     reads:int,active:int,pending:Set[int],balance:int,balanceKey:int,
