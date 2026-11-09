@@ -1,13 +1,24 @@
 // @source src/SolanaBountyRecovery.tsx
 // @source src/SecurityBounty.tsx
+// @source backend/security/handler.ts
 // @source src/lib/use-payout-wallets.ts
 // @source src/lib/wallets.ts
 // @source src/lib/base58.ts
 // @evidence tests/e2e/solana-history-recovery.spec.ts
-// Two action slots (connect or check), two expired messages, one parent actor
-// and a second/absent session actor. At most one context replacement changes
-// case/generation, revision, payer or message bytes. Child layout cleanup
+// Three action slots (connect or check), two expired messages, one parent actor
+// and a second/absent session actor. At most one explicit context replacement
+// changes case/generation, revision, payer or message bytes; one observed
+// server-only revision change can cause another refresh. Child layout cleanup
 // invalidates the action token and resets its connected wallet.
+// Server revision and displayed revision are distinct. One server-only case
+// change may keep the same generation/messages; parent GET observation and
+// reply are separate. A changed observed revision refreshes the view and
+// invalidates the old action before a prompt/cache write/POST. A later connect
+// and check may reuse exact valid proofs because revision is not in the key.
+// POST keeps the captured displayed revision. A subsequent server revision
+// change can still refuse it. The guarded external-effect action summarizes
+// the backend's commit-time expected-revision fence; post-event revision and
+// returned case projection are outside this child-lifetime refinement.
 // Cache keys bind case/generation and actor, not revision. Proof body/payer
 // fields below are semantic witnesses of exact bytes and strict Ed25519 proof,
 // not additional stored schema. Finite signature classes abstract length64,
@@ -23,30 +34,33 @@
 // while its parent stays active. Once verify is invoked while current, its
 // external effect may complete after departure. No rollback of an already
 // handed-off request is claimed. A pre-connected state is used for bounded
-// two-check retry scenarios; connection is exercised separately.
+// two-check retry scenarios; connection is exercised separately and the third
+// slot permits reconnecting after a stale preflight before reusing cached proof.
 // Old unverified-cache, late-effect and stale-finally actions are negative
 // controls outside step. No tests, parser/checker, browser, signer or provider
 // were run for this edit.
 module ui_solana_history_recovery {
-  val ids = Set(1, 2)
+  val ids = Set(1, 2, 3)
   val indices = Set(1, 2)
   val keys = Set(111, 112, 121, 122, 211, 212, 221, 222)
   val signatures = Set("valid", "invalid64", "short", "noncanonical", "wrong-payer", "wrong-message", "malformed")
   type Proof = { exists: bool, body: int, payer: int, message: int, signature: str }
   val absent: Proof = { exists: false, body: 1, payer: 1, message: 1, signature: "malformed" }
   type Op = { phase: str, mode: str, context: int, scope: int, actor: int,
-    payer: int, body: int, index: int, next: str, authorized: bool,
+    payer: int, body: int, revision: int, observedRevision: int, index: int, next: str, authorized: bool,
     local: int -> Proof, ready: Set[int], candidate: Proof, prompts: int,
-    dispatched: bool }
+    dispatched: bool, backendAccepted: bool }
   val idle: Op = { phase: "unused", mode: "check", context: 1, scope: 1, actor: 1,
-    payer: 1, body: 1, index: 1, next: "none", authorized: false,
-    local: indices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false }
+    payer: 1, body: 1, revision: 1, observedRevision: 0, index: 1, next: "none", authorized: false,
+    local: indices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false, backendAccepted: false }
   var s: { child: bool, parent: bool, context: int, scope: int, revision: int,
+    serverRevision: int, serverChanges: int, refreshes: int,
     payer: int, body: int, actor: int, allowed: bool, wallet: bool,
     active: int, busy: int, error: str, cacheJsonValid: bool, seeded: bool,
     cache: int -> Proof, written: Set[int], operations: int -> Op,
     verifyRequests: int, effects: Set[int], badEffect: bool }
   action init = s' = { child: true, parent: true, context: 1, scope: 1, revision: 1,
+    serverRevision: 1, serverChanges: 0, refreshes: 0,
     payer: 1, body: 1, actor: 1, allowed: true, wallet: false, active: 0, busy: 0,
     error: "none", cacheJsonValid: true, seeded: false, cache: keys.mapBy(_ => absent),
     written: Set(), operations: ids.mapBy(_ => idle), verifyRequests: 0, effects: Set(), badEffect: false }
@@ -75,7 +89,7 @@ module ui_solana_history_recovery {
     ids.contains(id), Set("connect", "check").contains(mode), s.child, s.active == 0, operation(id).phase == "unused",
     s' = s.with("active", id).with("busy", id).with("error", "none")
       .with("operations", s.operations.set(id, idle.with("mode", mode).with("context", s.context)
-        .with("scope", s.scope).with("payer", s.payer).with("body", s.body)
+        .with("scope", s.scope).with("payer", s.payer).with("body", s.body).with("revision", s.revision)
         .with("phase", if (mode == "connect") "connect-authorize" else "identity"))) }
   action identityReply(id: int, available: bool): bool = {
     val op = operation(id)
@@ -96,15 +110,25 @@ module ui_solana_history_recovery {
       else if (op.phase == "cache-authorize") "cache-write" else "verify"
     all { Set("connect-authorize", "loop-authorize", "cache-authorize", "final-authorize").contains(op.phase),
       s' = if (not(current(id))) stopped(id, "none")
-        else s.with("operations", s.operations.set(id, op.with("phase", "parent-await").with("next", next).with("authorized", false))) }
+        else s.with("operations", s.operations.set(id, op.with("phase", "parent-await").with("next", next)
+          .with("authorized", false).with("observedRevision", 0))) }
   }
-  action parentReply(id: int, available: bool): bool = {
+  action parentObservation(id: int): bool = {
     val op = operation(id)
-    all { op.phase == "parent-await", s' = if (not(current(id))) stopped(id, "none")
+    all { op.phase == "parent-await", s' = s.with("operations", s.operations.set(id,
+      op.with("phase", "parent-reply").with("observedRevision", s.serverRevision))) }
+  }
+  action parentCompletion(id: int, available: bool): bool = {
+    val op = operation(id)
+    all { op.phase == "parent-reply", s' = if (not(current(id))) stopped(id, "none")
       else if (not(available) or not(s.parent) or not(s.allowed) or s.actor != 1) stopped(id, "authority")
+      else if (op.observedRevision != op.revision) stopped(id, "none")
+        .with("revision", op.observedRevision).with("context", s.context + 1).with("refreshes", s.refreshes + 1)
+        .with("active", 0).with("busy", 0).with("wallet", false).with("error", "none")
       else s.with("operations", s.operations.set(id, op.with("phase", if (op.mode == "connect") "authority-ready" else "session-await")
         .with("authorized", true))) }
   }
+  action parentReply(id: int, available: bool): bool = parentObservation(id).then(parentCompletion(id, available))
   action sessionReply(id: int, available: bool): bool = {
     val op = operation(id)
     all { op.phase == "session-await", s' = if (not(current(id))) stopped(id, "none")
@@ -159,14 +183,24 @@ module ui_solana_history_recovery {
         else s.with("verifyRequests", s.verifyRequests + 1)
           .with("operations", s.operations.set(id, op.with("phase", "verify-await").with("dispatched", true))) }
   }
-  action externalEffect(id: int): bool = all { operation(id).dispatched, not(s.effects.contains(id)), s' = s.with("effects", s.effects.union(Set(id))) }
+  action externalEffect(id: int): bool = all { operation(id).dispatched, not(s.effects.contains(id)),
+    operation(id).revision == s.serverRevision,
+    s' = s.with("effects", s.effects.union(Set(id)))
+      .with("operations", s.operations.set(id, operation(id).with("backendAccepted", true))) }
+  action backendRefusesStale(id: int): bool = all { operation(id).phase == "verify-await",
+    not(operation(id).backendAccepted), operation(id).revision != s.serverRevision,
+    s' = stopped(id, "stale-revision") }
   action verifyReturns(id: int, succeeds: bool): bool = all { operation(id).phase == "verify-await",
+    not(succeeds) or operation(id).backendAccepted or operation(id).revision == s.serverRevision,
     s' = stopped(id, if (succeeds) "none" else "verification") }
+  action serverRevisionAdvances = all { s.serverChanges < 1,
+    s' = s.with("serverRevision", s.serverRevision + 1).with("serverChanges", s.serverChanges + 1) }
   action contextChanges(kind: str): bool = all {
     s.context == 1, Set("case", "generation", "revision", "payer", "messages").contains(kind),
     s' = s.with("context", 2).with("active", 0).with("busy", 0).with("wallet", false).with("error", "none")
       .with("scope", if (Set("case", "generation").contains(kind)) 2 else s.scope)
       .with("revision", if (kind == "revision") 2 else s.revision)
+      .with("serverRevision", if (kind == "revision" and s.serverRevision < 2) 2 else s.serverRevision)
       .with("payer", if (kind == "payer") 2 else s.payer)
       .with("body", if (kind == "messages") 2 else s.body) }
   action accountChanges = s' = s.with("actor", 2)
@@ -185,6 +219,12 @@ module ui_solana_history_recovery {
   }
   action oldLateEffect(id: int): bool = all { not(current(id)), operation(id).phase != "unused", s' = s.with("badEffect", true) }
   action oldFinally(id: int): bool = all { not(current(id)), s.active > 0, s' = s.with("busy", 0) }
+  action oldParentCompletionWithoutRevision(id: int): bool = {
+    val op = operation(id)
+    all { op.phase == "parent-reply", current(id), s.parent, s.allowed, s.actor == 1,
+      s' = s.with("operations", s.operations.set(id, op.with("phase", if (op.mode == "connect") "authority-ready" else "session-await")
+        .with("authorized", true))) }
+  }
   action step = {
     nondet id = ids.oneOf()
     nondet mode = Set("connect", "check").oneOf()
@@ -192,18 +232,20 @@ module ui_solana_history_recovery {
     nondet seedKind = Set("empty", "both-valid", "first-valid", "wrong-body", "wrong-message", "foreign", "invalid64", "noncanonical", "short", "wrong-payer", "malformed", "bad-json").oneOf()
     nondet contextKind = Set("case", "generation", "revision", "payer", "messages").oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { connected, seed(seedKind), start(id, mode), identityReply(id, yes), readCache(id), authorize(id), parentReply(id, yes),
+    any { connected, seed(seedKind), start(id, mode), identityReply(id, yes), readCache(id), authorize(id), parentObservation(id), parentCompletion(id, yes),
       sessionReply(id, yes), continueAuthorized(id), walletReturns(id, yes), lookup(id, yes), signatureReturns(id, kind), cacheWrite(id, yes),
-      advance(id), dispatch(id), externalEffect(id), verifyReturns(id, yes), contextChanges(contextKind), accountChanges,
+      advance(id), dispatch(id), externalEffect(id), backendRefusesStale(id), verifyReturns(id, yes), serverRevisionAdvances, contextChanges(contextKind), accountChanges,
       signOut, accessLost, unmount, parentUnmount, s' = s }
   }
-  val invariant = all { s.busy == s.active, not(s.badEffect), s.verifyRequests <= 2,
+  val invariant = all { s.busy == s.active, not(s.badEffect), s.verifyRequests <= 3,
+    s.revision <= s.serverRevision, s.serverRevision <= 3, s.serverChanges <= 1, s.refreshes <= 1,
     s.active > 0 implies current(s.active), s.written.forall(k => s.cache.get(k).signature == "valid"),
     s.effects.forall(id => operation(id).dispatched),
     ids.forall(id => {
       val op = operation(id)
       all { op.index >= 1 and op.index <= 2, op.prompts <= 2,
-        op.ready.subseteq(indices), op.dispatched implies op.authorized and op.ready == indices,
+        op.ready.subseteq(indices), op.authorized implies op.observedRevision == op.revision,
+        op.dispatched implies op.authorized and op.ready == indices,
         op.ready.forall(i => valid(op.local.get(i), op, i)) }
     }) }
   action authority(id: int): bool = authorize(id).then(parentReply(id, true))
@@ -291,4 +333,30 @@ module ui_solana_history_recovery {
     .then(unmount).then(oldLateEffect(1)).expect(s.parent and not(invariant))
   run oldFinallyResetNegativeControlTest = init.then(connected).then(seed("both-valid")).then(begin(1)).then(ready(1))
     .then(contextChanges("revision")).then(start(2, "connect")).then(oldFinally(1)).expect(not(invariant))
+  run serverRevisionChangeBeforeConnectRefreshesWithoutPromptTest = init.then(start(1, "connect")).then(serverRevisionAdvances)
+    .then(authorize(1)).then(parentReply(1, true))
+    .expect(s.revision == 2 and s.refreshes == 1 and not(s.wallet) and operation(1).phase == "done" and invariant)
+  run sameIntentNewServerRevisionInvalidatesOldCheckTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(authorize(1)).then(serverRevisionAdvances).then(parentReply(1, true))
+    .expect(s.scope == 1 and s.body == 1 and s.revision == 2 and operation(1).prompts == 0 and s.verifyRequests == 0 and invariant)
+  run revisionChangeDuringPromptStopsCacheWriteTest = init.then(connected).then(begin(1)).then(authority(1)).then(lookup(1, true))
+    .then(serverRevisionAdvances).then(signatureReturns(1, "valid")).then(authorize(1)).then(parentReply(1, true))
+    .expect(s.revision == 2 and s.written == Set() and s.verifyRequests == 0 and not(s.wallet) and invariant)
+  run refreshedRevisionReconnectReusesValidatedCacheTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(serverRevisionAdvances).then(authorize(1)).then(parentReply(1, true))
+    .then(start(2, "connect")).then(authorize(2)).then(parentReply(2, true)).then(continueAuthorized(2)).then(walletReturns(2, true))
+    .then(begin(3)).then(ready(3))
+    .expect(operation(3).revision == 2 and operation(3).prompts == 0 and s.verifyRequests == 1 and invariant)
+  run revisionReadIsSnapshotAndNextPreflightStillRefusesTest = init.then(connected).then(begin(1)).then(authorize(1))
+    .then(parentObservation(1)).then(serverRevisionAdvances).then(parentCompletion(1, true))
+    .then(sessionReply(1, true)).then(continueAuthorized(1)).then(lookup(1, true)).then(signatureReturns(1, "valid"))
+    .then(authorize(1)).then(parentReply(1, true))
+    .expect(operation(1).prompts == 1 and s.revision == 2 and s.written == Set() and s.verifyRequests == 0 and invariant)
+  run serverRevisionAfterFinalPreflightRefusesStalePostTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(existing(1)).then(existing(1)).then(authority(1)).then(serverRevisionAdvances).then(dispatch(1)).then(backendRefusesStale(1))
+    .expect(s.error == "stale-revision" and s.verifyRequests == 1 and s.effects == Set() and invariant)
+  run oldParentRevisionOmissionCouldPromptStaleViewNegativeControlTest = init.then(connected).then(begin(1)).then(authorize(1))
+    .then(serverRevisionAdvances).then(parentObservation(1)).then(oldParentCompletionWithoutRevision(1))
+    .then(sessionReply(1, true)).then(continueAuthorized(1)).then(lookup(1, true))
+    .expect(s.revision == 1 and s.serverRevision == 2 and operation(1).prompts == 1 and not(invariant))
 }

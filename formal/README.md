@@ -506,6 +506,21 @@ a connection across navigation and a signature across an account change.
 They have not been run, and updated browser, accessibility and video evidence
 for this UI change remains outstanding under the current skip-checks direction.
 
+Earnings wallet steps now repeat the operation-ownership check in the caller
+after each awaited account helper. A helper's successful result does not keep
+an operation current across a later promise continuation; the
+[ECMAScript Await operation](https://tc39.es/ecma262/2026/multipage/control-abstraction-objects.html#await)
+resumes the caller through a separate promise reaction. Every account-clear
+path also aborts the current account read, including access loss found by a
+wallet step. Layout cleanup retires both the wallet operation and its account
+read when the view unmounts. A previously captured successful session response
+cannot restore the cleared account through that read. An ordinary successful
+account switch can still publish its newly validated value in the same
+synchronous callback.
+The actor-binding model separates session observation, helper return and caller
+effects, and separates a read's final observation from its publication. The
+new scenarios and corresponding browser definitions remain unexecuted.
+
 The lifetime model bounds two operations, two review contexts and actors, and
 one concurrent parent read. It treats prepared-message and signature checks as
 predicates. The Solana API model bounds two requests, two claim/attempt snapshots
@@ -567,6 +582,13 @@ The action runner is local because the shared busy/error helper has no such
 ownership contract. Callers recheck ownership after asynchronous authority
 checks, including the payout-consent caller. Already submitted requests remain
 separate effects; closing a view cannot roll them back.
+
+The parent's fresh recovery read also compares the case revision, even when
+the generation and messages are unchanged. A newer revision replaces the
+displayed case and retires the old action before another prompt or POST. A
+later attempt can reuse valid cached proofs with the new revision. A revision
+change after this preflight remains subject to the backend's exact-revision
+refusal; the preflight and database write are not one atomic operation.
 
 The retirement model separates input/signature refusal, withheld challenges,
 provider disagreement, found transactions, incomplete history and completed

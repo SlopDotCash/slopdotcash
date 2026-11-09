@@ -8,7 +8,14 @@ import {
   Wallet as WalletIcon,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ChainIcon } from "./ChainIcon";
 import { ContributorAllocationRow } from "./ContributorAllocation";
 import { readBoundedJson } from "./lib/browser-json";
@@ -253,6 +260,9 @@ export function EarningsPage({
   const loadController = useRef<AbortController | null>(null);
   const accountActor = useRef<string | null>(null);
   const clearAccount = useCallback((signedOut: boolean) => {
+    loadController.current?.abort();
+    loadController.current = null;
+    setLoading(false);
     walletAttempt.current += 1;
     accountActor.current = null;
     setData(null);
@@ -265,21 +275,20 @@ export function EarningsPage({
   useEffect(
     () =>
       subscribeProjectSessionChange(() => {
-        loadController.current?.abort();
-        loadController.current = null;
         clearAccount(true);
-        setLoading(false);
         setError("");
         setLoadError("");
       }),
     [clearAccount],
   );
   const heading = useId();
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       walletAttempt.current += 1;
+      loadController.current?.abort();
+      loadController.current = null;
     };
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a user refresh must reload the account.
@@ -385,7 +394,8 @@ export function EarningsPage({
     setError("");
     setMessage("");
     try {
-      if (await checkActor()) await step(isCurrent, checkActor);
+      if ((await checkActor()) && isCurrent())
+        await step(isCurrent, checkActor);
     } catch (e) {
       if (!isCurrent()) return;
       if (e instanceof SignedOutError) {
@@ -407,7 +417,7 @@ export function EarningsPage({
     isCurrent: () => boolean,
     checkActor: () => Promise<boolean>,
   ) {
-    if (!(await checkActor())) return false;
+    if (!(await checkActor()) || !isCurrent()) return false;
     const claim = (await request(
       "wallets/register",
       { chain, address },
@@ -416,7 +426,7 @@ export function EarningsPage({
     )) as {
       claimId: string;
     };
-    if (!(await checkActor())) return false;
+    if (!(await checkActor()) || !isCurrent()) return false;
     if (typeof claim.claimId !== "string")
       throw new Error("Wallet registration could not be verified.");
     // Registration is pending intent. The verified wallet remains active until
@@ -435,7 +445,7 @@ export function EarningsPage({
         address: string;
         chain: string;
       };
-      if (!(await checkActor())) return false;
+      if (!(await checkActor()) || !isCurrent()) return false;
       if (
         challenge.address !== address ||
         challenge.chain !== chain ||
@@ -446,7 +456,7 @@ export function EarningsPage({
           "Wallet confirmation does not match your selected address.",
         );
       const signature = await sign(challenge.message);
-      if (!(await checkActor())) return false;
+      if (!(await checkActor()) || !isCurrent()) return false;
       authorizationAttempted = true;
       await request(
         "wallets/authorize",
@@ -529,7 +539,7 @@ export function EarningsPage({
       const { address, sign } = await chosen.connect({
         chooseAccount: saved.some((w) => w.authorized),
       });
-      if (!(await checkActor())) return;
+      if (!(await checkActor()) || !isCurrent()) return;
       // The wallet decides which account it returns. A different address
       // from a saved one is a change, so it needs the same public-record
       // consent as Account Wallets before anything is registered (WAL-02).
@@ -946,9 +956,6 @@ export function EarningsPage({
                           payment={payment}
                           account={data}
                           onAccessLost={(signedOut) => {
-                            loadController.current?.abort();
-                            loadController.current = null;
-                            setLoading(false);
                             clearAccount(signedOut);
                             setLoadError(
                               signedOut ? "" : new AccountChangedError().message,

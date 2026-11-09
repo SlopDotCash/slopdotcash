@@ -16,6 +16,7 @@ type WalletWindow = Window & {
     releaseConnect(): void;
     connectReturned: boolean;
   };
+  earningsLoadReplyRead?: boolean;
 };
 
 async function fixture(
@@ -291,4 +292,126 @@ test("accepted A authorization remains recorded without starting B's next chain"
   expect(
     await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
   ).toEqual(["eth_requestAccounts", "personal_sign"]);
+});
+
+test("wallet access loss prevents a retained account load from restoring the old view", async ({
+  page,
+  diagnostics,
+}) => {
+  const state = await fixture(page, "connect");
+  await page.goto("/account#wallets", { waitUntil: "networkidle" });
+  const card = page.getByRole("article", { name: "EVM wallet" });
+  await expect(card).toBeVisible();
+
+  // Observe consumption of the held HTTP body. This is a Web API boundary,
+  // not an exposed application callback. The task runs after the JSON/await
+  // continuations drain; settle() then waits for the browser's rendered frames.
+  await page.evaluate(() => {
+    const readJson = Response.prototype.json;
+    Response.prototype.json = async function (this: Response) {
+      const value = await readJson.call(this);
+      if (this.headers.get("x-earnings-held-session") === "1") {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+          (window as WalletWindow).earningsLoadReplyRead = true;
+          channel.port1.close();
+          channel.port2.close();
+        };
+        channel.port2.postMessage(null);
+      }
+      return value;
+    };
+  });
+
+  let actor = "123";
+  let failFirstSession = true;
+  let holdFinalSession = false;
+  let capturedFinalSession = false;
+  let announceFinalSession = () => {};
+  let releaseFinalSession = () => {};
+  let finishFinalSession = () => {};
+  const finalSessionStarted = new Promise<void>((resolve) => {
+    announceFinalSession = () => resolve();
+  });
+  const finalSessionRelease = new Promise<void>((resolve) => {
+    releaseFinalSession = () => resolve();
+  });
+  const finalSessionFinished = new Promise<void>((resolve) => {
+    finishFinalSession = () => resolve();
+  });
+  diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (failFirstSession) {
+      failFirstSession = false;
+      await route.fulfill({
+        status: 503,
+        json: { error: "unavailable", message: "Session lookup unavailable." },
+      });
+      return;
+    }
+    const observedActor = actor;
+    const retained = holdFinalSession && !capturedFinalSession;
+    if (retained) {
+      capturedFinalSession = true;
+      announceFinalSession();
+      await finalSessionRelease;
+    }
+    await route.fulfill({
+      ...(retained ? { headers: { "x-earnings-held-session": "1" } } : {}),
+      json: {
+        session: { githubId: observedActor, githubLogin: "qa", admin: false },
+      },
+    });
+    if (retained) finishFinalSession();
+  });
+  await page.route("**/api/v1/payments/me", async (route) => {
+    // The next session read belongs to the refresh that just received /me.
+    holdFinalSession = true;
+    await route.fallback();
+  });
+  const chooseWallet = async () => {
+    await page
+      .getByRole("button", { name: "Connect EVM wallet", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Connect an EVM wallet" })
+      .getByRole("button", { name: "MetaMask", exact: true })
+      .click();
+  };
+
+  try {
+    // Produce the existing Retry control without discarding verified A data.
+    await chooseWallet();
+    await expect(page.getByRole("alert")).toContainText(
+      "Session lookup unavailable.",
+    );
+    await expect(card).toBeVisible();
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await finalSessionStarted;
+
+    // A's refresh has already captured its final session response. A separate
+    // wallet operation now sees B and invalidates the private account view.
+    actor = "456";
+    state.changeActor(actor);
+    await chooseWallet();
+    await expect(page.getByRole("alert")).toContainText("Your account changed");
+    await expect(card).toHaveCount(0);
+
+    releaseFinalSession();
+    await finalSessionFinished;
+    await page.waitForFunction(
+      () => (window as WalletWindow).earningsLoadReplyRead,
+    );
+    await settle(page);
+    await expect(card).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Checking your payouts" }),
+    ).toHaveCount(0);
+    expect(state.writes).toEqual([]);
+    expect(
+      await page.evaluate(() => (window as WalletWindow).earningsWallet.calls),
+    ).toEqual([]);
+  } finally {
+    releaseFinalSession();
+  }
 });

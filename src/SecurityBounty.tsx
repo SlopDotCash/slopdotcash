@@ -3722,6 +3722,7 @@ function CaseDetail({
                       `security-cases/${encodeURIComponent(record.id)}`,
                     );
                     if (
+                      current.case.revision !== record.revision ||
                       !current.case.allowedActions.includes(
                         "recover-payment",
                       ) ||

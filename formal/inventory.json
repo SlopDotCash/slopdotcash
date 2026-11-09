@@ -786,7 +786,8 @@
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt"
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
         199, 281, 285, 370, 382, 383, 431, 566, 587, 683, 684, 735, 737, 744,
@@ -4402,7 +4403,7 @@
     },
     {
       "path": "src/Earnings.tsx",
-      "sha256": "6ed98cc111d0c19879c22cc7b96bc8f0f8ef8fad7103f2b5c1a1a0a57906b892",
+      "sha256": "1a0de37a3aacce84f1359deec861bea3895423c97e2fd9b5e5de8c6e16db2a13",
       "models": [
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
@@ -4412,9 +4413,9 @@
         "formal/models/ui/ui_wallet_choice.qnt"
       ],
       "candidateLines": [
-        11, 122, 126, 130, 134, 168, 176, 192, 218, 231, 233, 234, 235, 236,
-        237, 238, 239, 240, 249, 265, 278, 286, 291, 351, 359, 395, 422, 473,
-        658, 682, 686, 710, 712, 718, 736, 744, 763, 777, 908, 920, 990
+        13, 17, 129, 133, 137, 141, 175, 183, 199, 225, 238, 240, 241, 242, 243,
+        244, 245, 246, 247, 256, 275, 295, 300, 360, 368, 405, 432, 483, 668,
+        692, 696, 720, 722, 728, 746, 754, 773, 787, 918, 930, 997
       ],
       "review": "mapped-abstraction"
     },
@@ -4939,7 +4940,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "9dc22adb7a5839d544c2b001323efb5378f0bd5995bf3c13d2a92d450d045144",
+      "sha256": "1a92e2037ec16536d45efaf932e2acfb0b874439fa550d4f3e257fd1847ae60c",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -4974,11 +4975,11 @@
         3016, 3017, 3024, 3040, 3062, 3079, 3080, 3081, 3084, 3108, 3109, 3118,
         3149, 3166, 3167, 3168, 3171, 3197, 3198, 3207, 3260, 3323, 3354, 3372,
         3388, 3389, 3391, 3395, 3401, 3404, 3406, 3410, 3447, 3461, 3497, 3501,
-        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3834, 3966, 4105, 4108, 4110,
-        4117, 4122, 4127, 4128, 4130, 4135, 4151, 4179, 4182, 4189, 4227, 4232,
-        4244, 4245, 4251, 4276, 4278, 4280, 4284, 4285, 4289, 4292, 4293, 4295,
-        4313, 4331, 4336, 4339, 4344, 4347, 4349, 4353, 4358, 4383, 4389, 4432,
-        4435, 4440, 4442, 4480, 4482, 4523, 4542
+        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3835, 3967, 4106, 4109, 4111,
+        4118, 4123, 4128, 4129, 4131, 4136, 4152, 4180, 4183, 4190, 4228, 4233,
+        4245, 4246, 4252, 4277, 4279, 4281, 4285, 4286, 4290, 4293, 4294, 4296,
+        4314, 4332, 4337, 4340, 4345, 4348, 4350, 4354, 4359, 4384, 4390, 4433,
+        4436, 4441, 4443, 4481, 4483, 4524, 4543
       ],
       "review": "mapped-abstraction"
     },
@@ -13600,7 +13601,7 @@
     },
     {
       "path": "formal/models/ui/ui_earnings_actor_binding.qnt",
-      "sha256": "c3ca8019e378eb9c9b7063b380b13d9e65fb8bd6c4890b545544b5d671abc46c",
+      "sha256": "f448a84e0d3d0c41b1b75bbd18e3e3fa11283621aedd3444bc3f44deee483404",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",
@@ -13610,19 +13611,36 @@
       "scenarios": [
         "acceptedAAuthorizationCannotStartBChainTest",
         "acceptedRegistrationIsRetainedOnSwapTest",
+        "accessLossCancelsAlreadyValidatedAccountReadTest",
+        "callerHeaderStillCatchesCookieChangeAfterObservationTest",
         "changedChallengeActorCannotSignTest",
         "connectionReturnAfterActorSwapStopsTest",
+        "departureAfterTrueHelperReturnCannotAuthorizeTest",
+        "departureAfterTrueHelperReturnCannotConnectTest",
         "differentAccountReadClearsOldDataTest",
+        "explicitResetCancelsCapturedFinalSessionReadTest",
         "headerCatchesSwapAfterFreshCheckTest",
+        "helperObservedBeforeResetCannotReturnAuthorityTest",
+        "initialSessionFailureCanRecoverThroughAuthenticatedReadTest",
         "lateSignatureCannotAuthorizeBTest",
+        "oldAcceptedRequestMayFinishAfterDepartureTest",
+        "oldTrueReturnConsumptionNegativeControlTest",
+        "oldUncancelledReadRestorationNegativeControlTest",
+        "readPublicationDoesNotClaimContinuousCookieAuthorityTest",
+        "replacementAfterConnectionCheckCannotOpenConsentTest",
+        "replacementAfterTrueHelperReturnCannotRegisterTest",
+        "requestCookieSnapshotCanFinishBeforeFreshActorRecheckTest",
         "sameAccountMayAuthorizeTest",
+        "sessionResetAfterTrueHelperReturnCannotPromptTest",
         "signOutClearsAccountBeforePromptTest",
-        "unavailableSessionDoesNotAdvanceTest"
+        "unavailableFinalSessionReadKeepsPriorDataWithErrorTest",
+        "unavailableSessionDoesNotAdvanceTest",
+        "validatedDifferentActorIsDeliberatelyPublishedTest"
       ]
     },
     {
       "path": "formal/models/ui/ui_earnings_wallet_lifetime.qnt",
-      "sha256": "a29cae739d4efdf4dad1013aa950fae1c65d2e6ec01790d2e9626c7d7859c9ce",
+      "sha256": "5b5b2decd70bbbcf54a9dbe33928c4ca6b2cfc642062a200077c4a11c8c436fe",
       "sources": ["src/Earnings.tsx"],
       "scenarios": [
         "acceptedAuthorizationSurvivesDepartureTest",
@@ -14921,8 +14939,9 @@
     },
     {
       "path": "formal/models/ui/ui_solana_history_recovery.qnt",
-      "sha256": "2a27f7705483f8450da7c3ec7f71dd43e2621581c01e6248fdcd62bfa1096b8b",
+      "sha256": "4d12467d900c3b09e35a6c2767dd42b7ae78528d2cd103952d3787c2a2bf351f",
       "sources": [
+        "backend/security/handler.ts",
         "src/SecurityBounty.tsx",
         "src/SolanaBountyRecovery.tsx",
         "src/lib/base58.ts",
@@ -14950,11 +14969,18 @@
         "noncanonicalCacheCannotAvoidSigningTest",
         "oldFinallyCannotClearNewConnectionBusyTest",
         "oldFinallyResetNegativeControlTest",
+        "oldParentRevisionOmissionCouldPromptStaleViewNegativeControlTest",
         "parentAliveDoesNotAuthorizeDepartedChildTest",
         "partialCacheSurvivesSecondPromptRefusalTest",
         "payerChangeResetsConnectedWalletTest",
+        "refreshedRevisionReconnectReusesValidatedCacheTest",
         "resetBetweenAuthorityReturnAndContinuationStopsEffectTest",
         "revisionChangeBeforeFinalAuthorizeRefusesOldRequestTest",
+        "revisionChangeDuringPromptStopsCacheWriteTest",
+        "revisionReadIsSnapshotAndNextPreflightStillRefusesTest",
+        "sameIntentNewServerRevisionInvalidatesOldCheckTest",
+        "serverRevisionAfterFinalPreflightRefusesStalePostTest",
+        "serverRevisionChangeBeforeConnectRefreshesWithoutPromptTest",
         "signOutStopsCachedProofBeforeSubmissionTest",
         "signThenCacheFailureIsVisibleTest",
         "synchronousOwnershipRefusesSecondActionTest",
