@@ -188,7 +188,10 @@
     {
       "path": "backend/identity-assertion.ts",
       "sha256": "0ae7a1d11ea5c66c179bc6fb29f7fcded38b02e6d3d8ca343aacace8b08084bf",
-      "models": ["formal/models/api/api_accounts.qnt"],
+      "models": [
+        "formal/models/api/api_accounts.qnt",
+        "formal/models/api/identity_consumer_exchange.qnt"
+      ],
       "candidateLines": [32],
       "review": "mapped-abstraction"
     },
@@ -433,6 +436,7 @@
       "sha256": "42e5b63cef64789c55a40262e36a4d35f1a907eacec473ab98bf6b2f724c9eac",
       "models": [
         "formal/models/api/api_accounts.qnt",
+        "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
@@ -924,7 +928,10 @@
     {
       "path": "backend/trace/auth.ts",
       "sha256": "4f910eb11ca0743fe3ea20e98b051977382b1a4b90e04010f8fb14dd9cf8f1fb",
-      "models": ["formal/models/api/api_trace.qnt"],
+      "models": [
+        "formal/models/api/api_trace.qnt",
+        "formal/models/api/identity_consumer_exchange.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -964,7 +971,8 @@
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
-        "formal/models/api/api_wallet_claims.qnt"
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/identity_consumer_exchange.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
@@ -1730,6 +1738,7 @@
       "sha256": "dcfe38bd303daecdfaba2c37f427a831069061e755b9999a994bc55ff75a63c1",
       "models": [
         "formal/models/api/api_request_composition.qnt",
+        "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [517, 518, 553, 566],
@@ -3068,6 +3077,7 @@
       "sha256": "1574ffa6294e132979059ca996fa7187b8ccf54dc8471a2b7c2e91830ef9014a",
       "models": [
         "formal/models/api/api_dev_migrations.qnt",
+        "formal/models/tooling/dev_identity_bridge.qnt",
         "formal/models/tooling/development_stack.qnt"
       ],
       "candidateLines": [165, 190, 199, 207, 219, 222, 225, 236, 245, 256],
@@ -3076,7 +3086,10 @@
     {
       "path": "scripts/dev-identity-bridge.ts",
       "sha256": "c3bdd12d78824e18bcaeb1f145f4bf6a885f47e5256ce06886765bd684f6d164",
-      "models": ["formal/models/tooling/dev_registry_import.qnt"],
+      "models": [
+        "formal/models/tooling/dev_identity_bridge.qnt",
+        "formal/models/tooling/dev_registry_import.qnt"
+      ],
       "candidateLines": [19, 20, 32, 71, 133, 135, 145, 164],
       "review": "mapped-abstraction"
     },
@@ -5332,6 +5345,7 @@
       "path": "src/lib/local-signin.ts",
       "sha256": "02c612d060892549506a1d6f8a22f922343f1ac731ca7de101c15cf0332b28b7",
       "models": [
+        "formal/models/tooling/dev_identity_bridge.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_session.qnt"
       ],
@@ -6483,7 +6497,8 @@
         "formal/models/api/github_identity_exchange.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt",
-        "formal/models/api/pr_review_signin.qnt"
+        "formal/models/api/pr_review_signin.qnt",
+        "formal/models/tooling/dev_identity_bridge.qnt"
       ],
       "candidateLines": [
         58, 60, 87, 93, 104, 108, 114, 115, 116, 191, 205, 210, 222, 238, 239,
@@ -6515,7 +6530,9 @@
         "formal/models/api/api_identity.qnt",
         "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt",
-        "formal/models/api/identity_scheduled_maintenance.qnt"
+        "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt",
+        "formal/models/tooling/dev_identity_bridge.qnt"
       ],
       "candidateLines": [
         17, 46, 77, 79, 90, 109, 123, 130, 131, 132, 148, 149, 151, 169, 170,
@@ -8754,6 +8771,40 @@
         "responseConstructionFailureKeepsCommitTest",
         "secondCallbackCannotRecoverConsumedClaimTest",
         "thrownResolverClearsLocalSlotTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/identity_consumer_exchange.qnt",
+      "sha256": "0873d8a1fdde472a511e058e9b74f4428e0cf26ad9cc2036873d4ad467bc903b",
+      "sources": [
+        "backend/identity-assertion.ts",
+        "backend/points/handler.ts",
+        "backend/trace/auth.ts",
+        "backend/trace/handler.ts",
+        "functions/api/v1/[[path]].ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "bodyReadFailureCannotUndoConsumptionTest",
+        "capturedRemoteStampMayCommitAfterExpiryTest",
+        "concurrentExchangesHaveOneAcceptedConsumeTest",
+        "expiredBeforeRemoteClockIsRefusedTest",
+        "failedServiceResponseDoesNotRestoreAssertionTest",
+        "invalidRequestNeverContactsServiceTest",
+        "invalidServiceIdentityCannotUndoConsumptionTest",
+        "lostConsumeReplyDoesNotRestoreAssertionTest",
+        "lostTokenResponseKeepsAssertionConsumedTest",
+        "pointsIdentityPassesNodeValidationTest",
+        "pointsRequiresValidNodeAfterSharedAdapterTest",
+        "rejectedIdentityCannotBecomeTraceTokenTest",
+        "serviceFailureBeforeCommitAllowsRetryTest",
+        "signingFailureRequiresNewAssertionTest",
+        "tokenSigningDelayDoesNotRefreshClaimsTest",
+        "traceAcceptsBasicIdentityWithoutNodeTest",
+        "traceIdentityIssuesOnlyContributorTokenTest",
+        "traceTokenClockIsSampledAfterIdentityReplyTest",
+        "wrongAudienceDoesNotConsumeTest",
+        "wrongTokenDoesNotConsumeTest"
       ]
     },
     {
@@ -11947,6 +11998,62 @@
         "migrations/0105_slopbot_value_terminal_states.sql"
       ],
       "scenarios": ["preserveHistoricalStateTest"]
+    },
+    {
+      "path": "formal/models/tooling/dev_identity_bridge.qnt",
+      "sha256": "6b49d13b1e1aebe8e05788ea1f575f9d967f6b31acd9314ad9e731246756631c",
+      "sources": [
+        "scripts/dev-backend.ts",
+        "scripts/dev-identity-bridge.ts",
+        "src/lib/local-signin.ts",
+        "workers/identity/handler.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "authorizeRequiresExactQueryTest",
+        "boundAuthorizeRedirectsWithoutConsumingMapTest",
+        "capturedConsumeTimeMayPrecedeExpiryAtCommitTest",
+        "concurrentLocalConsumesCommitOnlyOnceTest",
+        "concurrentPollsUseRemoteClaimAsMutexTest",
+        "consumeCapturedExactlyAtExpiryIsRefusedTest",
+        "consumeFailureBeforeCommitAllowsSecondAttemptTest",
+        "delayedHashCanStoreAndReturnAlreadyExpiredAssertionTest",
+        "errorResponseBodyIsParsedBeforeStatusTest",
+        "expiryNeedsAnIncomingRequestToPruneMapTest",
+        "failedStartTransportHasNoMapTest",
+        "falseLocalWriteResultCanFollowCommitTest",
+        "hashFailureRequiresANewFlowTest",
+        "invalidStartAudienceNeverDispatchesTest",
+        "issuedLocalTokenSurvivesBackendRestartTest",
+        "laterEntryPruningDoesNotCancelReceivedIdentityTest",
+        "localBodyFailurePrecedesBearerRefusalTest",
+        "localWriteFailureCannotReplayRemoteHandoffTest",
+        "lostConsumeReplyDoesNotRestoreTokenTest",
+        "lostLocalSuccessReplyDoesNotDiscloseTokenTest",
+        "lostLocalWriteReplyRetainsUnknownAssertionTest",
+        "lostRemoteReplyLeavesClaimedFlowAndNoLocalRowTest",
+        "lostStartResponseLeavesUnusableMapTest",
+        "malformedStartBodyLeavesNoMapTest",
+        "mintFailureDoesNotRestoreDeletedMapTest",
+        "missingReadbackRefusesCommittedLocalRowTest",
+        "missingRemoteChangeCountCannotIssueLocalTokenTest",
+        "nonOkStartMayLeaveRemoteFlowTest",
+        "pendingResponseRetainsFlowForSecondPollTest",
+        "readbackFailureDoesNotUndoLocalInsertTest",
+        "remoteClaimMayCommitAfterLocalRestartTest",
+        "remoteClaimMayFollowLocalFetchRejectionTest",
+        "remoteCleanupAfterClaimKeepsReceivedIdentityTest",
+        "remoteCleanupBeforeClaimRefusesCapturedPollTest",
+        "remoteStartMayCommitAfterFetchRejectionTest",
+        "requestBodyDelayDoesNotRecheckLocalExpiryTest",
+        "restartAfterInsertKeepsUnknownRowTest",
+        "restartLosesSavedFlowRoutingTest",
+        "startResponseExpiredAtValidationRefusesMapTest",
+        "unboundAuthorizationUrlRefusedTest",
+        "unboundRemoteIdentityRetainsMapAfterRemoteClaimTest",
+        "wrongLocalAudienceRefusesWithoutConsumptionTest",
+        "wrongOriginNeverDispatchesStartTest"
+      ]
     },
     {
       "path": "formal/models/tooling/dev_registry_import.qnt",
