@@ -57,6 +57,37 @@ test("an MSBuild project or import is an install surface", () => {
   }
 });
 
+test("Directory.Build.rsp switches apply to every build below it", () => {
+  // MSBuild reads Directory.Build.rsp from the project directory up to the
+  // root and adds its switches to the build. A property switch can replace
+  // the restore feed or import an arbitrary file as targets, so the file is
+  // an install surface, while a similarly named file is not.
+  const RSP = `-p:RestoreSources=https://feed.example/v3/index.json\n-p:CustomBeforeMicrosoftCommonTargets=tools/hook.xml\n# ${PAYLOAD}\n`;
+  for (const path of [
+    "Directory.Build.rsp",
+    "src/App/directory.build.rsp",
+    "DIRECTORY.BUILD.RSP",
+  ]) {
+    expect({ path, surfaces: surfacesOf(path) }).toEqual({
+      path,
+      surfaces: ["installScripts", "source"],
+    });
+    const inspection = inspected(path, RSP);
+    expect({ path, coverage: inspection.coverage.installScripts }).toEqual({
+      path,
+      coverage: { state: "complete", items: 1 },
+    });
+    expect({
+      path,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({ path, findings: [`${path}:unsafe-execution:high`] });
+  }
+  expect(surfacesOf("build.rsp")).toEqual([]);
+  expect(surfacesOf("docs/Directory.Build.rsp.md")).toEqual([]);
+});
+
 test("Directory.Build.targets runs even when the project file does not name it", () => {
   // SDK-style MSBuild imports Directory.Build.targets automatically. A clean
   // project file is not the only build script.
