@@ -406,10 +406,16 @@ export function ownerVaultSetupService(deps: {
           "vault_role_conflict",
           "The platform fee wallet must be separate from the vault owner and identity authority.",
         );
-      let verified: Awaited<ReturnType<typeof verifyEvmVaultCreation>> | undefined;
+      let verified:
+        | Awaited<ReturnType<typeof verifyEvmVaultCreation>>
+        | undefined;
       if (transactionId !== undefined) {
         try {
-          verified = await verifyEvmVaultCreation(config, creation, transactionId);
+          verified = await verifyEvmVaultCreation(
+            config,
+            creation,
+            transactionId,
+          );
         } catch (error) {
           if (error instanceof EvmRpcUnavailable) networkUnavailable();
           if (error instanceof EvmVaultCreationFailed)

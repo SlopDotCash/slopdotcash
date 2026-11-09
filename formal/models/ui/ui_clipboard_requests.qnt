@@ -32,18 +32,18 @@ module ui_clipboard_requests {
       .with("latest", 0).with("feedback", "idle") }
   action complete(id: int, outcome: str): bool = {
     val request = s.requests.get(id)
-    val next = s.with("requests", s.requests.set(id,
+    val nextValue = s.with("requests", s.requests.set(id,
       request.with("phase", outcome).with("timer", owns(id) and outcome == "copied" and s.expires)))
     all { ids.contains(id), request.phase == "pending", Set("copied", "failed").contains(outcome),
-      s' = if (owns(id)) next.with("feedback", outcome)
+      s' = if (owns(id)) nextValue.with("feedback", outcome)
         .with("feedbackValue", request.value).with("feedbackVersion", request.version)
-        .with("feedbackLifetime", request.lifetime) else next }
+        .with("feedbackLifetime", request.lifetime) else nextValue }
   }
   // Includes a timer already queued before its effect cleanup cancelled it.
   action expire(id: int): bool = {
-    val next = s.with("requests", s.requests.set(id, s.requests.get(id).with("timer", false)))
+    val nextValue = s.with("requests", s.requests.set(id, s.requests.get(id).with("timer", false)))
     all { ids.contains(id), s.requests.get(id).timer,
-      s' = if (owns(id)) next.with("feedback", "idle") else next }
+      s' = if (owns(id)) nextValue.with("feedback", "idle") else nextValue }
   }
   action leave = all { s.active,
     s' = s.with("active", false).with("latest", 0).with("feedback", "idle") }

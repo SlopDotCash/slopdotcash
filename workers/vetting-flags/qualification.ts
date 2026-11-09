@@ -511,7 +511,10 @@ async function run(env: Environment, inputs: Inputs) {
     "wrong-source-pin-refused",
   );
   check(unexpectedRequests === 0, "Unexpected transport request was swallowed");
-  check(publicBranchReads > 0, "Pages did not use the public-token branch read");
+  check(
+    publicBranchReads > 0,
+    "Pages did not use the public-token branch read",
+  );
   const counts = await db
     .prepare(
       "SELECT (SELECT count(*) FROM projects) projects,(SELECT count(*) FROM project_flags) flags,(SELECT count(*) FROM vetting_assessments) assessments,(SELECT count(*) FROM project_enforcements) enforcements,(SELECT count(*) FROM points_sessions) sessions,(SELECT count(*) FROM notifications) notifications,(SELECT count(*) FROM vetting_evidence_objects) evidenceObjects",
@@ -529,7 +532,11 @@ async function run(env: Environment, inputs: Inputs) {
     browser: false,
     liveScanner: false,
     productionTouched: false,
-    assertions: [...assertions, "one-moderator-notice", "public-token-branch-read"],
+    assertions: [
+      ...assertions,
+      "one-moderator-notice",
+      "public-token-branch-read",
+    ],
     githubFixtureReads: calls,
     publicBranchReads,
     unexpectedTransportRequests: unexpectedRequests,

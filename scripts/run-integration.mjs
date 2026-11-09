@@ -86,7 +86,7 @@ const pooled = [
   [
     "vetting-generation-retirement",
     "node",
-    ["workers/vetting-backup/generation-retirement-workflow.mjs"],
+    ["workers/vetting-backup/generation-retirement.workflow.mjs"],
   ],
   [
     "vetting-qualification",

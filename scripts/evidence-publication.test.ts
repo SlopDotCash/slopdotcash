@@ -22,7 +22,9 @@ function publicationCase(name: string, body: string) {
         copyFileSync(resolve("scripts", file), join(scripts, file));
       }
       const runner = join(root, "case.mjs");
-      writeFileSync(runner, `
+      writeFileSync(
+        runner,
+        `
         import assert from 'node:assert/strict';
         import fs from 'node:fs';
         import { join, basename } from 'node:path';
@@ -50,7 +52,8 @@ function publicationCase(name: string, body: string) {
         };
         ${body}
         process.stdout.write('fixture passed');
-      `);
+      `,
+      );
       const result = spawnSync("node", [runner], {
         encoding: "utf8",
         timeout: 15_000,
@@ -64,7 +67,9 @@ function publicationCase(name: string, body: string) {
   });
 }
 
-publicationCase("clean evidence publication closes staging and preserves the new bundle", String.raw`
+publicationCase(
+  "clean evidence publication closes staging and preserves the new bundle",
+  String.raw`
   const tx = candidate();
   tx.publish();
   assert.equal(marker(finalRoot), 'new');
@@ -73,18 +78,24 @@ publicationCase("clean evidence publication closes staging and preserves the new
   tx.abort();
   assert.equal(marker(finalRoot), 'new');
   assert.match(captured(() => tx.publish()).message, /already published/);
-`);
+`,
+);
 
-publicationCase("first evidence publication needs no previous bundle", String.raw`
+publicationCase(
+  "first evidence publication needs no previous bundle",
+  String.raw`
   native.rm(finalRoot, { recursive: true });
   const tx = candidate();
   tx.publish();
   tx.abort();
   assert.equal(marker(finalRoot), 'new');
   assert.deepEqual(backups(), []);
-`);
+`,
+);
 
-publicationCase("failure moving the old bundle preserves its original error and contents", String.raw`
+publicationCase(
+  "failure moving the old bundle preserves its original error and contents",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture previous move failed');
   fs.renameSync = (from, to) => {
@@ -100,9 +111,12 @@ publicationCase("failure moving the old bundle preserves its original error and 
   tx.abort();
   assert.equal(fs.existsSync(tx.stagingRoot), false);
   assert.equal(marker(finalRoot), 'old');
-`);
+`,
+);
 
-publicationCase("failed activation restores the old bundle before staging abort", String.raw`
+publicationCase(
+  "failed activation restores the old bundle before staging abort",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture activation failed');
   fs.renameSync = (from, to) => {
@@ -117,9 +131,12 @@ publicationCase("failed activation restores the old bundle before staging abort"
   assert.deepEqual(backups(), []);
   tx.abort();
   assert.equal(fs.existsSync(tx.stagingRoot), false);
-`);
+`,
+);
 
-publicationCase("backup cleanup failure truthfully retains a committed new bundle", String.raw`
+publicationCase(
+  "backup cleanup failure truthfully retains a committed new bundle",
+  String.raw`
   const tx = candidate();
   const cleanup = new Error('fixture backup cleanup failed');
   fs.rmSync = (path, options) => {
@@ -137,9 +154,12 @@ publicationCase("backup cleanup failure truthfully retains a committed new bundl
   assert.equal(marker(finalRoot), 'new');
   assert.equal(backups().length, 1);
   assert.match(captured(() => tx.publish()).message, /already published/);
-`);
+`,
+);
 
-publicationCase("failed restoration preserves the primary error and both recovery inputs", String.raw`
+publicationCase(
+  "failed restoration preserves the primary error and both recovery inputs",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture activation failure');
   const recovery = new Error('fixture restoration failure');
@@ -162,9 +182,12 @@ publicationCase("failed restoration preserves the primary error and both recover
   assert.equal(marker(tx.stagingRoot), 'new');
   assert.equal(backups().length, 1);
   assert.match(captured(() => tx.publish()).message, /already recovery-required/);
-`);
+`,
+);
 
-publicationCase("a competing published directory is preserved with both recovery candidates", String.raw`
+publicationCase(
+  "a competing published directory is preserved with both recovery candidates",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture competing activation');
   fs.renameSync = (from, to) => {
@@ -185,9 +208,12 @@ publicationCase("a competing published directory is preserved with both recovery
   assert.equal(marker(tx.stagingRoot), 'new');
   assert.equal(marker(join(root, backups()[0])), 'old');
   assert.match(captured(() => tx.publish()).message, /already recovery-required/);
-`);
+`,
+);
 
-publicationCase("failed staging abort stays retryable without touching the old bundle", String.raw`
+publicationCase(
+  "failed staging abort stays retryable without touching the old bundle",
+  String.raw`
   const tx = candidate();
   const cleanup = new Error('fixture abort failed');
   fs.rmSync = (path, options) => {
@@ -205,9 +231,12 @@ publicationCase("failed staging abort stays retryable without touching the old b
   assert.equal(fs.existsSync(tx.stagingRoot), false);
   assert.equal(marker(finalRoot), 'old');
   assert.match(captured(() => tx.publish()).message, /already aborted/);
-`);
+`,
+);
 
-publicationCase("successful finalization returns the operation value after both cleanups", String.raw`
+publicationCase(
+  "successful finalization returns the operation value after both cleanups",
+  String.raw`
   const order = [];
   const value = { captured: true };
   const result = await withEvidenceCleanup(async () => { order.push('operation'); return value; }, [
@@ -216,9 +245,12 @@ publicationCase("successful finalization returns the operation value after both 
   ]);
   assert.equal(result, value);
   assert.deepEqual(order, ['operation', 'preview', 'abort']);
-`);
+`,
+);
 
-publicationCase("clean finalizers preserve the original thrown operation identity", String.raw`
+publicationCase(
+  "clean finalizers preserve the original thrown operation identity",
+  String.raw`
   const primary = new Error('fixture capture failure');
   const order = [];
   const error = await rejected(() => withEvidenceCleanup(async () => { throw primary; }, [
@@ -227,9 +259,12 @@ publicationCase("clean finalizers preserve the original thrown operation identit
   ]));
   assert.equal(error, primary);
   assert.deepEqual(order, ['preview', 'abort']);
-`);
+`,
+);
 
-publicationCase("preview and abort failures are retained after the primary capture failure", String.raw`
+publicationCase(
+  "preview and abort failures are retained after the primary capture failure",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture capture failure');
   const preview = new Error('fixture preview shutdown failure');
@@ -255,9 +290,12 @@ publicationCase("preview and abort failures are retained after the primary captu
   fs.rmSync = native.rm;
   syncBuiltinESMExports();
   tx.abort();
-`);
+`,
+);
 
-publicationCase("preview shutdown failure cannot skip a successful staging abort", String.raw`
+publicationCase(
+  "preview shutdown failure cannot skip a successful staging abort",
+  String.raw`
   const tx = candidate();
   const preview = new Error('fixture preview shutdown failure');
   const error = await rejected(() => withEvidenceCleanup(async () => 'capture completed', [
@@ -269,9 +307,12 @@ publicationCase("preview shutdown failure cannot skip a successful staging abort
   assert.match(error.message, /operation completed, but cleanup failed/);
   assert.equal(fs.existsSync(tx.stagingRoot), false);
   assert.equal(marker(finalRoot), 'old');
-`);
+`,
+);
 
-publicationCase("nested browser cleanup preserves capture failure through outer cleanup", String.raw`
+publicationCase(
+  "nested browser cleanup preserves capture failure through outer cleanup",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture browser capture failed');
   const browser = new Error('fixture browser close failed');
@@ -294,9 +335,12 @@ publicationCase("nested browser cleanup preserves capture failure through outer 
   assert.deepEqual(error.errors, [inner, preview]);
   assert.equal(fs.existsSync(tx.stagingRoot), false);
   assert.equal(marker(finalRoot), 'old');
-`);
+`,
+);
 
-publicationCase("video-directory setup failure still reaches both owned finalizers", String.raw`
+publicationCase(
+  "video-directory setup failure still reaches both owned finalizers",
+  String.raw`
   const tx = candidate();
   const primary = new Error('fixture video directory failed');
   const order = [];
@@ -315,9 +359,12 @@ publicationCase("video-directory setup failure still reaches both owned finalize
   assert.deepEqual(order, ['preview', 'abort']);
   assert.equal(fs.existsSync(tx.stagingRoot), false);
   assert.equal(marker(finalRoot), 'old');
-`);
+`,
+);
 
-publicationCase("post-publication preview failure keeps committed evidence and reports failure", String.raw`
+publicationCase(
+  "post-publication preview failure keeps committed evidence and reports failure",
+  String.raw`
   const tx = candidate();
   const preview = new Error('fixture final preview shutdown failed');
   let reported = false;
@@ -333,4 +380,5 @@ publicationCase("post-publication preview failure keeps committed evidence and r
   assert.equal(reported, false);
   assert.equal(marker(finalRoot), 'new');
   assert.equal(fs.existsSync(tx.stagingRoot), false);
-`);
+`,
+);

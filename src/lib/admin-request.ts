@@ -18,7 +18,9 @@ export async function requireAdminActionActor(actorId: string): Promise<void> {
   try {
     session = await currentProjectSession();
   } catch {
-    throw new AdminAccessLoss("Your admin session could not be checked. Retry.");
+    throw new AdminAccessLoss(
+      "Your admin session could not be checked. Retry.",
+    );
   }
   if (session?.githubId !== actorId || !session.admin)
     throw new AdminAccessLoss(

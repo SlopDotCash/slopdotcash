@@ -10,9 +10,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { handleProjectApi } from "../backend/projects/handler";
-import { EVIDENCE_CHUNK_BYTES, type EvidenceChunk } from "../backend/vetting/evidence-chunks";
-import { EvidenceStorage, EVIDENCE_RETIREMENT_METADATA_KEY, EVIDENCE_RETIREMENT_METADATA_VALUE, type EvidenceStorageRow } from "../backend/vetting/evidence-storage";
 import { EVIDENCE_POLICY } from "../backend/vetting/evidence";
+import {
+  EVIDENCE_CHUNK_BYTES,
+  type EvidenceChunk,
+} from "../backend/vetting/evidence-chunks";
+import {
+  EVIDENCE_RETIREMENT_METADATA_KEY,
+  EVIDENCE_RETIREMENT_METADATA_VALUE,
+  EvidenceStorage,
+  type EvidenceStorageRow,
+} from "../backend/vetting/evidence-storage";
 import {
   handleVettingApi,
   signedVettingRequest,
@@ -53,15 +61,25 @@ async function selectedEvidenceKey(
   const db = retained.evidence.deps.db;
   const row = await evidenceStorageRow(assessmentId, runId, sha256);
   const key = await new EvidenceStorage(
-    db, retained.evidence.deps.bucket!, () => NOW, () => crypto.randomUUID(),
+    db,
+    retained.evidence.deps.bucket!,
+    () => NOW,
+    () => crypto.randomUUID(),
   ).partKey(row, part);
   if (key === null) throw new Error("Evidence has no published storage target");
   return key;
 }
-async function evidenceStorageRow(assessmentId: string, runId: string, sha256: string) {
-  const row = await retained.evidence.deps.db.prepare(
-    "SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
-  ).bind(assessmentId, runId, sha256).first<EvidenceStorageRow & { storage_generation: string | null }>();
+async function evidenceStorageRow(
+  assessmentId: string,
+  runId: string,
+  sha256: string,
+) {
+  const row = await retained.evidence.deps.db
+    .prepare(
+      "SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
+    )
+    .bind(assessmentId, runId, sha256)
+    .first<EvidenceStorageRow & { storage_generation: string | null }>();
   if (!row) throw new Error("Missing retained evidence row");
   return row;
 }
@@ -112,36 +130,78 @@ beforeEach(async () => {
 /** Seed the old content protocol before its real migration; never bypass its trigger. */
 async function legacyContentRun(runId: string) {
   await retained.dispose();
-  const database = sqliteD1(readdirSync(new URL("../migrations", import.meta.url))
-    .filter((name) => name.endsWith(".sql") && name < "0119_").sort());
+  const database = sqliteD1(
+    readdirSync(new URL("../migrations", import.meta.url))
+      .filter((name) => name.endsWith(".sql") && name < "0119_")
+      .sort(),
+  );
   const { db } = database;
   sqlite = database.sqlite;
   projects = new CloudflareProjectPersistence(db);
   retained = await localVettingEvidence(db, () => NOW);
-  vetting = new CloudflareVettingPersistence(db,
-    async (a) => a.result !== null && retained.evidence.retained(a.result));
+  vetting = new CloudflareVettingPersistence(
+    db,
+    async (a) => a.result !== null && retained.evidence.retained(a.result),
+  );
   await listPausedProject();
   const id = await queueScan();
-  const objects = VETTING_EVIDENCE_OBJECTS.map(({ body: _body, ...object }) => object);
+  const objects = VETTING_EVIDENCE_OBJECTS.map(
+    ({ body: _body, ...object }) => object,
+  );
   const manifest = JSON.stringify({ traceSha256: VETTING_TRACE_SHA, objects });
-  sqlite.query(
-    "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)",
-  ).run(id, runId, VETTING_TRACE_SHA, createHash("sha256").update(manifest).digest("hex"),
-    manifest, JSON.stringify(EVIDENCE_POLICY), NOW.toISOString(),
-    new Date(NOW.getTime() + EVIDENCE_POLICY.postClosureRetentionSeconds * 1000).toISOString());
+  sqlite
+    .query(
+      "INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      id,
+      runId,
+      VETTING_TRACE_SHA,
+      createHash("sha256").update(manifest).digest("hex"),
+      manifest,
+      JSON.stringify(EVIDENCE_POLICY),
+      NOW.toISOString(),
+      new Date(
+        NOW.getTime() + EVIDENCE_POLICY.postClosureRetentionSeconds * 1000,
+      ).toISOString(),
+    );
   for (const object of VETTING_EVIDENCE_OBJECTS) {
-    sqlite.query(
-      "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,storage) VALUES(?,?,?,?,?,?,?,?,'content')",
-    ).run(id, runId, object.sha256, object.sizeBytes, object.kind, object.label,
-      object.contentType, `vetting/${id}/${runId}/${object.sha256}`);
-    await retained.bucket.put(`vetting/objects/${object.sha256}`, new TextEncoder().encode(object.body), {
-      onlyIf: { etagDoesNotMatch: "*" },
-      customMetadata: { sha256: object.sha256 },
-      httpMetadata: { contentType: object.contentType },
-    });
+    sqlite
+      .query(
+        "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,storage) VALUES(?,?,?,?,?,?,?,?,'content')",
+      )
+      .run(
+        id,
+        runId,
+        object.sha256,
+        object.sizeBytes,
+        object.kind,
+        object.label,
+        object.contentType,
+        `vetting/${id}/${runId}/${object.sha256}`,
+      );
+    await retained.bucket.put(
+      `vetting/objects/${object.sha256}`,
+      new TextEncoder().encode(object.body),
+      {
+        onlyIf: { etagDoesNotMatch: "*" },
+        customMetadata: { sha256: object.sha256 },
+        httpMetadata: { contentType: object.contentType },
+      },
+    );
   }
-  sqlite.exec(readFileSync(new URL("../migrations/0119_vetting_storage_generations.sql", import.meta.url), "utf8"));
-  expect((await evidenceStorageRow(id, runId, VETTING_TRACE_SHA)).storage_generation).toBeNull();
+  sqlite.exec(
+    readFileSync(
+      new URL(
+        "../migrations/0119_vetting_storage_generations.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  expect(
+    (await evidenceStorageRow(id, runId, VETTING_TRACE_SHA)).storage_generation,
+  ).toBeNull();
   return id;
 }
 
@@ -856,14 +916,18 @@ test("private retained bytes remain inspectable without granting clean clearance
   expect((await operator(overview, "900000001")).status).toBe(403);
   expect((await operator(overview, "")).status).toBe(401);
   const countsBeforeMismatch = {
-    grants: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_grants").get(),
+    grants: sqlite
+      .query("SELECT COUNT(*) n FROM vetting_evidence_grants")
+      .get(),
     audits: sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
   };
   for (const path of [overview, `${base}/grant`, `${base}/download-grant`]) {
     const response = await operator(
       path,
       EVIDENCE_READER_GITHUB_ID,
-      path === overview ? undefined : { reason: "Inspect expected-actor refusal" },
+      path === overview
+        ? undefined
+        : { reason: "Inspect expected-actor refusal" },
       undefined,
       EVIDENCE_OWNER_GITHUB_ID,
     );
@@ -877,12 +941,20 @@ test("private retained bytes remain inspectable without granting clean clearance
     sqlite.query("SELECT COUNT(*) n FROM vetting_evidence_audit").get(),
   ).toEqual(countsBeforeMismatch.audits);
   const malformedExpected = await operator(
-    overview, undefined, undefined, undefined, "invalid",
+    overview,
+    undefined,
+    undefined,
+    undefined,
+    "invalid",
   );
   expect(malformedExpected.status).toBe(400);
   expect((await malformedExpected.json()).error).toBe("invalid_expected_actor");
   const matchingExpected = await operator(
-    overview, undefined, undefined, undefined, EVIDENCE_OWNER_GITHUB_ID,
+    overview,
+    undefined,
+    undefined,
+    undefined,
+    EVIDENCE_OWNER_GITHUB_ID,
   );
   expect(matchingExpected.status).toBe(200);
   const visible = await operator(overview);
@@ -991,7 +1063,9 @@ test("a clean result cannot omit a referenced retained artifact or replace an im
     await retained.request("POST", service, JSON.stringify(changed)),
   );
   expect(conflict?.status).toBe(409);
-  await retained.bucket.delete(await selectedEvidenceKey(id, run, result.artifacts[0].sha256));
+  await retained.bucket.delete(
+    await selectedEvidenceKey(id, run, result.artifacts[0].sha256),
+  );
   expect((await postResult(result)).status).toBe(422);
   expect((await publicVetting()).state).toBe("queued");
   await retained.retain(id, run);
@@ -1406,9 +1480,7 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
   );
   // One published target in the row's storage generation, never a run root.
   const smallKey = await selectedEvidenceKey(id, "large-first", smallSha);
-  expect(
-    await retained.bucket.head(smallKey),
-  ).not.toBeNull();
+  expect(await retained.bucket.head(smallKey)).not.toBeNull();
   expect(
     await retained.bucket.head(`vetting/${id}/large-first/${smallSha}`),
   ).toBeNull();
@@ -1422,7 +1494,8 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
   expect(
     (await send("POST", `${second}/${bigSha}/finalize`, "{}")).status,
   ).toBe(200);
-  const sharedGeneration = (await evidenceStorageRow(id, "large-first", bigSha)).storage_generation;
+  const sharedGeneration = (await evidenceStorageRow(id, "large-first", bigSha))
+    .storage_generation;
   expect(typeof sharedGeneration).toBe("string");
   const rows = sqlite
     .query(
@@ -1430,12 +1503,27 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
     )
     .all(id, bigSha);
   expect(rows).toEqual([
-    { run_id: "large-first", storage: "content", storage_generation: sharedGeneration },
-    { run_id: "large-second", storage: "content", storage_generation: sharedGeneration },
+    {
+      run_id: "large-first",
+      storage: "content",
+      storage_generation: sharedGeneration,
+    },
+    {
+      run_id: "large-second",
+      storage: "content",
+      storage_generation: sharedGeneration,
+    },
   ]);
-  expect(await selectedEvidenceKey(id, "large-second", smallSha)).toBe(smallKey);
+  expect(await selectedEvidenceKey(id, "large-second", smallSha)).toBe(
+    smallKey,
+  );
   // A changed stored part fails verification for every run that references it.
-  const partKey = await selectedEvidenceKey(id, "large-first", bigSha, layout[3]);
+  const partKey = await selectedEvidenceKey(
+    id,
+    "large-first",
+    bigSha,
+    layout[3],
+  );
   await retained.bucket.delete(partKey);
   const changed = new Uint8Array(layout[3].sizeBytes);
   await retained.bucket.put(partKey, changed, {
@@ -1474,11 +1562,22 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
   expect((await send("POST", `${third}/${bigSha}/finalize`, "{}")).status).toBe(
     200,
   );
-  const repairedKey = await selectedEvidenceKey(id, "large-third", bigSha, layout[3]);
+  const repairedKey = await selectedEvidenceKey(
+    id,
+    "large-third",
+    bigSha,
+    layout[3],
+  );
   expect(repairedKey).not.toBe(partKey);
-  expect(await selectedEvidenceKey(id, "large-first", bigSha, layout[3])).toBe(repairedKey);
-  expect(await selectedEvidenceKey(id, "large-second", bigSha, layout[3])).toBe(repairedKey);
-  expect(new Uint8Array(await (await retained.bucket.get(partKey))!.arrayBuffer())).toEqual(changed);
+  expect(await selectedEvidenceKey(id, "large-first", bigSha, layout[3])).toBe(
+    repairedKey,
+  );
+  expect(await selectedEvidenceKey(id, "large-second", bigSha, layout[3])).toBe(
+    repairedKey,
+  );
+  expect(
+    new Uint8Array(await (await retained.bucket.get(partKey))!.arrayBuffer()),
+  ).toEqual(changed);
 }, 120_000);
 
 /** #1411 C-09: the scanner controller records its publication state through the
@@ -2230,7 +2329,12 @@ for (const changed of [false, true]) {
 // The real evidence route owns an R2 response even when its metadata or
 // stream fails. Inject faults around the local R2 body after granting access;
 // never replace the stored evidence or bypass the one-use grant/audit flow.
-for (const failure of ["metadata", "retirement-marker", "overflow", "read"] as const) {
+for (const failure of [
+  "metadata",
+  "retirement-marker",
+  "overflow",
+  "read",
+] as const) {
   test(`evidence ${failure} refusal releases its body and preserves the original error`, async () => {
     await listPausedProject();
     const id = await queueScan();
@@ -2246,7 +2350,13 @@ for (const failure of ["metadata", "retirement-marker", "overflow", "read"] as c
           "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
           ...(grant ? { "x-vetting-read-grant": grant } : {}),
         },
-        ...(grant ? {} : { body: JSON.stringify({ reason: "Verify evidence reader cleanup" }) }),
+        ...(grant
+          ? {}
+          : {
+              body: JSON.stringify({
+                reason: "Verify evidence reader cleanup",
+              }),
+            }),
       });
     const granted = await retained.evidence.handle(request("grant"));
     expect(granted?.status).toBe(201);
@@ -2256,10 +2366,13 @@ for (const failure of ["metadata", "retirement-marker", "overflow", "read"] as c
     let bodyPulls = 0;
     let bodyCancels = 0;
     let nativeReleased = false;
-    const readError = Object.assign(new Error("Injected evidence read failure"), {
-      status: 409,
-      code: "evidence_read_fixture",
-    });
+    const readError = Object.assign(
+      new Error("Injected evidence read failure"),
+      {
+        status: 409,
+        code: "evidence_read_fixture",
+      },
+    );
     retained.evidence.deps.bucket = {
       ...bucket,
       get: async (key) => {
@@ -2272,64 +2385,88 @@ for (const failure of ["metadata", "retirement-marker", "overflow", "read"] as c
             nativeReleased = true;
           }
         };
-        body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            bodyPulls++;
-            if (failure === "read") {
+        body = new ReadableStream<Uint8Array>(
+          {
+            async pull(controller) {
+              bodyPulls++;
+              if (failure === "read") {
+                try {
+                  await reader.cancel();
+                } finally {
+                  release();
+                }
+                controller.error(readError);
+                return;
+              }
+              const part = await reader.read();
+              if (part.done) {
+                release();
+                controller.close();
+              } else if (failure === "overflow") {
+                controller.enqueue(new Uint8Array(object.size + 1));
+              } else controller.enqueue(part.value);
+            },
+            async cancel() {
+              bodyCancels++;
               try {
                 await reader.cancel();
               } finally {
                 release();
               }
-              controller.error(readError);
-              return;
-            }
-            const part = await reader.read();
-            if (part.done) {
-              release();
-              controller.close();
-            } else if (failure === "overflow") {
-              controller.enqueue(new Uint8Array(object.size + 1));
-            } else controller.enqueue(part.value);
+              throw new Error(
+                "Injected cleanup failure must not replace refusal",
+              );
+            },
           },
-          async cancel() {
-            bodyCancels++;
-            try {
-              await reader.cancel();
-            } finally {
-              release();
-            }
-            throw new Error("Injected cleanup failure must not replace refusal");
-          },
-        }, { highWaterMark: 0 });
+          { highWaterMark: 0 },
+        );
         return {
           ...object,
           size: failure === "metadata" ? object.size + 1 : object.size,
-          ...(failure === "retirement-marker" ? {
-            customMetadata: { ...object.customMetadata, [EVIDENCE_RETIREMENT_METADATA_KEY]: EVIDENCE_RETIREMENT_METADATA_VALUE },
-          } : {}),
+          ...(failure === "retirement-marker"
+            ? {
+                customMetadata: {
+                  ...object.customMetadata,
+                  [EVIDENCE_RETIREMENT_METADATA_KEY]:
+                    EVIDENCE_RETIREMENT_METADATA_VALUE,
+                },
+              }
+            : {}),
           body,
         };
       },
     };
     try {
       const response = await retained.evidence.handle(request("body", grant));
-      expect(response?.status).toBe(failure === "retirement-marker" ? 410 : 409);
+      expect(response?.status).toBe(
+        failure === "retirement-marker" ? 410 : 409,
+      );
       const result = await response!.json();
-      expect(result.error).toBe(failure === "read" ? "evidence_read_fixture"
-        : failure === "retirement-marker" ? "evidence_retired" : "evidence_corrupt");
+      expect(result.error).toBe(
+        failure === "read"
+          ? "evidence_read_fixture"
+          : failure === "retirement-marker"
+            ? "evidence_retired"
+            : "evidence_corrupt",
+      );
       expect(JSON.stringify(result)).not.toContain(VETTING_TRACE_BODY);
       expect(body?.locked).toBe(false);
       expect(nativeReleased).toBe(true);
-      expect(bodyPulls).toBe(failure === "metadata" || failure === "retirement-marker" ? 0 : 1);
+      expect(bodyPulls).toBe(
+        failure === "metadata" || failure === "retirement-marker" ? 0 : 1,
+      );
       // An already errored stream rejects cancel without invoking its source.
       expect(bodyCancels).toBe(failure === "read" ? 0 : 1);
       const replay = await retained.evidence.handle(request("body", grant));
       expect(replay?.status).toBe(403);
-      const actions = sqlite.query(
-        "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=?",
-      ).all(id, runId) as { action: string }[];
-      expect(actions.filter((row) => row.action === "read-attempt")).toHaveLength(1);
+      const actions = sqlite
+        .query(
+          "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=?",
+        )
+        .all(id, runId) as { action: string }[];
+      expect(
+        actions.filter((row) => row.action === "read-attempt"),
+      ).toHaveLength(1);
       expect(actions.some((row) => row.action === "read")).toBe(false);
     } finally {
       retained.evidence.deps.bucket = bucket;
@@ -2344,11 +2481,17 @@ test("native evidence download refuses a retirement marker even when bytes and d
   const runId = "native-retirement-marker";
   await retained.retain(id, runId);
   const path = `/api/v1/operator/vetting-evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
-  const granted = await retained.evidence.handle(new Request(`${ORIGIN}${path}/download-grant`, {
-    method: "POST",
-    headers: { origin: ORIGIN, "content-type": "application/json", "x-test-operator": EVIDENCE_OWNER_GITHUB_ID },
-    body: JSON.stringify({ reason: "Verify retired-target refusal" }),
-  }));
+  const granted = await retained.evidence.handle(
+    new Request(`${ORIGIN}${path}/download-grant`, {
+      method: "POST",
+      headers: {
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+      },
+      body: JSON.stringify({ reason: "Verify retired-target refusal" }),
+    }),
+  );
   expect(granted?.status).toBe(201);
   const cookie = granted!.headers.get("set-cookie")?.split(";")[0];
   if (!cookie) throw new Error("Missing synthetic download grant");
@@ -2357,21 +2500,39 @@ test("native evidence download refuses a retirement marker even when bytes and d
     ...bucket,
     get: async (key) => {
       const object = await bucket.get(key);
-      return object ? { ...object, customMetadata: {
-        ...object.customMetadata, [EVIDENCE_RETIREMENT_METADATA_KEY]: EVIDENCE_RETIREMENT_METADATA_VALUE,
-      } } : null;
+      return object
+        ? {
+            ...object,
+            customMetadata: {
+              ...object.customMetadata,
+              [EVIDENCE_RETIREMENT_METADATA_KEY]:
+                EVIDENCE_RETIREMENT_METADATA_VALUE,
+            },
+          }
+        : null;
     },
   };
   try {
-    const response = await retained.evidence.handle(new Request(`${ORIGIN}${path}/download`, {
-      headers: { cookie, "sec-fetch-site": "same-origin", "x-test-operator": EVIDENCE_OWNER_GITHUB_ID },
-    }));
+    const response = await retained.evidence.handle(
+      new Request(`${ORIGIN}${path}/download`, {
+        headers: {
+          cookie,
+          "sec-fetch-site": "same-origin",
+          "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
+        },
+      }),
+    );
     expect(response?.status).toBe(200);
     await expect(response!.arrayBuffer()).rejects.toThrow();
-    const actions = sqlite.query(
-      "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action LIKE 'download-%' ORDER BY action",
-    ).all(id, runId);
-    expect(actions).toEqual([{ action: "download-authorized" }, { action: "download-failed" }]);
+    const actions = sqlite
+      .query(
+        "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action LIKE 'download-%' ORDER BY action",
+      )
+      .all(id, runId);
+    expect(actions).toEqual([
+      { action: "download-authorized" },
+      { action: "download-failed" },
+    ]);
   } finally {
     retained.evidence.deps.bucket = bucket;
   }
@@ -2387,9 +2548,12 @@ test("legacy content refuses unavailable reads and repairs only verified corrupt
   const writes: boolean[] = [];
   const repairEtags: string[] = [];
   let unavailable = true;
-  const uploadAudits = () => sqlite.query(
-    "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
-  ).get(id, runId);
+  const uploadAudits = () =>
+    sqlite
+      .query(
+        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+      )
+      .get(id, runId);
   const before = uploadAudits();
   retained.evidence.deps.bucket = {
     ...bucket,
@@ -2407,15 +2571,18 @@ test("legacy content refuses unavailable reads and repairs only verified corrupt
       return bucket.get(target);
     },
   };
-  const upload = async () => (await retained.evidence.handle(
-    await retained.request("PUT", path, bytes),
-  ))!;
+  const upload = async () =>
+    (await retained.evidence.handle(
+      await retained.request("PUT", path, bytes),
+    ))!;
   try {
     expect((await upload()).status).toBe(500);
     expect(writes).toEqual([true]);
     expect(uploadAudits()).toEqual(before);
     const retainedObject = await bucket.get(key);
-    expect(await new Response(retainedObject!.body).text()).toBe(VETTING_TRACE_BODY);
+    expect(await new Response(retainedObject!.body).text()).toBe(
+      VETTING_TRACE_BODY,
+    );
     expect((await upload()).status).toBe(200);
     expect(writes).toEqual([true, true]);
 
@@ -2454,7 +2621,8 @@ for (const winner of ["repaired", "changed-corrupt", "missing-etag"] as const) {
       httpMetadata: { contentType: "text/plain" },
     });
     const before = await bucket.head(key);
-    if (!before?.etag) throw new Error("Local R2 did not expose the corrupt ETag");
+    if (!before?.etag)
+      throw new Error("Local R2 did not expose the corrupt ETag");
     const beforeEtag = before.etag;
     let repairs = 0;
     let rejected = false;
@@ -2474,11 +2642,17 @@ for (const winner of ["repaired", "changed-corrupt", "missing-etag"] as const) {
           expect(options.onlyIf.etagMatches).toBe(beforeEtag);
           // Another writer commits after our corrupt-body read. Exercise the
           // actual workerd condition, then reread whichever bytes won.
-          await bucket.put(target, winner === "repaired" ? bytes : new Uint8Array(bytes.length).fill(8), {
-            onlyIf: { etagMatches: beforeEtag },
-            customMetadata: { sha256: VETTING_TRACE_SHA, winner },
-            httpMetadata: { contentType: "text/plain" },
-          });
+          await bucket.put(
+            target,
+            winner === "repaired"
+              ? bytes
+              : new Uint8Array(bytes.length).fill(8),
+            {
+              onlyIf: { etagMatches: beforeEtag },
+              customMetadata: { sha256: VETTING_TRACE_SHA, winner },
+              httpMetadata: { contentType: "text/plain" },
+            },
+          );
           const result = await bucket.put(target, value, options);
           rejected = result === null;
           return result;
@@ -2486,11 +2660,15 @@ for (const winner of ["repaired", "changed-corrupt", "missing-etag"] as const) {
         return bucket.put(target, value, options);
       },
     };
-    const auditCount = sqlite.query(
-      "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
-    ).get(id, runId);
+    const auditCount = sqlite
+      .query(
+        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+      )
+      .get(id, runId);
     try {
-      const response = await retained.evidence.handle(await retained.request("PUT", path, bytes));
+      const response = await retained.evidence.handle(
+        await retained.request("PUT", path, bytes),
+      );
       expect(response?.status).toBe(winner === "repaired" ? 200 : 409);
       expect(repairs).toBe(winner === "missing-etag" ? 0 : 1);
       expect(rejected).toBe(winner !== "missing-etag");
@@ -2498,12 +2676,18 @@ for (const winner of ["repaired", "changed-corrupt", "missing-etag"] as const) {
       if (winner === "missing-etag") expect(after?.etag).toBe(beforeEtag);
       else expect(after?.customMetadata?.winner).toBe(winner);
       if (winner !== "repaired")
-        expect(sqlite.query(
-          "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
-        ).get(id, runId)).toEqual(auditCount);
+        expect(
+          sqlite
+            .query(
+              "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+            )
+            .get(id, runId),
+        ).toEqual(auditCount);
       if (winner === "repaired") {
         const object = await bucket.get(key);
-        expect(await new Response(object!.body).text()).toBe(VETTING_TRACE_BODY);
+        expect(await new Response(object!.body).text()).toBe(
+          VETTING_TRACE_BODY,
+        );
       }
     } finally {
       retained.evidence.deps.bucket = bucket;
@@ -2547,7 +2731,9 @@ test("legacy missing evidence retry stays create-only when another writer restor
     },
   };
   try {
-    const response = await retained.evidence.handle(await retained.request("PUT", path, bytes));
+    const response = await retained.evidence.handle(
+      await retained.request("PUT", path, bytes),
+    );
     expect(response?.status).toBe(200);
     expect(writes).toBe(2);
     expect(rejected).toBe(true);
@@ -2569,14 +2755,17 @@ for (const state of ["missing", "corrupt"] as const) {
     const corrupt = new Uint8Array(bytes.length).fill(19);
     const bucket = retained.evidence.deps.bucket!;
     await retained.bucket.delete(previous);
-    if (state === "corrupt") await bucket.put(previous, corrupt, {
-      onlyIf: { etagDoesNotMatch: "*" },
-      customMetadata: { sha256: VETTING_TRACE_SHA },
-      httpMetadata: { contentType: "text/plain" },
-    });
+    if (state === "corrupt")
+      await bucket.put(previous, corrupt, {
+        onlyIf: { etagDoesNotMatch: "*" },
+        customMetadata: { sha256: VETTING_TRACE_SHA },
+        httpMetadata: { contentType: "text/plain" },
+      });
     let observed = 0;
     let release: () => void = () => {};
-    const bothObserved = new Promise<void>((resolve) => { release = resolve; });
+    const bothObserved = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const written: string[] = [];
     retained.evidence.deps.bucket = {
       ...bucket,
@@ -2602,24 +2791,42 @@ for (const state of ["missing", "corrupt"] as const) {
     };
     const path = `/api/v1/vetting/evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
     try {
-      const requests = await Promise.all([retained.request("PUT", path, bytes), retained.request("PUT", path, bytes)]);
-      const responses = await Promise.all(requests.map((request) => retained.evidence.handle(request)));
+      const requests = await Promise.all([
+        retained.request("PUT", path, bytes),
+        retained.request("PUT", path, bytes),
+      ]);
+      const responses = await Promise.all(
+        requests.map((request) => retained.evidence.handle(request)),
+      );
       expect(responses.map((response) => response?.status)).toEqual([200, 200]);
       expect(observed).toBe(2);
       expect(new Set(written).size).toBe(2);
       const selected = await selectedEvidenceKey(id, runId, VETTING_TRACE_SHA);
       expect(written).toContain(selected);
       for (const key of written)
-        expect(await new Response((await bucket.get(key))!.body).text()).toBe(VETTING_TRACE_BODY);
+        expect(await new Response((await bucket.get(key))!.body).text()).toBe(
+          VETTING_TRACE_BODY,
+        );
       const old = await bucket.get(previous);
       if (state === "missing") expect(old).toBeNull();
-      else expect(new Uint8Array(await new Response(old!.body).arrayBuffer())).toEqual(corrupt);
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_targets WHERE generation_id=? AND part_index=-1 AND sha256=?",
-      ).get(row.storage_generation, VETTING_TRACE_SHA)).toEqual({ n: 3 });
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_heads WHERE generation_id=? AND part_index=-1 AND sha256=?",
-      ).get(row.storage_generation, VETTING_TRACE_SHA)).toEqual({ n: 1 });
+      else
+        expect(
+          new Uint8Array(await new Response(old!.body).arrayBuffer()),
+        ).toEqual(corrupt);
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_targets WHERE generation_id=? AND part_index=-1 AND sha256=?",
+          )
+          .get(row.storage_generation, VETTING_TRACE_SHA),
+      ).toEqual({ n: 3 });
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_heads WHERE generation_id=? AND part_index=-1 AND sha256=?",
+          )
+          .get(row.storage_generation, VETTING_TRACE_SHA),
+      ).toEqual({ n: 1 });
     } finally {
       release();
       retained.evidence.deps.bucket = bucket;
@@ -2634,8 +2841,16 @@ for (const outcome of ["before-commit", "after-commit"] as const) {
     const runId = `unknown-publication-${outcome}`;
     const path = `/api/v1/vetting/evidence/${id}/${runId}`;
     const object = VETTING_EVIDENCE_OBJECTS[0];
-    const registered = await retained.evidence.handle(await retained.request("POST", path,
-      JSON.stringify({ traceSha256: object.sha256, objects: [{ ...object, body: undefined }] })));
+    const registered = await retained.evidence.handle(
+      await retained.request(
+        "POST",
+        path,
+        JSON.stringify({
+          traceSha256: object.sha256,
+          objects: [{ ...object, body: undefined }],
+        }),
+      ),
+    );
     expect(registered?.status).toBe(201);
     const row = await evidenceStorageRow(id, runId, object.sha256);
     const db = retained.evidence.deps.db;
@@ -2644,44 +2859,75 @@ for (const outcome of ["before-commit", "after-commit"] as const) {
       ...db,
       prepare: (sql) => {
         const statement = db.prepare(sql);
-        if (!sql.includes("INSERT INTO vetting_evidence_heads")) return statement;
+        if (!sql.includes("INSERT INTO vetting_evidence_heads"))
+          return statement;
         return {
           ...statement,
           bind: (...values) => {
             const bound = statement.bind(...values);
-            return { ...bound, run: async () => {
-              if (injected) return bound.run();
-              injected = true;
-              if (outcome === "after-commit") await bound.run();
-              throw new Error("Publication response unavailable");
-            } };
+            return {
+              ...bound,
+              run: async () => {
+                if (injected) return bound.run();
+                injected = true;
+                if (outcome === "after-commit") await bound.run();
+                throw new Error("Publication response unavailable");
+              },
+            };
           },
         };
       },
     };
-    const upload = () => retained.request("PUT", `${path}/${object.sha256}`, object.body)
-      .then((request) => retained.evidence.handle(request));
+    const upload = () =>
+      retained
+        .request("PUT", `${path}/${object.sha256}`, object.body)
+        .then((request) => retained.evidence.handle(request));
     try {
       const response = await upload();
       expect(injected).toBe(true);
       expect(response?.status).toBe(outcome === "after-commit" ? 200 : 500);
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
-      ).get(id, runId)).toEqual({ n: outcome === "after-commit" ? 1 : 0 });
-      const candidates = sqlite.query(
-        "SELECT target_key FROM vetting_evidence_targets WHERE generation_id=?",
-      ).all(row.storage_generation) as { target_key: string }[];
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+          )
+          .get(id, runId),
+      ).toEqual({ n: outcome === "after-commit" ? 1 : 0 });
+      const candidates = sqlite
+        .query(
+          "SELECT target_key FROM vetting_evidence_targets WHERE generation_id=?",
+        )
+        .all(row.storage_generation) as { target_key: string }[];
       expect(candidates).toHaveLength(1);
-      expect(await new Response((await retained.evidence.deps.bucket!.get(candidates[0].target_key))!.body).text())
-        .toBe(object.body);
-      const storage = new EvidenceStorage(db, retained.evidence.deps.bucket!, () => NOW, () => crypto.randomUUID());
-      expect(await storage.partKey(row)).toBe(outcome === "after-commit" ? candidates[0].target_key : null);
+      expect(
+        await new Response(
+          (await retained.evidence.deps.bucket!.get(candidates[0].target_key))!
+            .body,
+        ).text(),
+      ).toBe(object.body);
+      const storage = new EvidenceStorage(
+        db,
+        retained.evidence.deps.bucket!,
+        () => NOW,
+        () => crypto.randomUUID(),
+      );
+      expect(await storage.partKey(row)).toBe(
+        outcome === "after-commit" ? candidates[0].target_key : null,
+      );
       expect((await upload())?.status).toBe(200);
-      expect(await new Response((await retained.evidence.deps.bucket!.get(candidates[0].target_key))!.body).text())
-        .toBe(object.body);
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_targets WHERE generation_id=?",
-      ).get(row.storage_generation)).toEqual({ n: outcome === "after-commit" ? 1 : 2 });
+      expect(
+        await new Response(
+          (await retained.evidence.deps.bucket!.get(candidates[0].target_key))!
+            .body,
+        ).text(),
+      ).toBe(object.body);
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_targets WHERE generation_id=?",
+          )
+          .get(row.storage_generation),
+      ).toEqual({ n: outcome === "after-commit" ? 1 : 2 });
     } finally {
       retained.evidence.deps.db = db;
     }
@@ -2693,29 +2939,54 @@ for (const state of ["retiring", "retired"] as const) {
     await listPausedProject();
     const id = await queueScan();
     const object = VETTING_EVIDENCE_OBJECTS[0];
-    const manifest = JSON.stringify({ traceSha256: object.sha256, objects: [{ ...object, body: undefined }] });
+    const manifest = JSON.stringify({
+      traceSha256: object.sha256,
+      objects: [{ ...object, body: undefined }],
+    });
     const path = `/api/v1/vetting/evidence/${id}`;
     const send = async (method: string, suffix: string, body: string) =>
-      retained.evidence.handle(await retained.request(method, `${path}${suffix}`, body));
+      retained.evidence.handle(
+        await retained.request(method, `${path}${suffix}`, body),
+      );
     expect((await send("POST", "/old", manifest))?.status).toBe(201);
     const old = await evidenceStorageRow(id, "old", object.sha256);
     // An unpopulated generation has no physical targets to retire. This fixture
     // isolates the immutable run binding; worker coverage retires actual bytes.
-    sqlite.query("UPDATE vetting_evidence_generations SET state='retiring' WHERE id=?").run(old.storage_generation);
-    if (state === "retired") sqlite.query(
-      "UPDATE vetting_evidence_generations SET state='retired',retired_at=? WHERE id=?",
-    ).run(NOW.toISOString(), old.storage_generation);
+    sqlite
+      .query(
+        "UPDATE vetting_evidence_generations SET state='retiring' WHERE id=?",
+      )
+      .run(old.storage_generation);
+    if (state === "retired")
+      sqlite
+        .query(
+          "UPDATE vetting_evidence_generations SET state='retired',retired_at=? WHERE id=?",
+        )
+        .run(NOW.toISOString(), old.storage_generation);
     const later = await send("POST", "/new", manifest);
     expect(later?.status).toBe(201);
     expect((await later!.json()).stored).toEqual([]);
     const current = await evidenceStorageRow(id, "new", object.sha256);
     expect(current.storage_generation).not.toBe(old.storage_generation);
-    expect((await send("PUT", `/old/${object.sha256}`, object.body))?.status).toBe(410);
-    expect((await send("PUT", `/new/${object.sha256}`, object.body))?.status).toBe(200);
-    expect((await evidenceStorageRow(id, "old", object.sha256)).storage_generation).toBe(old.storage_generation);
-    const storage = new EvidenceStorage(retained.evidence.deps.db, retained.evidence.deps.bucket!, () => NOW, () => crypto.randomUUID());
+    expect(
+      (await send("PUT", `/old/${object.sha256}`, object.body))?.status,
+    ).toBe(410);
+    expect(
+      (await send("PUT", `/new/${object.sha256}`, object.body))?.status,
+    ).toBe(200);
+    expect(
+      (await evidenceStorageRow(id, "old", object.sha256)).storage_generation,
+    ).toBe(old.storage_generation);
+    const storage = new EvidenceStorage(
+      retained.evidence.deps.db,
+      retained.evidence.deps.bucket!,
+      () => NOW,
+      () => crypto.randomUUID(),
+    );
     expect(await storage.partKey(old)).toBeNull();
-    expect(await storage.readPart(current)).toEqual(new TextEncoder().encode(object.body));
+    expect(await storage.readPart(current)).toEqual(
+      new TextEncoder().encode(object.body),
+    );
   }, 30000);
 }
 
@@ -2725,8 +2996,8 @@ for (const operation of ["upload", "upload-chunk", "finalize"] as const) {
     const id = await queueScan();
     const result = await fixture(id, "incomplete");
     expect((await postResult(result)).status).toBe(200);
-    const close = await retained.evidence.handle(new Request(
-      `${ORIGIN}/api/v1/operator/vetting-evidence/${id}/close`, {
+    const close = await retained.evidence.handle(
+      new Request(`${ORIGIN}/api/v1/operator/vetting-evidence/${id}/close`, {
         method: "POST",
         headers: {
           origin: ORIGIN,
@@ -2734,49 +3005,92 @@ for (const operation of ["upload", "upload-chunk", "finalize"] as const) {
           "x-test-operator": EVIDENCE_OWNER_GITHUB_ID,
         },
         body: JSON.stringify({ reason: "Finish the synthetic exception case" }),
-      },
-    ));
+      }),
+    );
     expect(close?.status).toBe(200);
     const runId = `expiry-${operation}`;
     const path = `/api/v1/vetting/evidence/${id}/${runId}`;
-    const bytes = new Uint8Array(operation === "upload" ? 17 : EVIDENCE_CHUNK_BYTES + 17).fill(21);
-    const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
+    const bytes = new Uint8Array(
+      operation === "upload" ? 17 : EVIDENCE_CHUNK_BYTES + 17,
+    ).fill(21);
+    const hash = (value: Uint8Array) =>
+      createHash("sha256").update(value).digest("hex");
     const sha = hash(bytes);
     const chunks = (operation === "upload" ? [] : [0, 1]).map((index) => {
-      const part = bytes.subarray(index * EVIDENCE_CHUNK_BYTES, (index + 1) * EVIDENCE_CHUNK_BYTES);
+      const part = bytes.subarray(
+        index * EVIDENCE_CHUNK_BYTES,
+        (index + 1) * EVIDENCE_CHUNK_BYTES,
+      );
       return { index, sizeBytes: part.length, sha256: hash(part) };
     });
-    const send = async (method: string, suffix: string, body: string | Uint8Array) =>
-      (await retained.evidence.handle(await retained.request(method, `${path}${suffix}`, body)))!;
-    const registered = await send("POST", "", JSON.stringify({
-      traceSha256: sha,
-      objects: [{ sha256: sha, sizeBytes: bytes.length, kind: "trace", label: "Expiry race", contentType: "application/octet-stream", ...(chunks.length ? { chunks } : {}) }],
-    }));
+    const send = async (
+      method: string,
+      suffix: string,
+      body: string | Uint8Array,
+    ) =>
+      (await retained.evidence.handle(
+        await retained.request(method, `${path}${suffix}`, body),
+      ))!;
+    const registered = await send(
+      "POST",
+      "",
+      JSON.stringify({
+        traceSha256: sha,
+        objects: [
+          {
+            sha256: sha,
+            sizeBytes: bytes.length,
+            kind: "trace",
+            label: "Expiry race",
+            contentType: "application/octet-stream",
+            ...(chunks.length ? { chunks } : {}),
+          },
+        ],
+      }),
+    );
     expect(registered.status).toBe(201);
     if (operation === "finalize") {
       for (const chunk of chunks)
-        expect((await send("PUT", `/${sha}/chunks/${chunk.index}`, bytes.subarray(
-          chunk.index * EVIDENCE_CHUNK_BYTES,
-          chunk.index * EVIDENCE_CHUNK_BYTES + chunk.sizeBytes,
-        ))).status).toBe(200);
+        expect(
+          (
+            await send(
+              "PUT",
+              `/${sha}/chunks/${chunk.index}`,
+              bytes.subarray(
+                chunk.index * EVIDENCE_CHUNK_BYTES,
+                chunk.index * EVIDENCE_CHUNK_BYTES + chunk.sizeBytes,
+              ),
+            )
+          ).status,
+        ).toBe(200);
     }
     const row = await evidenceStorageRow(id, runId, sha);
-    const targetIndex = operation === "upload" ? -1 : operation === "upload-chunk" ? 0 : 1;
+    const targetIndex =
+      operation === "upload" ? -1 : operation === "upload-chunk" ? 0 : 1;
     let targetKey: string | null = null;
     const bucket = retained.evidence.deps.bucket!;
     let entered: () => void = () => {};
-    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     retained.evidence.deps.bucket = {
       ...bucket,
       get: async (key) => {
         const object = await bucket.get(key);
         // Upload reads its reserved target before publishing a head. Resolve
         // that exact reservation instead of assuming a physical storage path.
-        if (targetKey === null && sqlite.query(
-          "SELECT 1 FROM vetting_evidence_targets WHERE target_key=? AND generation_id=? AND part_index=?",
-        ).get(key, row.storage_generation, targetIndex)) {
+        if (
+          targetKey === null &&
+          sqlite
+            .query(
+              "SELECT 1 FROM vetting_evidence_targets WHERE target_key=? AND generation_id=? AND part_index=?",
+            )
+            .get(key, row.storage_generation, targetIndex)
+        ) {
           targetKey = key;
           entered();
           await gate;
@@ -2784,30 +3098,47 @@ for (const operation of ["upload", "upload-chunk", "finalize"] as const) {
         return object;
       },
     };
-    const before = sqlite.query(
-      "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
-    ).get(id, runId, operation);
+    const before = sqlite
+      .query(
+        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
+      )
+      .get(id, runId, operation);
     try {
-      const pending = operation === "upload"
-        ? send("PUT", `/${sha}`, bytes)
-        : operation === "upload-chunk"
-          ? send("PUT", `/${sha}/chunks/0`, bytes.subarray(0, EVIDENCE_CHUNK_BYTES))
-          : send("POST", `/${sha}/finalize`, "{}");
+      const pending =
+        operation === "upload"
+          ? send("PUT", `/${sha}`, bytes)
+          : operation === "upload-chunk"
+            ? send(
+                "PUT",
+                `/${sha}/chunks/0`,
+                bytes.subarray(0, EVIDENCE_CHUNK_BYTES),
+              )
+            : send("POST", `/${sha}/finalize`, "{}");
       await reading;
-      retained.evidence.deps.now = () => new Date(NOW.getTime() + 90 * 86400_000);
+      retained.evidence.deps.now = () =>
+        new Date(NOW.getTime() + 90 * 86400_000);
       release();
       const refused = await pending;
       expect(refused.status).toBe(410);
       expect((await refused.json()).error).toBe("evidence_expired");
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
-      ).get(id, runId, operation)).toEqual(before);
-      expect(sqlite.query(
-        "SELECT count(*) AS n FROM vetting_evidence_completions WHERE assessment_id=? AND run_id=?",
-      ).get(id, runId)).toEqual({ n: 0 });
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action=?",
+          )
+          .get(id, runId, operation),
+      ).toEqual(before);
+      expect(
+        sqlite
+          .query(
+            "SELECT count(*) AS n FROM vetting_evidence_completions WHERE assessment_id=? AND run_id=?",
+          )
+          .get(id, runId),
+      ).toEqual({ n: 0 });
       // The completed bounded write is retained evidence, not an accepted
       // upload/finalization receipt and not proof of physical cleanup.
-      if (targetKey === null) throw new Error("No reserved target read was held");
+      if (targetKey === null)
+        throw new Error("No reserved target read was held");
       expect(await bucket.head(targetKey)).not.toBeNull();
     } finally {
       release();

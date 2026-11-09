@@ -103,19 +103,25 @@ export function sqliteD1(
           };
         // D1 batch retains SELECT and RETURNING rows. Distinguish read-only
         // results from writes without reporting the previous write's count.
-        const before = once("SELECT total_changes() AS n", (read) => read.get()) as {
+        const before = once("SELECT total_changes() AS n", (read) =>
+          read.get(),
+        ) as {
           n: number;
         };
         const results = prepared.all(...params);
-        const after = once("SELECT total_changes() AS n", (read) => read.get()) as {
+        const after = once("SELECT total_changes() AS n", (read) =>
+          read.get(),
+        ) as {
           n: number;
         };
         const changed =
           after.n === before.n
             ? 0
-            : (once("SELECT changes() AS n", (read) => read.get()) as {
-                n: number;
-              }).n;
+            : (
+                once("SELECT changes() AS n", (read) => read.get()) as {
+                  n: number;
+                }
+              ).n;
         return { success: true, results, meta: { changes: changed } };
       });
     return {

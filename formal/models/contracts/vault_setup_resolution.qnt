@@ -42,15 +42,15 @@ module vault_setup_resolution {
   action templates(available: bool): bool = all { s.phase == "templates",
     s' = s.with("phase", if (available) "candidate" else "done")
       .with("result", if (available) "none" else "unavailable-503") }
-  def next = s.with("candidate", if (s.candidate == 1) 2 else 2)
+  def nextValue = s.with("candidate", if (s.candidate == 1) 2 else 2)
     .with("selected", 0)
     .with("phase", if (s.candidate == 1) "candidate" else "exhausted")
-  action skipWrongNetwork = all { s.phase == "candidate", s' = next }
+  action skipWrongNetwork = all { s.phase == "candidate", s' = nextValue }
   action prepare(outcome: str): bool = all { s.phase == "candidate",
     Set("compatible", "refused", "conflict", "unavailable").contains(outcome),
     s' = if (outcome == "unavailable") s.with("phase", "done").with("result", "network-503")
       else if (outcome == "compatible") s.with("phase", "prepared").with("selected", s.candidate)
-      else next.with("firstConflict", s.firstConflict or (s.family == "solana" and outcome == "conflict")) }
+      else nextValue.with("firstConflict", s.firstConflict or (s.family == "solana" and outcome == "conflict")) }
   action roleCheck(conflict: bool): bool = all { s.phase == "prepared",
     s' = if (s.family == "evm" and conflict) s.with("phase", "done").with("result", "role-422")
       else s.with("phase", if (s.mode == "review") "done" else "verify")
@@ -59,7 +59,7 @@ module vault_setup_resolution {
     s' = s.with("phase", "done").with("result", if (s.verificationError or s.firstConflict) "creation-422" else "unavailable-503") }
   action transaction(outcome: str): bool = all { s.phase == "verify",
     Set("pending", "invalid", "failed", "valid", "unavailable").contains(outcome),
-    s' = if (outcome == "invalid") next.with("verificationError", true)
+    s' = if (outcome == "invalid") nextValue.with("verificationError", true)
       else s.with("phase", "done").with("result",
       if (outcome == "pending") "pending" else if (outcome == "valid") "verified-deployment"
       else if (outcome == "unavailable") "network-503"

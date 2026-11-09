@@ -27,7 +27,6 @@ import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
-import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -43,6 +42,7 @@ import {
 } from "./lib/projects.mjs";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";

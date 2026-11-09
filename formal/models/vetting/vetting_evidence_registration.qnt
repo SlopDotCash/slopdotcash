@@ -57,8 +57,8 @@ module vetting_evidence_registration {
     generation: int, bytes: int -> str, wholeMatches: bool }
   action init = s' = { now: 0, assessment: true, rows: ids.mapBy(_ => emptyRow), requests: ids.mapBy(_ => idle),
     generation: 1, bytes: physicalParts.mapBy(_ => "missing"), wholeMatches: true }
-  def fail(r: Request, status: int): Request = r.with("phase", "response").with("status", status)
-  def replay(r: Request, row: Row): Request = if (r.manifest != row.manifest) fail(r, 409)
+  def failedState(r: Request, status: int): Request = r.with("phase", "response").with("status", status)
+  def replay(r: Request, row: Row): Request = if (r.manifest != row.manifest) failedState(r, 409)
     else r.with("phase", "hints").with("status", 200).with("replayed", true)
   action tick = all { s.now < 3, s' = s.with("now", s.now + 1) }
   action removeUnreferencedAssessment = all { ids.forall(scope => s.rows.get(scope).manifest == 0), s' = s.with("assessment", false) }
@@ -76,28 +76,28 @@ module vetting_evidence_registration {
   action configuration(id: int, ready: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "configuration", s' = s.with("requests", s.requests.set(id,
-      if (ready) r.with("phase", "signature") else fail(r, 503))) }
+      if (ready) r.with("phase", "signature") else failedState(r, 503))) }
   }
   action signature(id: int, outcome: str): bool = {
     val r = s.requests.get(id)
     all { r.phase == "signature", Set("valid", "invalid", "unconfigured", "oversize", "throw").contains(outcome),
       s' = s.with("requests", s.requests.set(id, if (outcome == "valid") r.with("phase", "json")
-        else fail(r, if (outcome == "invalid") 401 else if (outcome == "unconfigured") 503 else if (outcome == "oversize") 413 else 500))) }
+        else failedState(r, if (outcome == "invalid") 401 else if (outcome == "unconfigured") 503 else if (outcome == "oversize") 413 else 500))) }
   }
   action json(id: int): bool = {
     val r = s.requests.get(id)
     all { r.phase == "json", s' = s.with("requests", s.requests.set(id,
-      if (Set("json", "shape", "digest", "empty", "limit").contains(r.fault)) fail(r, 400) else r.with("phase", "assessment"))) }
+      if (Set("json", "shape", "digest", "empty", "limit").contains(r.fault)) failedState(r, 400) else r.with("phase", "assessment"))) }
   }
   action assessment(id: int, readable: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "assessment", s' = s.with("requests", s.requests.set(id,
-      if (not(readable)) fail(r, 500) else if (not(s.assessment)) fail(r, 404) else r.with("phase", "objects"))) }
+      if (not(readable)) failedState(r, 500) else if (not(s.assessment)) failedState(r, 404) else r.with("phase", "objects"))) }
   }
   action objects(id: int): bool = {
     val r = s.requests.get(id)
     all { r.phase == "objects", s' = s.with("requests", s.requests.set(id,
-      if (r.fault != "none") fail(r, 400) else r.with("phase", "canonical"))) }
+      if (r.fault != "none") failedState(r, 400) else r.with("phase", "canonical"))) }
   }
   action canonical(id: int): bool = {
     val r = s.requests.get(id)
@@ -108,14 +108,14 @@ module vetting_evidence_registration {
     val r = s.requests.get(id)
     val row = s.rows.get(r.scope)
     all { r.phase == "initial-read", s' = s.with("requests", s.requests.set(id,
-      if (not(readable)) fail(r, 500) else if (row.manifest != 0) replay(r, row)
+      if (not(readable)) failedState(r, 500) else if (row.manifest != 0) replay(r, row)
       else r.with("phase", "batch").with("at", s.now))) }
   }
   action batch(id: int, operational: bool): bool = {
     val r = s.requests.get(id)
-    val exists = s.rows.get(r.scope).manifest != 0
-    val commits = operational and not(exists) and s.assessment
-    val cause = if (exists) "unique" else if (not(operational) or not(s.assessment)) "other" else "none"
+    val isPresent = s.rows.get(r.scope).manifest != 0
+    val commits = operational and not(isPresent) and s.assessment
+    val cause = if (isPresent) "unique" else if (not(operational) or not(s.assessment)) "other" else "none"
     all { r.phase == "batch",
       s' = s.with("rows", if (commits) s.rows.set(r.scope,
         { generation: s.generation, manifest: r.manifest, objects: Set(1, 2), audited: true, service: r.service, at: r.at }) else s.rows)
@@ -131,20 +131,20 @@ module vetting_evidence_registration {
     val r = s.requests.get(id)
     val row = s.rows.get(r.scope)
     all { r.phase == "catch-read", s' = s.with("requests", s.requests.set(id,
-      if (not(readable)) fail(r, 500) else if (row.manifest != 0) replay(r, row)
-      else fail(r, 500))) }
+      if (not(readable)) failedState(r, 500) else if (row.manifest != 0) replay(r, row)
+      else failedState(r, 500))) }
   }
   action hint(id: int, ioWorks: bool): bool = {
     val r = s.requests.get(id)
     val generation = s.rows.get(r.scope).generation
     val valid = ioWorks and (if (r.hintIndex < 3 and generation > 0)
       s.bytes.get(r.hintIndex + 1 + 3 * (generation - 1)) == "valid" else false)
-    val next = if (r.hintIndex == 1 and not(valid)) 3 else r.hintIndex + 1
+    val nextValue = if (r.hintIndex == 1 and not(valid)) 3 else r.hintIndex + 1
     val stored = if (valid and r.hintIndex == 0) r.stored.union(Set(1))
       else if (valid and r.hintIndex == 2) r.stored.union(Set(2)) else r.stored
     all { r.phase == "hints", r.hintIndex < 3,
-      s' = s.with("requests", s.requests.set(id, r.with("hintIndex", next).with("stored", stored)
-        .with("phase", if (next == 3) "response" else "hints"))) }
+      s' = s.with("requests", s.requests.set(id, r.with("hintIndex", nextValue).with("stored", stored)
+        .with("phase", if (nextValue == 3) "response" else "hints"))) }
   }
   action response(id: int, delivered: bool): bool = {
     val r = s.requests.get(id)

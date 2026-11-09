@@ -146,7 +146,7 @@ module project_skill_publication {
       else request.with("roles", request.roles.union(Set(role))).with("renderedRevision", request.revisions.get(request.project))
         .with("phase", if (role == 1) "files" else "select"))) }
   }
-  action select(id: int): bool = {
+  action selectRequest(id: int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "select", s' = s.with("requests", s.requests.set(id, respond(request, if (request.pathExists) 200 else 404, false))) }
   }
@@ -171,7 +171,7 @@ module project_skill_publication {
     any { omit(project), unpublish(project), pause(project), retire(project), restrict(project), revise(project),
       evidence(project, kind), changeLivePin, publishTemplate, mismatchedAsset(file), begin(id, method, route, project, yes),
       readProjects(id), readRestrictions(id), joined(id), templateReply(id, yes), clearanceReply(id, project), discovered(id),
-      fileReply(id, yes), render(id, yes), select(id), dependencyFailure(id), deliver(id, yes), s' = s }
+      fileReply(id, yes), render(id, yes), selectRequest(id), dependencyFailure(id), deliver(id, yes), s' = s }
   }
   val invariant = all { ids.forall(id => {
     val request = s.requests.get(id)
@@ -188,7 +188,7 @@ module project_skill_publication {
   action admitted(id: int): bool = lookup(id, "artifact").then(templateReply(id, true)).then(clearanceReply(id, 1))
   action contributor(id: int): bool = fileReply(id, true).then(fileReply(id, true)).then(render(id, true))
   action reviewer(id: int): bool = fileReply(id, true).then(fileReply(id, true)).then(render(id, true))
-  action complete(id: int): bool = contributor(id).then(reviewer(id)).then(select(id)).then(deliver(id, true))
+  action complete(id: int): bool = contributor(id).then(reviewer(id)).then(selectRequest(id)).then(deliver(id, true))
 
   run completeArtifactUsesOneCapturedRevisionTest = init.then(admitted(1)).then(complete(1))
     .expect(s.requests.get(1).status == 200 and s.requests.get(1).renderedRevision == 1 and invariant)
@@ -238,7 +238,7 @@ module project_skill_publication {
   run unknownMatchedFilenameNeedsCompletedPublicationTest = init.then(begin(1, "GET", "artifact", 1, false))
     .then(readProjects(1)).then(readRestrictions(1)).then(joined(1)).then(templateReply(1, true)).then(clearanceReply(1, 1))
     .then(complete(1)).expect(s.requests.get(1).status == 404 and s.requests.get(1).roles == ids and invariant)
-  run revisionChangesDoNotMixCapturedRoleInputsTest = init.then(admitted(1)).then(contributor(1)).then(revise(1)).then(reviewer(1)).then(select(1))
+  run revisionChangesDoNotMixCapturedRoleInputsTest = init.then(admitted(1)).then(contributor(1)).then(revise(1)).then(reviewer(1)).then(selectRequest(1))
     .expect(s.requests.get(1).renderedRevision == 1 and s.revisions.get(1) == 2 and invariant)
   run laterRequestReadsNewRevisionTest = init.then(admitted(1)).then(complete(1)).then(revise(1)).then(admitted(2)).then(complete(2))
     .expect(s.requests.get(1).renderedRevision == 1 and s.requests.get(2).renderedRevision == 2 and invariant)
@@ -252,6 +252,6 @@ module project_skill_publication {
     .expect(s.requests.get(1).status == 200 and not(s.requests.get(1).body) and invariant)
   run caughtHeadFailureRetainsFunctionLevelTextBodyTest = init.then(begin(1, "HEAD", "artifact", 1, true)).then(dependencyFailure(1))
     .expect(s.requests.get(1).status == 503 and s.requests.get(1).body and s.requests.get(1).caught and invariant)
-  run lostReplyDoesNotTurnCompletedArtifactIntoFailureTest = init.then(admitted(1)).then(contributor(1)).then(reviewer(1)).then(select(1)).then(deliver(1, false))
+  run lostReplyDoesNotTurnCompletedArtifactIntoFailureTest = init.then(admitted(1)).then(contributor(1)).then(reviewer(1)).then(selectRequest(1)).then(deliver(1, false))
     .expect(s.requests.get(1).status == 200 and not(s.requests.get(1).delivered) and invariant)
 }

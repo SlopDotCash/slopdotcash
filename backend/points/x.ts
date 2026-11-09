@@ -323,7 +323,10 @@ export async function handleX(
       code_challenge_method: "S256",
     }).toString();
     const response = json(200, { authorizationUrl: authorize.href });
-    response.headers.set("set-cookie", flowHeader(`${flowCookie}_${state}`, cap, 600));
+    response.headers.set(
+      "set-cookie",
+      flowHeader(`${flowCookie}_${state}`, cap, 600),
+    );
     return response;
   }
   if (route === "/disconnect" && request.method === "POST") {

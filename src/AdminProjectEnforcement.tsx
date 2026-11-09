@@ -211,7 +211,9 @@ export function ProjectEnforcementPanel({
         body.preview.sequence !== submitted.expectedSequence ||
         body.preview.revision.before !== submitted.expectedRevision
       )
-        throw new Error("The preview did not match this request. Preview again.");
+        throw new Error(
+          "The preview did not match this request. Preview again.",
+        );
       setReview({
         preview: body.preview,
         sourceKey,
@@ -222,7 +224,7 @@ export function ProjectEnforcementPanel({
                 ...submitted,
                 responsibleAccounts:
                   submitted.action === "reinstate_accounts"
-                    ? body.preview.accountReinstatements ?? []
+                    ? (body.preview.accountReinstatements ?? [])
                     : body.preview.maintainerBans,
               },
       });
@@ -252,18 +254,12 @@ export function ProjectEnforcementPanel({
         setError("The request changed. Preview the current action again.");
         return;
       }
-      await projectApiRequest(
-        "POST",
-        path("enforcement"),
-        submitted.request,
-        { expectedActorGithubId: actorId },
-      );
+      await projectApiRequest("POST", path("enforcement"), submitted.request, {
+        expectedActorGithubId: actorId,
+      });
       if (!mounted.current) return;
       await requireAdminActionActor(actorId);
-      if (
-        !mounted.current ||
-        currentRequestKey.current !== submitted.sourceKey
-      )
+      if (!mounted.current || currentRequestKey.current !== submitted.sourceKey)
         return;
       onDone(
         `${actionLabel(submitted.preview.action, submitted.preview.maintainerBans.length > 0)} recorded for ${submitted.preview.projectName}.`,

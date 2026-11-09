@@ -263,7 +263,8 @@ function setup(
         : null;
     },
     async get(key) {
-      if (reportReadUnavailable) throw new Error("Synthetic report storage outage");
+      if (reportReadUnavailable)
+        throw new Error("Synthetic report storage outage");
       const value = objects.get(key);
       if (!value) return null;
       const body = new Response(new Uint8Array(value.bytes).buffer).body;
@@ -1685,36 +1686,37 @@ describe("private intake: send outcomes", () => {
         const wrap = (
           statement: ReturnType<typeof t.db.prepare>,
           values: unknown[],
-        ): ReturnType<typeof t.db.prepare> => new Proxy(statement, {
-          get(target, property, receiver) {
-            if (property === "bind")
-              return (...next: unknown[]) => wrap(target.bind(...next), next);
-            if (property === "first")
-              return async () => {
-                if (
-                  sql.includes("FROM security_submissions WHERE id = ?") &&
-                  values[0] === submission.id &&
-                  t.row(submission.id).state === "submitting"
-                ) {
-                  if (!oldHeld && t.row(submission.id).attempt === 1) {
-                    oldHeld = true;
-                    enteredOld();
-                    await oldGate;
-                  } else if (
-                    advancedTo === "new-claim" &&
-                    !newHeld &&
-                    t.row(submission.id).attempt === 2
+        ): ReturnType<typeof t.db.prepare> =>
+          new Proxy(statement, {
+            get(target, property, receiver) {
+              if (property === "bind")
+                return (...next: unknown[]) => wrap(target.bind(...next), next);
+              if (property === "first")
+                return async () => {
+                  if (
+                    sql.includes("FROM security_submissions WHERE id = ?") &&
+                    values[0] === submission.id &&
+                    t.row(submission.id).state === "submitting"
                   ) {
-                    newHeld = true;
-                    enteredNew();
-                    await newGate;
+                    if (!oldHeld && t.row(submission.id).attempt === 1) {
+                      oldHeld = true;
+                      enteredOld();
+                      await oldGate;
+                    } else if (
+                      advancedTo === "new-claim" &&
+                      !newHeld &&
+                      t.row(submission.id).attempt === 2
+                    ) {
+                      newHeld = true;
+                      enteredNew();
+                      await newGate;
+                    }
                   }
-                }
-                return target.first();
-              };
-            return Reflect.get(target, property, receiver);
-          },
-        });
+                  return target.first();
+                };
+              return Reflect.get(target, property, receiver);
+            },
+          });
         return wrap(prepare(sql), []);
       });
       let older: ReturnType<typeof t.send> | undefined;
@@ -1746,7 +1748,9 @@ describe("private intake: send outcomes", () => {
           await Promise.race([
             newEntered,
             newer.then(() => {
-              throw new Error("The new send finished before its claim readback");
+              throw new Error(
+                "The new send finished before its claim readback",
+              );
             }),
           ]);
         }
@@ -2423,24 +2427,38 @@ describe("optional GitHub forwarding of a saved report", () => {
         const t = setup({ durable: true });
         try {
           const created = await t.create(REPORTER, { report: REPORT });
-          const submission = created.body.submission as NonNullable<Body["submission"]>;
+          const submission = created.body.submission as NonNullable<
+            Body["submission"]
+          >;
           const original = t.cases()[0];
           const draft = await t.create(REPORTER, {
             report: {
               ...REPORT,
               summary: "Separate unsent report for the forwarding gate",
-              description: "Separate synthetic reproduction, never sent to GitHub.",
+              description:
+                "Separate synthetic reproduction, never sent to GitHub.",
             },
           });
-          const unsent = draft.body.submission as NonNullable<Body["submission"]>;
+          const unsent = draft.body.submission as NonNullable<
+            Body["submission"]
+          >;
           const authorization = await t.call(
-            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/authorize`,
+            {},
           );
-          await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
-          if (pendingState === "uncertain") t.github.faults.create = "timeout-after-create";
+          await t.authorize(
+            REPORTER,
+            authorization.body.authorizeUrl as string,
+          );
+          if (pendingState === "uncertain")
+            t.github.faults.create = "timeout-after-create";
           else t.github.faults.get = "error";
           const sent = await t.call(
-            REPORTER, "POST", `security-submissions/${submission.id}/send`,
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/send`,
             { expectedRevision: submission.revision },
           );
           expect(sent.body.submission?.state).toBe(pendingState);
@@ -2450,41 +2468,64 @@ describe("optional GitHub forwarding of a saved report", () => {
             for (const entry of [sent.body.submission, unsent]) {
               if (!entry) throw new Error("Missing stored report");
               const held = await t.call(
-                MAINTAINER, "POST", `security-submissions/${entry.id}/review`,
+                MAINTAINER,
+                "POST",
+                `security-submissions/${entry.id}/review`,
                 {
-                  expectedRevision: (entry.intake as { revision: number }).revision,
+                  expectedRevision: (entry.intake as { revision: number })
+                    .revision,
                   decision: "request-information",
-                  reason: "Do not forward another copy; retain the received report.",
+                  reason:
+                    "Do not forward another copy; retain the received report.",
                 },
               );
               expect(held.status).toBe(200);
             }
           } else t.setReportReadUnavailable(true);
           t.advance(2 * 60 * 60 * 1000 + 1000);
-          const expired = await t.reconcile(submission.id, Number(t.row(submission.id).revision));
+          const expired = await t.reconcile(
+            submission.id,
+            Number(t.row(submission.id).revision),
+          );
           expect(expired.body.error).toBe("grant_required");
           const renewed = await t.call(
-            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/authorize`,
+            {},
           );
           expect(renewed.status).toBe(200);
           expect(renewed.body.submission?.state).toBe(pendingState);
-          expect((await t.authorize(REPORTER, renewed.body.authorizeUrl as string)).status).toBe(303);
+          expect(
+            (await t.authorize(REPORTER, renewed.body.authorizeUrl as string))
+              .status,
+          ).toBe(303);
           const resend = await t.call(
-            REPORTER, "POST", `security-submissions/${submission.id}/send`,
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/send`,
             { expectedRevision: Number(t.row(submission.id).revision) },
           );
           expect(resend.body.error).toBe(
-            pendingState === "uncertain" ? "reconcile_required" : "already_submitted",
+            pendingState === "uncertain"
+              ? "reconcile_required"
+              : "already_submitted",
           );
           const refusedDraft = await t.call(
-            REPORTER, "POST", `security-submissions/${unsent.id}/authorize`, {},
+            REPORTER,
+            "POST",
+            `security-submissions/${unsent.id}/authorize`,
+            {},
           );
           if (barrier === "human-hold") {
             expect(refusedDraft.status).toBe(409);
             expect(refusedDraft.body.error).toBe("screening_required");
           } else expect(refusedDraft.status).toBeGreaterThanOrEqual(500);
           t.github.faults.get = "ok";
-          const recovered = await t.reconcile(submission.id, Number(t.row(submission.id).revision));
+          const recovered = await t.reconcile(
+            submission.id,
+            Number(t.row(submission.id).revision),
+          );
           expect(recovered.body.submission?.state).toBe("receipt-verified");
           expect(recovered.body.submission?.caseId).toBe(original.id);
           expect(t.github.counts.posts).toBe(1);
@@ -2493,7 +2534,10 @@ describe("optional GitHub forwarding of a saved report", () => {
           expect(t.cases()).toHaveLength(2);
           // Terminal refusal takes precedence even if the body cannot be read.
           const closed = await t.call(
-            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+            REPORTER,
+            "POST",
+            `security-submissions/${submission.id}/authorize`,
+            {},
           );
           expect(closed.body.error).toBe("submission_closed");
         } finally {

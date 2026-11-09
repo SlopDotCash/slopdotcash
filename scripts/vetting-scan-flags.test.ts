@@ -1135,7 +1135,9 @@ test("a withdrawn reporter's new flag is outside an older scan's immutable snaps
   expect(
     (
       await postResult(
-        await scanFixture(assessment.id, "clean", { runId: "scan-refiled-flag" }),
+        await scanFixture(assessment.id, "clean", {
+          runId: "scan-refiled-flag",
+        }),
       )
     ).status,
   ).toBe(200);

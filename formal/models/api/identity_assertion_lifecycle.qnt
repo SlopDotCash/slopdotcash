@@ -78,14 +78,14 @@ module identity_assertion_lifecycle {
   action readFlow(id: int): bool = {
     val poll = s.polls.get(id)
     val found = s.flowPresent and poll.capability and poll.stamp < flowExpiry
-    val next = if (not(found) or not(poll.audience)) ending(poll, "410")
+    val nextValue = if (not(found) or not(poll.audience)) ending(poll, "410")
       else if (poll.endpointLocal != s.local) ending(poll, "403")
       else if (Set("pending", "callback_processing").contains(s.flowStatus)) ending(poll, "202")
       else if (s.flowStatus != "callback_complete") ending(poll, "410")
       else if (s.local and not(s.node)) ending(poll, "502")
       else poll.with("phase", if (s.local) "issue-clock" else "derive")
     all { poll.phase == "flow-read",
-      s' = s.with("polls", s.polls.set(id, next.with("snapshotStatus", if (found) s.flowStatus else "none"))) }
+      s' = s.with("polls", s.polls.set(id, nextValue.with("snapshotStatus", if (found) s.flowStatus else "none"))) }
   }
   action derive(id: int, ok: bool): bool = {
     val poll = s.polls.get(id)

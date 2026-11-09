@@ -47,7 +47,7 @@ module vetting_verified_parts {
       .with("hashDestroyed", mode == "whole" and not(bounded)) }
   action emptyPart = all { s.phase == "get", s.mode == "part",
     s' = s.with("expectedSize", 0) }
-  action get(present: bool): bool = all { s.phase == "get",
+  action getRecord(present: bool): bool = all { s.phase == "get",
     s' = if (present) s.with("phase", "acquire")
       else s.with("phase", "done").with("outcome", "error")
         .with("primary", "missing").with("preserved", "missing")
@@ -67,11 +67,11 @@ module vetting_verified_parts {
     s' = if (matches) s.with("phase", "read")
       else s.with("phase", "cancel").with("primary", "metadata")
         .with("preserved", "metadata") }
-  action fragment(length: int, matches: bool): bool = all {
-    s.phase == "read", Set(1, 2, 3).contains(length),
-    s' = if (s.offset + length > s.expectedSize)
+  action fragment(byteLength: int, matches: bool): bool = all {
+    s.phase == "read", Set(1, 2, 3).contains(byteLength),
+    s' = if (s.offset + byteLength > s.expectedSize)
       s.with("phase", "cancel").with("primary", "overflow").with("preserved", "overflow")
-      else s.with("offset", s.offset + length).with("bytesMatch", s.bytesMatch and matches) }
+      else s.with("offset", s.offset + byteLength).with("bytesMatch", s.bytesMatch and matches) }
   action readError = all { s.phase == "read",
     s' = s.with("phase", "cancel").with("primary", "read").with("preserved", "read") }
   action wrongExpectedDigest = all { s.phase == "read",
@@ -112,8 +112,8 @@ module vetting_verified_parts {
   action step = {
     nondet mode = Set("part", "whole").oneOf()
     nondet yes = Set(false, true).oneOf()
-    nondet length = Set(1, 2, 3).oneOf()
-    any { begin(mode, yes), emptyPart, get(yes), fetchError, acquire, retirementMarker, metadata(yes), fragment(length, yes),
+    nondet byteLength = Set(1, 2, 3).oneOf()
+    any { begin(mode, yes), emptyPart, getRecord(yes), fetchError, acquire, retirementMarker, metadata(yes), fragment(byteLength, yes),
       readError, wrongExpectedDigest, eof, cancelStart, cancelResult(yes), release, finishError,
       feed, wholeHash(yes), callerCancel, s' = s }
   }
@@ -129,30 +129,30 @@ module vetting_verified_parts {
     s.phase == "done" and s.mode == "whole" implies s.hashDestroyed,
     s.outcome == "verified" implies s.primary == "none" and
       (if (s.mode == "part") s.verified == Set(0) else s.verified == Set(0, 1) and s.fed == [0, 1]) }
-  action part = begin("part", true).then(get(true)).then(acquire)
-  action whole = begin("whole", true).then(get(true)).then(acquire)
+  action part = begin("part", true).then(getRecord(true)).then(acquire)
+  action whole = begin("whole", true).then(getRecord(true)).then(acquire)
   action validPart = metadata(true).then(fragment(1, true)).then(fragment(1, true)).then(eof).then(release)
   action rejectCleanup(ok: bool): bool = cancelStart.then(cancelResult(ok)).then(release).then(finishError)
-  action secondPart = feed.then(get(true)).then(acquire).then(validPart).then(feed)
+  action secondPart = feed.then(getRecord(true)).then(acquire).then(validPart).then(feed)
   run exactBytesRequireEofTest = init.then(part).then(metadata(true)).then(fragment(2, true))
     .expect(s.outcome == "pending" and s.readerOwned).then(eof).then(release).expect(s.outcome == "verified" and invariant)
   run validFragmentedPartReleasesReaderTest = init.then(part).then(validPart).expect(s.releases == 1 and not(s.cancelTried) and invariant)
   run oversizedRequestOwnsNoBodyTest = init.then(begin("part", false)).expect(s.acquisitions == 0 and s.primary == "size" and invariant)
-  run missingObjectOwnsNoReaderTest = init.then(begin("part", true)).then(get(false)).expect(s.acquisitions == 0 and s.primary == "missing" and invariant)
+  run missingObjectOwnsNoReaderTest = init.then(begin("part", true)).then(getRecord(false)).expect(s.acquisitions == 0 and s.primary == "missing" and invariant)
   run unavailableObjectIsNotMissingTest = init.then(begin("part", true)).then(fetchError)
     .expect(s.acquisitions == 0 and s.primary == "fetch-error" and invariant)
   run unavailableObjectDestroysWholeHasherTest = init.then(begin("whole", true)).then(fetchError)
     .expect(s.acquisitions == 0 and s.primary == "fetch-error" and s.hashDestroyed and invariant)
-  run emptyObjectVerifiesAtEofTest = init.then(begin("part", true)).then(emptyPart).then(get(true)).then(acquire)
+  run emptyObjectVerifiesAtEofTest = init.then(begin("part", true)).then(emptyPart).then(getRecord(true)).then(acquire)
     .then(metadata(true)).then(eof).then(release).expect(s.outcome == "verified" and s.offset == 0 and invariant)
-  run emptyObjectStillRequiresDigestTest = init.then(begin("part", true)).then(emptyPart).then(get(true)).then(acquire)
+  run emptyObjectStillRequiresDigestTest = init.then(begin("part", true)).then(emptyPart).then(getRecord(true)).then(acquire)
     .then(metadata(true)).then(wrongExpectedDigest).then(eof).then(rejectCleanup(true))
     .expect(s.primary == "digest" and s.outcome == "error" and invariant)
   run metadataRefusalCancelsWithoutReadingTest = init.then(part).then(metadata(false)).then(rejectCleanup(true))
     .expect(s.offset == 0 and s.cancelTried and s.sourceClosed and s.primary == "metadata" and invariant)
   run retiredMarkerCancelsAndReleasesWithoutReadingTest = init.then(part).then(retirementMarker).then(rejectCleanup(true))
     .expect(s.offset == 0 and s.cancelTried and s.sourceClosed and s.releases == 1 and s.primary == "retired" and invariant)
-  run retiredMarkerCleanupFailurePreservesRefusalTest = init.then(begin("part", true)).then(emptyPart).then(get(true)).then(acquire)
+  run retiredMarkerCleanupFailurePreservesRefusalTest = init.then(begin("part", true)).then(emptyPart).then(getRecord(true)).then(acquire)
     .then(retirementMarker).then(rejectCleanup(false))
     .expect(s.offset == 0 and s.primary == "retired" and s.verified == Set() and s.cancelFailed and s.releases == 1 and invariant)
   run metadataCleanupFailurePreservesPrimaryTest = init.then(part).then(metadata(false)).then(rejectCleanup(false))
@@ -171,9 +171,9 @@ module vetting_verified_parts {
     .expect(s.verified == Set(0, 1) and s.primary == "whole-digest" and s.hashDestroyed and invariant)
   run orderedWholeDigestSucceedsTest = init.then(whole).then(validPart).then(secondPart).then(wholeHash(true))
     .expect(s.outcome == "verified" and s.fed == [0, 1] and s.hashDestroyed and invariant)
-  run missingSecondPartDestroysWholeHasherTest = init.then(whole).then(validPart).then(feed).then(get(false))
+  run missingSecondPartDestroysWholeHasherTest = init.then(whole).then(validPart).then(feed).then(getRecord(false))
     .expect(s.fed == [0] and s.primary == "missing" and s.hashDestroyed and invariant)
-  run corruptSecondPartNeverFeedsWholeHasherTest = init.then(whole).then(validPart).then(feed).then(get(true)).then(acquire)
+  run corruptSecondPartNeverFeedsWholeHasherTest = init.then(whole).then(validPart).then(feed).then(getRecord(true)).then(acquire)
     .then(metadata(true)).then(fragment(2, false)).then(eof).then(rejectCleanup(true))
     .expect(s.fed == [0] and s.hashDestroyed and s.releases == 2 and invariant)
   run callerCancellationDoesNotAbortBoundedHelperTest = init.then(part).then(metadata(true)).then(callerCancel)

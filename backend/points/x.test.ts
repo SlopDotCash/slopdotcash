@@ -188,11 +188,7 @@ async function xLifecycleFixture() {
     .prepare(
       "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)",
     )
-    .run(
-      await sha256Hex(token),
-      "U_lifecycle",
-      "2026-11-08T01:00:00.000Z",
-    );
+    .run(await sha256Hex(token), "U_lifecycle", "2026-11-08T01:00:00.000Z");
   const deps: PointsDependencies = {
     db,
     rateLimitSecret: "fixture-lifecycle-secret".repeat(3),
@@ -265,7 +261,9 @@ for (const failure of ["cancelled", "token", "identity"] as const) {
         if (failure === "token" && path === "/2/oauth2/token")
           return new Response(null, { status: 503 });
         if (failure === "identity" && path === "/2/users/me")
-          return Response.json({ data: { id: "invalid", username: "fixture" } });
+          return Response.json({
+            data: { id: "invalid", username: "fixture" },
+          });
         return undefined;
       });
       const flow = await fixture.start();
@@ -340,9 +338,7 @@ test("X callback expiry is checked before claiming a pending flow", async () => 
     expect(fixture.providerPaths).toEqual([]);
     expect(
       fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
-    ).toEqual([
-      { status: "pending" },
-    ]);
+    ).toEqual([{ status: "pending" }]);
   } finally {
     fixture.sqlite.close();
   }
@@ -368,9 +364,7 @@ for (const [at, expected] of [
       expect(response.headers.get("location")).toBe(`/points?x=${expected}`);
       expect(
         fixture.sqlite.prepare("SELECT x_id FROM points_x_links").all(),
-      ).toEqual(
-        expected === "connected" ? [{ x_id: "987654321" }] : [],
-      );
+      ).toEqual(expected === "connected" ? [{ x_id: "987654321" }] : []);
       expect(fixture.providerPaths).toContain("/2/oauth2/revoke");
     } finally {
       fixture.sqlite.close();
@@ -398,9 +392,7 @@ test("a superseded X callback leaves the newer flow available", async () => {
     );
     expect(
       fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
-    ).toEqual([
-      { status: "pending" },
-    ]);
+    ).toEqual([{ status: "pending" }]);
     expect(
       fixture.sqlite.prepare("SELECT * FROM points_x_links").all(),
     ).toEqual([]);
@@ -425,7 +417,8 @@ test("X provider revoke failure preserves a verified public link", async () => {
   try {
     const flow = await fixture.start();
     fixture.setProviderReply(async (path) => {
-      if (path === "/2/oauth2/revoke") throw new Error("Fixture provider outage");
+      if (path === "/2/oauth2/revoke")
+        throw new Error("Fixture provider outage");
       return undefined;
     });
     const response = await fixture.call(
@@ -436,9 +429,7 @@ test("X provider revoke failure preserves a verified public link", async () => {
     expect(response.headers.get("location")).toBe("/points?x=connected");
     expect(
       fixture.sqlite.prepare("SELECT x_id,public FROM points_x_links").all(),
-    ).toEqual([
-      { x_id: "987654321", public: 1 },
-    ]);
+    ).toEqual([{ x_id: "987654321", public: 1 }]);
     expect(
       fixture.sqlite.prepare("SELECT * FROM points_x_awards").all(),
     ).toEqual([]);
@@ -469,9 +460,7 @@ test("an X identity reserved to another actor is not reassigned", async () => {
     expect(response.headers.get("location")).toBe("/points?x=failed");
     expect(
       fixture.sqlite.prepare("SELECT actor_id FROM points_x_claims").all(),
-    ).toEqual([
-      { actor_id: "U_foreign" },
-    ]);
+    ).toEqual([{ actor_id: "U_foreign" }]);
     expect(
       fixture.sqlite.prepare("SELECT * FROM points_x_links").all(),
     ).toEqual([]);
@@ -513,9 +502,7 @@ test("X callback replay cannot claim a processing flow", async () => {
     expect(second.headers.get("location")).toBe("/points?x=failed");
     expect(
       fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
-    ).toEqual([
-      { status: "processing" },
-    ]);
+    ).toEqual([{ status: "processing" }]);
     release();
     expect((await first).headers.get("location")).toBe("/points?x=connected");
     expect(
@@ -580,14 +567,10 @@ for (const revokeFails of [false, true]) {
       expect(response.headers.has("set-cookie")).toBe(false);
       expect(
         fixture.sqlite.prepare("SELECT x_id,public FROM points_x_links").all(),
-      ).toEqual([
-        { x_id: "987654321", public: 1 },
-      ]);
+      ).toEqual([{ x_id: "987654321", public: 1 }]);
       expect(
         fixture.sqlite.prepare("SELECT status FROM points_x_flows").all(),
-      ).toEqual([
-        { status: "processing" },
-      ]);
+      ).toEqual([{ status: "processing" }]);
       expect(fixture.providerPaths).toContain("/2/oauth2/revoke");
     } finally {
       fixture.sqlite.close();
@@ -647,8 +630,12 @@ test("out-of-order X start responses keep distinct browser cookies", async () =>
   const fixture = await xLifecycleFixture();
   let release = () => {};
   let reached = () => {};
-  const firstCommitted = new Promise<void>((resolve) => { reached = resolve; });
-  const firstRelease = new Promise<void>((resolve) => { release = resolve; });
+  const firstCommitted = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const firstRelease = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let first: ReturnType<typeof fixture.start> | undefined;
   try {
     const batch = fixture.db.batch.bind(fixture.db);
@@ -665,7 +652,9 @@ test("out-of-order X start responses keep distinct browser cookies", async () =>
     first = fixture.start();
     await Promise.race([
       firstCommitted,
-      first.then(() => { throw new Error("First start returned before its hold"); }),
+      first.then(() => {
+        throw new Error("First start returned before its hold");
+      }),
     ]);
     const second = await fixture.start();
     release();
@@ -674,12 +663,18 @@ test("out-of-order X start responses keep distinct browser cookies", async () =>
     // Apply B then A as response order. Distinct names coexist in the browser.
     const cookies = `${second.cookie}; ${earlier.cookie}`;
     const old = await fixture.call(
-      `x/callback?state=${earlier.state}&code=fixture`, undefined, cookies,
+      `x/callback?state=${earlier.state}&code=fixture`,
+      undefined,
+      cookies,
     );
     expect(old.headers.get("location")).toBe("/points?x=failed");
-    expect(old.headers.get("set-cookie")).toStartWith(`${earlier.cookie.split("=")[0]}=;`);
+    expect(old.headers.get("set-cookie")).toStartWith(
+      `${earlier.cookie.split("=")[0]}=;`,
+    );
     const current = await fixture.call(
-      `x/callback?state=${second.state}&code=fixture`, undefined, second.cookie,
+      `x/callback?state=${second.state}&code=fixture`,
+      undefined,
+      second.cookie,
     );
     expect(current.headers.get("location")).toBe("/points?x=connected");
   } finally {
@@ -700,7 +695,9 @@ test("an already-started legacy X flow can complete without clearing its shared 
       `__Host-slop_x_flow=${cap}`,
     );
     expect(response.headers.get("location")).toBe("/points?x=connected");
-    expect(response.headers.get("set-cookie")).toStartWith(`__Host-slop_x_flow_${flow.state}=;`);
+    expect(response.headers.get("set-cookie")).toStartWith(
+      `__Host-slop_x_flow_${flow.state}=;`,
+    );
   } finally {
     fixture.sqlite.close();
   }

@@ -129,7 +129,12 @@ test("delivery model: retired workers cannot change successor metadata or duplic
   try {
     const first = (await h.claim())[0];
     expect(
-      await recordDeliveryDestination(h.deps.db, first, "a".repeat(64), "activity"),
+      await recordDeliveryDestination(
+        h.deps.db,
+        first,
+        "a".repeat(64),
+        "activity",
+      ),
     ).toBe(true);
     h.advance(300_001);
     expect(await h.claim()).toEqual([]);
@@ -149,19 +154,41 @@ test("delivery model: retired workers cannot change successor metadata or duplic
     h.advance(60_001);
     const second = (await h.claim())[0];
     expect(
-      await recordDeliveryDestination(h.deps.db, second, "b".repeat(64), "activity"),
+      await recordDeliveryDestination(
+        h.deps.db,
+        second,
+        "b".repeat(64),
+        "activity",
+      ),
     ).toBe(true);
     expect(
-      await recordDelivery(h.deps, second, "provider-accepted", null, "activity"),
+      await recordDelivery(
+        h.deps,
+        second,
+        "provider-accepted",
+        null,
+        "activity",
+      ),
     ).toBe(true);
     // Even a repeated completion in the same millisecond appends no event.
     expect(
-      await recordDelivery(h.deps, second, "provider-accepted", null, "activity"),
+      await recordDelivery(
+        h.deps,
+        second,
+        "provider-accepted",
+        null,
+        "activity",
+      ),
     ).toBe(false);
     const retained = h.row();
     h.advance(10_000);
     expect(
-      await recordDeliveryDestination(h.deps.db, first, "a".repeat(64), "activity"),
+      await recordDeliveryDestination(
+        h.deps.db,
+        first,
+        "a".repeat(64),
+        "activity",
+      ),
     ).toBe(false);
     expect(await retryWithoutProviderCall(h.deps, first, "activity")).toBe(
       "superseded",

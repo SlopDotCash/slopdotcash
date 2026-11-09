@@ -21,7 +21,7 @@ module ui_payment_page_assembly {
   }
   pure def rejected(value: State, reason: str): State =
     value.with("phase", "error").with("published", false).with("error", reason)
-  pure def totalAmount(rows: List[int]): int = rows.fold(0, (sum, id) => sum + id)
+  pure def totalAmount(rows: List[int]): int = rows.foldl(0, (sum, id) => sum + id)
   action init = s' = initial("direct", 0)
   action vaultMode = all { s.pages == 0, s.phase == "request",
     s' = s.with("mode", "vault") }
@@ -33,17 +33,17 @@ module ui_payment_page_assembly {
     s' = rejected(s, "transport") }
   // rowsValid covers the source's per-row schemas. headersValid covers
   // safe-integer/canonical-number parsing and the page limit of 100.
-  action receivePage(rows: List[int], through: int, total: int, next: int,
+  action receivePage(rows: List[int], through: int, total: int, nextValue: int,
     rowsValid: bool, headersValid: bool, pageAmount: int): bool = {
     val valid = rowsValid and headersValid and through >= 0 and total >= 0
       and (s.through == -1 or through == s.through)
       and (s.total == -1 or total == s.total)
-      and (next == -1 or (rows.length() > 0 and next > s.after and next <= through))
+      and (nextValue == -1 or (rows.length() > 0 and nextValue > s.after and nextValue <= through))
       and (s.mode == "vault" or pageAmount == totalAmount(rows))
     all { s.phase == "waiting", batches.contains(rows),
       s' = if (not(valid)) rejected(s, "page")
       else s.with("phase", "rows").with("through", through).with("total", total)
-        .with("incoming", rows).with("offset", 0).with("next", next) }
+        .with("incoming", rows).with("offset", 0).with("next", nextValue) }
   }
   // The legacy path is selected only when ALL three pagination properties
   // are absent on the first response. It does not compare the sum or dedupe.
@@ -52,7 +52,7 @@ module ui_payment_page_assembly {
       batches.contains(rows),
       s' = if (not(rowsValid and canonicalAmount)) rejected(s, "legacy-shape")
       else s.with("phase", "complete").with("rows", rows)
-        .with("seen", rows.fold(Set(), (seen, id) => seen.union(Set(id))))
+        .with("seen", rows.foldl(Set(), (seen, id) => seen.union(Set(id))))
         .with("published", true).with("legacy", true) }
   }
   // The synchronous source loop may append a private prefix before a later
@@ -84,12 +84,12 @@ module ui_payment_page_assembly {
     nondet rows = batches.oneOf()
     nondet through = Set(-1, 0, 1, 2, 3).oneOf()
     nondet total = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet next = Set(-1, 0, 1, 2, 3).oneOf()
+    nondet nextValue = Set(-1, 0, 1, 2, 3).oneOf()
     nondet shape = Set(false, true).oneOf()
     nondet headers = Set(false, true).oneOf()
     nondet amount = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
     any { vaultMode, originRefusal, requestPage, transportFailure,
-      receivePage(rows, through, total, next, shape, headers, amount),
+      receivePage(rows, through, total, nextValue, shape, headers, amount),
       receiveLegacy(rows, shape, headers), appendRow, finishPage,
       cancelWaiting, lateReply, retry, s' = s }
   }

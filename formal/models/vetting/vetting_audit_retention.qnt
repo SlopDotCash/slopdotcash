@@ -35,7 +35,7 @@ module vetting_audit_retention {
     not(s.inserted.contains(row)),
     s' = s.with("rows", s.rows.union(Set(row))).with("inserted", s.inserted.union(Set(row)))
       .with("result", "none") }
-  action mode(enabled: bool): bool = all { s.phase == "idle", s' = s.with("enabled", enabled) }
+  action mode(isEnabled: bool): bool = all { s.phase == "idle", s' = s.with("enabled", isEnabled) }
   action advance = all { s.now < 14, s' = s.with("now", s.now + 1) }
   // observedCutoff records invocation timing for the model, not a runtime
   // argument. pruneAccessAudit passes no date into its DELETE statement.
@@ -67,8 +67,8 @@ module vetting_audit_retention {
     s' = s.with("phase", "idle").with("result", "aborted") }
   action step = {
     nondet row = ids.oneOf()
-    nondet enabled = Set(false, true).oneOf()
-    any { insertEdge(row), mode(enabled), advance, scheduled, direct(Set(row)), direct(s.rows),
+    nondet isEnabled = Set(false, true).oneOf()
+    any { insertEdge(row), mode(isEnabled), advance, scheduled, direct(Set(row)), direct(s.rows),
       execute, inspect(row), commit, finishAbort, s' = s }
   }
   val invariant = all {

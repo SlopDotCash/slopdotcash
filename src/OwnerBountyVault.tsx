@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
@@ -102,9 +102,19 @@ function ExistingBountyVault({
       }
   >({ status: "loading" });
   const [reload, setReload] = useState(0);
+  const generation = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [project, reload],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh repeats the private balance read.
   useEffect(() => {
     let active = true;
+    const currentGeneration = generation.current;
+    const owns = () => active && generation.current === currentGeneration;
     // A balance refresh must not unmount the wallet action and erase its
     // finalized result or an in-flight recovery form.
     setState((previous) =>
@@ -115,7 +125,7 @@ function ExistingBountyVault({
       let identityVerified = false;
       try {
         const session = await currentProjectSession();
-        if (!active) return;
+        if (!owns()) return;
         if (!session) throw new Error("Sign in to view private bounty funds.");
         actorId = session.githubId;
         setState((previous) =>
@@ -123,7 +133,9 @@ function ExistingBountyVault({
             ? previous
             : { status: "loading" },
         );
-        let result: { funds: PrivateFunds | null; canSetup: boolean } | undefined;
+        let result:
+          | { funds: PrivateFunds | null; canSetup: boolean }
+          | undefined;
         let failure: unknown;
         let failed = false;
         try {
@@ -140,23 +152,25 @@ function ExistingBountyVault({
           failed = true;
           failure = cause;
           if (
-            active &&
+            owns() &&
             cause instanceof ProjectApiError &&
             [401, 403, 404, 410].includes(cause.status)
           )
             setState({ status: "error", message: errorMessage(cause) });
         }
-        if (!active) return;
+        if (!owns()) return;
         const current = await currentProjectSession();
-        if (!active) return;
+        if (!owns()) return;
         if (current?.githubId !== actorId)
-          throw new Error("Your account changed. Refresh private bounty funds.");
+          throw new Error(
+            "Your account changed. Refresh private bounty funds.",
+          );
         identityVerified = true;
         if (failed) throw failure;
         if (!result) throw new Error("Bounty funds could not load.");
         setState({ status: "ready", ...result, actorId });
       } catch (error: unknown) {
-        if (!active) return;
+        if (!owns()) return;
         const message = errorMessage(error, "Bounty funds could not load.");
         const temporary =
           identityVerified &&

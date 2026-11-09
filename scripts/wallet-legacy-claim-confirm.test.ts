@@ -253,9 +253,14 @@ test("a concurrent historical winner is retried before wallet authorization", as
     expect(claimId).not.toBe(historicalClaimId);
     expect(
       sqlite
-        .query("SELECT source,supersedes_claim_id FROM wallet_claims WHERE id=?")
+        .query(
+          "SELECT source,supersedes_claim_id FROM wallet_claims WHERE id=?",
+        )
         .get(claimId),
-    ).toEqual({ source: "d1_registry", supersedes_claim_id: historicalClaimId });
+    ).toEqual({
+      source: "d1_registry",
+      supersedes_claim_id: historicalClaimId,
+    });
     const challenge = await payments("/wallets/challenge", { claimId });
     expect(challenge.status).toBe(200);
     const signature = Buffer.from(

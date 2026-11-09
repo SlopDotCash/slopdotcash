@@ -100,6 +100,14 @@ export function usePublicResource<T extends object>(
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [enabled, load, fallbackMessage, timeoutMs, attempt, retain, retainFailure]);
+  }, [
+    enabled,
+    load,
+    fallbackMessage,
+    timeoutMs,
+    attempt,
+    retain,
+    retainFailure,
+  ]);
   return [state, useCallback(() => setAttempt((value) => value + 1), [])];
 }

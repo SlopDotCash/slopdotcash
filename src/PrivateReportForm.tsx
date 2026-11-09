@@ -110,6 +110,7 @@ export function PrivateReportForm({
     message: string;
   } | null>(null);
   const storageKey = `${PREFIX}${owner}:${project.id}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -253,9 +254,7 @@ export function PrivateReportForm({
           return;
         }
         setNeedsSession(false);
-        setError(
-          "Your account is verified. Review and retry the same report.",
-        );
+        setError("Your account is verified. Review and retry the same report.");
         return;
       }
       const attempt = { ...saved, attempted: true };

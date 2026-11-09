@@ -292,9 +292,9 @@ test("acknowledgment during a failed send prevents a later backup notice", async
       state: "ambiguous",
       acknowledged_at: at,
     });
-    expect(
-      h.rows().filter((row) => row.escalation_of === original.id),
-    ).toEqual([]);
+    expect(h.rows().filter((row) => row.escalation_of === original.id)).toEqual(
+      [],
+    );
   } finally {
     h.sqlite.close();
   }

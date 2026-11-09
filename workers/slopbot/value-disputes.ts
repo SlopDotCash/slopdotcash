@@ -171,8 +171,7 @@ export async function affectedValueActor(
     if (
       rows.some(
         (row) =>
-          row.user?.node_id === actor.node_id &&
-          reviews.has(row.node_id ?? ""),
+          row.user?.node_id === actor.node_id && reviews.has(row.node_id ?? ""),
       )
     )
       return true;
@@ -200,9 +199,15 @@ export async function affectedValueActor(
     throw new Error("Value actor commit evidence is unavailable");
   if (pull.head?.sha !== currentHead)
     throw new Error("Value actor commit evidence changed");
-  const commits = await pullCommits(github, `/repos/${repository}`, path, pull, {
-    requireImmutableRange: true,
-  });
+  const commits = await pullCommits(
+    github,
+    `/repos/${repository}`,
+    path,
+    pull,
+    {
+      requireImmutableRange: true,
+    },
+  );
   return commits.some((commit) => commit.author?.node_id === actor.node_id);
 }
 

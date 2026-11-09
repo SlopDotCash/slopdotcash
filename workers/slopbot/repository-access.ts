@@ -10,7 +10,8 @@ import {
 } from "../../src/lib/project-contracts";
 import { appJwt } from "./github";
 
-const REPOSITORY_ACCESS_URL = "https://slopbot.internal/v1/repository-access";
+export const REPOSITORY_ACCESS_URL =
+  "https://slopbot.internal/v1/repository-access";
 
 const REPOSITORY = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/u;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;

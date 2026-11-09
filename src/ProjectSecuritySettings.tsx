@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { errorMessage } from "./lib/errors";
 import { type ProjectSessionState, projectApiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -37,6 +43,7 @@ export function ProjectSecuritySettings({
   const actorId =
     session.status === "signed-in" ? session.session.githubId : null;
   const generation = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(
     () => () => {
       generation.current += 1;
@@ -76,7 +83,10 @@ export function ProjectSecuritySettings({
           await requireSecuritySettingsActor(actorId);
           if (!owns()) return;
           if (result.viewer.githubId !== actorId) {
-            onAccessLost("Your account changed. Retry management access.", true);
+            onAccessLost(
+              "Your account changed. Retry management access.",
+              true,
+            );
             return;
           }
           if (result.canManageBounty) setPermitted(`${project.id}:${actorId}`);
@@ -90,7 +100,10 @@ export function ProjectSecuritySettings({
           const failure = await checkedSecuritySettingsFailure(cause, actorId);
           if (!owns()) return;
           onAccessLost(
-            errorMessage(failure, "Current project access could not be checked."),
+            errorMessage(
+              failure,
+              "Current project access could not be checked.",
+            ),
             isSecuritySettingsIdentityChange(failure),
           );
         }

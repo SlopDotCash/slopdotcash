@@ -691,7 +691,9 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         const page = Number(url.searchParams.get("page") ?? 1);
         // GitHub's PR endpoint stops at 250 even when metadata reports more.
         return Response.json(
-          commitRows().slice(0, 250).slice((page - 1) * 100, page * 100),
+          commitRows()
+            .slice(0, 250)
+            .slice((page - 1) * 100, page * 100),
         );
       }
       if (path.endsWith("/permission"))
@@ -1456,7 +1458,9 @@ for (const count of [1, 251]) {
       ]);
       expect(run.sql("SELECT * FROM slopbot_value_journal")).toEqual(history);
       expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
-      expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(false);
+      expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(
+        false,
+      );
     });
   });
 }
@@ -1469,7 +1473,9 @@ test("an incomplete long-PR author comparison retries before opening a value dis
       senderId: IMPLEMENTER,
       subject: "value",
     });
-    await expect(run.deliver(request)).rejects.toThrow("appeal job was retried");
+    await expect(run.deliver(request)).rejects.toThrow(
+      "appeal job was retried",
+    );
     expect(run.modelInputs).toHaveLength(0);
     expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
     expect(

@@ -486,10 +486,13 @@ test("evidence deep links load only after sign-in and select one reasoned reader
     0,
   );
   holdNextInventory = true;
-  const nextInventory = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === "/api/v1/operator/vetting-evidence",
+  const nextInventory = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/operator/vetting-evidence",
   );
-  const lookup = page.getByRole("button", { name: "Inspect evidence inventory" });
+  const lookup = page.getByRole("button", {
+    name: "Inspect evidence inventory",
+  });
   if (!(await lookup.isVisible()))
     await page.getByText("Find evidence", { exact: true }).click();
   await lookup.click();
@@ -504,9 +507,10 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   }
   await (await nextInventory).finished();
   await page.evaluate(
-    () => new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    ),
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
   );
   await expect(
     page.getByRole("heading", { name: "Evidence inventory" }),
@@ -517,15 +521,19 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   viewer = "4242";
   inventoryDenied = false;
   await page.reload({ waitUntil: "networkidle" });
-  await page.getByRole("button", {
-    name: `Select Second object, ${otherHash.slice(0, 12)}`,
-  }).click();
-  await page.getByLabel("Reason to inspect Second object")
+  await page
+    .getByRole("button", {
+      name: `Select Second object, ${otherHash.slice(0, 12)}`,
+    })
+    .click();
+  await page
+    .getByLabel("Reason to inspect Second object")
     .fill("Inspect after renewed operator identity");
   diagnostics.allowResponse(403, "POST", `/api/v1/${base}/${otherHash}/grant`);
   holdNextGrant = true;
-  const refusedGrant = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === `/api/v1/${base}/${otherHash}/grant`,
+  const refusedGrant = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/${base}/${otherHash}/grant`,
   );
   await page.getByRole("button", { name: "Read Second object" }).click();
   await heldGrant;
@@ -539,9 +547,10 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("heading", { name: "Evidence inventory" }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(0);
+  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
+    0,
+  );
   await expect(page.getByRole("alert")).toContainText(
     "Vetting operator access required.",
   );
-
 });

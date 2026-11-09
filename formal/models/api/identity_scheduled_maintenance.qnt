@@ -44,8 +44,8 @@ module identity_scheduled_maintenance {
         .with("next", if (s.next == 6) 6 else s.next + 1) }
   action cleanupFailure = all { s.running, s.cleanupPhase == "ready",
     s' = s.with("cleanupPhase", "failed") }
-  action renewalWrite(enabled: bool): bool = all { s.running, s.renewal == "pending",
-    s' = s.with("renewal", "committed").with("intakeEnabled", enabled).with("intakeWrites", s.intakeWrites + 1) }
+  action renewalWrite(isEnabled: bool): bool = all { s.running, s.renewal == "pending",
+    s' = s.with("renewal", "committed").with("intakeEnabled", isEnabled).with("intakeWrites", s.intakeWrites + 1) }
   action renewalReply(received: bool): bool = all { s.running, s.renewal == "committed",
     s' = s.with("renewal", if (received) "renewed" else "rejected") }
   // An equal/older candidate can return renewed without replacing the existing

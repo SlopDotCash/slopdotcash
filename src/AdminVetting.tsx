@@ -21,7 +21,13 @@ import {
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   checkedAdminActionFailure,
   isAdminActionAccessLoss,
@@ -749,6 +755,7 @@ export function VettingSection({
       },
     );
   }, [actorId, onAccessLost]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -989,6 +996,7 @@ export function ActivationClearance({
   );
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(
     () => () => {
       generation.current += 1;

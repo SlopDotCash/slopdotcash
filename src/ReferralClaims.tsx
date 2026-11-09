@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { networkLabel } from "./lib/network-names";
+import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
   clearPendingAttempt,
   createPendingAttempt,
@@ -9,7 +10,6 @@ import {
   updatePendingAttempt,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
-import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
 import {
   type ReferralAccount,
   type ReferralResponse,
@@ -90,13 +90,18 @@ export function ReferralClaims() {
   const action = useRef(0);
   const latestData = useRef(data);
   latestData.current = data;
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       action.current += 1;
     };
   }, []);
+  const readController = useRef<AbortController | null>(null);
+  // Retire the previous read at commit, before a granted Web Lock can resume
+  // its automatic pending-record cleanup. Fetch and display updates stay passive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(() => () => readController.current?.abort(), [revision]);
   const pendingIntent = useRef<{
     key: string;
     value: Pending | null | undefined;
@@ -114,6 +119,7 @@ export function ReferralClaims() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: user refresh rechecks the cached record.
   useEffect(() => {
     const controller = new AbortController();
+    readController.current = controller;
     setError("");
     setReview(null);
     fetch("/api/v1/referrals/me", {
@@ -149,7 +155,8 @@ export function ReferralClaims() {
             previous.value &&
             snapshot.value &&
             snapshot.value.attemptId === undefined &&
-            BigInt(previous.value.cumulative) >= BigInt(snapshot.value.cumulative)
+            BigInt(previous.value.cumulative) >=
+              BigInt(snapshot.value.cumulative)
           ) {
             // A legacy/older writer must not use a smaller total to confirm
             // this view's newer request. Keep the actual stored bytes separate.
@@ -305,12 +312,7 @@ export function ReferralClaims() {
           const result = { ...captured, hash };
           let updated = false;
           try {
-            updated = updatePendingAttempt(
-              key,
-              captured,
-              result,
-              localStorage,
-            );
+            updated = updatePendingAttempt(key, captured, result, localStorage);
           } catch {
             if (current()) {
               rememberPending(account, result, {
@@ -339,10 +341,7 @@ export function ReferralClaims() {
             }
           }
         } catch (cause) {
-          if (
-            (cause as { code?: unknown })?.code === 4001 &&
-            recorded.value
-          ) {
+          if ((cause as { code?: unknown })?.code === 4001 && recorded.value) {
             declined = true;
             if (!clearPendingAttempt(key, recorded.value, localStorage))
               throw new Error(

@@ -9,6 +9,7 @@ Object.assign(window, { walletLifetime: state });
 function WalletAttempt() {
   const { mounted, remember } = usePendingWalletAttempt<{
     hash: string | null;
+    attemptId?: string;
   }>(
     key,
     (raw) => JSON.parse(raw),

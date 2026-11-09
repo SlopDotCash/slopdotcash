@@ -110,8 +110,11 @@ export async function verifiedPart(
     });
   const reader = object.body.getReader();
   try {
-    if (!allowRetirementMarker &&
-      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] === EVIDENCE_RETIREMENT_METADATA_VALUE)
+    if (
+      !allowRetirementMarker &&
+      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
+        EVIDENCE_RETIREMENT_METADATA_VALUE
+    )
       throw Object.assign(new Error("Evidence target has retired"), {
         status: 410,
         code: "evidence_retired",
@@ -164,12 +167,19 @@ export async function observedPart(bucket: R2Bucket, key: string) {
     });
   const reader = object.body.getReader();
   try {
-    if (object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] === EVIDENCE_RETIREMENT_METADATA_VALUE)
+    if (
+      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
+      EVIDENCE_RETIREMENT_METADATA_VALUE
+    )
       throw Object.assign(new Error("Evidence target has retired"), {
         status: 410,
         code: "evidence_retired",
       });
-    if (!Number.isSafeInteger(object.size) || object.size < 0 || object.size > EVIDENCE_CHUNK_BYTES)
+    if (
+      !Number.isSafeInteger(object.size) ||
+      object.size < 0 ||
+      object.size > EVIDENCE_CHUNK_BYTES
+    )
       throw new Error("Evidence backup source exceeds bounded part size");
     const bytes = new Uint8Array(object.size);
     let offset = 0;
@@ -183,10 +193,17 @@ export async function observedPart(bucket: R2Bucket, key: string) {
     }
     if (offset !== bytes.byteLength)
       throw new Error("Evidence backup source length changed");
-    return { bytes, sha256: bytesToHex(sha256(bytes)), sizeBytes: bytes.byteLength };
+    return {
+      bytes,
+      sha256: bytesToHex(sha256(bytes)),
+      sizeBytes: bytes.byteLength,
+    };
   } catch (error) {
-    try { await reader.cancel(); }
-    catch { /* error-policy:J3 preserve the original backup refusal. */ }
+    try {
+      await reader.cancel();
+    } catch {
+      /* error-policy:J3 preserve the original backup refusal. */
+    }
     throw error;
   } finally {
     reader.releaseLock();
@@ -201,12 +218,7 @@ export async function verifyParts(
   digest: string,
 ) {
   return verifyPartSequence(chunks, digest, (chunk) =>
-    verifiedPart(
-      bucket,
-      chunkKey(key, chunk),
-      chunk.sha256,
-      chunk.sizeBytes,
-    ),
+    verifiedPart(bucket, chunkKey(key, chunk), chunk.sha256, chunk.sizeBytes),
   );
 }
 

@@ -56,10 +56,10 @@ module github_identity_exchange {
     s' = s.with("phase", "finally").with("result", "error").with("reason", "user-fetch") }
   action validateUser(kind: str, node: str): bool = {
     val basic = kind == "valid"
-    val fields = if (basic) Set("githubActorId", "githubLogin").union(
+    val fieldValues = if (basic) Set("githubActorId", "githubLogin").union(
       if (node == "valid-user") Set("githubNodeId") else Set()) else Set()
     all { s.phase == "user-value", userClasses.contains(kind), nodeClasses.contains(node),
-      s' = s.with("userClass", kind).with("nodeClass", node).with("fields", fields)
+      s' = s.with("userClass", kind).with("nodeClass", node).with("fields", fieldValues)
         .with("phase", "finally").with("result", if (basic) "identity" else "null")
         .with("reason", if (basic) "none" else "user-value") }
   }

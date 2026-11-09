@@ -1,6 +1,10 @@
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { projectImageApiFixture } from "../project-image-api-fixture.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 test.use({ video: "on" });
 
@@ -16,6 +20,8 @@ test("maintainers review incomplete assessments in private Inbox", async ({
   let role = "maintainer";
   let unavailable = false;
   let holdQueue = false;
+  let swapOnNextQueue = false;
+  let notificationReads = 0;
   let queueStarted = () => {};
   let releaseQueue = () => {};
   const queueWaiting = new Promise<void>((resolve) => {
@@ -79,6 +85,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       path === "/api/v1/notifications/incomplete-assessments" ||
       path === "/api/v1/project-session"
     ) {
+      if (path === "/api/v1/notifications") notificationReads++;
       if (path.endsWith("/incomplete-assessments")) paginationReads++;
       const response = await api.fetch(
         new Request(request.url(), {
@@ -89,6 +96,10 @@ test("maintainers review incomplete assessments in private Inbox", async ({
           },
         }),
       );
+      if (swapOnNextQueue && path.endsWith("/incomplete-assessments")) {
+        swapOnNextQueue = false;
+        role = "other";
+      }
       if (holdQueue && path.endsWith("/incomplete-assessments")) {
         holdQueue = false;
         queueStarted();
@@ -148,6 +159,45 @@ test("maintainers review incomplete assessments in private Inbox", async ({
       { exact: true },
     );
     await expect(privateNotice).toBeVisible();
+    // Hold the child's decoded B session, then refresh the still-live A
+    // parent. Removing the old child in that commit must retire its callback.
+    // The child's own heading is absent while its page loads. The parent's
+    // notification list is removed in the same commit that unmounts the child.
+    await page.waitForLoadState("networkidle");
+    await holdProjectSessionUntilUnmount(
+      page,
+      'ol[aria-label="Notifications"]',
+    );
+    swapOnNextQueue = true;
+    await queue.getByRole("button", { name: "More", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        (
+          window as typeof window & {
+            heldEditorSession: { waiting: boolean };
+          }
+        ).heldEditorSession.waiting,
+    );
+    role = "maintainer";
+    const readsBeforeRefresh = notificationReads;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.waitForFunction(() => {
+      const value = (
+        window as typeof window & {
+          heldEditorSession: { removed: boolean; released: boolean };
+        }
+      ).heldEditorSession;
+      return value.removed && value.released;
+    });
+    await expect(privateNotice).toBeVisible();
+    await expect(queue.getByRole("link")).toHaveCount(25);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    expect(notificationReads).toBe(readsBeforeRefresh + 1);
     // A's accepted page response arrives after the cookie belongs to B.
     // This child must invalidate the parent, including A's other notices.
     holdQueue = true;
@@ -188,6 +238,7 @@ test("maintainers review incomplete assessments in private Inbox", async ({
     await expect(queue).toHaveCount(0);
   } finally {
     releaseQueue();
+    await releaseHeldEditorSession(page);
     await api.dispose();
   }
 });

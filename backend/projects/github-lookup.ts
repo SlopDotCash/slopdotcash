@@ -581,7 +581,10 @@ export async function lookupGitHubRepository(
       { expression: `${commitSha}:LICENSE` },
       apiOrigin,
     );
-    const blob = source.object as { __typename?: unknown; oid?: unknown } | null;
+    const blob = source.object as {
+      __typename?: unknown;
+      oid?: unknown;
+    } | null;
     if (
       blob?.__typename !== "Blob" ||
       typeof blob.oid !== "string" ||
@@ -629,7 +632,9 @@ export async function lookupGitHubRepository(
     const gitObject = new Uint8Array(header.byteLength + bytes.byteLength);
     gitObject.set(header);
     gitObject.set(bytes, header.byteLength);
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", gitObject));
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-1", gitObject),
+    );
     const blobOid = Array.from(digest, (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");

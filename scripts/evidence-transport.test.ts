@@ -56,7 +56,9 @@ class SocketFixture extends EventEmitter {
 
 type TransportError = Error & { errors?: unknown[]; cause?: unknown };
 
-async function failure(operation: () => Promise<unknown>): Promise<TransportError> {
+async function failure(
+  operation: () => Promise<unknown>,
+): Promise<TransportError> {
   try {
     await operation();
   } catch (error) {
@@ -66,36 +68,56 @@ async function failure(operation: () => Promise<unknown>): Promise<TransportErro
   throw new Error("Expected transport failure");
 }
 
-function responseFixture(options: {
-  chunks?: Uint8Array[];
-  close?: boolean;
-  cancelError?: Error;
-  status?: number;
-  headers?: Record<string, string>;
-} = {}) {
+function responseFixture(
+  options: {
+    chunks?: Uint8Array[];
+    close?: boolean;
+    cancelError?: Error;
+    status?: number;
+    headers?: Record<string, string>;
+  } = {},
+) {
   let cancels = 0;
-  const response = new Response(new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of options.chunks ?? []) controller.enqueue(chunk);
-      if (options.close) controller.close();
-    },
-    cancel() {
-      cancels++;
-      if (options.cancelError) throw options.cancelError;
-    },
-  }), { status: options.status, headers: options.headers });
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of options.chunks ?? []) controller.enqueue(chunk);
+        if (options.close) controller.close();
+      },
+      cancel() {
+        cancels++;
+        if (options.cancelError) throw options.cancelError;
+      },
+    }),
+    { status: options.status, headers: options.headers },
+  );
   return { response, cancels: () => cancels };
 }
 
 test("TLS validation waits for owned socket close before returning success", async () => {
   const socket = new SocketFixture();
   let options: unknown;
-  const result = probeProductionTls((value: unknown) => { options = value; return socket; }, 1_000);
+  const result = probeProductionTls((value: unknown) => {
+    options = value;
+    return socket;
+  }, 1_000);
   let settled = false;
-  void result.then(() => { settled = true; }, () => { settled = true; });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   socket.emit("secureConnect");
   await Promise.resolve();
-  expect(options).toEqual({ host: "slop.cash", port: 443, rejectUnauthorized: true, servername: "slop.cash" });
+  expect(options).toEqual({
+    host: "slop.cash",
+    port: 443,
+    rejectUnauthorized: true,
+    servername: "slop.cash",
+  });
   expect(socket.endCalls).toBe(1);
   expect(socket.destroyCalls).toBe(1);
   expect(settled).toBe(false);
@@ -121,7 +143,9 @@ test("TLS policy failure rejects without escaping the event callback", async () 
   socket.autoClose = true;
   const result = probeProductionTls(() => socket, 1_000);
   socket.emit("secureConnect");
-  expect((await failure(() => result)).message).toContain("TLS protocol is not accepted");
+  expect((await failure(() => result)).message).toContain(
+    "TLS protocol is not accepted",
+  );
   expect(socket.endCalls).toBe(0);
   expect(socket.destroyCalls).toBe(1);
 });
@@ -142,7 +166,9 @@ for (const event of ["end", "close"] as const) {
     socket.autoClose = true;
     const result = probeProductionTls(() => socket, 1_000);
     socket.emit(event);
-    expect((await failure(() => result)).message).toContain("before a verified handshake");
+    expect((await failure(() => result)).message).toContain(
+      "before a verified handshake",
+    );
   });
 }
 
@@ -150,10 +176,22 @@ test("TLS activity cannot restart the absolute observation deadline", async () =
   const socket = new SocketFixture();
   const result = probeProductionTls(() => socket, 20);
   let settlements = 0;
-  void result.then(() => { settlements++; }, () => { settlements++; });
-  const activity = setInterval(() => socket.emit("data", Buffer.from("activity")), 1);
+  void result.then(
+    () => {
+      settlements++;
+    },
+    () => {
+      settlements++;
+    },
+  );
+  const activity = setInterval(
+    () => socket.emit("data", Buffer.from("activity")),
+    1,
+  );
   try {
-    expect((await failure(() => result)).message).toContain("exceeded its deadline");
+    expect((await failure(() => result)).message).toContain(
+      "exceeded its deadline",
+    );
     expect(socket.destroyCalls).toBe(1);
     socket.emit("close");
     socket.emit("error", new Error("late fixture error"));
@@ -168,7 +206,9 @@ test("verified TLS without observed close cannot report success", async () => {
   const socket = new SocketFixture();
   const result = probeProductionTls(() => socket, 20);
   socket.emit("secureConnect");
-  expect((await failure(() => result)).message).toContain("exceeded its deadline");
+  expect((await failure(() => result)).message).toContain(
+    "exceeded its deadline",
+  );
   expect(socket.endCalls).toBe(1);
   socket.emit("close");
 });
@@ -200,12 +240,21 @@ test("TLS deadline keeps the original validation failure when close never arrive
 
 test("TLS connector failure settles without a socket", async () => {
   const primary = new Error("fixture connect failed");
-  expect(await failure(() => probeProductionTls(() => { throw primary; }, 1_000))).toBe(primary);
+  expect(
+    await failure(() =>
+      probeProductionTls(() => {
+        throw primary;
+      }, 1_000),
+    ),
+  ).toBe(primary);
 });
 
 test("header-only response success disposes its unread body", async () => {
   const fixture = responseFixture();
-  const value = await withEvidenceResponse(fixture.response, async () => "headers verified");
+  const value = await withEvidenceResponse(
+    fixture.response,
+    async () => "headers verified",
+  );
   expect(value).toBe("headers verified");
   expect(fixture.cancels()).toBe(1);
   expect(fixture.response.body?.locked).toBe(false);
@@ -214,7 +263,11 @@ test("header-only response success disposes its unread body", async () => {
 test("response validation failure still disposes its body", async () => {
   const fixture = responseFixture();
   const primary = new Error("fixture response headers rejected");
-  const error = await failure(() => withEvidenceResponse(fixture.response, async () => { throw primary; }));
+  const error = await failure(() =>
+    withEvidenceResponse(fixture.response, async () => {
+      throw primary;
+    }),
+  );
   expect(error).toBe(primary);
   expect(fixture.cancels()).toBe(1);
 });
@@ -223,7 +276,11 @@ test("response cancellation failure retains the earlier operation error", async 
   const primary = new Error("fixture rejected response");
   const cleanup = new Error("fixture cancellation failed");
   const fixture = responseFixture({ cancelError: cleanup });
-  const error = await failure(() => withEvidenceResponse(fixture.response, async () => { throw primary; }));
+  const error = await failure(() =>
+    withEvidenceResponse(fixture.response, async () => {
+      throw primary;
+    }),
+  );
   expect(error).toBeInstanceOf(AggregateError);
   expect(error.cause).toBe(primary);
   expect(error.errors).toEqual([primary, cleanup]);
@@ -233,15 +290,20 @@ test("response cancellation failure retains the earlier operation error", async 
 test("successful response validation cannot hide cancellation failure", async () => {
   const cleanup = new Error("fixture cancellation failed");
   const fixture = responseFixture({ cancelError: cleanup });
-  const error = await failure(() => withEvidenceResponse(fixture.response, async () => "accepted"));
+  const error = await failure(() =>
+    withEvidenceResponse(fixture.response, async () => "accepted"),
+  );
   expect(error).toBeInstanceOf(AggregateError);
   expect(error.errors).toEqual([cleanup]);
 });
 
 test("bounded response reading releases the reader before cancellation", async () => {
   const fixture = responseFixture({ chunks: [new Uint8Array([1, 2, 3])] });
-  const error = await failure(() => withEvidenceResponse(fixture.response,
-    () => readEvidenceResponseBytes(fixture.response, 2, "fixture body")));
+  const error = await failure(() =>
+    withEvidenceResponse(fixture.response, () =>
+      readEvidenceResponseBytes(fixture.response, 2, "fixture body"),
+    ),
+  );
   expect(error.message).toContain("exceeded the verified body size");
   expect(fixture.response.body?.locked).toBe(false);
   expect(fixture.cancels()).toBe(1);
@@ -249,28 +311,49 @@ test("bounded response reading releases the reader before cancellation", async (
 
 test("oversize refusal remains the primary error if cancellation fails", async () => {
   const cleanup = new Error("fixture oversize cancellation failed");
-  const fixture = responseFixture({ chunks: [new Uint8Array([1, 2, 3])], cancelError: cleanup });
-  const error = await failure(() => withEvidenceResponse(fixture.response,
-    () => readEvidenceResponseBytes(fixture.response, 2, "fixture body")));
+  const fixture = responseFixture({
+    chunks: [new Uint8Array([1, 2, 3])],
+    cancelError: cleanup,
+  });
+  const error = await failure(() =>
+    withEvidenceResponse(fixture.response, () =>
+      readEvidenceResponseBytes(fixture.response, 2, "fixture body"),
+    ),
+  );
   expect(error).toBeInstanceOf(AggregateError);
-  expect((error.cause as Error | undefined)?.message).toContain("exceeded the verified body size");
+  expect((error.cause as Error | undefined)?.message).toContain(
+    "exceeded the verified body size",
+  );
   expect(error.errors?.[1]).toBe(cleanup);
   expect(fixture.response.body?.locked).toBe(false);
 });
 
 test("short bounded response may finish and leaves no reader lock", async () => {
-  const fixture = responseFixture({ chunks: [new Uint8Array([1])], close: true });
-  const bytes = await withEvidenceResponse(fixture.response,
-    () => readEvidenceResponseBytes(fixture.response, 2, "fixture body"));
+  const fixture = responseFixture({
+    chunks: [new Uint8Array([1])],
+    close: true,
+  });
+  const bytes = await withEvidenceResponse(fixture.response, () =>
+    readEvidenceResponseBytes(fixture.response, 2, "fixture body"),
+  );
   expect([...bytes]).toEqual([1]);
   expect(fixture.response.body?.locked).toBe(false);
 });
 
 test("a failed stream read releases its lock and preserves the source error", async () => {
   const primary = new Error("fixture body read failed");
-  const response = new Response(new ReadableStream({ start(controller) { controller.error(primary); } }));
-  const error = await failure(() => withEvidenceResponse(response,
-    () => readEvidenceResponseBytes(response, 2, "fixture body")));
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(primary);
+      },
+    }),
+  );
+  const error = await failure(() =>
+    withEvidenceResponse(response, () =>
+      readEvidenceResponseBytes(response, 2, "fixture body"),
+    ),
+  );
   // Canceling an already errored native stream rejects with that stored error.
   expect(error).toBeInstanceOf(AggregateError);
   expect(error.cause).toBe(primary);
@@ -286,11 +369,13 @@ for (const mismatch of ["status", "type", "length"] as const) {
         "content-length": mismatch === "length" ? "99" : "3",
       },
     });
-    const error = await failure(() => verifyRemoteArtifacts({
-      artifacts: [{ path: "llms.txt", contents: Buffer.from("abc") }],
-      cacheKey: "fixture",
-      fetchImpl: async () => fixture.response,
-    }));
+    const error = await failure(() =>
+      verifyRemoteArtifacts({
+        artifacts: [{ path: "llms.txt", contents: Buffer.from("abc") }],
+        cacheKey: "fixture",
+        fetchImpl: async () => fixture.response,
+      }),
+    );
     expect(error).toBeInstanceOf(Error);
     expect(fixture.cancels()).toBe(1);
     expect(fixture.response.body?.locked).toBe(false);
@@ -299,7 +384,8 @@ for (const mismatch of ["status", "type", "length"] as const) {
 
 test("exact remote artifact bytes remain verified after transport cleanup", async () => {
   const fixture = responseFixture({
-    chunks: [new TextEncoder().encode("abc")], close: true,
+    chunks: [new TextEncoder().encode("abc")],
+    close: true,
     headers: { "content-type": "text/plain", "content-length": "3" },
   });
   const result = await verifyRemoteArtifacts({
@@ -314,22 +400,28 @@ test("exact remote artifact bytes remain verified after transport cleanup", asyn
 
 test("short exact artifact body is refused after releasing the reader", async () => {
   const fixture = responseFixture({
-    chunks: [new TextEncoder().encode("a")], close: true,
+    chunks: [new TextEncoder().encode("a")],
+    close: true,
     headers: { "content-type": "text/plain" },
   });
-  const error = await failure(() => verifyRemoteArtifacts({
-    artifacts: [{ path: "llms.txt", contents: Buffer.from("abc") }],
-    cacheKey: "fixture",
-    fetchImpl: async () => fixture.response,
-  }));
+  const error = await failure(() =>
+    verifyRemoteArtifacts({
+      artifacts: [{ path: "llms.txt", contents: Buffer.from("abc") }],
+      cacheKey: "fixture",
+      fetchImpl: async () => fixture.response,
+    }),
+  );
   expect(error.message).toContain("length does not match");
   expect(fixture.response.body?.locked).toBe(false);
 });
 
 test("missing response body rejects without inventing a disposal error", async () => {
   const response = new Response(null);
-  const error = await failure(() => withEvidenceResponse(response,
-    () => readEvidenceResponseBytes(response, 2, "fixture body")));
+  const error = await failure(() =>
+    withEvidenceResponse(response, () =>
+      readEvidenceResponseBytes(response, 2, "fixture body"),
+    ),
+  );
   expect(error.message).toContain("omitted its response body");
   expect(error).not.toBeInstanceOf(AggregateError);
 });

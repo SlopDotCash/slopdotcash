@@ -149,22 +149,22 @@ module historical_subscription_intake {
     all { r.phase == "preflight", s' = s.with("requests", s.requests.set(id,
       if (allowed) r.with("phase", "append") else respond(r, 409))) }
   }
-  action append(id: int, lostReply: bool): bool = {
+  action appendRecord(id: int, lostReply: bool): bool = {
     val r = s.requests.get(id)
     val row = rowOf(r)
     val replay = rowAt(row).exists
     val valid = s.active and s.installed and r.members.subseteq(s.selected) and r.registryRevision == s.registryRevision
       and r.parent == s.tip and not(r.mode == "single" and rowAt(s.tip).mode == "joint")
-    val next = if (lostReply) respond(r, 409) else r.with("phase", "readback")
+    val nextValue = if (lostReply) respond(r, 409) else r.with("phase", "readback")
     val record: Record = { exists: true, mode: r.mode, parent: r.parent, payload: r.payload, members: r.members }
     all { r.phase == "append",
-      s' = if (replay) s.with("requests", s.requests.set(id, next))
+      s' = if (replay) s.with("requests", s.requests.set(id, nextValue))
         else if (not(valid)) s.with("requests", s.requests.set(id, respond(r, 409)))
         else s.with("records", s.records.set(row, record)).with("tip", row)
           .with("sourceIndex", s.sourceIndex.set(row, if (r.mode == "joint") r.members else Set()))
           .with("claimIndex", s.claimIndex.set(row, if (r.mode == "joint") r.members else Set()))
           .with("parentIndex", s.parentIndex.set(row, if (r.mode == "joint" and rowAt(r.parent).mode == "joint") Set(r.parent) else Set()))
-          .with("requests", s.requests.set(id, next)) }
+          .with("requests", s.requests.set(id, nextValue)) }
   }
   action readback(id: int, available: bool): bool = {
     val r = s.requests.get(id)
@@ -196,7 +196,7 @@ module historical_subscription_intake {
     any { sourceChanges(source), registryChanges, pause, removeSource(source), revokeInstallation,
       begin(id, mode, key, parent, payload, yes), headers(id, yes, other), session(id, result, yes), body(id, yes), envelope(id, yes), installation(id, yes),
       collect(id, source, yes, other), reconstruct(id, yes), capture(id), refresh(id, source, yes), prepare(id, yes),
-      preflight(id), append(id, yes), readback(id, yes), failure(id), send(id, yes), s' = s }
+      preflight(id), appendRecord(id, yes), readback(id, yes), failure(id), send(id, yes), s' = s }
   }
   val invariant = all {
     0.to(4).contains(s.tip), s.tip > 0 implies rowAt(s.tip).exists,
@@ -218,7 +218,7 @@ module historical_subscription_intake {
   action singleCollected(id: int): bool = collect(id, 1, true, true).then(capture(id)).then(refresh(id, 1, true)).then(prepare(id, true)).then(preflight(id))
   action jointCollected(id: int): bool = collect(id, 1, true, true).then(collect(id, 2, true, true))
   action jointPrepared(id: int): bool = capture(id).then(refresh(id, 1, true)).then(refresh(id, 2, true)).then(prepare(id, true)).then(preflight(id))
-  action receipt(id: int): bool = append(id, false).then(readback(id, true)).then(send(id, true))
+  action receipt(id: int): bool = appendRecord(id, false).then(readback(id, true)).then(send(id, true))
   run validSingleImportTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(receipt(1))
     .expect(s.requests.get(1).status == 200 and s.tip == 1 and invariant)
   run methodRefusedBeforeSessionTest = init.then(begin(1, "single", 1, 0, 1, false)).then(headers(1, false, true))
@@ -249,30 +249,30 @@ module historical_subscription_intake {
     .then(sourceChanges(1)).then(capture(1)).then(refresh(1, 1, true)).expect(s.requests.get(1).status == 409 and s.tip == 0 and invariant)
   run changedResultDigestRefusesTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(collect(1, 1, true, true)).then(capture(1))
     .then(refresh(1, 1, true)).then(prepare(1, false)).expect(s.tip == 0 and s.requests.get(1).status == 409 and invariant)
-  run lateRegistryChangeRefusesInsertTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(registryChanges).then(append(1, false))
+  run lateRegistryChangeRefusesInsertTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(registryChanges).then(appendRecord(1, false))
     .expect(s.tip == 0 and s.requests.get(1).status == 409 and invariant)
-  run lateInstallationRemovalRefusesInsertTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(revokeInstallation).then(append(1, false))
+  run lateInstallationRemovalRefusesInsertTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(revokeInstallation).then(appendRecord(1, false))
     .expect(s.tip == 0 and invariant)
   run lateSourceDeselectionRefusesInsertTest = init.then(admitted(1, "joint", 1, 0, 1, false)).then(jointCollected(1)).then(jointPrepared(1))
-    .then(removeSource(2)).then(append(1, false)).expect(s.tip == 0 and invariant)
+    .then(removeSource(2)).then(appendRecord(1, false)).expect(s.tip == 0 and invariant)
   run differentKeysCannotForkOnePredecessorTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1))
-    .then(admitted(2, "single", 2, 0, 2, false)).then(singleCollected(2)).then(receipt(1)).then(append(2, false))
+    .then(admitted(2, "single", 2, 0, 2, false)).then(singleCollected(2)).then(receipt(1)).then(appendRecord(2, false))
     .expect(s.tip == 1 and not(rowAt(2).exists) and s.requests.get(2).status == 409 and invariant)
   run sameKeyReturnsFirstPayloadTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1))
     .then(admitted(2, "single", 1, 0, 2, false)).then(singleCollected(2)).then(receipt(1)).then(receipt(2))
     .expect(s.requests.get(2).returnedPayload == 1 and s.tip == 1 and invariant)
-  run lostInsertReplyDoesNotUndoJournalTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(append(1, true))
+  run lostInsertReplyDoesNotUndoJournalTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(appendRecord(1, true))
     .expect(rowAt(1).exists and s.requests.get(1).status == 409 and invariant)
   run lostReadbackDoesNotUndoJournalTest = init.then(admitted(1, "joint", 1, 0, 1, false)).then(jointCollected(1)).then(jointPrepared(1))
-    .then(append(1, false)).then(readback(1, false)).expect(s.requests.get(1).status == 409 and s.sourceIndex.get(3) == sources and invariant)
-  run retryAfterLostReplyUsesStoredRowTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(append(1, true)).then(send(1, true))
+    .then(appendRecord(1, false)).then(readback(1, false)).expect(s.requests.get(1).status == 409 and s.sourceIndex.get(3) == sources and invariant)
+  run retryAfterLostReplyUsesStoredRowTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(appendRecord(1, true)).then(send(1, true))
     .then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(receipt(1)).expect(s.tip == 1 and s.requests.get(1).status == 200 and invariant)
   run concurrentReplayAfterPauseReturnsExistingRowTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1))
     .then(admitted(2, "single", 1, 0, 2, false)).then(singleCollected(2)).then(receipt(1)).then(pause).then(receipt(2))
     .expect(s.tip == 1 and s.requests.get(2).returnedPayload == 1 and invariant)
   run jointMigrationPreventsSingleForkTest = init.then(admitted(1, "joint", 1, 0, 1, false)).then(jointCollected(1)).then(jointPrepared(1)).then(receipt(1))
     .then(admitted(2, "single", 2, 3, 2, false)).then(singleCollected(2)).expect(s.requests.get(2).status == 409 and s.tip == 3 and invariant)
-  run lostHttpResponseKeepsSuccessfulJournalTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(append(1, false))
+  run lostHttpResponseKeepsSuccessfulJournalTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1)).then(appendRecord(1, false))
     .then(readback(1, true)).then(send(1, false)).expect(rowAt(1).exists and not(s.requests.get(1).received) and invariant)
   run sourceChangeAfterFinalReadIsNotContinuousFenceTest = init.then(admitted(1, "single", 1, 0, 1, false)).then(singleCollected(1))
     .then(sourceChanges(1)).then(receipt(1)).expect(s.requests.get(1).status == 200 and invariant)

@@ -227,9 +227,7 @@ function PendingApplicationsForAccount({ actorId }: { actorId: string }) {
             key={application.id}
             application={application}
             actorId={actorId}
-            onAccountLost={(message) =>
-              setLoad({ status: "error", message })
-            }
+            onAccountLost={(message) => setLoad({ status: "error", message })}
           />
         ))
       )}

@@ -3,22 +3,24 @@
 // @source backend/http.ts
 // @evidence tests/e2e/owner-awards.spec.ts
 // @evidence tests/e2e/vault-actions.spec.ts
-// Actor observation / request / response / final observation are separate.
+// Two lifetimes, two actors and two requests. Session observation, helper return
+// and caller use are separate. Funds and awards readers retire in layout
+// cleanup, before a returned session can resume its caller after removal.
 // Source-only: all scenarios are unexecuted. Money rules remain in other models.
 // Backend slice: requireActor's optional expected-actor header guard only.
 module ui_owner_private_requests {
   type Request = { phase: str, kind: str, actor: int, cookie: int, admitted: bool,
-    lifetime: int, outcome: str, setup: bool }
-  type State = { mode: str, mounted: bool, lifetime: int, session: int,
+    lifetime: int, outcome: str, setup: bool, observed: int, available: bool }
+  type State = { mode: str, present: bool, mounted: bool, lifetime: int, session: int,
     knownActor: int, data: bool, draft: bool, stale: bool, canSetup: bool,
     error: str, active: int, requests: int -> Request, accepted: Set[int] }
   val ids = Set(1, 2)
   var s: State
-  action init = s' = { mode: "awards", mounted: true, lifetime: 1,
+  action init = s' = { mode: "awards", present: true, mounted: true, lifetime: 1,
     session: 1, knownActor: 1, data: true, draft: true, stale: false,
     canSetup: false, error: "none", active: 0,
     requests: ids.mapBy(_ => { phase: "unused", kind: "read", actor: 0, cookie: 0, admitted: false,
-      lifetime: 1, outcome: "success", setup: false }), accepted: Set() }
+      lifetime: 1, outcome: "success", setup: false, observed: 0, available: false }), accepted: Set() }
   def owns(id: int): bool = s.mounted and s.active == id
     and s.requests.get(id).lifetime == s.lifetime
   pure def clearPrivate(value: State): State = value.with("data", false)
@@ -35,22 +37,30 @@ module ui_owner_private_requests {
       .with("data", if (s.mode == "awards" and kind == "read") false else s.data)
       .with("requests", s.requests.set(id, { phase: "preflight", kind: kind,
         actor: if (kind == "mutation") s.knownActor else 0, lifetime: s.lifetime,
-        cookie: 0, admitted: false, outcome: "success", setup: false })) }
-  action preflight(id: int, available: bool): bool = {
+        cookie: 0, admitted: false, outcome: "success", setup: false, observed: 0, available: false })) }
+  action observePreflight(id: int, available: bool): bool = all {
+    s.requests.get(id).phase == "preflight",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("observed", s.session).with("available", available).with("phase", "preflight-observed"))) }
+  action returnPreflight(id: int): bool = all { s.requests.get(id).phase == "preflight-observed",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "preflight-returned"))) }
+  action usePreflight(id: int): bool = {
     val r = s.requests.get(id)
-    val refused = not(available) or s.session == 0
-      or (r.kind == "mutation" and r.actor != s.session)
+    val refused = not(r.available) or r.observed == 0
+      or (r.kind == "mutation" and r.actor != r.observed)
     val finished = s.with("requests", s.requests.set(id, r.with("phase", "done")))
-    all { r.phase == "preflight",
+    all { r.phase == "preflight-returned",
       s' = if (not(owns(id))) finished
       else if (refused) clearPrivate(finished).with("error", "identity")
       else {
-        val current = if (s.knownActor != 0 and s.knownActor != s.session)
+        val current = if (s.knownActor != 0 and s.knownActor != r.observed)
           clearPrivate(s) else s
         current.with("requests", s.requests.set(id,
-          r.with("phase", "dispatch").with("actor", s.session)))
+          r.with("phase", "dispatch").with("actor", r.observed)))
       } }
   }
+  action preflight(id: int, available: bool): bool = observePreflight(id, available)
+    .then(returnPreflight(id)).then(usePreflight(id))
   // fetch captures the cookie and expected-actor header at dispatch. A later
   // browser cookie change cannot rewrite this request's server identity.
   action dispatch(id: int): bool = {
@@ -76,12 +86,18 @@ module ui_owner_private_requests {
       outcome != "success" or r.admitted,
       s' = if (owns(id) and outcome == "refused") clearPrivate(finished) else finished }
   }
-  action recheck(id: int, available: bool): bool = {
+  action observeRecheck(id: int, available: bool): bool = all {
+    s.requests.get(id).phase == "recheck",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id)
+      .with("observed", s.session).with("available", available).with("phase", "recheck-observed"))) }
+  action returnRecheck(id: int): bool = all { s.requests.get(id).phase == "recheck-observed",
+    s' = s.with("requests", s.requests.set(id, s.requests.get(id).with("phase", "recheck-returned"))) }
+  action useRecheck(id: int): bool = {
     val r = s.requests.get(id)
     val finished = s.with("requests", s.requests.set(id, r.with("phase", "done")))
-    all { r.phase == "recheck",
+    all { r.phase == "recheck-returned",
       s' = if (not(owns(id))) finished
-      else if (not(available) or s.session != r.actor)
+      else if (not(r.available) or r.observed != r.actor)
         clearPrivate(finished).with("error", "identity")
       else if (r.outcome == "success") finished.with("data", true)
         .with("knownActor", r.actor).with("draft", if (r.kind == "mutation") false else s.draft).with("stale", false)
@@ -92,9 +108,11 @@ module ui_owner_private_requests {
         clearPrivate(finished).with("error", "request")
       else finished.with("error", "request") }
   }
-  action depart = all { s.mounted, s' = clearPrivate(s).with("mounted", false) }
+  action recheck(id: int, available: bool): bool = observeRecheck(id, available)
+    .then(returnRecheck(id)).then(useRecheck(id))
+  action depart = all { s.mounted, s' = clearPrivate(s).with("present", false).with("mounted", false) }
   action remount = all { not(s.mounted), s.lifetime == 1,
-    s' = clearPrivate(s).with("mounted", true).with("lifetime", 2).with("active", 0)
+    s' = clearPrivate(s).with("present", true).with("mounted", true).with("lifetime", 2).with("active", 0)
       .with("error", "none") }
   action step = {
     nondet id = ids.oneOf()
@@ -103,10 +121,10 @@ module ui_owner_private_requests {
     nondet outcome = Set("success", "temporary", "refused", "invalid").oneOf()
     nondet available = Set(false, true).oneOf()
     nondet setup = Set(false, true).oneOf()
-    any { fundsMode, sessionChanges(actor), begin(id, kind), preflight(id, available), dispatch(id), admit(id),
-      response(id, outcome, setup), recheck(id, available), depart, remount, s' = s }
+    any { fundsMode, sessionChanges(actor), begin(id, kind), observePreflight(id, available), returnPreflight(id), usePreflight(id), dispatch(id), admit(id),
+      response(id, outcome, setup), observeRecheck(id, available), returnRecheck(id), useRecheck(id), depart, remount, s' = s }
   }
-  val invariant = all { s.data implies s.knownActor > 0,
+  val invariant = all { not(s.present) implies not(s.mounted), s.data implies s.knownActor > 0,
     s.stale implies (s.mode == "funds" and s.data and not(s.canSetup)),
     not(s.mounted) implies not(s.data), s.accepted.subseteq(ids),
     ids.forall(id => all { s.requests.get(id).actor >= 0, s.requests.get(id).actor <= 2,
@@ -164,4 +182,29 @@ module ui_owner_private_requests {
   run transportFailureBeforeAdmissionRetainsOwnDraftTest = init.then(begin(1, "mutation"))
     .then(preflight(1, true)).then(dispatch(1)).then(response(1, "temporary", false))
     .then(recheck(1, true)).expect(s.data and s.draft and s.accepted == Set())
+  run fundsReturnedPreflightCannotReadAfterCommittedRemovalTest = init.then(fundsMode).then(begin(1, "read"))
+    .then(observePreflight(1, true)).then(returnPreflight(1)).then(depart).then(usePreflight(1))
+    .expect(not(s.data) and invariant).then(dispatch(1).fail())
+  run fundsObservedPreflightCannotReadAfterCommittedRemovalTest = init.then(fundsMode).then(begin(1, "read"))
+    .then(observePreflight(1, true)).then(depart).then(returnPreflight(1)).then(usePreflight(1))
+    .expect(s.requests.get(1).phase == "done" and invariant)
+  run awardsReturnedPreflightCannotReadAfterCommittedRemovalTest = init.then(begin(1, "read"))
+    .then(observePreflight(1, true)).then(returnPreflight(1)).then(depart).then(usePreflight(1))
+    .expect(not(s.data) and invariant).then(dispatch(1).fail())
+  run awardsObservedPreflightCannotWriteAfterCommittedRemovalTest = init.then(begin(1, "mutation"))
+    .then(observePreflight(1, true)).then(depart).then(returnPreflight(1)).then(usePreflight(1))
+    .expect(s.accepted == Set() and not(s.draft) and invariant).then(dispatch(1).fail())
+  run detachedIdentityFailureCannotClearReplacementReadTest = init.then(fundsMode).then(begin(1, "read"))
+    .then(preflight(1, true)).then(dispatch(1)).then(admit(1)).then(response(1, "temporary", false))
+    .then(observeRecheck(1, false)).then(returnRecheck(1)).then(depart).then(remount)
+    .then(begin(2, "read")).then(useRecheck(1)).expect(s.active == 2 and s.error == "none" and invariant)
+  run sessionObservationIsNotDispatchAuthorityTest = init.then(fundsMode).then(begin(1, "read"))
+    .then(observePreflight(1, true)).then(sessionChanges(2)).then(returnPreflight(1)).then(usePreflight(1))
+    .then(dispatch(1)).then(admit(1)).expect(not(s.requests.get(1).admitted) and invariant)
+  // The old passive cleanup left a departed reader able to start a request.
+  action historicalPassiveDepart = s' = s.with("present", false)
+  run historicalPassiveCleanupCouldStartPrivateReadTest = init.then(fundsMode).then(begin(1, "read"))
+    .then(observePreflight(1, true)).then(historicalPassiveDepart).then(returnPreflight(1)).then(usePreflight(1))
+    .then(dispatch(1)).expect(s.requests.get(1).phase == "admission" and not(invariant))
+
 }

@@ -4,6 +4,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -219,6 +220,16 @@ export function InboxEmail({
     },
     [accountActor, resetIdentity, setError],
   );
+  // Retire request ownership in the removal commit, before a resolved actor
+  // check can resume. Loading and focus subscriptions remain passive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+      controllerRef.current?.abort();
+    },
+    [load],
+  );
   useEffect(() => {
     load();
     const refresh = () => {
@@ -226,8 +237,6 @@ export function InboxEmail({
     };
     window.addEventListener("focus", refresh);
     return () => {
-      generation.current += 1;
-      controllerRef.current?.abort();
       window.removeEventListener("focus", refresh);
     };
   }, [load]);
@@ -735,10 +744,20 @@ export function InboxEmailAction() {
   const [done, setDone] = useState(false);
   const { busy, error, setError, run } = useAction();
   const generation = useRef(0);
+  const mounted = useRef(true);
+  // Retire session checks and token writes in the removal commit, before a
+  // resolved promise can resume. Event subscriptions remain passive.
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, []);
   useEffect(
     () =>
       subscribeProjectSessionChange(() => {
-        if (action?.kind !== "verify") return;
+        if (!mounted.current || action?.kind !== "verify") return;
         // Preserve the link for a later sign-in, but retire its old actor and work.
         generation.current += 1;
         setActor(null);
@@ -749,7 +768,10 @@ export function InboxEmailAction() {
   );
   useEffect(() => {
     const capture = () => {
-      if (!/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash))
+      if (
+        !mounted.current ||
+        !/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash)
+      )
         return;
       generation.current += 1;
       setAction(readEmailAction());
@@ -760,7 +782,6 @@ export function InboxEmailAction() {
     window.addEventListener("hashchange", capture);
     window.addEventListener("popstate", capture);
     return () => {
-      generation.current += 1;
       window.removeEventListener("hashchange", capture);
       window.removeEventListener("popstate", capture);
     };
@@ -870,7 +891,9 @@ export function InboxEmailAction() {
         setDone(true);
       } catch (caught) {
         // A replacement link owns its own status, error and retained token.
-        if (generation.current === current) throw caught;
+        // Publish under this guard instead of handing a rejection to the
+        // shared hook, whose later catch does not know this action's generation.
+        if (generation.current === current) setError(errorMessage(caught));
       }
     });
   };

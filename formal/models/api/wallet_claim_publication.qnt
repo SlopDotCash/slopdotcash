@@ -121,9 +121,9 @@ module wallet_claim_publication {
     val current = claimAt(tip)
     val same = current.exists and current.source == "registry" and current.address == claim.address
       and loginFold(current.login) == loginFold(claim.login)
-    val next = if (not(ok)) ending(request, "500") else if (tip != claim.predecessor) ending(request, "409")
+    val nextValue = if (not(ok)) ending(request, "500") else if (tip != claim.predecessor) ending(request, "409")
       else if (same) existing(request, tip) else request.with("phase", "capture")
-    all { request.phase == "tip", s' = s.with("requests", s.requests.set(slot, next.with("tip", tip))) }
+    all { request.phase == "tip", s' = s.with("requests", s.requests.set(slot, nextValue.with("tip", tip))) }
   }
   action capture(slot: int): bool = {
     val request = s.requests.get(slot)
@@ -157,8 +157,8 @@ module wallet_claim_publication {
   action batch(slot: int, succeeds: bool): bool = {
     val request = s.requests.get(slot)
     val claim = request.claim
-    val head = s.heads.get(lineage(claim.actor, claim.chain))
-    val allowed = head == claim.predecessor and digestRow(claim) == 0
+    val readHead = s.heads.get(lineage(claim.actor, claim.chain))
+    val allowed = readHead == claim.predecessor and digestRow(claim) == 0
     val commit = succeeds and allowed
     all { request.phase == "batch", s' = s
       .with("history", if (commit) s.history.set(claim.id, claim.with("exists", true)) else s.history)
@@ -185,8 +185,8 @@ module wallet_claim_publication {
   action readCompeting(slot: int, ok: bool): bool = {
     val request = s.requests.get(slot)
     val claim = request.claim
-    val head = s.heads.get(lineage(claim.actor, claim.chain))
-    val competitor = if (claim.predecessor == 0) head != 0 else head != claim.predecessor
+    val readHead = s.heads.get(lineage(claim.actor, claim.chain))
+    val competitor = if (claim.predecessor == 0) readHead != 0 else readHead != claim.predecessor
     all { request.phase == "competing", s' = s.with("requests", s.requests.set(slot,
       ending(request, if (ok and competitor) "409" else "500"))) }
   }
@@ -231,9 +231,9 @@ module wallet_claim_publication {
         and (s.history.get(a).predecessor != 0 or s.history.get(b).predecessor != 0
           or s.history.get(a).actor != s.history.get(b).actor or s.history.get(a).chain != s.history.get(b).chain)))),
     lineages.forall(key => {
-      val head = s.heads.get(key)
-      head == 0 or (claimAt(head).exists and lineage(claimAt(head).actor, claimAt(head).chain) == key
-        and rows.forall(id => not(s.history.get(id).exists) or s.history.get(id).predecessor != head))
+      val readHead = s.heads.get(key)
+      readHead == 0 or (claimAt(readHead).exists and lineage(claimAt(readHead).actor, claimAt(readHead).chain) == key
+        and rows.forall(id => not(s.history.get(id).exists) or s.history.get(id).predecessor != readHead))
     }),
     slots.forall(slot => {
       val request = s.requests.get(slot)

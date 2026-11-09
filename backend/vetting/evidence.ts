@@ -30,8 +30,8 @@ import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
-  EvidenceCorruptionError,
   type EvidenceChunk,
+  EvidenceCorruptionError,
   evidenceLocation,
   verifiedPart,
   verifyPartSequence,
@@ -434,10 +434,7 @@ export class VettingEvidence {
     const whole = new Uint8Array(row.size_bytes);
     let offset = 0;
     for (const chunk of chunks) {
-      whole.set(
-        await storage.readPart(row, chunk),
-        offset,
-      );
+      whole.set(await storage.readPart(row, chunk), offset);
       offset += chunk.sizeBytes;
     }
     if ((await sha256Hex(whole)) !== row.sha256)
@@ -1313,19 +1310,17 @@ export class VettingEvidence {
    * retention still rereads and hashes every byte, and a chunked object
    * still needs this run's finalization.
    */
-  private async stored(
-    assessment: string,
-    runId: string,
-  ): Promise<string[]> {
+  private async stored(assessment: string, runId: string): Promise<string[]> {
     const storage = this.storage();
-    const objects = (
-      await this.deps.db
-        .prepare(
-          "SELECT * FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? ORDER BY sha256",
-        )
-        .bind(assessment, runId)
-        .all<ObjectRow>()
-    ).results ?? [];
+    const objects =
+      (
+        await this.deps.db
+          .prepare(
+            "SELECT * FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? ORDER BY sha256",
+          )
+          .bind(assessment, runId)
+          .all<ObjectRow>()
+      ).results ?? [];
     // Reread and hash each part (one part buffered at a time), so a missing
     // or corrupt copy is uploaded again instead of referenced.
     const present = (row: ObjectRow, part?: EvidenceChunk) =>
@@ -1416,7 +1411,12 @@ export class VettingEvidence {
         "Upload must match the complete declared bytes",
       );
     if (object.storage_generation) {
-      await this.storage().storePart(object, body, undefined, object.content_type);
+      await this.storage().storePart(
+        object,
+        body,
+        undefined,
+        object.content_type,
+      );
     } else {
       await this.store(
         bucket,
@@ -1459,7 +1459,12 @@ export class VettingEvidence {
         "Upload must match the exact declared chunk bytes",
       );
     if (object.storage_generation) {
-      await this.storage().storePart(object, body, chunk, "application/octet-stream");
+      await this.storage().storePart(
+        object,
+        body,
+        chunk,
+        "application/octet-stream",
+      );
     } else {
       await this.store(
         bucket,
@@ -1576,7 +1581,9 @@ export class VettingEvidence {
               )
               .bind(run.assessment_id, run.run_id, row.sha256)
               .first<{ completed_at: string }>()
-          : key === null ? null : await bucket.head(key);
+          : key === null
+            ? null
+            : await bucket.head(key);
         const state =
           run.expires_at !== null &&
           Date.parse(run.expires_at) <= this.deps.now().getTime()

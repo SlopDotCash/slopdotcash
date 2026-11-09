@@ -59,8 +59,8 @@ module trace_route_authorization {
     or (s.originHeader == "same" and browserOrigin)
   val recoveryCandidate = not(s.preflight) and s.route == "recovery"
     and s.authHeader == "absent" and (browserOrigin or local)
-  def ended(status: str, reason: str) = s.with("phase", "done").with("result", status).with("reason", reason)
-  def invoked(credential: str) = s.with("phase", "delegated").with("result", "delegated")
+  def ended(status, reason) = s.with("phase", "done").with("result", status).with("reason", reason)
+  def invoked(credential) = s.with("phase", "delegated").with("result", "delegated")
     .with("delegated", true).with("credential", credential)
 
   action begin(route: str, origin: str, secure: bool, preflight: bool,

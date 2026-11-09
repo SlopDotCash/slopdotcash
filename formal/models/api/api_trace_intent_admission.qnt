@@ -11,27 +11,27 @@ module api_trace_intent_admission {
   type Intent = { exists: bool, digest: int, shape: int,
     expired: bool, consumed: bool, epoch: int }
   type Request = { stage: str, key: int, actor: int, digest: int, shape: int }
-  val keys = Set(1, 2)
+  val keyIds = Set(1, 2)
   val empty = { exists: false, digest: 0, shape: 0,
     expired: false, consumed: false, epoch: 0 }
   val idle = { stage: "idle", key: 1, actor: 1, digest: 1, shape: 1 }
-  var s: { run: str, runDigest: int, banned: bool, rows: int -> Intent,
+  var s: { runState: str, runDigest: int, banned: bool, rows: int -> Intent,
     request: Request, result: str, mutations: int, frozenMutations: int }
-  action init = s' = { run: "awaiting_trace", runDigest: 0, banned: false,
-    rows: keys.mapBy(_ => empty), request: idle, result: "none",
+  action init = s' = { runState: "awaiting_trace", runDigest: 0, banned: false,
+    rows: keyIds.mapBy(_ => empty), request: idle, result: "none",
     mutations: 0, frozenMutations: 0 }
   def compatible(digest: int): bool = s.runDigest == 0 or s.runDigest == digest
   action begin(key: int, actor: int, digest: int, shape: int): bool = all {
-    s.request.stage == "idle", keys.contains(key), actor == 1,
-    keys.contains(digest), keys.contains(shape), not(s.banned),
-    s.run != "finalized", compatible(digest),
+    s.request.stage == "idle", keyIds.contains(key), actor == 1,
+    keyIds.contains(digest), keyIds.contains(shape), not(s.banned),
+    s.runState != "finalized", compatible(digest),
     s' = s.with("request", { stage: "read", key: key, actor: actor,
       digest: digest, shape: shape }).with("result", "none") }
   action readIntent = {
     val row = s.rows.get(s.request.key)
     val same = row.digest == s.request.digest and row.shape == s.request.shape
     val authorized = s.request.actor == 1 and not(s.banned)
-      and s.run != "finalized" and compatible(s.request.digest)
+      and s.runState != "finalized" and compatible(s.request.digest)
     all { s.request.stage == "read",
       s' = s.with("request", s.request.with("stage",
         if (not(authorized)) "invalid" else if (not(row.exists)) "new" else if (not(same)) "invalid"
@@ -42,7 +42,7 @@ module api_trace_intent_admission {
     val request = s.request
     val row = s.rows.get(request.key)
     val authorized = request.actor == 1 and not(s.banned)
-      and s.run != "finalized" and compatible(request.digest)
+      and s.runState != "finalized" and compatible(request.digest)
     val create = request.stage == "new" and not(row.exists) and authorized
     val renew = request.stage == "renew" and row.exists and row.expired
       and not(row.consumed) and authorized
@@ -59,37 +59,37 @@ module api_trace_intent_admission {
   }
   action renewalReadback = all { s.request.stage == "renew-readback",
     s' = s.with("result", if (s.request.actor == 1 and not(s.banned)
-      and s.run != "finalized" and compatible(s.request.digest)
+      and s.runState != "finalized" and compatible(s.request.digest)
       and not(s.rows.get(s.request.key).consumed)) "existing" else "conflict")
       .with("request", s.request.with("stage", "done")) }
   action finish = all { s.request.stage == "done", s' = s.with("request", idle) }
-  action expire(key: int): bool = all { keys.contains(key), s.rows.get(key).exists,
+  action expire(key: int): bool = all { keyIds.contains(key), s.rows.get(key).exists,
     s.rows.get(key).epoch == 1, not(s.rows.get(key).expired),
     s' = s.with("rows", s.rows.set(key, s.rows.get(key).with("expired", true))) }
-  action attach(digest: int): bool = all { keys.contains(digest),
-    s.run != "finalized", compatible(digest),
-    s' = s.with("run", "trace_uploaded").with("runDigest", digest) }
-  action consume(key: int): bool = all { keys.contains(key), s.rows.get(key).exists,
+  action attach(digest: int): bool = all { keyIds.contains(digest),
+    s.runState != "finalized", compatible(digest),
+    s' = s.with("runState", "trace_uploaded").with("runDigest", digest) }
+  action consume(key: int): bool = all { keyIds.contains(key), s.rows.get(key).exists,
     not(s.rows.get(key).expired), not(s.rows.get(key).consumed),
-    s.run != "finalized", compatible(s.rows.get(key).digest),
+    s.runState != "finalized", compatible(s.rows.get(key).digest),
     s' = s.with("rows", s.rows.set(key, s.rows.get(key).with("consumed", true)))
-      .with("run", "trace_uploaded").with("runDigest", s.rows.get(key).digest) }
-  action finalize = all { s.run == "trace_uploaded",
-    s' = s.with("run", "finalized").with("frozenMutations", s.mutations) }
+      .with("runState", "trace_uploaded").with("runDigest", s.rows.get(key).digest) }
+  action finalize = all { s.runState == "trace_uploaded",
+    s' = s.with("runState", "finalized").with("frozenMutations", s.mutations) }
   action ban = s' = s.with("banned", true)
   action step = {
-    nondet key = keys.oneOf()
-    nondet actor = keys.oneOf()
-    nondet digest = keys.oneOf()
-    nondet shape = keys.oneOf()
+    nondet key = keyIds.oneOf()
+    nondet actor = keyIds.oneOf()
+    nondet digest = keyIds.oneOf()
+    nondet shape = keyIds.oneOf()
     any { begin(key, actor, digest, shape), readIntent, commit, renewalReadback, finish,
       expire(key), attach(digest), consume(key), finalize, ban, s' = s }
   }
   val invariant = all { s.mutations <= 4,
-    s.run == "finalized" implies s.mutations == s.frozenMutations,
-    keys.forall(key => {
+    s.runState == "finalized" implies s.mutations == s.frozenMutations,
+    keyIds.forall(key => {
       val row = s.rows.get(key)
-      all { row.exists implies keys.contains(row.digest) and keys.contains(row.shape),
+      all { row.exists implies keyIds.contains(row.digest) and keyIds.contains(row.shape),
         row.epoch >= 0, row.epoch <= 2, row.consumed implies row.exists }
     }) }
   run newIntentAfterCapturedReadCannotMutateFinalizedRunTest = init.then(attach(1))

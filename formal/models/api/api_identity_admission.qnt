@@ -9,7 +9,7 @@
 // Gate/route/hash-key composition is separate in identity_rate_gate.
 module api_identity_admission {
   val ids = Set(1, 2, 3, 4)
-  val keys = Set(1, 2)
+  val digestKeys = Set(1, 2)
   type Counter = { present: bool, count: int, started: int, expiry: int, generation: int }
   type Request = { phase: str, key: int, stamp: int, count: int, expiry: int,
     generation: int, result: str, retryAfter: int }
@@ -18,11 +18,11 @@ module api_identity_admission {
     generation: 0, result: "none", retryAfter: 0 }
   var s: { now: int, counters: int -> Counter, requests: int -> Request,
     cleanupPhase: str, cleanupStamp: int }
-  action init = s' = { now: 0, counters: keys.mapBy(_ => absent), requests: ids.mapBy(_ => unused),
+  action init = s' = { now: 0, counters: digestKeys.mapBy(_ => absent), requests: ids.mapBy(_ => unused),
     cleanupPhase: "idle", cleanupStamp: 0 }
   action tick = all { s.now < 6, s' = s.with("now", s.now + 1) }
   action capture(id: int, key: int): bool = all {
-    ids.contains(id), keys.contains(key), s.requests.get(id).phase == "unused",
+    ids.contains(id), digestKeys.contains(key), s.requests.get(id).phase == "unused",
     s' = s.with("requests", s.requests.set(id, unused.with("phase", "hash")
       .with("key", key).with("stamp", s.now))) }
   action hash(id: int, ok: bool): bool = {
@@ -33,16 +33,16 @@ module api_identity_admission {
   }
   action commit(id: int): bool = {
     val request = s.requests.get(id)
-    val prior = if (keys.contains(request.key)) s.counters.get(request.key) else absent
+    val prior = if (digestKeys.contains(request.key)) s.counters.get(request.key) else absent
     val reset = not(prior.present) or prior.expiry <= request.stamp
-    val next = { present: true, count: if (reset) 1 else prior.count + 1,
+    val nextCounter = { present: true, count: if (reset) 1 else prior.count + 1,
       started: if (reset) request.stamp else prior.started,
       expiry: if (reset) request.stamp + 3 else prior.expiry,
       generation: if (reset) id else prior.generation }
     all { ids.contains(id), request.phase == "ready",
-      s' = s.with("counters", s.counters.set(request.key, next))
+      s' = s.with("counters", s.counters.set(request.key, nextCounter))
         .with("requests", s.requests.set(id, request.with("phase", "committed")
-          .with("count", next.count).with("expiry", next.expiry).with("generation", next.generation))) }
+          .with("count", nextCounter.count).with("expiry", nextCounter.expiry).with("generation", nextCounter.generation))) }
   }
   action sqlFailure(id: int): bool = {
     val request = s.requests.get(id)
@@ -61,21 +61,21 @@ module api_identity_admission {
   action beginCleanup = all { s.cleanupPhase == "idle",
     s' = s.with("cleanupPhase", "waiting").with("cleanupStamp", s.now) }
   action deleteExpired = all { s.cleanupPhase == "waiting",
-    s' = s.with("cleanupPhase", "done").with("counters", keys.mapBy(key => {
+    s' = s.with("cleanupPhase", "done").with("counters", digestKeys.mapBy(key => {
       val row = s.counters.get(key)
       if (row.present and row.expiry <= s.cleanupStamp) absent else row
     })) }
   action cleanupFailure = all { s.cleanupPhase == "waiting", s' = s.with("cleanupPhase", "failed") }
   action step = {
     nondet id = ids.oneOf()
-    nondet key = keys.oneOf()
+    nondet key = digestKeys.oneOf()
     nondet ok = Set(false, true).oneOf()
     any { tick, capture(id, key), hash(id, ok), commit(id), sqlFailure(id), reply(id, ok),
       beginCleanup, deleteExpired, cleanupFailure, s' = s }
   }
   val invariant = all {
     s.now >= 0, s.now <= 6,
-    keys.forall(key => {
+    digestKeys.forall(key => {
       val row = s.counters.get(key)
       if (row.present) row.count > 0 and row.count <= 4 and row.expiry > row.started
         and ids.contains(row.generation)

@@ -356,7 +356,10 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
       "projectId()": registryProjectDigest("vault-network"),
       "monthlyCap()": BigInt(monthlyCapMinor).toString(16),
       "monthlyEnabled()": "0",
-    }).map(([signature, value]) => [toFunctionSelector(signature), word(value)]),
+    }).map(([signature, value]) => [
+      toFunctionSelector(signature),
+      word(value),
+    ]),
   );
   creationMethods.length = 0;
   mode = "creation";
@@ -380,7 +383,9 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
       },
     });
     expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
-    expect(creationMethods.some((method) => /send|sign/iu.test(method))).toBe(false);
+    expect(creationMethods.some((method) => /send|sign/iu.test(method))).toBe(
+      false,
+    );
   } finally {
     reviewedFactories.splice(0, reviewedFactories.length, factory);
     mode = "factory";

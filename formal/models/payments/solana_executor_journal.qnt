@@ -104,13 +104,13 @@ module solana_executor_journal {
       or current.identity != request.snapshot.identity or current.generation != request.snapshot.generation)
     val collision = current.exists and current.fingerprint != request.fingerprint
     val refuses = s.retired or collision or not(signatureAndPacketValid) or (request.expired and not(current.exists))
-    val next: Row = { exists: true, identity: id * 10 + request.quote,
+    val nextValue: Row = { exists: true, identity: id * 10 + request.quote,
       fingerprint: request.fingerprint, generation: request.quote,
       cosigner: s.role == "attester", completed: false }
     val signed = not(s.retired) and not(collision) and not(winner) and signatureAndPacketValid
       and (not(request.expired) or current.exists)
     all { request.phase == "admit",
-      s' = s.with("active", if (signed) next else current)
+      s' = s.with("active", if (signed) nextValue else current)
         .with("archive", if (signed and current.exists) s.archive.set(current.generation, current) else s.archive)
         .with("requests", s.requests.set(id,
           if (s.retired or collision) finish(request, if (s.retired) "retired" else "collision")
@@ -118,7 +118,7 @@ module solana_executor_journal {
             else finish(request, "write-reply-lost"))
           else if (refuses) finish(request, "sign-error")
           else if (not(replyReceived)) finish(request.with("signed", true), "write-reply-lost")
-          else request.with("phase", "handoff").with("signed", true).with("snapshot", next))) }
+          else request.with("phase", "handoff").with("signed", true).with("snapshot", nextValue))) }
   }
   action handoff(id: int): bool = {
     val request = s.requests.get(id)

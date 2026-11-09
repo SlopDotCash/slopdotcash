@@ -1,16 +1,19 @@
 // @source src/ReferralClaims.tsx
 // @source src/lib/pending-attempt.ts
 // @evidence tests/e2e/referral-claims.spec.ts
-// Two same-origin views, two UUIDs, two cumulative amounts. Unexecuted.
+// Two same-origin views, two UUIDs, two cumulative amounts. Web Lock request,
+// grant, final wallet observation and caller use are distinct transitions.
+// Layout cleanup retires the view at committed removal. Already-open wallet
+// tails may still update their own exact slot. Unexecuted.
 module ui_referral_claim_lifetime {
   // record: 0 empty, 1 legacy, 2/3 A unknown/hash, 4/5 B unknown/hash,
   // 6 unreadable. Values also represent exact captured JSON versions.
-  type State = { mounted: Set[int], supported: bool, writeWorks: bool,
+  type State = { present: Set[int], mounted: Set[int], supported: bool, writeWorks: bool,
     lock: int, phase: int -> str, record: int, captured: int -> int, target: int -> int,
     memoryHash: Set[int], errors: Set[int], sent: Set[int], claimed: int }
   val views = Set(1, 2)
   var s: State
-  action init = s' = { mounted: views, supported: true, writeWorks: true,
+  action init = s' = { present: views, mounted: views, supported: true, writeWorks: true,
     lock: 0, phase: views.mapBy(_ => "reviewed"), record: 0,
     captured: views.mapBy(_ => 0), target: views.mapBy(_ => 0), memoryHash: Set(), errors: Set(),
     sent: Set(), claimed: 0 }
@@ -29,21 +32,37 @@ module ui_referral_claim_lifetime {
       .with("target", s.target.set(id, if (s.record == 0 or s.record == 6) 0
         else if (s.record == 1 and s.target.get(id) > 1) s.target.get(id)
         else amount(s.record))) }
-  action beginSend(id: int): bool = all {
-    s.mounted.contains(id), s.supported, s.lock == 0, s.phase.get(id) == "reviewed",
-    s' = s.with("lock", id).with("phase", s.phase.set(id, "preflight")) }
-  action requestWallet(id: int): bool = all {
-    s.mounted.contains(id), s.lock == id, s.phase.get(id) == "preflight",
+  action requestLock(id: int): bool = all {
+    s.mounted.contains(id), s.supported, s.phase.get(id) == "reviewed",
+    s' = s.with("phase", s.phase.set(id, "locking")) }
+  action grantLock(id: int): bool = {
+    val allowed = s.mounted.contains(id) and s.lock == 0
+    all { s.phase.get(id) == "locking",
+      s' = s.with("lock", if (allowed) id else s.lock)
+        .with("phase", s.phase.set(id, if (allowed) "preflight" else "done"))
+        .with("errors", if (not(allowed) and s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors) }
+  }
+  action beginSend(id: int): bool = requestLock(id).then(grantLock(id))
+  action observePreflight(id: int): bool = all {
+    s.lock == id, s.phase.get(id) == "preflight",
+    s' = s.with("phase", s.phase.set(id, "observed")) }
+  action returnPreflight(id: int): bool = all {
+    s.lock == id, s.phase.get(id) == "observed",
+    s' = s.with("phase", s.phase.set(id, "returned")) }
+  action dispatchWallet(id: int): bool = all {
+    s.mounted.contains(id), s.lock == id, s.phase.get(id) == "returned",
     s.record == 0, s.writeWorks,
     s' = s.with("record", unknown(id)).with("captured", s.captured.set(id, unknown(id)))
       .with("target", s.target.set(id, id))
       .with("phase", s.phase.set(id, "wallet")).with("sent", s.sent.union(Set(id))) }
+  action requestWallet(id: int): bool = observePreflight(id).then(returnPreflight(id)).then(dispatchWallet(id))
   action preflightRefuses(id: int): bool = all {
-    s.lock == id, s.phase.get(id) == "preflight",
+    s.lock == id, Set("preflight", "observed", "returned").contains(s.phase.get(id)),
     s' = s.with("lock", 0).with("phase", s.phase.set(id, "done"))
       .with("errors", if (s.mounted.contains(id)) s.errors.union(Set(id)) else s.errors) }
   action depart(id: int): bool = all {
-    s.mounted.contains(id), s' = s.with("mounted", s.mounted.exclude(Set(id))) }
+    s.mounted.contains(id), s' = s.with("present", s.present.exclude(Set(id)))
+      .with("mounted", s.mounted.exclude(Set(id))) }
   // SPA departure retains the lock until the existing wallet request settles.
   action walletHash(id: int): bool = all {
     s.lock == id, s.phase.get(id) == "wallet",
@@ -63,7 +82,8 @@ module ui_referral_claim_lifetime {
   // Browser-context termination releases a Web Lock. It does not prove whether
   // the external transaction was sent, and it does not clear the marker.
   action terminate(id: int): bool = all {
-    s.lock == id, s' = s.with("lock", 0).with("mounted", s.mounted.exclude(Set(id)))
+    s.lock == id, s' = s.with("lock", 0).with("present", s.present.exclude(Set(id)))
+      .with("mounted", s.mounted.exclude(Set(id)))
       .with("phase", s.phase.set(id, "terminated")) }
   action reset(id: int): bool = all {
     s.mounted.contains(id), s.supported, s.lock == 0, s.writeWorks,
@@ -89,13 +109,14 @@ module ui_referral_claim_lifetime {
     nondet total = Set(0, 1, 2).oneOf()
     nondet record = Set(1, 3, 5, 6).oneOf()
     any { unavailableLocks, storageFails, storageRecovers, restoreLegacy,
-      restoreUnreadable, observe(id), beginSend(id), requestWallet(id), preflightRefuses(id),
+      restoreUnreadable, observe(id), requestLock(id), grantLock(id), observePreflight(id), returnPreflight(id), dispatchWallet(id), preflightRefuses(id),
       depart(id), walletHash(id), walletDeclines(id), walletUnknown(id), terminate(id),
       reset(id), refuseBusyOrUnsupported(id), observeClaimed(total), clearVerified(id),
       externalReplacement(record), s' = s }
   }
   val invariant = all {
-    if (s.lock == 0) true else Set("preflight", "wallet").contains(s.phase.get(s.lock)),
+    s.mounted.subseteq(s.present),
+    if (s.lock == 0) true else Set("preflight", "observed", "returned", "wallet").contains(s.phase.get(s.lock)),
     views.filter(id => s.phase.get(id) == "wallet").size() <= 1,
     s.sent.subseteq(views), s.memoryHash.subseteq(s.sent),
     s.record >= 0, s.record <= 6,
@@ -144,4 +165,20 @@ module ui_referral_claim_lifetime {
   run olderLegacyCannotConfirmNewerLocalClaimTest = init.then(beginSend(2)).then(requestWallet(2))
     .then(walletHash(2)).then(externalReplacement(1)).then(observe(2))
     .then(observeClaimed(1)).then(clearVerified(2).fail())
+  run departedBeforeLockGrantNeverStartsPreflightTest = init.then(requestLock(1)).then(depart(1)).then(grantLock(1))
+    .expect(s.lock == 0 and s.sent == Set() and invariant)
+  run departedObservedPreflightCannotDispatchTest = init.then(beginSend(1)).then(observePreflight(1))
+    .then(depart(1)).then(returnPreflight(1)).then(dispatchWallet(1).fail()).then(preflightRefuses(1))
+    .expect(s.record == 0 and s.sent == Set() and invariant)
+  run departedReturnedPreflightCannotDispatchTest = init.then(beginSend(1)).then(observePreflight(1))
+    .then(returnPreflight(1)).then(depart(1)).then(dispatchWallet(1).fail())
+  run competingLockGrantRefusesWithoutReleasingOwnerTest = init.then(requestLock(1)).then(requestLock(2))
+    .then(grantLock(1)).then(grantLock(2)).expect(s.lock == 1 and s.errors.contains(2) and invariant)
+  // Historical passive cleanup was later than the DOM-removal observation.
+  // This action is excluded from step.
+  action historicalPassiveRemoval(id: int): bool = all { s.present.contains(id),
+    s' = s.with("present", s.present.exclude(Set(id))) }
+  run historicalPassiveRemovalCouldPromptTest = init.then(beginSend(1)).then(observePreflight(1))
+    .then(returnPreflight(1)).then(historicalPassiveRemoval(1)).then(dispatchWallet(1))
+    .expect(s.sent == Set(1) and not(invariant))
 }

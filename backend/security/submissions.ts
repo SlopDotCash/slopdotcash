@@ -137,7 +137,6 @@ async function ownSubmission(
   return row;
 }
 
-
 function expectedRevision(body: Record<string, unknown>): number {
   if (
     typeof body.expectedRevision !== "number" ||

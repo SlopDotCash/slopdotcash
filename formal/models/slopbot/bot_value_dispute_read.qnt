@@ -40,18 +40,18 @@ module bot_value_dispute_read {
       else if (s.joint) c.with("row", 3).with("phase", "digest")
       else c.with("phase", "single-query"))) }
   }
-  action singleQuery(id: int, available: bool, exists: bool): bool = {
+  action singleQuery(id: int, available: bool, isPresent: bool): bool = {
     val c = s.calls.get(id)
     all { c.phase == "single-query", s' = s.with("calls", s.calls.set(id,
       if (not(available)) c.with("phase", "query-error")
-      else if (not(exists)) c.with("phase", "null")
+      else if (not(isPresent)) c.with("phase", "null")
       else c.with("row", s.single).with("phase", "digest"))) }
   }
-  action retainedQuery(id: int, available: bool, exists: bool): bool = {
+  action retainedQuery(id: int, available: bool, isPresent: bool): bool = {
     val c = s.calls.get(id)
     all { c.phase == "retained-query", s' = s.with("calls", s.calls.set(id,
       if (not(available)) c.with("phase", "query-error")
-      else if (not(exists)) c.with("phase", "missing-error")
+      else if (not(isPresent)) c.with("phase", "missing-error")
       else c.with("row", s.bound).with("phase", "digest"))) }
   }
   action digest(id: int): bool = {
@@ -88,9 +88,9 @@ module bot_value_dispute_read {
     nondet mode = Set("current", "retained").oneOf()
     nondet fault = faults.oneOf()
     nondet yes = Set(false, true).oneOf()
-    nondet exists = Set(false, true).oneOf()
+    nondet isPresent = Set(false, true).oneOf()
     any { correctSingle, jointSuccessor, start(id, mode, fault), validateKey(id, yes),
-      jointQuery(id, yes), singleQuery(id, yes, exists), retainedQuery(id, yes, exists),
+      jointQuery(id, yes), singleQuery(id, yes, isPresent), retainedQuery(id, yes, isPresent),
       digest(id), parse(id), identity(id), bindDelivery(id), s' = s }
   }
   val invariant = all {

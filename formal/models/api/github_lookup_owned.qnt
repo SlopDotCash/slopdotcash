@@ -19,12 +19,12 @@
 // Existing API tests cover filtering, forks and renamed actors, not every
 // pagination class below. No parser, tests or model execution were run.
 module github_lookup_owned {
-  val keys = Set(1, 2, 3)
+  val keyIds = Set(1, 2, 3)
   val entries = 0.to(8)
   var s: { phase: str, page: int, batch: List[int], cursor: int, names: Set[int],
     descriptions: int -> int, result: str, status: int, requests: int, foreignFetch: bool }
   action init = s' = { phase: "input", page: 1, batch: [0, 0], cursor: 0, names: Set(),
-    descriptions: keys.mapBy(_ => 0), result: "none", status: 0, requests: 0, foreignFetch: false }
+    descriptions: keyIds.mapBy(_ => 0), result: "none", status: 0, requests: 0, foreignFetch: false }
   def entryKey(entry: int): int = if (entry == 1 or entry == 2) 1 else if (entry == 3) 2 else 3
   def description(entry: int): int = if (entry == 2 or entry == 8) 2 else if (entry == 4) 0 else 1
   def eligible(entry: int): bool = Set(1, 2, 3, 4, 8).contains(entry)
@@ -61,7 +61,7 @@ module github_lookup_owned {
     any { begin(yes), pageReply(outcome, first, second), row, link(kind), s' = s }
   }
   val invariant = all { Set(1, 20).contains(s.page), s.cursor >= 0 and s.cursor <= 2,
-    s.names.subseteq(keys), not(s.foreignFetch), s.requests >= 0 and s.requests <= 2,
+    s.names.subseteq(keyIds), not(s.foreignFetch), s.requests >= 0 and s.requests <= 2,
     s.result == "list" implies s.phase == "done" and s.status == 0,
     s.result == "error" implies s.phase == "done" }
   action page(first: int, second: int): bool = pageReply("array", first, second).then(row).then(row)

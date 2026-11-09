@@ -27,7 +27,7 @@
 // Backup chain validity is supplied by vetting_backup_chain. No checks ran.
 module vetting_retention {
   val refs = Set(1, 2, 3)
-  val keys = Set(1, 2, 3)
+  val contentKeys = Set(1, 2, 3)
   var s: { present: Set[int], backup: Set[int], verifiedBackup: Set[int],
     closed: Set[int], oldEnough: Set[int], permanent: Set[int],
     references: Set[int], deleted: Set[int], physicalReceipts: Set[int], missingAudits: Set[int],
@@ -58,10 +58,10 @@ module vetting_retention {
     s' = s.with("layouts", s.layouts.set(1, Set(1, 3))).with("present", s.present.union(Set(3))) }
   action copy = all { s.phase == "idle", s' = s.with("backup", s.present).with("verifiedBackup", Set()) }
   action verifyBackup = all { s.phase == "idle", s' = s.with("verifiedBackup", s.backup) }
-  action loseSource(part: int): bool = all { keys.contains(part), s' = s.with("present", s.present.exclude(Set(part))) }
-  action loseBackup(part: int): bool = all { keys.contains(part),
+  action loseSource(part: int): bool = all { contentKeys.contains(part), s' = s.with("present", s.present.exclude(Set(part))) }
+  action loseBackup(part: int): bool = all { contentKeys.contains(part),
     s' = s.with("backup", s.backup.exclude(Set(part))).with("verifiedBackup", s.verifiedBackup.exclude(Set(part))) }
-  action corruptBackup(part: int): bool = all { keys.contains(part), s' = s.with("verifiedBackup", s.verifiedBackup.exclude(Set(part))) }
+  action corruptBackup(part: int): bool = all { contentKeys.contains(part), s' = s.with("verifiedBackup", s.verifiedBackup.exclude(Set(part))) }
   action addReference(ref: int): bool = all { refs.contains(ref), s.claim == 0, not(s.references.contains(ref)),
     s' = s.with("references", s.references.union(Set(ref))) }
   action startUpload(ref: int, part: int): bool = all { s.references.contains(ref), not(s.oldEnough.contains(ref)),
@@ -69,7 +69,7 @@ module vetting_retention {
     s' = s.with("pendingUploads", s.pendingUploads.union(Set(part))).with("admitted", s.admitted + 1) }
   action finishUpload(part: int): bool = all { s.pendingUploads.contains(part),
     s' = s.with("pendingUploads", s.pendingUploads.exclude(Set(part))).with("present", s.present.union(Set(part))) }
-  action select(ref: int): bool = all { s.phase == "idle", s.selections < 3, activeRefs.contains(ref),
+  action selectReference(ref: int): bool = all { s.phase == "idle", s.selections < 3, activeRefs.contains(ref),
     s.oldEnough.contains(ref), not(s.permanent.contains(ref)), s.claim == 0 or s.claim == ref,
     s' = s.with("phase", "claim").with("selected", ref).with("selections", s.selections + 1)
       .with("target", s.layouts.get(ref)).with("scanIndex", 0).with("backed", Set()).with("missing", Set())
@@ -93,8 +93,8 @@ module vetting_retention {
           .with("phase", if (s.scanIndex == 1) (if (verified.size() == 0) "commit" else "delete") else "scan") }
   }
   action deletePart(part: int, commits: bool): bool = {
-    val next = if (s.remaining.contains(1)) 1 else if (s.remaining.contains(2)) 2 else 3
-    all { s.phase == "delete", s.remaining.contains(part), part == next,
+    val nextKey = if (s.remaining.contains(1)) 1 else if (s.remaining.contains(2)) 2 else 3
+    all { s.phase == "delete", s.remaining.contains(part), part == nextKey,
       s' = if (commits) s.with("present", s.present.exclude(Set(part))).with("deleting", part).with("phase", "head")
         .with("safeDeletion", s.safeDeletion and s.claim == s.selected and s.backed.contains(part))
         else s.with("phase", "failed").with("result", "delete-error") }
@@ -115,19 +115,19 @@ module vetting_retention {
   action retry = all { s.phase == "failed", s' = s.with("phase", "idle") }
   action historicalStep = {
     nondet ref = refs.oneOf()
-    nondet part = keys.oneOf()
+    nondet part = contentKeys.oneOf()
     nondet yes = Set(false, true).oneOf()
     any { close(ref), age(ref), permanentAdmission(ref), alternateHistoricalLayout, copy, verifyBackup,
       loseSource(part), loseBackup(part), corruptBackup(part), addReference(ref), startUpload(ref, part), finishUpload(part),
-      select(ref), claimOrShare, sharedCommit(yes), inspectPart(yes), deletePart(part, yes), loseDeleteReply, observeDelete(yes), commit(yes), reply, loseReply, retry, s' = s }
+      selectReference(ref), claimOrShare, sharedCommit(yes), inspectPart(yes), deletePart(part, yes), loseDeleteReply, observeDelete(yes), commit(yes), reply, loseReply, retry, s' = s }
   }
   action holdLegacy = all { s.phase == "claim", s.claim == 0,
     s' = s.with("phase", "reply").with("result", "retention-held") }
   action step = {
     nondet ref = refs.oneOf()
-    nondet part = keys.oneOf()
+    nondet part = contentKeys.oneOf()
     any { close(ref), age(ref), permanentAdmission(ref), alternateHistoricalLayout, copy, verifyBackup,
-      startUpload(ref, part), finishUpload(part), select(ref), holdLegacy, reply, s' = s }
+      startUpload(ref, part), finishUpload(part), selectReference(ref), holdLegacy, reply, s' = s }
   }
   val invariant = all { s.safeDeletion, s.deleted.subseteq(s.oldEnough), s.physicalReceipts.subseteq(s.deleted), s.missingAudits.subseteq(s.oldEnough),
     s.verifiedBackup.subseteq(s.backup), s.admitted <= 2, s.selections <= 3,
@@ -135,23 +135,23 @@ module vetting_retention {
     s.result == "deleted" implies s.target.subseteq(s.observedAbsent) }
   action bothExpired = close(1).then(close(2)).then(age(1)).then(age(2))
   action backed = copy.then(verifyBackup)
-  action retireFirst = select(1).then(claimOrShare).then(sharedCommit(true)).then(reply)
-  action lastReady = select(2).then(claimOrShare).then(inspectPart(true)).then(inspectPart(true))
+  action retireFirst = selectReference(1).then(claimOrShare).then(sharedCommit(true)).then(reply)
+  action lastReady = selectReference(2).then(claimOrShare).then(inspectPart(true)).then(inspectPart(true))
   action deleteBoth = deletePart(1, true).then(observeDelete(true)).then(deletePart(2, true)).then(observeDelete(true))
 
   run sharedReferencePreservesObjectTest = init.then(close(1)).then(age(1)).then(backed).then(retireFirst)
     .expect(s.present == Set(1, 2) and activeRefs == Set(2) and s.claim == 0 and invariant)
   run backedUpExpiredReferencesTest = init.then(bothExpired).then(backed).then(retireFirst).then(lastReady).then(deleteBoth).then(commit(true))
     .expect(s.deleted == Set(1, 2) and s.present.size() == 0 and invariant)
-  run admissionEvidencePermanentTest = init.then(permanentAdmission(1)).then(bothExpired).then(backed).then(select(2)).then(claimOrShare).then(sharedCommit(true))
+  run admissionEvidencePermanentTest = init.then(permanentAdmission(1)).then(bothExpired).then(backed).then(selectReference(2)).then(claimOrShare).then(sharedCommit(true))
     .expect(s.present == Set(1, 2) and activeRefs == Set(1) and s.claim == 0 and invariant)
-  run lateReferencePreventsDeletionTest = init.then(bothExpired).then(backed).then(addReference(3)).then(retireFirst).then(select(2)).then(claimOrShare).then(sharedCommit(true))
+  run lateReferencePreventsDeletionTest = init.then(bothExpired).then(backed).then(addReference(3)).then(retireFirst).then(selectReference(2)).then(claimOrShare).then(sharedCommit(true))
     .expect(s.present == Set(1, 2) and activeRefs == Set(3) and invariant)
-  run claimBlocksNewReferenceTest = init.then(bothExpired).then(backed).then(retireFirst).then(select(2)).then(claimOrShare).then(addReference(3).fail())
+  run claimBlocksNewReferenceTest = init.then(bothExpired).then(backed).then(retireFirst).then(selectReference(2)).then(claimOrShare).then(addReference(3).fail())
   run missingSourceAndBackupIsNotDeletionReceiptTest = init.then(loseSource(2)).then(bothExpired).then(backed).then(retireFirst).then(lastReady)
     .then(deletePart(1, true)).then(observeDelete(true)).then(commit(true))
     .expect(s.missingAudits == Set(2) and s.deleted == Set(1) and s.claim == 0 and invariant)
-  run presentSourceWithoutBackupRetainsClaimTest = init.then(bothExpired).then(retireFirst).then(select(2)).then(claimOrShare).then(inspectPart(true))
+  run presentSourceWithoutBackupRetainsClaimTest = init.then(bothExpired).then(retireFirst).then(selectReference(2)).then(claimOrShare).then(inspectPart(true))
     .expect(s.phase == "failed" and s.claim == 2 and s.present == Set(1, 2) and invariant)
   run corruptBackupStopsBeforeAnyDeleteTest = init.then(bothExpired).then(backed).then(corruptBackup(2)).then(retireFirst).then(lastReady)
     .expect(s.phase == "failed" and s.present == Set(1, 2) and s.claim == 2)
@@ -183,9 +183,9 @@ module vetting_retention {
   run newSnapshotCannotInheritPriorByteVerificationTest = init.then(bothExpired).then(backed).then(retireFirst).then(lastReady)
     .then(deleteBoth).then(commit(true)).then(reply).then(copy)
     .expect(s.backup.size() == 0 and s.verifiedBackup.size() == 0 and invariant)
-  run currentLegacyCleanupHoldsBytesTest = init.then(bothExpired).then(backed).then(select(1)).then(holdLegacy).then(reply)
+  run currentLegacyCleanupHoldsBytesTest = init.then(bothExpired).then(backed).then(selectReference(1)).then(holdLegacy).then(reply)
     .expect(s.present == Set(1, 2) and s.deleted.size() == 0 and s.result == "retention-held" and invariant)
   run currentLegacyHoldDoesNotPretendToFenceOldWriterTest = init.then(startUpload(1, 1)).then(bothExpired)
-    .then(select(1)).then(holdLegacy).then(reply).then(finishUpload(1))
+    .then(selectReference(1)).then(holdLegacy).then(reply).then(finishUpload(1))
     .expect(s.present == Set(1, 2) and s.physicalReceipts.size() == 0 and invariant)
 }

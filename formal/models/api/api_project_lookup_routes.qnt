@@ -45,7 +45,7 @@
 // No tests, parser, checker or provider request ran for these definitions.
 module api_project_lookup_routes {
   val ids = Set(1, 2)
-  val keys = Set(1, 2, 3, 4)
+  val keyIds = Set(1, 2, 3, 4)
   val routes = Set("owned", "repository", "session", "actor-selection", "unknown")
   val outcomes = Set("found", "missing", "organization", "unavailable", "limited", "throw")
   type Entry = { version: int, subject: int }
@@ -65,7 +65,7 @@ module api_project_lookup_routes {
     cache: int -> Entry, legacyCache: int -> Entry }
   action init = s' = { session: 1, loginVersion: ids.mapBy(_ => 1), dataVersion: 1,
     admins: Set(1), moderators: Set(1), requests: ids.mapBy(_ => idle),
-    cache: keys.mapBy(_ => empty), legacyCache: ids.mapBy(_ => empty) }
+    cache: keyIds.mapBy(_ => empty), legacyCache: ids.mapBy(_ => empty) }
   def reply(request: Request, status: int): Request = request.with("phase", "response")
     .with("status", status).with("policy", if (status == 200 and Set("owned", "repository").contains(request.route)) "private-300" else "no-store")
   def errorStatus(outcome: str): int = if (outcome == "organization") 422
@@ -75,12 +75,12 @@ module api_project_lookup_routes {
     s' = s.with("loginVersion", s.loginVersion.set(actor, 2)) }
   action changeData = all { s.dataVersion == 1, s' = s.with("dataVersion", 2) }
   action revokeModerator(actor: int): bool = all { ids.contains(actor), s' = s.with("moderators", s.moderators.exclude(Set(actor))) }
-  action expire(key: int): bool = all { keys.contains(key), s' = s.with("cache", s.cache.set(key, empty)) }
+  action expire(key: int): bool = all { keyIds.contains(key), s' = s.with("cache", s.cache.set(key, empty)) }
   // Environment: bytes from the old deployment remain under the old key.
   // This is not a write performed by the current githubLookup function.
   action legacyPut(repository: int, version: int): bool = all {
     ids.contains(repository), ids.contains(version),
-    s' = s.with("legacyCache", s.legacyCache.set(repository, { version, subject: 0 })) }
+    s' = s.with("legacyCache", s.legacyCache.set(repository, { version: version, subject: 0 })) }
   // expected0=absent,1/2=the named actor,3=malformed header. Repository0 is a
   // syntactically invalid but route-shaped owner/name; valid paths are1/2.
   action begin(id: int, route: str, method: str, expected: int, repository: int, transport: bool, cached: bool, wait: bool): bool = {
@@ -115,7 +115,7 @@ module api_project_lookup_routes {
   }
   action cacheRead(id: int, result: str): bool = {
     val request = s.requests.get(id)
-    val entry = if (keys.contains(request.key)) s.cache.get(request.key) else empty
+    val entry = if (keyIds.contains(request.key)) s.cache.get(request.key) else empty
     all { request.phase == "cache", Set("hit", "miss", "error").contains(result),
       result == "hit" implies request.cacheEnabled and entry.version > 0,
       s' = s.with("requests", s.requests.set(id,
@@ -151,9 +151,9 @@ module api_project_lookup_routes {
     all { request.phase == "buffer", s' = s.with("requests", s.requests.set(id,
       if (not(readable)) reply(request, 500) else reply(request, 200).with("putPending", request.cacheEnabled))) }
   }
-  action put(id: int, succeeds: bool): bool = {
+  action putRecord(id: int, succeeds: bool): bool = {
     val request = s.requests.get(id)
-    all { request.putPending, keys.contains(request.key),
+    all { request.putPending, keyIds.contains(request.key),
       s' = s.with("cache", if (succeeds) s.cache.set(request.key, { version: request.payload, subject: request.subject }) else s.cache)
         .with("requests", s.requests.set(id, request.with("putPending", false))) }
   }
@@ -184,13 +184,13 @@ module api_project_lookup_routes {
     nondet expected = Set(0, 1, 2, 3).oneOf()
     nondet repository = Set(0, 1, 2).oneOf()
     nondet actor = Set(0, 1, 2).oneOf()
-    nondet key = keys.oneOf()
+    nondet key = keyIds.oneOf()
     nondet result = Set("hit", "miss", "error").oneOf()
     nondet outcome = outcomes.oneOf()
     nondet yes = Set(false, true).oneOf()
     any { switchSession(actor), rename(id), changeData, revokeModerator(id), expire(key), legacyPut(id, repository),
       begin(id, route, method, expected, repository, yes, yes, yes), dispatch(id), session(id, yes, yes), cacheRead(id, result),
-      validate(id), actorReply(id, outcome), dataReply(id, outcome), buffer(id, yes), put(id, yes), selectionInput(id, repository, yes),
+      validate(id), actorReply(id, outcome), dataReply(id, outcome), buffer(id, yes), putRecord(id, yes), selectionInput(id, repository, yes),
       selectionReply(id, outcome, id), respond(id, yes), s' = s }
   }
   val invariant = ids.forall(id => {
@@ -220,29 +220,29 @@ module api_project_lookup_routes {
     .expect(s.requests.get(1).status == 404 and s.requests.get(1).actor == 0)
   run wrongOriginWriteRefusesBeforeSessionTest = init.then(begin(1, "actor-selection", "POST", 0, 1, false, true, false)).then(dispatch(1))
     .expect(s.requests.get(1).status == 403 and s.requests.get(1).providerReads == 0)
-  run repositorySuccessCachesPublicFactsAndReturnsPrivatePolicyTest = init.then(repository(1)).then(put(1, true)).then(respond(1, true))
+  run repositorySuccessCachesPublicFactsAndReturnsPrivatePolicyTest = init.then(repository(1)).then(putRecord(1, true)).then(respond(1, true))
     .expect(s.cache.get(3).version == 1 and s.requests.get(1).policy == "private-300" and invariant)
-  run canonicalRepositoryKeySharesFactsAcrossActorsTest = init.then(repository(1)).then(put(1, true)).then(respond(1, true))
+  run canonicalRepositoryKeySharesFactsAcrossActorsTest = init.then(repository(1)).then(putRecord(1, true)).then(respond(1, true))
     .then(switchSession(2)).then(start(2, "repository")).then(cacheRead(2, "hit"))
     .expect(s.requests.get(2).payload == 1 and s.requests.get(2).actor == 2 and invariant)
-  run ownedCacheIsPartitionedByImmutableActorTest = init.then(owned(1)).then(put(1, true)).then(respond(1, true))
+  run ownedCacheIsPartitionedByImmutableActorTest = init.then(owned(1)).then(putRecord(1, true)).then(respond(1, true))
     .then(switchSession(2)).then(start(2, "owned")).then(cacheRead(2, "hit").fail())
-  run signedOutCannotReadAnExistingPublicFactCacheTest = init.then(repository(1)).then(put(1, true)).then(respond(1, true))
+  run signedOutCannotReadAnExistingPublicFactCacheTest = init.then(repository(1)).then(putRecord(1, true)).then(respond(1, true))
     .then(switchSession(0)).then(start(2, "repository")).expect(s.requests.get(2).status == 401 and invariant)
-  run accountRenameUsesImmutableActorThenCurrentLoginTest = init.then(rename(1)).then(owned(1)).then(put(1, false))
+  run accountRenameUsesImmutableActorThenCurrentLoginTest = init.then(rename(1)).then(owned(1)).then(putRecord(1, false))
     .expect(s.requests.get(1).login == 2 and s.requests.get(1).subject == 1 and invariant)
   run sessionSwitchAfterCaptureDoesNotRewriteRequestTest = init.then(start(1, "owned")).then(switchSession(2))
-    .then(cacheRead(1, "miss")).then(validate(1)).then(actorReply(1, "found")).then(dataReply(1, "found")).then(buffer(1, true)).then(put(1, true))
+    .then(cacheRead(1, "miss")).then(validate(1)).then(actorReply(1, "found")).then(dataReply(1, "found")).then(buffer(1, true)).then(putRecord(1, true))
     .expect(s.cache.get(1).subject == 1 and s.cache.get(2).version == 0 and invariant)
   run missingOwnedActorIsUnavailableNotEmptySuccessTest = init.then(miss(1, "owned")).then(actorReply(1, "missing"))
     .expect(s.requests.get(1).status == 502 and s.cache.get(1).version == 0 and invariant)
   run missingRepositoryIs404AndNotCachedTest = init.then(miss(1, "repository")).then(dataReply(1, "missing"))
     .expect(s.requests.get(1).status == 404 and s.cache.get(3).version == 0 and invariant)
   run providerFailureCanRetryAfterNoCacheWriteTest = init.then(miss(1, "repository")).then(dataReply(1, "limited")).then(respond(1, true))
-    .then(repository(1)).then(put(1, true)).then(respond(1, true)).expect(s.requests.get(1).attempt == 2 and s.requests.get(1).status == 200 and invariant)
+    .then(repository(1)).then(putRecord(1, true)).then(respond(1, true)).expect(s.requests.get(1).attempt == 2 and s.requests.get(1).status == 200 and invariant)
   run cacheReadFailureFallsBackToProviderTest = init.then(start(1, "repository")).then(cacheRead(1, "error")).then(validate(1))
-    .then(dataReply(1, "found")).then(buffer(1, true)).then(put(1, true)).expect(s.requests.get(1).providerReads == 1 and invariant)
-  run cachePutFailureKeepsSuccessfulResponseTest = init.then(repository(1)).then(put(1, false)).then(respond(1, true))
+    .then(dataReply(1, "found")).then(buffer(1, true)).then(putRecord(1, true)).expect(s.requests.get(1).providerReads == 1 and invariant)
+  run cachePutFailureKeepsSuccessfulResponseTest = init.then(repository(1)).then(putRecord(1, false)).then(respond(1, true))
     .expect(s.requests.get(1).status == 200 and s.cache.get(3).version == 0 and invariant)
   run absentCacheReturnsBuiltResponseWithoutBufferingTest = init.then(begin(1, "repository", "GET", 0, 1, true, false, false))
     .then(dispatch(1)).then(session(1, true, true)).then(cacheRead(1, "miss")).then(validate(1)).then(dataReply(1, "found"))
@@ -250,9 +250,9 @@ module api_project_lookup_routes {
   run synchronousCachePutMustSettleBeforeResponseTest = init.then(repository(1)).then(respond(1, true).fail())
   run backgroundCachePutCanSettleAfterResponseTest = init.then(begin(1, "repository", "GET", 0, 1, true, true, true))
     .then(dispatch(1)).then(session(1, true, true)).then(cacheRead(1, "miss")).then(validate(1)).then(dataReply(1, "found"))
-    .then(buffer(1, true)).then(respond(1, false)).then(put(1, true))
+    .then(buffer(1, true)).then(respond(1, false)).then(putRecord(1, true))
     .expect(not(s.requests.get(1).delivered) and s.cache.get(3).version == 1 and invariant)
-  run latePublicCacheWriteCanOverwriteNewerSnapshotTest = init.then(repository(1)).then(changeData).then(repository(2)).then(put(2, true)).then(put(1, true))
+  run latePublicCacheWriteCanOverwriteNewerSnapshotTest = init.then(repository(1)).then(changeData).then(repository(2)).then(putRecord(2, true)).then(putRecord(1, true))
     .expect(s.requests.get(2).payload == 2 and s.cache.get(3).version == 1 and invariant)
   run invalidRepositoryRefusesOnMissTest = init.then(begin(1, "repository", "GET", 0, 0, true, true, false))
     .then(dispatch(1)).then(session(1, true, true)).then(cacheRead(1, "miss")).then(validate(1)).expect(s.requests.get(1).status == 400 and invariant)
@@ -271,7 +271,7 @@ module api_project_lookup_routes {
   run legacyRepositoryCacheCannotHitCurrentNamespaceTest = init.then(legacyPut(1, 1))
     .then(start(1, "repository")).then(cacheRead(1, "hit").fail())
   run currentRepositoryReadIgnoresLegacyBytesAndLateLegacyPutTest = init.then(legacyPut(1, 1)).then(changeData)
-    .then(repository(1)).then(put(1, true)).then(respond(1, true)).then(legacyPut(1, 1))
+    .then(repository(1)).then(putRecord(1, true)).then(respond(1, true)).then(legacyPut(1, 1))
     .then(start(2, "repository")).then(cacheRead(2, "hit"))
     .expect(s.legacyCache.get(1).version == 1 and s.cache.get(3).version == 2
       and s.requests.get(1).providerReads == 1 and s.requests.get(2).payload == 2 and invariant)

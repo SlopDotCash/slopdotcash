@@ -35,11 +35,13 @@ for (const branch of [
               node: {
                 ...node,
                 refs: {
-                  nodes: [{
-                    name: branch,
-                    prefix: "refs/heads/",
-                    target: { __typename: "Commit", oid: COMMIT },
-                  }],
+                  nodes: [
+                    {
+                      name: branch,
+                      prefix: "refs/heads/",
+                      target: { __typename: "Commit", oid: COMMIT },
+                    },
+                  ],
                   pageInfo: { hasNextPage: false, endCursor: null },
                 },
               },

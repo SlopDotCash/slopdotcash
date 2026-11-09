@@ -1,4 +1,4 @@
-/** Copied production module with isolated filesystem failures; source-only, unexecuted. */
+/** Copied production module with isolated filesystem failures. */
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -26,6 +26,10 @@ function publicationCase(name: string, body: string) {
           join(scripts, file),
         );
       }
+      writeFileSync(
+        join(root, "project.json"),
+        JSON.stringify({ repositoryId: "example/project" }),
+      );
       const launched = join(root, "launched");
       writeFileSync(
         join(bin, "gh"),
@@ -86,7 +90,9 @@ function publicationCase(name: string, body: string) {
   });
 }
 
-publicationCase("a published candidate is not removed through its former path", String.raw`
+publicationCase(
+  "a published candidate is not removed through its former path",
+  String.raw`
   let absentCandidateRemovals = 0;
   fs.rmSync = (path, options) => {
     if (String(path).includes('.candidate-') && !fs.existsSync(path)) {
@@ -102,9 +108,12 @@ publicationCase("a published candidate is not removed through its former path", 
   lock.release();
   assert.equal(absentCandidateRemovals, 0);
   assert.deepEqual(fs.readdirSync(locks), []);
-`);
+`,
+);
 
-publicationCase("candidate preparation preserves its first failure when cleanup also fails", String.raw`
+publicationCase(
+  "candidate preparation preserves its first failure when cleanup also fails",
+  String.raw`
   const primary = new Error('fixture owner write failed');
   fs.writeFileSync = (path, ...args) => {
     if (String(path).includes('.candidate-') && String(path).endsWith('/owner.json')) throw primary;
@@ -127,9 +136,12 @@ publicationCase("candidate preparation preserves its first failure when cleanup 
   retry.release();
   assert.equal(fs.existsSync(lockPath), false);
   assert.equal(candidates().length, 1);
-`);
+`,
+);
 
-publicationCase("candidate cleanup cannot replace live-owner contention", String.raw`
+publicationCase(
+  "candidate cleanup cannot replace live-owner contention",
+  String.raw`
   const { acquireLiveReportLock, LiveReportLockContentionError } = await load();
   const owner = acquireLiveReportLock(identity, { rootPath: locks });
   const before = fs.readFileSync(join(lockPath, 'owner.json'), 'utf8');
@@ -145,9 +157,12 @@ publicationCase("candidate cleanup cannot replace live-owner contention", String
   fs.rmSync = original.rm;
   syncBuiltinESMExports();
   owner.release();
-`);
+`,
+);
 
-publicationCase("a failed publication leaves the dead quarantine separate and permits retry", String.raw`
+publicationCase(
+  "a failed publication leaves the dead quarantine separate and permits retry",
+  String.raw`
   seedStale();
   const primary = new Error('fixture new owner rename failed');
   fs.renameSync = (source, target) => {
@@ -171,7 +186,8 @@ publicationCase("a failed publication leaves the dead quarantine separate and pe
   const retry = acquireLiveReportLock(identity, { rootPath: locks });
   retry.release();
   assert.equal(stale().length, 1);
-`);
+`,
+);
 
 for (const failCandidateCleanup of [false, true]) {
   publicationCase(
@@ -219,7 +235,9 @@ for (const failCandidateCleanup of [false, true]) {
   );
 }
 
-publicationCase("failed rollback reports committed ownership and retains both failure identities", String.raw`
+publicationCase(
+  "failed rollback reports committed ownership and retains both failure identities",
+  String.raw`
   seedStale();
   const primary = new Error('fixture stale removal failed');
   const rollback = new Error('fixture rollback rename failed');
@@ -245,9 +263,12 @@ publicationCase("failed rollback reports committed ownership and retains both fa
   assert.equal(fs.existsSync(guard), false);
   assert.equal(JSON.parse(fs.readFileSync(join(lockPath, 'owner.json'), 'utf8')).pid, process.pid);
   assert.ok(captured(() => acquireLiveReportLock(identity, { rootPath: locks })) instanceof LiveReportLockContentionError);
-`);
+`,
+);
 
-publicationCase("acquisition guard cleanup failure retains the committed owner without a handle", String.raw`
+publicationCase(
+  "acquisition guard cleanup failure retains the committed owner without a handle",
+  String.raw`
   const primary = new Error('fixture acquisition guard cleanup failed');
   fs.rmdirSync = (path, ...args) => {
     if (path === guard) throw primary;
@@ -267,9 +288,12 @@ publicationCase("acquisition guard cleanup failure retains the committed owner w
   assert.ok(retry instanceof LiveReportLockContentionError);
   assert.match(retry.message, /transition guard/);
   assert.equal(fs.existsSync(guard), true);
-`);
+`,
+);
 
-publicationCase("release cleanup retries touch only the saved tombstone after a successor acquires", String.raw`
+publicationCase(
+  "release cleanup retries touch only the saved tombstone after a successor acquires",
+  String.raw`
   const { acquireLiveReportLock } = await load();
   const first = acquireLiveReportLock(identity, { rootPath: locks });
   let failRemoval = true;
@@ -299,9 +323,12 @@ publicationCase("release cleanup retries touch only the saved tombstone after a 
   assert.equal(fs.readFileSync(join(lockPath, 'owner.json'), 'utf8'), successorBytes);
   successor.release();
   assert.deepEqual(fs.readdirSync(locks), []);
-`);
+`,
+);
 
-publicationCase("release guard cleanup failure remains blocked on every retry", String.raw`
+publicationCase(
+  "release guard cleanup failure remains blocked on every retry",
+  String.raw`
   const { acquireLiveReportLock, LiveReportLockContentionError } = await load();
   const owner = acquireLiveReportLock(identity, { rootPath: locks });
   const primary = new Error('fixture release guard cleanup failed');
@@ -319,9 +346,12 @@ publicationCase("release guard cleanup failure remains blocked on every retry", 
   assert.match(captured(() => owner.release()).message, /transition guard/);
   assert.ok(captured(() => acquireLiveReportLock(identity, { rootPath: locks })) instanceof LiveReportLockContentionError);
   assert.equal(fs.existsSync(guard), true);
-`);
+`,
+);
 
-publicationCase("a failed release rename keeps its owner and permits a later release", String.raw`
+publicationCase(
+  "a failed release rename keeps its owner and permits a later release",
+  String.raw`
   const { acquireLiveReportLock } = await load();
   const owner = acquireLiveReportLock(identity, { rootPath: locks });
   const before = fs.readFileSync(join(lockPath, 'owner.json'), 'utf8');
@@ -338,4 +368,5 @@ publicationCase("a failed release rename keeps its owner and permits a later rel
   syncBuiltinESMExports();
   owner.release();
   assert.deepEqual(fs.readdirSync(locks), []);
-`);
+`,
+);

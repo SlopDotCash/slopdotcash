@@ -144,7 +144,8 @@ export function CyclePage({
           See the{" "}
           <Link href={projectHref}>
             {listedProject ? "project page" : "cycle archive"}
-          </Link>.
+          </Link>
+          .
         </p>
       </NotFound>
     );
@@ -552,7 +553,9 @@ export function CycleArchivePage({
       month: monthFilter,
       state: stateFilter,
     };
-    if (ARCHIVE_FILTERS.some((key) => normalized[key] !== requestedFilters[key]))
+    if (
+      ARCHIVE_FILTERS.some((key) => normalized[key] !== requestedFilters[key])
+    )
       setFilters(normalized);
     const url = new URL(window.location.href);
     for (const key of ARCHIVE_FILTERS) {
@@ -566,15 +569,18 @@ export function CycleArchivePage({
     state.status === "ready"
       ? Date.parse(state.cycleIndex.generatedAt) + SNAPSHOT_STALE_AFTER_MS + 1
       : null;
-  const nextBoundary = all.reduce<number | null>((next, cycle) => {
-    const deadline =
-      cycle.state === "review" && cycle.reviewEndsAt
-        ? Date.parse(cycle.reviewEndsAt)
-        : null;
-    return deadline !== null && deadline > now
-      ? Math.min(next ?? deadline, deadline)
-      : next;
-  }, staleAt !== null && staleAt > now ? staleAt : null);
+  const nextBoundary = all.reduce<number | null>(
+    (next, cycle) => {
+      const deadline =
+        cycle.state === "review" && cycle.reviewEndsAt
+          ? Date.parse(cycle.reviewEndsAt)
+          : null;
+      return deadline !== null && deadline > now
+        ? Math.min(next ?? deadline, deadline)
+        : next;
+    },
+    staleAt !== null && staleAt > now ? staleAt : null,
+  );
   useTimeBoundary(nextBoundary);
   const cycles = all.filter(
     (cycle) =>

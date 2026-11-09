@@ -3,7 +3,12 @@
  * Wallet/HTTP authorities are controlled here; native retirement has separate
  * chain evidence. No transaction-sending feature is made available.
  */
-import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { decodeBase58Bytes, encodeBase58Bytes } from "../../src/lib/base58";
@@ -45,46 +50,50 @@ async function holdParentGate(
   followingSessions: number,
 ) {
   await page.waitForLoadState("networkidle");
-  await page.evaluate(({ caseId, caseReads, followingSessions }) => {
-    const state = {
-      cases: 0,
-      remaining: -1,
-      waiting: false,
-      returned: false,
-      release: () => {},
-    };
-    Object.assign(window, { heldPaymentGate: state });
-    const json = Response.prototype.json;
-    Response.prototype.json = async function (this: Response) {
-      const body = await json.call(this);
-      const path = this.url ? new URL(this.url).pathname : "";
-      let hold = false;
-      if (path === `/api/v1/security-cases/${caseId}`) {
-        state.cases += 1;
-        if (state.cases === caseReads) {
-          state.remaining = followingSessions;
-          hold = followingSessions === 0;
+  await page.evaluate(
+    ({ caseId, caseReads, followingSessions }) => {
+      const state = {
+        cases: 0,
+        remaining: -1,
+        waiting: false,
+        returned: false,
+        release: () => {},
+      };
+      Object.assign(window, { heldPaymentGate: state });
+      const json = Response.prototype.json;
+      Response.prototype.json = async function (this: Response) {
+        const body = await json.call(this);
+        const path = this.url ? new URL(this.url).pathname : "";
+        let hold = false;
+        if (path === `/api/v1/security-cases/${caseId}`) {
+          state.cases += 1;
+          if (state.cases === caseReads) {
+            state.remaining = followingSessions;
+            hold = followingSessions === 0;
+          }
+        } else if (path === "/api/v1/project-session" && state.remaining > 0) {
+          state.remaining -= 1;
+          hold = state.remaining === 0;
         }
-      } else if (path === "/api/v1/project-session" && state.remaining > 0) {
-        state.remaining -= 1;
-        hold = state.remaining === 0;
-      }
-      if (hold && !state.waiting) {
-        state.waiting = true;
-        await new Promise<void>((resolve) => {
-          state.release = resolve;
-        });
-        state.returned = true;
-      }
-      return body;
-    };
-  }, { caseId, caseReads, followingSessions });
+        if (hold && !state.waiting) {
+          state.waiting = true;
+          await new Promise<void>((resolve) => {
+            state.release = resolve;
+          });
+          state.returned = true;
+        }
+        return body;
+      };
+    },
+    { caseId, caseReads, followingSessions },
+  );
 }
 
 async function departHeldPayment(page: Page, leaveParent = false) {
-  await page.waitForFunction(() =>
-    (window as typeof window & { heldPaymentGate: { waiting: boolean } })
-      .heldPaymentGate.waiting,
+  await page.waitForFunction(
+    () =>
+      (window as typeof window & { heldPaymentGate: { waiting: boolean } })
+        .heldPaymentGate.waiting,
   );
   if (leaveParent) {
     await page.evaluate(() => {
@@ -95,23 +104,28 @@ async function departHeldPayment(page: Page, leaveParent = false) {
     await page.goBack();
     await expect(page).toHaveURL(/\/how-it-works$/u);
   } else {
-    await page.getByRole("button", { name: "Back to reports", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Back to reports", exact: true })
+      .click();
   }
   await expect(
     page.getByRole("button", { name: "Back to reports", exact: true }),
   ).toHaveCount(0);
   await page.evaluate(() =>
-    (window as typeof window & { heldPaymentGate: { release(): void } })
-      .heldPaymentGate.release(),
+    (
+      window as typeof window & { heldPaymentGate: { release(): void } }
+    ).heldPaymentGate.release(),
   );
-  await page.waitForFunction(() =>
-    (window as typeof window & { heldPaymentGate: { returned: boolean } })
-      .heldPaymentGate.returned,
+  await page.waitForFunction(
+    () =>
+      (window as typeof window & { heldPaymentGate: { returned: boolean } })
+        .heldPaymentGate.returned,
   );
   await page.evaluate(
-    () => new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    }),
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
   );
 }
 
@@ -221,9 +235,12 @@ async function setup(page: Page, fallback = false) {
   const posted: unknown[] = [];
   const submittedKey = `slop:bounty-solana:v1:${record.id}:${record.settlement.recovery.generation}:fixture:${OWNER}`;
   if (fallback)
-    await page.addInitScript(({ key, signature }) => {
-      sessionStorage.setItem(key, JSON.stringify({ signature }));
-    }, { key: submittedKey, signature: "1".repeat(64) });
+    await page.addInitScript(
+      ({ key, signature }) => {
+        sessionStorage.setItem(key, JSON.stringify({ signature }));
+      },
+      { key: submittedKey, signature: "1".repeat(64) },
+    );
   await page.exposeFunction("historyWalletAccount", () => ({
     address: record.settlement.recovery.payer,
     publicKey: [...decodeBase58Bytes(record.settlement.recovery.payer)],
@@ -432,7 +449,9 @@ test("a refreshed case revision keeps valid cached history proof for the next at
   flow.setFailure(true);
   await flow.check();
   await expect(
-    page.getByRole("alert").filter({ hasText: "History verification unavailable." }),
+    page
+      .getByRole("alert")
+      .filter({ hasText: "History verification unavailable." }),
   ).toBeVisible();
   expect(flow.signed).toHaveLength(1);
   expect(flow.posted).toHaveLength(1);
@@ -482,11 +501,17 @@ test("a poisoned cached signature is replaced by a valid wallet proof", async ({
   const flow = await setup(page);
   const message = flow.record.settlement.recovery.messages[0];
   const invalid = encodeBase58Bytes(new Uint8Array(64).fill(255));
-  await page.evaluate(({ key, message, signature }) => {
-    sessionStorage.setItem(key, JSON.stringify({
-      [message.messageId]: { message: message.message, signature },
-    }));
-  }, { key: flow.cacheKey, message, signature: invalid });
+  await page.evaluate(
+    ({ key, message, signature }) => {
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          [message.messageId]: { message: message.message, signature },
+        }),
+      );
+    },
+    { key: flow.cacheKey, message, signature: invalid },
+  );
   await flow.connect();
   await flow.check();
   await expect.poll(() => flow.posted.length).toBe(1);
@@ -510,13 +535,17 @@ test("leaving a recovery child during signing cannot cache or post the old proof
   await flow.connect();
   await flow.check();
   await expect.poll(() => flow.signed.length).toBe(1);
-  await page.getByRole("button", { name: "Back to reports", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Back to reports", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Check expired payment", exact: true }),
   ).toHaveCount(0);
   release();
-  await page.waitForFunction(() =>
-    (window as Window & { historyWalletReturned?: boolean }).historyWalletReturned,
+  await page.waitForFunction(
+    () =>
+      (window as Window & { historyWalletReturned?: boolean })
+        .historyWalletReturned,
   );
   expect(flow.posted).toHaveLength(0);
   expect(
@@ -557,7 +586,9 @@ for (const boundary of ["authorization", "post-preflight"] as const) {
       name: "Submitted payment recovery",
       exact: true,
     });
-    const input = recovery.getByLabel("Transaction signature 1", { exact: true });
+    const input = recovery.getByLabel("Transaction signature 1", {
+      exact: true,
+    });
     await expect(input).toHaveValue("1".repeat(64));
     const candidate = encodeBase58Bytes(new Uint8Array(64).fill(2));
     await input.fill(candidate);
@@ -586,8 +617,9 @@ for (const boundary of ["authorization", "post-preflight"] as const) {
       await expect(recovery).toHaveCount(0);
     } finally {
       await page.evaluate(() =>
-        (window as typeof window & { heldPaymentGate: { release(): void } })
-          .heldPaymentGate.release(),
+        (
+          window as typeof window & { heldPaymentGate: { release(): void } }
+        ).heldPaymentGate.release(),
       );
     }
   });
@@ -616,12 +648,16 @@ for (const owner of ["child", "parent"] as const) {
         flow.record.settlement.recovery.messages.length,
       );
       expect(
-        await page.evaluate((key) => sessionStorage.getItem(key), flow.cacheKey),
+        await page.evaluate(
+          (key) => sessionStorage.getItem(key),
+          flow.cacheKey,
+        ),
       ).not.toBeNull();
     } finally {
       await page.evaluate(() =>
-        (window as typeof window & { heldPaymentGate: { release(): void } })
-          .heldPaymentGate.release(),
+        (
+          window as typeof window & { heldPaymentGate: { release(): void } }
+        ).heldPaymentGate.release(),
       );
     }
   });

@@ -141,8 +141,10 @@ rows with zero customer charge. Spend alerts live in `spend-alerts.ts`; failure
 alerts in `failure-alerts.ts`.
 
 Every reservation occupies that three-attempt limit until recorded calls prove
-the whole attempt was a free denial. A missing response or unfinished result
-stays reserved. An immutable attempt-completion record is written only after
+the whole attempt was a free denial, or an immutable completion and a zero-call,
+zero-cost reconciliation prove that no provider request started. A missing
+response or unfinished result stays reserved. An immutable attempt-completion
+record is written only after
 call records and any valid retained result are stored; it does not assert that
 provider cost amounts are known or reconciled. A full limit with unfinished
 attempts returns `attempts-pending` and keeps the request on its existing

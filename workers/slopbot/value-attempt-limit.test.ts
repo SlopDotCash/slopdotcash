@@ -124,6 +124,38 @@ test("completed zero-call refusals leave paid attempts and budget available", as
       accepted: true,
     });
     expect(requests).toBe(1);
+    // Retained provider evidence wins if it contradicts a zero-call receipt.
+    // A late cost row must make that attempt count again, not disappear.
+    const zero = sqlite
+      .query<{ attempt_id: string; inference_key: string }, []>(
+        `SELECT a.attempt_id,a.inference_key FROM slopbot_value_inference_attempts a
+       JOIN slopbot_value_budget_reconciliations r USING(attempt_id)
+       WHERE r.call_count=0 LIMIT 1`,
+      )
+      .get();
+    if (!zero) throw new Error("Expected a completed zero-call attempt");
+    const count = () =>
+      db
+        .prepare(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`)
+        .bind(zero.inference_key, PROVIDER_BUDGET_EXHAUSTED)
+        .first<{ n: number }>();
+    const before = await count();
+    const step = TRIAGE_ROUTE[0];
+    await recordCalls(db, zero.attempt_id, 1, "triage", [
+      {
+        routeStep: 1,
+        provider: step.provider,
+        requestedModel: step.model,
+        servedModel: null,
+        priceKey: step.priceKey,
+        outcome: "failed",
+        failure: "late provider evidence",
+        usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+        providerCostMicroUsd: 1,
+        providerRequestId: "local-late-receipt",
+      },
+    ]);
+    expect(await count()).toEqual({ n: before!.n + 1 });
   } finally {
     server.stop(true);
     sqlite.close();

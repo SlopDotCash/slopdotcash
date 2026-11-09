@@ -36,7 +36,7 @@ module wallet_possession_completion {
     requests: ids.mapBy(_ => noProof), attestations: ids.mapBy(_ => 0), witnesses: ids.mapBy(_ => 0), audits: ids.mapBy(_ => 0) }
   action configure(kind: str): bool = all { not(s.configured), Set("solana", "off-curve", "evm").contains(kind),
     s' = s.with("configured", true).with("firstKind", kind) }
-  def exists(claim: int): bool = claim == 1 or (claim == 2 and s.secondExists)
+  def isPresent(claim: int): bool = claim == 1 or (claim == 2 and s.secondExists)
   def kind(claim: int): str = if (claim == 1) s.firstKind else "solana"
   def published(claim: int): str = if (s.attestations.get(claim) != 0) "proven"
     else if (kind(claim) == "off-curve") "not-provable-by-signature" else "unproven"
@@ -51,7 +51,7 @@ module wallet_possession_completion {
   action issueOwner(id: int): bool = {
     val request = s.issues.get(id)
     all { request.phase == "owner", s' = s.with("issues", s.issues.set(id,
-      if (not(exists(request.claim)) or request.actor != 1) endIssue(request, "404")
+      if (not(isPresent(request.claim)) or request.actor != 1) endIssue(request, "404")
       else if (kind(request.claim) != "solana") endIssue(request, "409")
       else request.with("phase", "existing"))) }
   }
@@ -89,16 +89,16 @@ module wallet_possession_completion {
     all { request.phase == "response", s' = s.with("issues", s.issues.set(id,
       request.with("phase", "done").with("response", request.desired))) }
   }
-  action beginProof(id: int, claim: int, actor: int, challenge: int, body: bool, fields: bool, signature: bool, window: bool): bool = all {
+  action beginProof(id: int, claim: int, actor: int, challenge: int, body: bool, fieldValues: bool, signature: bool, window: bool): bool = all {
     s.configured, ids.contains(id), ids.contains(claim), ids.contains(actor), challengeIds.contains(challenge),
     s.requests.get(id).phase == "unused", challenge == 0 or s.challenges.get(challenge).known,
     s' = s.with("requests", s.requests.set(id, noProof.with("phase", "owner").with("claim", claim).with("actor", actor)
-      .with("challenge", challenge).with("bodyValid", body).with("fieldsMatch", fields)
+      .with("challenge", challenge).with("bodyValid", body).with("fieldsMatch", fieldValues)
       .with("signatureValid", signature).with("windowMatch", window))) }
   action proofOwner(id: int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "owner", s' = s.with("requests", s.requests.set(id,
-      if (not(exists(request.claim)) or request.actor != 1) endProof(request, "404")
+      if (not(isPresent(request.claim)) or request.actor != 1) endProof(request, "404")
       else if (kind(request.claim) == "evm") endProof(request, "409") else request.with("phase", "existing"))) }
   }
   action proofExisting(id: int): bool = {
@@ -211,8 +211,8 @@ module wallet_possession_completion {
   action ready = init.then(configure("solana"))
   action issued(id: int, claim: int): bool = beginIssue(id, claim, 1).then(issueOwner(id)).then(issueExisting(id))
     .then(prepareIssue(id, true)).then(issueWrite(id)).then(issueReply(id, true))
-  action submitted(id: int, claim: int, ch: int, fields: bool, signature: bool, window: bool): bool =
-    beginProof(id, claim, 1, ch, true, fields, signature, window).then(proofOwner(id)).then(proofExisting(id))
+  action submitted(id: int, claim: int, ch: int, fieldValues: bool, signature: bool, window: bool): bool =
+    beginProof(id, claim, 1, ch, true, fieldValues, signature, window).then(proofOwner(id)).then(proofExisting(id))
       .then(proofBody(id)).then(consume(id)).then(consumedReply(id, true))
   action verified(id: int, claim: int, ch: int): bool = submitted(id, claim, ch, true, true, true).then(verify(id)).then(hashProof(id, true)).then(prewrite(id))
   action recorded(id: int): bool = commit(id).then(batchReply(id, true)).then(respondProof(id, true))

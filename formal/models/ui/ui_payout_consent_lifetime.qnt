@@ -65,12 +65,12 @@ module ui_payout_consent_lifetime {
       .with("active", 0).with("busy", 0).with("open", false).with("notice", 0) }
   action startSession(id: int): bool = {
     val op = s.operations.get(id)
-    val next = if (op.phase == "connect-check") "connect-wait"
+    val nextValue = if (op.phase == "connect-check") "connect-wait"
       else if (op.phase == "prepare-check") "prepare"
       else if (op.phase == "sign-check") "sign"
       else if (op.phase == "write-check") "write" else "success"
     all { Set("connect-check", "prepare-check", "sign-check", "write-check", "success-check").contains(op.phase),
-      s' = if (current(id)) s.with("operations", s.operations.set(id, op.with("phase", "session-wait").with("next", next)))
+      s' = if (current(id)) s.with("operations", s.operations.set(id, op.with("phase", "session-wait").with("next", nextValue)))
         else stopped(id) }
   }
   action observeSession(id: int, available: bool): bool = {

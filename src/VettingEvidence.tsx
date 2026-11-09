@@ -409,99 +409,97 @@ function EvidenceItem({
         }
       }
     };
-    void perform(
-      async () => {
-        try {
-          if (!(await requireActor()) || !current()) return;
-          const base = `operator/vetting-evidence/${encodeURIComponent(run.assessmentId)}/${encodeURIComponent(run.runId)}/${object.sha256}`;
-          if (object.streamed) {
-            await projectApiRequest(
-              "POST",
-              `${base}/download-grant`,
-              { reason },
-              { expectedActorGithubId: actorId },
-            );
-            if (!(await requireActor()) || !current()) return;
-            const link = document.createElement("a");
-            link.href = `/api/v1/${base}/download`;
-            link.download = `${object.sha256}.bin`;
-            link.click();
-            setStatus(
-              "Download requested. Do not execute the file. A failed transfer needs a new grant.",
-            );
-            return;
-          }
-          const granted = await projectApiRequest<{ grant: string }>(
+    void perform(async () => {
+      try {
+        if (!(await requireActor()) || !current()) return;
+        const base = `operator/vetting-evidence/${encodeURIComponent(run.assessmentId)}/${encodeURIComponent(run.runId)}/${object.sha256}`;
+        if (object.streamed) {
+          await projectApiRequest(
             "POST",
-            `${base}/grant`,
+            `${base}/download-grant`,
             { reason },
             { expectedActorGithubId: actorId },
           );
           if (!(await requireActor()) || !current()) return;
-          const response = await fetchWithDeadline(`/api/v1/${base}/body`, {
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {
-              "x-vetting-read-grant": granted.grant,
-              "x-slop-expected-github-id": actorId,
-            },
-            signal: controller.signal,
-          });
-          if (!current()) return;
-          if (!response.ok)
-            throw new ProjectApiError(
-              response.status,
-              "evidence_read_failed",
-              `Evidence read failed (${response.status}). Request a new grant.`,
-            );
-          const bytes = await response.arrayBuffer();
-          if (!current()) return;
-          if (bytes.byteLength !== object.sizeBytes)
-            throw new Error(
-              "Evidence length differs from the immutable inventory.",
-            );
-          const digest = await sha256Hex(new Uint8Array(bytes));
-          if (!current()) return;
-          if (digest !== object.sha256)
-            throw new Error(
-              "Evidence digest differs from the immutable inventory.",
-            );
-          if (!(await requireActor()) || !current()) return;
-          if (object.contentType !== "application/octet-stream")
-            setContent(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-          else {
-            const url = URL.createObjectURL(
-              new Blob([bytes], { type: "application/octet-stream" }),
-            );
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `${object.sha256}.bin`;
-            link.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }
+          const link = document.createElement("a");
+          link.href = `/api/v1/${base}/download`;
+          link.download = `${object.sha256}.bin`;
+          link.click();
           setStatus(
-            object.contentType === "application/octet-stream"
-              ? "Exact bytes verified. Download requested; do not execute the file."
-              : "Complete bytes verified. Text is displayed without execution.",
+            "Download requested. Do not execute the file. A failed transfer needs a new grant.",
           );
-        } catch (cause) {
-          if (!current()) return;
-          if (invalidated) throw cause;
-          if (
-            cause instanceof ProjectApiError &&
-            [401, 403, 404, 410].includes(cause.status)
-          ) {
-            invalidated = true;
-            onIdentityChange();
-            throw cause;
-          }
-          // A failure can also complete after the account silently changes.
-          // Keep its error only after another current-actor observation.
-          if (!(await requireActor()) || !current()) return;
+          return;
+        }
+        const granted = await projectApiRequest<{ grant: string }>(
+          "POST",
+          `${base}/grant`,
+          { reason },
+          { expectedActorGithubId: actorId },
+        );
+        if (!(await requireActor()) || !current()) return;
+        const response = await fetchWithDeadline(`/api/v1/${base}/body`, {
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: {
+            "x-vetting-read-grant": granted.grant,
+            "x-slop-expected-github-id": actorId,
+          },
+          signal: controller.signal,
+        });
+        if (!current()) return;
+        if (!response.ok)
+          throw new ProjectApiError(
+            response.status,
+            "evidence_read_failed",
+            `Evidence read failed (${response.status}). Request a new grant.`,
+          );
+        const bytes = await response.arrayBuffer();
+        if (!current()) return;
+        if (bytes.byteLength !== object.sizeBytes)
+          throw new Error(
+            "Evidence length differs from the immutable inventory.",
+          );
+        const digest = await sha256Hex(new Uint8Array(bytes));
+        if (!current()) return;
+        if (digest !== object.sha256)
+          throw new Error(
+            "Evidence digest differs from the immutable inventory.",
+          );
+        if (!(await requireActor()) || !current()) return;
+        if (object.contentType !== "application/octet-stream")
+          setContent(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+        else {
+          const url = URL.createObjectURL(
+            new Blob([bytes], { type: "application/octet-stream" }),
+          );
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `${object.sha256}.bin`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+        setStatus(
+          object.contentType === "application/octet-stream"
+            ? "Exact bytes verified. Download requested; do not execute the file."
+            : "Complete bytes verified. Text is displayed without execution.",
+        );
+      } catch (cause) {
+        if (!current()) return;
+        if (invalidated) throw cause;
+        if (
+          cause instanceof ProjectApiError &&
+          [401, 403, 404, 410].includes(cause.status)
+        ) {
+          invalidated = true;
+          onIdentityChange();
           throw cause;
         }
-      },
-    );
+        // A failure can also complete after the account silently changes.
+        // Keep its error only after another current-actor observation.
+        if (!(await requireActor()) || !current()) return;
+        throw cause;
+      }
+    });
   }
   return (
     <article className="evidence-object operations-detail-panel">

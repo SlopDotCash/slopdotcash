@@ -55,12 +55,12 @@ module trace_event_finalization {
   }
   action readOwner(id: int): bool = {
     val request = s.requests.get(id)
-    val next = if (request.owner == "missing") ending(request, "404")
+    val nextValue = if (request.owner == "missing") ending(request, "404")
       else if (request.owner != "own") ending(request, "404")
       else if (request.op == "event" and s.finalized) ending(request, "409")
       else if (request.op == "finalize" and not(s.trace)) ending(request, "409")
       else request.with("phase", if (request.op == "event") "body" else "finalize-clock")
-    all { request.phase == "owner", s' = s.with("requests", s.requests.set(id, next)) }
+    all { request.phase == "owner", s' = s.with("requests", s.requests.set(id, nextValue)) }
   }
   action validateEvent(id: int): bool = {
     val request = s.requests.get(id)

@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import type { Page, Route } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { type ProjectDefinition, PROJECTS } from "../../src/lib/projects.mjs";
+import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { escapeRegExp, expect, test } from "./fixtures";
 
 const { site } = deploymentOrigins(
@@ -145,6 +145,8 @@ async function serve(page: Page) {
           walletObservations: [],
         },
       });
+    if (/^\/api\/v1\/payments\/projects\/[^/]+\/direct-transfers$/u.test(path))
+      return route.fulfill({ json: { transfers: [], totalMicro: "0" } });
     if (path === "/api/v1/referrals/me")
       return route.fulfill({ json: { enabled: false } });
     throw new Error(
@@ -232,7 +234,9 @@ for (const activeWrite of [false, true]) {
         new URL(route.request().url()).pathname !== "/api/v1/notifications/read"
       )
         return false;
-      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(actor);
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        actor,
+      );
       accepted = true;
       held.started();
       await held.promise;
@@ -351,7 +355,7 @@ test("header signout stops a connected standalone payout wallet before registrat
       },
     });
   });
-  await page.goto(`${site}/earnings`, { waitUntil: "networkidle" });
+  await page.goto(`${site}/account#wallets`, { waitUntil: "networkidle" });
   await page
     .getByRole("button", { name: "Connect EVM wallet", exact: true })
     .click();
@@ -364,7 +368,9 @@ test("header signout stops a connected standalone payout wallet before registrat
   };
   await expect
     .poll(() =>
-      page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.calls),
+      page.evaluate(
+        () => (window as unknown as WalletWindow).signoutWallet.calls,
+      ),
     )
     .toEqual(["eth_requestAccounts"]);
   try {
@@ -373,11 +379,15 @@ test("header signout stops a connected standalone payout wallet before registrat
       page.getByRole("dialog", { name: "Connect an EVM wallet" }),
     ).not.toBeVisible();
   } finally {
-    await page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.release());
+    await page.evaluate(() =>
+      (window as unknown as WalletWindow).signoutWallet.release(),
+    );
   }
   await expect
     .poll(() =>
-      page.evaluate(() => (window as unknown as WalletWindow).signoutWallet.returned),
+      page.evaluate(
+        () => (window as unknown as WalletWindow).signoutWallet.returned,
+      ),
     )
     .toBe(true);
   await settle(page);
@@ -418,7 +428,9 @@ test("header signout retires a pending owner awards refresh", async ({
       return true;
     }
     if (
-      !/^\/api\/v1\/payments\/projects\/eliza\/monthly\/\d{4}-\d{2}$/u.test(path)
+      !/^\/api\/v1\/payments\/projects\/eliza\/monthly\/\d{4}-\d{2}$/u.test(
+        path,
+      )
     )
       return false;
     const pending = held;
@@ -442,7 +454,9 @@ test("header signout retires a pending owner awards refresh", async ({
     pending?.finished();
     return true;
   };
-  await page.goto(`${site}/projects/eliza/funding`, { waitUntil: "networkidle" });
+  await page.goto(`${site}/projects/eliza/funding`, {
+    waitUntil: "networkidle",
+  });
   await page
     .getByRole("button", { name: "Review monthly awards", exact: true })
     .click();
@@ -453,7 +467,9 @@ test("header signout retires a pending owner awards refresh", async ({
   await expect(settings).toBeVisible();
   const pending = gate();
   held = pending;
-  await page.getByRole("button", { name: "Refresh awards", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Refresh awards", exact: true })
+    .click();
   await pending.requested;
   try {
     await signout(page);
@@ -495,7 +511,9 @@ for (const kind of ["verify", "unsubscribe"] as const) {
         return false;
       expect(route.request().postDataJSON()).toEqual({ token });
       if (kind === "verify")
-        expect(route.request().headers()["x-slop-expected-github-id"]).toBe(actor);
+        expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+          actor,
+        );
       held.started();
       await held.promise;
       await route.fulfill({

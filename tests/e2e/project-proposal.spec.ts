@@ -40,7 +40,10 @@ const LICENSE_BLOB = createHash("sha1")
   .update(LICENSE_TEXT)
   .digest("hex");
 
-type GithubFixture = (url: URL, init: RequestInit) => Promise<Response> | Response;
+type GithubFixture = (
+  url: URL,
+  init: RequestInit,
+) => Promise<Response> | Response;
 
 /** Uses the picker's organization/URL entry mode; valid input looks up itself. */
 async function enterRepository(page: Page, repository: string) {
@@ -293,7 +296,9 @@ test("committed proposal unmount retires creation before dispatch", async ({
     window.history.pushState({}, "", "/projects/new");
   });
   try {
-    await page.getByRole("button", { name: "Create project", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
     await leaveEditorWithHeldSession(page);
     await expect(page.locator(".proposal-form")).toHaveCount(0);
     expect(writes).toBe(0);
@@ -327,7 +332,9 @@ test("project creation refuses a silent account change before dispatch", async (
   });
   await prepareCreationReview(page);
   actor = "4343";
-  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
   await expect(page.getByRole("alert")).toContainText("Your account changed");
   expect(writes).toBe(0);
   await expect(
@@ -374,7 +381,9 @@ test("an accepted project creation is not displayed under a later account", asyn
     });
   });
   await prepareCreationReview(page);
-  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
   await waiting;
   try {
     actor = "4343";
@@ -430,7 +439,9 @@ test("a stale session observation cannot authorize creation for a new actor", as
   });
   await prepareCreationReview(page);
   replaceAfterSessionRead = true;
-  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
   await expect(page.getByRole("alert")).toContainText(
     "signed-in account changed",
   );

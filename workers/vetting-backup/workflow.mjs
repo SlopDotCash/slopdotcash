@@ -352,7 +352,8 @@ try {
   // registration below always see the current schema and its insert guards.
   for (const query of splitSqlQuery(
     await readFile("migrations/0119_vetting_storage_generations.sql", "utf8"),
-  )) await db.prepare(query).run();
+  ))
+    await db.prepare(query).run();
   const cleanupJobs = [];
   const retentionEnv = {
     ...env,
@@ -382,10 +383,11 @@ try {
   let deleteAttempts = 0;
   const legacySource = new Proxy(source, {
     get(target, property) {
-      if (property === "delete") return async () => {
-        deleteAttempts++;
-        throw new Error("Legacy evidence must remain physically held");
-      };
+      if (property === "delete")
+        return async () => {
+          deleteAttempts++;
+          throw new Error("Legacy evidence must remain physically held");
+        };
       const value = Reflect.get(target, property);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -394,36 +396,78 @@ try {
     const job = cleanupJobs.shift();
     if (job.kind === "cleanup") {
       cleanupPages++;
-      await cleanupEvidence({ ...retentionEnv, EVIDENCE_SOURCE: legacySource }, job.day);
+      await cleanupEvidence(
+        { ...retentionEnv, EVIDENCE_SOURCE: legacySource },
+        job.day,
+      );
     } else await backupPage(retentionEnv, job);
   }
-  assert.ok(cleanupPages >= 3, "expired legacy rows span multiple cleanup pages");
+  assert.ok(
+    cleanupPages >= 3,
+    "expired legacy rows span multiple cleanup pages",
+  );
   assert.equal(deleteAttempts, 0);
   for (const item of retainedCases)
     for (const key of item.keys) {
-      const uploaded = !item.id.startsWith("vet_missing_") &&
+      const uploaded =
+        !item.id.startsWith("vet_missing_") &&
         !(item.id === "vet_partial_upload" && key === item.keys[1]);
-      assert.equal(Boolean(await source.head(key)), uploaded, "all uploaded legacy bytes remain held");
-      assert.equal(Boolean(await backups.head(`daily/${retentionDay}/objects/${key}`)), uploaded,
-        "only uploaded bytes have verified backup copies");
+      assert.equal(
+        Boolean(await source.head(key)),
+        uploaded,
+        "all uploaded legacy bytes remain held",
+      );
+      assert.equal(
+        Boolean(await backups.head(`daily/${retentionDay}/objects/${key}`)),
+        uploaded,
+        "only uploaded bytes have verified backup copies",
+      );
     }
   assert.ok(await source.head(contentKey(sharedData)));
-  assert.ok(await source.head(contentKey(soleData)), "sole legacy content also remains held");
-  const deletions = async () => (await db.prepare(
-    "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
-  ).all()).results;
+  assert.ok(
+    await source.head(contentKey(soleData)),
+    "sole legacy content also remains held",
+  );
+  const deletions = async () =>
+    (
+      await db
+        .prepare(
+          "SELECT assessment_id FROM vetting_evidence_deletions ORDER BY assessment_id",
+        )
+        .all()
+    ).results;
   assert.deepEqual(await deletions(), []);
   assert.ok(await source.head("permanent-contributor-trace"));
-  assert.equal((await db.prepare("SELECT phase FROM vetting_storage_cycles WHERE day=?")
-    .bind(retentionDay).first()).phase, "complete");
-  const holds = async () => (await db.prepare(
-    "SELECT id,reason FROM vetting_evidence_audit WHERE action='retention-held' ORDER BY id",
-  ).all()).results;
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT phase FROM vetting_storage_cycles WHERE day=?")
+        .bind(retentionDay)
+        .first()
+    ).phase,
+    "complete",
+  );
+  const holds = async () =>
+    (
+      await db
+        .prepare(
+          "SELECT id,reason FROM vetting_evidence_audit WHERE action='retention-held' ORDER BY id",
+        )
+        .all()
+    ).results;
   const firstHolds = await holds();
   assert.equal(firstHolds.length, 23);
-  assert.equal((await db.prepare(
-    "SELECT COUNT(*) AS count FROM vetting_evidence_audit WHERE action='retention-missing'",
-  ).first()).count, 0, "legacy holds do not pretend physical inventory was checked");
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM vetting_evidence_audit WHERE action='retention-missing'",
+        )
+        .first()
+    ).count,
+    0,
+    "legacy holds do not pretend physical inventory was checked",
+  );
   // Missing/partial legacy inventory and stable hold audits cannot block the
   // next snapshot. A repeated cleanup still neither deletes nor grants receipts.
   const nextTime = now + 2 * 86400_000;
@@ -432,11 +476,21 @@ try {
   while (cleanupJobs.length) {
     const job = cleanupJobs.shift();
     if (job.kind === "cleanup")
-      await cleanupEvidence({ ...retentionEnv, EVIDENCE_SOURCE: legacySource }, job.day);
+      await cleanupEvidence(
+        { ...retentionEnv, EVIDENCE_SOURCE: legacySource },
+        job.day,
+      );
     else await backupPage(retentionEnv, job);
   }
-  assert.equal((await db.prepare("SELECT phase FROM vetting_storage_cycles WHERE day=?")
-    .bind(nextDay).first()).phase, "complete");
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT phase FROM vetting_storage_cycles WHERE day=?")
+        .bind(nextDay)
+        .first()
+    ).phase,
+    "complete",
+  );
   assert.ok(await backups.head(`daily/${nextDay}/complete.json`));
   assert.deepEqual(await holds(), firstHolds);
   assert.deepEqual(await deletions(), []);
@@ -444,7 +498,7 @@ try {
   assert.ok(await source.head(contentKey(soleData)));
 
   // Current registration does not reuse a held legacy physical key. Generation
-  // retirement races are covered by generation-retirement-workflow.mjs.
+  // retirement races are covered by generation-retirement.workflow.mjs.
   const evidenceBundle = join(directory, "evidence.mjs");
   const evidenceBuild = spawnSync(
     "bun",
@@ -468,33 +522,87 @@ try {
       keySha256: "a".repeat(64),
     }),
   });
-  await db.prepare(
-    "INSERT INTO vetting_assessments(id,state,completed_at,result) VALUES('post_migration','clean',?,?)",
-  ).bind(new Date(now).toISOString(), JSON.stringify({
-    schemaVersion: "slop-vetting-result-v2", disposition: "clean",
-  })).run();
+  await db
+    .prepare(
+      "INSERT INTO vetting_assessments(id,state,completed_at,result) VALUES('post_migration','clean',?,?)",
+    )
+    .bind(
+      new Date(now).toISOString(),
+      JSON.stringify({
+        schemaVersion: "slop-vetting-result-v2",
+        disposition: "clean",
+      }),
+    )
+    .run();
   const registration = new Request("https://slop.test/evidence", {
     method: "POST",
-    body: JSON.stringify({ traceSha256: digest(soleData), objects: [{
-      sha256: digest(soleData), sizeBytes: soleData.length, kind: "trace",
-      label: "migration isolation", contentType: "application/octet-stream",
-    }] }),
+    body: JSON.stringify({
+      traceSha256: digest(soleData),
+      objects: [
+        {
+          sha256: digest(soleData),
+          sizeBytes: soleData.length,
+          kind: "trace",
+          label: "migration isolation",
+          contentType: "application/octet-stream",
+        },
+      ],
+    }),
   });
-  const registered = await evidence.register(registration, "post_migration", "new");
+  const registered = await evidence.register(
+    registration,
+    "post_migration",
+    "new",
+  );
   assert.equal(registered.status, 201);
-  assert.deepEqual((await registered.json()).stored, [], "legacy bytes are not a new generation receipt");
-  const newRow = await evidence.object("post_migration", "new", digest(soleData));
+  assert.deepEqual(
+    (await registered.json()).stored,
+    [],
+    "legacy bytes are not a new generation receipt",
+  );
+  const newRow = await evidence.object(
+    "post_migration",
+    "new",
+    digest(soleData),
+  );
   assert.equal(typeof newRow.storage_generation, "string");
-  assert.equal((await evidence.upload(new Request("https://slop.test/evidence", {
-    method: "PUT", body: soleData,
-  }), "post_migration", "new", digest(soleData))).status, 200);
-  const newHead = await db.prepare(
-    "SELECT target_key FROM vetting_evidence_heads WHERE generation_id=? AND part_index=-1 AND sha256=? AND size_bytes=?",
-  ).bind(newRow.storage_generation, digest(soleData), soleData.length).first();
+  assert.equal(
+    (
+      await evidence.upload(
+        new Request("https://slop.test/evidence", {
+          method: "PUT",
+          body: soleData,
+        }),
+        "post_migration",
+        "new",
+        digest(soleData),
+      )
+    ).status,
+    200,
+  );
+  const newHead = await db
+    .prepare(
+      "SELECT target_key FROM vetting_evidence_heads WHERE generation_id=? AND part_index=-1 AND sha256=? AND size_bytes=?",
+    )
+    .bind(newRow.storage_generation, digest(soleData), soleData.length)
+    .first();
   assert.ok(newHead && newHead.target_key !== contentKey(soleData));
-  assert.deepEqual(Buffer.from(await (await source.get(newHead.target_key)).arrayBuffer()), soleData);
-  assert.deepEqual(Buffer.from(await (await source.get(contentKey(soleData))).arrayBuffer()), soleData);
-  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM vetting_evidence_cleanup_claims").first()).n, 0);
+  assert.deepEqual(
+    Buffer.from(await (await source.get(newHead.target_key)).arrayBuffer()),
+    soleData,
+  );
+  assert.deepEqual(
+    Buffer.from(await (await source.get(contentKey(soleData))).arrayBuffer()),
+    soleData,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT COUNT(*) AS n FROM vetting_evidence_cleanup_claims")
+        .first()
+    ).n,
+    0,
+  );
 
   // Preserve observed raw bytes even when their old metadata digest is wrong.
   // This is backup evidence, not proof that a registered expected digest matched.
@@ -525,18 +633,32 @@ try {
   assert.equal(rawCopy.customMetadata.sha256, digest(bad));
   assert.notEqual(rawCopy.customMetadata.sha256, "0".repeat(64));
   assert.deepEqual(Buffer.from(await rawCopy.arrayBuffer()), bad);
-  const rawRestore = await restoreCheck(backups, restored, observedDay, badKey, "observed-raw");
+  const rawRestore = await restoreCheck(
+    backups,
+    restored,
+    observedDay,
+    badKey,
+    "observed-raw",
+  );
   assert.equal(rawRestore.sha256, digest(bad));
-  assert.deepEqual(Buffer.from(await (await restored.get(rawRestore.key)).arrayBuffer()), bad);
-  assert.equal((await source.head(badKey)).customMetadata.sha256, "0".repeat(64));
+  assert.deepEqual(
+    Buffer.from(await (await restored.get(rawRestore.key)).arrayBuffer()),
+    bad,
+  );
+  assert.equal(
+    (await source.head(badKey)).customMetadata.sha256,
+    "0".repeat(64),
+  );
 
   // An actual unreadable source cannot yield a complete snapshot or be skipped.
   const unreadable = new Proxy(source, {
     get(target, property) {
-      if (property === "get") return async (key) => {
-        if (key === badKey) throw new Error("Injected unavailable source read");
-        return target.get(key);
-      };
+      if (property === "get")
+        return async (key) => {
+          if (key === badKey)
+            throw new Error("Injected unavailable source read");
+          return target.get(key);
+        };
       const value = Reflect.get(target, property);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -544,7 +666,10 @@ try {
   const failureEnv = { ...observedEnv, EVIDENCE_SOURCE: unreadable };
   const unavailableTime = now + 5 * 86_400_000;
   await startDailyBackup(failureEnv, unavailableTime);
-  await assert.rejects(backupPage(failureEnv, jobs[0]), /unavailable source read/);
+  await assert.rejects(
+    backupPage(failureEnv, jobs[0]),
+    /unavailable source read/,
+  );
   assert.equal(
     await backups.get(
       `daily/${new Date(unavailableTime).toISOString().slice(0, 10)}/complete.json`,

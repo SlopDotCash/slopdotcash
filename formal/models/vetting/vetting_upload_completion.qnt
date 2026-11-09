@@ -50,7 +50,7 @@
 module vetting_upload_completion {
   val runs = Set(1, 2)
   val parts = Set(0, 1)
-  var s: { phase: str, mode: str, storage: str, run: int, target: int,
+  var s: { phase: str, mode: str, storage: str, runId: int, target: int,
     attempt: int, expired: Set[int], disk: int -> str, etags: int -> int, checked: Set[int],
     wholeMatches: bool, postChecked: bool, completed: Set[int], proved: Set[int],
     uploadAudits: int, finalizeAudits: int, puts: int, repairs: int,
@@ -58,7 +58,7 @@ module vetting_upload_completion {
     safeRepairs: bool, conditionRejected: bool,
     retired: bool, wroteAfterRetirement: bool,
     result: str, error: str }
-  action init = s' = { phase: "idle", mode: "single", storage: "content", run: 1,
+  action init = s' = { phase: "idle", mode: "single", storage: "content", runId: 1,
     target: 0, attempt: 0, expired: Set(), disk: parts.mapBy(_ => "missing"),
     etags: parts.mapBy(_ => 0),
     checked: Set(), wholeMatches: true, postChecked: false,
@@ -66,20 +66,20 @@ module vetting_upload_completion {
     puts: 0, repairs: 0, repairProof: false, repairKind: "none", observedEtag: 0,
     safeRepairs: true, conditionRejected: false, retired: false,
     wroteAfterRetirement: false, result: "none", error: "none" }
-  action begin(mode: str, storage: str, run: int, target: int): bool = all {
+  action begin(mode: str, storage: str, runId: int, target: int): bool = all {
     Set("idle", "done").contains(s.phase), s.attempt < 2,
     Set("single", "chunk", "finalize").contains(mode),
-    Set("content", "run").contains(storage), runs.contains(run), parts.contains(target),
-    storage == "content" or run == 1,
+    Set("content", "run").contains(storage), runs.contains(runId), parts.contains(target),
+    storage == "content" or runId == 1,
     s.attempt == 0 or (s.storage == storage and ((s.mode == "single") == (mode == "single"))),
     s' = s.with("phase", "preflight").with("mode", mode).with("storage", storage)
-      .with("run", run).with("target", if (mode == "single") 0 else target)
+      .with("runId", runId).with("target", if (mode == "single") 0 else target)
       .with("attempt", s.attempt + 1).with("checked", Set()).with("postChecked", false)
       .with("repairProof", false).with("repairKind", "none").with("observedEtag", 0)
       .with("conditionRejected", false).with("result", "pending").with("error", "none") }
-  action expire(run: int): bool = all { runs.contains(run), s' = s.with("expired", s.expired.union(Set(run))) }
+  action expire(runId: int): bool = all { runs.contains(runId), s' = s.with("expired", s.expired.union(Set(runId))) }
   action preflight(valid: bool): bool = all { s.phase == "preflight",
-    s' = if (not(valid) or s.expired.contains(s.run))
+    s' = if (not(valid) or s.expired.contains(s.runId))
       s.with("phase", "done").with("result", "error").with("error", if (valid) "expired" else "input")
       else s.with("phase", if (s.mode == "finalize") "verify0" else "put") }
   action corrupt(part: int): bool = all { parts.contains(part), s.disk.get(part) == "valid",
@@ -96,7 +96,7 @@ module vetting_upload_completion {
     s' = s.with("disk", s.disk.set(part, kind)).with("etags", s.etags.set(part, if (kind == "valid") 1 else 2)) }
   action historicalRetire = all { s.expired.contains(1), s.expired.contains(2), not(s.retired),
     s' = s.with("retired", true).with("disk", parts.mapBy(_ => "missing")).with("etags", parts.mapBy(_ => 0)) }
-  action put(reply: str): bool = {
+  action putRecord(reply: str): bool = {
     val repair = s.phase == "repair-put"
     val matches = if (repair and s.repairKind == "cas")
       s.observedEtag > 0 and s.etags.get(s.target) == s.observedEtag
@@ -132,11 +132,11 @@ module vetting_upload_completion {
   }
   action storeRead(available: bool): bool = storeReadWithTag(available, true)
   action singleRead(available: bool): bool = {
-    val valid = available and s.disk.get(0) == "valid" and not(s.expired.contains(s.run))
+    val valid = available and s.disk.get(0) == "valid" and not(s.expired.contains(s.runId))
     all { s.phase == "single-read",
       s' = s.with("phase", if (valid) "audit" else "done").with("postChecked", valid)
         .with("result", if (valid) "pending" else "error")
-        .with("error", if (valid) "none" else if (s.expired.contains(s.run)) "expired" else "read-unavailable") }
+        .with("error", if (valid) "none" else if (s.expired.contains(s.runId)) "expired" else "read-unavailable") }
   }
   action verifyPart(available: bool): bool = {
     val part = if (s.phase == "verify0") 0 else 1
@@ -153,7 +153,7 @@ module vetting_upload_completion {
       .with("result", if (s.wholeMatches) "pending" else "error")
       .with("error", if (s.wholeMatches) "none" else "whole-digest") }
   action postcheck = all { s.phase == "postcheck",
-    s' = if (s.expired.contains(s.run)) s.with("phase", "done").with("result", "error").with("error", "expired")
+    s' = if (s.expired.contains(s.runId)) s.with("phase", "done").with("result", "error").with("error", "expired")
       else s.with("postChecked", true).with("phase", if (s.mode == "finalize") "batch" else "audit") }
   action audit(reply: str): bool = all { s.phase == "audit", Set("ok", "lost-before", "lost-after").contains(reply),
     s' = s.with("uploadAudits", s.uploadAudits + (if (reply == "lost-before") 0 else 1))
@@ -162,10 +162,10 @@ module vetting_upload_completion {
       .with("error", if (reply == "ok") "none" else "audit-unavailable") }
   action batch(reply: str): bool = {
     val commits = reply != "lost-before"
-    val first = not(s.completed.contains(s.run))
+    val first = not(s.completed.contains(s.runId))
     all { s.phase == "batch", Set("ok", "lost-before", "lost-after").contains(reply),
-      s' = s.with("completed", if (commits) s.completed.union(Set(s.run)) else s.completed)
-        .with("proved", if (commits) s.proved.union(Set(s.run)) else s.proved)
+      s' = s.with("completed", if (commits) s.completed.union(Set(s.runId)) else s.completed)
+        .with("proved", if (commits) s.proved.union(Set(s.runId)) else s.proved)
         .with("finalizeAudits", s.finalizeAudits + (if (commits and first) 1 else 0))
         .with("phase", if (reply == "ok") "reply" else "done")
         .with("result", if (reply == "ok") (if (first) "created" else "replayed") else "error")
@@ -176,13 +176,13 @@ module vetting_upload_completion {
   action step = {
     nondet mode = Set("single", "chunk", "finalize").oneOf()
     nondet storage = Set("content", "run").oneOf()
-    nondet run = runs.oneOf()
+    nondet runId = runs.oneOf()
     nondet part = parts.oneOf()
     nondet kind = Set("valid", "corrupt").oneOf()
     nondet yes = Set(false, true).oneOf()
     nondet result = Set("ok", "lost-before", "lost-after").oneOf()
-    any { begin(mode, storage, run, part), expire(run), preflight(yes), preload(part, kind),
-      corrupt(part), metadataCorrupt(part), concurrentRepair, concurrentCorrupt, removePart, put(result),
+    any { begin(mode, storage, runId, part), expire(runId), preflight(yes), preload(part, kind),
+      corrupt(part), metadataCorrupt(part), concurrentRepair, concurrentCorrupt, removePart, putRecord(result),
       storeRead(yes), storeReadWithTag(true, false), singleRead(yes), verifyPart(yes),
       wrongWhole, whole, postcheck, audit(result), batch(result), reply, s' = s }
   }
@@ -192,27 +192,27 @@ module vetting_upload_completion {
     Set("accepted", "created", "replayed").contains(s.result) implies s.postChecked,
     s.mode == "finalize" and Set("created", "replayed").contains(s.result) implies s.checked == parts and s.wholeMatches }
   action chunk = begin("chunk", "content", 1, 0).then(preflight(true))
-  action finalize(run: int): bool = begin("finalize", "content", run, 0).then(preflight(true))
+  action finalize(runId: int): bool = begin("finalize", "content", runId, 0).then(preflight(true))
   action verifyWhole = verifyPart(true).then(verifyPart(true)).then(whole)
-  action finishChunk = put("ok").then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply)
+  action finishChunk = putRecord("ok").then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply)
   action validParts = preload(0, "valid").then(preload(1, "valid"))
   run invalidBodyWritesNothingTest = init.then(begin("chunk", "content", 1, 0)).then(preflight(false)).expect(s.puts == 0 and invariant)
   run expiredRunWritesNothingTest = init.then(expire(1)).then(chunk).expect(s.puts == 0 and s.error == "expired" and invariant)
   run validExistingCopyIsNotRepairedTest = init.then(preload(0, "valid")).then(chunk).then(finishChunk).expect(s.repairs == 0 and s.result == "accepted" and invariant)
-  run unavailableReadIsNotCorruptionTest = init.then(preload(0, "valid")).then(chunk).then(put("ok")).then(storeRead(false)).expect(s.repairs == 0 and s.error == "read-unavailable" and invariant)
-  run knownCorruptionCanBeRepairedTest = init.then(preload(0, "corrupt")).then(chunk).then(put("ok")).then(storeRead(true)).then(put("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.repairs == 1 and s.result == "accepted" and invariant)
-  run concurrentRepairWinsWithoutOverwriteTest = init.then(preload(0, "corrupt")).then(chunk).then(put("ok")).then(storeRead(true)).then(concurrentRepair).then(put("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.conditionRejected and s.disk.get(0) == "valid" and invariant)
-  run metadataRepairMayShareSameEtagTest = init.then(preload(0, "valid")).then(metadataCorrupt(0)).then(chunk).then(put("ok")).then(storeRead(true)).then(concurrentRepair).then(put("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(not(s.conditionRejected) and s.repairs == 1 and s.disk.get(0) == "valid" and s.result == "accepted" and invariant)
-  run changedCorruptionRejectsStaleRepairTest = init.then(preload(0, "corrupt")).then(chunk).then(put("ok")).then(storeRead(true)).then(concurrentCorrupt).then(put("ok")).then(storeRead(true)).expect(s.conditionRejected and s.result == "error" and s.disk.get(0) == "corrupt" and invariant)
-  run missingEtagCannotAuthorizeRepairTest = init.then(preload(0, "corrupt")).then(chunk).then(put("ok")).then(storeReadWithTag(true, false)).expect(s.repairs == 0 and s.error == "missing-etag" and invariant)
-  run missingRetryDoesNotOverwriteConcurrentRestoreTest = init.then(chunk).then(put("ok")).then(removePart).then(storeRead(true)).then(concurrentRepair).then(put("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.repairKind == "create" and s.conditionRejected and s.result == "accepted" and invariant)
-  run legacyCorruptionIsNotOverwrittenTest = init.then(preload(0, "corrupt")).then(begin("chunk", "run", 1, 0)).then(preflight(true)).then(put("ok")).then(storeRead(true)).expect(s.repairs == 0 and s.error == "corrupt" and invariant)
-  run putCommitWithLostReplyKeepsBytesTest = init.then(chunk).then(put("lost-after")).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and invariant)
-  run retryAfterLostPutReplyAcceptsSameCopyTest = init.then(chunk).then(put("lost-after")).then(chunk).then(finishChunk).expect(s.result == "accepted" and s.repairs == 0 and invariant)
-  run lostRepairReplyKeepsRepairedBytesTest = init.then(preload(0, "corrupt")).then(chunk).then(put("ok")).then(storeRead(true)).then(put("lost-after")).expect(s.disk.get(0) == "valid" and s.result == "error" and invariant)
-  run uploadAuditFailureDoesNotUndoBytesTest = init.then(chunk).then(put("ok")).then(storeRead(true)).then(postcheck).then(audit("lost-before")).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and invariant)
-  run chunkExpiryDuringIoRefusesReceiptTest = init.then(chunk).then(put("ok")).then(expire(1)).then(storeRead(true)).then(postcheck).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and s.error == "expired" and invariant)
-  run singleUploadHasAdditionalVerifiedReadTest = init.then(begin("single", "content", 1, 0)).then(preflight(true)).then(put("ok")).then(storeRead(true)).then(corrupt(0)).then(singleRead(true)).expect(s.result == "error" and s.uploadAudits == 0 and invariant)
+  run unavailableReadIsNotCorruptionTest = init.then(preload(0, "valid")).then(chunk).then(putRecord("ok")).then(storeRead(false)).expect(s.repairs == 0 and s.error == "read-unavailable" and invariant)
+  run knownCorruptionCanBeRepairedTest = init.then(preload(0, "corrupt")).then(chunk).then(putRecord("ok")).then(storeRead(true)).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.repairs == 1 and s.result == "accepted" and invariant)
+  run concurrentRepairWinsWithoutOverwriteTest = init.then(preload(0, "corrupt")).then(chunk).then(putRecord("ok")).then(storeRead(true)).then(concurrentRepair).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.conditionRejected and s.disk.get(0) == "valid" and invariant)
+  run metadataRepairMayShareSameEtagTest = init.then(preload(0, "valid")).then(metadataCorrupt(0)).then(chunk).then(putRecord("ok")).then(storeRead(true)).then(concurrentRepair).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(not(s.conditionRejected) and s.repairs == 1 and s.disk.get(0) == "valid" and s.result == "accepted" and invariant)
+  run changedCorruptionRejectsStaleRepairTest = init.then(preload(0, "corrupt")).then(chunk).then(putRecord("ok")).then(storeRead(true)).then(concurrentCorrupt).then(putRecord("ok")).then(storeRead(true)).expect(s.conditionRejected and s.result == "error" and s.disk.get(0) == "corrupt" and invariant)
+  run missingEtagCannotAuthorizeRepairTest = init.then(preload(0, "corrupt")).then(chunk).then(putRecord("ok")).then(storeReadWithTag(true, false)).expect(s.repairs == 0 and s.error == "missing-etag" and invariant)
+  run missingRetryDoesNotOverwriteConcurrentRestoreTest = init.then(chunk).then(putRecord("ok")).then(removePart).then(storeRead(true)).then(concurrentRepair).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(audit("ok")).then(reply).expect(s.repairKind == "create" and s.conditionRejected and s.result == "accepted" and invariant)
+  run legacyCorruptionIsNotOverwrittenTest = init.then(preload(0, "corrupt")).then(begin("chunk", "run", 1, 0)).then(preflight(true)).then(putRecord("ok")).then(storeRead(true)).expect(s.repairs == 0 and s.error == "corrupt" and invariant)
+  run putCommitWithLostReplyKeepsBytesTest = init.then(chunk).then(putRecord("lost-after")).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and invariant)
+  run retryAfterLostPutReplyAcceptsSameCopyTest = init.then(chunk).then(putRecord("lost-after")).then(chunk).then(finishChunk).expect(s.result == "accepted" and s.repairs == 0 and invariant)
+  run lostRepairReplyKeepsRepairedBytesTest = init.then(preload(0, "corrupt")).then(chunk).then(putRecord("ok")).then(storeRead(true)).then(putRecord("lost-after")).expect(s.disk.get(0) == "valid" and s.result == "error" and invariant)
+  run uploadAuditFailureDoesNotUndoBytesTest = init.then(chunk).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(audit("lost-before")).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and invariant)
+  run chunkExpiryDuringIoRefusesReceiptTest = init.then(chunk).then(putRecord("ok")).then(expire(1)).then(storeRead(true)).then(postcheck).expect(s.disk.get(0) == "valid" and s.uploadAudits == 0 and s.error == "expired" and invariant)
+  run singleUploadHasAdditionalVerifiedReadTest = init.then(begin("single", "content", 1, 0)).then(preflight(true)).then(putRecord("ok")).then(storeRead(true)).then(corrupt(0)).then(singleRead(true)).expect(s.result == "error" and s.uploadAudits == 0 and invariant)
   run missingPartCannotFinalizeTest = init.then(preload(0, "valid")).then(finalize(1)).then(verifyPart(true)).then(verifyPart(true)).expect(s.completed == Set() and s.error == "missing" and invariant)
   run partHashesDoNotProveWholeTest = init.then(validParts).then(wrongWhole).then(finalize(1)).then(verifyWhole).expect(s.completed == Set() and s.error == "whole-digest" and invariant)
   run finalizationExpiryDuringIoRefusesCompletionTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(expire(1)).then(postcheck).expect(s.completed == Set() and s.finalizeAudits == 0 and invariant)
@@ -221,6 +221,6 @@ module vetting_upload_completion {
   run completionReplayRechecksBytesWithoutNewAuditTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("lost-after")).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).expect(s.result == "replayed" and s.finalizeAudits == 1 and invariant)
   run secondRunNeedsOwnCompletionTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).then(finalize(2)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).expect(s.completed == runs and s.finalizeAudits == 2 and invariant)
   run completionDoesNotProveCurrentBytesTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).then(corrupt(0)).expect(s.completed == Set(1) and s.disk.get(0) == "corrupt" and invariant)
-  run expiryAfterLastCheckIsNotAtomicClockReservationTest = init.then(chunk).then(put("ok")).then(storeRead(true)).then(postcheck).then(expire(1)).then(audit("ok")).then(reply).expect(s.result == "accepted" and s.expired.contains(1) and invariant)
-  run delayedWriterCanResurrectRetiredStorageTest = init.then(chunk).then(expire(1)).then(expire(2)).then(historicalRetire).then(put("ok")).then(storeRead(true)).then(postcheck).expect(resurrectedAfterRetirement and s.result == "error" and s.uploadAudits == 0 and invariant)
+  run expiryAfterLastCheckIsNotAtomicClockReservationTest = init.then(chunk).then(putRecord("ok")).then(storeRead(true)).then(postcheck).then(expire(1)).then(audit("ok")).then(reply).expect(s.result == "accepted" and s.expired.contains(1) and invariant)
+  run delayedWriterCanResurrectRetiredStorageTest = init.then(chunk).then(expire(1)).then(expire(2)).then(historicalRetire).then(putRecord("ok")).then(storeRead(true)).then(postcheck).expect(resurrectedAfterRetirement and s.result == "error" and s.uploadAudits == 0 and invariant)
 }

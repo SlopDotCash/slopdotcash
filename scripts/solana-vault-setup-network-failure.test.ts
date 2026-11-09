@@ -196,11 +196,16 @@ const manifest = applicationManifest("vault-network", "example/vault-network", {
     kind: "stablecoin",
     address: network.asset,
     symbol: "USDC",
+    decimals: 6,
+    chainId: null,
+    cluster: "mainnet-beta",
+    verifiedAt: NOW,
   },
   reward: {
     ...(applicationManifest("vault-network", "example/vault-network")
       .reward as Record<string, unknown>),
     chain: "solana",
+    feeBasisPoints: 200,
   },
   escrow: {
     schemaVersion: "1",
@@ -295,9 +300,7 @@ async function vaultSetup(step: "review" | "register") {
         network: "solana-mainnet",
         claimId: CLAIM,
         automatic: false,
-        ...(step === "register"
-          ? { transactionId: creationSignature }
-          : {}),
+        ...(step === "register" ? { transactionId: creationSignature } : {}),
       }),
     }),
     deps,

@@ -137,7 +137,7 @@ preservation, exclusion of non-scanner objects, raw recovery of changed
 source bytes, and refusal of corrupted backup copies. It does not prove hosted scheduling, lifecycle
 deletion, D1 recovery or production access controls.
 
-`generation-retirement-workflow.mjs` defines the new generation counterpart:
+`generation-retirement.workflow.mjs` defines the new generation counterpart:
 actual API registration/repair, migrated D1 and local R2; shared-reference hold;
 all-target pagination; missing-target versus admitted PUT; zero-byte originals;
 lost marker reply and interrupted retry; changed-byte recovery; corrupt or

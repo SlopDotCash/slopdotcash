@@ -4,40 +4,44 @@ import { expect, type Page } from "@playwright/test";
 export async function holdProjectSessionUntilUnmount(
   page: Page,
   selector: string,
+  pathSuffix = "/api/v1/project-session",
 ) {
-  await page.evaluate((selector) => {
-    const state = {
-      waiting: false,
-      removed: false,
-      released: false,
-      release: () => {},
-    };
-    Object.assign(window, { heldEditorSession: state });
-    const readJson = Response.prototype.json;
-    Response.prototype.json = async function (this: Response) {
-      const value = await readJson.call(this);
-      if (!state.waiting && this.url.endsWith("/api/v1/project-session")) {
-        state.waiting = true;
-        await new Promise<void>((resolve) => {
-          state.release = () => {
-            state.released = true;
-            resolve();
-          };
-        });
-      }
-      return value;
-    };
-    // A native history transition commits outside the discrete click that
-    // starts the request. Release before a later passive cleanup task runs.
-    const observer = new MutationObserver(() => {
-      if (state.waiting && !document.querySelector(selector)) {
-        state.removed = true;
-        state.release();
-        observer.disconnect();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }, selector);
+  await page.evaluate(
+    ({ selector, pathSuffix }) => {
+      const state = {
+        waiting: false,
+        removed: false,
+        released: false,
+        release: () => {},
+      };
+      Object.assign(window, { heldEditorSession: state });
+      const readJson = Response.prototype.json;
+      Response.prototype.json = async function (this: Response) {
+        const value = await readJson.call(this);
+        if (!state.waiting && this.url.endsWith(pathSuffix)) {
+          state.waiting = true;
+          await new Promise<void>((resolve) => {
+            state.release = () => {
+              state.released = true;
+              resolve();
+            };
+          });
+        }
+        return value;
+      };
+      // A native history transition commits outside the discrete click that
+      // starts the request. Release before a later passive cleanup task runs.
+      const observer = new MutationObserver(() => {
+        if (state.waiting && !document.querySelector(selector)) {
+          state.removed = true;
+          state.release();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    },
+    { selector, pathSuffix },
+  );
 }
 
 export async function leaveEditorWithHeldSession(page: Page) {

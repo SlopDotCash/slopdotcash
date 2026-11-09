@@ -300,7 +300,9 @@ for (const resource of ["projects", "fee-conversions"] as const) {
         ).toHaveCount(0);
       } else {
         await expect(
-          page.locator('section[aria-labelledby="admin-fee-conversions"] > article'),
+          page.locator(
+            'section[aria-labelledby="admin-fee-conversions"] > article',
+          ),
         ).toHaveCount(0);
       }
     } finally {
@@ -392,12 +394,15 @@ test("an admin refresh timeout cannot retain private data while its identity rec
     }
     return route.fulfill({ json: { projects: [record] } });
   });
-  await page.route(`**/api/v1/admin/projects/${record.id}/manifest`, (route) => {
-    const body = route.request().postDataJSON();
-    record = { ...record, revision: 2, manifest: body.manifest };
-    saved = true;
-    return route.fulfill({ json: { project: record } });
-  });
+  await page.route(
+    `**/api/v1/admin/projects/${record.id}/manifest`,
+    (route) => {
+      const body = route.request().postDataJSON();
+      record = { ...record, revision: 2, manifest: body.manifest };
+      saved = true;
+      return route.fulfill({ json: { project: record } });
+    },
+  );
   try {
     await page.goto(`/admin?project=${record.id}&section=settings`, {
       waitUntil: "networkidle",

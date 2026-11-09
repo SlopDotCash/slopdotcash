@@ -24,11 +24,11 @@ module inbox_mark_read {
   action init = s' = { readAt: rows.mapBy(_ => 0), requests: attempts.mapBy(_ => unused), moderators: Set(1) }
   action revoke(actor: int): bool = all { Set(1, 2).contains(actor),
     s' = s.with("moderators", s.moderators.filter(value => value != actor)) }
-  action begin(id: int, actor: int, keys: Set[int]): bool = all {
+  action begin(id: int, actor: int, keyIds: Set[int]): bool = all {
     attempts.contains(id), s.requests.get(id).phase == "unused", Set(1, 2).contains(actor),
-    keys.subseteq(Set(1, 2, 3, 4)),
+    keyIds.subseteq(Set(1, 2, 3, 4)),
     s' = s.with("requests", s.requests.set(id, unused.with("phase", "body")
-      .with("actor", actor).with("moderator", s.moderators.contains(actor)).with("keys", keys))) }
+      .with("actor", actor).with("moderator", s.moderators.contains(actor)).with("keys", keyIds))) }
   action rejectAdmission(id: int): bool = all {
     attempts.contains(id), s.requests.get(id).phase == "unused",
     s' = s.with("requests", s.requests.set(id, unused.with("phase", "done").with("outcome", "failure"))) }
@@ -62,9 +62,9 @@ module inbox_mark_read {
   action step = {
     nondet id = attempts.oneOf()
     nondet actor = Set(1, 2).oneOf()
-    nondet keys = keyChoices.oneOf()
+    nondet keyIds = keyChoices.oneOf()
     nondet ok = Set(false, true).oneOf()
-    any { revoke(actor), begin(id, actor, keys), rejectAdmission(id), validate(id, ok), commit(id),
+    any { revoke(actor), begin(id, actor, keyIds), rejectAdmission(id), validate(id, ok), commit(id),
       statementFailure(id), reply(id, ok), s' = s }
   }
   val invariant = all {

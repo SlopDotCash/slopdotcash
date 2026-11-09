@@ -20,7 +20,11 @@ type ArchivePutOptions = Omit<Parameters<R2Bucket["put"]>[2], "onlyIf"> & {
   onlyIf?: Parameters<R2Bucket["put"]>[2]["onlyIf"];
 };
 export type ArchiveBucket = Omit<R2Bucket, "put"> & {
-  put(key: string, bytes: Uint8Array, options: ArchivePutOptions): Promise<unknown>;
+  put(
+    key: string,
+    bytes: Uint8Array,
+    options: ArchivePutOptions,
+  ): Promise<unknown>;
   delete(key: string): Promise<void>;
   list(options: { prefix: string; limit: number; cursor?: string }): Promise<{
     objects: ListedObject[];
@@ -95,7 +99,8 @@ const root = (day: string) => {
 };
 const pageKey = (day: string, page: number) =>
   `${root(day)}/pages/${page}.json`;
-const generationKey = /^vetting\/generations\/([A-Za-z0-9_-]{1,100})\/[A-Za-z0-9_-]{1,100}$/u;
+const generationKey =
+  /^vetting\/generations\/([A-Za-z0-9_-]{1,100})\/[A-Za-z0-9_-]{1,100}$/u;
 const retirementKey = async (day: string, key: string) =>
   `${root(day)}/retirement/${await sha256Hex(encoder.encode(key))}.json`;
 
@@ -113,10 +118,20 @@ async function verifyMarker(
 ) {
   const bytes = evidenceRetirementBytes(key);
   const head = await bucket.head(key);
-  if (!markerHead(head)) throw new Error("Evidence retirement marker is absent");
-  if (outcome !== undefined && head?.customMetadata?.retirementOutcome !== outcome)
+  if (!markerHead(head))
+    throw new Error("Evidence retirement marker is absent");
+  if (
+    outcome !== undefined &&
+    head?.customMetadata?.retirementOutcome !== outcome
+  )
     throw new Error("Evidence retirement marker outcome differs");
-  await verifiedPart(bucket, key, await sha256Hex(bytes), bytes.byteLength, true);
+  await verifiedPart(
+    bucket,
+    key,
+    await sha256Hex(bytes),
+    bytes.byteLength,
+    true,
+  );
 }
 
 async function writeMarker(
@@ -472,7 +487,10 @@ async function retireTarget(
     let copy = primary;
     if (copy) {
       await verifiedPart(
-        env.EVIDENCE_BACKUPS, copy.backupKey, copy.sha256, copy.sizeBytes,
+        env.EVIDENCE_BACKUPS,
+        copy.backupKey,
+        copy.sha256,
+        copy.sizeBytes,
       );
     } else {
       let head = await env.EVIDENCE_SOURCE.head(target.target_key);
@@ -490,9 +508,15 @@ async function retireTarget(
       if (markerHead(head)) {
         await verifyMarker(env.EVIDENCE_SOURCE, target.target_key, "missing");
       } else {
-        const observed = await observedPart(env.EVIDENCE_SOURCE, target.target_key);
+        const observed = await observedPart(
+          env.EVIDENCE_SOURCE,
+          target.target_key,
+        );
         await immutable(
-          env.EVIDENCE_BACKUPS, supplementalKey, observed.bytes, "application/octet-stream",
+          env.EVIDENCE_BACKUPS,
+          supplementalKey,
+          observed.bytes,
+          "application/octet-stream",
         );
         copy = {
           key: target.target_key,
@@ -511,18 +535,23 @@ async function retireTarget(
       partIndex: target.part_index,
       sha256: target.sha256,
       sizeBytes: target.size_bytes,
-      outcome: copy === undefined
-        ? "missing"
-        : copy.sha256 === target.sha256 && copy.sizeBytes === target.size_bytes
-          ? "backed"
-          : "changed",
+      outcome:
+        copy === undefined
+          ? "missing"
+          : copy.sha256 === target.sha256 &&
+              copy.sizeBytes === target.size_bytes
+            ? "backed"
+            : "changed",
       backupKey: copy?.backupKey ?? null,
       observedSha256: copy?.sha256 ?? null,
       observedSizeBytes: copy?.sizeBytes ?? null,
     };
     const bytes = encoder.encode(JSON.stringify(value));
     const digest = await immutable(
-      env.EVIDENCE_BACKUPS, key, bytes, "application/json",
+      env.EVIDENCE_BACKUPS,
+      key,
+      bytes,
+      "application/json",
     );
     receipt = { value, digest };
   }
@@ -551,14 +580,27 @@ async function retireTarget(
     `INSERT OR IGNORE INTO vetting_evidence_target_retirements
      (target_key,outcome,backup_day,backup_key,observed_sha256,observed_size_bytes,observed_at)
      VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-  ).bind(target.target_key, receipt.value.outcome, day, receipt.value.backupKey,
-    receipt.value.observedSha256, receipt.value.observedSizeBytes).run();
+  )
+    .bind(
+      target.target_key,
+      receipt.value.outcome,
+      day,
+      receipt.value.backupKey,
+      receipt.value.observedSha256,
+      receipt.value.observedSizeBytes,
+    )
+    .run();
   const recorded = await env.EVIDENCE_DATABASE.prepare(
     "SELECT outcome,backup_day,backup_key,observed_sha256,observed_size_bytes FROM vetting_evidence_target_retirements WHERE target_key=?",
-  ).bind(target.target_key).first<{
-    outcome: string; backup_day: string; backup_key: string | null;
-    observed_sha256: string | null; observed_size_bytes: number | null;
-  }>();
+  )
+    .bind(target.target_key)
+    .first<{
+      outcome: string;
+      backup_day: string;
+      backup_key: string | null;
+      observed_sha256: string | null;
+      observed_size_bytes: number | null;
+    }>();
   if (
     !recorded ||
     recorded.outcome !== receipt.value.outcome ||
@@ -587,36 +629,60 @@ async function retireGeneration(
          AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
          AND (c.closed_at IS NULL OR julianday(c.closed_at,'+90 days') IS NULL OR julianday(c.closed_at,'+90 days') > julianday('now') OR COALESCE((${PERMANENT_ADMISSION_EVIDENCE_SQL}),0)=1)
      )`,
-  ).bind(generation).run();
+  )
+    .bind(generation)
+    .run();
   const current = await env.EVIDENCE_DATABASE.prepare(
     "SELECT state FROM vetting_evidence_generations WHERE id=?",
-  ).bind(generation).first<{ state: string }>();
+  )
+    .bind(generation)
+    .first<{ state: string }>();
   if (!current) throw new Error("Evidence generation is missing");
   if (current.state === "active") return "held" as const;
   if (current.state === "retired") return "retired" as const;
-  if (current.state !== "retiring") throw new Error("Invalid evidence generation state");
-  const targets = (await env.EVIDENCE_DATABASE.prepare(
-    `SELECT t.target_key,t.generation_id,t.part_index,t.sha256,t.size_bytes
+  if (current.state !== "retiring")
+    throw new Error("Invalid evidence generation state");
+  const targets = (
+    await env.EVIDENCE_DATABASE.prepare(
+      `SELECT t.target_key,t.generation_id,t.part_index,t.sha256,t.size_bytes
      FROM vetting_evidence_targets t WHERE t.generation_id=?
        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
      ORDER BY t.target_key LIMIT 16`,
-  ).bind(generation).all<GenerationTarget>()).results;
+    )
+      .bind(generation)
+      .all<GenerationTarget>()
+  ).results;
   const copies = await snapshotCopies(
-    env.EVIDENCE_BACKUPS, day, snapshot, new Set(targets.map(target => target.target_key)),
+    env.EVIDENCE_BACKUPS,
+    day,
+    snapshot,
+    new Set(targets.map((target) => target.target_key)),
   );
   for (const target of targets)
-    await retireTarget(env, day, snapshot.digest, target, copies.get(target.target_key));
+    await retireTarget(
+      env,
+      day,
+      snapshot.digest,
+      target,
+      copies.get(target.target_key),
+    );
   await env.EVIDENCE_DATABASE.prepare(
     `UPDATE vetting_evidence_generations SET state='retired',retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
      WHERE id=? AND state='retiring' AND NOT EXISTS (
        SELECT 1 FROM vetting_evidence_targets t WHERE t.generation_id=vetting_evidence_generations.id
          AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
      )`,
-  ).bind(generation).run();
+  )
+    .bind(generation)
+    .run();
   const finished = await env.EVIDENCE_DATABASE.prepare(
     "SELECT state FROM vetting_evidence_generations WHERE id=?",
-  ).bind(generation).first<{ state: string }>();
-  return finished?.state === "retired" ? "retired" as const : "pending" as const;
+  )
+    .bind(generation)
+    .first<{ state: string }>();
+  return finished?.state === "retired"
+    ? ("retired" as const)
+    : ("pending" as const);
 }
 
 /** Called only by the same single-consumer queue after a complete snapshot. */
@@ -630,9 +696,11 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
     .first<{ phase: string; cleanup_after: string | null }>();
   if (cycle?.phase === "complete") return;
   if (cycle?.phase !== "cleanup") throw new Error("Snapshot is not complete");
-  const snapshot = await jsonRecord<Complete>(env.EVIDENCE_BACKUPS, `${root(day)}/complete.json`);
-  if (!snapshot)
-    throw new Error("Snapshot completion receipt is missing");
+  const snapshot = await jsonRecord<Complete>(
+    env.EVIDENCE_BACKUPS,
+    `${root(day)}/complete.json`,
+  );
+  if (!snapshot) throw new Error("Snapshot completion receipt is missing");
   if (env.EVIDENCE_RETENTION_MODE === "enabled") {
     const rows =
       (
@@ -674,17 +742,30 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
         await env.EVIDENCE_DATABASE.batch([
           env.EVIDENCE_DATABASE.prepare(
             "INSERT OR IGNORE INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,reason,created_at) VALUES(?,'storage-retention','retention-held',?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-          ).bind(`retention-held:legacy:${row.object_key}`, row.assessment_id, row.run_id, row.sha256,
-            "Legacy storage has no generation fence; bytes remain retained without a deletion receipt."),
+          ).bind(
+            `retention-held:legacy:${row.object_key}`,
+            row.assessment_id,
+            row.run_id,
+            row.sha256,
+            "Legacy storage has no generation fence; bytes remain retained without a deletion receipt.",
+          ),
           env.EVIDENCE_DATABASE.prepare(
             "UPDATE vetting_storage_cycles SET cleanup_after=? WHERE day=? AND phase='cleanup'",
           ).bind(row.object_key, day),
         ]);
         continue;
       }
-      if (row.storage !== "content" || !/^[A-Za-z0-9_-]{1,100}$/u.test(row.storage_generation))
+      if (
+        row.storage !== "content" ||
+        !/^[A-Za-z0-9_-]{1,100}$/u.test(row.storage_generation)
+      )
         throw new Error("Invalid evidence storage generation");
-      const retired = await retireGeneration(env, day, snapshot, row.storage_generation);
+      const retired = await retireGeneration(
+        env,
+        day,
+        snapshot,
+        row.storage_generation,
+      );
       if (retired === "pending") {
         await enqueueCleanup(env, day);
         return;
@@ -693,8 +774,13 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
         await env.EVIDENCE_DATABASE.batch([
           env.EVIDENCE_DATABASE.prepare(
             "INSERT OR IGNORE INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,reason,created_at) VALUES(?,'storage-retention','retention-held',?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-          ).bind(`retention-held:shared:${row.object_key}`, row.assessment_id, row.run_id, row.sha256,
-            "A current reference keeps this storage generation active."),
+          ).bind(
+            `retention-held:shared:${row.object_key}`,
+            row.assessment_id,
+            row.run_id,
+            row.sha256,
+            "A current reference keeps this storage generation active.",
+          ),
           env.EVIDENCE_DATABASE.prepare(
             "UPDATE vetting_storage_cycles SET cleanup_after=? WHERE day=? AND phase='cleanup'",
           ).bind(row.object_key, day),
@@ -713,7 +799,9 @@ export async function cleanupEvidence(env: BackupEnvironment, day: string) {
              AND h.sha256=json_extract(slot.value,'$.sha256') AND h.size_bytes=json_extract(slot.value,'$.sizeBytes')
              AND r.outcome='backed'
          )`,
-      ).bind(JSON.stringify(slots), row.storage_generation).first<{ count: number }>();
+      )
+        .bind(JSON.stringify(slots), row.storage_generation)
+        .first<{ count: number }>();
       if (!missing || !Number.isSafeInteger(missing.count) || missing.count < 0)
         throw new Error("Generation retirement slots could not be read");
       const missingParts = missing.count;
@@ -761,7 +849,10 @@ export async function restoreCheck(
 ) {
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(checkId))
     throw new Error("Invalid restore check identity");
-  const complete = await jsonRecord<Complete>(backups, `${root(day)}/complete.json`);
+  const complete = await jsonRecord<Complete>(
+    backups,
+    `${root(day)}/complete.json`,
+  );
   if (!complete) throw new Error("Backup is incomplete");
   let found = (
     await snapshotCopies(backups, day, complete, new Set([sourceKey]))

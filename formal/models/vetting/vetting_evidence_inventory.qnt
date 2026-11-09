@@ -38,7 +38,7 @@ module vetting_evidence_inventory {
   action closeCase = s' = s.with("expires", 2)
   action removeRun = all { s.request.phase == "idle", s' = s.with("runExists", false) }
   action rows(count: int): bool = all { s.request.phase == "idle", Set(0, 1, 2).contains(count), s' = s.with("objectCount", count) }
-  action changeHead(head: str): bool = all { Set("valid", "missing", "corrupt").contains(head), s' = s.with("head", head) }
+  action changeHead(readHead: str): bool = all { Set("valid", "missing", "corrupt").contains(readHead), s' = s.with("head", readHead) }
   action completion(present: bool): bool = all { s.request.phase == "idle" or present,
     s' = s.with("completed", present) }
   action corruptBytes = s' = s.with("bytesValid", false)
@@ -87,11 +87,11 @@ module vetting_evidence_inventory {
   action step = {
     nondet actor = Set(0, 1, 2, 3).oneOf()
     nondet count = Set(0, 1, 2).oneOf()
-    nondet head = Set("valid", "missing", "corrupt").oneOf()
+    nondet headChoice = Set("valid", "missing", "corrupt").oneOf()
     nondet outcome = Set("ok", "io-error", "layout-error").oneOf()
     nondet yes = Set(false, true).oneOf()
     nondet other = Set(false, true).oneOf()
-    any { session(actor), tick, closeCase, removeRun, rows(count), changeHead(head), completion(yes), corruptBytes,
+    any { session(actor), tick, closeCase, removeRun, rows(count), changeHead(headChoice), completion(yes), corruptBytes,
       begin(count), admit(yes), query, readRun(yes), readRows(yes), readHead(outcome), assembly(yes), audit(yes, other), finalAuth(yes), response(yes), s' = s }
   }
   val invariant = all {

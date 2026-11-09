@@ -180,9 +180,9 @@ module payment_wallet_registration {
           and row(claim.predecessor).actor == claim.actor and row(claim.predecessor).chain == claim.chain)))
     }),
     partitions.forall(key => {
-      val head = s.heads.get(key)
-      head == 0 or (row(head).exists and partition(row(head).actor, row(head).chain) == key
-        and ids.forall(id => not(row(id).exists) or row(id).predecessor != head))
+      val readHead = s.heads.get(key)
+      readHead == 0 or (row(readHead).exists and partition(row(readHead).actor, row(readHead).chain) == key
+        and ids.forall(id => not(row(id).exists) or row(id).predecessor != readHead))
     }),
     slots.forall(slot => s.requests.get(slot).attempt >= 0 and s.requests.get(slot).attempt <= 2)
   }

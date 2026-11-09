@@ -34,9 +34,9 @@ module ui_image_decode {
     ids.contains(job), s.jobs.get(job).phase == "pending",
     s' = s.with("jobs", s.jobs.set(job, s.jobs.get(job).with("phase", "decoded"))) }
   action decodeReject(job: int): bool = {
-    val next = s.with("jobs", s.jobs.set(job, s.jobs.get(job).with("phase", "failed")))
+    val nextState = s.with("jobs", s.jobs.set(job, s.jobs.get(job).with("phase", "failed")))
     all { ids.contains(job), s.jobs.get(job).phase == "pending",
-      s' = if (owns(job)) next.with("phase", "error").with("current", 0) else next }
+      s' = if (owns(job)) nextState.with("phase", "error").with("current", 0) else nextState }
   }
   // Canvas/context/encoding/admission failure still disposes the real bitmap.
   action invalidImage(job: int): bool = all {

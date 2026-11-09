@@ -274,10 +274,18 @@ test("an owner publication returns its committed revision when another writer ad
     return result;
   };
   try {
-    const published = await t.call("PUT", "projects/publication-receipt", OWNER, {
-      expectedRevision: initial.revision,
-      manifest: { ...initial.manifest, headline: "The submitted owner edit." },
-    });
+    const published = await t.call(
+      "PUT",
+      "projects/publication-receipt",
+      OWNER,
+      {
+        expectedRevision: initial.revision,
+        manifest: {
+          ...initial.manifest,
+          headline: "The submitted owner edit.",
+        },
+      },
+    );
     expect(published.status).toBe(200);
     const receipt = published.body.project as {
       revision: number;
@@ -368,13 +376,15 @@ test.each(["create", "stored application"] as const)(
       ).toEqual({ n: 0 });
       expect(
         t.sqlite
-          .query("SELECT COUNT(*) n FROM project_repositories WHERE project_id=?")
+          .query(
+            "SELECT COUNT(*) n FROM project_repositories WHERE project_id=?",
+          )
           .get(id),
       ).toEqual({ n: 0 });
       if (flow === "stored application")
-        expect((await t.persistence.getApplication(applicationId))?.status).toBe(
-          "pending",
-        );
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("pending");
       const next = await publish();
       expect(next.status).toBe(403);
       expect(next.body.error).toBe("maintainer_banned");
@@ -472,13 +482,13 @@ test.each(["create", "stored application"] as const)(
       ]);
       expect((await t.persistence.getProject(id))?.revision).toBe(2);
       expect(committedManifestText).not.toBeNull();
-      expect<string | null | undefined>((await t.persistence.getRevisionText(id, 1))?.manifestText).toBe(
-        committedManifestText,
-      );
+      expect<string | null | undefined>(
+        (await t.persistence.getRevisionText(id, 1))?.manifestText,
+      ).toBe(committedManifestText);
       if (flow === "stored application")
-        expect((await t.persistence.getApplication(applicationId))?.status).toBe(
-          "approved",
-        );
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("approved");
     } finally {
       t.persistence.createProject = create;
       t.persistence.publishApplication = publish;
@@ -632,7 +642,10 @@ test("setup distinguishes a confirmed identity mismatch from a provider outage w
     });
     const write = await t.call("PUT", "projects/identity-status", OWNER, {
       expectedRevision: initial.revision,
-      manifest: { ...initial.manifest, headline: "A changed project headline." },
+      manifest: {
+        ...initial.manifest,
+        headline: "A changed project headline.",
+      },
     });
     expect(write.status).toBe(422);
     expect(write.body.error).toBe("invalid_manifest");

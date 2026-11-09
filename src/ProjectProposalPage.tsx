@@ -2519,7 +2519,8 @@ function ProjectUpdateForm({
       </p>
       <RoutePageHeader icon={<Settings2 />} title="Manage project" />
       <ProjectNav project={project} current="settings" />
-      {session.status === "signed-in" && session.session.githubId === actorId ? (
+      {session.status === "signed-in" &&
+      session.session.githubId === actorId ? (
         <ProjectSetupStatusPanel
           key={
             submission.state === "published"

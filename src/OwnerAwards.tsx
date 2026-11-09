@@ -1,6 +1,13 @@
 import "./owner-review.css";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
@@ -119,7 +126,7 @@ export default function OwnerAwards({
   const knownActor = useRef<string | null>(null);
   const mounted = useRef(true);
   const generation = useRef(0);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -274,6 +281,7 @@ export default function OwnerAwards({
     },
     [base, clearPrivate],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useEffect(() => {
     if (!opened) return;
     setView(null);
@@ -330,7 +338,8 @@ export default function OwnerAwards({
     try {
       await action(owns);
     } catch (reason) {
-      if (owns()) setActionError(errorMessage(reason, "Awards are unavailable."));
+      if (owns())
+        setActionError(errorMessage(reason, "Awards are unavailable."));
     } finally {
       if (owns()) setActionBusy(false);
     }

@@ -6,6 +6,9 @@
 // Byte/authority equality is an abstract observation. Managed paths are not
 // externally modified during this trace. Prepublication verification and
 // postpublication readback are distinct from the process exit status.
+// permitted represents captured installation authority, not a continuous
+// guarantee. skill_install_process refines process death, kernel lock recovery,
+// and a later project restriction after that authority observation.
 module skill_installation {
   var s: { phase: str, locked: bool, attempt: int, template: int, revision: int,
     currentTemplate: int, currentRevision: int, priorTemplate: int, priorRevision: int,

@@ -587,9 +587,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
         replaced = true;
         sql.exec("SAVEPOINT binding_authority_race");
         const successorId = `${input.claimId}-race`;
-        const successorDigest = hash("executor-successor-race").toString(
-          "hex",
-        );
+        const successorDigest = hash("executor-successor-race").toString("hex");
         const successorMessage = consent
           .replace(`Claim: ${input.claimId}`, `Claim: ${successorId}`)
           .replace(`Digest: ${claimDigest}`, `Digest: ${successorDigest}`)
@@ -613,17 +611,26 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
         sql
           .prepare("INSERT INTO payment_wallet_challenges VALUES(?,?,?,?,?,?)")
           .run(
-            "executor-race", successorId, "103", successorMessage, expires, now,
+            "executor-race",
+            successorId,
+            "103",
+            successorMessage,
+            expires,
+            now,
           );
         sql
-          .prepare("INSERT INTO payment_wallet_authorizations VALUES(?,?,?,?,?)")
+          .prepare(
+            "INSERT INTO payment_wallet_authorizations VALUES(?,?,?,?,?)",
+          )
           .run(
             successorId,
             "103",
             now,
             "executor-race",
             Buffer.from(
-              await signer(recipient).signMessage(Buffer.from(successorMessage)),
+              await signer(recipient).signMessage(
+                Buffer.from(successorMessage),
+              ),
             ).toString("base64"),
           );
       }
@@ -638,7 +645,9 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
       });
       assert.equal(response.status, 409);
       assert.equal(
-        replaced, true, "The current wallet must change after status lookup",
+        replaced,
+        true,
+        "The current wallet must change after status lookup",
       );
       assert.equal(sends, 0, "Obsolete co-signed bytes must remain unsent");
       const retained = await identityEnvironment.JOURNAL.get(

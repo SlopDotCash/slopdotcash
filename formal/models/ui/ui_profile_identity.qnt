@@ -35,7 +35,7 @@ module ui_profile_identity {
   }
   pure def first(values: Set[int]): int = if (values.contains(1)) 1
     else if (values.contains(2)) 2 else 0
-  pure def select(source: Sources): int = {
+  pure def selectRequest(source: Sources): int = {
     val candidate = if (source.member > 0) source.member
       else if (source.matches.size() > 0) first(source.matches)
       else if (source.directory.size() == 1) first(source.directory) else 0
@@ -47,7 +47,7 @@ module ui_profile_identity {
       or (source.member == 0 and source.memberPending) or candidate == 0 or conflict) 0
     else candidate
   }
-  val actor = select(sources(s.source))
+  val actor = selectRequest(sources(s.source))
   val visibleWallet = s.mounted and actor > 0 and s.wallet == "ready" and s.walletActor == actor
   action init = s' = { source: 1, mounted: true, life: 1, effectActor: 0,
     active: 0, requests: ids.mapBy(_ => {phase: "unused", actor: 0, life: 0, source: 0}),
@@ -89,7 +89,7 @@ module ui_profile_identity {
     actor == 0 implies not(visibleWallet),
     not(s.mounted) implies not(visibleWallet),
     ids.forall(id => s.requests.get(id).phase != "unused" implies
-      s.requests.get(id).actor == select(sources(s.requests.get(id).source))),
+      s.requests.get(id).actor == selectRequest(sources(s.requests.get(id).source))),
     s.wallet == "ready" implies ids.exists(id => s.requests.get(id).phase == "done"
       and s.requests.get(id).actor == s.walletActor) }
   run pendingDirectoryCannotNameActorTest = init.expect(actor == 0)

@@ -273,212 +273,218 @@ async function vettingFixture(page: Page, baseURL: string | undefined) {
 }
 
 for (const kind of ["scan", "grant"] as const) {
-  test(
-    `${kind}: committed departure during preflight starts no mutation`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { button } = await fixture.prepare(kind);
-        const reads = fixture.readCount();
-        await holdProjectSessionUntilUnmount(
-          page,
-          `[aria-label="Security vetting for ${fixture.projectId}"]`,
-        );
-        await page.evaluate(() => {
-          const current = window.location.href;
-          window.history.replaceState(window.history.state, "", "/how-it-works");
-          window.history.pushState({}, "", current);
-        });
-        await button.click();
-        await leaveEditorWithHeldSession(page);
-        expect(fixture.posts).toHaveLength(0);
-        expect(fixture.accepted).toHaveLength(0);
-        expect(fixture.readCount()).toBe(reads);
-        await expect(fixture.card).toHaveCount(0);
-      } finally {
-        await releaseHeldEditorSession(page);
-        fixture.release();
-      }
-    },
-  );
-
-  test(
-    `${kind}: accepted reply after SPA departure starts no vetting refresh`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { button } = await fixture.prepare(kind);
-        await button.click();
-        await expect.poll(() => fixture.posts.length).toBe(1);
-        const reads = fixture.readCount();
-        await page.getByRole("link", { name: "Slop home", exact: true }).click();
-        await expect(page).toHaveURL(/\/$/u);
-        const response = page.waitForResponse(
-          (reply) =>
-            reply.request().method() === "POST" &&
-            reply
-              .url()
-              .includes(
-                `/admin/vetting/${kind === "scan" ? "assessments" : "exemptions"}`,
-              ),
-        );
-        fixture.release();
-        await (await response).finished();
-        await settleResponse(page);
-        expect(fixture.accepted).toHaveLength(1);
-        expect(fixture.accepted[0].actor).toBe(ACTOR);
-        expect(fixture.readCount()).toBe(reads);
-        await expect(fixture.card).toHaveCount(0);
-      } finally {
-        fixture.release();
-      }
-    },
-  );
-
-  test(
-    `${kind}: accepted old-actor reply clears the private parent without refreshing`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { button } = await fixture.prepare(kind);
-        await button.click();
-        await expect.poll(() => fixture.posts.length).toBe(1);
-        const reads = fixture.readCount();
-        await fixture.setActor(OTHER_ACTOR);
-        fixture.release();
-        await expect(
-          page.getByRole("alert").filter({
-            hasText: "@replacement is not a Slop admin.",
-          }),
-        ).toBeVisible();
-        await expect(fixture.card).toHaveCount(0);
-        expect(fixture.accepted).toHaveLength(1);
-        expect(fixture.accepted[0].actor).toBe(ACTOR);
-        expect(fixture.accepted[0].cookie).toContain(`${TEST_COOKIE}=${ACTOR}`);
-        expect(fixture.readCount()).toBe(reads);
-      } finally {
-        fixture.release();
-      }
-    },
-  );
-
-  test(
-    `${kind}: forbidden reply removes the parent private overview`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      diagnostics.allowResponse(
-        403,
-        "POST",
-        `/api/v1/admin/vetting/${kind === "scan" ? "assessments" : "exemptions"}`,
+  test(`${kind}: committed departure during preflight starts no mutation`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { button } = await fixture.prepare(kind);
+      const reads = fixture.readCount();
+      await holdProjectSessionUntilUnmount(
+        page,
+        `[aria-label="Security vetting for ${fixture.projectId}"]`,
       );
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { button } = await fixture.prepare(kind);
-        fixture.denyPost();
-        await button.click();
-        await expect.poll(() => fixture.posts.length).toBe(1);
-        fixture.revokeAdmin();
-        fixture.release();
+      await page.evaluate(() => {
+        const current = window.location.href;
+        window.history.replaceState(window.history.state, "", "/how-it-works");
+        window.history.pushState({}, "", current);
+      });
+      await button.click();
+      await leaveEditorWithHeldSession(page);
+      expect(fixture.posts).toHaveLength(0);
+      expect(fixture.accepted).toHaveLength(0);
+      expect(fixture.readCount()).toBe(reads);
+      await expect(fixture.card).toHaveCount(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+      fixture.release();
+    }
+  });
+
+  test(`${kind}: accepted reply after SPA departure starts no vetting refresh`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { button } = await fixture.prepare(kind);
+      await button.click();
+      await expect.poll(() => fixture.posts.length).toBe(1);
+      const reads = fixture.readCount();
+      await page.getByRole("link", { name: "Slop home", exact: true }).click();
+      await expect(page).toHaveURL(/\/$/u);
+      const response = page.waitForResponse(
+        (reply) =>
+          reply.request().method() === "POST" &&
+          reply
+            .url()
+            .includes(
+              `/admin/vetting/${kind === "scan" ? "assessments" : "exemptions"}`,
+            ),
+      );
+      fixture.release();
+      await (await response).finished();
+      await settleResponse(page);
+      expect(fixture.accepted).toHaveLength(1);
+      expect(fixture.accepted[0].actor).toBe(ACTOR);
+      expect(fixture.readCount()).toBe(reads);
+      await expect(fixture.card).toHaveCount(0);
+    } finally {
+      fixture.release();
+    }
+  });
+
+  test(`${kind}: accepted old-actor reply clears the private parent without refreshing`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { button } = await fixture.prepare(kind);
+      await button.click();
+      await expect.poll(() => fixture.posts.length).toBe(1);
+      const reads = fixture.readCount();
+      await fixture.setActor(OTHER_ACTOR);
+      fixture.release();
+      await expect(
+        page.getByRole("alert").filter({
+          hasText: "@replacement is not a Slop admin.",
+        }),
+      ).toBeVisible();
+      await expect(fixture.card).toHaveCount(0);
+      expect(fixture.accepted).toHaveLength(1);
+      expect(fixture.accepted[0].actor).toBe(ACTOR);
+      expect(fixture.accepted[0].cookie).toContain(`${TEST_COOKIE}=${ACTOR}`);
+      expect(fixture.readCount()).toBe(reads);
+    } finally {
+      fixture.release();
+    }
+  });
+
+  test(`${kind}: forbidden reply removes the parent private overview`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    diagnostics.allowResponse(
+      403,
+      "POST",
+      `/api/v1/admin/vetting/${kind === "scan" ? "assessments" : "exemptions"}`,
+    );
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { button } = await fixture.prepare(kind);
+      fixture.denyPost();
+      await button.click();
+      await expect.poll(() => fixture.posts.length).toBe(1);
+      fixture.revokeAdmin();
+      fixture.release();
+      await expect(
+        page.getByRole("alert").filter({
+          hasText: "@operator is not a Slop admin.",
+        }),
+      ).toBeVisible();
+      await expect(fixture.card).toHaveCount(0);
+      await expect(
+        page.getByRole("heading", { name: "Security vetting", exact: true }),
+      ).toHaveCount(0);
+      expect(fixture.accepted).toHaveLength(0);
+    } finally {
+      fixture.release();
+    }
+  });
+
+  test(`${kind}: changed preflight actor sends no mutation`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { button } = await fixture.prepare(kind);
+      await fixture.setActor(OTHER_ACTOR);
+      await button.click();
+      await expect(
+        page.getByRole("alert").filter({
+          hasText: "@replacement is not a Slop admin.",
+        }),
+      ).toBeVisible();
+      await expect(fixture.card).toHaveCount(0);
+      expect(fixture.posts).toHaveLength(0);
+    } finally {
+      fixture.release();
+    }
+  });
+
+  test(`${kind}: current success uses the captured payload and refreshes once`, async ({
+    page,
+    baseURL,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    const fixture = await vettingFixture(page, baseURL);
+    try {
+      const { reason, form, button } = await fixture.prepare(kind);
+      await button.click();
+      await expect.poll(() => fixture.posts.length).toBe(1);
+      const reads = fixture.readCount();
+      await expect(form.getByRole("button")).toBeDisabled();
+      await reason.fill(
+        "A later unsent draft must not replace the captured reason.",
+      );
+      await form.evaluate((element) =>
+        element.dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+      );
+      fixture.release();
+      const note =
+        kind === "scan"
+          ? `Queued a scan of ${fixture.projectId} revision ${fixture.revision}.`
+          : `Recorded the owner-approved exemption for ${fixture.projectId}.`;
+      await expect(
+        page.getByRole("status").filter({ hasText: note }),
+      ).toBeVisible();
+      if (kind === "grant") {
+        await expect(fixture.card.locator(".admin-badge")).toHaveText(
+          "Owner-approved exemption",
+        );
+      } else {
         await expect(
-          page.getByRole("alert").filter({
-            hasText: "@operator is not a Slop admin.",
+          fixture.card.getByRole("heading", {
+            name: "Scan history",
+            exact: true,
           }),
         ).toBeVisible();
-        await expect(fixture.card).toHaveCount(0);
         await expect(
-          page.getByRole("heading", { name: "Security vetting", exact: true }),
+          fixture.card.getByRole("button", {
+            name: `Queue scan of revision ${fixture.revision}`,
+          }),
         ).toHaveCount(0);
-        expect(fixture.accepted).toHaveLength(0);
-      } finally {
-        fixture.release();
       }
-    },
-  );
-
-  test(
-    `${kind}: changed preflight actor sends no mutation`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { button } = await fixture.prepare(kind);
-        await fixture.setActor(OTHER_ACTOR);
-        await button.click();
-        await expect(
-          page.getByRole("alert").filter({
-            hasText: "@replacement is not a Slop admin.",
-          }),
-        ).toBeVisible();
-        await expect(fixture.card).toHaveCount(0);
-        expect(fixture.posts).toHaveLength(0);
-      } finally {
-        fixture.release();
-      }
-    },
-  );
-
-  test(
-    `${kind}: current success uses the captured payload and refreshes once`,
-    async ({ page, baseURL, diagnostics }) => {
-      diagnostics.allowPreviewApiMisses();
-      const fixture = await vettingFixture(page, baseURL);
-      try {
-        const { reason, form, button } = await fixture.prepare(kind);
-        await button.click();
-        await expect.poll(() => fixture.posts.length).toBe(1);
-        const reads = fixture.readCount();
-        await expect(form.getByRole("button")).toBeDisabled();
-        await reason.fill(
-          "A later unsent draft must not replace the captured reason.",
-        );
-        await form.evaluate((element) =>
-          element.dispatchEvent(
-            new Event("submit", { bubbles: true, cancelable: true }),
-          ),
-        );
-        fixture.release();
-        const note =
-          kind === "scan"
-            ? `Queued a scan of ${fixture.projectId} revision ${fixture.revision}.`
-            : `Recorded the owner-approved exemption for ${fixture.projectId}.`;
-        await expect(
-          page.getByRole("status").filter({ hasText: note }),
-        ).toBeVisible();
-        if (kind === "grant") {
-          await expect(fixture.card.locator(".admin-badge")).toHaveText(
-            "Owner-approved exemption",
-          );
-        } else {
-          await expect(
-            fixture.card.getByRole("heading", {
-              name: "Scan history",
-              exact: true,
-            }),
-          ).toBeVisible();
-          await expect(
-            fixture.card.getByRole("button", {
-              name: `Queue scan of revision ${fixture.revision}`,
-            }),
-          ).toHaveCount(0);
-        }
-        expect(fixture.posts).toHaveLength(1);
-        expect(fixture.accepted).toHaveLength(1);
-        expect(fixture.accepted[0].expectedActor).toBe(ACTOR);
-        expect(fixture.accepted[0].body).toEqual({
-          projectId: fixture.projectId,
-          revision: fixture.revision,
-          reason: REASON,
-          ...(kind === "grant"
-            ? { decisionReference: REFERENCE, confirmation: true }
-            : {}),
-        });
-        expect(fixture.readCount()).toBe(reads + 1);
-      } finally {
-        fixture.release();
-      }
-    },
-  );
+      expect(fixture.posts).toHaveLength(1);
+      expect(fixture.accepted).toHaveLength(1);
+      expect(fixture.accepted[0].expectedActor).toBe(ACTOR);
+      expect(fixture.accepted[0].body).toEqual({
+        projectId: fixture.projectId,
+        revision: fixture.revision,
+        reason: REASON,
+        ...(kind === "grant"
+          ? { decisionReference: REFERENCE, confirmation: true }
+          : {}),
+      });
+      expect(fixture.readCount()).toBe(reads + 1);
+    } finally {
+      fixture.release();
+    }
+  });
 }

@@ -13,7 +13,7 @@ module ui_explicit_signout {
   type Read = { phase: str, epoch: int }
   var s: { epoch: int, signout: str, mounted: bool, enabled: bool,
     hook: str, hookEpoch: int, latestRead: int, reads: int -> Read,
-    privateView: bool, privateEpoch: int, action: str, actionEpoch: int,
+    privateView: bool, privateEpoch: int, actionState: str, actionEpoch: int,
     accepted: bool, completion: bool, walletOpen: bool, walletRequests: int,
     marker: bool, email: str, emailActor: bool, emailEpoch: int,
     emailPending: bool, emailToken: bool, emailDone: bool }
@@ -21,7 +21,7 @@ module ui_explicit_signout {
   action init = s' = { epoch: 0, signout: "idle", mounted: true, enabled: true,
     hook: "checking", hookEpoch: 0, latestRead: 0,
     reads: ids.mapBy(_ => {phase: "unused", epoch: 0}),
-    privateView: false, privateEpoch: 0, action: "idle", actionEpoch: 0,
+    privateView: false, privateEpoch: 0, actionState: "idle", actionEpoch: 0,
     accepted: false, completion: false, walletOpen: false, walletRequests: 0,
     marker: true, email: "none", emailActor: false, emailEpoch: 0,
     emailPending: false, emailToken: false, emailDone: false }
@@ -47,18 +47,18 @@ module ui_explicit_signout {
     s.mounted, hookPrivate,
     s' = s.with("privateView", true).with("privateEpoch", s.epoch) }
   action beginAction = all {
-    s.mounted, s.privateView, s.action == "idle",
-    s' = s.with("action", "pending").with("actionEpoch", s.epoch) }
+    s.mounted, s.privateView, s.actionState == "idle",
+    s' = s.with("actionState", "pending").with("actionEpoch", s.epoch) }
   action requestWallet = all {
-    s.mounted, s.action == "pending", s.actionEpoch == s.epoch,
+    s.mounted, s.actionState == "pending", s.actionEpoch == s.epoch,
     s.walletRequests == 0,
     s' = s.with("walletOpen", true).with("walletRequests", 1) }
   action acceptAction = all {
-    s.action == "pending", not(s.accepted),
+    s.actionState == "pending", not(s.accepted),
     s' = s.with("accepted", true) }
   action actionReply = all {
-    s.action == "pending",
-    s' = s.with("action", "done").with("walletOpen", false)
+    s.actionState == "pending",
+    s' = s.with("actionState", "done").with("walletOpen", false)
       .with("completion", s.mounted and s.actionEpoch == s.epoch) }
   action walletReply = all {
     s.walletOpen,

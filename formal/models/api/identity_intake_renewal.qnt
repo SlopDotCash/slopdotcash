@@ -36,11 +36,11 @@ module identity_intake_renewal {
         else if (result == "ok") request.with("phase", "body")
         else request.with("phase", "done").with("status", "skipped").with("reason", result))) }
   }
-  action body(id: int, valid: bool, enabled: bool): bool = {
+  action body(id: int, valid: bool, isEnabled: bool): bool = {
     val request = s.requests.get(id)
     all { ids.contains(id), request.phase == "body",
       s' = s.with("requests", s.requests.set(id,
-        if (valid) request.with("phase", "write").with("candidate", enabled)
+        if (valid) request.with("phase", "write").with("candidate", isEnabled)
         else request.with("phase", "done").with("status", "skipped").with("reason", "malformed"))) }
   }
   action commitWrite(id: int): bool = {
@@ -71,8 +71,8 @@ module identity_intake_renewal {
     nondet token = tokenKinds.oneOf()
     nondet result = replies.oneOf()
     nondet valid = Set(false, true).oneOf()
-    nondet enabled = Set(false, true).oneOf()
-    any { tick, begin(id, token), fetchReply(id, result), body(id, valid, enabled),
+    nondet isEnabled = Set(false, true).oneOf()
+    any { tick, begin(id, token), fetchReply(id, result), body(id, valid, isEnabled),
       commitWrite(id), writeFailure(id), writeReply(id, valid), s' = s }
   }
   val invariant = {

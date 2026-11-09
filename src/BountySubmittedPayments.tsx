@@ -36,6 +36,7 @@ export function BountySubmittedPayments({
   const [error, setError] = useState<string | null>(null);
   const lifetime = useRef<symbol | null>(null);
   const active = useRef<symbol | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(() => {
     lifetime.current = Symbol();
     active.current = null;
@@ -48,6 +49,7 @@ export function BountySubmittedPayments({
       active.current = null;
     };
   }, [caseId, generation, solana]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useEffect(() => {
     const owner = lifetime.current;
     let loading = true;

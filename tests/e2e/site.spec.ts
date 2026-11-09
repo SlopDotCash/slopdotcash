@@ -2151,7 +2151,10 @@ test("an unavailable cycle index refuses a live substitute and retries the recor
   );
   await page.route("**/data/leaderboard.json?**", (route) => {
     leaderboardReads += 1;
-    return route.fulfill({ status: 503, body: "Unexpected leaderboard request" });
+    return route.fulfill({
+      status: 503,
+      body: "Unexpected leaderboard request",
+    });
   });
   await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
     waitUntil: "networkidle",

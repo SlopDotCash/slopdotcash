@@ -42,8 +42,8 @@
 // were run for this edit.
 module ui_solana_history_recovery {
   val ids = Set(1, 2, 3)
-  val indices = Set(1, 2)
-  val keys = Set(111, 112, 121, 122, 211, 212, 221, 222)
+  val messageIndices = Set(1, 2)
+  val cacheKeys = Set(111, 112, 121, 122, 211, 212, 221, 222)
   val signatures = Set("valid", "invalid64", "short", "noncanonical", "wrong-payer", "wrong-message", "malformed")
   type Proof = { exists: bool, body: int, payer: int, message: int, signature: str }
   val absent: Proof = { exists: false, body: 1, payer: 1, message: 1, signature: "malformed" }
@@ -53,7 +53,7 @@ module ui_solana_history_recovery {
     dispatched: bool, backendAccepted: bool, postActor: int, postCookie: int }
   val idle: Op = { phase: "unused", mode: "check", context: 1, scope: 1, actor: 1,
     payer: 1, body: 1, revision: 1, observedRevision: 0, index: 1, next: "none", authorized: false,
-    local: indices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false, backendAccepted: false,
+    local: messageIndices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false, backendAccepted: false,
     postActor: -1, postCookie: 0 }
   var s: { child: bool, parent: bool, context: int, scope: int, revision: int,
     serverRevision: int, serverChanges: int, refreshes: int,
@@ -64,14 +64,14 @@ module ui_solana_history_recovery {
   action init = s' = { child: true, parent: true, context: 1, scope: 1, revision: 1,
     serverRevision: 1, serverChanges: 0, refreshes: 0,
     payer: 1, body: 1, actor: 1, allowed: true, wallet: false, active: 0, busy: 0,
-    error: "none", cacheJsonValid: true, seeded: false, cache: keys.mapBy(_ => absent),
+    error: "none", cacheJsonValid: true, seeded: false, cache: cacheKeys.mapBy(_ => absent),
     written: Set(), operations: ids.mapBy(_ => idle), verifyRequests: 0, effects: Set(), badEffect: false }
   def key(scope: int, actor: int, index: int): int = scope * 100 + actor * 10 + index
   def operation(id: int): Op = if (ids.contains(id)) s.operations.get(id) else idle
   def current(id: int): bool = s.child and s.active == id and operation(id).context == s.context
   def valid(proof: Proof, op: Op, index: int): bool = proof.exists and proof.body == op.body
     and proof.payer == op.payer and proof.message == index and proof.signature == "valid"
-  def stopped(id: int, error: str) = s.with("operations", s.operations.set(id, operation(id).with("phase", "done")))
+  def stopped(id, error) = s.with("operations", s.operations.set(id, operation(id).with("phase", "done")))
     .with("active", if (current(id)) 0 else s.active).with("busy", if (current(id)) 0 else s.busy)
     .with("error", if (current(id)) error else s.error)
   action connected = all { s.child, s.parent, s.context == 1, s.actor == 1, s.allowed,
@@ -103,16 +103,16 @@ module ui_solana_history_recovery {
     val op = operation(id)
     all { op.phase == "cache-read", s' = if (not(current(id))) stopped(id, "none")
       else if (not(s.cacheJsonValid)) stopped(id, "cache-json")
-      else s.with("operations", s.operations.set(id, op.with("local", indices.mapBy(i => s.cache.get(key(op.scope, op.actor, i))))
+      else s.with("operations", s.operations.set(id, op.with("local", messageIndices.mapBy(i => s.cache.get(key(op.scope, op.actor, i))))
         .with("phase", "loop-authorize"))) }
   }
   action authorize(id: int): bool = {
     val op = operation(id)
-    val next = if (op.phase == "connect-authorize") "connect" else if (op.phase == "loop-authorize") "lookup"
+    val nextPhase = if (op.phase == "connect-authorize") "connect" else if (op.phase == "loop-authorize") "lookup"
       else if (op.phase == "cache-authorize") "cache-write" else "verify"
     all { Set("connect-authorize", "loop-authorize", "cache-authorize", "final-authorize").contains(op.phase),
       s' = if (not(current(id))) stopped(id, "none")
-        else s.with("operations", s.operations.set(id, op.with("phase", "parent-await").with("next", next)
+        else s.with("operations", s.operations.set(id, op.with("phase", "parent-await").with("next", nextPhase)
           .with("authorized", false).with("observedRevision", 0))) }
   }
   action parentObservation(id: int): bool = {
@@ -180,7 +180,7 @@ module ui_solana_history_recovery {
   }
   action beginVerification(id: int): bool = {
     val op = operation(id)
-    all { op.phase == "verify", op.ready == indices,
+    all { op.phase == "verify", op.ready == messageIndices,
       s' = if (not(current(id))) stopped(id, "none")
         else s.with("operations", s.operations.set(id, op.with("phase", "post-identity"))) }
   }
@@ -264,8 +264,8 @@ module ui_solana_history_recovery {
     ids.forall(id => {
       val op = operation(id)
       all { op.index >= 1 and op.index <= 2, op.prompts <= 2,
-        op.ready.subseteq(indices), op.authorized implies op.observedRevision == op.revision,
-        op.dispatched implies op.authorized and op.ready == indices,
+        op.ready.subseteq(messageIndices), op.authorized implies op.observedRevision == op.revision,
+        op.dispatched implies op.authorized and op.ready == messageIndices,
         op.ready.forall(i => valid(op.local.get(i), op, i)) }
     }) }
   action authority(id: int): bool = authorize(id).then(parentReply(id, true))

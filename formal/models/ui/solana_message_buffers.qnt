@@ -58,10 +58,10 @@ module solana_message_buffers {
   action mutateProviderInput = all { s.inputExposed, Set("provider", "validate", "returned", "refused").contains(s.phase),
     s' = s.with("providerInput", other(s.providerInput))
       .with("caller", if (s.inputShared) other(s.providerInput) else s.caller) }
-  action providerReply(signature: int, length: int, echoKind: str, present: bool): bool = all {
-    s.phase == "provider", identities.contains(signature), Set(0, 63, 64).contains(length), echoKinds.contains(echoKind),
+  action providerReply(signature: int, byteLength: int, echoKind: str, present: bool): bool = all {
+    s.phase == "provider", identities.contains(signature), Set(0, 63, 64).contains(byteLength), echoKinds.contains(echoKind),
     s' = s.with("phase", "validate").with("present", present).with("providerSignature", signature)
-      .with("signatureLength", length).with("echoAliasesInput", echoKind == "input")
+      .with("signatureLength", byteLength).with("echoAliasesInput", echoKind == "input")
       .with("echo", if (echoKind == "other") other(s.providerInput) else if (echoKind == "absent") 0 else s.providerInput)
       .with("echoLength", not(Set("short", "absent").contains(echoKind))) }
   action mutateProviderEcho = all { Set("validate", "returned").contains(s.phase),
@@ -91,11 +91,11 @@ module solana_message_buffers {
   action step = {
     nondet kind = Set("standard", "legacy").oneOf()
     nondet signature = identities.oneOf()
-    nondet length = Set(0, 63, 64).oneOf()
+    nondet byteLength = Set(0, 63, 64).oneOf()
     nondet echoKind = echoKinds.oneOf()
     nondet yes = Set(false, true).oneOf()
     any { start(kind), reconnectReply(yes), mutateCaller, mutateProviderInput,
-      providerReply(signature, length, echoKind, yes), providerFailure,
+      providerReply(signature, byteLength, echoKind, yes), providerFailure,
       mutateProviderEcho, mutateProviderSignature, validate, mutateReturnedSignature, s' = s }
   }
   val invariant = all {

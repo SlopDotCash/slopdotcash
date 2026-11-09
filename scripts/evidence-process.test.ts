@@ -59,7 +59,14 @@ test("command success waits for close after zero exit", async () => {
   const state = observeEvidenceProcess(child);
   const result = completeEvidenceCommand("fixture-build", state);
   let settled = false;
-  void result.then(() => { settled = true; }, () => { settled = true; });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   child.exit(0);
   await Promise.resolve();
   expect(settled).toBe(false);
@@ -85,7 +92,9 @@ test("signal command close refuses success and names the signal", async () => {
   const rejected = failure(completeEvidenceCommand("fixture-encoder", state));
   child.exit(null, "SIGTERM");
   child.close();
-  expect((await rejected).message).toBe("fixture-encoder exited with unknown (SIGTERM)");
+  expect((await rejected).message).toBe(
+    "fixture-encoder exited with unknown (SIGTERM)",
+  );
 });
 
 test("failed-spawn command waits for close without requiring exit", async () => {
@@ -95,7 +104,14 @@ test("failed-spawn command waits for close without requiring exit", async () => 
   const result = completeEvidenceCommand("missing-build", state);
   const rejected = failure(result);
   let settled = false;
-  void result.then(() => { settled = true; }, () => { settled = true; });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   child.failSpawn(primary);
   await Promise.resolve();
   expect(settled).toBe(false);
@@ -116,7 +132,9 @@ test("command preserves the first error and consumes later child errors", async 
   child.exit(0);
   child.close();
   expect(await rejected).toBe(primary);
-  expect(() => child.emit("error", new Error("fixture error after settlement"))).not.toThrow();
+  expect(() =>
+    child.emit("error", new Error("fixture error after settlement")),
+  ).not.toThrow();
   expect(state.error).toBe(primary);
 });
 
@@ -145,8 +163,13 @@ test("preview startup rejection survives successful failed-spawn cleanup unchang
   const state = observeEvidenceProcess(child);
   const primary = new Error("fixture preview could not start");
   child.failSpawn(new Error("fixture native spawn error"));
-  const result = withEvidenceCleanup(async () => { throw primary; }, [
-    { label: "preview shutdown", run: () => stopEvidencePreview(child, state, 100) },
+  const result = withEvidenceCleanup(async () => {
+    throw primary;
+  }, [
+    {
+      label: "preview shutdown",
+      run: () => stopEvidencePreview(child, state, 100),
+    },
   ]);
   const rejected = failure(result);
   queueMicrotask(() => child.close(-2, null));
@@ -160,7 +183,14 @@ test("already exited preview waits for close and receives no signals", async () 
   child.exit(0);
   const result = stopEvidencePreview(child, state, 100);
   let settled = false;
-  void result.then(() => { settled = true; }, () => { settled = true; });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   await Promise.resolve();
   expect(settled).toBe(false);
   expect(child.signals).toEqual([]);
@@ -186,10 +216,20 @@ test("absent production-mode preview cleanup is a no-op", async () => {
 test("preview termination alone does not complete cleanup before close", async () => {
   const child = new ChildFixture();
   const state = observeEvidenceProcess(child);
-  child.onKill = () => { child.exit(null, "SIGTERM"); return true; };
+  child.onKill = () => {
+    child.exit(null, "SIGTERM");
+    return true;
+  };
   const result = stopEvidencePreview(child, state, 100);
   let settled = false;
-  void result.then(() => { settled = true; }, () => { settled = true; });
+  void result.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   await Promise.resolve();
   expect(settled).toBe(false);
   expect(child.signals).toEqual(["SIGTERM"]);
@@ -229,7 +269,14 @@ test("false signal results never prove closure and late close does not change re
   child.onKill = () => false;
   const result = stopEvidencePreview(child, state, 10);
   let settlements = 0;
-  void result.then(() => { settlements++; }, () => { settlements++; });
+  void result.then(
+    () => {
+      settlements++;
+    },
+    () => {
+      settlements++;
+    },
+  );
   const error = await failure(result);
   expect(error.message).toContain("did not close after shutdown");
   expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
@@ -244,7 +291,9 @@ test("false signal results never prove closure and late close does not change re
 test("signal exception does not prevent success when close is observed", async () => {
   const child = new ChildFixture();
   const state = observeEvidenceProcess(child);
-  child.onKill = () => { throw new Error("fixture signal request failed"); };
+  child.onKill = () => {
+    throw new Error("fixture signal request failed");
+  };
   const result = stopEvidencePreview(child, state, 100);
   child.exit(0);
   child.close();
@@ -272,12 +321,16 @@ test("unconfirmed shutdown preserves both thrown signal errors", async () => {
   const state = observeEvidenceProcess(child);
   const term = new Error("fixture TERM failed");
   const kill = new Error("fixture KILL failed");
-  child.onKill = (signal) => { throw signal === "SIGTERM" ? term : kill; };
+  child.onKill = (signal) => {
+    throw signal === "SIGTERM" ? term : kill;
+  };
   const error = await failure(stopEvidencePreview(child, state, 10));
   expect(error).toBeInstanceOf(AggregateError);
   expect(error.cause).toBe(term);
   expect(error.errors?.slice(0, 2)).toEqual([term, kill]);
-  expect((error.errors?.[2] as Error).message).toContain("did not close after shutdown");
+  expect((error.errors?.[2] as Error | undefined)?.message).toContain(
+    "did not close after shutdown",
+  );
   expect(state.closed).toBe(false);
 });
 
@@ -295,7 +348,9 @@ test("later asynchronous KILL error cannot replace the earlier thrown TERM cause
   expect(error).toBeInstanceOf(AggregateError);
   expect(error.cause).toBe(term);
   expect(error.errors?.slice(0, 2)).toEqual([term, kill]);
-  expect((error.errors?.[2] as Error).message).toContain("did not close after shutdown");
+  expect((error.errors?.[2] as Error | undefined)?.message).toContain(
+    "did not close after shutdown",
+  );
   expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
   expect(state.closed).toBe(false);
 });
@@ -305,7 +360,10 @@ test("unconfirmed shutdown retains the first asynchronous child error", async ()
   const state = observeEvidenceProcess(child);
   const primary = new Error("fixture asynchronous TERM error");
   child.onKill = (signal) => {
-    child.emit("error", signal === "SIGTERM" ? primary : new Error("fixture later KILL error"));
+    child.emit(
+      "error",
+      signal === "SIGTERM" ? primary : new Error("fixture later KILL error"),
+    );
     return false;
   };
   const error = await failure(stopEvidencePreview(child, state, 10));

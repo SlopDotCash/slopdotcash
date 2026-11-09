@@ -11,9 +11,15 @@ function publicationCase(name: string, setup: string, body: string) {
     try {
       // The fixture already owns its frozen registry; isolate builtin mocks
       // from every other repository test and from the parent's module cache.
-      writeFileSync(join(root, "bunfig.toml"), "[test]\npreload = []\n");
+      writeFileSync(join(root, "fixture-preload.ts"), "export {};\n");
+      writeFileSync(
+        join(root, "bunfig.toml"),
+        '[test]\npreload = ["./fixture-preload.ts"]\n',
+      );
       const probe = join(root, "cycle-publication-probe.test.ts");
-      writeFileSync(probe, `
+      writeFileSync(
+        probe,
+        `
         import { test, mock } from 'bun:test';
         import assert from 'node:assert/strict';
         import * as fs from 'node:fs/promises';
@@ -60,13 +66,18 @@ function publicationCase(name: string, setup: string, body: string) {
           ({syncCycleIndex:sync}=await import('./scripts/sync-cycle-index'));
           ${body}
         },60000);
-      `);
-      const result = spawnSync(process.execPath, ["test", probe, "--timeout", "60000"], {
-        cwd: root,
-        encoding: "utf8",
-        timeout: 70_000,
-        env: { ...process.env, TMPDIR: join(root, ".bun-tmp") },
-      });
+      `,
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["test", probe, "--timeout", "60000"],
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 70_000,
+          env: { ...process.env, TMPDIR: join(root, ".bun-tmp") },
+        },
+      );
       expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -74,22 +85,28 @@ function publicationCase(name: string, setup: string, body: string) {
   }, 90_000);
 }
 
-publicationCase("failed promotion staging keeps the prior outputs and releases the guard", String.raw`
+publicationCase(
+  "failed promotion staging keeps the prior outputs and releases the guard",
+  String.raw`
   let fail=true;
   overrides.mkdtemp=async(prefix,...args)=>{
     if(fail && String(prefix).includes('.cycle-promotion-')) throw new Error('fixture promotion staging failure');
     return native.mkdtemp(prefix,...args);
   };
-`, String.raw`
+`,
+  String.raw`
   assert.match((await failure()).message,/promotion staging failure/);
   await oldPair();
   await assert.rejects(native.stat(guard));
   fail=false;
   await sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   await newPair();
-`);
+`,
+);
 
-publicationCase("failed cycle writes drain siblings and preserve both prior outputs", String.raw`
+publicationCase(
+  "failed cycle writes drain siblings and preserve both prior outputs",
+  String.raw`
   let fail=true, delayed=false, delayedSettled=false, cleanedTooSoon=false;
   overrides.writeFile=async(path,...args)=>{
     if(fail && String(path).includes('.staging-') && basename(String(path))==='proposal.json') {
@@ -107,7 +124,8 @@ publicationCase("failed cycle writes drain siblings and preserve both prior outp
     if(String(path).includes('.staging-') && delayed && !delayedSettled) cleanedTooSoon=true;
     return native.rm(path,options);
   };
-`, String.raw`
+`,
+  String.raw`
   const error=await failure();
   assert.match(error.message,/proposal write failure/);
   assert.equal(delayed,true);
@@ -118,9 +136,12 @@ publicationCase("failed cycle writes drain siblings and preserve both prior outp
   fail=false;
   await sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   await newPair();
-`);
+`,
+);
 
-publicationCase("failed public-tree activation restores the prior tree and promotion", String.raw`
+publicationCase(
+  "failed public-tree activation restores the prior tree and promotion",
+  String.raw`
   let fail=true;
   overrides.rename=async(from,to)=>{
     if(fail && to===publicRoot && String(from).includes('.staging-') && !String(from).endsWith('.previous')) {
@@ -128,16 +149,20 @@ publicationCase("failed public-tree activation restores the prior tree and promo
     }
     return native.rename(from,to);
   };
-`, String.raw`
+`,
+  String.raw`
   assert.match((await failure()).message,/tree activation failure/);
   await oldPair();
   await assert.rejects(native.stat(guard));
   fail=false;
   await sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   await newPair();
-`);
+`,
+);
 
-publicationCase("failed promotion activation retracts the new tree and restores the old pair", String.raw`
+publicationCase(
+  "failed promotion activation retracts the new tree and restores the old pair",
+  String.raw`
   let fail=true;
   overrides.rename=async(from,to)=>{
     if(fail && to===promotionPath && basename(String(from))==='next.json') {
@@ -145,22 +170,27 @@ publicationCase("failed promotion activation retracts the new tree and restores 
     }
     return native.rename(from,to);
   };
-`, String.raw`
+`,
+  String.raw`
   assert.match((await failure()).message,/promotion activation failure/);
   await oldPair();
   await assert.rejects(native.stat(guard));
   fail=false;
   await sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   await newPair();
-`);
+`,
+);
 
-publicationCase("failed cycle restoration retains recovery paths and blocks another writer", String.raw`
+publicationCase(
+  "failed cycle restoration retains recovery paths and blocks another writer",
+  String.raw`
   overrides.rename=async(from,to)=>{
     if(to===promotionPath && basename(String(from))==='next.json') throw new Error('fixture primary promotion failure');
     if(to===publicRoot && String(from).endsWith('.previous')) throw new Error('fixture tree restoration failure');
     return native.rename(from,to);
   };
-`, String.raw`
+`,
+  String.raw`
   const error=await failure();
   assert.match(error.message,/primary promotion failure/);
   assert.match(error.message,/tree restoration failure/);
@@ -173,15 +203,19 @@ publicationCase("failed cycle restoration retains recovery paths and blocks anot
   const retry=await failure();
   assert.match(retry.message,/could not acquire/);
   assert.deepEqual((await native.readdir(join(import.meta.dir,'public/data'))).filter(name=>name.includes('.staging-')),retained);
-`);
+`,
+);
 
-publicationCase("backup cleanup failure reports a committed cycle pair", String.raw`
+publicationCase(
+  "backup cleanup failure reports a committed cycle pair",
+  String.raw`
   let fail=true;
   overrides.rm=async(path,options)=>{
     if(fail && String(path).endsWith('.previous')) throw new Error('fixture previous-tree cleanup failure');
     return native.rm(path,options);
   };
-`, String.raw`
+`,
+  String.raw`
   const error=await failure();
   assert.match(error.message,/were published, but cleanup failed/);
   assert.match(error.message,/previous-tree cleanup failure/);
@@ -190,9 +224,12 @@ publicationCase("backup cleanup failure reports a committed cycle pair", String.
   fail=false;
   await sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   await newPair();
-`);
+`,
+);
 
-publicationCase("concurrent cycle publication refuses without touching the in-flight pair", String.raw`
+publicationCase(
+  "concurrent cycle publication refuses without touching the in-flight pair",
+  String.raw`
   let release;
   let signal;
   const entered=new Promise(resolve=>{signal=resolve;});
@@ -204,7 +241,8 @@ publicationCase("concurrent cycle publication refuses without touching the in-fl
     }
     return native.writeFile(path,...args);
   };
-`, String.raw`
+`,
+  String.raw`
   const publishing=sync({generatedAt:'2026-11-01T00:00:00.000Z'});
   let failed=false;
   try {
@@ -220,18 +258,23 @@ publicationCase("concurrent cycle publication refuses without touching the in-fl
     catch(error) { if(!failed) throw error; }
   }
   await newPair();
-`);
+`,
+);
 
-publicationCase("failed guard cleanup retains committed outputs and refuses an automatic retry", String.raw`
+publicationCase(
+  "failed guard cleanup retains committed outputs and refuses an automatic retry",
+  String.raw`
   overrides.rmdir=async(path,...args)=>{
     if(path===guard) throw new Error('fixture publication guard cleanup failure');
     return native.rmdir(path,...args);
   };
-`, String.raw`
+`,
+  String.raw`
   const error=await failure();
   assert.match(error.message,/were published, but cleanup failed/);
   await newPair();
   await native.stat(guard);
   assert.match((await failure()).message,/could not acquire/);
   await newPair();
-`);
+`,
+);

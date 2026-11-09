@@ -40,7 +40,7 @@ module vetting_observed_part {
     s.phase == "get", sizeClasses.contains(sizeClass),
     s' = s.with("sizeClass", sizeClass).with("headerSize", if (sizeClass == "empty") 0 else 2)
       .with("marked", marked).with("metadataMatches", metadataMatches).with("declaredMatches", declaredMatches) }
-  action get(outcome: str): bool = all { s.phase == "get", Set("present", "missing", "rejected").contains(outcome),
+  action getRecord(outcome: str): bool = all { s.phase == "get", Set("present", "missing", "rejected").contains(outcome),
     s' = if (outcome == "present") s.with("phase", "acquire")
       else s.with("phase", "done").with("outcome", "error")
         .with("primary", if (outcome == "missing") "missing" else "fetch")
@@ -50,13 +50,13 @@ module vetting_observed_part {
   action marker = all { s.phase == "marker",
     s' = if (s.marked) s.with("phase", "cancel").with("primary", "retired").with("preserved", "retired")
       else s.with("phase", "size") }
-  action size = all { s.phase == "size",
+  action byteSize = all { s.phase == "size",
     s' = if (Set("empty", "bounded").contains(s.sizeClass)) s.with("phase", "read").with("allocated", true)
       else s.with("phase", "cancel").with("primary", "size").with("preserved", "size") }
-  action fragment(length: int): bool = all { s.phase == "read", Set(1, 2, 3).contains(length),
-    s' = if (s.offset + length > s.headerSize)
+  action fragment(byteLength: int): bool = all { s.phase == "read", Set(1, 2, 3).contains(byteLength),
+    s' = if (s.offset + byteLength > s.headerSize)
       s.with("phase", "cancel").with("primary", "length").with("preserved", "length")
-      else s.with("offset", s.offset + length) }
+      else s.with("offset", s.offset + byteLength) }
   action readError = all { s.phase == "read",
     s' = s.with("phase", "cancel").with("primary", "read").with("preserved", "read") }
   action eof = all { s.phase == "read",
@@ -82,9 +82,9 @@ module vetting_observed_part {
     nondet metadataMatches = Set(false, true).oneOf()
     nondet declaredMatches = Set(false, true).oneOf()
     nondet outcome = Set("present", "missing", "rejected").oneOf()
-    nondet length = Set(1, 2, 3).oneOf()
-    any { source(sizeClass, yes, metadataMatches, declaredMatches), get(outcome), acquire, marker, size,
-      fragment(length), readError, eof, digest, cancelStart, cancelResult(yes), release, callerCancel, s' = s }
+    nondet byteLength = Set(1, 2, 3).oneOf()
+    any { source(sizeClass, yes, metadataMatches, declaredMatches), getRecord(outcome), acquire, marker, byteSize,
+      fragment(byteLength), readError, eof, digest, cancelStart, cancelResult(yes), release, callerCancel, s' = s }
   }
   val invariant = all {
     s.releases <= s.acquisitions, s.acquisitions <= 1,
@@ -96,8 +96,8 @@ module vetting_observed_part {
     s.allocated implies Set("empty", "bounded").contains(s.sizeClass) and not(s.marked),
     s.digestFromRead implies s.eofSeen and s.returnedSize == s.headerSize,
     s.outcome == "observed" implies s.primary == "none" and s.digestFromRead and s.sourceClosed and s.releases == 1 }
-  action acquired = get("present").then(acquire)
-  action reading = acquired.then(marker).then(size)
+  action acquired = getRecord("present").then(acquire)
+  action reading = acquired.then(marker).then(byteSize)
   action complete = eof.then(digest).then(release)
   action cleanup(ok: bool): bool = cancelStart.then(cancelResult(ok)).then(release)
   run completeObservedBodyComputesOwnDigestTest = init.then(reading).then(fragment(1)).then(fragment(1)).then(complete)
@@ -113,15 +113,15 @@ module vetting_observed_part {
     .expect(s.outcome == "observed" and s.returnedSize == 0 and invariant)
   run advertisedLengthWithoutEofIsNotSuccessTest = init.then(reading).then(fragment(2))
     .expect(s.offset == 2 and s.outcome == "pending" and s.readerOwned and not(s.digestFromRead) and invariant)
-  run missingBodyOwnsNoReaderTest = init.then(get("missing"))
+  run missingBodyOwnsNoReaderTest = init.then(getRecord("missing"))
     .expect(s.primary == "missing" and s.acquisitions == 0 and not(s.cancelTried) and invariant)
-  run unavailableBodyIsNotMissingTest = init.then(get("rejected"))
+  run unavailableBodyIsNotMissingTest = init.then(getRecord("rejected"))
     .expect(s.primary == "fetch" and s.acquisitions == 0 and invariant)
-  run negativeAdvertisedSizeReleasesOwnedBodyTest = init.then(source("negative", false, true, true)).then(acquired).then(marker).then(size).then(cleanup(true))
+  run negativeAdvertisedSizeReleasesOwnedBodyTest = init.then(source("negative", false, true, true)).then(acquired).then(marker).then(byteSize).then(cleanup(true))
     .expect(s.primary == "size" and not(s.allocated) and s.releases == 1 and invariant)
-  run fractionalAdvertisedSizeRefusesTest = init.then(source("fractional", false, true, true)).then(acquired).then(marker).then(size).then(cleanup(true))
+  run fractionalAdvertisedSizeRefusesTest = init.then(source("fractional", false, true, true)).then(acquired).then(marker).then(byteSize).then(cleanup(true))
     .expect(s.primary == "size" and s.offset == 0 and invariant)
-  run oversizedAdvertisedSizeRefusesBeforeAllocationTest = init.then(source("oversized", false, true, true)).then(acquired).then(marker).then(size).then(cleanup(false))
+  run oversizedAdvertisedSizeRefusesBeforeAllocationTest = init.then(source("oversized", false, true, true)).then(acquired).then(marker).then(byteSize).then(cleanup(false))
     .expect(s.primary == "size" and not(s.allocated) and s.cancelFailed and s.releases == 1 and invariant)
   run retirementMarkerPrecedesInvalidSizeTest = init.then(source("oversized", true, false, false)).then(acquired).then(marker).then(cleanup(true))
     .expect(s.primary == "retired" and not(s.allocated) and s.offset == 0 and invariant)

@@ -778,7 +778,8 @@ for (const failure of ["access", "changed-actor", "same-actor"] as const) {
     diagnostics.allowResponse(status, "PUT", `/api/v1/projects/${fixture.id}`);
     let inject = true;
     await page.route(`**/api/v1/projects/${fixture.id}`, async (route) => {
-      if (route.request().method() !== "PUT" || !inject) return route.continue();
+      if (route.request().method() !== "PUT" || !inject)
+        return route.continue();
       inject = false;
       if (failure === "changed-actor")
         await settingsSession(page, "reporter-b");
@@ -799,11 +800,13 @@ for (const failure of ["access", "changed-actor", "same-actor"] as const) {
         .click();
       if (failure === "same-actor") {
         await expect(
-          page.getByRole("alert").filter({ hasText: "Injected publication failure." }),
+          page
+            .getByRole("alert")
+            .filter({ hasText: "Injected publication failure." }),
         ).toBeVisible();
-        await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
-          "200",
-        );
+        await expect(
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveValue("200");
         await reviewSettingsAmount(page, "200");
         await page
           .getByRole("button", { name: "Publish bounty terms", exact: true })
@@ -814,16 +817,21 @@ for (const failure of ["access", "changed-actor", "same-actor"] as const) {
           }),
         ).toBeVisible();
       } else if (failure === "changed-actor") {
-        await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
-          "100",
-        );
+        await expect(
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveValue("100");
         expect((await adminProject(request, fixture.id)).revision).toBe(
           before.revision,
         );
       } else {
-        await expect(page.getByLabel("Published gross award (USD)")).toHaveCount(0);
         await expect(
-          page.getByRole("button", { name: "Retry management access", exact: true }),
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveCount(0);
+        await expect(
+          page.getByRole("button", {
+            name: "Retry management access",
+            exact: true,
+          }),
         ).toBeVisible();
         expect((await adminProject(request, fixture.id)).revision).toBe(
           before.revision,
@@ -4928,7 +4936,9 @@ async function preparePrivateReceiptForm(
     );
   if (invalidCvss) {
     await page.getByText("Additional classification", { exact: false }).click();
-    await page.getByRole("textbox", { name: /CVSS vector/u }).fill("not-a-vector");
+    await page
+      .getByRole("textbox", { name: /CVSS vector/u })
+      .fill("not-a-vector");
   }
   await page
     .getByRole("button", { name: "Review report", exact: true })
@@ -4994,7 +5004,8 @@ test("an accepted private report rechecks identity before navigation and preserv
         attempted: false,
         draft: {
           summary: "A newer unsent draft in the same storage slot",
-          description: "Synthetic replacement text must survive the old receipt.",
+          description:
+            "Synthetic replacement text must survive the old receipt.",
           severity: "",
           cvss: "",
           cwe: "",
@@ -5038,7 +5049,10 @@ test("an accepted private report rechecks identity before navigation and preserv
     expect(retained.status).toBe(200);
     await replacePrivateReportActor(page, first);
     await page
-      .getByRole("button", { name: "Check session and open receipt", exact: true })
+      .getByRole("button", {
+        name: "Check session and open receipt",
+        exact: true,
+      })
       .click();
     await expect(page).toHaveURL(
       new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
@@ -5099,7 +5113,10 @@ test("a received private report survives a session outage without being submitte
   await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
   unavailable = false;
   await page
-    .getByRole("button", { name: "Check session and open receipt", exact: true })
+    .getByRole("button", {
+      name: "Check session and open receipt",
+      exact: true,
+    })
     .click();
   await expect(page).toHaveURL(
     new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
@@ -5170,7 +5187,8 @@ test("a departed private receipt check cannot clear a newer draft or navigate it
         attempted: false,
         draft: {
           summary: "A draft written after leaving the accepted report",
-          description: "New synthetic text belongs to the replacement form only.",
+          description:
+            "New synthetic text belongs to the replacement form only.",
           severity: "",
           cvss: "",
           cwe: "",
@@ -5184,7 +5202,8 @@ test("a departed private receipt check cannot clear a newer draft or navigate it
       page.getByRole("textbox", { name: "Summary", exact: true }),
     ).toHaveValue("A draft written after leaving the accepted report");
     const delivered = page.waitForResponse(
-      (response) => new URL(response.url()).pathname === "/api/v1/project-session",
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/project-session",
     );
     release();
     await (await delivered).finished();
@@ -5313,7 +5332,10 @@ test("an unknown private session hides an uncertain report until a session-only 
     .getByRole("button", { name: "Submit private report", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Check your private session", exact: true }),
+    page.getByRole("heading", {
+      name: "Check your private session",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.locator(".report-preview")).toHaveCount(0);
   await expect(
@@ -5323,7 +5345,10 @@ test("an unknown private session hides an uncertain report until a session-only 
   expect(pending).toEqual({ ...original, attempted: true });
   unavailable = false;
   await page
-    .getByRole("button", { name: "Check session to recover report", exact: true })
+    .getByRole("button", {
+      name: "Check session to recover report",
+      exact: true,
+    })
     .click();
   await expect(
     page.getByRole("button", { name: "Retry same report", exact: true }),
@@ -5403,7 +5428,10 @@ for (const replaceStored of [false, true]) {
     request,
     diagnostics,
   }) => {
-    test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+    test.skip(
+      process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
+      "Private intake lane",
+    );
     test.setTimeout(120_000);
     const id = `report-400-${projectSuffix()}`;
     const reporter: Role = test.info().project.name.endsWith("-mobile")
@@ -5453,7 +5481,8 @@ for (const replaceStored of [false, true]) {
               attempted: false,
               draft: {
                 summary: "A replacement while validation is pending",
-                description: "Synthetic replacement retained until an explicit new edit.",
+                description:
+                  "Synthetic replacement retained until an explicit new edit.",
                 severity: "",
                 cvss: "",
                 cwe: "",
@@ -5487,13 +5516,14 @@ for (const replaceStored of [false, true]) {
         .click();
       await page.getByRole("textbox", { name: /CVSS vector/u }).fill("");
       await expect
-        .poll(async () =>
-          JSON.parse(
-            (await page.evaluate(
-              (key) => sessionStorage.getItem(key),
-              storageKey,
-            )) ?? "null",
-          )?.draft.cvss,
+        .poll(
+          async () =>
+            JSON.parse(
+              (await page.evaluate(
+                (key) => sessionStorage.getItem(key),
+                storageKey,
+              )) ?? "null",
+            )?.draft.cvss,
         )
         .toBe("");
       await page

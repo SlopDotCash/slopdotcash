@@ -305,9 +305,7 @@ for (const reusedDuringRead of [false, true]) {
         issuedBody =
           typeof init?.body === "string" ? JSON.parse(init.body) : null;
         const scope = issuedBody as { repository_ids?: number[] } | null;
-        allowed = new Set(
-          scope?.repository_ids ?? [expectedId, replacementId],
-        );
+        allowed = new Set(scope?.repository_ids ?? [expectedId, replacementId]);
         tokenContentType = new Headers(init?.headers).get("content-type");
         return Response.json(
           { token: "scoped-installation-token-fixture" },
@@ -318,8 +316,7 @@ for (const reusedDuringRead of [false, true]) {
         "Bearer scoped-installation-token-fixture",
       );
       if (path === repository) {
-        if (!allowed.has(currentId))
-          return new Response(null, { status: 404 });
+        if (!allowed.has(currentId)) return new Response(null, { status: 404 });
         const facts = {
           ...repositoryFacts("example/renamed-registry"),
           id: currentId,
@@ -329,10 +326,11 @@ for (const reusedDuringRead of [false, true]) {
         if (reusedDuringRead) currentId = replacementId;
         return Response.json(facts);
       }
-      if (path === `${repository}/collaborators/${OWNER.githubLogin}/permission`) {
+      if (
+        path === `${repository}/collaborators/${OWNER.githubLogin}/permission`
+      ) {
         permissionTargets.push(currentId);
-        if (!allowed.has(currentId))
-          return new Response(null, { status: 404 });
+        if (!allowed.has(currentId)) return new Response(null, { status: 404 });
         return Response.json({
           permission: "admin",
           role_name: "admin",

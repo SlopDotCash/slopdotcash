@@ -64,11 +64,11 @@ module ui_pending_applications {
   // when the old browser later disconnects or receives an error.
   action admitPublish(v:int,outcome:str):bool = {
     val view=s.views.get(v)
-    val next=if(view.publishCookie!=view.actor)"refused"
+    val nextValue=if(view.publishCookie!=view.actor)"refused"
       else if(s.published.contains(view.actor))"retry" else outcome
     all{view.publish=="http",Set("accepted","retry","refused").contains(outcome),
-      s'=s.with("views",s.views.set(v,view.with("publish",next)))
-        .with("published",if(next=="accepted")s.published.union(Set(view.actor)) else s.published)}
+      s'=s.with("views",s.views.set(v,view.with("publish",nextValue)))
+        .with("published",if(nextValue=="accepted")s.published.union(Set(view.actor)) else s.published)}
   }
   action publishReply(v:int):bool = {
     val view=s.views.get(v)

@@ -123,7 +123,9 @@ async function request(
     timeoutMs: 30_000,
     headers: {
       ...(path === "me" ? { "x-slop-direct-history": "paged" } : {}),
-      ...(actorId === undefined ? {} : { "x-slop-expected-github-id": actorId }),
+      ...(actorId === undefined
+        ? {}
+        : { "x-slop-expected-github-id": actorId }),
     },
   });
   if (response.status === 401) throw new SignedOutError();
@@ -508,7 +510,14 @@ export function EarningsPage({
         const saved = data?.wallets.find((w) => w.chain === chain);
         if (saved?.authorized && saved.address === address) continue;
         if (
-          !(await register(chain, address, sign, actorId, isCurrent, checkActor))
+          !(await register(
+            chain,
+            address,
+            sign,
+            actorId,
+            isCurrent,
+            checkActor,
+          ))
         )
           return;
       }
@@ -554,7 +563,14 @@ export function EarningsPage({
         });
         return;
       }
-      await registerFamily(family, address, sign, actorId, isCurrent, checkActor);
+      await registerFamily(
+        family,
+        address,
+        sign,
+        actorId,
+        isCurrent,
+        checkActor,
+      );
     });
   }
 
@@ -956,7 +972,9 @@ export function EarningsPage({
                           onAccessLost={(signedOut) => {
                             clearAccount(signedOut);
                             setLoadError(
-                              signedOut ? "" : new AccountChangedError().message,
+                              signedOut
+                                ? ""
+                                : new AccountChangedError().message,
                             );
                           }}
                         />

@@ -193,10 +193,11 @@ export async function qualifyRetention(
   let deletes = 0;
   const heldSource = new Proxy(source, {
     get(bucket, property) {
-      if (property === "delete") return async () => {
-        deletes++;
-        throw new Error("Legacy evidence must remain physically held");
-      };
+      if (property === "delete")
+        return async () => {
+          deletes++;
+          throw new Error("Legacy evidence must remain physically held");
+        };
       const value = Reflect.get(bucket, property);
       return typeof value === "function" ? value.bind(bucket) : value;
     },
@@ -216,7 +217,14 @@ export async function qualifyRetention(
       // Backup verification still refuses missing/corrupt copies on restore.
       await copies.delete(copyKey);
       await refuses(
-        () => restoreCheck(copies, env.RESTORED, day, target.keys[0], "missing-legacy"),
+        () =>
+          restoreCheck(
+            copies,
+            env.RESTORED,
+            day,
+            target.keys[0],
+            "missing-legacy",
+          ),
         "Missing backup passed restore",
       );
       check(await source.head(target.keys[0]), "Missing backup lost source");
@@ -226,48 +234,98 @@ export async function qualifyRetention(
         httpMetadata: { contentType: "application/octet-stream" },
       });
       await refuses(
-        () => restoreCheck(copies, env.RESTORED, day, target.keys[0], "corrupt-legacy"),
+        () =>
+          restoreCheck(
+            copies,
+            env.RESTORED,
+            day,
+            target.keys[0],
+            "corrupt-legacy",
+          ),
         "Corrupt backup passed restore",
       );
       check(await source.head(target.keys[0]), "Corrupt backup lost source");
       await copies.delete(copyKey);
       await put(copies, copyKey, firstBytes);
     }
-    await cleanupEvidence({ ...controlled, EVIDENCE_SOURCE: heldSource }, job.day);
+    await cleanupEvidence(
+      { ...controlled, EVIDENCE_SOURCE: heldSource },
+      job.day,
+    );
   }
   check(faults && cleanupPages >= 3, "Retention pagination not exercised");
   check(deletes === 0, "Legacy cleanup attempted physical deletion");
   for (const item of fixtures)
     for (const [index, key] of item.keys.entries()) {
       const uploaded = !item.missing && !(item.partial && index === 1);
-      check(Boolean(await source.head(key)) === uploaded, "Legacy source retention differs");
-      check(Boolean(await copies.head(`daily/${day}/objects/${key}`)) === uploaded,
-        "Backup inventory differs");
+      check(
+        Boolean(await source.head(key)) === uploaded,
+        "Legacy source retention differs",
+      );
+      check(
+        Boolean(await copies.head(`daily/${day}/objects/${key}`)) === uploaded,
+        "Backup inventory differs",
+      );
     }
   async function deletionCount() {
-    return (await db.prepare(
-      "SELECT count(*) n FROM vetting_evidence_deletions WHERE assessment_id LIKE ?",
-    ).bind(`${prefix}%`).first<{ n: number }>())?.n;
+    return (
+      await db
+        .prepare(
+          "SELECT count(*) n FROM vetting_evidence_deletions WHERE assessment_id LIKE ?",
+        )
+        .bind(`${prefix}%`)
+        .first<{ n: number }>()
+    )?.n;
   }
-  const held = () => db.prepare(
-    "SELECT id,reason FROM vetting_evidence_audit WHERE action='retention-held' AND assessment_id LIKE ? ORDER BY id",
-  ).bind(`${prefix}%`).all<{ id: string; reason: string }>();
+  const held = () =>
+    db
+      .prepare(
+        "SELECT id,reason FROM vetting_evidence_audit WHERE action='retention-held' AND assessment_id LIKE ? ORDER BY id",
+      )
+      .bind(`${prefix}%`)
+      .all<{ id: string; reason: string }>();
   const heldBefore = (await held()).results ?? [];
-  check((await deletionCount()) === 0, "Legacy evidence received deletion receipts");
-  check(heldBefore.length === 21, "Expired legacy references were not explicitly held");
-  check((await db.prepare(
-    "SELECT count(*) n FROM vetting_evidence_audit WHERE action='retention-missing' AND assessment_id LIKE ?",
-  ).bind(`${prefix}%`).first<{ n: number }>())?.n === 0,
-    "Legacy hold fabricated a physical inventory result");
+  check(
+    (await deletionCount()) === 0,
+    "Legacy evidence received deletion receipts",
+  );
+  check(
+    heldBefore.length === 21,
+    "Expired legacy references were not explicitly held",
+  );
+  check(
+    (
+      await db
+        .prepare(
+          "SELECT count(*) n FROM vetting_evidence_audit WHERE action='retention-missing' AND assessment_id LIKE ?",
+        )
+        .bind(`${prefix}%`)
+        .first<{ n: number }>()
+    )?.n === 0,
+    "Legacy hold fabricated a physical inventory result",
+  );
   await cleanupEvidence(controlled, day);
-  check(JSON.stringify((await held()).results ?? []) === JSON.stringify(heldBefore)
-    && (await deletionCount()) === 0, "Replay changed the legacy hold or deletion state");
+  check(
+    JSON.stringify((await held()).results ?? []) ===
+      JSON.stringify(heldBefore) && (await deletionCount()) === 0,
+    "Replay changed the legacy hold or deletion state",
+  );
   await refuses(
-    () => db.prepare("DELETE FROM vetting_evidence_audit WHERE id=?").bind(heldBefore[0].id).run(),
+    () =>
+      db
+        .prepare("DELETE FROM vetting_evidence_audit WHERE id=?")
+        .bind(heldBefore[0].id)
+        .run(),
     "Legacy hold audit was removable",
   );
   await refuses(
-    () => db.prepare("UPDATE vetting_evidence_audit SET reason='changed' WHERE id=?").bind(heldBefore[0].id).run(),
+    () =>
+      db
+        .prepare(
+          "UPDATE vetting_evidence_audit SET reason='changed' WHERE id=?",
+        )
+        .bind(heldBefore[0].id)
+        .run(),
     "Legacy hold audit was mutable",
   );
   for (const key of target.keys)

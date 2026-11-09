@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { PointAward, PointRevision } from "./lib/points";
@@ -55,12 +55,20 @@ export default function PointsDisputes({
   const [retry, setRetry] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(() => {
+  const readController = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      readController.current?.abort();
     };
   }, []);
+  // A new page/target owns its commit before the passive fetch effect starts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => readController.current?.abort(),
+    [actorId, selected, cursor, retry],
+  );
   const clearPrivateView = () => {
     setPage(null);
     setDetail(null);
@@ -79,19 +87,24 @@ export default function PointsDisputes({
     let failed = false;
     let accessRefused = false;
     try {
-      const response = await fetchWithDeadline(`/api/v1/points/disputes${path}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: "error",
-        signal,
-        headers: {
-          "x-slop-expected-github-id": actorId,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+      const response = await fetchWithDeadline(
+        `/api/v1/points/disputes${path}`,
+        {
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          signal,
+          headers: {
+            "x-slop-expected-github-id": actorId,
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json" }),
+          },
+          ...(body === undefined
+            ? {}
+            : { method: "POST", body: JSON.stringify(body) }),
         },
-        ...(body === undefined
-          ? {}
-          : { method: "POST", body: JSON.stringify(body) }),
-      });
+      );
       accessRefused =
         response.status === 401 ||
         response.status === 403 ||
@@ -136,6 +149,7 @@ export default function PointsDisputes({
   // biome-ignore lint/correctness/useExhaustiveDependencies: request is bound to this actor; retry reloads the current page.
   useEffect(() => {
     const controller = new AbortController();
+    readController.current = controller;
     setError("");
     setBusy(true);
     setDetail(null);

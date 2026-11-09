@@ -132,10 +132,10 @@ module vetting_evidence_delivery {
     all { r.phase == "read-audit", s' = s.with("reads", s.reads.set(id,
       (if (commits and reply) r.with("phase", "refresh") else refuse(r, 500)).with("readAudit", commits))) }
   }
-  action refresh(id: int, exists: bool): bool = {
+  action refresh(id: int, isPresent: bool): bool = {
     val r = s.reads.get(id)
     all { r.phase == "refresh", s' = s.with("reads", s.reads.set(id,
-      if (exists) r.with("phase", "final-auth").with("retentionUntil", currentRetention) else refuse(r, 404))) }
+      if (isPresent) r.with("phase", "final-auth").with("retentionUntil", currentRetention) else refuse(r, 404))) }
   }
   action bodyFinish(id: int): bool = {
     val r = s.reads.get(id)

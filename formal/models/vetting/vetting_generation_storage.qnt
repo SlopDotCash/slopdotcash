@@ -76,11 +76,11 @@ module vetting_generation_storage {
   }
   action headRead(id: int, io: bool): bool = {
     val r = s.requests.get(id)
-    val head = s.heads.get(tuple(r.generation, r.descriptor))
+    val readHead = s.heads.get(tuple(r.generation, r.descriptor))
     all { r.phase == "lookup", s' = s.with("requests", s.requests.set(id,
       if (not(io)) stop(r, "database-error")
-      else if (head == 0 and r.mode == "read") stop(r, "missing")
-      else r.with("expected", head).with("selected", head).with("phase", if (head == 0) "reserve" else "current"))) }
+      else if (readHead == 0 and r.mode == "read") stop(r, "missing")
+      else r.with("expected", readHead).with("selected", readHead).with("phase", if (readHead == 0) "reserve" else "current"))) }
   }
   action currentRead(id: int, io: bool): bool = {
     val r = s.requests.get(id)
@@ -164,11 +164,11 @@ module vetting_generation_storage {
   }
   action winnerRead(id: int, io: bool): bool = {
     val r = s.requests.get(id)
-    val head = s.heads.get(tuple(r.generation, r.descriptor))
+    val readHead = s.heads.get(tuple(r.generation, r.descriptor))
     all { r.phase == "winner", s' = s.with("requests", s.requests.set(id,
       if (not(io)) stop(r, "database-error")
-      else if (head == 0) stop(r, if (r.dbFailure) "database-error" else "publication-error")
-      else r.with("selected", head).with("phase", "verify-winner"))) }
+      else if (readHead == 0) stop(r, if (r.dbFailure) "database-error" else "publication-error")
+      else r.with("selected", readHead).with("phase", "verify-winner"))) }
   }
   action winnerVerify(id: int, io: bool): bool = {
     val r = s.requests.get(id)

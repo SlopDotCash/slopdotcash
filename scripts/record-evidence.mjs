@@ -31,8 +31,8 @@ import {
   PRODUCTION_ORIGIN,
   parseEvidenceMode,
   probeProductionTls,
-  readEvidenceResponseBytes,
   REMOTE_ARTIFACT_PATHS,
+  readEvidenceResponseBytes,
   shouldBuildForEvidence,
   verifyRemoteArtifacts,
   withEvidenceResponse,
@@ -375,12 +375,9 @@ if (mode === "production") {
     await waitForServer(baseUrl, previewServer, previewState, buildFingerprint);
   } catch (error) {
     // error-policy:J6 a failed local preview is terminated before its startup error is rethrown.
-    await withEvidenceCleanup(
-      async () => {
-        throw error;
-      },
-      [{ label: "preview shutdown", run: () => stopPreview(previewServer) }],
-    );
+    await withEvidenceCleanup(async () => {
+      throw error;
+    }, [{ label: "preview shutdown", run: () => stopPreview(previewServer) }]);
   }
   verification = {
     schemaVersion: "1",
@@ -398,12 +395,9 @@ try {
   evidenceTransaction = beginEvidenceTransaction(finalEvidenceRoot);
 } catch (error) {
   // error-policy:J6 a local preview is terminated if evidence staging cannot begin.
-  await withEvidenceCleanup(
-    async () => {
-      throw error;
-    },
-    [{ label: "preview shutdown", run: () => stopPreview(previewServer) }],
-  );
+  await withEvidenceCleanup(async () => {
+    throw error;
+  }, [{ label: "preview shutdown", run: () => stopPreview(previewServer) }]);
 }
 const evidenceRoot = evidenceTransaction.stagingRoot;
 const videoRoot = join(evidenceRoot, ".video");
@@ -566,17 +560,14 @@ async function captureEvidence() {
     }
   }
 
-  await withEvidenceCleanup(
-    async () => {
-      await capture("after-desktop", { width: 1440, height: 1000 });
-      await capture("walkthrough", { width: 1440, height: 900 }, true, false);
-      await capture("after-mobile", { width: 320, height: 800 });
-      if (previewServer && previewState) {
-        assertPreviewRunning(previewServer, previewState);
-      }
-    },
-    [{ label: "browser close", run: () => browser.close() }],
-  );
+  await withEvidenceCleanup(async () => {
+    await capture("after-desktop", { width: 1440, height: 1000 });
+    await capture("walkthrough", { width: 1440, height: 900 }, true, false);
+    await capture("after-mobile", { width: 320, height: 800 });
+    if (previewServer && previewState) {
+      assertPreviewRunning(previewServer, previewState);
+    }
+  }, [{ label: "browser close", run: () => browser.close() }]);
 
   const webmPath = join(evidenceRoot, "walkthrough.webm");
   const mp4Path = join(evidenceRoot, "walkthrough.mp4");

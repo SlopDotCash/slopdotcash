@@ -7,7 +7,13 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "./Link";
 import "./owner-review.css";
 import { errorMessage } from "./lib/errors";
@@ -159,11 +165,7 @@ function ProjectSetupStatusForActor({
         try {
           await requireActor();
           if (!owns()) return;
-          const body = await checkProjectSetup(
-            projectId,
-            requestScan,
-            actorId,
-          );
+          const body = await checkProjectSetup(projectId, requestScan, actorId);
           if (!owns()) return;
           await requireActor();
           if (!owns()) return;

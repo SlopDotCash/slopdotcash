@@ -169,7 +169,10 @@ test("wallet account binding refuses a switched session before claims, challenge
       ["me", undefined],
       ["wallets/challenge", { claimId }],
     ] as const) {
-      const response = await f.call(path, body, { token, expectedActor: "123" });
+      const response = await f.call(path, body, {
+        token,
+        expectedActor: "123",
+      });
       expect(response.status).toBe(403);
       expect(response.body.error).toBe("actor_changed");
     }

@@ -257,9 +257,17 @@ for (const boundary of ["viewer", "final-session", "admission"] as const) {
         actor = "4243";
         release();
       }
-      await expect(
-        page.getByRole("button", { name: "Retry access check", exact: true }),
-      ).toBeVisible();
+      if (boundary === "admission")
+        await expect(
+          page.getByText(
+            "Project settings are available only to this project's maintainers.",
+            { exact: true },
+          ),
+        ).toBeVisible();
+      else
+        await expect(
+          page.getByRole("button", { name: "Retry access check", exact: true }),
+        ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Publish changes", exact: true }),
       ).toHaveCount(0);
@@ -425,7 +433,9 @@ test("a confirmed setup identity mismatch retains the observed installation", as
       panel.getByRole("status").filter({ hasText: reason }),
     ).toBeVisible();
     await expect(panel.getByText("Installed", { exact: true })).toBeVisible();
-    await expect(panel.getByText("Unavailable", { exact: true })).toHaveCount(0);
+    await expect(panel.getByText("Unavailable", { exact: true })).toHaveCount(
+      0,
+    );
     await expect(panel.getByRole("alert")).toHaveCount(0);
   } finally {
     await api.dispose();
@@ -479,8 +489,9 @@ test("committed setup unmount retires a preflight before it can send another che
         removed: false,
         release: () => {},
       };
-      (window as typeof window & { heldSetupRead: HeldSetupRead }).heldSetupRead =
-        state;
+      (
+        window as typeof window & { heldSetupRead: HeldSetupRead }
+      ).heldSetupRead = state;
       const readJson = Response.prototype.json;
       Response.prototype.json = async function (this: Response) {
         const value = await readJson.call(this);
@@ -540,13 +551,12 @@ test("committed setup unmount retires a preflight before it can send another che
     await expect(page).toHaveURL(/\/how-it-works$/u);
     expect(checks).toBe(1);
   } finally {
-    await page.evaluate(
-      () =>
-        (
-          window as typeof window & {
-            heldSetupRead?: { release: () => void };
-          }
-        ).heldSetupRead?.release(),
+    await page.evaluate(() =>
+      (
+        window as typeof window & {
+          heldSetupRead?: { release: () => void };
+        }
+      ).heldSetupRead?.release(),
     );
     await api.dispose();
   }

@@ -38,10 +38,11 @@ async function request(
   });
   if (response.status === 401)
     throw new ProjectApiError(401, "unauthorized", "Sign in again.");
-  const value = (await readBoundedJson(response, 16_384, "payout consent")) as Record<
-    string,
-    unknown
-  >;
+  const value = (await readBoundedJson(
+    response,
+    16_384,
+    "payout consent",
+  )) as Record<string, unknown>;
   if (response.status === 403 && value?.error === "actor_changed")
     throw new ProjectApiError(403, "actor_changed", "Your account changed.");
   if (!response.ok)
@@ -103,6 +104,7 @@ export function PayoutConsent({
     payment.vault,
     payment.state,
   ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
   useLayoutEffect(() => {
     const reset = () => {
       operation.current?.abort();
@@ -135,7 +137,11 @@ export function PayoutConsent({
       if (session === null)
         throw new ProjectApiError(401, "unauthorized", "Sign in again.");
       if (session.githubId !== account.githubUserId)
-        throw new ProjectApiError(403, "actor_changed", "Your account changed.");
+        throw new ProjectApiError(
+          403,
+          "actor_changed",
+          "Your account changed.",
+        );
       return true;
     };
     const requestConsent = (path: string, body: unknown) =>

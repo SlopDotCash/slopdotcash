@@ -88,10 +88,10 @@ module retained_copy_bindings {
     nondet source = sourceKinds.oneOf()
     nondet identity = identities.oneOf()
     nondet proof = proofs.oneOf()
-    nondet match = matchKinds.oneOf()
+    nondet matchKind = matchKinds.oneOf()
     nondet yes = Set(false, true).oneOf()
     any { begin(source), candidate(id, identity, proof, yes), admissions, fileEvidence(yes),
-      matchCandidate(id, match), bind, referenceFailure, returnResult, downstream(yes), s' = s }
+      matchCandidate(id, matchKind), bind, referenceFailure, returnResult, downstream(yes), s' = s }
   }
   val invariant = all { ids.contains(s.original), s.inspected.subseteq(ids), s.admitted.subseteq(s.inspected),
     s.compared.subseteq(s.admitted), s.matched.subseteq(s.compared), s.limitations.subseteq(ids),

@@ -53,7 +53,7 @@ module payment_history {
     (s.rail == "direct" or (row != 5 and not(s.hidden.contains(actor(row)))
       and not(s.unmatched.contains(row)) and (s.testnets or row != 4)))
   def first(rows: Set[int], count: int): Set[int] = rows.filter(row => rows.filter(other => other < row).size() < count)
-  def fail(page: Page, result: str): Page = page.with("phase", "response").with("result", result)
+  def failedPage(page: Page, result: str): Page = page.with("phase", "response").with("result", result)
   action configure(rail: str, count: int, public2: bool, invalid: int, unmatched: int): bool = all {
     not(s.configured), Set("vault", "direct").contains(rail), Set(2, 3, 5).contains(count),
     Set(0, 1, 2, 3, 4, 5).contains(invalid), Set(0, 1, 2, 3, 4, 5).contains(unmatched),
@@ -72,13 +72,13 @@ module payment_history {
     s.configured, ids.contains(id), s.pages.get(id).phase == "unused", Set(0, 1, 2, 3, 4, 5, 6).contains(after),
     Set(-1, 0, 1, 2, 3, 4, 5, 6).contains(through),
     s' = s.with("pages", s.pages.set(id, if (not(syntaxValid) or (after > 0 and through == -1))
-      fail(unused.with("after", after).with("requested", through), "400")
+      failedPage(unused.with("after", after).with("requested", through), "400")
       else unused.with("phase", "boundary").with("after", after).with("requested", through))) }
   action boundary(id: int): bool = {
     val page = s.pages.get(id)
     val through = if (page.requested == -1) highest else page.requested
     all { page.phase == "boundary", s' = s.with("pages", s.pages.set(id,
-      if (through < page.after or through > highest) fail(page, "400")
+      if (through < page.after or through > highest) failedPage(page, "400")
       else page.with("phase", "count").with("through", through))) }
   }
   action count(id: int): bool = {
@@ -90,20 +90,20 @@ module payment_history {
     val page = s.pages.get(id)
     val fetched = first(s.present.filter(row => eligible(row) and row > page.after and row <= page.through), 3)
     val selected = first(fetched, 2)
-    val next = if (fetched.size() > 2) selected.fold(0, (a, b) => if (a > b) a else b) else 0
+    val nextCursor = if (fetched.size() > 2) selected.fold(0, (a, b) => if (a > b) a else b) else 0
     all { page.phase == "page", s' = s.with("pages", s.pages.set(id, page.with("phase", "validate")
-      .with("fetched", fetched).with("selected", selected).with("next", next)
+      .with("fetched", fetched).with("selected", selected).with("next", nextCursor)
       .with("months", if (s.rail == "vault") selected.intersect(s.monthly) else Set()))) }
   }
   action validate(id: int): bool = {
     val page = s.pages.get(id)
     all { page.phase == "validate", s' = s.with("pages", s.pages.set(id,
-      fail(page, if (s.rail == "direct" or page.selected.intersect(s.invalid).size() == 0) "200" else "503"))) }
+      failedPage(page, if (s.rail == "direct" or page.selected.intersect(s.invalid).size() == 0) "200" else "503"))) }
   }
   action queryFailure(id: int): bool = {
     val page = s.pages.get(id)
     all { Set("boundary", "count", "page", "validate").contains(page.phase),
-      s' = s.with("pages", s.pages.set(id, fail(page, "503"))) }
+      s' = s.with("pages", s.pages.set(id, failedPage(page, "503"))) }
   }
   action accept(id: int): bool = {
     val page = s.pages.get(id)
@@ -131,9 +131,9 @@ module payment_history {
     nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
     nondet rail = Set("vault", "direct").oneOf()
     nondet n = Set(2, 3, 5).oneOf()
-    nondet filter = scopes.oneOf()
+    nondet filterScope = scopes.oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { configure(rail, n, yes, row, other), scope(filter, yes), appendRecord, appendPrivate,
+    any { configure(rail, n, yes, row, other), scope(filterScope, yes), appendRecord, appendPrivate,
       visibility(id, yes), attachMonth(row), begin(id, after, through, yes), boundary(id), count(id), readPage(id), validate(id), queryFailure(id), accept(id), s' = s }
   }
   val invariant = all {

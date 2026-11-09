@@ -91,19 +91,19 @@ module received_totals {
     .with("v", noScan.with("through", maximum(s.vault)).with("count", s.vaultPrefix)) }
   action vaultPage = {
     val rows = first(s.vault.filter(row => visible(row) and row > s.v.after and row <= s.v.through))
-    val next = read(s.v, rows)
+    val nextValue = read(s.v, rows)
     all { s.phase == "vault-page", s' = if (rows.size() == 0) s.with("phase", "direct-boundary")
-      else s.with("v", next).with("phase", if (next.count > 20000) "response" else "vault-page")
-        .with("status", if (next.count > 20000) "503" else s.status) }
+      else s.with("v", nextValue).with("phase", if (nextValue.count > 20000) "response" else "vault-page")
+        .with("status", if (nextValue.count > 20000) "503" else s.status) }
   }
   action directBoundary = all { s.phase == "direct-boundary", s' = s.with("phase", "direct-page")
     .with("d", noScan.with("through", maximum(s.direct)).with("count", s.directPrefix)) }
   action directPage = {
     val rows = first(s.direct.filter(row => row > s.d.after and row <= s.d.through))
-    val next = read(s.d, rows)
+    val nextValue = read(s.d, rows)
     all { s.phase == "direct-page", s' = if (rows.size() == 0) s.with("phase", "direct-validate")
-      else s.with("d", next).with("phase", if (next.count > 20000) "response" else "direct-page")
-        .with("status", if (next.count > 20000) "503" else s.status) }
+      else s.with("d", nextValue).with("phase", if (nextValue.count > 20000) "response" else "direct-page")
+        .with("status", if (nextValue.count > 20000) "503" else s.status) }
   }
   action readFailure = all { Set("vault-boundary", "vault-page", "direct-boundary", "direct-page").contains(s.phase),
     s' = s.with("phase", "response").with("status", "503") }

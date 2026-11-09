@@ -2,7 +2,7 @@
 // @source backend/vetting/evidence-storage.ts
 // @source backend/vetting/evidence-chunks.ts
 // @source migrations/0119_vetting_storage_generations.sql
-// @evidence workers/vetting-backup/generation-retirement-workflow.mjs
+// @evidence workers/vetting-backup/generation-retirement.workflow.mjs
 // Current forward protocol: one retiring generation, two references/declared
 // slots, three reserved physical targets (including an orphan/old head), and
 // one fresh successor-generation target. Two retries bound one queue consumer;
@@ -153,7 +153,7 @@ module vetting_generation_retirement {
   action readback(visible: bool): bool = all { s.phase == "readback",
     s' = if (visible and s.recorded.contains(s.selected)) s.with("phase", "choose")
       else s.with("phase", "failed").with("result", "readback-error") }
-  action fail = all { not(Set("idle", "choose", "done", "failed").contains(s.phase)),
+  action failedState = all { not(Set("idle", "choose", "done", "failed").contains(s.phase)),
     s' = s.with("phase", "failed").with("result", "reply-lost").with("lost", true) }
   action retry = all { s.phase == "failed", s.retries < 2,
     s' = s.with("phase", "choose").with("retries", s.retries + 1) }
@@ -190,7 +190,7 @@ module vetting_generation_retirement {
       publishHead(slot, target), corruptBeforeFreeze(target), primaryCopy(target), seedConflictingOrphan(target), completeSnapshot,
       freeze, holdShared, holdLegacy, choose(target), inspect, copyBody(yes), verifyBackup(yes),
       createMissingMarker(yes), writeBackedMarker(yes), verifyMarker(yes), publishReceipt(yes),
-      recordRetirement(yes), readback(yes), fail, retry, finishGeneration, referenceReceipt(ref),
+      recordRetirement(yes), readback(yes), failedState, retry, finishGeneration, referenceReceipt(ref),
       restoreSupplement(target, yes, intact), allocateSuccessor, writeSuccessor, s' = s }
   }
   val invariant = all {
@@ -240,7 +240,7 @@ module vetting_generation_retirement {
     .then(choose(2)).then(inspect).then(finishPut(2)).then(historicalOverwriteMissing)
     .expect(s.disk.get(2) == "marker-missing" and not(s.backups.contains(2)) and s.lost)
   run missingMarkerCommitSurvivesLostReplyTest = init.then(ready).then(choose(2)).then(inspect)
-    .then(createMissingMarker(true)).then(fail).then(retry).then(choose(2)).then(inspect)
+    .then(createMissingMarker(true)).then(failedState).then(retry).then(choose(2)).then(inspect)
     .then(verifyMarker(true)).then(publishReceipt(true)).then(finishRecorded)
     .expect(s.recorded.contains(2) and s.receipts.get(2) == "missing" and invariant)
   run backedReceiptBeforeMarkerSurvivesFailureTest = init.then(ready).then(choose(1)).then(inspect)
@@ -252,7 +252,7 @@ module vetting_generation_retirement {
     .expect(s.disk.get(1) == "marker-backed" and not(s.recorded.contains(1)) and invariant)
   run databaseCommitSurvivesLostReplyTest = init.then(ready).then(choose(1)).then(inspect)
     .then(verifyBackup(true)).then(publishReceipt(true)).then(writeBackedMarker(true)).then(verifyMarker(true))
-    .then(recordRetirement(true)).then(fail).then(retry)
+    .then(recordRetirement(true)).then(failedState).then(retry)
     .expect(s.recorded.contains(1) and s.phase == "choose" and invariant)
   run missingReadbackCannotInventDatabaseReceiptTest = init.then(ready).then(choose(2)).then(inspect)
     .then(createMissingMarker(true)).then(verifyMarker(true)).then(publishReceipt(true))
@@ -262,7 +262,7 @@ module vetting_generation_retirement {
     .then(finishGeneration).then(referenceReceipt(1)).then(restoreSupplement(1, true, true))
     .expect(s.missingAudits == Set(1) and s.restore == "changed-restored" and invariant)
   run copyCommitSurvivesLostVerificationReplyTest = init.then(admit(2)).then(finishPut(2)).then(ready)
-    .then(choose(2)).then(inspect).then(copyBody(true)).then(fail).then(retry).then(choose(2))
+    .then(choose(2)).then(inspect).then(copyBody(true)).then(failedState).then(retry).then(choose(2))
     .then(inspect).then(copyBody(true)).then(verifyBackup(true)).then(publishReceipt(true)).then(writeBackedMarker(true))
     .then(verifyMarker(true)).then(finishRecorded).expect(s.recorded.contains(2) and invariant)
   run supplementalBackupRestoresOnlyWithMatchingChainTest = init.then(admit(2)).then(finishPut(2))

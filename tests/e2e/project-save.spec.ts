@@ -50,24 +50,29 @@ test("committed project editor unmount retires publication before dispatch", asy
   );
   try {
     await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
-    await page.getByLabel("Short description", { exact: true }).fill(
-      "A draft that must remain unpublished after leaving its editor",
+    await page
+      .getByLabel("Short description", { exact: true })
+      .fill("A draft that must remain unpublished after leaving its editor");
+    const savedDraft = await readProjectDraft(
+      page,
+      "slop:project-update:v2:eliza",
     );
-    const savedDraft = await readProjectDraft(page, "slop:project-update:v2:eliza");
     const before = await api.stored();
     await holdProjectSessionUntilUnmount(page, "#field-headline");
     await page.evaluate(() => {
       window.history.replaceState(window.history.state, "", "/how-it-works");
       window.history.pushState({}, "", "/projects/eliza/manage");
     });
-    await page.getByRole("button", { name: "Publish changes", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Publish changes", exact: true })
+      .click();
     await leaveEditorWithHeldSession(page);
     await expect(page.locator("#field-headline")).toHaveCount(0);
     expect(writes).toBe(0);
     expect(await api.stored()).toEqual(before);
-    expect(await readProjectDraft(page, "slop:project-update:v2:eliza")).toEqual(
-      savedDraft,
-    );
+    expect(
+      await readProjectDraft(page, "slop:project-update:v2:eliza"),
+    ).toEqual(savedDraft);
   } finally {
     await releaseHeldEditorSession(page);
     await api.dispose();
@@ -170,7 +175,9 @@ test("an image decoded after a headline publication uses the new draft revision"
     expect(first.revision).toBe(2);
     expect(first.project.headline).toBe(headline);
     expect(first.project.image).toBeUndefined();
-    await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage.release());
+    await page.evaluate(() =>
+      (window as unknown as ImageWindow).lateProjectImage.release(),
+    );
     const preview = page.getByRole("img", {
       name: "Project avatar preview",
       exact: true,
@@ -182,7 +189,9 @@ test("an image decoded after a headline publication uses the new draft revision"
     const image = await preview.getAttribute("src");
     expect(image).toMatch(/^data:image\/(?:webp|jpeg);base64,/u);
     expect(
-      await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage.closed),
+      await page.evaluate(
+        () => (window as unknown as ImageWindow).lateProjectImage.closed,
+      ),
     ).toBe(1);
     expect(
       await readProjectDraft(page, "slop:project-update:v2:eliza"),
@@ -207,7 +216,9 @@ test("an image decoded after a headline publication uses the new draft revision"
     });
   } finally {
     if (!page.isClosed())
-      await page.evaluate(() => (window as unknown as ImageWindow).lateProjectImage?.release());
+      await page.evaluate(() =>
+        (window as unknown as ImageWindow).lateProjectImage?.release(),
+      );
     await api.dispose();
   }
 });
@@ -507,9 +518,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
               ...request.headers(),
               ...(otherActor ? { "x-fixture-role": "other" } : {}),
             },
-            ...(request.method() === "GET"
-              ? {}
-              : { body: request.postData() }),
+            ...(request.method() === "GET" ? {} : { body: request.postData() }),
           }),
         );
         if (request.method() === "PUT") {
@@ -517,10 +526,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
           expect(response.status).toBe(200);
           accepted = true;
           await held;
-        } else if (
-          otherActor &&
-          url.pathname === "/api/v1/projects/eliza"
-        ) {
+        } else if (otherActor && url.pathname === "/api/v1/projects/eliza") {
           otherRevisionReads += 1;
         }
         await route.fulfill({
@@ -535,8 +541,10 @@ for (const boundary of ["departure", "actor-change"] as const) {
       const description = page.getByLabel("Short description", { exact: true });
       await description.fill("Submitted revision before the view changed");
       await expect
-        .poll(async () =>
-          (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+        .poll(
+          async () =>
+            (await readProjectDraft(page, "slop:project-update:v2:eliza"))
+              ?.headline,
         )
         .toBe("Submitted revision before the view changed");
       await page
@@ -562,8 +570,10 @@ for (const boundary of ["departure", "actor-change"] as const) {
       await expect(description).toBeVisible();
       await description.fill("Newer local draft must survive the old response");
       await expect
-        .poll(async () =>
-          (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+        .poll(
+          async () =>
+            (await readProjectDraft(page, "slop:project-update:v2:eliza"))
+              ?.headline,
         )
         .toBe("Newer local draft must survive the old response");
       release();
@@ -572,7 +582,8 @@ for (const boundary of ["departure", "actor-change"] as const) {
         "Newer local draft must survive the old response",
       );
       expect(
-        (await readProjectDraft(page, "slop:project-update:v2:eliza"))?.headline,
+        (await readProjectDraft(page, "slop:project-update:v2:eliza"))
+          ?.headline,
       ).toBe("Newer local draft must survive the old response");
       await expect(
         page.getByText("Published revision 2.", { exact: true }),

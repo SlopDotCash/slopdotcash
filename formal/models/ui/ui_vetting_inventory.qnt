@@ -48,7 +48,7 @@ module ui_vetting_inventory {
     s'=if(owns(id))s.with("requests",s.requests.set(id,s.requests.get(id).with("phase","done")))
       .with("busy",false).with("error",true)
       else s.with("requests",s.requests.set(id,s.requests.get(id).with("phase","done")))}
-  action select=all{visible,s'=s.with("selected",true)}
+  action selectRequest=all{visible,s'=s.with("selected",true)}
   // A current reader reports a changed or unavailable session. The parent
   // clears its inventory and increments the hook revision; busy is unchanged.
   action invalidateFromReader=all{visible,s.selected,
@@ -57,13 +57,13 @@ module ui_vetting_inventory {
   action depart=s'=s.with("mounted",false).with("active",0)
   action step={nondet id=ids.oneOf() nondet actor=Set(0,1,2).oneOf() nondet available=Set(false,true).oneOf()
     any{cookieChanges(actor),sessionChecking,sessionObserved,sessionUnavailable,changeLookup,start(id),
-      response(id),confirm(id,available),requestFailed(id),select,invalidateFromReader,depart,s'=s}}
+      response(id),confirm(id,available),requestFailed(id),selectRequest,invalidateFromReader,depart,s'=s}}
   val invariant=all{s.lookup>=1,s.lookup<=2,s.refreshes<=2,
     visible implies(s.session=="signed-in" and s.actor>0 and s.dataActor==s.actor and s.dataLookup==s.lookup),
     s.dataActor==0 implies s.dataLookup==0}
   run signedOutDoesNotStartInventoryTest=init.then(cookieChanges(0)).then(sessionObserved).then(start(1).fail())
   run matchingInventoryBecomesVisibleTest=init.then(sessionObserved).then(start(1)).then(response(1))
-    .then(confirm(1,true)).then(select).expect(visible and s.selected)
+    .then(confirm(1,true)).then(selectRequest).expect(visible and s.selected)
   run cookieChangedBeforePublishInvalidatesTest=init.then(sessionObserved).then(start(1)).then(response(1))
     .then(cookieChanges(2)).then(confirm(1,true)).expect(not(visible) and s.dataActor==0 and s.refreshes==1)
   run oldActorInventoryDoesNotRenderForNewActorTest=init.then(sessionObserved).then(start(1)).then(response(1))
@@ -80,7 +80,7 @@ module ui_vetting_inventory {
   run retryAfterSessionCheckOutageTest=init.then(sessionObserved).then(start(1)).then(response(1)).then(confirm(1,false))
     .then(start(2)).then(response(2)).then(confirm(2,true)).expect(visible and not(s.error))
   run readerIdentityLossClearsInventoryTest=init.then(sessionObserved).then(start(1)).then(response(1))
-    .then(confirm(1,true)).then(select).then(invalidateFromReader)
+    .then(confirm(1,true)).then(selectRequest).then(invalidateFromReader)
     .expect(s.dataActor==0 and not(s.selected) and s.refreshes==1 and s.session=="checking")
   run inventoryFailureDoesNotInventEmptySuccessTest=init.then(sessionObserved).then(start(1)).then(requestFailed(1))
     .expect(s.error and s.dataActor==0 and not(visible))

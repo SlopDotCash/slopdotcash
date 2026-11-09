@@ -2,6 +2,8 @@
 // @source src/lib/run-receipts.ts
 // One local run, two finish candidates, two trace digests and two PR event
 // times. The opened command owns a different server run from optional trace.
+// contributor_session_exchange refines the authentication and create-run
+// shorthand, including lost replies, reauthentication and actor/key identity.
 // Byte/signature/identity validation are predicates; this is not crypto proof.
 module skill_run_local {
   var s: { active: bool, started: bool, consent: bool, usage: str,

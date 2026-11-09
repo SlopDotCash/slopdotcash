@@ -11,8 +11,8 @@ import {
   PRIMARY_REPOSITORY,
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
-import { sha256Hex as sha256 } from "./sha256.mjs";
 import { withEvidenceCleanup } from "./evidence-bundle.mjs";
+import { sha256Hex as sha256 } from "./sha256.mjs";
 
 export const PRODUCTION_ORIGIN = "https://slop.cash";
 export const PRODUCTION_HOSTNAME = "slop.cash";
@@ -415,7 +415,9 @@ export function probeProductionTls(connectTls, timeoutMs = 10_000) {
     function onEnd() {
       if (settled || session !== undefined) return;
       fail(
-        new Error("production TLS connection ended before a verified handshake"),
+        new Error(
+          "production TLS connection ended before a verified handshake",
+        ),
       );
       destroy();
     }
@@ -424,7 +426,9 @@ export function probeProductionTls(connectTls, timeoutMs = 10_000) {
       if (settled) return;
       if (session === undefined && !failed) {
         fail(
-          new Error("production TLS connection closed before a verified handshake"),
+          new Error(
+            "production TLS connection closed before a verified handshake",
+          ),
         );
       }
       finish();
@@ -485,23 +489,20 @@ export function withEvidenceResponse(response, operation) {
 export async function readEvidenceResponseBytes(response, maxBytes, label) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error(`${label} omitted its response body`);
-  return withEvidenceCleanup(
-    async () => {
-      const chunks = [];
-      let receivedBytes = 0;
-      for (;;) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        receivedBytes += chunk.value.byteLength;
-        if (receivedBytes > maxBytes) {
-          throw new Error(`${label} exceeded the verified body size`);
-        }
-        chunks.push(Buffer.from(chunk.value));
+  return withEvidenceCleanup(async () => {
+    const chunks = [];
+    let receivedBytes = 0;
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      receivedBytes += chunk.value.byteLength;
+      if (receivedBytes > maxBytes) {
+        throw new Error(`${label} exceeded the verified body size`);
       }
-      return Buffer.concat(chunks, receivedBytes);
-    },
-    [{ label: "response reader lock", run: () => reader.releaseLock() }],
-  );
+      chunks.push(Buffer.from(chunk.value));
+    }
+    return Buffer.concat(chunks, receivedBytes);
+  }, [{ label: "response reader lock", run: () => reader.releaseLock() }]);
 }
 
 async function readExactResponseBytes(response, expectedBytes, path) {
@@ -572,7 +573,8 @@ export async function verifyRemoteArtifacts({
       const expectedContentType = artifactContentType(artifact.path);
       if (
         typeof contentType !== "string" ||
-        contentType.toLowerCase().split(";", 1)[0].trim() !== expectedContentType
+        contentType.toLowerCase().split(";", 1)[0].trim() !==
+          expectedContentType
       ) {
         throw new Error(
           `production ${artifact.path} returned ${contentType ?? "no Content-Type"}; expected ${expectedContentType}`,

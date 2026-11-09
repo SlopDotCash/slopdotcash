@@ -707,7 +707,9 @@ export function startGitHubApiFixture(port) {
         });
         response.end(JSON.stringify(body));
       };
-      if (request.headers.authorization !== `Bearer ${E2E_PUBLIC_GITHUB_TOKEN}`) {
+      if (
+        request.headers.authorization !== `Bearer ${E2E_PUBLIC_GITHUB_TOKEN}`
+      ) {
         send(401, { message: "The loopback public lookup token is required" });
         return;
       }
@@ -721,9 +723,13 @@ export function startGitHubApiFixture(port) {
           return;
         }
         if (limitedRepositories.has(repository.full_name.toLowerCase())) {
-          send(403, { message: "API rate limit exceeded" }, {
-            "x-ratelimit-remaining": "0",
-          });
+          send(
+            403,
+            { message: "API rate limit exceeded" },
+            {
+              "x-ratelimit-remaining": "0",
+            },
+          );
           return;
         }
         const node = {
@@ -741,14 +747,17 @@ export function startGitHubApiFixture(port) {
           },
         });
         if (query.includes("query ProjectRepositoryBranches(")) {
-          if (variables.cursor !== null) throw new Error("Invalid fixture cursor");
+          if (variables.cursor !== null)
+            throw new Error("Invalid fixture cursor");
           node.refs = {
             nodes: ["development", "main"].map(branch),
             pageInfo: { hasNextPage: false, endCursor: null },
           };
         } else if (query.includes("query ProjectRepositoryHead(")) {
           const name = variables.qualifiedName?.replace(/^refs\/heads\//u, "");
-          node.ref = ["main", "development"].includes(name) ? branch(name) : null;
+          node.ref = ["main", "development"].includes(name)
+            ? branch(name)
+            : null;
         } else if (query.includes("query ProjectRepositoryLicense(")) {
           if (!/^[a-f0-9]{40}:LICENSE$/u.test(variables.expression ?? ""))
             throw new Error("Invalid fixture license expression");

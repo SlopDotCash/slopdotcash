@@ -24,12 +24,12 @@ module ui_identity_poll_protocol {
   val intervals = 1.to(10)
   val startClasses = Set("valid", "missing", "non-record", "expired", "future", "flow-id", "capability", "url", "interval")
   val flowExpiry = 6
-  var s: { phase: str, now: int, resumed: bool, hook: bool, aborted: bool,
+  var s: { phase: str, now: int, resumed: bool, hook: bool, aborted: bool, mounted: bool,
     startRequests: int, polls: int, baseInterval: int, interval: int,
     authorizationCalls: int, saveCalls: int, clearCalls: int,
     storageIntent: str, receivedAssertion: bool, assertionExpiry: int, validatedAt: int,
     returnedAssertion: bool, joinRequested: bool, result: str, reason: str }
-  action init = s' = { phase: "setup", now: 0, resumed: false, hook: false, aborted: false,
+  action init = s' = { phase: "setup", now: 0, resumed: false, hook: false, aborted: false, mounted: true,
     startRequests: 0, polls: 0, baseInterval: 1, interval: 1,
     authorizationCalls: 0, saveCalls: 0, clearCalls: 0,
     storageIntent: "none", receivedAssertion: false, assertionExpiry: -1, validatedAt: -1,
@@ -110,6 +110,11 @@ module ui_identity_poll_protocol {
         .with("result", if (completed) "assertion" else "error")
         .with("reason", if (completed) "none" else "clear-hook") }
   }
+  // JoinPoints aborts during committed removal, including after the helper
+  // resolved but before its caller resumes. Accepted POSTs are not undone.
+  action depart = all { s.mounted, not(s.joinRequested),
+    Set("start", "resume", "save-start", "authorize", "loop", "delay", "poll", "clear", "returned").contains(s.phase),
+    s' = s.with("mounted", false).with("aborted", true) }
   // This is Points.start's guard before /points/join, not a session result.
   action parentGuard = all { s.phase == "returned",
     s' = s.with("phase", if (s.aborted) "discarded" else "join-requested")
@@ -125,7 +130,7 @@ module ui_identity_poll_protocol {
     any { begin(yes, other, third, interval), tick, abort, startReply(kind), saveStart(yes),
       abortFromHook, timeInHook, authorize(yes), scheduleDelay, timerFires, requestFails,
       pollPending(retry), pollRefuses, pollComplete(yes, expires), clearAuthorization(yes),
-      parentGuard, s' = s }
+      depart, parentGuard, s' = s }
   }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.startRequests >= 0, s.startRequests <= 1,
@@ -206,4 +211,13 @@ module ui_identity_poll_protocol {
     .then(clearAuthorization(true)).expect(s.returnedAssertion and s.assertionExpiry == s.now and s.validatedAt == 0 and invariant)
   run pendingPrefixDoesNotInventApplicationRetryLimitTest = fresh.then(polling).then(pollPending(2)).then(scheduleDelay)
     .then(timerFires).then(pollPending(2)).then(scheduleDelay).expect(s.phase == "delay" and s.polls == 2 and s.result == "pending" and invariant)
+  run committedDepartureAfterAssertionRefusesJoinTest = fresh.then(polling)
+    .then(pollComplete(true, 3)).then(clearAuthorization(true)).then(depart).then(parentGuard)
+    .expect(s.returnedAssertion and not(s.joinRequested) and s.phase == "discarded")
+  run committedDepartureDuringHelperRefusesJoinTest = fresh.then(polling).then(pollComplete(true, 3))
+    .then(depart).then(clearAuthorization(true)).then(parentGuard).expect(not(s.joinRequested))
+  // Old passive cleanup left the signal live until a later task; outside step.
+  action oldPassiveCommit = all { s.mounted, s' = s.with("mounted", false) }
+  run oldPassiveDepartureCouldJoinTest = fresh.then(polling).then(pollComplete(true, 3))
+    .then(clearAuthorization(true)).then(oldPassiveCommit).then(parentGuard).expect(s.joinRequested)
 }

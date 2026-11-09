@@ -70,11 +70,11 @@ module api_owner_vault_lifecycle {
     s' = s.with("banned", true).with("generation", s.generation + 1) }
   action edit(kind: str): bool = {
     val old = policyAt(s.head)
-    val next: Policy = { exists: true, kind: if (kind == "policy") 2 else old.kind,
+    val nextPolicy: Policy = { exists: true, kind: if (kind == "policy") 2 else old.kind,
       cap: if (kind == "cap") 2 else old.cap }
     all { s.head < 3, Set("cap", "policy", "other").contains(kind),
       kind != "policy" or purposes.forall(purpose => not(deploymentAt(purpose).exists)),
-      s' = s.with("head", s.head + 1).with("history", s.history.set(s.head + 1, next)) }
+      s' = s.with("head", s.head + 1).with("history", s.history.set(s.head + 1, nextPolicy)) }
   }
   action begin(id: int, mode: str, purpose: int, family: str, expected: int, transaction: str): bool = all {
     slots.contains(id), s.requests.get(id).phase == "unused", Set("get", "review", "register").contains(mode),
@@ -179,11 +179,11 @@ module api_owner_vault_lifecycle {
   action commit(id: int, reply: str): bool = {
     val r = s.requests.get(id)
     val matches = r.current == s.head and r.appendGeneration == s.generation
-    val next: Policy = { exists: true, kind: r.policy, cap: r.cap }
+    val nextPolicy: Policy = { exists: true, kind: r.policy, cap: r.cap }
     val written = r.with("committed", r.current + 1)
     all { r.phase == "commit", s.head < 3, Set("ok", "lost", "bad-metadata").contains(reply),
       s' = if (not(matches)) s.with("requests", s.requests.set(id, respond(r, 409, "cas")))
-        else s.with("head", s.head + 1).with("history", s.history.set(s.head + 1, next))
+        else s.with("head", s.head + 1).with("history", s.history.set(s.head + 1, nextPolicy))
           .with("deployments", s.deployments.set(r.purpose, { exists: true, transaction: r.transaction, family: r.family }))
           .with("requests", s.requests.set(id, if (reply == "lost") respond(written, 500, "batch-reply")
             else if (reply == "bad-metadata") respond(written, 409, "batch-metadata") else written.with("phase", "postcommit"))) }

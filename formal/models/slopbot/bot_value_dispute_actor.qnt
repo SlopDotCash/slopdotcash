@@ -21,8 +21,8 @@ module bot_value_dispute_actor {
   action init = s' = { phase: "idle", joint: false, claim: false, head: false,
     page: 1, eligible: false, reason: "none", commitQueries: false,
     listMatch: false, listComplete: false, commitComplete: false, compared: false }
-  action begin(joint: bool, claim: bool, head: bool): bool = all { s.phase == "idle",
-    s' = s.with("phase", "actor").with("joint", joint).with("claim", claim).with("head", head) }
+  action begin(joint: bool, claim: bool, readHead: bool): bool = all { s.phase == "idle",
+    s' = s.with("phase", "actor").with("joint", joint).with("claim", claim).with("head", readHead) }
   action actorReply(valid: bool): bool = all { s.phase == "actor",
     s' = if (valid) s.with("phase", "claim") else s.with("phase", "done").with("reason", "unknown-actor") }
   action retainedClaim = all { s.phase == "claim",
@@ -41,14 +41,14 @@ module bot_value_dispute_actor {
   action metadataReply(kind: str): bool = all { s.phase == "metadata", Set("valid", "unavailable", "changed").contains(kind),
     s' = if (kind == "valid") s.with("phase", "commit-list")
       else s.with("phase", "error").with("reason", kind) }
-  action commitList(complete: bool, match: bool): bool = all { s.phase == "commit-list",
-    s' = s.with("listMatch", match).with("listComplete", complete)
+  action commitList(complete: bool, matches: bool): bool = all { s.phase == "commit-list",
+    s' = s.with("listMatch", matches).with("listComplete", complete)
       .with("commitComplete", false).with("phase", "comparison") }
-  action comparison(valid: bool, match: bool): bool = all { s.phase == "comparison",
+  action comparison(valid: bool, matches: bool): bool = all { s.phase == "comparison",
     s' = s.with("compared", true).with("commitComplete", valid)
       .with("phase", if (valid) "done" else "error")
-      .with("eligible", valid and match)
-      .with("reason", if (not(valid)) "incomplete" else if (match) "current-head-author" else "unaffected") }
+      .with("eligible", valid and matches)
+      .with("reason", if (not(valid)) "incomplete" else if (matches) "current-head-author" else "unaffected") }
   action commitFailure = all { Set("commit-list", "comparison").contains(s.phase),
     s' = s.with("phase", "error").with("reason", "unavailable") }
   action oldTruncatedListLooksComplete = all { s.phase == "comparison", not(s.listMatch),
@@ -59,10 +59,10 @@ module bot_value_dispute_actor {
   action step = {
     nondet yes = Set(false, true).oneOf()
     nondet claim = Set(false, true).oneOf()
-    nondet head = Set(false, true).oneOf()
+    nondet readHead = Set(false, true).oneOf()
     nondet evidence = Set("match", "unrelated", "none", "unavailable").oneOf()
     nondet metadata = Set("valid", "unavailable", "changed").oneOf()
-    any { begin(yes, claim, head), actorReply(yes), retainedClaim, pageReply(evidence, yes), actorFailure,
+    any { begin(yes, claim, readHead), actorReply(yes), retainedClaim, pageReply(evidence, yes), actorFailure,
       metadataReply(metadata), commitList(yes, claim), comparison(yes, claim), commitFailure, s' = s }
   }
   val invariant = all { Set(1, 30).contains(s.page),
@@ -71,7 +71,7 @@ module bot_value_dispute_actor {
     s.reason == "joint-claim" implies s.joint and s.claim,
     s.reason == "current-head-author" implies s.head and s.commitQueries and s.commitComplete,
     s.phase == "done" and s.commitQueries implies s.commitComplete }
-  action reviews(head: bool): bool = begin(false, false, head).then(actorReply(true)).then(retainedClaim)
+  action reviews(readHead: bool): bool = begin(false, false, readHead).then(actorReply(true)).then(retainedClaim)
   action commits = reviews(true).then(pageReply("none", false)).then(metadataReply("valid"))
   run unknownActorIsNotAffectedTest = init.then(begin(true, true, true)).then(actorReply(false))
     .expect(not(s.eligible) and not(s.commitQueries) and invariant)

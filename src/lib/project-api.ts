@@ -284,7 +284,9 @@ export function notifyProjectSessionChanged(): void {
   for (const listener of sessionChangeListeners) listener();
 }
 
-export function subscribeProjectSessionChange(listener: () => void): () => void {
+export function subscribeProjectSessionChange(
+  listener: () => void,
+): () => void {
   sessionChangeListeners.add(listener);
   return () => {
     sessionChangeListeners.delete(listener);

@@ -383,13 +383,13 @@ describe("authenticated skill installer lifecycle", () => {
     it(`reports committed ${operation} when post-activation readback fails`, () => {
       const f = completionFixture(`completion-${operation}`);
       if (operation !== "install")
-        expect(run(command(f.artifactA, f.authority), f.installRoot).status).toBe(
-          0,
-        );
+        expect(
+          run(command(f.artifactA, f.authority), f.installRoot).status,
+        ).toBe(0);
       if (operation === "rollback")
-        expect(run(command(f.artifactB, f.authority), f.installRoot).status).toBe(
-          0,
-        );
+        expect(
+          run(command(f.artifactB, f.authority), f.installRoot).status,
+        ).toBe(0);
       const selected = operation === "update" ? revisionB : revisionA;
       const script = command(
         operation === "install" ? f.artifactA : f.artifactB,
@@ -411,7 +411,9 @@ describe("authenticated skill installer lifecycle", () => {
       expect(result.stderr).toContain(
         "synthetic post-activation readback failure",
       );
-      expect(result.stderr).toContain("The committed activation was not reverted.");
+      expect(result.stderr).toContain(
+        "The committed activation was not reverted.",
+      );
       expect(result.stderr).not.toContain("Refusing skill operation:");
       expect(currentLink(f.installRoot)).toBe(
         `.contribute-to-eliza-versions/${selected}`,
@@ -2396,7 +2398,13 @@ describe("generated project skill installation", () => {
     const started = invokeAt(startedAt, ["start", ...declared]);
     expect(started.status, started.stderr).toBe(0);
     const runId = JSON.parse(started.stdout).runId;
-    const active = join(configuration, "slop", "runs", "active", `${runId}.json`);
+    const active = join(
+      configuration,
+      "slop",
+      "runs",
+      "active",
+      `${runId}.json`,
+    );
     const completed = join(
       configuration,
       "slop",

@@ -2,7 +2,7 @@
 // @source workers/slopbot/value-budget.ts
 // @source workers/slopbot/value-consumer.ts
 // @source workers/slopbot/value-processing.ts
-// @source migrations/0118_slopbot_value_attempt_completion.sql
+// @source migrations/0120_slopbot_value_attempt_completion.sql
 // @evidence workers/slopbot/value-pipeline.test.ts
 // One key has two completed non-free attempts, an in-flight third attempt A,
 // and at most two attempts by successor B. A's lease may expire before receipt,

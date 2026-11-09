@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { randomToken, sha256Hex } from "./crypto";
+import { randomToken } from "./crypto";
 import {
   handleIdentityRequest,
   type IdentityWorkerDependencies,

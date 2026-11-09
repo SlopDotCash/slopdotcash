@@ -58,11 +58,11 @@ module ui_earnings_actor_binding {
     s' = s.with("actor", s.dataActor).with("currentToken", s.currentToken + 1)
       .with("token", s.currentToken + 1).with("phase", "connect-check").with("error", false) }
   action querySession = {
-    val next = if (s.phase == "connect-check") "connect" else if (s.phase == "register-check") "register"
+    val nextValue = if (s.phase == "connect-check") "connect" else if (s.phase == "register-check") "register"
       else if (s.phase == "challenge-check") "challenge" else if (s.phase == "sign-check") "sign"
       else if (s.phase == "authorize-check") "authorize" else "next"
     all { Set("connect-check", "register-check", "challenge-check", "sign-check", "authorize-check", "next-check").contains(s.phase),
-      s' = if (owns) s.with("phase", "check-query").with("next", next).with("returned", false)
+      s' = if (owns) s.with("phase", "check-query").with("next", nextValue).with("returned", false)
         else s.with("phase", "stopped") }
   }
   action observeSession(available: bool): bool = all { s.phase == "check-query",

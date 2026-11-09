@@ -32,7 +32,7 @@
 // response conformance. This model and its named scenarios are unexecuted.
 module trace_run_creation {
   val actors = Set(1, 2)
-  val keys = Set(1, 2)
+  val keyIds = Set(1, 2)
   val slots = Set(1, 2)
   val rowKeys = Set(1, 2, 3, 4)
   val payloads = Set(1, 2)
@@ -72,7 +72,7 @@ module trace_run_creation {
     s' = s.with("bans", s.bans.exclude(Set(actor))) }
   action begin(slot: int, actor: int, key: int, payload: int, login: int): bool = {
     val previous = s.requests.get(slot)
-    all { slots.contains(slot), actors.contains(actor), keys.contains(key), payloads.contains(payload), logins.contains(login),
+    all { slots.contains(slot), actors.contains(actor), keyIds.contains(key), payloads.contains(payload), logins.contains(login),
       Set("idle", "done").contains(previous.phase), previous.attempt < 2,
       previous.attempt > 0 implies actor == previous.actor and key == previous.key,
       s' = s.with("requests", s.requests.set(slot, idle.with("phase", "initial-ban")
@@ -102,9 +102,9 @@ module trace_run_creation {
   action readExisting(slot: int, ok: bool): bool = {
     val request = s.requests.get(slot)
     val row = s.rows.get(index(request.actor, request.key))
-    val next = if (not(ok)) finish(request, "500") else if (not(row.exists)) request.with("phase", "insert")
+    val nextValue = if (not(ok)) finish(request, "500") else if (not(row.exists)) request.with("phase", "insert")
       else if (row.payload == request.payload) snapshot(request, row, "existing") else conflict(request)
-    all { request.phase == "lookup", s' = s.with("requests", s.requests.set(slot, next)) }
+    all { request.phase == "lookup", s' = s.with("requests", s.requests.set(slot, nextValue)) }
   }
   action insert(slot: int): bool = {
     val request = s.requests.get(slot)
@@ -164,7 +164,7 @@ module trace_run_creation {
   action step = {
     nondet slot = slots.oneOf()
     nondet actor = actors.oneOf()
-    nondet key = keys.oneOf()
+    nondet key = keyIds.oneOf()
     nondet payload = payloads.oneOf()
     nondet login = logins.oneOf()
     nondet yes = Set(false, true).oneOf()

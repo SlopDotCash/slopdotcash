@@ -1933,7 +1933,6 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
     );
   });
   let result;
-  let failed = true;
   try {
     result = spawnSync(
       process.execPath,
@@ -1951,25 +1950,22 @@ function spawnLockedGh(lockPath, ownerToken, command, args, options = {}) {
         windowsHide: true,
       },
     );
-    failed = false;
-    return result;
-  } finally {
-    if (failed) {
-      cleanupPreservingFailure(
-        () => rmSync(requestPath, { force: true }),
-        true,
-        "Slop command request cleanup",
-      );
-    } else {
-      try {
-        rmSync(requestPath, { force: true });
-      } catch (error) {
-        if (!result.error && result.status === 0) throw error;
-        const detail = error instanceof Error ? error.message : String(error);
-        result.stderr = `${result.stderr ?? ""}Slop command request cleanup also failed: ${detail}\n`;
-      }
-    }
+  } catch (error) {
+    cleanupPreservingFailure(
+      () => rmSync(requestPath, { force: true }),
+      true,
+      "Slop command request cleanup",
+    );
+    throw error;
   }
+  try {
+    rmSync(requestPath, { force: true });
+  } catch (error) {
+    if (!result.error && result.status === 0) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    result.stderr = `${result.stderr ?? ""}Slop command request cleanup also failed: ${detail}\n`;
+  }
+  return result;
 }
 
 export function acquireLiveReportLock(identity, options = {}) {
@@ -2091,7 +2087,9 @@ export function acquireLiveReportLock(identity, options = {}) {
               owner.processIdentity !== processIdentity ||
               owner.ownerToken !== ownerToken
             ) {
-              throw new Error("live report lock ownership changed before release");
+              throw new Error(
+                "live report lock ownership changed before release",
+              );
             }
             // An interrupted helper can return before its GitHub child exits.
             // Retain ownership until a recorded child exits, or require manual
@@ -2319,7 +2317,9 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
       );
     }
     if (result.status === null) {
-      throw new Error(`gh terminated by ${result.signal ?? "an unknown signal"}`);
+      throw new Error(
+        `gh terminated by ${result.signal ?? "an unknown signal"}`,
+      );
     }
   } catch (error) {
     primaryFailure = error;
@@ -2334,8 +2334,7 @@ async function runLockedGhCommand(lockPath, ownerToken, commandToken) {
     }
   }
   if (primaryFailure !== undefined) throw primaryFailure;
-  if (cleanupFailure !== undefined && result.status === 0)
-    throw cleanupFailure;
+  if (cleanupFailure !== undefined && result.status === 0) throw cleanupFailure;
   writeProcessDescriptor(1, result.stdout);
   writeProcessDescriptor(2, result.stderr);
   if (cleanupFailure !== undefined) {
