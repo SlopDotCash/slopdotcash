@@ -272,7 +272,7 @@ for (const kind of ["save", "delist", "enforcement"] as const) {
             exact: true,
           });
           await panel
-            .getByLabel("Reason", { exact: true })
+            .getByRole("textbox", { name: "Reason", exact: true })
             .fill("Review this explicitly selected restriction");
           await panel
             .getByLabel("Evidence link or case ID")
@@ -527,19 +527,21 @@ test("editing a pending enforcement preview cannot confirm a different action", 
       exact: true,
     });
     await panel
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption("quarantine");
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a suspected malicious change");
     await panel.getByLabel("Evidence link or case ID").fill("case-first");
     await panel
       .getByRole("button", { name: "Preview action", exact: true })
       .click();
     await expect.poll(() => previews.length).toBe(1);
-    await panel.getByLabel("Action", { exact: true }).selectOption("ban");
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
+      .selectOption("ban");
+    await panel
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a confirmed malicious change");
     await panel.getByLabel("Evidence link or case ID").fill("case-second");
     heldPreview.release();
@@ -602,7 +604,7 @@ test("a changed project revision invalidates its displayed enforcement preview",
       exact: true,
     });
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review a suspected malicious change");
     await panel
       .getByLabel("Evidence link or case ID")
@@ -654,7 +656,9 @@ test("changed enforcement input during actor preflight sends no preview", async 
       name: "Enforcement",
       exact: true,
     });
-    await panel.getByLabel("Reason", { exact: true }).fill("The first reason");
+    await panel
+      .getByRole("textbox", { name: "Reason", exact: true })
+      .fill("The first reason");
     await panel.getByLabel("Evidence link or case ID").fill("case-preflight-1");
     const held = fixture.holdNextSession();
     releaseSession = held.release;
@@ -663,7 +667,7 @@ test("changed enforcement input during actor preflight sends no preview", async 
       .click();
     await expect.poll(held.started).toBe(true);
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("The revised reason");
     await panel.getByLabel("Evidence link or case ID").fill("case-preflight-2");
     held.release();
@@ -714,7 +718,7 @@ test("changed project props during confirmation preflight send no enforcement", 
       exact: true,
     });
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Review this change");
     await panel
       .getByLabel("Evidence link or case ID")
@@ -799,10 +803,10 @@ test("accepted enforcement with changed props retains the write without a stale 
       exact: true,
     });
     await panel
-      .getByLabel("Action", { exact: true })
+      .getByRole("combobox", { name: "Action", exact: true })
       .selectOption("request_reinstatement");
     await panel
-      .getByLabel("Reason", { exact: true })
+      .getByRole("textbox", { name: "Reason", exact: true })
       .fill("Request a new review");
     await panel
       .getByLabel("Evidence link or case ID")
