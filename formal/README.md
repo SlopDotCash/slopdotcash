@@ -235,6 +235,8 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Scheduled identity cleanup and intake renewal | `identity_intake_renewal`, `identity_scheduled_maintenance` | `workers/identity/index.ts`, `workers/identity/persistence.ts`, `scripts/identity-maintenance.test.ts`; token-fallback and outer scheduled-handler execution evidence remains incomplete |
 | GitHub identity exchange and callback completion | `github_identity_exchange`, `identity_callback_completion` | `workers/identity/index.ts`, `workers/identity/handler.ts`, `workers/identity/persistence.ts`; `workers/identity/failed-callback.test.ts` and `workers/identity/expiry-boundary.test.ts` use an injected resolver and do not exercise real provider exchange |
 | Polling, assertion storage and one-time consumption | `identity_assertion_lifecycle`, `ui_identity_poll_protocol` | `workers/identity/handler.ts`, `workers/identity/persistence.ts`, `src/lib/identity-flow.ts`, `workers/identity/expiry-boundary.test.ts`, existing login and account-closure browser workflows |
+| Local identity handoff | `dev_identity_bridge` | `scripts/dev-identity-bridge.ts`, `scripts/dev-identity-bridge.test.ts`; remote and local persistence are separate authorities |
+| Service-binding identity and contributor-token exchange | `identity_consumer_exchange` | `backend/identity-assertion.ts`, `backend/points/handler.ts`, `backend/trace/handler.ts`, `backend/trace/auth.ts`, existing publication and account-closure workflows |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -332,6 +334,26 @@ before session exchange. Storage callbacks express requested effects, not
 durability. The helper validates assertion expiry on receipt; it does not
 refresh server expiry or promise that a later caller-owned hook ends before
 that expiry. No UI behavior changed in this follow-up.
+
+The local bridge model separates its in-memory flow map, the remote one-time
+handoff and local assertion persistence. A remote claim can commit before its
+reply fails. A valid reply removes the local flow before storing the independent
+random assertion. A later local write or reply failure does not undo the remote
+claim. Restart removes the map without deleting durable local assertions or
+sessions. The map is not a lock: overlapping polls depend on the remote atomic
+claim to prevent duplicate handoffs. Existing local integration tests cover
+selected paths; they do not prove every modeled interruption.
+
+The consumer model follows the
+[HTTP service binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/http/)
+through atomic assertion consumption, response parsing and caller projection.
+Consumption can remain committed after body-read, validation or later signing
+failure. Points requires a valid node ID before its membership write; the trace
+exchange can accept a basic identity and issues contributor authority only.
+It does not issue operator authority or a database session row. A signed token's
+expiry remains based on its captured issuance time, even if signing or delivery
+is delayed. General bearer verification and later authenticated actions are
+separate boundaries. These new models remain unexecuted here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
