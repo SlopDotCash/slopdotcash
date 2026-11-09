@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, verify } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { applyRepositoryMigrations } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Actual named Worker RPC, App JWT/token adapter, native D1 and Pages routing.
@@ -189,14 +189,7 @@ export default { async fetch(request, env) {
   );
   await runtime.ready;
   const db = await runtime.getD1Database("SLOP_DB", "pages");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort())
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
+  await applyRepositoryMigrations(db);
   const manifest = applicationManifest("reporting-fixture", repository);
   manifest.rewardAsset = {
     ...manifest.rewardAsset,

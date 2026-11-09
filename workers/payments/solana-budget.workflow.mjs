@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { base58 } from "@scure/base";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
+import { applyRepositoryMigrations } from "../../tests/miniflare-d1.mjs";
 
 // Local HTTP transport fixture; no chain, signature, or payment is fabricated as verified.
 // This deliberately waits real wall time: the documented Cron limit is 900 seconds.
@@ -90,13 +90,7 @@ catch(error){controller.enqueue(encoder.encode(String(error)+'\\n'));}finally{cl
     });
   runtime = new Miniflare(options());
   let db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((n) => n.endsWith(".sql"))
-    .sort())
-    for (const sql of splitSqlQuery(
-      await readFile(join("migrations", name), "utf8"),
-    ))
-      await db.prepare(sql).run();
+  await applyRepositoryMigrations(db);
   await db
     .prepare("INSERT INTO payment_chain_cursors VALUES(?,?,?,?)")
     .bind(
