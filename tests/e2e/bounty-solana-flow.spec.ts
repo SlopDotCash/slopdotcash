@@ -12,6 +12,7 @@ import {
   type Diagnostics,
   expect,
   expectAccessible,
+  expectAccessibleReflow,
   projectSuffix,
   test,
 } from "./fixtures";
@@ -455,7 +456,7 @@ async function exerciseNativeSolana(
       expect(await readPending()).toBeNull();
       expect(await balance(info.reporter)).toBe(beforeReporter);
       expect(await balance(info.fee)).toBe(beforeFee);
-      await expectAccessible(owner.page);
+      await expectAccessibleReflow(owner.page, "solana-departed-preflight");
       await owner.page.screenshot({
         path: test.info().outputPath("solana-departed-preflight.png"),
       });
@@ -559,8 +560,13 @@ async function exerciseNativeSolana(
           }),
         ).toHaveValue(submittedSignature);
       }
-      await expectAccessible(owner.page);
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-recovery-wcag-aa`,
+      });
       const restoreText = await enlargeText(owner.page.locator("body"));
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-recovery-200-percent-wcag-aa`,
+      });
       expect(
         await owner.page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -593,7 +599,9 @@ async function exerciseNativeSolana(
       expect(sent).toBe(1);
       expect((await balance(info.reporter)) - beforeReporter).toBe(30_000_000n);
       expect((await balance(info.fee)) - beforeFee).toBe(10_000_000n);
-      await expectAccessible(owner.page);
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-paid-wcag-aa`,
+      });
       await owner.page.screenshot({
         path: test.info().outputPath(`solana-${scenario}.png`),
       });
@@ -659,9 +667,14 @@ async function exerciseNativeSolana(
     expect((await balance(info.reporter)) - beforeReporter).toBe(30_000_000n);
     expect((await balance(info.fee)) - beforeFee).toBe(10_000_000n);
     expect(await balance(info.recoveryAddress)).toBe(0n);
-    await expectAccessible(owner.page);
+    await expectAccessible(owner.page, {
+      attachmentName: "solana-uncertain-paid-wcag-aa",
+    });
 
     const restoreEnlargedText1 = await enlargeText(owner.page.locator("body"));
+    await expectAccessible(owner.page, {
+      attachmentName: "solana-uncertain-paid-200-percent-wcag-aa",
+    });
     expect(
       await owner.page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

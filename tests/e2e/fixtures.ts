@@ -23,6 +23,7 @@ import {
 } from "@playwright/test";
 import type { CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { enlargeText } from "../text-size";
 
 export { expect };
 
@@ -244,13 +245,42 @@ export async function expectAccessible(
   {
     include,
     everyRule = false,
-  }: { include?: string; everyRule?: boolean } = {},
+    attachmentName,
+  }: { include?: string; everyRule?: boolean; attachmentName?: string } = {},
 ) {
   const builder = new AxeBuilder({ page });
   if (!everyRule)
     builder.withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
   if (include) builder.include(include);
-  expect((await builder.analyze()).violations).toEqual([]);
+  const result = await builder.analyze();
+  if (attachmentName)
+    await test.info().attach(attachmentName, {
+      body: JSON.stringify(result),
+      contentType: "application/json",
+    });
+  expect(result.violations).toEqual([]);
+}
+
+/** Record the tested terminal state at normal and doubled text size. */
+export async function expectAccessibleReflow(page: Page, name: string) {
+  await expectAccessible(page, { attachmentName: `${name}-wcag-aa` });
+  const restore = await enlargeText(page.locator("body"));
+  try {
+    await page.screenshot({
+      path: test.info().outputPath(`${name}-200-percent.png`),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(page, {
+      attachmentName: `${name}-200-percent-wcag-aa`,
+    });
+  } finally {
+    await restore();
+  }
 }
 
 /**

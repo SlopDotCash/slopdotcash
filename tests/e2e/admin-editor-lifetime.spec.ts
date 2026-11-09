@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
-import { expect, test } from "./fixtures";
+import { expect, expectAccessibleReflow, test } from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 function gate() {
@@ -139,7 +139,8 @@ test("late admin save cannot clear or close a newer focus-remounted draft", asyn
     await fixture.reason.fill("Record the accepted project description.");
     await page
       .getByRole("button", { name: "Save revision 2", exact: true })
-      .click();
+      .focus();
+    await page.keyboard.press("Enter");
     await expect.poll(() => fixture.saves.length).toBe(1);
     await expect(
       page.getByRole("button", { name: "Saving…", exact: true }),
@@ -155,9 +156,9 @@ test("late admin save cannot clear or close a newer focus-remounted draft", asyn
     );
     await fixture.description.fill("A newer draft after returning to this tab");
     await fixture.reason.fill("Keep this newer proposal for separate review.");
-    await expect.poll(() => savedDescription(page, fixture.draftKey)).toBe(
-      "A newer draft after returning to this tab",
-    );
+    await expect
+      .poll(() => savedDescription(page, fixture.draftKey))
+      .toBe("A newer draft after returning to this tab");
     const response = page.waitForResponse(
       (value) =>
         new URL(value.url()).pathname === fixture.savePath &&
@@ -180,6 +181,7 @@ test("late admin save cannot clear or close a newer focus-remounted draft", asyn
     expect(fixture.saves[0].manifest.headline).toBe(
       "The submitted project description",
     );
+    await expectAccessibleReflow(page, "admin-remounted-draft-retained");
   } finally {
     releaseSession?.();
     fixture.releaseSave();
@@ -195,16 +197,19 @@ test("editing during admin save retains newer content and reports only the submi
     await fixture.reason.fill("Record the accepted project description.");
     await page
       .getByRole("button", { name: "Save revision 2", exact: true })
-      .click();
+      .focus();
+    await page.keyboard.press("Enter");
     await expect.poll(() => fixture.saves.length).toBe(1);
     await expect(
       page.getByRole("button", { name: "Saving…", exact: true }),
     ).toBeDisabled();
-    await fixture.description.fill("Newer edits made while the save is pending");
-    await fixture.reason.fill("This later draft has not been submitted.");
-    await expect.poll(() => savedDescription(page, fixture.draftKey)).toBe(
+    await fixture.description.fill(
       "Newer edits made while the save is pending",
     );
+    await fixture.reason.fill("This later draft has not been submitted.");
+    await expect
+      .poll(() => savedDescription(page, fixture.draftKey))
+      .toBe("Newer edits made while the save is pending");
     const response = page.waitForResponse(
       (value) =>
         new URL(value.url()).pathname === fixture.savePath &&
@@ -233,6 +238,7 @@ test("editing during admin save retains newer content and reports only the submi
     expect(fixture.saves[0].manifest.headline).toBe(
       "The submitted project description",
     );
+    await expectAccessibleReflow(page, "admin-newer-edits-retained");
   } finally {
     fixture.releaseSave();
   }

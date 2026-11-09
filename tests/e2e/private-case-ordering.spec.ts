@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
-import { type Diagnostics, expect, test } from "./fixtures";
+import {
+  type Diagnostics,
+  expect,
+  expectAccessibleReflow,
+  test,
+} from "./fixtures";
 
 test.use({ actionTimeout: 15_000 });
 
@@ -170,7 +175,8 @@ async function privateCase(page: Page, diagnostics: Diagnostics) {
       await form.getByLabel("Remediation state").selectOption(value);
       await form
         .getByRole("button", { name: "Save remediation state", exact: true })
-        .click();
+        .focus();
+      await page.keyboard.press("Enter");
     },
     release() {
       for (const value of holds) value.release();
@@ -207,6 +213,7 @@ test("private case refuses an older action after a newer accepted revision", asy
       "Case revision 3",
     );
     expect(fixture.revisions).toEqual([1, 2]);
+    await expectAccessibleReflow(page, "private-case-newer-revision-retained");
   } finally {
     fixture.release();
   }
@@ -247,6 +254,7 @@ test("an equal private case action joins its current fresh read", async ({
       "Current live projection at revision 2",
     );
     expect(fixture.reads).toBe(readCount);
+    await expectAccessibleReflow(page, "private-case-current-read-retained");
   } finally {
     fixture.release();
   }
@@ -277,6 +285,7 @@ test("a departed private case callback does not start another case read", async 
     await page.waitForLoadState("networkidle");
     expect(fixture.reads).toBe(readCount);
     await expect(fixture.detail).toHaveCount(0);
+    await expectAccessibleReflow(page, "private-case-departed-view");
   } finally {
     fixture.release();
   }
