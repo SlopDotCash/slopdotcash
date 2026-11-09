@@ -8,6 +8,7 @@
 import { isBaseUnits } from "../escrow-policy.mjs";
 import { sha256Hex } from "../sha256";
 import { sumAmounts } from "../verified-allocation";
+import { monthlyCutoffSeconds } from "../verified-calendar";
 import { freezeMonthlyAmounts } from "../verified-money";
 import {
   type MonthlyAllocation,
@@ -81,7 +82,7 @@ export function assertPeriod(period: string): string {
 /** 00:00 UTC on the first day of the following month. */
 export function periodEnd(period: string): Date {
   const [year, month] = assertPeriod(period).split("-").map(Number);
-  return new Date(Date.UTC(year, month, 1));
+  return new Date(monthlyCutoffSeconds(year, month, 0) * 1000);
 }
 
 /** The automatic cutoff of a month, or null when the month is outside the schedule. */
@@ -90,8 +91,10 @@ export function monthlyCutoff(
   period: string,
 ): Date | null {
   if (assertPeriod(period) < schedule.firstPeriod) return null;
+  const [year, month] = period.split("-").map(Number);
   return new Date(
-    periodEnd(period).getTime() + schedule.cutoffSecondsAfterPeriodEnd * 1000,
+    monthlyCutoffSeconds(year, month, schedule.cutoffSecondsAfterPeriodEnd) *
+      1000,
   );
 }
 
@@ -235,6 +238,10 @@ export function buildExecutionSnapshot(input: {
   /** Rebuild a month frozen before fees rounded up, whose rows hold floor(gross / 50). */
   legacyFloorFee?: boolean;
 }): { snapshot: MonthlyExecutionSnapshot; text: string; sha256: string } {
+  if (input.allocations.some((row) => !isBaseUnits(row.grossBase)))
+    throw new MonthlyAllocationError(
+      "Each allocation must be integer base units.",
+    );
   const frozen = freezeMonthlyAmounts(
     input.allocations.map((row) => ({
       githubUserId: row.githubUserId,
