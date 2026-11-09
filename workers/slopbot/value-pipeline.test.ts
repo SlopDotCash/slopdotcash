@@ -94,17 +94,18 @@ for (const expiry of [
       : `${expiry} expiry preserves retained inference and one joint publication for both PRs`;
   test(title, async () => {
     const beforeCall = expiry === "pre-call" || expiry === "queued-pre-call";
-    const trace = localRevocation || attemptRecovery
-      ? []
-      : pipelineTrace(
-          beforeCall
-            ? "leaseExpiryDuringPreCallCheckPreventsSpendTest"
-            : expiry === "publication" || expiry === "queued"
-              ? "expiredPublicationReusesInferenceTest"
-              : expiry === "provider"
-                ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
-                : "overlappingConsumerWaitsThenReadsCurrentTest",
-        );
+    const trace =
+      localRevocation || attemptRecovery
+        ? []
+        : pipelineTrace(
+            beforeCall
+              ? "leaseExpiryDuringPreCallCheckPreventsSpendTest"
+              : expiry === "publication" || expiry === "queued"
+                ? "expiredPublicationReusesInferenceTest"
+                : expiry === "provider"
+                  ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
+                  : "overlappingConsumerWaitsThenReadsCurrentTest",
+          );
     const tick = trace.find((state) => state.last === "tick");
     if (!localRevocation && !attemptRecovery && !tick)
       throw new Error("Generated pipeline trace omitted expiry");
@@ -750,7 +751,7 @@ for (const expiry of [
             sqlite.run(
               `INSERT INTO project_enforcements
               (id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,actor_role,decision_source,before_revision,before_manifest_sha256,result,created_at)
-              VALUES ('enf_precall',?,1,'quarantine','quarantined','none','Review pending','local-workflow',?,?,'77','moderator','project-moderator','admin-panel',1,?,'revision_pending',?)`,
+              VALUES ('enf_precall_fixture',?,1,'quarantine','quarantined','none','Review pending','local-workflow',?,?,'77','moderator','project-moderator','admin-panel',1,?,'revision_pending',?)`,
               [
                 project.id,
                 "42",

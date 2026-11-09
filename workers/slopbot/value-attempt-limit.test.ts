@@ -31,6 +31,7 @@ const MIGRATIONS = [
   "0085_slopbot_provider_failure_notices.sql",
   "0104_slopbot_value_inference_attempts.sql",
   "0118_slopbot_value_attempt_completion.sql",
+  "0120_slopbot_zero_call_reconciliation.sql",
 ];
 
 const output = (sourceDigest: string) => ({
@@ -52,6 +53,82 @@ const prompt = {
   policy: "No publication",
   item: "No source material",
 };
+
+test("completed zero-call refusals leave paid attempts and budget available", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  let requests = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      requests++;
+      const input = (await request.json()) as { model: string };
+      return Response.json(
+        {
+          id: "local-after-authority-recovery",
+          type: "message",
+          role: "assistant",
+          model: input.model,
+          content: [{ type: "text", text: '{"accepted":true}' }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10 },
+        },
+        { headers: { "x-si-buyer-cost-micro": "100" } },
+      );
+    },
+  });
+  const invoke = (mayCall: () => Promise<boolean>) =>
+    runValueInference(
+      {
+        SURPLUS_API_KEY: "local-only",
+        SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}`,
+      },
+      prompt,
+      output("d".repeat(64)),
+      mayCall,
+      {
+        db,
+        installationId: 1,
+        attemptId: `value:${crypto.randomUUID()}`,
+        maximumMicroUsd: 600,
+        approvedMonthlyMicroUsd: 1000,
+      },
+    );
+  try {
+    for (let i = 0; i <= VALUE_INFERENCE_ATTEMPT_LIMIT; i++) {
+      let checks = 0;
+      const failing = i % 2 === 1;
+      const result = invoke(async () => {
+        if (++checks === 1) return true;
+        if (failing) throw new Error("registry unavailable");
+        return false;
+      });
+      if (failing) await expect(result).rejects.toThrow("registry unavailable");
+      else expect((await result).blockReason).toBe("authority");
+      expect(requests).toBe(0);
+    }
+    expect(
+      sqlite
+        .query(
+          "SELECT call_count,recorded_micro_usd FROM slopbot_value_budget_reconciliations",
+        )
+        .all(),
+    ).toEqual(
+      Array(VALUE_INFERENCE_ATTEMPT_LIMIT + 1).fill({
+        call_count: 0,
+        recorded_micro_usd: 0,
+      }),
+    );
+    expect((await invoke(async () => true)).verdict).toEqual({
+      accepted: true,
+    });
+    expect(requests).toBe(1);
+  } finally {
+    server.stop(true);
+    sqlite.close();
+  }
+});
 
 async function providerRetries(knownCost: boolean) {
   const { db, sqlite } = sqliteD1(MIGRATIONS);
@@ -142,11 +219,9 @@ async function providerRetries(knownCost: boolean) {
 }
 
 test("provider retries of one source are bounded and recorded immutably", () =>
-  providerRetries(true),
-);
+  providerRetries(true));
 test("completed attempts with unknown cost amounts still have a terminal cap", () =>
-  providerRetries(false),
-);
+  providerRetries(false));
 
 test("concurrent admitted inferences cannot reserve the same final attempt slot", async () => {
   const { db, sqlite } = sqliteD1(MIGRATIONS);

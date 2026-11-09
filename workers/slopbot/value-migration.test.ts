@@ -155,3 +155,60 @@ test("completion upgrade preserves history without inventing finished attempts",
     sqlite.close();
   }
 });
+
+test("zero-call upgrade preserves reconciliation history and immutable amounts", () => {
+  const upgrade = "0120_slopbot_zero_call_reconciliation.sql";
+  const boundary = MIGRATIONS.indexOf(upgrade);
+  expect(boundary).toBeGreaterThan(0);
+  const { sqlite } = sqliteD1(MIGRATIONS.slice(0, boundary));
+  const paid = `value:${crypto.randomUUID()}`;
+  const zero = `value:${crypto.randomUUID()}`;
+  const at = "2026-11-01T00:00:00.000Z";
+  try {
+    for (const id of [paid, zero])
+      sqlite
+        .query(
+          "INSERT INTO slopbot_value_budget_reservations VALUES(?,'2026-11',600,1000,?)",
+        )
+        .run(id, at);
+    sqlite
+      .query(
+        "INSERT INTO slopbot_value_budget_reconciliations VALUES(?,1,100,?)",
+      )
+      .run(paid, at);
+    const before = sqlite
+      .query("SELECT * FROM slopbot_value_budget_reconciliations")
+      .all();
+    sqlite.exec(readFileSync(`migrations/${upgrade}`, "utf8"));
+    expect(
+      sqlite.query("SELECT * FROM slopbot_value_budget_reconciliations").all(),
+    ).toEqual(before);
+    expect(() =>
+      sqlite
+        .query(
+          "INSERT INTO slopbot_value_budget_reconciliations VALUES(?,0,1,?)",
+        )
+        .run(zero, at),
+    ).toThrow();
+    sqlite
+      .query("INSERT INTO slopbot_value_budget_reconciliations VALUES(?,0,0,?)")
+      .run(zero, at);
+    expect(() =>
+      sqlite.exec(
+        "UPDATE slopbot_value_budget_reconciliations SET recorded_micro_usd=1",
+      ),
+    ).toThrow("immutable");
+    expect(() =>
+      sqlite.exec("DELETE FROM slopbot_value_budget_reconciliations"),
+    ).toThrow("immutable");
+    expect(() =>
+      sqlite
+        .query(
+          "INSERT OR REPLACE INTO slopbot_value_budget_reconciliations VALUES(?,0,0,?)",
+        )
+        .run(zero, at),
+    ).toThrow("already exists");
+  } finally {
+    sqlite.close();
+  }
+});

@@ -167,7 +167,9 @@ export async function runValueInference<T>(
   );
   const retained = await readValueInference(budget.db, key, output.validate);
   if (retained) return { ...retained, blockReason: null };
-  const blocked = async (reason: "attempts" | "attempts-pending" | "budget") => {
+  const blocked = async (
+    reason: "attempts" | "attempts-pending" | "budget",
+  ) => {
     if (reason === "attempts") {
       // A completing attempt may have retained its result after our first
       // read. Completion is later than retention; read that immutable result
@@ -237,12 +239,9 @@ export async function runValueInference<T>(
     result.calls.length,
     Boolean(!result.blocked && result.verdict && result.servedBy),
   );
-  if (result.calls.length)
-    await reconcileValueBudget(
-      budget.db,
-      budget.attemptId,
-      result.calls.length,
-    );
+  // An explicit completion with no calls proves there is no provider charge.
+  // Settle it before another attempt can reuse either paid-attempt or budget capacity.
+  await reconcileValueBudget(budget.db, budget.attemptId, result.calls.length);
   if (!result.blocked && result.verdict && result.servedBy) {
     const completed = await readValueInference(budget.db, key, output.validate);
     if (!completed) throw new Error("Validated inference was not retained");

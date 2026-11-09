@@ -6,10 +6,16 @@ const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 const attempt = (value: string) => /^value:[a-f0-9-]{36}$/.test(value);
 
 /** Internal SQL expressions only. Admission and reservation count identically. */
-export function countedValueAttemptsSql(key: string, freeFailure: string): string {
+export function countedValueAttemptsSql(
+  key: string,
+  freeFailure: string,
+): string {
   return `(SELECT COUNT(*) FROM slopbot_value_inference_attempts a
     JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
     WHERE a.inference_key=${key}
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_attempt_completions done
+        JOIN slopbot_value_budget_reconciliations settled ON settled.attempt_id=done.attempt_id
+        WHERE done.attempt_id=a.attempt_id AND settled.call_count=0 AND settled.recorded_micro_usd=0)
       AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c
              WHERE c.review_key=a.attempt_id AND c.failure=${freeFailure})
         OR EXISTS (SELECT 1 FROM slopbot_costs c
@@ -26,7 +32,11 @@ function nonFreeValueAttemptsSql(key: string, freeFailure: string): string {
         AND c.failure IS NOT ${freeFailure}))`;
 }
 
-function valueAttemptRefusalSql(key: string, freeFailure: string, limit: string) {
+function valueAttemptRefusalSql(
+  key: string,
+  freeFailure: string,
+  limit: string,
+) {
   return `CASE WHEN ${nonFreeValueAttemptsSql(key, freeFailure)} >= ${limit}
     THEN 'attempts' ELSE 'attempts-pending' END`;
 }
@@ -237,7 +247,11 @@ export async function reconcileValueBudget(
   attemptId: string,
   expectedCalls: number,
 ): Promise<boolean> {
-  if (!attempt(attemptId) || !positive(expectedCalls))
+  if (
+    !attempt(attemptId) ||
+    !Number.isSafeInteger(expectedCalls) ||
+    expectedCalls < 0
+  )
     throw new Error("Invalid value budget reconciliation");
   const row = await db
     .prepare(
