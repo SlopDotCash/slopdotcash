@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "dbd3aa8d3d3044b1a02374a1233ba8b788c4a7b287570fe9cb6bdc602a73001f",
+  "inventorySha256": "3ca6218e752f49358d3d75a235e29cd071f7450d155dfb12e380bb988c98d5a1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -28,6 +28,7 @@
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/points_dispute_receipts.qnt",
         "formal/models/api/wallet_claim_publication.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened"],
@@ -332,6 +333,7 @@
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
         "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/solana_message_buffers.qnt"
       ],
@@ -592,6 +594,7 @@
       "kind": "sql-check",
       "values": ["completed", "failed", "running", "skipped"],
       "models": [
+        "formal/models/api/api_public_summary.qnt",
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_review_lease.qnt"
       ],
@@ -605,6 +608,7 @@
       "kind": "sql-check",
       "values": ["failed", "ok"],
       "models": [
+        "formal/models/api/api_public_summary.qnt",
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_review_lease.qnt"
       ],
@@ -3563,6 +3567,7 @@
       "kind": "string-union",
       "values": ["failed", "ok"],
       "models": [
+        "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
         "formal/models/slopbot/bot_value_budget.qnt",

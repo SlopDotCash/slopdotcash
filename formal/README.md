@@ -1078,6 +1078,38 @@ tested or verified here:
   paused/retired handling, returned failures, aborted suffixes and retry.
   Five migrated-SQLite regression definitions cover the cache boundaries. The
   reporting runtime is unchanged, and these additions remain unexecuted.
+- `private_recovery_scan_concurrency` refines the retirement result already
+  abstracted by the two-caller, two-plan `private_recovery_progress` model.
+  Its 19 scenarios derive each caller's result from per-plan/provider evidence,
+  shared scan revisions, matching complete coverage and the final case CAS.
+  A lost scan reply or stale case write preserves committed scan evidence;
+  another caller's completion cannot rewrite an earlier incomplete result.
+  Concurrent implementation conformance remains outstanding.
+- `api_public_summary` now covers row-order budget-block suppression, distinct
+  item and installation aggregation, earliest-close reopen/appeal windows,
+  numeric repository order, captured SQL results and HTTP failure states.
+  Its 23 scenarios distinguish failed-only listings from skipped/running-only
+  or action-only repositories. Seven migrated-SQLite/handler regression
+  definitions exercise these projections and private-field exclusion.
+- `ui_transport` now separates generic JSON transport from session validation,
+  including header/body deadline errors and independently optional error fields.
+  Its 20 scenarios complement the 18 in `ui_bounded_body`: bounded retained
+  chunks, EOF, cancellation/refusal, reader release, fatal UTF-8 and JSON parsing.
+  Declared content length is an early size gate, not a byte-integrity claim.
+  Native stream/abort behavior remains an external assumption. The two existing
+  transport test files have 23 additional regression cases; none were run.
+- `points_dispute_receipts` adds 19 scenarios for atomic intake/decision
+  notifications, lost write replies, exact retry recovery, independent moderator
+  decisions and captured views. Two real-handler/SQLite regression definitions
+  cover committed writes whose replies are lost. A detail response can combine
+  the initially read view state with a later-read decision reason; the model
+  keeps those observations separate. `api_points_dispute_lease`
+  now separates the lease observation from the awaited scope check: an already
+  admitted call can start after takeover or resolution, while subsequent SQL
+  writes retain their ownership fence. Its previous global diagnostic-call
+  freeze was not a source guarantee; the model now preserves the immutable
+  draft/escalation fields and includes that interleaving explicitly.
+  These are source refinements with no new execution evidence or runtime edits.
 
 ## Acceptance requirements and limits
 

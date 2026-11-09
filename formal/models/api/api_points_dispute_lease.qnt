@@ -1,12 +1,16 @@
 // @source workers/slopbot/points-disputes.ts
+// @source workers/slopbot/models.ts
 // @source workers/slopbot/appeals.ts
 // @source migrations/0114_points_dispute_intake.sql
+// @evidence backend/points/disputes.test.ts
 // processPointsDispute: a claim UPDATE sets claim_token/claim_until when the
 // row is unresolved, lacks a draft or an escalation, and has no live lease.
 // The worker then re-reads the row; a retained draft is resumed without a
 // model call. Model calls, recordDraft and escalateAppeal are fenced by the
-// current unexpired token (mayWrite and the SQL claim_token/claim_until
-// terms); recordCalls is not fenced. A call whose cost was not recorded
+// current unexpired token at their own observation/SQL boundaries; recordCalls
+// is not fenced. The model-call guard awaits currentScope after observing the
+// lease, so a replaced lease can still finish that guard and start a call.
+// A call whose cost was not recorded
 // rethrows; every other error escalates when the lease is still held. The
 // finally block releases only the worker's own lease.
 // processPendingPointsDisputes visits the disputes selected at the start of
@@ -14,13 +18,15 @@
 // reports an AggregateError after its last visit.
 // Bounds: two disputes, worker 1 is the cron run and worker 2 a concurrent
 // route request or overlapping run on dispute 1; three lease tokens, clock 0..3, a lease
-// lasts one tick, one cron run. Provider and GitHub results are
+// lasts one tick, one cron run and one representative provider leg per lease.
+// The production triage route can also try a fallback; its full provider-loop
+// cardinality is outside this bound. Provider and GitHub results are
 // abstracted to "uphold", "deny" or "unavailable".
 module api_points_dispute_lease {
   type Dispute = { draft: str, escalated: bool, resolved: bool, token: int,
     until: int, claims: int, calls: int, callsAtDraft: int, draftWrites: int,
-    frozen: (str, bool, int) }
-  type Worker = { phase: str, d: int, token: int, sawDraft: str, thrown: bool }
+    frozen: (str, bool) }
+  type Worker = { phase: str, d: int, token: int, sawDraft: str, admitted: bool, thrown: bool }
   var disputes: int -> Dispute
   var workers: int -> Worker
   var now: int
@@ -33,11 +39,11 @@ module api_points_dispute_lease {
   var reported: int
   val DISPUTES = Set(1, 2)
   val WORKERS = Set(1, 2)
-  val idleWorker = { phase: "idle", d: 0, token: 0, sawDraft: "none", thrown: false }
+  val idleWorker = { phase: "idle", d: 0, token: 0, sawDraft: "none", admitted: false, thrown: false }
   action init = all {
     disputes' = DISPUTES.mapBy(_ => { draft: "none", escalated: false, resolved: false,
       token: 0, until: 0, claims: 0, calls: 0, callsAtDraft: 0, draftWrites: 0,
-      frozen: ("none", false, 0) }),
+      frozen: ("none", false) }),
     workers' = WORKERS.mapBy(_ => idleWorker),
     now' = 0, nextToken' = 0, cursor' = 0, runSet' = Set(), visited' = Set(),
     failures' = 0, runs' = 0, reported' = -1,
@@ -62,7 +68,7 @@ module api_points_dispute_lease {
     workers.get(w).phase == "idle", mayVisit(w, d), claimable(d), nextToken < 3,
     disputes' = disputes.setBy(d, x => x.with("token", nextToken + 1).with("until", now + 1)
       .with("claims", x.claims + 1)),
-    setWorker(w, { phase: "claimed", d: d, token: nextToken + 1, sawDraft: "none", thrown: false }),
+    setWorker(w, { phase: "claimed", d: d, token: nextToken + 1, sawDraft: "none", admitted: false, thrown: false }),
     nextToken' = nextToken + 1, now' = now, keepCron,
   }
   // A refused claim (live lease, or a drafted and escalated row) returns.
@@ -78,13 +84,23 @@ module api_points_dispute_lease {
       .with("sawDraft", disputes.get(workers.get(w).d).draft)),
     disputes' = disputes, now' = now, nextToken' = nextToken, keepCron,
   }
-  action call(w: int): bool = all {
+  action observeCallLease(w: int): bool = all {
     workers.get(w).phase == "read", workers.get(w).sawDraft == "none",
-    mayWrite(workers.get(w)),
-    disputes' = disputes.setBy(workers.get(w).d, x => x.with("calls", x.calls + 1)),
-    setWorker(w, workers.get(w).with("phase", "calling")),
+    setWorker(w, workers.get(w).with("admitted", mayWrite(workers.get(w))).with("phase", "scope")),
+    disputes' = disputes, now' = now, nextToken' = nextToken, keepCron,
+  }
+  // This is the reply to the separate currentScope await. It does not reread
+  // claim_token or draft after the earlier mayWrite observation.
+  action scopeReply(w: int, allowed: bool): bool = all {
+    workers.get(w).phase == "scope",
+    val starts = workers.get(w).admitted and allowed
+    disputes' = if (starts) disputes.setBy(workers.get(w).d, x => x.with("calls", x.calls + 1)) else disputes,
+    // A blocked route returns an empty call list; its unavailable result is
+    // still handled by afterCost and may escalate under a live lease.
+    setWorker(w, workers.get(w).with("phase", if (starts) "calling" else "blocked")),
     now' = now, nextToken' = nextToken, keepCron,
   }
+  action call(w: int): bool = observeCallLease(w).then(scopeReply(w, true))
   action recordCost(w: int): bool = all {
     workers.get(w).phase == "calling",
     setWorker(w, workers.get(w).with("phase", "called")),
@@ -102,7 +118,8 @@ module api_points_dispute_lease {
   action afterCost(w: int, result: str): bool = {
     val wk = workers.get(w)
     all {
-      wk.phase == "called", result.in(Set("uphold", "deny", "unavailable")),
+      (wk.phase == "called" or (wk.phase == "blocked" and result == "unavailable")),
+      result.in(Set("uphold", "deny", "unavailable")),
       if (not(mayWrite(wk))) all { disputes' = disputes, setWorker(w, wk.with("phase", "exit")) }
       else if (result == "unavailable") all {
         disputes' = disputes.setBy(wk.d, x => escalated(x)),
@@ -129,7 +146,7 @@ module api_points_dispute_lease {
   action error(w: int): bool = {
     val wk = workers.get(w)
     all {
-      wk.phase.in(Set("claimed", "read", "called", "drafted")),
+      wk.phase.in(Set("claimed", "read", "scope", "blocked", "called", "drafted")),
       disputes' = if (mayWrite(wk)) disputes.setBy(wk.d, x => escalated(x)) else disputes,
       setWorker(w, wk.with("phase", "exit")),
       now' = now, nextToken' = nextToken, keepCron,
@@ -174,7 +191,7 @@ module api_points_dispute_lease {
   action resolve(d: int): bool = all {
     disputes.get(d).escalated, not(disputes.get(d).resolved),
     disputes' = disputes.setBy(d, x => x.with("resolved", true)
-      .with("frozen", (x.draft, x.escalated, x.calls))),
+      .with("frozen", (x.draft, x.escalated))),
     workers' = workers, now' = now, nextToken' = nextToken, keepCron,
   }
   action tick = all { now < 3, now' = now + 1,
@@ -183,7 +200,8 @@ module api_points_dispute_lease {
     nondet w = WORKERS.oneOf()
     nondet d = DISPUTES.oneOf()
     nondet r = Set("uphold", "deny", "unavailable").oneOf()
-    any { claim(w, d), refuse(w, d), read(w), call(w), recordCost(w),
+    nondet allowed = Set(false, true).oneOf()
+    any { claim(w, d), refuse(w, d), read(w), observeCallLease(w), scopeReply(w, allowed), recordCost(w),
       throwBeforeCost(w), afterCost(w, r), escalate(w), error(w), release(w),
       cronStart, cronSkip, cronReport, resolve(d), tick }
   }
@@ -191,14 +209,16 @@ module api_points_dispute_lease {
     // recordDraft's `draft IS NULL` term: a row's draft is written once.
     DISPUTES.forall(d => disputes.get(d).draftWrites <= 1
       and (disputes.get(d).draft != "none") == (disputes.get(d).draftWrites == 1)),
-    // No model call follows a recorded draft, whichever lease wrote it.
+    // callsAtDraft is a lower bound, not a freeze: a stale already-admitted
+    // scope reply can start a provider call after a replacement wrote a draft.
     DISPUTES.forall(d => disputes.get(d).draft != "none"
-      implies disputes.get(d).calls == disputes.get(d).callsAtDraft),
-    // Each lease on the row makes at most one model call.
+      implies disputes.get(d).calls >= disputes.get(d).callsAtDraft),
+    // At most one representative provider leg is counted per bounded claim.
     DISPUTES.forall(d => disputes.get(d).calls <= disputes.get(d).claims),
-    // A resolved row keeps the draft, escalation and calls it had.
+    // A resolved row keeps its draft and escalation. External call diagnostics
+    // can grow after resolution and are not columns of the immutable row.
     DISPUTES.forall(d => disputes.get(d).resolved implies
-      (disputes.get(d).draft, disputes.get(d).escalated, disputes.get(d).calls)
+      (disputes.get(d).draft, disputes.get(d).escalated)
         == disputes.get(d).frozen),
     DISPUTES.forall(d => disputes.get(d).resolved implies disputes.get(d).escalated),
     // Only one live lease exists per row: two workers never both may write.
@@ -240,4 +260,20 @@ module api_points_dispute_lease {
       and disputes.get(1).until == 0)
   run resolvedRowIsFinalTest = init.then(claim(2, 1)).then(read(2)).then(error(2))
     .then(resolve(1)).then(release(2)).then(claim(1, 1).fail())
+  run admittedScopeReplyCanCallAfterReplacementDraftTest = init.then(claim(2, 1)).then(read(2))
+    .then(observeCallLease(2)).then(tick).then(cronStart).then(claim(1, 1)).then(read(1))
+    .then(call(1)).then(recordCost(1)).then(afterCost(1, "uphold")).then(scopeReply(2, true))
+    .then(recordCost(2)).then(afterCost(2, "deny"))
+    .expect(disputes.get(1).draft == "uphold" and disputes.get(1).draftWrites == 1
+      and disputes.get(1).calls == 2 and workers.get(2).phase == "exit" and invariant)
+  run admittedScopeReplyCanCallAfterModeratorResolutionTest = init.then(claim(2, 1)).then(read(2))
+    .then(observeCallLease(2)).then(tick).then(cronStart).then(claim(1, 1)).then(read(1))
+    .then(call(1)).then(recordCost(1)).then(afterCost(1, "uphold")).then(escalate(1)).then(resolve(1))
+    .then(scopeReply(2, true)).then(recordCost(2)).then(afterCost(2, "deny"))
+    .expect(disputes.get(1).resolved and disputes.get(1).draft == "uphold"
+      and disputes.get(1).calls == 2 and invariant)
+  run refusedScopeEscalatesWithoutInventingVerdictTest = init.then(claim(2, 1)).then(read(2))
+    .then(observeCallLease(2)).then(scopeReply(2, false)).then(afterCost(2, "unavailable"))
+    .expect(disputes.get(1).escalated and disputes.get(1).calls == 0
+      and disputes.get(1).draft == "none" and invariant)
 }

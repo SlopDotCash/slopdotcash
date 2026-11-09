@@ -252,6 +252,7 @@
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/points_dispute_receipts.qnt",
         "formal/models/api/wallet_claim_publication.qnt"
       ],
       "candidateLines": [
@@ -509,7 +510,8 @@
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
-        "formal/models/api/points_dispute_lease.qnt"
+        "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/points_dispute_receipts.qnt"
       ],
       "candidateLines": [59, 141, 208, 228],
       "review": "mapped-abstraction"
@@ -521,6 +523,7 @@
         "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/points_dispute_receipts.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
@@ -849,6 +852,7 @@
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
         "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
@@ -867,6 +871,7 @@
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
         "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/solana_message_buffers.qnt"
       ],
@@ -915,6 +920,7 @@
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt",
         "formal/models/payments/security_payment_projection.qnt",
         "formal/models/payments/security_rail_exclusivity.qnt",
         "formal/models/payments/solana_history_retirement.qnt",
@@ -2132,6 +2138,7 @@
       "path": "migrations/0013_slopbot.sql",
       "sha256": "b60d0e723555888e9171ea83d4234811bc90234e700c97e0645ce70f3a9c8460",
       "models": [
+        "formal/models/api/api_public_summary.qnt",
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_review_lease.qnt"
       ],
@@ -2453,7 +2460,10 @@
     {
       "path": "migrations/0045_slopbot_review_leases.sql",
       "sha256": "bbba194daa92ab3d041e496391f91a8710b17357bc1d07d5856b18dbb8a7ff5e",
-      "models": ["formal/models/slopbot/bot_review_lease.qnt"],
+      "models": [
+        "formal/models/api/api_public_summary.qnt",
+        "formal/models/slopbot/bot_review_lease.qnt"
+      ],
       "candidateLines": [4, 10],
       "review": "mapped-abstraction"
     },
@@ -2481,7 +2491,10 @@
     {
       "path": "migrations/0048_slopbot_budget_blocks.sql",
       "sha256": "252dad7a8d7250562c0c590c7742e569e638ea134b5ad0c48b9b6bf76154e15b",
-      "models": ["formal/models/slopbot/bot_budget_resume.qnt"],
+      "models": [
+        "formal/models/api/api_public_summary.qnt",
+        "formal/models/slopbot/bot_budget_resume.qnt"
+      ],
       "candidateLines": [2, 16, 19, 27, 29, 33, 35, 37, 41, 43, 45],
       "review": "mapped-abstraction"
     },
@@ -3149,7 +3162,8 @@
         "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
-        "formal/models/payments/private_recovery_progress.qnt"
+        "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt"
       ],
       "candidateLines": [12, 14, 16, 21, 46, 48, 50, 53, 57, 61, 74, 76],
       "review": "mapped-abstraction"
@@ -3162,7 +3176,8 @@
         "formal/models/payments/direct_payer_nonce.qnt",
         "formal/models/payments/direct_payment_recovery.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
-        "formal/models/payments/private_recovery_progress.qnt"
+        "formal/models/payments/private_recovery_progress.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt"
       ],
       "candidateLines": [3, 19, 22],
       "review": "mapped-abstraction"
@@ -3175,7 +3190,8 @@
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
-        "formal/models/api/points_dispute_lease.qnt"
+        "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/points_dispute_receipts.qnt"
       ],
       "candidateLines": [2, 31, 39],
       "review": "mapped-abstraction"
@@ -5541,6 +5557,7 @@
       "sha256": "90a4b15cb147de6233eea8f7675dcab703d066032cbc997cf105e7a940d1527e",
       "models": [
         "formal/models/api/trace_object_storage.qnt",
+        "formal/models/ui/ui_bounded_body.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_transport.qnt",
@@ -6997,6 +7014,7 @@
       "models": [
         "formal/models/fees/fee_expiry_scan_protocol.qnt",
         "formal/models/fees/solana_expiry.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt",
         "formal/models/payments/solana_history_retirement.qnt"
       ],
       "candidateLines": [29, 57, 126, 139, 161],
@@ -7097,7 +7115,8 @@
       "sha256": "4c57516608636d009854016a2def8ecd4666dfc4490cbeef1278f058a827c04d",
       "models": [
         "formal/models/fees/fee_expiry_scan_protocol.qnt",
-        "formal/models/fees/solana_expiry.qnt"
+        "formal/models/fees/solana_expiry.qnt",
+        "formal/models/payments/private_recovery_scan_concurrency.qnt"
       ],
       "candidateLines": [73],
       "review": "mapped-abstraction"
@@ -7860,6 +7879,7 @@
       "path": "workers/slopbot/models.ts",
       "sha256": "1595aa393d13b76d286029c5a44a1abd482ae8e27187dd85ef113f50b3cee156",
       "models": [
+        "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
         "formal/models/slopbot/bot_value_budget.qnt",
@@ -9173,17 +9193,21 @@
     },
     {
       "path": "formal/models/api/api_points_dispute_lease.qnt",
-      "sha256": "cb4d457fb1ec76dac0f16707d1822070965d6e9654ed716cb0731f8b895f2ec2",
+      "sha256": "b1276ad4a0418bef302fbc1d5ee18f32c61379cd8f0bd390823abe8013c56431",
       "sources": [
         "migrations/0114_points_dispute_intake.sql",
         "workers/slopbot/appeals.ts",
+        "workers/slopbot/models.ts",
         "workers/slopbot/points-disputes.ts"
       ],
       "scenarios": [
+        "admittedScopeReplyCanCallAfterModeratorResolutionTest",
+        "admittedScopeReplyCanCallAfterReplacementDraftTest",
         "draftResumeEscalatesTest",
         "draftResumesWithoutSecondCallTest",
         "escalationWithoutDraftResumesTest",
         "expiredLeaseCannotDraftTest",
+        "refusedScopeEscalatesWithoutInventingVerdictTest",
         "resolvedRowIsFinalTest",
         "throwDoesNotStopBatchTest"
       ]
@@ -9556,9 +9580,38 @@
     },
     {
       "path": "formal/models/api/api_public_summary.qnt",
-      "sha256": "54ff9ac2c44a71ff9a62d21feae4da53b757626e4487569d7495bd2ab42803fb",
-      "sources": ["backend/slopbot/summary.ts"],
-      "scenarios": ["duplicateItemCountsOnceTest", "failureNotEmptySuccessTest"]
+      "sha256": "60b68f9f39d271176f80d449c05325dca482cc73692dbc322f91d08beb9854d1",
+      "sources": [
+        "backend/slopbot/summary.ts",
+        "migrations/0013_slopbot.sql",
+        "migrations/0045_slopbot_review_leases.sql",
+        "migrations/0048_slopbot_budget_blocks.sql"
+      ],
+      "scenarios": [
+        "actionOnlyRepositoryIsAbsentTest",
+        "capturedQueryDoesNotChangeWithLaterCompletionTest",
+        "differentClaimDoesNotMatchHistoricalBlockTest",
+        "duplicateItemCountsOnceTest",
+        "earliestCloseDefinesWindowTest",
+        "emptyDatabaseIsSuccessfulTest",
+        "equalTimeAppealAndReopenCountTest",
+        "failedOnlyRepositoryIsPresentTest",
+        "failureNotEmptySuccessTest",
+        "hiddenReviewBodyDoesNotEnterProjectionTest",
+        "latestBudgetBlockCountsTest",
+        "lostReplyDoesNotImplyConsumerObservationTest",
+        "missingCompletionUsesCreationTimeTest",
+        "newerRunningRowSuppressesOldBlockTest",
+        "newerSkippedRowSuppressesOldBlockTest",
+        "numericRepositoryOrderIsStableTest",
+        "ordinaryFailureIsNotBudgetBlockTest",
+        "parsingFailureIsNotEmptySuccessTest",
+        "reopenBeforeFirstCloseDoesNotCountTest",
+        "repeatedLabelsAndClosuresCountOneItemTest",
+        "runningAndSkippedRepositoriesAreAbsentTest",
+        "unknownItemCommentUpdatesRepositoryActivityTest",
+        "unsupportedMethodDoesNotReadDatabaseTest"
+      ]
     },
     {
       "path": "formal/models/api/api_registry_alias_transaction.qnt",
@@ -10508,6 +10561,37 @@
         "staleCleanupKeepsReplacementTest",
         "staleReturnedCallStillHasCostRecordTest",
         "unavailableProjectEscalatesWithoutCallTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/points_dispute_receipts.qnt",
+      "sha256": "eaec413076121cb7d5602b4773f4679f785b7d5f7311b78207a4d79ecbff71ea",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/points/disputes.ts",
+        "backend/points/handler.ts",
+        "migrations/0114_points_dispute_intake.sql"
+      ],
+      "scenarios": [
+        "admittedRetryMayReturnCapturedReviewAfterResolutionTest",
+        "changedStatementAfterLostReplyCannotReplaceSourceTest",
+        "concurrentDecisionReadbacksKeepFirstCommitTest",
+        "correctionAfterLostReplyStillAllowsExactRecoveryTest",
+        "correctionBeforeInsertPublishesNoReceiptTest",
+        "decisionLostReplyStillCreatesFinalNoticeTest",
+        "decisionReadFailureDoesNotEraseFinalResultTest",
+        "detailMayPairCapturedReviewWithNewDecisionReasonTest",
+        "detailViewRetainsReadSnapshotAcrossEscalationTest",
+        "dispatchedProcessorNeedNotFinishBeforeResponseTest",
+        "exactDecisionRetryRecoversLostWriteReplyTest",
+        "lostHttpReplyDoesNotEraseFinalResultTest",
+        "lostIntakeBatchReplyRetainsReceiptTest",
+        "moderatorCannotReadUnescalatedReceiptTest",
+        "omittedProcessorStillReturnsRetainedTriageTest",
+        "postCommitReadFailureDoesNotEraseDisputeTest",
+        "processorMayEscalateBeforeIntakeViewTest",
+        "recipientCannotDecideEvenWhenListedAsModeratorTest",
+        "sameOutcomeFromOtherModeratorIsNotExactRecoveryTest"
       ]
     },
     {
@@ -12708,6 +12792,40 @@
         "successorGenerationRejectsOldProgressAdoptionTest",
         "viewFailureDoesNotUndoProgressTest",
         "walletChangeBeforeCommitRejectsCapturedProgressTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/private_recovery_scan_concurrency.qnt",
+      "sha256": "749f17b872f62d02f175ba8f03da0e2565a3aefdf034704ec3cc69f15e0d2a6b",
+      "sources": [
+        "backend/security/direct-payments.ts",
+        "backend/security/direct-solana-recovery.ts",
+        "backend/security/handler.ts",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql",
+        "workers/fee-converter/solana-expiry.ts",
+        "workers/fee-converter/verified-expiry.ts"
+      ],
+      "scenarios": [
+        "authorizationChangeRefusesFullyProvedSuccessorTest",
+        "bothAbsentPlansNeedCompleteMatchingCoverageTest",
+        "committedPageSurvivesLostReplyTest",
+        "concurrentPageCASRetainsOnlyWinnerTest",
+        "failedAndAbsentPlansComposeWithoutInventedScanTest",
+        "failedCaseTransactionPreservesAllScanEvidenceTest",
+        "incompleteLocalResultCannotBorrowLaterGlobalCompletionTest",
+        "laterProviderErrorOverridesEarlierPossiblePaymentTest",
+        "lostSuccessorReplyDoesNotUndoWinnerTest",
+        "mismatchedFailedReceiptsHoldWithoutScanningTest",
+        "oldGenerationPageCanCommitAfterIndependentSuccessorTest",
+        "oneFailureAndOneAbsenceHoldTest",
+        "onlyOneConcurrentCompleteCallerPublishesSuccessorTest",
+        "possiblePaymentPreventsRetirementAcrossOtherPlanTest",
+        "progressWinnerCanInvalidateConcurrentCompleteCallerTest",
+        "secondCallerReusesFirstCallersCompletedRowsTest",
+        "secondProviderTipMismatchCannotCompletePlanTest",
+        "staleProgressRefusesAtMaximumRevisionTest",
+        "targetChangeRefusesFullyProvedSuccessorTest"
       ]
     },
     {
@@ -15834,6 +15952,31 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_bounded_body.qnt",
+      "sha256": "53984b82fa95c53c730b291c7fc7758e6e27acec93ac3ae03d466fbf0f4227a3",
+      "sources": ["src/lib/browser-json.ts"],
+      "scenarios": [
+        "absentBodyRefusedWithoutCancellationTest",
+        "boundWithoutEofIsNotSuccessTest",
+        "emptyBytesNeedEofTest",
+        "emptyJsonDecodesAsTextButRejectsAtParseTest",
+        "exactBoundInTwoFragmentsTest",
+        "extraFragmentAfterExactBoundRefusedTest",
+        "headerOversizeCancelsBeforeReaderTest",
+        "invalidHeaderCancellationFailureKeepsHeaderErrorTest",
+        "invalidHeaderWithoutBodyKeepsHeaderRefusalTest",
+        "malformedJsonIsSeparateFromUtf8FailureTest",
+        "malformedUtf8RefusedAfterReleaseTest",
+        "oversizedFirstFragmentNeverBufferedTest",
+        "pendingCancellationHasNoTerminalClaimTest",
+        "readFailureCancelsAndReleasesTest",
+        "rejectedCancellationDoesNotHideReadErrorTest",
+        "textReaderDoesNotParseJsonTest",
+        "validJsonCompletesAfterEofAndReleaseTest",
+        "withinBoundHeaderDoesNotRequireExactLengthTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_bounty_payment_parent.qnt",
       "sha256": "a10ce2ab22f03dcb09b9d9317d559b3c2543724befdf8f9b99aae1a0a0d59670",
       "sources": [
@@ -17933,9 +18076,30 @@
     },
     {
       "path": "formal/models/ui/ui_transport.qnt",
-      "sha256": "81ac338b14423f7e132db94de0f5716bccfde4f3223d04416b8215e153f82a48",
+      "sha256": "6d04006ef0935ba727311e2d699d12033744c4008d625b07514c6f572aaf62ae",
       "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
-      "scenarios": ["bodyTimeoutTest", "invalidTest", "validTest"]
+      "scenarios": [
+        "abortedOlderRequestDoesNotAbortIndependentRetryTest",
+        "apiErrorRetainsStatusAndDetailsTest",
+        "arrayHttpErrorKeepsStatusTest",
+        "bodyAbortMapsLikeTimeoutTest",
+        "bodyDeadlineDoesNotBecomeHttpRefusalTest",
+        "bodyNetworkFailureIsUnreadableHttpResponseTest",
+        "callerCannotInjectCancellationIntoProjectWrapperTest",
+        "headerDeadlineMapsToNetworkErrorTest",
+        "headerNetworkErrorRetainsNetworkClassificationTest",
+        "malformedErrorBodyIsUnreadableFirstTest",
+        "malformedSuccessBodyIsUnreadableTest",
+        "missingErrorCodeFallsBackIndependentlyTest",
+        "missingErrorMessageFallsBackIndependentlyTest",
+        "ownerAbortSurvivesResponseHeadersTest",
+        "primitiveHttpErrorKeepsStatusTest",
+        "rawHeaderErrorIsNotMappedTest",
+        "rawHttpErrorStillReturnsReadableBodyTest",
+        "successValueIsNotSessionAuthorityTest",
+        "timeoutAfterConsumedBodyCannotUndoValueTest",
+        "timeoutAfterDeliveryCannotUndoValueTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_vault_prompt_ownership.qnt",

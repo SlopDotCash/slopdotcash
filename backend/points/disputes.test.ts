@@ -128,6 +128,121 @@ test("a manual award recipient can retain a private dispute and retry without du
   ).toEqual({ n: 0 });
 });
 
+test("a committed intake survives a lost batch reply and exact retry keeps one receipt", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The accepted work belongs to the earlier UTC month.",
+  };
+  const batch = h.db.batch.bind(h.db);
+  let committed = false;
+  h.db.batch = async (statements) => {
+    await batch(statements);
+    committed = true;
+    throw new Error("Points intake batch reply lost");
+  };
+  try {
+    expect((await h.call("", input)).status).toBe(500);
+  } finally {
+    h.db.batch = batch;
+  }
+  expect(committed).toBe(true);
+  expect(h.started).toEqual([]);
+  const retained = h.sqlite
+    .query("SELECT appeal_key,statement FROM points_disputes")
+    .get() as { appeal_key: string; statement: string } | null;
+  if (!retained) throw new Error("Committed Points dispute missing");
+  expect(retained.statement).toBe(input.reason);
+  const retry = await h.call("", input);
+  expect(retry.status).toBe(201);
+  expect((await retry.json()).id).toBe(retained.appeal_key);
+  expect(h.started).toEqual([retained.appeal_key]);
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_disputes").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM notifications").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_revisions").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM payment_obligations").get(),
+  ).toEqual({ n: 0 });
+});
+
+test("a committed decision survives a lost batch reply and exact retry keeps one final notice", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "Review the month credited to this award.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "Independent review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  const decision = {
+    action: "uphold",
+    reason: "Keep the award and append the corrected attribution.",
+  };
+  const batch = h.db.batch.bind(h.db);
+  let committed = false;
+  h.db.batch = async (statements) => {
+    await batch(statements);
+    committed = true;
+    throw new Error("Points decision batch reply lost");
+  };
+  try {
+    expect((await h.call(`/${created.id}`, decision, otherToken)).status).toBe(
+      500,
+    );
+  } finally {
+    h.db.batch = batch;
+  }
+  expect(committed).toBe(true);
+  expect(
+    h.sqlite
+      .query(
+        "SELECT resolution,resolver_github_id,resolution_reason FROM points_disputes",
+      )
+      .get(),
+  ).toEqual({
+    resolution: "upheld",
+    resolver_github_id: moderator.githubId,
+    resolution_reason: decision.reason,
+  });
+  const retry = await h.call(`/${created.id}`, decision, otherToken);
+  expect(retry.status).toBe(200);
+  expect((await retry.json()).state).toBe("resolved");
+  expect(
+    (
+      await h.call(
+        `/${created.id}`,
+        { ...decision, reason: "A different explanation." },
+        otherToken,
+      )
+    ).status,
+  ).toBe(409);
+  expect(
+    h.sqlite
+      .query(
+        "SELECT COUNT(*) AS n FROM notifications WHERE event_key LIKE '%:resolved'",
+      )
+      .get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM points_revisions").get(),
+  ).toEqual({ n: 1 });
+  expect(
+    h.sqlite.query("SELECT COUNT(*) AS n FROM payment_obligations").get(),
+  ).toEqual({ n: 0 });
+});
+
 test("a superseded revision cannot open a dispute, but the current revision can", async () => {
   const h = await fixture();
   const { id: _, ...record } = h.revision;
