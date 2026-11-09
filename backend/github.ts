@@ -1,5 +1,9 @@
 /** GitHub REST plumbing shared by the backend readers. */
-import { encodeBase64Url, ownedBuffer } from "../src/lib/byte-encoding";
+import {
+  decodeBase64,
+  encodeBase64Url,
+  ownedBuffer,
+} from "../src/lib/byte-encoding";
 
 export const GITHUB_API = "https://api.github.com";
 export const GHSA =
@@ -57,7 +61,7 @@ function pkcs8FromPem(pem: string): Uint8Array {
   const body = pem
     .replace(/-----(BEGIN|END) (RSA )?PRIVATE KEY-----/gu, "")
     .replace(/\s+/gu, "");
-  const der = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+  const der = decodeBase64(body);
   if (!pkcs1) return der;
   const algorithm = [
     0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,

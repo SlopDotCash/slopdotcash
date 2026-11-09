@@ -2,7 +2,7 @@ import type { D1TransactionalDatabase as D1Database } from "../d1";
 import { json } from "../http";
 
 /** Public per-repository Slopbot aggregates (PRD BOT-07, LDR-04). */
-export interface SlopbotRepositorySummary {
+interface SlopbotRepositorySummary {
   installationIds: number[];
   repositoryId: number;
   itemsReviewed: number;

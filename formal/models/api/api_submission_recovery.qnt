@@ -1,4 +1,5 @@
 // @source backend/security/submissions.ts
+// @source backend/security/submission-store.ts
 // @source backend/security/report-intake.ts
 // @source backend/security/verified-intake.ts
 // @source migrations/0059_private_security_submissions.sql
@@ -105,14 +106,14 @@ module api_submission_recovery {
     s' = s.with("copies", s.copies.union(Set(copy))) }
   action providerResult(id: int, outcome: str, listingOk: bool): bool = {
     val sender = s.senders.get(id)
-    val next = if (outcome == "created") "submitted" else if (outcome == "uncertain") "uncertain"
+    val nextPhase = if (outcome == "created") "submitted" else if (outcome == "uncertain") "uncertain"
       else if (outcome == "throttled") "draft" else "failed"
     val chosen = if (outcome != "created") 0 else if (sender.attempt > 1 and listingOk) earliest else sender.attempt
     all { sender.phase == "provider", Set("created", "uncertain", "throttled", "terminal", "retryable").contains(outcome),
       outcome == "created" implies s.copies.contains(sender.attempt),
       Set("terminal", "retryable", "throttled").contains(outcome) implies not(s.copies.contains(sender.attempt)),
       s' = s.with("senders", s.senders.set(id, sender.with("phase", "outcome-write")
-        .with("outcome", outcome).with("nextState", next).with("chosen", chosen))) }
+        .with("outcome", outcome).with("nextState", nextPhase).with("chosen", chosen))) }
   }
   action commitOutcome(id: int): bool = {
     val sender = s.senders.get(id)

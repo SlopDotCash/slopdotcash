@@ -11,10 +11,7 @@ import { VALUE_RUBRIC_VERSION } from "../../src/lib/value-assessment";
 import { validValueContextSelections } from "./value-context";
 import { validMergeRecipe } from "./value-merge-profile";
 import { isValueProducer } from "./value-producer";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   type WorkUnitRecord,
   type workUnitHistory,
@@ -22,6 +19,7 @@ import {
   workUnitSourceBindings,
 } from "./value-work-unit-journal";
 import { validateWorkUnitAssessment } from "./value-work-unit-review";
+import type { WorkUnitSource } from "./value-work-unit-types";
 import { retainedAncestors } from "./verified-retained-binding";
 import {
   type CurrentOwner,

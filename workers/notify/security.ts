@@ -3,12 +3,11 @@ import {
   issueEmailUnsubscribeToken,
 } from "../../backend/notifications/email-destinations";
 import type { RepositoryAccessReader } from "../../backend/projects/setup";
+
 /** SEC-16 restricted pilot. No public route, caller-supplied destination or case content. */
 
-import {
-  type SecurityD1Database,
-  securityNotificationAccess,
-} from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
+import { securityNotificationAccess } from "../../backend/security/handler";
 import { reportingAuthorityUnavailable } from "../../backend/security/project-access";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {

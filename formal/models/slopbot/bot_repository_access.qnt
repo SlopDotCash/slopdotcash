@@ -1,6 +1,7 @@
 // @source workers/slopbot/repository-access.ts
 // @source workers/slopbot/repository-access-entrypoint.ts
 // @source workers/slopbot/github.ts
+// @source backend/github.ts
 // Access derives from live installation, immutable repository and actor IDs,
 // never a matching mutable login alone. An unavailable lookup grants nothing.
 module bot_repository_access {

@@ -340,7 +340,6 @@ export function NotFound({
   );
 }
 
-export type { RewardAmountAsset } from "./lib/reward-amount";
 export {
   formatMicroUsdc,
   formatRewardMinor,

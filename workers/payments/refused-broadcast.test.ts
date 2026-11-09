@@ -24,7 +24,7 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "../payment-executor/core";
+import type { JournalStore } from "../payment-executor/binding-shared";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
 import { reconcileFailedAttempts } from "./reconcile";
@@ -467,7 +467,6 @@ test("a payment the node refused is resent with the same bytes after the gas wal
   const signed = await journal.get<{ rawTransaction: Hex; transactionId: Hex }>(
     `pay:${attempt?.id}`,
   );
-  expect(signed).toBeDefined();
   expect(parseTransaction(signed?.rawTransaction as Hex).nonce).toBe(0);
 
   // The operator funds the relayer's gas wallet; the next scheduled run follows.

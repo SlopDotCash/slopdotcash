@@ -22,7 +22,7 @@ export const PRIVATE_BOUNTY_TESTING =
   "Use local tests with synthetic data and funds. Do not exploit live systems or access other users' data.";
 export const PRIVATE_BOUNTY_DISCLOSURE =
   "Keep reports private until the owner approves disclosure.";
-export type BountyAmountDraft = Omit<SecurityBountyAmount, "asset"> & {
+type BountyAmountDraft = Omit<SecurityBountyAmount, "asset"> & {
   asset: RewardAssetChoice;
 };
 

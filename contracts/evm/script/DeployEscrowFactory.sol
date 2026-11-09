@@ -21,7 +21,7 @@ abstract contract DeployEscrowFactory {
     DeploymentVm internal constant vm = DeploymentVm(address(uint160(uint256(keccak256("hevm cheat code")))));
     /// @dev Production and test deployments permit immediate award payment.
     uint64 public constant BINDING_DELAY = 0;
-    /// @dev Slop's published Base platform-fee recipient (src/lib/platform-fee-recipients.mjs). Default on Base only.
+    /// @dev Slop's published Base platform-fee recipient, chosen by the repository owner on 9 October 2026 (RFC #472). Default on Base only.
     address public constant BASE_PUBLISHED_FEE_RECIPIENT = 0x8f77C37D8650776bFe73c9b12B15209eE15D9b86;
 
     event FactoryDeployed(

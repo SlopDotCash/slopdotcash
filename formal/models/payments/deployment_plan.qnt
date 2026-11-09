@@ -5,6 +5,7 @@
 // @source workers/payment-executor/signer-stacks.mjs
 // @source scripts/prepare-payment-deployments.ts
 // @source scripts/release-referral.ts
+// @source scripts/worker-release.mjs
 // Pure preparation is distinct from operator-authorized service publication.
 // A disabled network with retained obligations receives stop code; a disabled
 // network with no existing service is not provisioned solely by configuration.

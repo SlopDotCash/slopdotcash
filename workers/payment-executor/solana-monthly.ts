@@ -1,6 +1,7 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
@@ -29,17 +30,18 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   acceptsPayoutFee,
   ordinaryFee,
 } from "../../src/lib/payments/contracts";
-import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,
   readSolanaAccount,
   solanaTransactionStatus,
+  verifiedSignerSignature,
 } from "./solana";
 
 const discriminator = (name: string) =>
@@ -128,20 +130,13 @@ async function submit(
     if (retired && !existing) throw new Error("Monthly attempt disappeared");
     if (existing)
       await store.put(`${key}:retired:${existing.generation}`, existing);
-    const signature = await env.SOLANA_SIGNER.signMessage(msg);
-    if (
-      signature.length !== 64 ||
-      !ed25519.verify(signature, msg, bytes(env.SOLANA_SIGNER.address), {
-        zip215: false,
-      })
-    )
-      throw new Error("Invalid signer response");
+    const signature = await verifiedSignerSignature(env.SOLANA_SIGNER, msg);
     const raw = concat(Uint8Array.of(1), signature, msg);
     if (raw.length > 1232) throw new Error("Monthly transaction too large");
     const candidate: Attempt = {
       fingerprint,
       transactionId: solanaBase58(signature),
-      raw: btoa(String.fromCharCode(...raw)),
+      raw: encodeBase64(raw),
       lastValidBlockHeight: latest.value.lastValidBlockHeight,
       generation: (existing?.generation ?? 0) + 1,
     };

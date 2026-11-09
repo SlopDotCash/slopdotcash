@@ -16,10 +16,7 @@ import {
 import { scanNeedsSpecialist } from "../../workers/verified-policy";
 import { PROJECT_ID } from "../http";
 import {
-  ARTIFACT_ANALYSES,
-  ARTIFACT_STATES,
-  ARTIFACT_TYPES,
-  CONFIRMATION_BASES,
+  type CONFIRMATION_BASES,
   count,
   digest,
   dispositionProblems,
@@ -27,11 +24,15 @@ import {
   list,
   object,
   oneOf,
+  parseArtifact,
+  parseConfirmation,
+  parseDependencyLocks,
+  parseFinding,
   parseVettingResult,
   REVIEW_STATUSES,
   REVIEW_VERDICTS,
   reject,
-  SEVERITIES,
+  type SEVERITIES,
   text,
   timestamp,
   type VettingArtifact,
@@ -202,7 +203,7 @@ function review(value: unknown, name: string): ScanReview {
 }
 
 /** Parses a bounded scan result exactly; unknown or missing fields refuse it. */
-export function parseVettingScanResult(value: unknown): VettingScanResult {
+function parseVettingScanResult(value: unknown): VettingScanResult {
   const body = object(value, "result", [
     "schemaVersion",
     "assessmentId",
@@ -304,29 +305,7 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
       body.reusedAssessmentId === body.assessmentId)
   )
     reject("reusedAssessmentId must name another assessment or be null");
-  const confirmation =
-    body.confirmation === null
-      ? null
-      : (() => {
-          const value = object(body.confirmation, "confirmation", [
-            "basis",
-            "rule",
-            "evidence",
-          ]);
-          const evidence = list(
-            value.evidence,
-            "confirmation.evidence",
-            20,
-            (item, name) => text(item, name, 300),
-          );
-          if (evidence.length === 0)
-            reject("confirmation.evidence needs at least one reference");
-          return {
-            basis: oneOf(value.basis, "confirmation.basis", CONFIRMATION_BASES),
-            rule: label(value.rule, "confirmation.rule"),
-            evidence,
-          };
-        })();
+  const confirmation = parseConfirmation(body.confirmation);
   const primaryReview = review(body.primaryReview, "primaryReview");
   const specialistReview =
     body.specialistReview === null
@@ -364,18 +343,7 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
             ),
           }
         : {}),
-      dependencyLocks: list(
-        assessed.dependencyLocks,
-        "assessed.dependencyLocks",
-        200,
-        (item, name) => {
-          const lock = object(item, name, ["path", "sha256"]);
-          return {
-            path: text(lock.path, `${name}.path`, 500),
-            sha256: digest(lock.sha256, `${name}.sha256`),
-          };
-        },
-      ),
+      dependencyLocks: parseDependencyLocks(assessed.dependencyLocks),
     },
     scan: {
       runId: label(scan.runId, "scan.runId"),
@@ -419,35 +387,7 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
     primaryReview,
     specialistReview,
     artifacts: list(body.artifacts, "artifacts", 500, (item, name) => {
-      const artifact = object(item, name, [
-        "sha256",
-        "parentSha256",
-        "origin",
-        "path",
-        "type",
-        "state",
-        "analysis",
-        "requestedExecution",
-      ]);
-      if (typeof artifact.requestedExecution !== "boolean")
-        reject(`${name}.requestedExecution must be a boolean`);
-      const parsed: VettingArtifact = {
-        sha256: digest(artifact.sha256, `${name}.sha256`),
-        parentSha256:
-          artifact.parentSha256 === null
-            ? null
-            : digest(artifact.parentSha256, `${name}.parentSha256`),
-        origin: text(artifact.origin, `${name}.origin`, 500),
-        path: text(artifact.path, `${name}.path`, 500),
-        type: oneOf(artifact.type, `${name}.type`, ARTIFACT_TYPES),
-        state: oneOf(artifact.state, `${name}.state`, ARTIFACT_STATES),
-        analysis: oneOf(
-          artifact.analysis,
-          `${name}.analysis`,
-          ARTIFACT_ANALYSES,
-        ),
-        requestedExecution: artifact.requestedExecution as boolean,
-      };
+      const parsed = parseArtifact(item, name);
       if (
         parsed.state === "released" &&
         !["static-clean", "detonation-clean"].includes(parsed.analysis)
@@ -455,24 +395,11 @@ export function parseVettingScanResult(value: unknown): VettingScanResult {
         reject("An artifact leaves quarantine only with a clean analysis");
       return parsed;
     }),
-    findings: list(body.findings, "findings", 200, (item, name) => {
-      const finding = object(item, name, [
-        "severity",
-        "category",
-        "summary",
-        "evidence",
-      ]);
-      return {
-        severity: oneOf(finding.severity, `${name}.severity`, SEVERITIES),
-        category: oneOf(
-          finding.category,
-          `${name}.category`,
-          FINDING_CATEGORIES,
-        ),
-        summary: text(finding.summary, `${name}.summary`, 500),
-        evidence: text(finding.evidence, `${name}.evidence`, 300),
-      };
-    }),
+    findings: list(body.findings, "findings", 200, (item, name) =>
+      parseFinding(item, name, (value, field) =>
+        oneOf(value, field, FINDING_CATEGORIES),
+      ),
+    ),
     confirmation,
   };
   return result;

@@ -560,6 +560,8 @@ test("Inbox focus during a write retains the completed mutation readback", async
       return route.fulfill({
         json: { recipientGithubId: "42", automatic: false, submissions: [] },
       });
+    // Ordering barrier: answered after any request the focus handler issued.
+    if (path === "/api/v1/__focus-barrier") return route.fulfill({ json: {} });
     if (path === "/api/v1/notifications/read" && request.method() === "POST") {
       expect(request.headers()["x-slop-expected-github-id"]).toBe("42");
       expect(request.postDataJSON()).toEqual({
@@ -603,9 +605,14 @@ test("Inbox focus during a write retains the completed mutation readback", async
       .getByRole("button", { name: "Mark shown as read", exact: true })
       .click();
     await started;
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    // The focus task has had an opportunity to request the pre-write state.
-    await page.waitForTimeout(500);
+    await page.evaluate(async () => {
+      window.dispatchEvent(new Event("focus"));
+      // A focus refresh starts its read synchronously; this later request
+      // returns only after the browser has dispatched any such read.
+      await (await fetch("/api/v1/__focus-barrier")).json();
+    });
+    // The write is still pending, so focus must not read the pre-write state.
+    expect(reads).toBe(1);
     finish();
     await expect(page.getByText("All read.", { exact: true })).toBeVisible();
     await expect(

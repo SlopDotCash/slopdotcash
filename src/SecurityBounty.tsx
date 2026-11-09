@@ -25,8 +25,8 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -87,6 +87,7 @@ import {
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
 import { useTimeBoundary } from "./lib/use-time-boundary";
+import { securityBountyShares } from "./lib/verified-security-split";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
@@ -1429,26 +1430,43 @@ function ClaimForm({
         projects={programProjects}
         value={projectId}
       />
-      <label>
-        GitHub advisory ID
-        <input
-          autoComplete="off"
-          onChange={(event) => setAdvisory(event.target.value)}
-          pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
-          placeholder="GHSA-xxxx-xxxx-xxxx"
-          required
-          spellCheck={false}
-          value={advisory}
-        />
-        <small className="field-hint">
-          Only the ID. Do not paste report details here.
-        </small>
-      </label>
+      <AdvisoryIdField
+        hint="Only the ID. Do not paste report details here."
+        onChange={setAdvisory}
+        value={advisory}
+      />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
         {busy ? "Linking…" : "Link my GitHub report"}
       </button>
     </form>
+  );
+}
+
+/** A reporter's GHSA advisory ID input; only the ID, never report details. */
+function AdvisoryIdField({
+  hint,
+  onChange,
+  value,
+}: {
+  hint: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label>
+      GitHub advisory ID
+      <input
+        autoComplete="off"
+        onChange={(event) => onChange(event.target.value)}
+        pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
+        placeholder="GHSA-xxxx-xxxx-xxxx"
+        required
+        spellCheck={false}
+        value={value}
+      />
+      <small className="field-hint">{hint}</small>
+    </label>
   );
 }
 
@@ -1505,21 +1523,11 @@ function DirectVerifyForm({
         projects={programProjects}
         value={projectId}
       />
-      <label>
-        GitHub advisory ID
-        <input
-          autoComplete="off"
-          onChange={(event) => setAdvisory(event.target.value)}
-          pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
-          placeholder="GHSA-xxxx-xxxx-xxxx"
-          required
-          spellCheck={false}
-          value={advisory}
-        />
-        <small className="field-hint">
-          Only the ID. Slop checks with GitHub that you are its author.
-        </small>
-      </label>
+      <AdvisoryIdField
+        hint="Only the ID. Slop checks with GitHub that you are its author."
+        onChange={setAdvisory}
+        value={advisory}
+      />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
         {busy ? "Opening GitHub…" : "Authorize GitHub and verify"}
@@ -2945,8 +2953,12 @@ function ActionForm({
             field.decimals,
           );
           const fullAward = isFullAwardSplit(record.terms?.split);
-          const exact =
-            minor !== null && (fullAward || BigInt(minor) % 4n === 0n);
+          const shares =
+            minor !== null &&
+            BigInt(minor) > 0n &&
+            (fullAward || BigInt(minor) % 4n === 0n)
+              ? securityBountyShares(BigInt(minor), fullAward)
+              : null;
           return (
             <label key={field.name}>
               {field.label}
@@ -2961,10 +2973,10 @@ function ActionForm({
               {hint}
               {minor !== null && record.terms ? (
                 <small className="field-hint" role="status">
-                  {exact
+                  {shares
                     ? fullAward
-                      ? `Researcher ${money(minor, record.terms)} · no Slop share`
-                      : `Researcher ${money(((BigInt(minor) * 3n) / 4n).toString(), record.terms)} · Slop ${money((BigInt(minor) / 4n).toString(), record.terms)}`
+                      ? `Researcher ${money(shares.researcher.toString(), record.terms)} · no Slop share`
+                      : `Researcher ${money(shares.researcher.toString(), record.terms)} · Slop ${money(shares.slop.toString(), record.terms)}`
                     : "This amount cannot be split exactly 75/25."}
                 </small>
               ) : null}
@@ -3377,17 +3389,13 @@ function CaseDetail({
   const recoveryAction = useAction();
   const [state, reload, replaceData] = useSecurityData<{
     case: SecurityCase;
-  }>(
-    `security-cases/${encodeURIComponent(caseId)}`,
-  );
+  }>(`security-cases/${encodeURIComponent(caseId)}`);
   const replace = useCallback(
     (value: { case: SecurityCase }) =>
-      replaceData(
-        value,
-        (previous) =>
-          value.case.revision === previous.case.revision
-            ? "refresh"
-            : value.case.revision > previous.case.revision,
+      replaceData(value, (previous) =>
+        value.case.revision === previous.case.revision
+          ? "refresh"
+          : value.case.revision > previous.case.revision,
       ),
     [replaceData],
   );
@@ -3439,6 +3447,34 @@ function CaseDetail({
     record.settlement?.generation !== undefined &&
     typeof directRequest?.solana?.transaction === "string" &&
     typeof directRequest.solana.messageId === "string";
+  /** Refuses a recovery signature once the request shown has changed. */
+  const stillRecoverable = async (
+    request: (
+      recovery: NonNullable<SecurityCase["settlement"]>["recovery"],
+    ) => unknown,
+    message: string,
+    isCurrent?: () => boolean,
+  ) => {
+    const current = await privateRequest<{ case: SecurityCase }>(
+      "GET",
+      `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
+    );
+    if (isCurrent && !isCurrent()) return;
+    if (
+      current.case.revision !== record.revision ||
+      !current.case.allowedActions.includes("recover-payment") ||
+      current.case.settlement?.recovery?.generation !==
+        record.settlement?.recovery?.generation ||
+      JSON.stringify(request(current.case.settlement?.recovery)) !==
+        JSON.stringify(request(record.settlement?.recovery))
+    ) {
+      replace(current);
+      onChanged();
+      throw new Error(message);
+    }
+  };
   const authorizeExistingPayment = async (isCurrent?: () => boolean) => {
     const current = await privateRequest<{ case: SecurityCase }>(
       "GET",
@@ -3731,35 +3767,13 @@ function CaseDetail({
                   generation={record.settlement.recovery.generation}
                   payer={record.settlement.recovery.payer}
                   messages={record.settlement.recovery.messages}
-                  authorize={async (isCurrent) => {
-                    const current = await privateRequest<{
-                      case: SecurityCase;
-                    }>(
-                      "GET",
-                      `security-cases/${encodeURIComponent(record.id)}`,
-                      undefined,
-                      { isCurrent },
-                    );
-                    if (isCurrent && !isCurrent()) return;
-                    if (
-                      current.case.revision !== record.revision ||
-                      !current.case.allowedActions.includes(
-                        "recover-payment",
-                      ) ||
-                      current.case.settlement?.recovery?.generation !==
-                        record.settlement?.recovery?.generation ||
-                      JSON.stringify(
-                        current.case.settlement?.recovery?.messages,
-                      ) !==
-                        JSON.stringify(record.settlement?.recovery?.messages)
-                    ) {
-                      replace(current);
-                      onChanged();
-                      throw new Error(
-                        "The recovery request changed. Refresh before signing.",
-                      );
-                    }
-                  }}
+                  authorize={(isCurrent) =>
+                    stillRecoverable(
+                      (recovery) => recovery?.messages,
+                      "The recovery request changed. Refresh before signing.",
+                      isCurrent,
+                    )
+                  }
                   verify={async (signatures, isCurrent) => {
                     const response = await privateRequest<{
                       case: SecurityCase;
@@ -3804,34 +3818,12 @@ function CaseDetail({
                       record.settlement.recovery.cancellationRequest,
                     ]}
                     cancellation
-                    authorize={async () => {
-                      const current = await privateRequest<{
-                        case: SecurityCase;
-                      }>(
-                        "GET",
-                        `security-cases/${encodeURIComponent(record.id)}`,
-                      );
-                      if (
-                        !current.case.allowedActions.includes(
-                          "recover-payment",
-                        ) ||
-                        current.case.settlement?.recovery?.generation !==
-                          record.settlement?.recovery?.generation ||
-                        JSON.stringify(
-                          current.case.settlement?.recovery
-                            ?.cancellationRequest,
-                        ) !==
-                          JSON.stringify(
-                            record.settlement?.recovery?.cancellationRequest,
-                          )
-                      ) {
-                        replace(current);
-                        onChanged();
-                        throw new Error(
-                          "The recovery request changed. Refresh the case before signing.",
-                        );
-                      }
-                    }}
+                    authorize={() =>
+                      stillRecoverable(
+                        (recovery) => recovery?.cancellationRequest,
+                        "The recovery request changed. Refresh the case before signing.",
+                      )
+                    }
                     authorizeVerification={async () => {
                       const current = await privateRequest<{
                         case: SecurityCase;

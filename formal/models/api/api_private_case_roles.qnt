@@ -1,5 +1,6 @@
 // @source backend/security/handler.ts
 // @source backend/security/project-access.ts
+// @source backend/security/case-store.ts
 // Authority abstraction of caseRoles, readCase and allowedActions.
 // Actors: 0 stranger, 1 reporter, 2 program maintainer, 3 financial approver,
 // 4 moderator, 5 assigned triager. Reporter also occurs in program approvers:

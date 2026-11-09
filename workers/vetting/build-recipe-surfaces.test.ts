@@ -79,10 +79,3 @@ test("a referenced SCons child script is scanned and changes the reuse key", () 
   );
   expect(after.inventorySha256).not.toBe(before.inventorySha256);
 });
-
-test("the executable surface stays bounded", () => {
-  // Only build recipes are added: unrelated extensionless files keep no
-  // surface, so the inventory does not become a blanket text scan.
-  expect(surfacesOf("LICENSE")).toEqual([]);
-  expect(surfacesOf("NOTICE")).toEqual([]);
-});

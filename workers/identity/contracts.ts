@@ -5,7 +5,7 @@ import {
 } from "../../src/lib/deployment";
 export const IDENTITY_PUBLIC_ORIGIN = "https://identity.slop.cash";
 export const IDENTITY_INTERNAL_HOST = "identity.internal";
-export const IDENTITY_AUDIENCE = "private-trace-api";
+const IDENTITY_AUDIENCE = "private-trace-api";
 export const POINTS_AUDIENCE = "slop-points-web";
 export type IdentityAudience =
   | typeof IDENTITY_AUDIENCE

@@ -1,18 +1,11 @@
 import { valueFileReader } from "./value-blob";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type {
+  EvidenceClient,
+  FileChange,
+  IndirectRetainedFile,
+  TextVersion,
+} from "./value-evidence-types";
 import { readValueTree } from "./value-tree";
-
-interface TextVersion {
-  blobSha: string;
-  mode: string;
-  text: string;
-}
-export interface IndirectRetainedFile {
-  sourcePath: string;
-  acceptedPath: string;
-  historical: TextVersion | null;
-  accepted: TextVersion | null;
-}
 
 /** Compare complete immutable texts at the submitted historical head and the
  * observed integration tip. A verified tree proves absence; HTTP 404 does not.

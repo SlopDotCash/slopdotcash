@@ -4,6 +4,7 @@
 // @source workers/slopbot/value-tree.ts
 // @source workers/slopbot/value-file-comparisons.ts
 // @source workers/slopbot/value-binary.ts
+// @source workers/slopbot/git-object.ts
 // Three paged source entrys and two bounded blobs. Hash verification is an
 // explicit transition; plausible SHA syntax and HTTP success do not suffice.
 module bot_evidence_integrity {

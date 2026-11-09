@@ -2,8 +2,8 @@
  * Exercise the deployed Pages composition with real migrated SQLite. */
 import { expect, test } from "bun:test";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 
 const origin = "https://slop.cash";
 const token = "x".repeat(48);

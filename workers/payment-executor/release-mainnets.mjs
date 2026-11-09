@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertActiveVersionTagged } from "../../scripts/worker-release.mjs";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import {
   readMonthlySchedule,
@@ -173,21 +174,12 @@ export async function publishMainnetRelease({ directory, sha, provider }) {
         "--json",
       ]),
     );
-    const active = deployment?.versions;
-    if (
-      !Array.isArray(active) ||
-      active.length !== 1 ||
-      active[0].percentage !== 100 ||
-      !Array.isArray(versions) ||
-      !versions.some(
-        (version) =>
-          version.id === active[0].version_id &&
-          version.annotations?.["workers/tag"] === sha,
-      )
-    )
-      throw new Error(
-        `${entry.network} attester version does not match tested source`,
-      );
+    assertActiveVersionTagged({
+      deployment,
+      versions,
+      sha,
+      message: `${entry.network} attester version does not match tested source`,
+    });
     entry.published = true;
   }
   await writeFile(

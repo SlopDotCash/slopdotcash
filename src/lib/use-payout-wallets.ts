@@ -7,6 +7,7 @@ import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletWithFeatures } from "@wallet-standard/base";
 import type { StandardConnectFeature } from "@wallet-standard/features";
 import { useEffect, useState } from "react";
+import { bytesToHex, encodeBase64 } from "./byte-encoding";
 import type { EscrowFamily } from "./escrow-policy.mjs";
 
 type EthereumWallet = {
@@ -125,7 +126,7 @@ function evmWallet(
         },
         async sign(message) {
           if (!trusted()) throw new Error(conflictMessage);
-          const hex = `0x${Array.from(new TextEncoder().encode(message), (n) => n.toString(16).padStart(2, "0")).join("")}`;
+          const hex = `0x${bytesToHex(new TextEncoder().encode(message))}`;
           const signature = await provider.request({
             method: "personal_sign",
             params: [hex, address],
@@ -378,7 +379,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                 const signature = await signMessage(
                   new TextEncoder().encode(message),
                 );
-                return btoa(String.fromCharCode(...signature));
+                return encodeBase64(signature);
               },
             };
           },
@@ -407,10 +408,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                 throw new Error(
                   "The signing wallet changed. Reconnect before continuing.",
                 );
-              const result = await provider.signMessage(
-                requested,
-                "utf8",
-              );
+              const result = await provider.signMessage(requested, "utf8");
               if (result.signature.length !== 64)
                 throw new Error(
                   "Your wallet did not return a valid signature.",
@@ -424,7 +422,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                 const signature = await signMessage(
                   new TextEncoder().encode(message),
                 );
-                return btoa(String.fromCharCode(...signature));
+                return encodeBase64(signature);
               },
             };
           },

@@ -1,6 +1,6 @@
 /** Real migrated D1 statements and delivery functions; no mail provider is called. */
 import { expect, test } from "bun:test";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   claimDueDeliveries,

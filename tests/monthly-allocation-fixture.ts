@@ -2,8 +2,8 @@
 import { readdirSync } from "node:fs";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { monthlyBasesSql } from "../scripts/prepare-monthly-rewards";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { escrowAwardOrigin } from "../src/lib/payments/escrow-cycle";
-import { sha256Hex } from "../workers/identity/crypto";
 import { fixtureProject } from "./fixture-overlay.mjs";
 import { sqliteD1 } from "./sqlite-d1";
 

@@ -16,7 +16,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPublishableLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { buildEscrowCycle } from "../src/lib/payments/escrow-cycle";
-import type { MonthlyBase } from "../src/lib/payments/monthly-allocation";
+import {
+  type MonthlyBase,
+  periodBounds,
+  shiftPeriod,
+  utcPeriodOf,
+} from "../src/lib/payments/monthly-allocation";
 import {
   findHistoricalProject,
   type ProjectDefinition,
@@ -48,17 +53,12 @@ function periodEndTime(period: string): number {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(period)) {
     throw new TypeError("cycle must be YYYY-MM");
   }
-  const [yearText, monthText] = period.split("-");
-  return Date.UTC(Number(yearText), Number(monthText), 1);
+  return periodBounds(period).to;
 }
 
 /** Returns the last fully closed UTC calendar month. */
 export function previousUtcCycleId(now = new Date()): string {
-  const validNow = exactDate(now, "now");
-  const previous = new Date(
-    Date.UTC(validNow.getUTCFullYear(), validNow.getUTCMonth() - 1, 1),
-  );
-  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+  return shiftPeriod(utcPeriodOf(exactDate(now, "now")), -1);
 }
 
 /**

@@ -25,7 +25,7 @@ import {
 } from "../http";
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import { isRecord, readJsonObject } from "../trace/validation";
+import { isRecord, readStrictJsonObject } from "../trace/validation";
 import {
   chunkKey,
   chunkLayout,
@@ -280,7 +280,7 @@ export class VettingEvidence {
         "forbidden",
         "Only the evidence policy owner may close an exception case",
       );
-    const body = await readJsonObject(request);
+    const body = await readStrictJsonObject(request);
     exact(body, ["reason"]);
     const reason = text(body.reason, 1000);
     const state = await this.deps.db
@@ -1671,7 +1671,7 @@ export class VettingEvidence {
     download = false,
   ) {
     const actor = await this.operator(request),
-      body = await readJsonObject(request);
+      body = await readStrictJsonObject(request);
     exact(body, ["reason"]);
     const reason = text(body.reason);
     if (reason.trim().length < 8)

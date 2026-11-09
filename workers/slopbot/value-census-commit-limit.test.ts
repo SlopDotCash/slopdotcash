@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { collectAcceptedCommitCensus } from "./value-accepted-commit-census";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import type { ValueClient } from "./value-publication";
 
 const start = Date.parse("2026-11-01T00:00:00Z");

@@ -48,10 +48,21 @@ supervises each process group. Commands fail on violations, errors or timeouts.
 The Java 21 CI job enables the translator's real TLC regressions; without the
 environment flag those cases are reported as skipped.
 
+CI (`.github/workflows/formal.yml`) splits the sorted model list across
+parallel shards. Each shard runs `check-formal.mjs [--verify] --model=NAME`
+for its models. The final `quint` job fails unless every current model has
+exactly one passing check report and one passing verification report bound to
+the checked-out model, source and tool bytes, and it publishes the merged
+`checks.json` and `verification.json`. `tlc.json` runs four TLC workers, one
+per hosted-runner vCPU; the worker count changes no explored state space.
+
 Type, scenario and simulation stages have a 90-second limit. Finite verification
-normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds
-and `direct_bounty_journal` has 1,800 seconds. The runner records the effective
-limit and its own hash. These allowances change no model domain or invariant.
+normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds.
+The full-state `ui_bounty_payment_parent` graph and the `direct_bounty_journal`
+safety quotient have 1,800 seconds. After its reductions,
+`ui_solana_payment_pending` uses the ordinary limit. The runner
+records the effective limit and its own hash. These allowances change no model
+domain or invariant.
 A timeout is an incomplete check, never a pass.
 
 The journal uses the exact, hash-bound safety view described in
@@ -76,6 +87,77 @@ refinement. The runner refuses stale or unexpected view evidence.
   progress property. A timeout or retry bound must settle visibly; fairness
   must not assume that a payment, provider request or human approval succeeds.
 - Record finite bounds and abstractions in the model's comments.
+
+### Tracked storage key
+
+The payment-parent model tracks durable storage contents for one storage key,
+chosen at initialization. Every guard and invariant that reads `savedKeys` or
+`hashKeys` concerns the current storage key or the open prompt key, and no
+transition copies contents between keys. An untracked slot is treated as
+empty, which only adds storage replies, so each tracked run over-approximates
+the full model's behavior for that key. Generation and message values 1 and 2
+are interchangeable (the initial state uses 0 and keys are compared only for
+equality), so keys 111, 112, 213 and 214 represent all twelve storage keys.
+This removes the `3^12` product of slot subsets that kept the full graph from
+completing. Scenarios fix the tracked key they assert on. This is reviewed
+reasoning, not a machine-checked equivalence theorem.
+
+### Duplicate transition choices
+
+The payment-parent model enumerates reply payloads only for the current,
+authenticated read. Every payload for another pending read produces the same
+removal from the pending set, so one original payload represents that successor.
+Storage replies retain both current-epoch plan values and the failed-write
+successor. A stale epoch already produced the identity successor from every
+state, including epochs outside the finite choice range; the wrapper retains
+that successor once and keeps the original range guard for current replies.
+
+The Solana pending model's completion flags affect its successor only through
+`authorized && storageWorks`. The wrapper therefore retains the original
+`true, true` and `false, false` representatives. Its direct action still accepts
+all four combinations, including the separately tested refusal cases.
+
+These changes preserve each wrapper's enabledness and full-state successors.
+They change the number of equivalent nondeterministic choices and can change
+seeded simulation frequencies. They do not project state fields or change
+initial states, direct actions, invariants, finite bounds or scenario outcomes.
+
+### Write-only fields and canonical choices
+
+The following finite `step` reductions remove state that no guard, update,
+invariant or scenario expectation reads, or fix a choice among interchangeable
+values. Each model header repeats its argument. Direct actions and named
+scenarios keep the original behavior unless stated. This is reviewed
+reasoning, not a machine-checked equivalence theorem.
+
+- `payment_dispatch` no longer stores `failedGenerations`. No guard or update
+  read it; its only invariant conjunct followed from
+  `readA, readB <= generation <= 2`, which the invariant still states.
+- `bot_value_pipeline` no longer records the last action name in `last`.
+  Removing it maps each state to one reduced state with the same enabled
+  actions and successors. The conformance test locates the tick by the clock
+  change, which only `tick` performs.
+- `direct_bounty_journal` reserves the fresh request ID `used.size() + 1`.
+  Request IDs are opaque and compared only with each other or with 0, and
+  `used` only grows, so any other unused ID reaches a permuted copy of a
+  canonical state with the same invariant truth. The safety view keeps `used`,
+  so its congruence argument still holds (see the audit record).
+- `ui_solana_payment_pending` leaves the write-only `warnings` empty in `step`
+  and edits drafts 0..3 only. Draft 4 and 0 both fail `validSignature`,
+  neither falls back to the stored record, and `draft` has no other reader;
+  dedicated scenarios check the equivalence. Named scenarios keep `warnings`.
+- `ui_submitted_payment_recovery` records the write-only `error` flag as false
+  in `step`, through the same projection as its stored payloads. Named
+  scenarios, `concreteStep` and `unboundedStep` keep the exact flag.
+- `ui_review_pool` ingests the smallest unseen review ID. `seen` is read only
+  when it is complete, so every ingestion order reaches the same allocation.
+- `binding_veto_policy` keeps cancellation and payment membership for the
+  current version only. Guards read only the current version, `bind` moves to
+  a version neither set contains, and an older version's membership is frozen
+  after the disjointness invariant checked it.
+- `referral_root_history` stores a voided epoch in one fixed form. Nothing
+  un-voids an epoch and every reader skips voided epochs, so only the list
+  length and the already checked `priorMax` range remain observable.
 
 ## Inventory and review
 

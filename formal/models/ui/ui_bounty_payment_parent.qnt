@@ -9,15 +9,28 @@
 // Mode is the projection of a structurally valid backend case, not a parser
 // proof. The backend supplies one chain family and role-filtered ownerRequest.
 // This model covers parent/keyed-child lifetime, not wallet signing/finality.
-// Authored by source inspection only; no check was run for this revision.
+// Durable storage slots are tracked for one nondeterministically chosen key.
+// Every guard and invariant that reads savedKeys or hashKeys concerns only
+// the current storage key or the open prompt key, and no transition moves
+// contents between keys. An untracked slot is therefore over-approximated as
+// empty, which only adds storage replies. Checking every tracked key covers
+// the per-key invariants of the full product without its 3^12 slot subsets.
+// Generation and message values 1 and 2 are interchangeable: the initial
+// state uses 0, every choice ranges over both values, and keys are compared
+// only for equality. Swapping either label is a model automorphism, so keys
+// 111, 112, 213 and 214 represent the orbits of all twelve storage keys.
 module ui_bounty_payment_parent {
   type State = {actor:int,phase:str,reads:int,replacements:int,active:int,pending:Set[int],warning:bool,
     generation:int,message:int,plan:int,mode:int,epoch:int,identityChecks:int,storageReady:bool,storagePending:bool,
     journal:bool,journalPlan:int,preflight:bool,walletOpen:bool,promptEpoch:int,promptKey:int,promptPlan:int,
-    savedKeys:Set[int],hashKeys:Set[int]}
+    tracked:int,savedKeys:Set[int],hashKeys:Set[int]}
   var s: State
-  action init=s'={actor:1,phase:"loading",reads:0,replacements:0,active:0,pending:Set(),warning:false,
-    generation:0,message:0,plan:0,mode:0,epoch:0,identityChecks:0,storageReady:false,storagePending:false,journal:false,journalPlan:0,preflight:false,walletOpen:false,promptEpoch:0,promptKey:0,promptPlan:0,savedKeys:Set(),hashKeys:Set()}
+  pure val storageKeys=Set(111,112,121,122,213,214,215,216,223,224,225,226)
+  def keep(slots:Set[int]):Set[int]=slots.intersect(Set(s.tracked))
+  action initTracking(tracked:int):bool=s'={actor:1,phase:"loading",reads:0,replacements:0,active:0,pending:Set(),warning:false,
+    generation:0,message:0,plan:0,mode:0,epoch:0,identityChecks:0,storageReady:false,storagePending:false,journal:false,journalPlan:0,preflight:false,walletOpen:false,promptEpoch:0,promptKey:0,promptPlan:0,tracked:tracked,savedKeys:Set(),hashKeys:Set()}
+  pure val trackedRepresentatives=Set(111,112,213,214)
+  action init={nondet tracked=trackedRepresentatives.oneOf() initTracking(tracked)}
   val storageKey=if(s.mode==2)200+s.generation*10+s.message*2+s.actor else 100+s.generation*10+s.actor
   val sendChild=s.mode==1 or s.mode==2
   val mismatched=s.mode==1 and s.journal and s.journalPlan!=s.plan
@@ -72,7 +85,7 @@ module ui_bounty_payment_parent {
     epoch!=s.epoch or not(s.storagePending) or not(s.savedKeys.contains(storageKey)) or hasJournal,
     s'=if(epoch==s.epoch and s.storagePending and sendChild and s.actor>0)
       s.with("storageReady",true).with("storagePending",false).with("journal",hasJournal).with("journalPlan",if(hasJournal)plan else 0)
-        .with("savedKeys",if(hasJournal)s.savedKeys.union(Set(storageKey)) else s.savedKeys)
+        .with("savedKeys",if(hasJournal)keep(s.savedKeys.union(Set(storageKey))) else s.savedKeys)
       else s}
   // Identity/plan preflight binds this invocation. Both send children check
   // their current mounted lifetime again immediately before recording/opening
@@ -86,11 +99,11 @@ module ui_bounty_payment_parent {
     s'=s.with("preflight",false).with("walletOpen",true)
       .with("journal",if(s.promptEpoch==s.epoch)true else s.journal)
       .with("journalPlan",if(s.promptEpoch==s.epoch)s.promptPlan else s.journalPlan)
-      .with("savedKeys",s.savedKeys.union(Set(s.promptKey)))}
+      .with("savedKeys",keep(s.savedKeys.union(Set(s.promptKey))))}
   // The promise retains the old storage key after its component unmounts.
   // A returned hash is durable evidence to check, not proof of payment.
   action walletReturns(storageWrites:bool):bool=all{s.walletOpen,
-    s'=finishedPrompt(s.with("hashKeys",if(storageWrites)s.hashKeys.union(Set(s.promptKey)) else s.hashKeys))}
+    s'=finishedPrompt(s.with("hashKeys",if(storageWrites)keep(s.hashKeys.union(Set(s.promptKey))) else s.hashKeys))}
   action walletUnknown=all{s.walletOpen,s'=finishedPrompt(s)}
   action walletDeclined(storageClears:bool):bool=all{s.walletOpen,
     s'=if(storageClears)finishedPrompt(s.with("savedKeys",s.savedKeys.exclude(Set(s.promptKey)))
@@ -98,17 +111,24 @@ module ui_bounty_payment_parent {
       .with("journal",if(s.promptEpoch==s.epoch)false else s.journal)
       .with("journalPlan",if(s.promptEpoch==s.epoch)0 else s.journalPlan))
       else finishedPrompt(s)}
-  action chooseCaseReply={nondet id=1.to(3).oneOf() nondet mode=0.to(3).oneOf()
-    nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
-    nondet plan=1.to(2).oneOf()
-    caseReply(id,mode,generation,message,plan)}
+  // Stale reply payloads do not reach State; retain one witness per ID.
+  action chooseCaseReply={nondet id=1.to(3).oneOf()
+    if(id==s.active and s.actor>0) {
+      nondet mode=0.to(3).oneOf() nondet generation=1.to(2).oneOf()
+      nondet message=1.to(2).oneOf() nondet plan=1.to(2).oneOf()
+      caseReply(id,mode,generation,message,plan)
+    } else caseReply(id,0,1,1,1)}
   action chooseCaseReplacement={nondet mode=0.to(3).oneOf()
     nondet generation=1.to(2).oneOf() nondet message=1.to(2).oneOf()
     nondet plan=1.to(2).oneOf()
     replaceCase(mode,generation,message,plan)}
   action chooseFailedRead={nondet id=1.to(3).oneOf() failedRead(id)}
-  action chooseStorageReply={nondet epoch=0.to(7).oneOf() nondet plan=1.to(2).oneOf()
-    any{storageReply(epoch,true,plan),storageReply(epoch,false,plan)}}
+  // A stale epoch already permits identity from every State; keep it once.
+  action chooseStorageReply=any{
+    {nondet plan=1.to(2).oneOf()
+      all{0.to(7).contains(s.epoch),storageReply(s.epoch,true,plan)}},
+    all{0.to(7).contains(s.epoch),storageReply(s.epoch,false,1)},
+    s'=s}
   // Keep each finite choice with its own transition. Hoisting all choices
   // over this disjunction repeats unrelated successors without adding states.
   action step=any{readCase,chooseCaseReply,chooseCaseReplacement,chooseFailedRead,
@@ -120,59 +140,60 @@ module ui_bounty_payment_parent {
     mismatched implies not(sendPresented),
     s.journal implies not(sendPresented),
     s.hashKeys.subseteq(s.savedKeys),
-    s.walletOpen implies s.savedKeys.contains(s.promptKey),
+    storageKeys.contains(s.tracked),s.savedKeys.subseteq(Set(s.tracked)),
+    (s.walletOpen and s.promptKey==s.tracked) implies s.savedKeys.contains(s.promptKey),
     s.actor==0 implies(s.mode==0 and not(s.storageReady) and not(s.journal))}
-  run sameGenerationEvmPlanKeepsAndChecksJournalTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run sameGenerationEvmPlanKeepsAndChecksJournalTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(readCase).then(caseReply(2,1,1,1,2))
     .expect(s.epoch==1 and s.journal and mismatched and not(sendPresented))
-  run evmGenerationChangeRemountsChildTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run evmGenerationChangeRemountsChildTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,true,1)).then(readCase).then(caseReply(2,1,2,1,2))
     .expect(s.epoch==2 and not(s.journal) and not(s.storageReady))
-  run solanaMessageChangeRemountsChildTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+  run solanaMessageChangeRemountsChildTest=initTracking(111).then(readCase).then(caseReply(1,2,1,1,1))
     .then(storageReply(1,true,1)).then(readCase).then(caseReply(2,2,1,2,2))
     .expect(s.epoch==2 and not(s.journal) and not(s.storageReady))
-  run staleStorageReplyCannotPopulateNewChildTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+  run staleStorageReplyCannotPopulateNewChildTest=initTracking(111).then(readCase).then(caseReply(1,2,1,1,1))
     .then(readCase).then(caseReply(2,2,1,2,2)).then(storageReply(1,true,1))
     .expect(not(s.journal) and not(s.storageReady))
-  run transientRefreshRetainsPaymentChildTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run transientRefreshRetainsPaymentChildTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,true,1)).then(readCase).then(failedRead(2))
     .expect(s.warning and s.mode==1 and s.journal and s.epoch==1)
-  run actorCheckUnmountsOldPrivateChildTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run actorCheckUnmountsOldPrivateChildTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,true,1)).then(hidePrivateView).then(confirmActor(2)).then(storageReply(1,true,1))
     .expect(s.actor==2 and s.mode==0 and not(s.journal))
-  run supersededCaseReadCannotRestoreSendControlsTest=init.then(readCase).then(readCase)
+  run supersededCaseReadCannotRestoreSendControlsTest=initTracking(111).then(readCase).then(readCase)
     .then(caseReply(2,3,2,1,2)).then(caseReply(1,1,1,1,1))
     .expect(s.mode==3 and s.generation==2 and not(sendPresented))
-  run fallbackGenerationChangeRetainsComponentInstanceTest=init.then(readCase).then(caseReply(1,3,1,1,1))
+  run fallbackGenerationChangeRetainsComponentInstanceTest=initTracking(111).then(readCase).then(caseReply(1,3,1,1,1))
     .then(readCase).then(caseReply(2,3,2,1,2)).expect(s.mode==3 and s.epoch==1 and s.generation==2)
-  run departedWalletResultStaysInOriginalStorageSlotTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+  run departedWalletResultStaysInOriginalStorageSlotTest=initTracking(213).then(readCase).then(caseReply(1,2,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(readCase).then(caseReply(2,2,1,2,2))
     .then(walletReturns(true)).expect(s.hashKeys.contains(213) and not(s.journal) and s.epoch==2)
-  run uncertainWalletResultKeepsOriginalMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run uncertainWalletResultKeepsOriginalMarkerTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletUnknown)
     .expect(s.savedKeys.contains(111) and s.journal and s.hashKeys==Set() and not(sendPresented))
-  run declinedWalletRequestClearsItsMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run declinedWalletRequestClearsItsMarkerTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletDeclined(true))
     .expect(not(s.journal) and s.savedKeys==Set() and sendPresented)
-  run departureAfterPromptDoesNotCancelWalletTailTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run departureAfterPromptDoesNotCancelWalletTailTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(hidePrivateView)
     .expect(s.walletOpen and s.savedKeys.contains(111) and s.mode==0 and not(s.journal))
-  run departedEvmPreflightCannotRecordOrPromptTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run departedEvmPreflightCannotRecordOrPromptTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(hidePrivateView)
     .then(recordBeforePrompt.fail())
-  run departedSolanaPreflightCannotRecordOrPromptTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+  run departedSolanaPreflightCannotRecordOrPromptTest=initTracking(111).then(readCase).then(caseReply(1,2,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(hidePrivateView)
     .then(recordBeforePrompt.fail())
-  run departedSolanaOpenPromptRetainsWalletEvidenceTest=init.then(readCase).then(caseReply(1,2,1,1,1))
+  run departedSolanaOpenPromptRetainsWalletEvidenceTest=initTracking(213).then(readCase).then(caseReply(1,2,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(hidePrivateView)
     .then(walletReturns(true)).expect(s.hashKeys.contains(213) and s.mode==0 and not(s.journal))
-  run declinedRequestWithStorageFailureRetainsMarkerTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run declinedRequestWithStorageFailureRetainsMarkerTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(storageReply(1,false,1)).then(reviewBeforePrompt).then(recordBeforePrompt).then(walletDeclined(false))
     .expect(s.journal and s.savedKeys.contains(111) and not(sendPresented))
-  run actionReplacementRejectsEarlierReadSuccessTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run actionReplacementRejectsEarlierReadSuccessTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(readCase).then(replaceCase(2,2,2,2)).then(caseReply(2,1,1,1,1))
     .expect(s.mode==2 and s.generation==2 and s.message==2)
-  run actionReplacementRejectsEarlierReadErrorTest=init.then(readCase).then(caseReply(1,1,1,1,1))
+  run actionReplacementRejectsEarlierReadErrorTest=initTracking(111).then(readCase).then(caseReply(1,1,1,1,1))
     .then(readCase).then(replaceCase(2,2,2,2)).then(failedRead(2))
     .expect(s.mode==2 and s.generation==2 and not(s.warning) and s.phase=="ready")
 }

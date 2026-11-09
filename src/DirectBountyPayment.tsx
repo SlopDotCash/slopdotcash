@@ -225,7 +225,7 @@ export function DirectBountyPayment({
           remember((latest) => {
             if (latest[transaction.nonce])
               throw new Error(
-                "This wallet request is already recorded. Check its transaction before sending again.",
+                "Already sent. Check this transaction before sending again.",
               );
             return {
               ...latest,
@@ -267,8 +267,8 @@ export function DirectBountyPayment({
                 });
               throw new Error(
                 replaced
-                  ? `Submitted ${hash}. The saved request changed; keep this hash and check wallet activity.`
-                  : `Submitted ${hash}. Browser storage could not save it; keep this hash.`,
+                  ? `Submitted ${hash}. Keep this hash; the saved request changed.`
+                  : `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
               );
             }
           } catch (cause) {
@@ -365,7 +365,7 @@ export function DirectBountyPayment({
       } catch (cause) {
         if (knownHashes.length)
           setNotice(
-            `The saved request could not be updated. Keep the known wallet transaction hash${knownHashes.length === 1 ? "" : "es"}: ${knownHashes.join(", ")}.`,
+            `Could not save. Keep ${knownHashes.length === 1 ? "this hash" : "these hashes"}: ${knownHashes.join(", ")}.`,
           );
         throw cause;
       }

@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-import { sha256Hex } from "../backend/trace/validation";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { vettingServiceSigner } from "../workers/vetting/service";
 
 class PublicKeyPreparationError extends Error {}

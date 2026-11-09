@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
 import {
   handlePointsApi,
@@ -268,7 +269,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         row.network === network &&
         row.vault === vault,
     );
-    if (matches.length !== 1) throw new Error("Funding vault unavailable");
+    if (matches.length !== 1)
+      throw new FundingVaultNotFoundError("Funding vault unavailable");
     return {
       ...matches[0],
       mint: matches[0].asset,
@@ -526,11 +528,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
             return [];
           }
         },
-        verifyAuthority: (project, actor) =>
+        verifyAuthority: (project, actor, level) =>
           verifyProjectAuthority(
             project.manifest,
             actor,
             env.SLOP_GITHUB_READ_TOKEN,
+            level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
         // turns both off; the payments Worker then fails loudly and freezes

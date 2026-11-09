@@ -14,10 +14,10 @@ module vetting_flag_reinstatement {
   pure val ids=Set(1,2,3,4)
   var s:{flags:Set[int],owners:int->int,history:int->str,created:int,captured:Set[int],
     restriction:str,restrictionEpoch:int,scanEpoch:int,revision:int,scannedRevision:int,content:int,scannedContent:int,
-    pin:int,scannedPin:int,pinReadable:bool,result:str,pending:bool,exempt:bool}
+    pin:int,scannedPin:int,pinReadable:bool,result:str,pending:bool,exempt:bool,everBanned:bool}
   action init=s'={flags:Set(),owners:ids.mapBy(_=>0),history:ids.mapBy(_=>"unused"),created:0,captured:Set(),
     restriction:"clear",restrictionEpoch:0,scanEpoch:0,revision:1,scannedRevision:0,content:1,scannedContent:0,
-    pin:1,scannedPin:0,pinReadable:true,result:"none",pending:false,exempt:false}
+    pin:1,scannedPin:0,pinReadable:true,result:"none",pending:false,exempt:false,everBanned:false}
   action flag(reporter:int):bool={
     val duplicate=s.flags.exists(id=>s.owners.get(id)==reporter)
     val id=s.created+1
@@ -49,30 +49,37 @@ module vetting_flag_reinstatement {
   action admissionExemption=s'=s.with("exempt",true)
   val fresh=s.content==s.scannedContent and s.pin==s.scannedPin and s.pinReadable
     and s.scanEpoch==s.restrictionEpoch and s.flags.subseteq(s.captured)
-  action completeClean={
+  action completeCleanWithReuse(reused:bool):bool={
     val closing=s.flags.intersect(s.captured)
-    val restore=fresh and s.restriction=="quarantined"
+    val restore=fresh and not(reused) and s.restriction=="quarantined"
     all{s.pending,
-      s'=s.with("pending",false).with("result","clean")
+      s'=s.with("pending",false).with("result",if(reused)"reused-clean" else "clean")
         .with("restriction",if(restore)"clear" else s.restriction)
         .with("flags",s.flags.exclude(closing))
         .with("history",ids.mapBy(id=>if(closing.contains(id))"resolved" else s.history.get(id)))}
   }
+  action completeClean=completeCleanWithReuse(false)
   // A recorded clean scan can later reinstate once its live pin is readable.
   action retryReinstatement=all{not(s.pending),s.result=="clean",fresh,s.restriction=="quarantined",s.revision==s.scannedRevision,
     s'=s.with("restriction","clear")}
   action incomplete=all{s.pending,s'=s.with("pending",false).with("result","incomplete")}
   action confirmedMalice=all{s.pending,
-    s'=s.with("pending",false).with("result","malicious").with("restriction","banned")
+    s'=s.with("pending",false).with("result","malicious").with("restriction","banned").with("everBanned",true)
       .with("restrictionEpoch",if(s.restriction=="banned")s.restrictionEpoch else s.restrictionEpoch+1)}
   action step={nondet reporter=Set(1,2,3).oneOf() nondet id=ids.oneOf()
     any{flag(reporter),withdraw(reporter),expire(id),requestScan,revise,presentationRevision,advancePin,
-      pinUnavailable,pinAvailable,admissionExemption,completeClean,retryReinstatement,incomplete,confirmedMalice,s'=s}}
+      pinUnavailable,pinAvailable,admissionExemption,completeClean,completeCleanWithReuse(true),retryReinstatement,incomplete,confirmedMalice,s'=s}}
   val invariant=all{s.created>=0,s.created<=4,s.revision>=1,s.revision<=3,s.restrictionEpoch<=3,
     s.flags==ids.filter(id=>s.history.get(id)=="active"),
     s.flags.size()>=2 implies s.restriction!="clear",
     s.flags.forall(id=>s.owners.get(id)>=1 and s.owners.get(id)<=3),
+    s.everBanned implies s.restriction=="banned",
+    s.flags.map(id=>s.owners.get(id)).size()==s.flags.size(),
     s.scannedContent<=s.content,s.scannedPin<=s.pin,s.scannedRevision<=s.revision}
+  // Reused clean evidence closes only its captured flags, never reinstates.
+  run reusedCleanResolvesButKeepsPauseTest=init.then(flag(1)).then(flag(2)).then(requestScan)
+    .then(completeCleanWithReuse(true)).expect(s.restriction=="quarantined" and s.flags==Set())
+    .then(retryReinstatement.fail())
   run duplicateReporterTest=init.then(flag(1)).then(flag(1))
     .expect(s.restriction=="clear" and s.flags.size()==1 and s.created==1)
   run withdrawalDoesNotReinstateTest=init.then(flag(1)).then(flag(2)).then(withdraw(2))

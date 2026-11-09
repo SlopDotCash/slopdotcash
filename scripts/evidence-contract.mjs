@@ -16,7 +16,7 @@ import { withEvidenceCleanup } from "./evidence-bundle.mjs";
 
 export const PRODUCTION_ORIGIN = "https://slop.cash";
 export const PRODUCTION_HOSTNAME = "slop.cash";
-export const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const LIVE_LEDGER_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // Project skills, the project discovery index and terms are Pages Function
 // responses rendered from D1, so they are not static release artifacts.

@@ -15,7 +15,7 @@ export function formatMicroUsdc(value: string): string {
 }
 
 /** The asset fields a page needs to name one reward amount. */
-export type RewardAmountAsset = {
+type RewardAmountAsset = {
   kind: "native" | "stablecoin" | "token";
   decimals: number;
   symbol: string;

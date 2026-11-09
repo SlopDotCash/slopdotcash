@@ -3,7 +3,6 @@
  * This prepares authorization bytes only. It does not reserve or pay funds.
  */
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmMonthlyDigest,
 } from "../../contracts/evm/adapter";
@@ -14,7 +13,6 @@ import {
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import {
   ESCROW_NETWORKS,
-  type EscrowDeployment,
   isBaseUnits,
   maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
@@ -35,28 +33,11 @@ import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
 import { chainAwards, holdsAward } from "./chain-awards";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
+import type {
+  MonthlyAttestationPlan,
+  MonthlyAttestationRequest,
+} from "./monthly-attestation-types";
 
-export interface MonthlyAttestationRequest {
-  projectId: string;
-  period: string;
-  network: EscrowDeployment["network"];
-  snapshotSha256: string;
-}
-export interface MonthlyAttestationPlan {
-  request: MonthlyAttestationRequest;
-  deployment: EscrowDeployment;
-  allocationRoot: string;
-  /** EIP-712 digest on EVM; domain-separated message on Solana. Hex without 0x. */
-  messageHex: string;
-  family: "evm" | "solana";
-  totalGrossBase: string;
-  /** EVM V2: one remaining-source execution attempt for the frozen allocation. */
-  evmReservation?: EvmMonthlyReservation;
-  /** Solana only: Unix seconds of the finalized slot at which the attester saw
-   * no `origin` or `monthly-source` account for any included source. */
-  frozenAt?: string;
-  entries: { githubUserId: string; grossMicro: string; sourceDigest: string }[];
-}
 function reject(code: string, message: string): never {
   throw new MonthlyPaymentError(409, code, message);
 }

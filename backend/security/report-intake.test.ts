@@ -19,11 +19,8 @@ import type {
   SecurityAppealInput,
   SecurityScreeningProposal,
 } from "./analysis";
-import {
-  handleSecurityApi,
-  type SecurityApiDependencies,
-  type SecurityD1Database,
-} from "./handler";
+import type { SecurityApiDependencies, SecurityD1Database } from "./case-store";
+import { handleSecurityApi } from "./handler";
 import { readStoredReportByCase } from "./report-intake";
 
 const ORIGIN = "https://slop.test";
@@ -1101,6 +1098,34 @@ describe("durable private report controls", () => {
       expect(t.screeningCalls()).toBe(1);
     },
   );
+
+  test("concurrent routing reviews of one revision keep one event and refuse the loser as stale", async () => {
+    const t = fixture();
+    const submission = required(
+      (await t.create("concurrent-routing-review")).body.submission,
+    );
+    const review = (reason: string) =>
+      t.call(OWNER, "POST", `security-submissions/${submission.id}/review`, {
+        expectedRevision: submission.intake.revision,
+        decision: "request-information",
+        reason,
+      });
+    const results = await Promise.all([
+      review("Include a second isolated reproduction."),
+      review("Name the affected function and its version."),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
+    expect(results.find((result) => result.status === 409)?.body.error).toBe(
+      "stale_revision",
+    );
+    expect(
+      t.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM security_intake_events WHERE submission_id=? AND kind='review'",
+        )
+        .get(submission.id),
+    ).toEqual({ n: 1 });
+  });
 
   test("a revision hides stale assessment, binds new content and keeps receipt scope", async () => {
     const t = fixture();

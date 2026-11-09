@@ -105,7 +105,7 @@ export type EvmFactoryConfig = EvmRpc &
 
 /** Amount fields keep their historical `*Micro` names; they carry token base units of any decimals as
  * decimal strings up to uint128. */
-export interface FinalizedEscrowEvent {
+interface FinalizedEscrowEvent {
   transactionId: string;
   eventIndex: number;
   blockId: string;
@@ -124,7 +124,7 @@ const toHex = (bytes: Uint8Array) =>
 const keccakText = (text: string) =>
   toHex(keccak_256(new TextEncoder().encode(text)));
 /** Topic 0 of every ProjectEscrow v4 and EscrowFactory event, from its canonical signature. */
-export const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
+const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
   Deposited: "Deposited(address,uint128)",
   AwardCommitted: "AwardCommitted(bytes32,uint64,uint128,uint128,bytes32)",
   DestinationBound: "DestinationBound(uint64,address,uint64,bytes32,uint64)",
@@ -241,16 +241,6 @@ export class EvmRpcUnavailable extends EvmRpcError {
     super(false, message, options);
   }
 }
-export {
-  buildCommitMonthlyLeafCalldata,
-  buildReserveMonthlyCalldata,
-  EvmMonthlyAlreadyAdmitted,
-  type EvmMonthlyReservation,
-  evmMonthlyReserveDigest,
-  evmMonthlySumTree,
-  prepareEvmMonthlyReservation,
-  readEvmMonthlyReserve,
-} from "./monthly-reserve";
 export { rpc as evmRpc };
 
 /** Explicit wallet-consent action: read the actor's current version only from a verified vault. */
@@ -271,7 +261,7 @@ export async function readEvmBindingVersion(
 }
 
 /** The reviewed factory rotates the identity authority only after this notice period. */
-export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
+const EVM_AUTHORITY_ROTATION_DELAY = 0n;
 function codeSha256(code: unknown) {
   if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(code))
     throw new Error("Escrow runtime code unavailable");
@@ -313,7 +303,7 @@ const addressWord = (value: string) =>
   `0x${value.slice(2).toLowerCase().padStart(64, "0")}`;
 
 /** The ProjectEscrow v5 purpose for a payout policy: 0 ordinary awards, 1 private bounties. */
-export function evmVaultPurpose(policy: PayoutPolicy = "ordinary") {
+function evmVaultPurpose(policy: PayoutPolicy = "ordinary") {
   return policy === "security-bounty" ? 1n : 0n;
 }
 /** EscrowFactory.vaultKey: keccak256(abi.encode(owner, projectId, token, purpose)), also the CREATE2 salt. */
@@ -974,7 +964,7 @@ export function buildBindCalldata(
   const signature = input.walletSignature.slice(2).toLowerCase();
   return `0xac11944e${word(input.githubUserId)}${input.destination.slice(2).toLowerCase().padStart(64, "0")}${word(input.expectedVersion)}${hash(input.claimDigest).slice(2)}${word(input.expiresAt)}${"c0".padStart(64, "0")}${"41".padStart(64, "0")}${signature.padEnd(192, "0")}`;
 }
-export interface EvmAuthorityRotation {
+interface EvmAuthorityRotation {
   factory: string;
   identityAuthority: string;
   /** Null when no rotation is proposed. */
@@ -1054,7 +1044,7 @@ export function buildWithdrawCalldata(grossMicro: string | bigint) {
   return `0x${selector("withdrawUnused(uint128)")}${amountWord(grossMicro)}`;
 }
 /** The owner's monthly commitment setting: a uint128 cap and the on/off flag. */
-export interface EvmMonthlyCommitment {
+interface EvmMonthlyCommitment {
   cap: string;
   enabled: boolean;
 }
@@ -1421,8 +1411,7 @@ export function buildCommitMonthlyCalldata(
   return `0x${selector("commitMonthly(uint32,(uint64,uint128,bytes32)[],bytes)")}${periodNumber(period).toString(16).padStart(64, "0")}${0x60n.toString(16).padStart(64, "0")}${bytesOffset.toString(16).padStart(64, "0")}${count.toString(16).padStart(64, "0")}${tail}${65n.toString(16).padStart(64, "0")}${attestation.slice(2).toLowerCase().padEnd(192, "0")}`;
 }
 
-export type { VaultTotals } from "../vault-totals";
-export type EvmVaultTotalsConfig = EvmRpc & {
+type EvmVaultTotalsConfig = EvmRpc & {
   /** The registry network key, echoed in the result. */
   network: string;
   vault: string;

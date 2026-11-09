@@ -1,32 +1,18 @@
 import { ata } from "../../contracts/solana/transactions";
 import { decodeJupiterRoute } from "./jupiter-wire";
-import type { ParsedTransaction } from "./solana";
 import {
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
 import { assertNativeWrap } from "./solana-native-route";
+import type { JupiterRouteExpectation } from "./solana-route-types";
+import type { ParsedTransaction } from "./solana-transaction";
 import {
   invalidRouteRole,
   routeAmountsMatch,
   routeBindingError,
   routeValue,
 } from "./verified-jupiter-policy";
-
-export interface JupiterRouteExpectation {
-  program: string;
-  wallet: string;
-  inputMint: string;
-  inputProgram: string;
-  outputMint: string;
-  outputProgram: string;
-  amountIn: bigint;
-  quotedOut: bigint;
-  minimumOut: bigint;
-  slippageBps: number;
-  /** The exact fee SOL is wrapped and spent atomically; existing WSOL stays untouched. */
-  nativeInput?: true;
-}
 
 /** Bind the actual on-chain instruction, not the API's description, to the quote. */
 export function assertJupiterRoute(

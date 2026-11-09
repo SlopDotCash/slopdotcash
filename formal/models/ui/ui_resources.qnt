@@ -3,6 +3,7 @@
 // @source src/lib/use-cycle-index.ts
 // @source src/lib/use-direct-transfers.ts
 // @source src/lib/use-vault-payments.ts
+// @source src/lib/paged-history.ts
 // @source src/Profiles.tsx
 // @source src/ProfilePage.tsx
 // @source src/EscrowFunding.tsx

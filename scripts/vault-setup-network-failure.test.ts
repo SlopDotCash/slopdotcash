@@ -162,11 +162,16 @@ const manifest = applicationManifest("vault-network", "example/vault-network", {
     kind: "stablecoin",
     address: ESCROW_NETWORKS["base-mainnet"].asset,
     symbol: "USDC",
+    decimals: 6,
+    chainId: ESCROW_NETWORKS["base-mainnet"].chainId,
+    cluster: null,
+    verifiedAt: NOW,
   },
   reward: {
     ...(applicationManifest("vault-network", "example/vault-network")
       .reward as Record<string, unknown>),
     chain: "base",
+    feeBasisPoints: 200,
   },
   escrow: {
     schemaVersion: "1",

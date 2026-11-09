@@ -114,7 +114,9 @@ async function providers(
             calls.push(`${name}:${method}`);
             if (reject) throw new Error("Wallet request rejected by user.");
             if (
-              holdConnect && name === "MetaMask" && method === "eth_requestAccounts"
+              holdConnect &&
+              name === "MetaMask" &&
+              method === "eth_requestAccounts"
             ) {
               connection.pending = true;
               await new Promise<void>((resolve) => {
@@ -312,9 +314,9 @@ test("modal routes EVM to MetaMask and Solana to Backpack despite Phantom global
   ).toBeLessThanOrEqual(1);
 });
 
-test("Escape and close cancel without wallet requests and return focus", async ({
-  page,
-}) => {
+test("Escape and close cancel without wallet requests and return focus", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page);
   await providers(page);
   await page.goto("/account#wallets");
@@ -335,9 +337,9 @@ test("Escape and close cancel without wallet requests and return focus", async (
   ).toEqual([]);
 });
 
-test("wallet rejection stops registration and permits reopening the modal", async ({
-  page,
-}) => {
+test("wallet rejection stops registration and permits reopening the modal", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page);
   await providers(page, true);
   await page.goto("/account#wallets");
@@ -348,9 +350,9 @@ test("wallet rejection stops registration and permits reopening the modal", asyn
   await openPicker(page, "EVM");
 });
 
-test("repeated announcements do not duplicate options and removed Solana wallet disappears", async ({
-  page,
-}) => {
+test("repeated announcements do not duplicate options and removed Solana wallet disappears", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   await payments(page);
   await providers(page);
   await page.goto("/account#wallets");
@@ -424,9 +426,9 @@ for (const [name, flags] of [
   ["Brave Wallet", { isBraveWallet: true, isMetaMask: true }],
   ["Coinbase Wallet", { isCoinbaseWallet: true, isMetaMask: true }],
 ] as const)
-  test(`legacy ${name} browser remains connectable through the modal`, async ({
-    page,
-  }) => {
+  test(`legacy ${name} browser remains connectable through the modal`, {
+    tag: "@desktop-only",
+  }, async ({ page }) => {
     await payments(page);
     await page.addInitScript(
       ({ evmAddress, flags }) => {
@@ -450,9 +452,9 @@ for (const [name, flags] of [
     ).toBeVisible();
   });
 
-test("conflicting EIP-6963 UUID removes both providers without wallet requests", async ({
-  page,
-}) => {
+test("conflicting EIP-6963 UUID removes both providers without wallet requests", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page);
   await providers(page);
   await page.goto("/account#wallets");
@@ -494,23 +496,29 @@ test("an announcement conflict during connect cannot register the returned addre
   const dialog = await openPicker(page, "EVM");
   await dialog.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect
-    .poll(() => page.evaluate(() =>
-      (window as unknown as { walletConnection: { pending: boolean } })
-        .walletConnection.pending,
-    ))
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { walletConnection: { pending: boolean } })
+            .walletConnection.pending,
+      ),
+    )
     .toBe(true);
   await page.evaluate(() => {
     (window as unknown as { announceImpostor(): void }).announceImpostor();
-    (window as unknown as { walletConnection: { release(): void } })
-      .walletConnection.release();
+    (
+      window as unknown as { walletConnection: { release(): void } }
+    ).walletConnection.release();
   });
   await expect(page.getByRole("alert")).toContainText(
     "Conflicting wallet details",
   );
   expect(writes).toEqual([]);
-  expect(await page.evaluate(() =>
-    (window as unknown as { walletCalls: string[] }).walletCalls,
-  )).toEqual(["MetaMask:eth_requestAccounts"]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["MetaMask:eth_requestAccounts"]);
 });
 
 test("a withdrawn Wallet Standard provider cannot prompt for registration consent", async ({
@@ -538,9 +546,11 @@ test("a withdrawn Wallet Standard provider cannot prompt for registration consen
     "The signing wallet changed",
   );
   expect(writes.map((write) => write.path)).toEqual(["wallets/register"]);
-  expect(await page.evaluate(() =>
-    (window as unknown as { walletCalls: string[] }).walletCalls,
-  )).toEqual(["Backpack:connect"]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["Backpack:connect"]);
 });
 
 test("mutating and echoing the signing buffer cannot authorize a different message", async ({
@@ -558,14 +568,16 @@ test("mutating and echoing the signing buffer cannot authorize a different messa
     "wallets/register",
     "wallets/challenge",
   ]);
-  expect(await page.evaluate(() =>
-    (window as unknown as { walletCalls: string[] }).walletCalls,
-  )).toEqual(["Backpack:connect", "Backpack:signMessage"]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["Backpack:connect", "Backpack:signMessage"]);
 });
 
-test("mixed standard and legacy discovery keeps every distinct wallet", async ({
-  page,
-}) => {
+test("mixed standard and legacy discovery keeps every distinct wallet", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page);
   await page.addInitScript(
     ({ evmAddress, solanaAddress }) => {
@@ -795,82 +807,86 @@ async function chooseMetaMask(page: Page, action: "Change" | "Connect") {
   await expect(dialog).not.toBeVisible();
 }
 
-test("changing a confirmed EVM wallet opens the account picker and asks before registering the new account", async ({
-  page,
-}, info) => {
-  const writes = await payments(page, savedEvm(true));
-  await providers(page, false, { connected: savedAddress });
-  await page.goto("/account#wallets");
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  const reveal = page.getByLabel("Show full EVM wallet address", {
-    exact: true,
-  });
-  await reveal.focus();
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".compact-identifier[open] code")).toHaveText(
-    savedAddress,
-  );
-  await page
-    .getByRole("button", { name: "Copy EVM wallet address", exact: true })
-    .click();
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe(savedAddress);
-  expect(writes).toEqual([]);
-  expect(await walletCalls(page)).toEqual([]);
-  await chooseMetaMask(page, "Change");
-  const confirmation = page.getByRole("region", {
-    name: "Register a different EVM address?",
-  });
-  await expect(confirmation).toBeVisible();
-  await expect(
-    confirmation.getByRole("heading", {
+test(
+  "changing a confirmed EVM wallet opens the account picker and asks before registering the new account",
+  { tag: "@desktop-only" },
+  async ({ page }, info) => {
+    const writes = await payments(page, savedEvm(true));
+    await providers(page, false, { connected: savedAddress });
+    await page.goto("/account#wallets");
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    const reveal = page.getByLabel("Show full EVM wallet address", {
+      exact: true,
+    });
+    await reveal.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".compact-identifier[open] code")).toHaveText(
+      savedAddress,
+    );
+    await page
+      .getByRole("button", { name: "Copy EVM wallet address", exact: true })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(savedAddress);
+    expect(writes).toEqual([]);
+    expect(await walletCalls(page)).toEqual([]);
+    await chooseMetaMask(page, "Change");
+    const confirmation = page.getByRole("region", {
       name: "Register a different EVM address?",
-    }),
-  ).toBeFocused();
-  await expect(confirmation).toContainText(`Saved address${savedAddress}`);
-  await expect(confirmation).toContainText(`Wallet account${evmAddress}`);
-  // The picker ran before the account read, and nothing is registered yet.
-  expect(await walletCalls(page)).toEqual([
-    "MetaMask:wallet_requestPermissions",
-    "MetaMask:eth_requestAccounts",
-  ]);
-  expect(writes).toEqual([]);
-  await expect(
-    page.getByRole("button", { name: "Change EVM wallet", exact: true }),
-  ).toBeDisabled();
-  await expectAccessible(page);
-  await page.screenshot({
-    path: info.outputPath("wallet-change-confirmation.png"),
-    fullPage: true,
-  });
-  await confirmation
-    .getByRole("button", { name: "Register wallet account", exact: true })
-    .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
-  await expect(confirmation).toHaveCount(0);
-  expect(writes.map((w) => w.path)).toEqual(
-    Array.from({ length: 3 }, () => [
-      "wallets/register",
-      "wallets/challenge",
-      "wallets/authorize",
-    ]).flat(),
-  );
-  expect(
-    writes.filter((w) => w.path === "wallets/register").map((w) => w.body),
-  ).toEqual([
-    { chain: "base", address: evmAddress },
-    { chain: "robinhood", address: evmAddress },
-    { chain: "ethereum", address: evmAddress },
-  ]);
-  expect((await walletCalls(page)).at(-1)).toBe("MetaMask:personal_sign");
-});
+    });
+    await expect(confirmation).toBeVisible();
+    await expect(
+      confirmation.getByRole("heading", {
+        name: "Register a different EVM address?",
+      }),
+    ).toBeFocused();
+    await expect(confirmation).toContainText(`Saved address${savedAddress}`);
+    await expect(confirmation).toContainText(`Wallet account${evmAddress}`);
+    // The picker ran before the account read, and nothing is registered yet.
+    expect(await walletCalls(page)).toEqual([
+      "MetaMask:wallet_requestPermissions",
+      "MetaMask:eth_requestAccounts",
+    ]);
+    expect(writes).toEqual([]);
+    await expect(
+      page.getByRole("button", { name: "Change EVM wallet", exact: true }),
+    ).toBeDisabled();
+    await expectAccessible(page);
+    await page.screenshot({
+      path: info.outputPath("wallet-change-confirmation.png"),
+      fullPage: true,
+    });
+    await confirmation
+      .getByRole("button", { name: "Register wallet account", exact: true })
+      .click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
+    ).toBeVisible();
+    await expect(confirmation).toHaveCount(0);
+    expect(writes.map((w) => w.path)).toEqual(
+      Array.from({ length: 3 }, () => [
+        "wallets/register",
+        "wallets/challenge",
+        "wallets/authorize",
+      ]).flat(),
+    );
+    expect(
+      writes.filter((w) => w.path === "wallets/register").map((w) => w.body),
+    ).toEqual([
+      { chain: "base", address: evmAddress },
+      { chain: "robinhood", address: evmAddress },
+      { chain: "ethereum", address: evmAddress },
+    ]);
+    expect((await walletCalls(page)).at(-1)).toBe("MetaMask:personal_sign");
+  },
+);
 
-test("keeping the saved address registers nothing and returns focus to the wallet button", async ({
-  page,
-}) => {
+test("keeping the saved address registers nothing and returns focus to the wallet button", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page, savedEvm(true));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
@@ -893,9 +909,9 @@ test("keeping the saved address registers nothing and returns focus to the walle
   expect(await walletCalls(page)).not.toContain("MetaMask:personal_sign");
 });
 
-test("connecting with an unconfirmed saved address asks before registering a different active account", async ({
-  page,
-}) => {
+test("connecting with an unconfirmed saved address asks before registering a different active account", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page, savedEvm(false));
   await providers(page);
   await page.goto("/account#wallets");
@@ -908,9 +924,9 @@ test("connecting with an unconfirmed saved address asks before registering a dif
   expect(writes).toEqual([]);
 });
 
-test("connecting the saved address confirms it without an extra step", async ({
-  page,
-}) => {
+test("connecting the saved address confirms it without an extra step", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page, savedEvm(false));
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
@@ -925,9 +941,9 @@ test("connecting the saved address confirms it without an extra step", async ({
 });
 
 for (const rejectedSignature of [2, 3]) {
-  test(`a rejected EVM signature ${rejectedSignature} stays visible after partial confirmation and can resume`, async ({
-    page,
-  }) => {
+  test(`a rejected EVM signature ${rejectedSignature} stays visible after partial confirmation and can resume`, {
+    tag: "@desktop-only",
+  }, async ({ page }) => {
     const saved: SavedWallet[] = [];
     const writes = await payments(page, saved);
     await page.route("**/api/v1/payments/wallets/authorize", async (route) => {
@@ -985,9 +1001,9 @@ for (const rejectedSignature of [2, 3]) {
   });
 }
 
-test("a wallet without an account picker falls back to its connected account", async ({
-  page,
-}) => {
+test("a wallet without an account picker falls back to its connected account", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   // Base and Ethereum are already confirmed at this address; only Robinhood
   // Chain needs a signature.
   const writes = await payments(page, [
@@ -1017,7 +1033,9 @@ test("a wallet without an account picker falls back to its connected account", a
   ]);
 });
 
-test("rejecting the account picker stops the change", async ({ page }) => {
+test("rejecting the account picker stops the change", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const writes = await payments(page, savedEvm(true));
   await providers(page, false, {
     connected: savedAddress,
@@ -1099,75 +1117,81 @@ for (const scenario of [
 }
 
 // Pending registration leaves the verified wallet active until authorization.
-test("a rejected signature after a wallet change keeps the verified wallet active", async ({
-  page,
-  diagnostics,
-}, info) => {
-  diagnostics.allowCanceledBackgroundReads();
-  const wallets = savedEvm(true);
-  // Keep the merged layout regression meaningful: a distinct, already verified
-  // Ethereum wallet leaves three chain rows even when the Base change is rejected.
-  wallets[2] = {
-    ...wallets[2],
-    address: "0x3333333333333333333333333333333333333333",
-  };
-  const writes = await payments(page, wallets);
-  await providers(page, false, {
-    connected: savedAddress,
-    rejectSignature: 1,
-  });
-  await page.goto("/account#wallets");
-  await chooseMetaMask(page, "Change");
-  await page
-    .getByRole("button", { name: "Register wallet account", exact: true })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    `Wallet signature rejected by user. Your new Base address ${evmAddress} is saved but not confirmed. Your verified address ${savedAddress} remains active for payouts. Connect your new wallet again to confirm the replacement.`,
-  );
-  const saved = page.getByRole("region", { name: "Payout wallets" });
-  await expect(saved).toContainText(savedAddress);
-  await expect(saved).not.toContainText(evmAddress);
-  await expect(
-    saved.getByRole("img", { name: "Base, confirmed", exact: true }),
-  ).toBeVisible();
-  await expect(
-    saved.getByRole("img", { name: "Robinhood Chain, confirmed", exact: true }),
-  ).toBeVisible();
-  await expect(
-    saved.getByRole("img", { name: "Ethereum, confirmed", exact: true }),
-  ).toBeVisible();
-  async function expectReadableAddresses(label: string) {
-    await saved.scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: info.outputPath(`wallet-address-layout-${label}.png`),
-      fullPage: true,
+test(
+  "a rejected signature after a wallet change keeps the verified wallet active",
+  { tag: "@desktop-only" },
+  async ({ page, diagnostics }, info) => {
+    diagnostics.allowCanceledBackgroundReads();
+    const wallets = savedEvm(true);
+    // Keep the merged layout regression meaningful: a distinct, already verified
+    // Ethereum wallet leaves three chain rows even when the Base change is rejected.
+    wallets[2] = {
+      ...wallets[2],
+      address: "0x3333333333333333333333333333333333333333",
+    };
+    const writes = await payments(page, wallets);
+    await providers(page, false, {
+      connected: savedAddress,
+      rejectSignature: 1,
     });
-    const addressLines = await saved
-      .locator(".wallet-card-rows .compact-identifier > summary")
-      .evaluateAll((addresses) =>
-        addresses.map((address) => {
-          const range = document.createRange();
-          range.selectNodeContents(address);
-          return new Set(
-            Array.from(range.getClientRects(), (rect) => Math.round(rect.top)),
-          ).size;
-        }),
-      );
-    expect(addressLines.length).toBe(3);
-    expect(
-      addressLines,
-      "short wallet addresses remain readable on one line",
-    ).toEqual([1, 1, 1]);
-    await expectAccessible(page);
-  }
-  await expectReadableAddresses("viewport");
-  if (info.project.name === "chromium-mobile") {
-    // The grid must not squeeze the addresses into narrow tablet columns.
-    await page.setViewportSize({ width: 768, height: 1000 });
-    await expectReadableAddresses("tablet");
-  }
-  expect(writes.map((w) => w.path)).toEqual([
-    "wallets/register",
-    "wallets/challenge",
-  ]);
-});
+    await page.goto("/account#wallets");
+    await chooseMetaMask(page, "Change");
+    await page
+      .getByRole("button", { name: "Register wallet account", exact: true })
+      .click();
+    await expect(page.getByRole("alert")).toContainText(
+      `Wallet signature rejected by user. Your new Base address ${evmAddress} is saved but not confirmed. Your verified address ${savedAddress} remains active for payouts. Connect your new wallet again to confirm the replacement.`,
+    );
+    const saved = page.getByRole("region", { name: "Payout wallets" });
+    await expect(saved).toContainText(savedAddress);
+    await expect(saved).not.toContainText(evmAddress);
+    await expect(
+      saved.getByRole("img", { name: "Base, confirmed", exact: true }),
+    ).toBeVisible();
+    await expect(
+      saved.getByRole("img", {
+        name: "Robinhood Chain, confirmed",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      saved.getByRole("img", { name: "Ethereum, confirmed", exact: true }),
+    ).toBeVisible();
+    async function expectReadableAddresses(label: string) {
+      await saved.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: info.outputPath(`wallet-address-layout-${label}.png`),
+        fullPage: true,
+      });
+      const addressLines = await saved
+        .locator(".wallet-card-rows .compact-identifier > summary")
+        .evaluateAll((addresses) =>
+          addresses.map((address) => {
+            const range = document.createRange();
+            range.selectNodeContents(address);
+            return new Set(
+              Array.from(range.getClientRects(), (rect) =>
+                Math.round(rect.top),
+              ),
+            ).size;
+          }),
+        );
+      expect(addressLines.length).toBe(3);
+      expect(
+        addressLines,
+        "short wallet addresses remain readable on one line",
+      ).toEqual([1, 1, 1]);
+      await expectAccessible(page);
+    }
+    await expectReadableAddresses("viewport");
+    if (info.project.name === "chromium-mobile") {
+      // The grid must not squeeze the addresses into narrow tablet columns.
+      await page.setViewportSize({ width: 768, height: 1000 });
+      await expectReadableAddresses("tablet");
+    }
+    expect(writes.map((w) => w.path)).toEqual([
+      "wallets/register",
+      "wallets/challenge",
+    ]);
+  },
+);

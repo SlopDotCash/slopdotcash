@@ -179,9 +179,7 @@ function review(value: unknown, field: string): EvaluatorAwardReview {
 }
 
 /** Strictly validates one checked-in award manifest. */
-export function assertEvaluatorAwardManifest(
-  value: unknown,
-): EvaluatorAwardManifest {
+function assertEvaluatorAwardManifest(value: unknown): EvaluatorAwardManifest {
   const manifest = readRecord(value, "evaluator award");
   exactKeys(
     manifest,

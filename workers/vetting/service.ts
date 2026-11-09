@@ -2,6 +2,7 @@
 
 import { vettingSignedMessage } from "../../backend/vetting/handler";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 
 export type VettingServiceSigner = {
   privateKey: CryptoKey;
@@ -136,6 +137,6 @@ export async function signedServiceHeaders(input: {
   return {
     "x-slop-vetting-key": await sha256Hex(rawKey),
     "x-slop-vetting-timestamp": timestamp,
-    "x-slop-vetting-signature": btoa(String.fromCharCode(...signature)),
+    "x-slop-vetting-signature": encodeBase64(signature),
   };
 }

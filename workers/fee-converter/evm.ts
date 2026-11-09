@@ -41,6 +41,7 @@ import {
 } from "../../contracts/evm/adapter";
 import { evmReceiptNativeCost } from "../../contracts/evm/native-cost";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
+import { nextReplacementFees } from "../verified-fee-replacement";
 import type { Limits, NetworkConfig } from "./config";
 import type {
   ChainClient,
@@ -55,7 +56,6 @@ import type {
 } from "./core";
 import type { NativeGasJournal, RecordedNativeSend } from "./native-gas";
 import {
-  ceilPercent,
   minimumOutput,
   priceImpactCeiling,
   roundedDivision,
@@ -118,14 +118,13 @@ const CLAIM_FEES = encodeFunctionData({
 const DEADLINE_SECONDS = 20 * 60;
 const RECEIPT_WAIT_MS = 60_000;
 /**
- * Same-nonce fee replacement policy (owner decision of 25 October 2026).
+ * Same-nonce fee replacement policy (owner decision of 25 October 2026),
+ * shared with the payment keeper in `workers/verified-fee-replacement.ts`.
  * Each step raises both fee fields by 25%, never above three times the
  * original send's fields. Every step must raise both fields by at least 10%,
  * the minimum that nodes accept for an EIP-1559 replacement; a step that
  * cannot is the cap.
  */
-const REPLACEMENT_STEP_PERCENT = 125n;
-const REPLACEMENT_MIN_PERCENT = 110n;
 const REPLACEMENT_CAP_MULTIPLE = 3n;
 /**
  * A swap replacement reuses the signed calldata and so its router deadline.
@@ -200,7 +199,7 @@ export const KYBER_ROUTER_ABI = [
 
 type Fetch = typeof fetch;
 
-export interface EvmClientOptions {
+interface EvmClientOptions {
   config: NetworkConfig;
   limits: Limits;
   kyberClientId: string;
@@ -1231,23 +1230,21 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       // tip does not make an otherwise includable transaction underpriced.
       if (block.baseFeePerGas <= previous.maxFeePerGas)
         return { wait: "the signed fee covers the current network fee" };
-      const step = (last: bigint, first: bigint) => {
-        const raised = ceilPercent(last, REPLACEMENT_STEP_PERCENT);
-        const cap = first * REPLACEMENT_CAP_MULTIPLE;
-        return raised < cap ? raised : cap;
-      };
-      const maxFeePerGas = step(previous.maxFeePerGas, original.maxFeePerGas);
-      const maxPriorityFeePerGas = step(
-        previous.maxPriorityFeePerGas,
-        original.maxPriorityFeePerGas,
-      );
-      if (
-        maxFeePerGas <
-          ceilPercent(previous.maxFeePerGas, REPLACEMENT_MIN_PERCENT) ||
-        maxPriorityFeePerGas <
-          ceilPercent(previous.maxPriorityFeePerGas, REPLACEMENT_MIN_PERCENT)
-      )
-        return { wait: "fee replacement cap reached" };
+      const next =
+        original.maxFeePerGas > 0n &&
+        original.maxPriorityFeePerGas >= 0n &&
+        previous.maxFeePerGas > 0n &&
+        previous.maxPriorityFeePerGas >= 0n
+          ? nextReplacementFees(
+              original.maxFeePerGas,
+              original.maxPriorityFeePerGas,
+              previous.maxFeePerGas,
+              previous.maxPriorityFeePerGas,
+              // This route has no absolute ceiling beyond three times the original.
+              original.maxFeePerGas * REPLACEMENT_CAP_MULTIPLE,
+            )
+          : null;
+      if (!next?.ok) return { wait: "fee replacement cap reached" };
       if (row.quoteValueMicro === null)
         return { wait: "the send has no recorded value to bound its fee" };
       await assertRecordedClaim(row);
@@ -1261,8 +1258,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           nonce: original.nonce,
           gas: original.gas,
           accessList: original.accessList,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
+          maxFeePerGas: next.maxFeePerGas,
+          maxPriorityFeePerGas: next.maxPriorityFeePerGas,
         },
         BigInt(row.quoteValueMicro),
         assertLease,
@@ -1272,8 +1269,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         txId: signed.hash,
         rawTx: signed.raw,
         nativeGasId: signed.nativeGasId,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
+        maxFeePerGas: next.maxFeePerGas,
+        maxPriorityFeePerGas: next.maxPriorityFeePerGas,
       };
     },
 

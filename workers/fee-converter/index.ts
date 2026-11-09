@@ -28,15 +28,11 @@ import {
   type RunTrigger,
   runNetwork,
 } from "./core";
+import type { FeeD1Database } from "./d1";
 import { createEvmClient } from "./evm";
 import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient } from "./solana";
-import {
-  D1ConversionStore,
-  type FeeD1Database,
-  projectRewardTokens,
-  projectVaults,
-} from "./store";
+import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
 
 export interface Env extends FeeConverterEnv {
   FEE_DB: FeeD1Database;

@@ -5,6 +5,7 @@ import { evmBindingTypedData } from "../contracts/evm/adapter";
 import { ChainIcon } from "./ChainIcon";
 import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
+import { decodeBase64, encodeBase64 } from "./lib/byte-encoding";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
@@ -233,9 +234,7 @@ export function PayoutConsent({
           throw new Error(
             "The binding is already pending or unavailable. Reload this page before trying again.",
           );
-        const bytes = Uint8Array.from(atob(prepared.transaction), (c) =>
-          c.charCodeAt(0),
-        );
+        const bytes = decodeBase64(prepared.transaction);
         const context = prepared.bindingContext as SolanaBindingContext;
         if (
           !context ||
@@ -261,7 +260,7 @@ export function PayoutConsent({
         if (!(await checkActor()) || !isCurrent()) return;
         const result = await requestConsent("solana-bind/complete", {
           obligationId: payment.id,
-          transaction: btoa(String.fromCharCode(...signed)),
+          transaction: encodeBase64(signed),
         });
         if (!(await checkActor()) || !isCurrent()) return;
         if (typeof result.transactionId !== "string")

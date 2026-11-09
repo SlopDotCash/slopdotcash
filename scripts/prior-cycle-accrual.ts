@@ -6,6 +6,7 @@ import {
   allocationFundingMinor,
   LAST_LEGACY_CAP_CYCLE,
 } from "../src/lib/allocation-funding";
+import { shiftPeriod } from "../src/lib/payments/monthly-allocation";
 import type { ProjectId } from "../src/lib/projects.mjs";
 import {
   assertRewardAllocationManifest,
@@ -21,7 +22,7 @@ const MAX_HISTORY_CYCLES = 1200;
 const MAX_HISTORY_REPORTS = 4096;
 const MAX_ACTOR_REPORTS = 32;
 
-export interface PriorCycleAccrual {
+interface PriorCycleAccrual {
   actorLogins: ReadonlyMap<string, string>;
   /**
    * The README proof that the reviewed prior manifest froze for each actor id
@@ -33,9 +34,9 @@ export interface PriorCycleAccrual {
   unsafeDestinationReports?: ReadonlyMap<string, UnsafeDestinationReport[]>;
 }
 
-export type PriorCycleNotReadyReason = "under-review" | "unresolved-proposals";
+type PriorCycleNotReadyReason = "under-review" | "unresolved-proposals";
 
-export class PriorCycleNotReadyError extends Error {
+class PriorCycleNotReadyError extends Error {
   readonly cycleId: string;
   readonly projectId: ProjectId;
   readonly reason: PriorCycleNotReadyReason;
@@ -58,9 +59,7 @@ export function previousCycleId(cycleId: string): string {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError("Cycle id must be YYYY-MM");
   }
-  const [year, month] = cycleId.split("-").map(Number);
-  const previous = new Date(Date.UTC(year, month - 2, 1));
-  return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+  return shiftPeriod(cycleId, -1);
 }
 
 async function readManifest(
@@ -105,7 +104,7 @@ async function readManifest(
  * Repeated reports must retain exact normalized bytes and an original held row.
  * Limits fail closed; dropping an old report could revive its unsafe address.
  */
-export async function loadUnsafeDestinationHistory(input: {
+async function loadUnsafeDestinationHistory(input: {
   asOf: string;
   cycleId: string;
   cyclesRoot: string;

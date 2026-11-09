@@ -32,7 +32,7 @@ export function reopenBreakerSql(repository: "?1" | "?3"): string {
   ))`;
 }
 
-export type CloseAttempt = {
+type CloseAttempt = {
   attempt_id: string;
   review_key: string;
   repository_id: number;

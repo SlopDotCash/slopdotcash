@@ -131,7 +131,7 @@ export async function retainedValueDispute(
   return result;
 }
 
-export function disputeAssessments(value: ValueDispute): ValueAssessment[] {
+function disputeAssessments(value: ValueDispute): ValueAssessment[] {
   return value.record.schemaVersion === "slop-value-record:v1"
     ? [value.record.assessment]
     : value.record.units.map((unit) => unit.assessment);
