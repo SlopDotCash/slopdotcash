@@ -1758,6 +1758,13 @@ export class VettingEvidence {
       object = await this.object(assessment, runId, sha),
       bytes = await this.bytes(object, run);
     await this.audit(actor.githubId, "read", assessment, runId, sha, reason);
+    // Storage and audit writes can outlive the session that consumed the
+    // grant. Recheck immediately before releasing the buffered private bytes.
+    const currentRun = await this.run(assessment, runId);
+    const currentActor = await this.operator(request);
+    if (currentActor.githubId !== actor.githubId)
+      fail(403, "forbidden", "The evidence operator changed");
+    this.readable(currentRun);
     return new Response(bytes as Uint8Array<ArrayBuffer>, {
       headers: {
         ...headers,
@@ -1772,11 +1779,11 @@ export class VettingEvidence {
     assessment: string,
     runId: string,
     sha: string,
-    token = "",
-    maxAge = 0,
+    token: string,
+    maxAge: number,
   ) {
     const path = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download`;
-    return `__Secure-vetting-read-grant=${token}; Path=${path}; Max-Age=${token ? maxAge : 0}; Secure; HttpOnly; SameSite=Strict`;
+    return `__Secure-vetting-read-grant=${token}; Path=${path}; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=Strict`;
   }
   async download(
     request: Request,
@@ -1972,22 +1979,18 @@ export class VettingEvidence {
       )
         return await this.grant(request, assessment, run, sha, true);
       if (operator && path.length === 6 && action === "download") {
-        let response: Response;
+        // A delayed response must not clear a newer grant's same-path cookie.
+        // D1 consumes each grant once; its original cookie TTL still applies.
         try {
           if (request.method !== "GET")
             fail(405, "method_not_allowed", "Native downloads require GET");
-          response = await this.download(request, assessment, run, sha);
+          return await this.download(request, assessment, run, sha);
         } catch (error) {
-          response = apiErrorResponse(error, {
+          return apiErrorResponse(error, {
             label: "vetting evidence API failure",
             respond: json,
           });
         }
-        response.headers.set(
-          "set-cookie",
-          this.downloadCookie(assessment, run, sha),
-        );
-        return response;
       }
       if (
         operator &&

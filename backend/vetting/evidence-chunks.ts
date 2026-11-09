@@ -92,37 +92,44 @@ export async function verifiedPart(
       status: 404,
       code: "evidence_missing",
     });
-  if (object.size !== size || object.customMetadata?.sha256 !== digest)
-    throw Object.assign(new Error("Evidence metadata changed"), {
-      status: 409,
-      code: "evidence_corrupt",
-    });
-  const result = new Uint8Array(size);
   const reader = object.body.getReader();
-  let offset = 0;
   try {
+    if (object.size !== size || object.customMetadata?.sha256 !== digest)
+      throw Object.assign(new Error("Evidence metadata changed"), {
+        status: 409,
+        code: "evidence_corrupt",
+      });
+    const result = new Uint8Array(size);
+    let offset = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (offset + value.byteLength > size) {
-        await reader.cancel();
+      if (offset + value.byteLength > size)
         throw Object.assign(new Error("Evidence length changed"), {
           status: 409,
           code: "evidence_corrupt",
         });
-      }
       result.set(value, offset);
       offset += value.byteLength;
     }
+    if (offset !== size || bytesToHex(sha256(result)) !== digest)
+      throw Object.assign(new Error("Evidence bytes changed"), {
+        status: 409,
+        code: "evidence_corrupt",
+      });
+    return result;
+  } catch (error) {
+    // Rejecting metadata or a body must relinquish the acquired R2 stream.
+    // Cleanup failure cannot replace the read/integrity error that caused it.
+    try {
+      await reader.cancel();
+    } catch {
+      // error-policy:J3 preserve the primary evidence refusal.
+    }
+    throw error;
   } finally {
     reader.releaseLock();
   }
-  if (offset !== size || bytesToHex(sha256(result)) !== digest)
-    throw Object.assign(new Error("Evidence bytes changed"), {
-      status: 409,
-      code: "evidence_corrupt",
-    });
-  return result;
 }
 
 /** Whole-file integrity is the SHA of ordered original bytes, never part hashes. */
