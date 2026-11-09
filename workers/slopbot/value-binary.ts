@@ -1,3 +1,5 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { gitObjectSha1 } from "./git-object";
 import { valueFileReader } from "./value-blob";
 import type {
   EvidenceClient,
@@ -32,10 +34,6 @@ const validPath = (path: string) =>
   !path.split("/").some((part) => !part || part === "." || part === "..");
 const keys =
   "baseSha,baseTreeSha,blobSha,contentBase64,contentReview,headSha,headTreeSha,mode,path,schemaVersion,sha256,size";
-const hex = (bytes: ArrayBuffer) =>
-  [...new Uint8Array(bytes)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 
 function encode(bytes: Uint8Array): string {
   let text = "";
@@ -75,13 +73,9 @@ export function needsAddedBinaryProof(file: FileChange): boolean {
 }
 
 async function identities(bytes: Uint8Array) {
-  const prefix = new TextEncoder().encode(`blob ${bytes.length}\0`);
-  const object = new Uint8Array(prefix.length + bytes.length);
-  object.set(prefix);
-  object.set(bytes, prefix.length);
   return {
-    blobSha: hex(await crypto.subtle.digest("SHA-1", object)),
-    sha256: hex(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+    blobSha: await gitObjectSha1("blob", bytes),
+    sha256: await sha256Hex(bytes),
   };
 }
 

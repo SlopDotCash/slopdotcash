@@ -1,3 +1,4 @@
+import { gitObjectSha1 } from "./git-object";
 import type { EvidenceClient, FileChange } from "./value-evidence";
 
 function addedLines(file: FileChange): string[] | null {
@@ -154,15 +155,7 @@ export function addedValuePatchRecovery(
           text.includes("\0")
         )
           continue;
-        const prefix = new TextEncoder().encode(`blob ${bytes.length}\0`);
-        const object = new Uint8Array(prefix.length + bytes.length);
-        object.set(prefix);
-        object.set(bytes, prefix.length);
-        const digest = [
-          ...new Uint8Array(await crypto.subtle.digest("SHA-1", object)),
-        ]
-          .map((value) => value.toString(16).padStart(2, "0"))
-          .join("");
+        const digest = await gitObjectSha1("blob", bytes);
         if (digest !== source.sha) continue;
         const lines = text === "" ? [] : text.split("\n");
         if (text.endsWith("\n")) lines.pop();

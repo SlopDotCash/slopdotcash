@@ -1,3 +1,4 @@
+import { gitObjectSha1 } from "./git-object";
 import type { EvidenceClient } from "./value-evidence";
 
 /** Bounded immutable Git blob verification shared by acceptance proofs. */
@@ -46,15 +47,7 @@ export function valueFileReader(client: EvidenceClient, repository: string) {
     }
     totalBytes += bytes.length;
     if (bytes.length !== file.size || totalBytes > 2 * 1024 * 1024) return null;
-    const prefix = new TextEncoder().encode(`blob ${bytes.length}\0`);
-    const object = new Uint8Array(prefix.length + bytes.length);
-    object.set(prefix);
-    object.set(bytes, prefix.length);
-    const digest = [
-      ...new Uint8Array(await crypto.subtle.digest("SHA-1", object)),
-    ]
-      .map((value) => value.toString(16).padStart(2, "0"))
-      .join("");
+    const digest = await gitObjectSha1("blob", bytes);
     return digest === file.sha ? { sha: digest, bytes } : null;
   };
 }
