@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { handleProjectApi } from "../backend/projects/handler";
-import { EVIDENCE_CHUNK_BYTES } from "../backend/vetting/evidence-chunks";
+import { EVIDENCE_CHUNK_BYTES, type EvidenceChunk } from "../backend/vetting/evidence-chunks";
+import { EvidenceStorage, type EvidenceStorageRow } from "../backend/vetting/evidence-storage";
 import {
   handleVettingApi,
   signedVettingRequest,
@@ -40,6 +41,25 @@ import { publishResult } from "../workers/vetting/publication";
 import { servicePublicationJournal } from "../workers/vetting/publication-journal";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
+
+/** Resolve the row's published storage pointer; do not guess a physical key. */
+async function selectedEvidenceKey(
+  assessmentId: string,
+  runId: string,
+  sha256: string,
+  part?: EvidenceChunk,
+) {
+  const db = retained.evidence.deps.db;
+  const row = await db.prepare(
+    "SELECT object_key,sha256,size_bytes,storage,storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? AND sha256=?",
+  ).bind(assessmentId, runId, sha256).first<EvidenceStorageRow>();
+  if (!row) throw new Error("Missing retained evidence row");
+  const key = await new EvidenceStorage(
+    db, retained.evidence.deps.bucket!, () => NOW, () => crypto.randomUUID(),
+  ).partKey(row, part);
+  if (key === null) throw new Error("Evidence has no published storage target");
+  return key;
+}
 afterEach(async () => {
   await retained?.dispose();
 });
@@ -751,7 +771,7 @@ test("private retained bytes remain inspectable without granting clean clearance
   const result = await fixture(id, "clean");
   const run = result.environment.runId;
   const base = `/api/v1/operator/vetting-evidence/${id}/${run}/${result.traceSha256}`;
-  const key = `vetting/objects/${result.traceSha256}`;
+  const key = await selectedEvidenceKey(id, run, result.traceSha256);
   const operator = async (
     path: string,
     actor = EVIDENCE_OWNER_GITHUB_ID,
@@ -914,7 +934,7 @@ test("a clean result cannot omit a referenced retained artifact or replace an im
     await retained.request("POST", service, JSON.stringify(changed)),
   );
   expect(conflict?.status).toBe(409);
-  await retained.bucket.delete(`vetting/objects/${result.artifacts[0].sha256}`);
+  await retained.bucket.delete(await selectedEvidenceKey(id, run, result.artifacts[0].sha256));
   expect((await postResult(result)).status).toBe(422);
   expect((await publicVetting()).state).toBe("queued");
   await retained.retain(id, run);
@@ -1208,7 +1228,7 @@ test("large retained evidence uses bounded chunks, immutable completion and acto
   const interruptedReader = interrupted.body!.getReader();
   await interruptedReader.read();
   await retained.bucket.delete(
-    `vetting/objects/${digest}/chunks/1/${chunks[1].sha256}`,
+    await selectedEvidenceKey(id, runId, digest, chunks[1]),
   );
   await expect(interruptedReader.read()).rejects.toThrow(
     "Declared evidence bytes are missing",
@@ -1327,9 +1347,10 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
   expect((await send("POST", `${first}/${bigSha}/finalize`, "{}")).status).toBe(
     200,
   );
-  // One copy, under the digest, never under the run.
+  // One published target in the row's storage generation, never a run root.
+  const smallKey = await selectedEvidenceKey(id, "large-first", smallSha);
   expect(
-    await retained.bucket.head(`vetting/objects/${smallSha}`),
+    await retained.bucket.head(smallKey),
   ).not.toBeNull();
   expect(
     await retained.bucket.head(`vetting/${id}/large-first/${smallSha}`),
@@ -1354,7 +1375,7 @@ test("evidence beyond the former 64 MiB run cap is stored once by digest, in bou
     { run_id: "large-second", storage: "content" },
   ]);
   // A changed stored part fails verification for every run that references it.
-  const partKey = `vetting/objects/${bigSha}/chunks/3/${layout[3].sha256}`;
+  const partKey = await selectedEvidenceKey(id, "large-first", bigSha, layout[3]);
   await retained.bucket.delete(partKey);
   const changed = new Uint8Array(layout[3].sizeBytes);
   await retained.bucket.put(partKey, changed, {

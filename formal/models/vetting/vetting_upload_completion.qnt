@@ -9,6 +9,10 @@
 // @source migrations/0107_vetting_content_addressed_evidence.sql
 // @source workers/vetting-backup/core.ts
 // @evidence scripts/vetting-api.test.ts
+// This model covers pre-0119 immutable rows with storage_generation=null.
+// New generated rows use vetting_generation_storage and the generation
+// retirement model. The DELETE resurrection trace is historical: the new
+// collector holds these legacy keys instead of deleting them.
 // Two registered runs share two content-addressed parts. At most two sequential
 // service requests model retry and cross-run finalization. Authorization, body
 // signature/size/digest, registered layout and R2 equality are predicates; the

@@ -4,6 +4,8 @@
 // @source migrations/0034_vetting_private_evidence.sql
 // @source migrations/0036_vetting_evidence_assembly.sql
 // @source migrations/0107_vetting_content_addressed_evidence.sql
+// @source migrations/0119_vetting_storage_generations.sql
+// @source backend/vetting/evidence-storage.ts
 // @evidence scripts/vetting-api.test.ts
 // Two requests, each with one retry; one assessment and two run IDs; two
 // immutable canonical manifests over two distinct object digests. Raw forms1/2
@@ -22,9 +24,13 @@
 // A successful batch promise denotes its committed transaction; missing/false
 // success metadata from an out-of-contract adapter is not modeled. Lost/thrown
 // replies after commit are modeled and may replay the caller's own new row.
-// Cleanup claims represent an independently authorized prior cleanup with no
-// current modeled reference. The migration0107 trigger blocks a new reference
-// while claimed; releasing the claim can delete bytes before a later admission.
+// Generation allocation and run/object references share the registration batch.
+// Two physical generations are represented, with both digests rotating together
+// in this bound. rotateGeneration abstracts independently authorized retirement;
+// its policy/target fencing is modeled by the generation and retention models.
+// Replay retains the original binding; a new run selects the current generation.
+// Legacy cleanup claims do not block a new generation. Per-generation part
+// observations are separate; no old copy is inferred into a new generation.
 // Existing run/object metadata is never deleted in this bound. Retention-based
 // selection, old deletion receipts, physical delete retries, uploads and whole
 // finalization belong to their separate models. Stored hints are observations,
@@ -37,31 +43,27 @@
 module vetting_evidence_registration {
   val ids = Set(1, 2)
   val parts = Set(1, 2, 3)
+  val physicalParts = Set(1, 2, 3, 4, 5, 6)
   val faults = Set("none", "json", "shape", "digest", "empty", "limit", "object", "duplicate", "layout", "trace", "assembly")
-  type Row = { manifest: int, objects: Set[int], audited: bool, service: int, at: int }
+  type Row = { generation: int, manifest: int, objects: Set[int], audited: bool, service: int, at: int }
   type Request = { phase: str, attempt: int, scope: int, raw: int, manifest: int,
     fault: str, service: int, at: int, committed: bool, cause: str,
     status: int, replayed: bool, hintIndex: int, stored: Set[int], delivered: bool }
-  val emptyRow: Row = { manifest: 0, objects: Set(), audited: false, service: 0, at: 0 }
+  val emptyRow: Row = { generation: 0, manifest: 0, objects: Set(), audited: false, service: 0, at: 0 }
   val idle: Request = { phase: "idle", attempt: 0, scope: 1, raw: 1, manifest: 0,
     fault: "none", service: 1, at: 0, committed: false, cause: "none",
     status: 0, replayed: false, hintIndex: 0, stored: Set(), delivered: false }
   var s: { now: int, assessment: bool, rows: int -> Row, requests: int -> Request,
-    claims: Set[int], bytes: int -> str, wholeMatches: bool }
+    generation: int, bytes: int -> str, wholeMatches: bool }
   action init = s' = { now: 0, assessment: true, rows: ids.mapBy(_ => emptyRow), requests: ids.mapBy(_ => idle),
-    claims: Set(), bytes: parts.mapBy(_ => "missing"), wholeMatches: true }
+    generation: 1, bytes: physicalParts.mapBy(_ => "missing"), wholeMatches: true }
   def fail(r: Request, status: int): Request = r.with("phase", "response").with("status", status)
   def replay(r: Request, row: Row): Request = if (r.manifest != row.manifest) fail(r, 409)
     else r.with("phase", "hints").with("status", 200).with("replayed", true)
-  def referenced(object: int): bool = ids.exists(scope => s.rows.get(scope).objects.contains(object))
   action tick = all { s.now < 3, s' = s.with("now", s.now + 1) }
   action removeUnreferencedAssessment = all { ids.forall(scope => s.rows.get(scope).manifest == 0), s' = s.with("assessment", false) }
-  action claim(object: int): bool = all { ids.contains(object), not(referenced(object)),
-    s' = s.with("claims", s.claims.union(Set(object))) }
-  action finishCleanup(object: int): bool = all { ids.contains(object), s.claims.contains(object),
-    s' = s.with("claims", s.claims.exclude(Set(object))).with("bytes",
-      if (object == 1) s.bytes.set(1, "missing") else s.bytes.set(2, "missing").set(3, "missing")) }
-  action changePart(part: int, state: str): bool = all { parts.contains(part), Set("valid", "missing", "corrupt").contains(state),
+  action rotateGeneration = all { s.generation == 1, s' = s.with("generation", 2) }
+  action changePart(part: int, state: str): bool = all { physicalParts.contains(part), Set("valid", "missing", "corrupt").contains(state),
     s' = s.with("bytes", s.bytes.set(part, state)) }
   action wrongWhole = s' = s.with("wholeMatches", false)
   action begin(id: int, scope: int, raw: int, fault: str, service: int): bool = {
@@ -112,12 +114,11 @@ module vetting_evidence_registration {
   action batch(id: int, operational: bool): bool = {
     val r = s.requests.get(id)
     val exists = s.rows.get(r.scope).manifest != 0
-    val cleanup = s.claims.size() > 0
-    val commits = operational and not(exists) and not(cleanup) and s.assessment
-    val cause = if (exists) "unique" else if (not(operational) or not(s.assessment)) "other" else if (cleanup) "cleanup" else "none"
+    val commits = operational and not(exists) and s.assessment
+    val cause = if (exists) "unique" else if (not(operational) or not(s.assessment)) "other" else "none"
     all { r.phase == "batch",
       s' = s.with("rows", if (commits) s.rows.set(r.scope,
-        { manifest: r.manifest, objects: Set(1, 2), audited: true, service: r.service, at: r.at }) else s.rows)
+        { generation: s.generation, manifest: r.manifest, objects: Set(1, 2), audited: true, service: r.service, at: r.at }) else s.rows)
         .with("requests", s.requests.set(id, r.with("phase", "batch-reply").with("committed", commits).with("cause", cause))) }
   }
   action batchReply(id: int, successful: bool): bool = {
@@ -131,11 +132,13 @@ module vetting_evidence_registration {
     val row = s.rows.get(r.scope)
     all { r.phase == "catch-read", s' = s.with("requests", s.requests.set(id,
       if (not(readable)) fail(r, 500) else if (row.manifest != 0) replay(r, row)
-      else fail(r, if (r.cause == "cleanup") 409 else 500))) }
+      else fail(r, 500))) }
   }
   action hint(id: int, ioWorks: bool): bool = {
     val r = s.requests.get(id)
-    val valid = ioWorks and (if (r.hintIndex < 3) s.bytes.get(r.hintIndex + 1) == "valid" else false)
+    val generation = s.rows.get(r.scope).generation
+    val valid = ioWorks and (if (r.hintIndex < 3 and generation > 0)
+      s.bytes.get(r.hintIndex + 1 + 3 * (generation - 1)) == "valid" else false)
     val next = if (r.hintIndex == 1 and not(valid)) 3 else r.hintIndex + 1
     val stored = if (valid and r.hintIndex == 0) r.stored.union(Set(1))
       else if (valid and r.hintIndex == 2) r.stored.union(Set(2)) else r.stored
@@ -154,10 +157,10 @@ module vetting_evidence_registration {
     nondet fault = faults.oneOf()
     nondet service = ids.oneOf()
     nondet outcome = Set("valid", "invalid", "unconfigured", "oversize", "throw").oneOf()
-    nondet part = parts.oneOf()
+    nondet part = physicalParts.oneOf()
     nondet state = Set("valid", "missing", "corrupt").oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { tick, removeUnreferencedAssessment, claim(scope), finishCleanup(scope), changePart(part, state), wrongWhole,
+    any { tick, removeUnreferencedAssessment, rotateGeneration, changePart(part, state), wrongWhole,
       begin(id, scope, raw, fault, service), configuration(id, yes), signature(id, outcome), json(id), assessment(id, yes), objects(id), canonical(id),
       initialRead(id, yes), batch(id, yes), batchReply(id, yes), catchRead(id, yes), hint(id, yes), response(id, yes), s' = s }
   }
@@ -165,7 +168,7 @@ module vetting_evidence_registration {
     ids.forall(scope => {
       val row = s.rows.get(scope)
       all { (row.manifest != 0) == row.audited,
-        row.manifest != 0 implies row.objects == Set(1, 2) and s.assessment and s.claims.size() == 0,
+        row.manifest != 0 implies row.objects == Set(1, 2) and s.assessment and Set(1, 2).contains(row.generation),
         row.manifest == 0 implies row.objects.size() == 0 }
     }),
     ids.forall(id => {
@@ -214,20 +217,21 @@ module vetting_evidence_registration {
     .expect(s.requests.get(1).committed and s.requests.get(1).replayed and invariant)
   run failedCatchReadKeepsCommittedHistoryTest = init.then(emptyRead(1, 1, 1)).then(batch(1, true)).then(batchReply(1, false)).then(catchRead(1, false))
     .expect(s.requests.get(1).status == 500 and s.rows.get(1).audited and invariant)
-  run cleanupTriggerRollsBackRunObjectsAndAuditTest = init.then(emptyRead(1, 1, 1)).then(claim(2)).then(batch(1, true)).then(batchReply(1, false)).then(catchRead(1, true))
-    .expect(s.requests.get(1).status == 409 and s.rows.get(1) == emptyRow and invariant)
-  run cleanupReleaseAllowsLaterRegistrationTest = init.then(claim(2)).then(emptyRead(1, 1, 1)).then(batch(1, true)).then(batchReply(1, false))
-    .then(catchRead(1, true)).then(response(1, true)).then(finishCleanup(2)).then(create(1, 1, 1))
-    .expect(s.requests.get(1).attempt == 2 and s.requests.get(1).status == 201 and invariant)
-  run winnerReadbackPrecedesOriginalCleanupErrorTest = init.then(emptyRead(1, 1, 1)).then(claim(1)).then(batch(1, true)).then(batchReply(1, false))
-    .then(finishCleanup(1)).then(create(2, 1, 2)).then(catchRead(1, true)).expect(s.requests.get(1).replayed and s.rows.get(1).service == 2 and invariant)
+  run generationReservationFailureRollsBackRunObjectsAndAuditTest = init.then(emptyRead(1, 1, 1)).then(batch(1, false)).then(batchReply(1, false)).then(catchRead(1, true))
+    .expect(s.requests.get(1).status == 500 and s.rows.get(1) == emptyRow and invariant)
+  run newRunSelectsNewGenerationTest = init.then(create(1, 1, 1)).then(rotateGeneration).then(create(2, 2, 1))
+    .expect(s.rows.get(1).generation == 1 and s.rows.get(2).generation == 2 and invariant)
+  run lostBatchReplyKeepsOriginalGenerationTest = init.then(emptyRead(1, 1, 1)).then(batch(1, true)).then(rotateGeneration)
+    .then(batchReply(1, false)).then(catchRead(1, true)).expect(s.requests.get(1).replayed and s.rows.get(1).generation == 1 and invariant)
   run foreignKeyRefusesDeletedAssessmentAfterLookupTest = init.then(emptyRead(1, 1, 1)).then(removeUnreferencedAssessment).then(batch(1, true))
     .then(batchReply(1, false)).then(catchRead(1, true)).expect(s.requests.get(1).status == 500 and s.rows.get(1) == emptyRow)
   run genericFailureWithNoWinnerKeepsNoPartialRegistrationTest = init.then(emptyRead(1, 1, 1)).then(batch(1, false)).then(batchReply(1, false)).then(catchRead(1, true))
     .expect(s.requests.get(1).status == 500 and s.rows.get(1) == emptyRow and invariant)
   run independentRunsKeepSeparateObjectReferencesTest = init.then(create(1, 1, 1)).then(create(2, 2, 1))
     .expect(s.rows.get(1).audited and s.rows.get(2).audited and invariant)
-  run admittedReferencePreventsNewCleanupClaimTest = init.then(create(1, 1, 1)).then(claim(1).fail())
+  run existingRunReplayCannotRebindGenerationTest = init.then(create(1, 1, 1)).then(rotateGeneration)
+    .then(validated(2, 1, 2)).then(initialRead(2, true))
+    .expect(s.requests.get(2).replayed and s.rows.get(1).generation == 1 and invariant)
   run registrationSucceedsWithNoStoredBytesTest = init.then(create(1, 1, 1)).then(hint(1, true)).then(hint(1, true)).then(response(1, true))
     .expect(s.requests.get(1).status == 201 and s.requests.get(1).stored.size() == 0 and invariant)
   run storedHintCanBeStaleBeforeResponseTest = init.then(allParts).then(create(1, 1, 1)).then(hint(1, true)).then(changePart(1, "missing"))

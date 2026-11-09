@@ -5,6 +5,9 @@
 // @source migrations/0036_vetting_evidence_assembly.sql
 // @source migrations/0066_vetting_case_retention.sql
 // @source migrations/0107_vetting_content_addressed_evidence.sql
+// Historical pre-0119 cleanup counterexample. These transitions describe the
+// replaced collector, not the current generation protocol. Current legacy
+// storage is held; new generations have separate reservation/retirement models.
 // One shared content digest, three run references, two competing registration
 // payloads, all non-permanent. Crypto/whole-byte equality are abstracted. Cleanup first
 // fences new references, while expired shared references are retired logically.

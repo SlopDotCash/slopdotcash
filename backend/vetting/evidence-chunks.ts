@@ -8,6 +8,8 @@ import type { R2Bucket } from "../trace/cloudflare-persistence";
 
 /** Every upload, read and backup request handles at most one part this size. */
 export const EVIDENCE_CHUNK_BYTES = 8 * 1024 * 1024;
+export const EVIDENCE_RETIREMENT_METADATA_KEY = "evidenceRetirement";
+export const EVIDENCE_RETIREMENT_METADATA_VALUE = "v1";
 /**
  * Where an evidence row's bytes live in R2: its content-addressed key for
  * `storage = 'content'`, otherwise its historical run-scoped `object_key`.
@@ -96,6 +98,7 @@ export async function verifiedPart(
   key: string,
   digest: string,
   size: number,
+  allowRetirementMarker = false,
 ): Promise<Uint8Array> {
   if (size > EVIDENCE_CHUNK_BYTES || size < 0)
     throw new Error("Evidence part exceeds bounded read size");
@@ -107,6 +110,12 @@ export async function verifiedPart(
     });
   const reader = object.body.getReader();
   try {
+    if (!allowRetirementMarker &&
+      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] === EVIDENCE_RETIREMENT_METADATA_VALUE)
+      throw Object.assign(new Error("Evidence target has retired"), {
+        status: 410,
+        code: "evidence_retired",
+      });
     if (object.size !== size || object.customMetadata?.sha256 !== digest)
       throw new EvidenceCorruptionError(
         "Evidence metadata changed",
@@ -149,17 +158,25 @@ export async function verifyParts(
   chunks: EvidenceChunk[],
   digest: string,
 ) {
+  return verifyPartSequence(chunks, digest, (chunk) =>
+    verifiedPart(
+      bucket,
+      chunkKey(key, chunk),
+      chunk.sha256,
+      chunk.sizeBytes,
+    ),
+  );
+}
+
+/** Resolve each current part independently, while retaining ordered whole hashing. */
+export async function verifyPartSequence(
+  chunks: EvidenceChunk[],
+  digest: string,
+  read: (chunk: EvidenceChunk) => Promise<Uint8Array>,
+) {
   const hash = sha256.create();
   try {
-    for (const chunk of chunks)
-      hash.update(
-        await verifiedPart(
-          bucket,
-          chunkKey(key, chunk),
-          chunk.sha256,
-          chunk.sizeBytes,
-        ),
-      );
+    for (const chunk of chunks) hash.update(await read(chunk));
     if (bytesToHex(hash.digest()) !== digest)
       throw Object.assign(new Error("Complete evidence digest changed"), {
         status: 409,
