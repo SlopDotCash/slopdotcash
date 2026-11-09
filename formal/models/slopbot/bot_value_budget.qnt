@@ -1,6 +1,7 @@
 // @source migrations/0051_slopbot_value_budget.sql
 // @source migrations/0077_slopbot_alerts_only.sql
 // @source migrations/0084_slopbot_attempt_accounting.sql
+// @source migrations/0120_slopbot_zero_call_reconciliation.sql
 // @source workers/slopbot/value-budget.ts
 // @source workers/slopbot/value-inference.ts
 // @source workers/slopbot/value-consumption.ts
@@ -8,9 +9,9 @@
 // unreconciled; this model does not pretend a reservation binds the provider.
 module bot_value_budget {
   var s: { used: int, held: int, unknown: bool, priorUnknown: bool, attempts: Set[int],
-    current: int, mode: str, reserved: int, calls: int, knownCalls: int, cost: int }
+    current: int, mode: str, reserved: int, calls: int, knownCalls: int, cost: int, completedNoCall: bool }
   action init = s' = { used: 0, held: 0, unknown: false, priorUnknown: false, attempts: Set(),
-    current: 0, mode: "none", reserved: 0, calls: 0, knownCalls: 0, cost: 0 }
+    current: 0, mode: "none", reserved: 0, calls: 0, knownCalls: 0, cost: 0, completedNoCall: false }
   action reserve(id, alerts, amount) = all {
     id.in(Set(1, 2)), not(id.in(s.attempts)), s.current == 0,
     amount.in(Set(1, 2, 3)),
@@ -24,16 +25,18 @@ module bot_value_budget {
   // cost is the ledger's COALESCE(actual, versioned estimate); an unknown
   // provider amount still consumes its recorded estimate and keeps its hold.
   action provider(known, cost) = all {
-    s.current != 0, s.calls == 0, cost.in(Set(0, 1, 3, 7)),
+    s.current != 0, s.calls == 0, not(s.completedNoCall), cost.in(Set(0, 1, 3, 7)),
     s' = s.with("calls", 1).with("knownCalls", if (known) 1 else 0)
       .with("cost", if (known) cost else 0).with("used", s.used + cost),
   }
+  action completeNoCall = all { s.current != 0, s.calls == 0,
+    s' = s.with("completedNoCall", true) }
   action reconcile = all {
-    s.current != 0, s.calls == 1, s.knownCalls == 1,
+    s.current != 0, (s.calls == 1 and s.knownCalls == 1) or s.completedNoCall,
     s.mode == "alerts" or s.cost <= s.reserved,
     s' = s.with("current", 0).with("held", s.held - s.reserved)
       .with("unknown", s.priorUnknown).with("mode", "none").with("reserved", 0)
-      .with("calls", 0).with("knownCalls", 0).with("cost", 0),
+      .with("calls", 0).with("knownCalls", 0).with("cost", 0).with("completedNoCall", false),
   }
   action abandonUncertain = all {
     s.current != 0, s.calls == 1,
@@ -47,13 +50,14 @@ module bot_value_budget {
     nondet amount = Set(1, 2, 3).oneOf()
     nondet cost = Set(0, 1, 3, 7).oneOf()
     nondet known = Set(false, true).oneOf()
-    any { reserve(id, alerts, amount), provider(known, cost), reconcile, abandonUncertain }
+    any { reserve(id, alerts, amount), provider(known, cost), completeNoCall, reconcile, abandonUncertain }
   }
   val invariant = all {
     s.used >= 0, s.held >= 0,
     s.current != 0 implies s.current.in(s.attempts),
     s.attempts.size() <= 2,
     s.knownCalls <= s.calls,
+    s.completedNoCall implies (s.current != 0 and s.calls == 0),
   }
   run providerOverchargeRemainsHeldTest = init.then(reserve(1, false, 2))
     .then(provider(true, 7)).then(abandonUncertain)
@@ -66,4 +70,9 @@ module bot_value_budget {
   run exactReconciliationReleasesCapacityTest = init.then(reserve(1, false, 3))
     .then(provider(true, 1)).then(reconcile).then(reserve(2, false, 3))
     .expect(s.used == 1 and s.held == 3)
+  run completedNoCallReleasesCapacityTest = init.then(reserve(1, false, 3))
+    .then(completeNoCall).then(reconcile).then(reserve(2, false, 3))
+    .expect(s.used == 0 and s.held == 3)
+  run unfinishedNoCallRemainsHeldTest = init.then(reserve(1, false, 3))
+    .then(reconcile.fail())
 }
