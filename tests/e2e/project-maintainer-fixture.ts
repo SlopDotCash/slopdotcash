@@ -20,6 +20,7 @@ export async function serveProjectMaintainer(
       const project = currentProject();
       return route.fulfill({
         json: {
+          viewer: { githubId: "1" },
           setup: {
             projectId: id,
             name: project.name,

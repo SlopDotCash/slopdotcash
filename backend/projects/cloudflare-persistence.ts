@@ -397,14 +397,19 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
       : null;
   }
 
-  async createProject(input: NewProjectInput): Promise<"created" | "conflict"> {
+  async createProject(
+    input: NewProjectInput,
+    expectedEnforcementGeneration: number,
+  ): Promise<"created" | "conflict"> {
+    const current =
+      "(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?";
     const statements = [
       this.db
         .prepare(
           `INSERT INTO project_revisions (
              project_id, revision, manifest, manifest_sha256, reason,
              actor_github_id, actor_github_login, created_at
-           ) VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
+           ) SELECT ?, 1, ?, ?, ?, ?, ?, ? WHERE ${current}`,
         )
         .bind(
           input.manifest.id,
@@ -414,11 +419,12 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubId,
           input.actor.githubLogin,
           input.at,
+          expectedEnforcementGeneration,
         ),
       this.db
         .prepare(
           `INSERT INTO projects (${PROJECT_COLUMNS})
-           VALUES (?, 'paused', 1, ?, ?, ?, ?, NULL, ?, ?)`,
+           SELECT ?, 'paused', 1, ?, ?, ?, ?, NULL, ?, ? WHERE ${current}`,
         )
         .bind(
           input.manifest.id,
@@ -428,18 +434,19 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.at,
           input.referrer?.githubId ?? null,
           input.referrer?.githubLogin ?? null,
+          expectedEnforcementGeneration,
         ),
       ...repositoryKeys(input.manifest).map((key) =>
         this.db
           .prepare(
-            "INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)",
+            `INSERT INTO project_repositories (repository_key, project_id) SELECT ?, ? WHERE ${current}`,
           )
-          .bind(key, input.manifest.id),
+          .bind(key, input.manifest.id, expectedEnforcementGeneration),
       ),
     ];
     try {
-      await this.db.batch(statements);
-      return "created";
+      const results = await this.db.batch(statements);
+      return results[1]?.meta?.changes === 1 ? "created" : "conflict";
     } catch (error) {
       if (isConstraintConflict(error)) return "conflict";
       throw error;
@@ -448,12 +455,14 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
 
   async publishApplication(
     input: DecisionInput,
+    expectedEnforcementGeneration: number,
   ): Promise<"published" | "conflict"> {
     const application = await this.getApplication(input.applicationId);
     if (application === null || application.status !== "pending") {
       return "conflict";
     }
-    const pending = `EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending')`;
+    const pending = `EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending')
+      AND (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?`;
     const manifestText = JSON.stringify(application.manifest);
     const reason = `Published application ${application.id}${input.reason ? `: ${input.reason}` : ""}`;
     const statements = [
@@ -473,6 +482,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubLogin,
           input.at,
           application.id,
+          expectedEnforcementGeneration,
         ),
       this.db
         .prepare(
@@ -489,6 +499,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           application.referrer?.githubId ?? null,
           application.referrer?.githubLogin ?? null,
           application.id,
+          expectedEnforcementGeneration,
         ),
       ...repositoryKeys(application.manifest).map((key) =>
         this.db
@@ -496,14 +507,20 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
             `INSERT INTO project_repositories (repository_key, project_id)
              SELECT ?, ? WHERE ${pending}`,
           )
-          .bind(key, application.projectId, application.id),
+          .bind(
+            key,
+            application.projectId,
+            application.id,
+            expectedEnforcementGeneration,
+          ),
       ),
       this.db
         .prepare(
           `UPDATE project_applications
               SET status = 'approved', decided_at = ?, decided_by_github_id = ?,
                   decided_by_github_login = ?, decision_reason = ?
-            WHERE id = ? AND status = 'pending'`,
+            WHERE id = ? AND status = 'pending'
+              AND (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?`,
         )
         .bind(
           input.at,
@@ -511,6 +528,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubLogin,
           input.reason,
           application.id,
+          expectedEnforcementGeneration,
         ),
     ];
     try {

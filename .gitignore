@@ -36,6 +36,9 @@ public/skill-templates/
 
 .points-build/
 
+# Retained cycle-publication recovery files are local build state.
+src/lib/.cycle-promotion-*/
+
 # Local smart-contract invariant runs
 /cache/
 

@@ -15,10 +15,10 @@
 module bot_value_budget {
   var s: { used: int, held: int, unknown: bool, priorUnknown: bool, attempts: Set[int],
     current: int, mode: str, reserved: int, calls: int, knownCalls: int, cost: int,
-    uncertainHeld: int }
+    uncertainHeld: int, completedNoCall: bool }
   action init = s' = { used: 0, held: 0, unknown: false, priorUnknown: false, attempts: Set(),
     current: 0, mode: "none", reserved: 0, calls: 0, knownCalls: 0, cost: 0,
-    uncertainHeld: 0 }
+    uncertainHeld: 0, completedNoCall: false }
   action reserve(id, alerts, amount) = all {
     id.in(Set(1, 2)), not(id.in(s.attempts)), s.current == 0,
     amount.in(Set(1, 2, 3)),
@@ -32,29 +32,25 @@ module bot_value_budget {
   // cost is the ledger's COALESCE(actual, versioned estimate); an unknown
   // provider amount still consumes its recorded estimate and keeps its hold.
   action provider(known, cost) = all {
-    s.current != 0, s.calls == 0, cost.in(Set(0, 1, 3, 7)),
+    s.current != 0, s.calls == 0, not(s.completedNoCall), cost.in(Set(0, 1, 3, 7)),
     s' = s.with("calls", 1).with("knownCalls", if (known) 1 else 0)
       .with("cost", if (known) cost else 0).with("used", s.used + cost),
   }
+  action completeNoCall = all { s.current != 0, s.calls == 0,
+    s' = s.with("completedNoCall", true) }
   action reconcile = all {
-    s.current != 0, s.calls == 1, s.knownCalls == 1,
+    s.current != 0, (s.calls == 1 and s.knownCalls == 1) or s.completedNoCall,
     s.mode == "alerts" or s.cost <= s.reserved,
     s' = s.with("current", 0).with("held", s.held - s.reserved)
       .with("unknown", s.priorUnknown).with("mode", "none").with("reserved", 0)
-      .with("calls", 0).with("knownCalls", 0).with("cost", 0),
-  }
-  // runStructuredRoute returned before its first request: nothing can bill.
-  action refuseBeforeCall = all {
-    s.current != 0, s.calls == 0,
-    s' = s.with("current", 0).with("held", s.held - s.reserved)
-      .with("unknown", s.priorUnknown).with("mode", "none").with("reserved", 0),
+      .with("calls", 0).with("knownCalls", 0).with("cost", 0).with("completedNoCall", false),
   }
   action abandonUncertain = all {
     s.current != 0, s.calls == 1,
     s.knownCalls == 0 or (s.mode == "capped" and s.cost > s.reserved),
     s' = s.with("current", 0).with("mode", "none")
       .with("uncertainHeld", s.uncertainHeld + s.reserved)
-      .with("reserved", 0).with("calls", 0).with("knownCalls", 0).with("cost", 0),
+      .with("reserved", 0).with("calls", 0).with("knownCalls", 0).with("cost", 0).with("completedNoCall", false),
   }
   action step = {
     nondet id = Set(1, 2).oneOf()
@@ -62,11 +58,12 @@ module bot_value_budget {
     nondet amount = Set(1, 2, 3).oneOf()
     nondet cost = Set(0, 1, 3, 7).oneOf()
     nondet known = Set(false, true).oneOf()
-    any { reserve(id, alerts, amount), provider(known, cost), reconcile, refuseBeforeCall,
+    any { reserve(id, alerts, amount), provider(known, cost), completeNoCall, reconcile,
       abandonUncertain }
   }
   // Every hold belongs to the live attempt or to one that made a call whose
-  // charge is unknown or excessive; no zero-call attempt keeps capacity.
+  // charge is unknown or excessive. A no-call hold stays until its explicit
+  // completion and zero reconciliation have both been recorded.
   val holdsAccounted = s.held == s.reserved + s.uncertainHeld
   val invariant = all {
     s.used >= 0, s.held >= 0,
@@ -74,6 +71,7 @@ module bot_value_budget {
     s.attempts.size() <= 2,
     s.knownCalls <= s.calls,
     holdsAccounted,
+    s.completedNoCall implies (s.current != 0 and s.calls == 0),
   }
   run providerOverchargeRemainsHeldTest = init.then(reserve(1, false, 2))
     .then(provider(true, 7)).then(abandonUncertain)
@@ -87,9 +85,14 @@ module bot_value_budget {
     .then(provider(true, 1)).then(reconcile).then(reserve(2, false, 3))
     .expect(s.used == 1 and s.held == 3)
   run authorityRefusalBeforeCallReleasesHoldTest = init.then(reserve(1, false, 3))
-    .then(refuseBeforeCall).expect(s.held == 0 and s.used == 0 and s.current == 0)
+    .then(completeNoCall).then(reconcile).expect(s.held == 0 and s.used == 0 and s.current == 0)
     .then(reserve(2, false, 3)).expect(s.held == 3)
   run alertsRefusalBeforeCallRestoresCappedModeTest = init.then(reserve(1, true, 1))
-    .then(refuseBeforeCall).expect(not(s.unknown)).then(reserve(2, false, 3))
+    .then(completeNoCall).then(reconcile).expect(not(s.unknown)).then(reserve(2, false, 3))
     .expect(s.mode == "capped" and s.held == 3)
+  run completedNoCallReleasesCapacityTest = init.then(reserve(1, false, 3))
+    .then(completeNoCall).then(reconcile).then(reserve(2, false, 3))
+    .expect(s.used == 0 and s.held == 3)
+  run unfinishedNoCallRemainsHeldTest = init.then(reserve(1, false, 3))
+    .then(reconcile.fail())
 }

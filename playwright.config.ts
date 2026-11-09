@@ -6,6 +6,7 @@ import { availableParallelism } from "node:os";
  */
 
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_PUBLIC_GITHUB_TOKEN } from "./tests/github-api-fixture.mjs";
 
 const firefoxStreamWorkflows =
   /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted|an escalated contribution appeal opens from the moderator Inbox/;
@@ -169,10 +170,11 @@ const registryArguments = registryPersistTo
         ? ` --binding PROJECT_MODERATOR_GITHUB_IDS=${registryModerators}`
         : ""
     }${
-      // The loopback fixture also answers the Surplus analysis provider, so
-      // private analysis and appeal triage run in every registry run.
+      // This synthetic public token is bound only alongside the validated
+      // loopback GitHub fixture. No production credential enters this lane.
+      // The fixture also answers private analysis and appeal triage.
       registryGitHub
-        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub} --binding REWARD_RPC_BASE=${registryGitHub}/__fixture/reward-rpc/base`
+        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SLOP_GITHUB_READ_TOKEN=${E2E_PUBLIC_GITHUB_TOKEN} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub} --binding REWARD_RPC_BASE=${registryGitHub}/__fixture/reward-rpc/base`
         : ""
     }${
       registryIntakeKey

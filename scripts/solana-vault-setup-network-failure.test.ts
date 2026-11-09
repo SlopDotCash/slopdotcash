@@ -6,6 +6,7 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import {
   handleProjectApi,
@@ -15,12 +16,17 @@ import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import {
   CONFIG_DISCRIMINATOR,
   CONFIG_SIZE,
+  PROJECT_DISCRIMINATOR,
+  PROJECT_SIZE,
   solanaBase58,
   solanaConfigAddress,
 } from "../contracts/solana/adapter";
+import { buildInitializeVaultInstructions } from "../contracts/solana/owner-instructions";
 import type { ReviewedSolanaProgram } from "../contracts/solana/programs";
+import { bytes, message } from "../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { registryProjectDigest } from "../src/lib/vault-setup";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 
@@ -29,7 +35,8 @@ const OWNER = { githubId: "900000002", githubLogin: "owner" };
 const CLAIM = "verified-owner-wallet";
 const key = (byte: number) => solanaBase58(new Uint8Array(32).fill(byte));
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
-const OWNER_WALLET = key(2);
+const OWNER_SECRET = new Uint8Array(32).fill(2);
+const OWNER_WALLET = solanaBase58(ed25519.getPublicKey(OWNER_SECRET));
 const network = ESCROW_NETWORKS["solana-mainnet"];
 
 // Chain facts that the local RPC serves for the reviewed program below: a
@@ -48,6 +55,16 @@ const program: ReviewedSolanaProgram = {
   bindingDelaySeconds: "0",
   rotationDelaySeconds: "0",
 } as ReviewedSolanaProgram;
+const reviewedPrograms = [program];
+let extraProgram: ReviewedSolanaProgram | undefined;
+let createdProject:
+  | { address: string; programId: string; data: Uint8Array }
+  | undefined;
+let creationSignature = solanaBase58(new Uint8Array(64).fill(7));
+let creationWire = new Uint8Array();
+let creationStatus: "pending" | "failed" | "valid" = "valid";
+const BLOCKHASH = key(9);
+const creationMethods: string[] = [];
 const config = new Uint8Array(CONFIG_SIZE);
 config.set(Buffer.from(CONFIG_DISCRIMINATOR, "hex"));
 config.set(new Uint8Array(32).fill(3), 8);
@@ -72,12 +89,35 @@ const accounts = (): Record<string, unknown> => ({
     executable: false,
     data: [base64(mint), "base64"],
   },
+  ...(extraProgram
+    ? {
+        [extraProgram.programId]: {
+          owner: "BPFLoader2111111111111111111111111111111111",
+          executable: true,
+          data: [base64(programCode), "base64"],
+        },
+        [solanaConfigAddress(extraProgram.programId)]: {
+          owner: extraProgram.programId,
+          executable: false,
+          data: [base64(config), "base64"],
+        },
+      }
+    : {}),
+  ...(createdProject
+    ? {
+        [createdProject.address]: {
+          owner: createdProject.programId,
+          executable: false,
+          data: [base64(createdProject.data), "base64"],
+        },
+      }
+    : {}),
 });
 
 // "limited": every read answers HTTP 429. "program": the program, Config and
 // mint are served, the project account does not exist yet, and every
 // transaction read answers HTTP 429.
-let mode: "limited" | "program" = "limited";
+let mode: "limited" | "program" | "creation" = "limited";
 let reads = 0;
 const rpc = Bun.serve({
   hostname: "127.0.0.1",
@@ -86,11 +126,44 @@ const rpc = Bun.serve({
     reads++;
     const { method, params } = (await request.json()) as {
       method: string;
-      params: [string];
+      params: [string, { encoding?: string }?];
     };
     const answer = (result: unknown) =>
       Response.json({ jsonrpc: "2.0", id: 1, result });
-    if (mode === "program") {
+    if (mode === "creation") {
+      creationMethods.push(method);
+      if (method === "getSignatureStatuses")
+        return answer({
+          value: [
+            {
+              slot: 1,
+              confirmationStatus: "finalized",
+              err:
+                creationStatus === "failed"
+                  ? { InstructionError: [0, "Custom"] }
+                  : null,
+            },
+          ],
+        });
+      if (method === "getTransaction") {
+        if (creationStatus === "pending") return answer(null);
+        return answer(
+          params[1]?.encoding === "base64"
+            ? {
+                slot: 1,
+                transaction: [base64(creationWire), "base64"],
+                meta: {
+                  err:
+                    creationStatus === "failed"
+                      ? { InstructionError: [0, "Custom"] }
+                      : null,
+                },
+              }
+            : { transaction: { message: { recentBlockhash: BLOCKHASH } } },
+        );
+      }
+    }
+    if (mode === "program" || mode === "creation") {
       if (method === "getGenesisHash") return answer(network.genesisHash);
       if (method === "getAccountInfo")
         return answer({
@@ -123,11 +196,16 @@ const manifest = applicationManifest("vault-network", "example/vault-network", {
     kind: "stablecoin",
     address: network.asset,
     symbol: "USDC",
+    decimals: 6,
+    chainId: null,
+    cluster: "mainnet-beta",
+    verifiedAt: NOW,
   },
   reward: {
     ...(applicationManifest("vault-network", "example/vault-network")
       .reward as Record<string, unknown>),
     chain: "solana",
+    feeBasisPoints: 200,
   },
   escrow: {
     schemaVersion: "1",
@@ -205,7 +283,7 @@ const deps: ProjectApiDependencies = {
     projects: () => persistence.listProjects(),
     networks: () => ["solana-mainnet"],
     rpcUrl: () => rpcUrl,
-    programs: [program],
+    programs: reviewedPrograms,
   }),
 };
 async function vaultSetup(step: "review" | "register") {
@@ -222,9 +300,7 @@ async function vaultSetup(step: "review" | "register") {
         network: "solana-mainnet",
         claimId: CLAIM,
         automatic: false,
-        ...(step === "register"
-          ? { transactionId: solanaBase58(new Uint8Array(64).fill(7)) }
-          : {}),
+        ...(step === "register" ? { transactionId: creationSignature } : {}),
       }),
     }),
     deps,
@@ -282,4 +358,74 @@ test("an unreadable Solana RPC is a retry, while a program mismatch still refuse
     log.mockRestore();
   }
   expect((await persistence.getProject("vault-network"))?.revision).toBe(1);
+});
+
+test("registration tries the next reviewed Solana program for the exact creation", async () => {
+  const { monthlyCapMinor } = manifest.reward as { monthlyCapMinor: string };
+  rpcUrl = `http://127.0.0.1:${rpc.port}`;
+  programCode = new Uint8Array([1, 2, 3, 4]);
+  const secondProgram = { ...program, programId: key(7) };
+  extraProgram = secondProgram;
+  reviewedPrograms.splice(0, reviewedPrograms.length, program, secondProgram);
+  const projectDigest = registryProjectDigest("vault-network");
+  const creation = {
+    ...secondProgram,
+    owner: OWNER_WALLET,
+    mint: network.asset as string,
+    projectDigest,
+    payoutPolicy: "ordinary" as const,
+    monthlyCap: monthlyCapMinor,
+    automaticMonthly: false,
+  };
+  const plan = buildInitializeVaultInstructions(creation);
+  const msg = message(OWNER_WALLET, BLOCKHASH, plan.instructions);
+  const signature = ed25519.sign(msg, OWNER_SECRET);
+  creationSignature = solanaBase58(signature);
+  creationWire = new Uint8Array([1, ...signature, ...msg]);
+  const projectData = new Uint8Array(PROJECT_SIZE);
+  projectData.set(Buffer.from(PROJECT_DISCRIMINATOR, "hex"));
+  projectData.set(bytes(OWNER_WALLET), 8);
+  projectData.set(Buffer.from(projectDigest, "hex"), 40);
+  projectData.set(Buffer.from(program.networkDomain, "hex"), 72);
+  projectData.set(bytes(program.identityAuthority), 104);
+  projectData.set(bytes(program.feeRecipient), 136);
+  projectData.set(bytes(network.asset as string), 168);
+  createdProject = {
+    address: plan.projectPda,
+    programId: secondProgram.programId,
+    data: projectData,
+  };
+  creationMethods.length = 0;
+  mode = "creation";
+  try {
+    creationStatus = "pending";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: { status: "pending" },
+    });
+    creationStatus = "failed";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 422,
+      body: { error: "vault_creation_failed" },
+    });
+    creationStatus = "valid";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: {
+        status: "registered",
+        deployment: {
+          programId: secondProgram.programId,
+          projectPda: plan.projectPda,
+          vault: plan.vault,
+        },
+      },
+    });
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(creationMethods).not.toContain("sendTransaction");
+  } finally {
+    reviewedPrograms.splice(0, reviewedPrograms.length, program);
+    extraProgram = undefined;
+    createdProject = undefined;
+    mode = "program";
+  }
 });

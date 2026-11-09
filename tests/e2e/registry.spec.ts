@@ -2253,6 +2253,43 @@ test("an applicant publishes an application stored before self-service setup wit
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   const entry = page.getByTestId(`pending-application-${applicationId}`);
   await expect(entry).toContainText(project.name);
+  // Hold the actual account inventory after D1 returned A's application.
+  // Changing the cookie alone does not deliver a focus/session event.
+  let releaseInventory = () => {};
+  let inventoryReceived = () => {};
+  const inventoryHeld = new Promise<void>((resolve) => {
+    releaseInventory = resolve;
+  });
+  const inventoryReady = new Promise<void>((resolve) => {
+    inventoryReceived = resolve;
+  });
+  const inventoryRoute = "**/api/v1/project-setup";
+  await page.route(inventoryRoute, async (route) => {
+    const response = await route.fetch();
+    inventoryReceived();
+    await inventoryHeld;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await inventoryReady;
+    await page.evaluate((token) => {
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+    }, APPLICANT_TOKEN);
+    releaseInventory();
+    await expect(entry).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Pending applications" }),
+    ).toContainText("Your account changed");
+  } finally {
+    releaseInventory();
+    await page.unroute(inventoryRoute);
+  }
+  await page.evaluate((token) => {
+    document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+  }, OWNER_TOKEN);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(entry).toContainText(project.name);
   await expect(entry.locator("details")).toHaveCount(0);
   await expect(page.getByLabel("Project name")).toHaveValue("");
   await expectAccessible(page, { include: ".setup-pending-applications" });
@@ -2550,8 +2587,8 @@ test("repository lookup failures explain the next action and preserve the draft 
       "Private upstream diagnostic",
     );
   }
-  // GitHub limits the shared anonymous Pages address. After Slopbot is
-  // installed, the repository's own installation reads its facts.
+  // Slopbot installation grants no fallback to its broader token. Public
+  // lookups recover only when the public-token provider recovers.
   const limited = `e2e-owner/slopbot-lookup-${projectSuffix()}`;
   expect(
     (
@@ -2566,12 +2603,38 @@ test("repository lookup failures explain the next action and preserve the draft 
     "GitHub limited lookups.",
   );
   await setSlopbot(`${limited}/installed`);
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  const [stillLimited] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(stillLimited.status()).toBe(503);
+  await stillLimited.finished();
+  await expect(page.locator("#field-repository-error")).toContainText(
+    "GitHub limited lookups.",
+  );
+  expect(
+    (
+      await fetch(
+        `${GITHUB_FIXTURE}/__fixture/public-repository/${limited}/ready`,
+        { method: "PUT" },
+      )
+    ).status,
+  ).toBe(204);
+  const [recoveredLookup] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(recoveredLookup.status()).toBe(200);
+  await recoveredLookup.finished();
   await expect(
     page.getByRole("combobox", { name: "Integration branch", exact: true }),
   ).toHaveValue("main");
   await page.screenshot({
-    path: test.info().outputPath("repository-lookup-through-slopbot.png"),
+    path: test.info().outputPath("repository-lookup-public-token-recovery.png"),
     fullPage: true,
   });
   await setRepository(page, fixtureProjects().owned.repository);

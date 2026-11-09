@@ -17,6 +17,8 @@ module notification_delivery {
   action noSendRetry = all{s.phase=="sending",s'=s.with("phase",if(s.attempt==5)"exhausted" else "retrying")}
   action staleClaim = all{s.phase=="sending",s'=s.with("phase","ambiguous")}
   action backoffElapsed = all{s.phase=="retrying",s'=s.with("due",true)}
+  // The guarded completion write only. Preparation metadata and live workers
+  // crossing the last local check are covered by notification_attempt_ownership.
   action oldCompletion(attempt:int):bool = all{attempt!=s.attempt or s.phase!="sending",s'=s}
   action readProof(id:int,outcome:str):bool = all{Set("provider-accepted","ambiguous").contains(s.phase),
     s'=s.with("held",{phase:s.phase,attempt:s.attempt,destination:s.destination,id:id,outcome:outcome})}

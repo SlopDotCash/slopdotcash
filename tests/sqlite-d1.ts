@@ -11,7 +11,11 @@ import { join, resolve } from "node:path";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 
 type Statement = ReturnType<ProjectD1Database["prepare"]> & {
-  runSync(): { success: boolean; meta: { changes: number } };
+  runSync(): {
+    success: boolean;
+    results?: unknown[];
+    meta: { changes: number };
+  };
 };
 
 const root = resolve(import.meta.dir, "..", "migrations");
@@ -90,12 +94,36 @@ export function sqliteD1(
   };
   const statement = (sql: string, values: unknown[] = []): Statement => {
     const params = values as never[];
-    const runSync = () => ({
-      success: true,
-      meta: {
-        changes: once(sql, (prepared) => prepared.run(...params).changes),
-      },
-    });
+    const runSync = () =>
+      once(sql, (prepared) => {
+        if (prepared.columnNames.length === 0)
+          return {
+            success: true,
+            meta: { changes: prepared.run(...params).changes },
+          };
+        // D1 batch retains SELECT and RETURNING rows. Distinguish read-only
+        // results from writes without reporting the previous write's count.
+        const before = once("SELECT total_changes() AS n", (read) =>
+          read.get(),
+        ) as {
+          n: number;
+        };
+        const results = prepared.all(...params);
+        const after = once("SELECT total_changes() AS n", (read) =>
+          read.get(),
+        ) as {
+          n: number;
+        };
+        const changed =
+          after.n === before.n
+            ? 0
+            : (
+                once("SELECT changes() AS n", (read) => read.get()) as {
+                  n: number;
+                }
+              ).n;
+        return { success: true, results, meta: { changes: changed } };
+      });
     return {
       bind: (...next: unknown[]) => statement(sql, next),
       first: async <T>() =>

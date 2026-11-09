@@ -559,6 +559,111 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
     ).status,
     409,
   );
+  // Both completion and prepare-retry can send retained, fully signed bytes.
+  // Replace the effective wallet after the last status read in each route.
+  // Savepoints isolate these fixture-only successors from the payment below;
+  // the completed journal entry was committed before the savepoint began.
+  for (const path of [
+    "/wallets/solana-bind/complete",
+    "/wallets/solana-bind/prepare",
+  ]) {
+    const beforeRaceFetch = globalThis.fetch;
+    let replaced = false;
+    let sends = 0;
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options?.body ?? "{}");
+      if (body.method === "sendTransaction") sends++;
+      const response = await beforeRaceFetch(url, options);
+      if (
+        !replaced &&
+        body.method === "getSignatureStatuses" &&
+        body.params?.[0]?.[0] === prepared.transactionId
+      ) {
+        const retained = await identityEnvironment.JOURNAL.get(
+          `solana:attester:${input.network}:${input.idempotencyKey}`,
+        );
+        assert.ok(retained && !retained.cosigner);
+        assert.equal((await response.clone().json()).result.value[0], null);
+        replaced = true;
+        sql.exec("SAVEPOINT binding_authority_race");
+        const successorId = `${input.claimId}-race`;
+        const successorDigest = hash("executor-successor-race").toString("hex");
+        const successorMessage = consent
+          .replace(`Claim: ${input.claimId}`, `Claim: ${successorId}`)
+          .replace(`Digest: ${claimDigest}`, `Digest: ${successorDigest}`)
+          .replace("Nonce: executor-challenge", "Nonce: executor-race");
+        sql
+          .prepare(
+            "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain,supersedes_claim_id) VALUES(?,?,?,?,'d1_registry',?,?,?,?,?,?)",
+          )
+          .run(
+            successorId,
+            "103",
+            "test-contributor",
+            input.destination,
+            "b".repeat(64),
+            now,
+            successorDigest,
+            now,
+            "solana",
+            input.claimId,
+          );
+        sql
+          .prepare("INSERT INTO payment_wallet_challenges VALUES(?,?,?,?,?,?)")
+          .run(
+            "executor-race",
+            successorId,
+            "103",
+            successorMessage,
+            expires,
+            now,
+          );
+        sql
+          .prepare(
+            "INSERT INTO payment_wallet_authorizations VALUES(?,?,?,?,?)",
+          )
+          .run(
+            successorId,
+            "103",
+            now,
+            "executor-race",
+            Buffer.from(
+              await signer(recipient).signMessage(
+                Buffer.from(successorMessage),
+              ),
+            ).toString("base64"),
+          );
+      }
+      return response;
+    };
+    try {
+      const response = await account(path, {
+        obligationId: input.obligationId,
+        ...(path.endsWith("complete")
+          ? { transaction: await cosign(recipient) }
+          : {}),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(
+        replaced,
+        true,
+        "The current wallet must change after status lookup",
+      );
+      assert.equal(sends, 0, "Obsolete co-signed bytes must remain unsent");
+      const retained = await identityEnvironment.JOURNAL.get(
+        `solana:attester:${input.network}:${input.idempotencyKey}`,
+      );
+      assert.equal(retained.transactionId, prepared.transactionId);
+      assert.equal(retained.raw, await cosign(recipient));
+      assert.equal(retained.cosigner, undefined);
+    } finally {
+      globalThis.fetch = beforeRaceFetch;
+      if (replaced) {
+        sql.exec("ROLLBACK TO binding_authority_race");
+        sql.exec("RELEASE binding_authority_race");
+      }
+    }
+  }
   // Lose the response only after the actual validator finalized these exact
   // signed bytes. Completion must reconcile the journaled signature, not resend.
   const bindingFetch = globalThis.fetch;

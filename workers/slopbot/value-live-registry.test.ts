@@ -247,9 +247,16 @@ for (const change of [
  */
 test("old and failing requests cannot starve new valuation requests", async () => {
   const { db, sqlite } = liveRegistration();
+  // Keep scheduled leases ahead of SQLite's real clock while replaying the
+  // same six-hour delivery order and retaining the old October source dates.
+  const clock = sqlite
+    .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+    .get() as { at: string };
+  const start = Date.parse(clock.at) + 60_000;
+  const minute = (offset: number) => start + offset * 60_000;
   sqlite.run(
     "INSERT INTO slopbot_installations(installation_id,account_id,account_login,account_type,created_at,removed_at) VALUES (3,77,'fresh-registration','Organization',?,?)",
-    [at, "2026-11-01T03:00:00.000Z"],
+    [at, new Date(minute(180)).toISOString()],
   );
   const env = {
     SLOPBOT_DB: db,
@@ -268,16 +275,16 @@ test("old and failing requests cannot starve new valuation requests", async () =
       number: 101 + (i % 12),
     })),
     ...Array.from({ length: 15 }, (_, i) => ({
-      at: Date.parse("2026-11-01T00:10:00Z") + i * 60_000,
+      at: minute(10 + i),
       number: 201 + i,
     })),
-    { at: Date.parse("2026-11-01T03:01:00Z"), number: 300, installationId: 3 },
+    { at: minute(181), number: 300, installationId: 3 },
     {
-      at: Date.parse("2026-11-01T03:01:30Z"),
+      at: minute(181.5),
       number: 300,
       previousName: true,
     },
-    { at: Date.parse("2026-11-01T03:02:00Z"), number: 300 },
+    { at: minute(182), number: 300 },
   ].map((delivery, i) => ({
     installationId: job.installationId,
     previousName: false,
@@ -315,11 +322,7 @@ test("old and failing requests cannot starve new valuation requests", async () =
   }) as typeof fetch;
   try {
     let pending = 0;
-    for (
-      let tick = Date.parse("2026-11-01T00:00:00Z");
-      tick <= Date.parse("2026-11-01T06:00:00Z");
-      tick += 5 * 60_000
-    ) {
+    for (let tick = start; tick <= minute(360); tick += 5 * 60_000) {
       for (
         ;
         pending < deliveries.length && deliveries[pending].at <= tick;
@@ -359,7 +362,7 @@ test("old and failing requests cannot starve new valuation requests", async () =
         .all(number);
     // The new request is read by the first schedule after it arrives. The
     // removed-installation and old-name deliveries retry on their own.
-    expect(reads.get(300)).toEqual([Date.parse("2026-11-01T03:05:00Z")]);
+    expect(reads.get(300)).toEqual([minute(185)]);
     expect(state(300)).toEqual([
       { state: "completed", outcome: "open", deliveries: 1 },
       { state: "waiting", outcome: "parked", deliveries: 1 },

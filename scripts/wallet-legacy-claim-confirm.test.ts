@@ -168,3 +168,116 @@ test("the skill's wallet claim route also writes a registry successor", async ()
   expect(claim.source).toBe("d1_registry");
   expect(claim.supersedesClaimId).toBe("legacy");
 });
+
+test("a concurrent historical winner is retried before wallet authorization", async () => {
+  const { db, sqlite, payments } = await setup("github_issue");
+  const secret = "historical-wallet-race-secret-0123456789";
+  const iat = Math.floor(Date.parse(NOW) / 1000);
+  const operator = await signApiToken(
+    {
+      iss: "slop.cash",
+      aud: "private-trace-api",
+      sub: `github:${ACTOR}`,
+      githubId: ACTOR,
+      githubLogin: "alice",
+      roles: ["operator"],
+      iat,
+      exp: iat + 300,
+      jti: "historical-wallet-race-jti",
+    },
+    secret,
+  );
+  const originalBatch = db.batch.bind(db);
+  let raced = false;
+  let historicalClaimId = "";
+  let counter = 0;
+  db.batch = async (statements) => {
+    if (!raced) {
+      raced = true;
+      // The payment adapter has read "legacy", but has not inserted its
+      // registry successor. An authorized historical writer wins that slot.
+      const historical = await handleTraceApi(
+        new Request("http://localhost/api/v1/operator/wallet-claims", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${operator}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            githubActorId: ACTOR,
+            githubLogin: "alice",
+            address: ADDRESS,
+            source: "github_issue",
+            issueRepository: "SlopDotCash/slopdotcash",
+            issueNumber: 8,
+            observedAt: NOW,
+            sourceBodySha256: "c".repeat(64),
+            supersedesClaimId: "legacy",
+          }),
+        }),
+        {
+          persistence: new CloudflareTracePersistence(db, {} as R2Bucket),
+          authSecret: secret,
+          operatorGithubIds: new Set([ACTOR]),
+          now: () => new Date(NOW),
+          randomId: () => `historical-wallet-race-${++counter}`,
+          verifyIdentityAssertion: async () => null,
+          privateIntakeStatus: async () => ({ status: "unavailable" }),
+        },
+      );
+      expect(historical.status).toBe(201);
+      historicalClaimId = ((await historical.json()) as { claimId: string })
+        .claimId;
+    }
+    return originalBatch(statements);
+  };
+  try {
+    const first = await payments("/wallets/register", {
+      chain: "solana",
+      address: ADDRESS,
+    });
+    expect(first).toEqual({
+      status: 409,
+      body: { error: "stale_wallet_claim" },
+    });
+    expect(
+      await payments("/wallets/challenge", { claimId: historicalClaimId }),
+    ).toEqual({ status: 409, body: { error: "claim_not_current" } });
+
+    const retry = await payments("/wallets/register", {
+      chain: "solana",
+      address: ADDRESS,
+    });
+    expect(retry.status).toBe(200);
+    const claimId = retry.body.claimId as string;
+    expect(claimId).not.toBe(historicalClaimId);
+    expect(
+      sqlite
+        .query(
+          "SELECT source,supersedes_claim_id FROM wallet_claims WHERE id=?",
+        )
+        .get(claimId),
+    ).toEqual({
+      source: "d1_registry",
+      supersedes_claim_id: historicalClaimId,
+    });
+    const challenge = await payments("/wallets/challenge", { claimId });
+    expect(challenge.status).toBe(200);
+    const signature = Buffer.from(
+      ed25519.sign(
+        new TextEncoder().encode(challenge.body.message as string),
+        secretKey,
+      ),
+    ).toString("base64");
+    expect(
+      await payments("/wallets/authorize", {
+        claimId,
+        challengeId: challenge.body.challengeId,
+        signature,
+      }),
+    ).toEqual({ status: 200, body: { authorized: true } });
+  } finally {
+    db.batch = originalBatch;
+    sqlite.close();
+  }
+});

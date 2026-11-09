@@ -29,10 +29,14 @@ function matchesPendingRecord(raw: string | null, expected: PendingAttempt) {
   );
 }
 
-/** A new prompt cannot overwrite an unexpected request in this tab. */
-export function createPendingAttempt(key: string, value: PendingAttempt) {
-  if (sessionStorage.getItem(key) !== null) return false;
-  sessionStorage.setItem(key, JSON.stringify(value));
+/** A new prompt cannot overwrite an unexpected request in this storage slot. */
+export function createPendingAttempt(
+  key: string,
+  value: PendingAttempt,
+  storage: Storage = sessionStorage,
+) {
+  if (storage.getItem(key) !== null) return false;
+  storage.setItem(key, JSON.stringify(value));
   return true;
 }
 
@@ -41,10 +45,10 @@ export function updatePendingAttempt(
   key: string,
   expected: PendingAttempt,
   value: PendingAttempt,
+  storage: Storage = sessionStorage,
 ) {
-  if (!matchesPendingAttempt(sessionStorage.getItem(key), expected))
-    return false;
-  sessionStorage.setItem(key, JSON.stringify(value));
+  if (!matchesPendingAttempt(storage.getItem(key), expected)) return false;
+  storage.setItem(key, JSON.stringify(value));
   return true;
 }
 
@@ -53,17 +57,20 @@ export function updatePendingRecord(
   key: string,
   expected: PendingAttempt,
   value: PendingAttempt,
+  storage: Storage = sessionStorage,
 ) {
-  if (!matchesPendingRecord(sessionStorage.getItem(key), expected))
-    return false;
-  sessionStorage.setItem(key, JSON.stringify(value));
+  if (!matchesPendingRecord(storage.getItem(key), expected)) return false;
+  storage.setItem(key, JSON.stringify(value));
   return true;
 }
 
 /** Compare and remove without an await: a late result cannot clear a retry. */
-export function clearPendingAttempt(key: string, expected: PendingAttempt) {
-  if (!matchesPendingRecord(sessionStorage.getItem(key), expected))
-    return false;
-  sessionStorage.removeItem(key);
+export function clearPendingAttempt(
+  key: string,
+  expected: PendingAttempt,
+  storage: Storage = sessionStorage,
+) {
+  if (!matchesPendingRecord(storage.getItem(key), expected)) return false;
+  storage.removeItem(key);
   return true;
 }

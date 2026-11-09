@@ -6,7 +6,6 @@ import type { DeploymentTier } from "../src/lib/deployment";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
 import type { ProjectD1Database } from "./projects/cloudflare-persistence";
 import { githubApiOrigin } from "./projects/github-lookup";
-import { slopbotGithubFetch } from "./projects/repository-access";
 import { assetTemplateSource } from "./projects/skill-publication";
 import type { HistoricalValueBinding } from "./slopbot/value-import";
 import type { R2Bucket } from "./trace/cloudflare-persistence";
@@ -58,7 +57,9 @@ export type PagesEnv = {
   SLOP_IDENTITY: { fetch(request: Request): Promise<Response> };
   /** Local browser tests only: a loopback GitHub API fixture origin. */
   SLOP_GITHUB_API_ORIGIN?: string;
-  /** Optional read-only GitHub token for repository ownership checks. */
+  /**
+   * Public-only read token required in production/staging; never repository authority.
+   */
   SLOP_GITHUB_READ_TOKEN?: string;
   /**
    * Durable private security intake (PRD section 8). Off unless exactly "on".
@@ -125,7 +126,8 @@ export type PagesMiddlewareContext<E> = PagesContext<E> & {
 
 /**
  * Private evidence, scan persistence and live-pin reads for one request.
- * Repository reads go through the Slopbot installation when it is bound.
+ * Public repository reads use the public-only token, never an installation
+ * token.
  */
 export function vettingContext(
   env: Pick<
@@ -133,7 +135,6 @@ export function vettingContext(
     | "SLOP_DB"
     | "VETTING_EVIDENCE"
     | "ASSETS"
-    | "SLOPBOT"
     | "SLOP_GITHUB_API_ORIGIN"
     | "SLOP_GITHUB_READ_TOKEN"
   >,
@@ -154,9 +155,7 @@ export function vettingContext(
   );
   const apiOrigin = githubApiOrigin(env.SLOP_GITHUB_API_ORIGIN);
   const github = {
-    fetch: slopbotGithubFetch(env.SLOPBOT, apiOrigin, (url, init) =>
-      fetch(url, init),
-    ),
+    fetch: (url: string, init: RequestInit) => fetch(url, init),
     token: env.SLOP_GITHUB_READ_TOKEN,
     apiOrigin,
     cache: vettingBranchCache(request),

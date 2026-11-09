@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   RewardAssetFields,
   type RewardAssetSelection,
@@ -9,7 +9,12 @@ import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
-import { publishProjectRevision, type RevisionResult } from "./lib/project-api";
+import {
+  currentProjectSession,
+  ProjectApiError,
+  publishProjectRevision,
+  type RevisionResult,
+} from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { parseAssetAmount } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
@@ -58,20 +63,89 @@ const lines = (value: string) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
+class SecuritySettingsAccessLoss extends Error {
+  constructor(
+    message: string,
+    readonly identityChanged = false,
+  ) {
+    super(message);
+  }
+}
+
+export function isSecuritySettingsIdentityChange(error: unknown): boolean {
+  return (
+    (error instanceof SecuritySettingsAccessLoss && error.identityChanged) ||
+    (error instanceof ProjectApiError &&
+      (error.status === 401 || error.code === "actor_changed"))
+  );
+}
+
+export function isSecuritySettingsAccessLoss(error: unknown): boolean {
+  return (
+    error instanceof SecuritySettingsAccessLoss ||
+    (error instanceof ProjectApiError &&
+      ([401, 403, 404, 410].includes(error.status) ||
+        error.code === "actor_changed"))
+  );
+}
+
+/** Identity only; the API separately checks current repository authority. */
+export async function requireSecuritySettingsActor(
+  actorId: string,
+): Promise<void> {
+  let session;
+  try {
+    session = await currentProjectSession();
+  } catch {
+    throw new SecuritySettingsAccessLoss(
+      "Your private session could not be checked. Retry management access.",
+    );
+  }
+  if (session?.githubId !== actorId)
+    throw new SecuritySettingsAccessLoss(
+      "Your account changed. Retry management access.",
+      true,
+    );
+}
+
+/** Retain an ordinary error only after the initiating actor is rechecked. */
+export async function checkedSecuritySettingsFailure(
+  error: unknown,
+  actorId: string,
+): Promise<unknown> {
+  if (isSecuritySettingsAccessLoss(error)) return error;
+  try {
+    await requireSecuritySettingsActor(actorId);
+  } catch (cause) {
+    return cause;
+  }
+  return error;
+}
+
 /** Public program terms use the same owner revision and live authority check as setup. */
 export function SecurityProgramEditor({
   project,
   revision,
   actor,
   onPublished,
+  onAccessLost,
   embedded = false,
 }: {
   project: ProjectDefinition;
   revision: number;
   actor: GithubActor;
   onPublished: (result: RevisionResult) => void;
+  onAccessLost: (message: string, identityChanged?: boolean) => void;
   embedded?: boolean;
 }) {
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const existing = project.securityBounty;
   const boundVault = Boolean(existing?.settlement?.deployments.length);
   const programSplit = initialSecuritySplit(existing);
@@ -236,25 +310,62 @@ export function SecurityProgramEditor({
     );
   }
   function publish() {
+    if (!mounted.current || inFlight.current) return;
+    const expectedActor = actor.githubId;
+    const expectedRevision = revision;
+    inFlight.current = true;
+    const owns = () => mounted.current && inFlight.current;
     void run(
       async () => {
-        const program = proposedProgram();
-        validateProgram(program);
-        const result = await publishProjectRevision(
-          project.id,
-          { ...project, securityBounty: program },
-          revision,
-          "Update security bounty terms",
-          null,
-          program.amount.asset ? amount : null,
-        );
-        onPublished(result);
-        setReviewing(false);
+        try {
+          const program = proposedProgram();
+          const manifest = { ...project, securityBounty: program };
+          const bountyAmount = program.amount.asset ? amount : null;
+          validateProgram(program);
+          await requireSecuritySettingsActor(expectedActor);
+          if (!owns()) return;
+          const result = await publishProjectRevision(
+            project.id,
+            manifest,
+            expectedRevision,
+            "Update security bounty terms",
+            null,
+            bountyAmount,
+            expectedActor,
+          );
+          if (!owns()) return;
+          await requireSecuritySettingsActor(expectedActor);
+          if (!owns()) return;
+          setReviewing(false);
+          onPublished(result);
+        } catch (cause) {
+          if (!owns()) return;
+          if (isSecuritySettingsAccessLoss(cause)) {
+            onAccessLost(
+              errorMessage(cause),
+              isSecuritySettingsIdentityChange(cause),
+            );
+            return;
+          }
+          const failure = await checkedSecuritySettingsFailure(
+            cause,
+            expectedActor,
+          );
+          if (!owns()) return;
+          if (isSecuritySettingsAccessLoss(failure)) {
+            onAccessLost(
+              errorMessage(failure),
+              isSecuritySettingsIdentityChange(failure),
+            );
+            return;
+          }
+          setReviewing(false);
+          throw failure;
+        } finally {
+          if (owns()) inFlight.current = false;
+        }
       },
-      (cause) => {
-        setReviewing(false);
-        return errorMessage(cause, "Cannot publish the bounty terms. Retry.");
-      },
+      (cause) => errorMessage(cause, "Cannot publish the bounty terms. Retry."),
     );
   }
   return (
@@ -306,6 +417,7 @@ export function SecurityProgramEditor({
             }}
             onSubmit={(event) => {
               event.preventDefault();
+              if (!mounted.current || inFlight.current) return;
               if (reviewing) publish();
               else
                 void run(async () => {

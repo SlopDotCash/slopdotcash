@@ -469,16 +469,19 @@ async function pollFlow(
     deps.assertionSecret,
   );
   const expiresAt = new Date(now.getTime() + ASSERTION_TTL_SECONDS * 1000);
-  const storedAssertion = await deps.persistence.createAssertion({
-    tokenHash: await sha256Hex(assertion),
-    githubActorId: flow.githubActorId,
-    githubLogin: flow.githubLogin,
-    audience: flow.audience,
-    ...(flow.githubNodeId ? { githubNodeId: flow.githubNodeId } : {}),
-    createdAt: now.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    consumedAt: null,
-  });
+  const storedAssertion = await deps.persistence.createAssertion(
+    {
+      tokenHash: await sha256Hex(assertion),
+      githubActorId: flow.githubActorId,
+      githubLogin: flow.githubLogin,
+      audience: flow.audience,
+      ...(flow.githubNodeId ? { githubNodeId: flow.githubNodeId } : {}),
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      consumedAt: null,
+    },
+    flow.id,
+  );
   const storedCreatedAt = Date.parse(storedAssertion?.createdAt ?? "");
   const storedExpiresAt = Date.parse(storedAssertion?.expiresAt ?? "");
   if (

@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -120,6 +120,11 @@ export function VaultActions({
     (raw) => readPending(raw, solana),
     (error) => errorMessage(error, "The wallet request failed."),
   );
+  const depositAllowed = useRef(canDeposit);
+  // The shared hook retires the view; publish permission changes at commit.
+  useLayoutEffect(() => {
+    depositAllowed.current = canDeposit;
+  }, [canDeposit]);
   const [wallet, setWallet] = useState<VaultConnection | null>(
     connectedWallet ?? null,
   );
@@ -232,6 +237,8 @@ export function VaultActions({
             throw new Error(
               "The wallet view was closed. Review before sending.",
             );
+          if (operation === "deposit" && !depositAllowed.current)
+            throw new Error("New deposits are currently unavailable.");
           if (!remember(intent))
             throw new Error(
               "The saved request changed. Reload before continuing.",

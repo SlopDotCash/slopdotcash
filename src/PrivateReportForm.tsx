@@ -2,6 +2,7 @@ import {
   type FormEvent,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -22,6 +23,7 @@ import { SecurityOffer } from "./SecurityOffer";
 
 const PREFIX = "slop-report-compose:";
 type SavedReport = { draft: ReportDraft; key: string; attempted: boolean };
+type AcceptedReport = { id: string; draftBytes: string | null };
 
 /** Only a confirmed identity change invalidates the tab's private drafts. */
 export function usePrivateDraftSession(session: ProjectSessionState): void {
@@ -91,28 +93,79 @@ export function PrivateReportForm({
   const [review, setReview] = useState(saved.attempted);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<AcceptedReport | null>(null);
+  const [receiptMessage, setReceiptMessage] = useState<string | null>(null);
+  const [needsSession, setNeedsSession] = useState(false);
   const [storageAvailable, setStorageAvailable] = useState(true);
   const heading = useRef<HTMLHeadingElement>(null);
   const accepted = useRef(false);
+  const closedDraft = useRef(false);
+  const mounted = useRef(false);
+  const operation = useRef(0);
+  const inFlight = useRef(false);
+  const recoveryDraftBytes = useRef<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const [invalid, setInvalid] = useState<{
     id: string;
     message: string;
   } | null>(null);
   const storageKey = `${PREFIX}${owner}:${project.id}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      operation.current += 1;
+    };
+  }, [owner, project.id]);
   const persist = (value: SavedReport) => {
+    const bytes = JSON.stringify(value);
     try {
-      sessionStorage.setItem(storageKey, JSON.stringify(value));
+      sessionStorage.setItem(storageKey, bytes);
       setStorageAvailable(true);
+      return bytes;
     } catch {
       setStorageAvailable(false);
+      // A failed write may leave this same draft's earlier record in place.
+      // Capture only that observed record, never an unrelated replacement.
+      try {
+        const previous = sessionStorage.getItem(storageKey);
+        return previous === JSON.stringify(saved) || previous === bytes
+          ? previous
+          : null;
+      } catch {
+        return null;
+      }
     }
   };
-  useEffect(() => {
+  const clearCapturedDraft = (bytes: string | null) => {
+    if (bytes === null) return;
     try {
-      sessionStorage.setItem(storageKey, JSON.stringify(saved));
+      if (sessionStorage.getItem(storageKey) === bytes)
+        sessionStorage.removeItem(storageKey);
     } catch {
-      setStorageAvailable(false);
+      // Unreadable or replaced storage is not evidence of ownership.
+    }
+  };
+  const hideDraft = () => {
+    closedDraft.current = true;
+    recoveryDraftBytes.current = null;
+    setSaved({
+      draft: { ...EMPTY_DRAFT },
+      key: crypto.randomUUID(),
+      attempted: false,
+    });
+    setReview(false);
+    setInvalid(null);
+  };
+  useEffect(() => {
+    if (!closedDraft.current) {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(saved));
+        setStorageAvailable(true);
+      } catch {
+        setStorageAvailable(false);
+      }
     }
     const warn = (event: BeforeUnloadEvent) => {
       if (!accepted.current && (saved.draft.summary || saved.draft.description))
@@ -124,93 +177,247 @@ export function PrivateReportForm({
   useEffect(() => {
     if (review) heading.current?.focus();
   }, [review]);
+  const openReceipt = async (
+    received: AcceptedReport,
+    isCurrent: () => boolean,
+  ) => {
+    let current: Awaited<ReturnType<typeof currentProjectSession>>;
+    try {
+      current = await currentProjectSession();
+    } catch {
+      if (isCurrent())
+        setReceiptMessage(
+          "Your report was received, but this tab could not verify your current account. Check your session to open its receipt.",
+        );
+      return;
+    }
+    if (!isCurrent()) return;
+    if (current?.githubId !== owner) {
+      clearCapturedDraft(received.draftBytes);
+      hideDraft();
+      setReceipt({ id: received.id, draftBytes: null });
+      setReceiptMessage(
+        `Your report was received for @${login}. Your account changed or signed out. Sign in with that account, then check this receipt.`,
+      );
+      return;
+    }
+    clearCapturedDraft(received.draftBytes);
+    window.location.assign(
+      `/inbox?view=reports&submission=${encodeURIComponent(received.id)}`,
+    );
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
-    if (!review) {
+    if (!mounted.current || inFlight.current) return;
+    if (receipt === null && !needsSession && !review) {
       setReview(true);
       setError(null);
       return;
     }
+    const currentOperation = ++operation.current;
     const route = window.location.pathname + window.location.search;
     // A new URL can precede the lazy route replacing this form.
     const isCurrent = () =>
+      mounted.current &&
+      operation.current === currentOperation &&
       form.current !== null &&
       window.location.pathname + window.location.search === route;
-    const attempt = { ...saved, attempted: true };
-    setSaved(attempt);
-    persist(attempt);
+    inFlight.current = true;
     setBusy(true);
     setError(null);
+    let draftBytes: string | null = null;
     try {
+      if (receipt !== null) {
+        setReceiptMessage(null);
+        await openReceipt(receipt, isCurrent);
+        return;
+      }
+      if (needsSession) {
+        let current: Awaited<ReturnType<typeof currentProjectSession>>;
+        try {
+          current = await currentProjectSession();
+        } catch {
+          if (isCurrent())
+            setError(
+              "Your current account could not be verified. Your original report is kept privately for recovery.",
+            );
+          return;
+        }
+        if (!isCurrent()) return;
+        if (current?.githubId !== owner) {
+          clearCapturedDraft(recoveryDraftBytes.current);
+          hideDraft();
+          setNeedsSession(false);
+          setError(
+            "Your account changed or signed out. Sign in again before submitting a report.",
+          );
+          return;
+        }
+        setNeedsSession(false);
+        setError("Your account is verified. Review and retry the same report.");
+        return;
+      }
+      const attempt = { ...saved, attempted: true };
+      setSaved(attempt);
+      draftBytes = persist(attempt);
+      recoveryDraftBytes.current = draftBytes;
       const current = await currentProjectSession();
       if (!isCurrent()) return;
       if (current?.githubId !== owner) {
-        try {
-          sessionStorage.removeItem(storageKey);
-        } catch {
-          /* Private state is also cleared in memory. */
-        }
-        setSaved({
-          draft: { ...EMPTY_DRAFT },
-          key: crypto.randomUUID(),
-          attempted: false,
-        });
-        setReview(false);
-        throw new Error(
+        clearCapturedDraft(draftBytes);
+        hideDraft();
+        setError(
           "Your account changed or signed out. Sign in again before submitting a report.",
         );
+        return;
       }
-      const result = await projectApiRequest<{ submission: { id: string } }>(
+      const result = await projectApiRequest<{ submission?: { id?: unknown } }>(
         "POST",
         "security-submissions",
         {
           projectId: project.id,
-          idempotencyKey: saved.key,
+          idempotencyKey: attempt.key,
           origin: "slop",
           expectedReporterGithubId: owner,
-          report: body(saved.draft),
+          report: body(attempt.draft),
         },
+        { expectedActorGithubId: owner },
       );
       if (!isCurrent()) return;
-      try {
-        sessionStorage.removeItem(storageKey);
-      } catch {
-        /* Memory draft remains until navigation. */
-      }
+      const submissionId = result?.submission?.id;
+      // Same identifier contract as the receipt route and backend loader.
+      if (
+        typeof submissionId !== "string" ||
+        !/^ss_[A-Za-z0-9_-]{8,72}$/u.test(submissionId)
+      )
+        throw new ProjectApiError(
+          0,
+          "invalid_response",
+          "The server did not return a usable report receipt. Retry the same report to reconcile it.",
+        );
+      const received = { id: submissionId, draftBytes };
       accepted.current = true;
-      window.location.assign(
-        `/inbox?view=reports&submission=${encodeURIComponent(result.submission.id)}`,
-      );
+      setReceipt(received);
+      hideDraft();
+      await openReceipt(received, isCurrent);
     } catch (cause) {
       if (!isCurrent()) return;
+      if (accepted.current) {
+        setReceiptMessage(
+          "Your report was received, but this tab could not open its receipt. Check your session and try again.",
+        );
+        return;
+      }
+      let current: Awaited<ReturnType<typeof currentProjectSession>>;
+      try {
+        current = await currentProjectSession();
+      } catch {
+        if (isCurrent()) {
+          setNeedsSession(true);
+          setError(
+            "Your current account could not be verified. Your original report is kept privately for recovery.",
+          );
+        }
+        return;
+      }
+      if (!isCurrent()) return;
+      if (current?.githubId !== owner) {
+        clearCapturedDraft(draftBytes);
+        hideDraft();
+        setError(
+          "Your account changed or signed out. Sign in again before submitting a report.",
+        );
+        return;
+      }
       setError(errorMessage(cause));
       // A definite validation refusal did not accept a report. Uncertain and
       // authentication failures keep the original payload for reconciliation.
       if (
         cause instanceof ProjectApiError &&
-        cause.code === "reporter_changed"
+        ["reporter_changed", "actor_changed"].includes(cause.code)
       ) {
-        try {
-          sessionStorage.removeItem(storageKey);
-        } catch {
-          /* Clear memory too. */
-        }
-        setSaved({
-          draft: { ...EMPTY_DRAFT },
-          key: crypto.randomUUID(),
-          attempted: false,
-        });
-        setReview(false);
+        clearCapturedDraft(draftBytes);
+        hideDraft();
       }
       if (cause instanceof ProjectApiError && cause.status === 400) {
-        setSaved({ ...saved, attempted: false, key: crypto.randomUUID() });
+        const corrected = {
+          ...saved,
+          attempted: false,
+          key: crypto.randomUUID(),
+        };
+        // This completion may update only its captured storage record. The
+        // passive draft effect must not later overwrite a replacement slot.
+        closedDraft.current = true;
+        try {
+          if (
+            draftBytes !== null &&
+            sessionStorage.getItem(storageKey) === draftBytes
+          ) {
+            sessionStorage.setItem(storageKey, JSON.stringify(corrected));
+            setStorageAvailable(true);
+          } else setStorageAvailable(false);
+        } catch {
+          setStorageAvailable(false);
+        }
+        setSaved(corrected);
       }
     } finally {
-      setBusy(false);
+      if (isCurrent()) {
+        inFlight.current = false;
+        setBusy(false);
+      }
     }
   };
   const reviewed = body(saved.draft);
+  if (receipt)
+    return (
+      <form
+        ref={form}
+        className="security-form report-composer"
+        onSubmit={submit}
+      >
+        <div role="status">
+          <h3>Report received</h3>
+          <p>
+            Slop saved your private report. Opening its receipt requires the
+            same signed-in account.
+          </p>
+          {receiptMessage ? <p>{receiptMessage}</p> : null}
+        </div>
+        <div className="report-form-actions">
+          <button
+            type="submit"
+            className="button primary-button"
+            disabled={busy}
+          >
+            {busy ? "Checking receipt…" : "Check session and open receipt"}
+          </button>
+        </div>
+      </form>
+    );
+  if (needsSession)
+    return (
+      <form
+        ref={form}
+        className="security-form report-composer"
+        onSubmit={submit}
+      >
+        <div role="alert">
+          <h3>Check your private session</h3>
+          <p>{error}</p>
+          <p>No new report will be sent when you check your session.</p>
+        </div>
+        <div className="report-form-actions">
+          <button
+            type="submit"
+            className="button primary-button"
+            disabled={busy}
+          >
+            {busy ? "Checking session…" : "Check session to recover report"}
+          </button>
+        </div>
+      </form>
+    );
   return (
     <form
       ref={form}
@@ -294,7 +501,10 @@ export function PrivateReportForm({
             Explain the affected component or revision, what an attacker could
             do, and how to reproduce it safely.
           </p>
-          {fields(saved.draft, (draft) => setSaved({ ...saved, draft }))}
+          {fields(saved.draft, (draft) => {
+            closedDraft.current = false;
+            setSaved({ ...saved, draft });
+          })}
           <details>
             <summary>Example report structure</summary>
             <pre className="report-preview">

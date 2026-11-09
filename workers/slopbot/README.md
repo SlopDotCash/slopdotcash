@@ -140,6 +140,19 @@ inference key (`value-inference.ts`). Free reviews still record provider cost
 rows with zero customer charge. Spend alerts live in `spend-alerts.ts`; failure
 alerts in `failure-alerts.ts`.
 
+Every reservation occupies that three-attempt limit until recorded calls prove
+the whole attempt was a free denial, or an immutable completion and a zero-call,
+zero-cost reconciliation prove that no provider request started. A missing
+response or unfinished result stays reserved. An immutable attempt-completion
+record is written only after
+call records and any valid retained result are stored; it does not assert that
+provider cost amounts are known or reconciled. A full limit with unfinished
+attempts returns `attempts-pending` and keeps the request on its existing
+retry schedule. Only three completed non-free attempts permit terminal
+`attempts-exhausted`, and a retained result is read again before that decision
+is returned. Completion, cost reconciliation and journal publication are
+separate facts; no reservation is refunded or expired by a timer.
+
 ## Value assessment
 
 Value scoring is a separate pipeline from advisory/close review. Entry points:

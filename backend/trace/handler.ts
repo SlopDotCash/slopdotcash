@@ -937,6 +937,11 @@ async function createTraceIntent(
   });
   if (result.status === "conflict") {
     await assertParticipationAllowed(actor, deps);
+    const current = await ensureOwner(deps.persistence, actor, runId);
+    if (current.state === "finalized")
+      fail(409, "run_finalized", "A finalized run cannot be changed");
+    if (current.traceSha256 !== null && current.traceSha256 !== sha256)
+      fail(409, "trace_conflict", "The run already has a different trace");
     fail(409, "idempotency_conflict", "Idempotency key was reused");
   }
   return json(result.status === "created" ? 201 : 200, {

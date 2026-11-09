@@ -5,7 +5,8 @@
 // @source src/Presentation.tsx
 // @source src/Operations.tsx
 // @source src/lib/copy-text.ts
-// Navigation, bounded list selection, disclosure, and clipboard feedback.
+// Navigation, bounded list selection, disclosure, and coarse clipboard outcome.
+// Request ownership and feedback expiry are refined in ui_clipboard_requests.
 module ui_navigation {
   var s: { route: int, history: List[int], selected: int, page: int, pages: int, disclosure: bool, copy: str }
   action init = s' = { route: 1, history: List(1), selected: 1, page: 0, pages: 2, disclosure: false, copy: "idle" }

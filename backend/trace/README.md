@@ -187,11 +187,18 @@ repository, projectPolicyRevision, provider, model, client, clientVersion }`.
 4. `POST /api/v1/runs/{serverRunId}/finalize` with `Idempotency-Key`.
 
 Upload URLs are HMAC-derived, one-time write capabilities. Consumption is an
-atomic D1 update. Failed or already-used capabilities cannot be retried
-directly. An authenticated client may renew an expired, unconsumed intent only
-by repeating the exact idempotent request for the same run, digest, size, and
+atomic D1 update. An unconsumed, unexpired capability may retry the exact same
+upload after a failed attempt; its permanent reservation does not permit
+different bytes. A consumed capability cannot be used again. An authenticated
+client may renew an expired, unconsumed intent only by repeating the exact
+idempotent request for the same run, digest, size, and
 content type; mismatched retries fail closed. Finalization fails closed unless
 the trace is attached.
+
+Intent creation and renewal check the current run owner, non-finalized state
+and compatible attached digest in the database write. Existing-intent reads
+and renewal readback apply the same guard. An already authorized read can
+finish after another request finalizes the run, but cannot change its intent.
 
 The public contribution receipt keeps its client `run_id` and includes the
 private join fields `server_run_id`, trace object ID, authority, and digest.

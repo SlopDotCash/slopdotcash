@@ -27,7 +27,6 @@ import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
-import { copyText } from "./lib/copy-text";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -36,12 +35,14 @@ import {
   homeProjects,
 } from "./lib/home-projects";
 import {
+  findHistoricalProject,
   findProject,
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
@@ -350,7 +351,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
     };
   }
   if ("projectId" in route) {
-    const project = findProject(route.projectId);
+    const project =
+      findProject(route.projectId) ??
+      (route.kind === "cycle" ? findHistoricalProject(route.projectId) : null);
     if (!project) return notFound;
     if (route.kind === "cycle") {
       return {
@@ -932,21 +935,7 @@ function AgentPromptBox({
   prompt: string;
   openIn?: boolean;
 }) {
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  useEffect(() => {
-    if (copy !== "copied") return;
-    const timer = window.setTimeout(() => setCopy("idle"), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [copy]);
-  const copyPrompt = async () => {
-    try {
-      await copyText(prompt);
-      setCopy("copied");
-    } catch {
-      // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
-      setCopy("error");
-    }
-  };
+  const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
     <div className="command-box agent-prompt-box">
       <output aria-label="Agent prompt" className="agent-prompt-copy">
@@ -965,7 +954,7 @@ function AgentPromptBox({
         aria-label={
           copy === "copied"
             ? "Copied agent prompt"
-            : copy === "error"
+            : copy === "failed"
               ? "Copy unavailable; select agent prompt"
               : "Copy agent prompt"
         }
@@ -974,15 +963,15 @@ function AgentPromptBox({
             ? "button primary-button agent-prompt-copied"
             : "button primary-button"
         }
-        data-copy={copy}
-        onClick={() => void copyPrompt()}
+        data-copy={copy === "failed" ? "error" : copy}
+        onClick={copyPrompt}
         type="button"
       >
         {copy === "copied" ? <Check /> : <Clipboard />}
         <span className="agent-prompt-copy-label">
           {copy === "copied"
             ? "Copied"
-            : copy === "error"
+            : copy === "failed"
               ? "Select text"
               : "Copy"}
         </span>
@@ -1536,10 +1525,26 @@ function AppContent({ route }: { route: Route }) {
   const blocked = Boolean(registryError) && !registryIndependent;
   const project =
     route.kind === "project" ? findProject(route.projectId) : undefined;
+  const [archive, retryArchive] = useCycleIndex(
+    route.kind === "cycle-archive" || route.kind === "cycle",
+  );
+  const cycleProjectId =
+    route.kind === "cycle"
+      ? (findProject(route.projectId)?.id ?? route.projectId)
+      : null;
+  const cycleNeedsSnapshot =
+    route.kind === "cycle" &&
+    archive.status === "ready" &&
+    !archive.cycleIndex.cycles.some(
+      (cycle) =>
+        cycle.projectId === cycleProjectId && cycle.cycleId === route.cycleId,
+    );
   const needsSnapshot =
-    !blocked && snapshot && !(project && hasBountyOverview(project));
+    !blocked &&
+    snapshot &&
+    !(project && hasBountyOverview(project)) &&
+    (route.kind !== "cycle" || cycleNeedsSnapshot);
   const [state, retry] = useSnapshot(needsSnapshot);
-  const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (blocked)
     content = (
@@ -1619,16 +1624,22 @@ function AppContent({ route }: { route: Route }) {
         state={state}
       />
     );
-  else if (route.kind === "cycle")
-    content = withProject(route, (project) => (
+  else if (route.kind === "cycle") {
+    const cycleProject =
+      findProject(route.projectId) ?? findHistoricalProject(route.projectId);
+    content = cycleProject ? (
       <CyclePage
+        archive={archive}
         cycleId={route.cycleId}
-        project={project}
+        project={cycleProject}
         retry={retry}
+        retryArchive={retryArchive}
         state={state}
       />
-    ));
-  else content = <NotFound />;
+    ) : (
+      <NotFound title="Project not found" />
+    );
+  } else content = <NotFound />;
   return (
     <>
       <Header />
