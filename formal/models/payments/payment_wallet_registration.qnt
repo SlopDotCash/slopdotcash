@@ -34,6 +34,8 @@
 // cryptography, shared-helper internals, wallet authorization and transfers are
 // excluded. Existing tests cover rename/legacy/notification paths, not every
 // interleaving below; all definitions are authored and manually reviewed only.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module payment_wallet_registration {
   val actors = Set(1, 2)
   val chains = Set(1, 2)
@@ -58,6 +60,21 @@ module payment_wallet_registration {
   def row(id: int): Claim = if (id == 0) absent else s.rows.get(id)
   def ending(request: Request, desired: str, returned: int): Request = request.with("phase", "response")
     .with("desired", desired).with("returned", returned)
+  // Projection used only by step (project=true). begin reads a done request's
+  // attempt, actor and chain; the invariant also reads its attempt and, only
+  // when desired is "200", its returned row and address. No other reader
+  // exists, so the remaining fields are written as fixed representatives. The
+  // response phase is read only by respond, whose projected successor depends
+  // on nothing else, and the invariant has the same value there as in that
+  // successor; a projected ending therefore moves directly to that done state.
+  def finished(request: Request): Request = {
+    val success = request.desired == "200"
+    idle.with("phase", "done").with("attempt", request.attempt).with("actor", request.actor)
+      .with("chain", request.chain).with("desired", if (success) "200" else "error")
+      .with("returned", if (success) request.returned else 0).with("address", if (success) request.address else 1)
+  }
+  def replied(request: Request, project: bool): Request =
+    if (project and request.phase == "response") finished(request) else request
   def candidateClaim(request: Request): Claim = { exists: true, id: request.candidate,
     actor: request.actor, chain: request.chain, address: request.address, login: request.login,
     source: "registry", stamp: request.stamp, predecessor: request.predecessor }
@@ -83,20 +100,22 @@ module payment_wallet_registration {
       s' = s.with("requests", s.requests.set(slot, idle.with("phase", "tip").with("attempt", previous.attempt + 1)
         .with("actor", actor).with("chain", chain).with("address", address).with("login", login).with("stamp", s.now))) }
   }
-  action readTip(slot: int, ok: bool): bool = {
+  action readTip(slot: int, ok: bool): bool = readTipWith(slot, ok, false)
+  action readTipWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val currentId = s.heads.get(partition(request.actor, request.chain))
     val current = row(currentId)
     val noop = current.exists and current.source == "registry" and current.address == request.address
     all { request.phase == "tip", s' = s.with("requests", s.requests.set(slot,
-      if (not(ok)) ending(request, "error", 0) else if (noop) ending(request, "200", currentId)
-      else request.with("phase", "prepare").with("predecessor", currentId))) }
+      replied(if (not(ok)) ending(request, "error", 0) else if (noop) ending(request, "200", currentId)
+      else request.with("phase", "prepare").with("predecessor", currentId), project))) }
   }
-  action prepare(slot: int, ok: bool): bool = {
+  action prepare(slot: int, ok: bool): bool = prepareWith(slot, ok, false)
+  action prepareWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "prepare", s' = s.with("requests", s.requests.set(slot,
-      if (ok) request.with("phase", "helper").with("candidate", 2 + (slot - 1) * 2 + request.attempt)
-      else ending(request, "error", 0))) }
+      replied(if (ok) request.with("phase", "helper").with("candidate", 2 + (slot - 1) * 2 + request.attempt)
+      else ending(request, "error", 0), project))) }
   }
   action helper(slot: int): bool = {
     val request = s.requests.get(slot)
@@ -111,16 +130,18 @@ module payment_wallet_registration {
         .with("requests", s.requests.set(slot, request.with("phase", "helper-reply").with("helperKind", kind)
           .with("helperReturned", if (existing != 0) existing else if (created) claim.id else 0))) }
   }
-  action helperFailure(slot: int): bool = {
+  action helperFailure(slot: int): bool = helperFailureWith(slot, false)
+  action helperFailureWith(slot: int, project: bool): bool = {
     val request = s.requests.get(slot)
-    all { request.phase == "helper", s' = s.with("requests", s.requests.set(slot, ending(request, "error", 0))) }
+    all { request.phase == "helper", s' = s.with("requests", s.requests.set(slot, replied(ending(request, "error", 0), project))) }
   }
-  action helperReply(slot: int, received: bool): bool = {
+  action helperReply(slot: int, received: bool): bool = helperReplyWith(slot, received, false)
+  action helperReplyWith(slot: int, received: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "helper-reply", s' = s.with("requests", s.requests.set(slot,
-      if (not(received)) ending(request, "error", 0)
+      replied(if (not(received)) ending(request, "error", 0)
       else if (request.helperKind == "conflict") request.with("phase", "winner")
-      else ending(request, "200", request.helperReturned))) }
+      else ending(request, "200", request.helperReturned), project))) }
   }
   def winnerResult(request: Request, ok: bool, registryRequired: bool): Request = {
     val winnerId = s.heads.get(partition(request.actor, request.chain))
@@ -131,9 +152,10 @@ module payment_wallet_registration {
       else if (accepted) ending(request, "200", winnerId) else ending(request, "409", 0))
       .with("winnerObserved", winnerId)
   }
-  action readWinner(slot: int, ok: bool): bool = {
+  action readWinner(slot: int, ok: bool): bool = readWinnerWith(slot, ok, false)
+  action readWinnerWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
-    all { request.phase == "winner", s' = s.with("requests", s.requests.set(slot, winnerResult(request, ok, true))) }
+    all { request.phase == "winner", s' = s.with("requests", s.requests.set(slot, replied(winnerResult(request, ok, true), project))) }
   }
   // Former production condition, excluded from step.
   action legacyWinnerRead(slot: int): bool = {
@@ -153,17 +175,71 @@ module payment_wallet_registration {
     all { request.phase == "response", s' = s.with("requests", s.requests.set(slot,
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; the request inputs are bound only by
+  //   begin, after its own slot guard. TLC no longer evaluates every action for
+  //   all 288 combinations of formerly hoisted choices, and the simulator does
+  //   not retry them while begin is disabled.
+  // - Endings are written through the projection at finished, so step does
+  //   not use respond.
+  // - now is read only by begin and historicalAppend; the invariant checks its
+  //   range. Once neither can still happen, a tick is unobservable, so step
+  //   offers tick only while one can.
+  // - Value symmetry. Actor, address and login values are compared only for
+  //   equality (actors also select a heads partition, over which the
+  //   invariant quantifies). The only constants are the seeded row and the
+  //   historical append's login 1, which therefore always counts as present. A permutation that fixes every value already present in
+  //   a row or a started request therefore maps reachable states to reachable
+  //   states and preserves the invariant. When step chooses a value not yet
+  //   present, it uses the smallest such value. Including extra values in the
+  //   present set only adds choices.
+  // - Local actions first. prepare and helperReply read and write only their
+  //   own slot. They commute with every action of the other slot and of the
+  //   environment, and no other action can disable them. The invariant's
+  //   per-slot conjunct reads that slot's fields and rows, which are only ever
+  //   added and never changed. When a slot has a local action, step takes only
+  //   the local actions of the lowest such slot (an ample set). Non-local
+  //   actions keep their order, so every shared state is still reached, and
+  //   each slot reaches each of its own states with no more rows than in the
+  //   full model.
+  val clockLive = not(s.historicalUsed) or slots.exists(slot => s.requests.get(slot).attempt < 2)
+  val started = slots.filter(slot => s.requests.get(slot).phase != "unused")
+  val presentRows = ids.filter(id => row(id).exists)
+  val presentActors = presentRows.map(id => row(id).actor).union(started.map(slot => s.requests.get(slot).actor))
+  val presentAddresses = presentRows.map(id => row(id).address).union(started.map(slot => s.requests.get(slot).address))
+  // historicalAppend always writes login 1, so 1 counts as present.
+  val presentLogins = Set(1).union(presentRows.map(id => row(id).login)).union(started.map(slot => s.requests.get(slot).login))
+  // Stamps are compared only for equality (in the digest) and the invariant
+  // checks only the range of now. Compressing unused clock values therefore
+  // maps every full-model state to one where each value below now is a
+  // present stamp, and a tick from an unused now changes nothing observable;
+  // step ticks only from a present stamp.
+  val presentStamps = presentRows.map(id => row(id).stamp).union(started.map(slot => s.requests.get(slot).stamp))
+  // The values already present plus the smallest value that is not.
+  def canonical(domain: Set[int], present: Set[int]): Set[int] =
+    domain.filter(v => present.contains(v) or domain.forall(w => w >= v or present.contains(w)))
+  val focus = if (Set("prepare", "helper-reply").contains(s.requests.get(1).phase)) 1
+    else if (Set("prepare", "helper-reply").contains(s.requests.get(2).phase)) 2 else 0
   action step = {
     nondet slot = slots.oneOf()
-    nondet actor = actors.oneOf()
-    nondet chain = chains.oneOf()
-    nondet address = Set(1, 2).oneOf()
-    nondet login = Set(1, 2, 3).oneOf()
-    nondet source = Set("none", "registry", "historical").oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { configure(source), tick, begin(slot, actor, chain, address, login), readTip(slot, yes), prepare(slot, yes),
-      helper(slot), helperFailure(slot), helperReply(slot, yes), readWinner(slot, yes), historicalAppend(actor, address),
-      respond(slot, yes), s' = s }
+    any {
+      all { not(s.configured), { nondet source = Set("none", "registry", "historical").oneOf() configure(source) } },
+      all { focus == 0, clockLive, presentStamps.contains(s.now), tick },
+      all { focus == 0, Set("unused", "done").contains(s.requests.get(slot).phase), {
+        nondet actor = canonical(actors, presentActors).oneOf()
+        nondet address = canonical(Set(1, 2), presentAddresses).oneOf()
+        nondet chain = chains.oneOf()
+        nondet login = canonical(Set(1, 2, 3), presentLogins).oneOf()
+        begin(slot, actor, chain, address, login) } },
+      all { focus == 0 or focus == slot, any { prepareWith(slot, yes, true), helperReplyWith(slot, yes, true) } },
+      all { focus == 0, any { readTipWith(slot, yes, true), helper(slot), helperFailureWith(slot, true),
+        readWinnerWith(slot, yes, true) } },
+      all { focus == 0, not(s.historicalUsed), {
+        nondet actor = canonical(actors, presentActors).oneOf()
+        nondet address = canonical(Set(1, 2), presentAddresses).oneOf()
+        historicalAppend(actor, address) } },
+      s' = s }
   }
   val successIsRegistry = slots.forall(slot => {
     val request = s.requests.get(slot)

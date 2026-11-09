@@ -14,12 +14,16 @@ module contributor_lock_publication {
     handles: int -> Handle, publishedCallers: Set[int], tombstones: Set[int], primary: str,
     secondary: Set[str], committed: bool, rolledBack: bool,
     diagnostic: str, cleanupCanonical: int, allStopped: bool }
-  action init = s' = { phase: "idle", operation: "none", actor: 1, attempt: 0,
+  val startState = { phase: "idle", operation: "none", actor: 1, attempt: 0,
     guard: "none", canonical: 0, priorDead: false, candidatePresent: false,
     candidates: Set(), stale: false, ownsStale: false, staleDamaged: false,
     handles: callers.mapBy(_ => absent), publishedCallers: Set(), tombstones: Set(), primary: "none",
     secondary: Set(), committed: false, rolledBack: false,
     diagnostic: "none", cleanupCanonical: 0, allStopped: false }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   // A fixed historical owner has no active parent, helper, or child.
   action seedStale = all { s.phase == "idle", s.attempt == 0, s.canonical == 0,
     s' = s.with("canonical", 3).with("priorDead", true) }
@@ -213,20 +217,20 @@ module contributor_lock_publication {
     .then(beginAcquire(2)).then(prepare(true)).then(inspect).then(publish(true)).then(cleanupGuard(true))
     .then(publishHandle).then(beginRelease(1)).then(cleanupReleased(false)).then(cleanupGuard(true))
     .then(finishRelease).expect(s.canonical == 2 and mayStart(2) and s.tombstones == Set(1) and invariant)
-  action releaseGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  action releaseGuardFailure = initState.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(true)).then(publishHandle).then(beginRelease(1))
     .then(renameRelease(true)).then(cleanupReleased(true)).then(cleanupGuard(false)).then(finishRelease)
   run releaseGuardFailureBlocksSuccessorAndRetryTest = releaseGuardFailure
     .expect(s.handles.get(1).released and not(s.handles.get(1).complete) and invariant)
     .then(beginRelease(1).fail())
   run releaseGuardFailureBlocksSuccessorTest = releaseGuardFailure.then(beginAcquire(2).fail())
-  action acquireGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  action acquireGuardFailure = initState.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(false)).then(reportAcquireFailure)
   run manualGuardRecoveryIsExternalTest = acquireGuardFailure.then(manualRecovery.fail())
   run stoppedOwnerAllowsManualGuardRecoveryTest = acquireGuardFailure.then(confirmAllStopped).then(manualRecovery)
     .then(beginAcquire(2)).then(prepare(true)).then(inspect).then(publish(true))
     .then(cleanupGuard(true)).then(publishHandle).expect(mayStart(2) and invariant)
-  action recoveredWithDebris = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  action recoveredWithDebris = initState.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(true)).then(publishHandle).then(beginRelease(1))
     .then(renameRelease(true)).then(cleanupReleased(false)).then(cleanupGuard(false)).then(finishRelease)
     .then(confirmAllStopped).then(manualRecovery)

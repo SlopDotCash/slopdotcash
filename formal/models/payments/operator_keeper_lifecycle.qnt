@@ -29,6 +29,8 @@
 // rollback are host assumptions, not claims about a second namespace/CLI.
 // Existing native integration defines coalescing, transaction rollback and
 // kill/restart recovery. It is partial evidence; no checks were executed here.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module operator_keeper_lifecycle {
   val ids = Set(1, 2, 3)
   val runIds = Set(1, 2)
@@ -51,21 +53,63 @@ module operator_keeper_lifecycle {
   action configure(mode: str, valid: bool, registry: int): bool = all {
     s.count == 0, ids.forall(id => s.requests.get(id).phase == "unused"), modes.contains(mode), Set(1, 2).contains(registry),
     s' = s.with("mode", mode).with("configValid", valid).with("registry", registry) }
-  def settle(id: int, outcome: str): State = s.with("active", 0)
-    .with("runs", s.runs.set(id, s.runs.get(id).with("phase", "settled").with("outcome", outcome).with("staged", false)))
-  action request(id: int, caller: str): bool = {
-    val local = unusedRequest.with("caller", caller).with("instance", s.instance)
+  def settle(id: int, outcome: str): State = settleWith(id, outcome, false)
+  // With project=true (step only), a settled run keeps only its phase and an
+  // outcome class: readers distinguish "throw", "partial" and any other
+  // outcome, and its remaining fields are never read again (it cannot become
+  // active). Such a request's result is itself projected away.
+  def settleWith(id: int, outcome: str, project: bool): State = s.with("active", 0)
+    .with("runs", s.runs.set(id, if (project)
+      unusedRun.with("phase", "settled").with("outcome", if (Set("throw", "partial").contains(outcome)) outcome else "ok")
+      else s.runs.get(id).with("phase", "settled").with("outcome", outcome).with("staged", false)))
+  // Projection used only by the finite step: a request's instance is never
+  // read, and once a request is done only its http status and, for HTTP 200,
+  // its run remain readable (by the invariant). Scenarios use project=false.
+  def stamp(project: bool): int = if (project) 0 else s.instance
+  // Slot symmetry, used only with project=true: request slots are
+  // interchangeable (unused slots are identical, runs are keyed by count and
+  // never refer to a slot, and no guard, update or invariant reads a slot
+  // number), so step stores the requests sorted by an injective key of their
+  // projected fields. Equal keys mean equal records, so ties are harmless.
+  def phaseRank(phase: str): int = if (phase == "unused") 0 else if (phase == "dispatch") 1
+    else if (phase == "waiting") 2 else if (phase == "body") 3 else 4
+  def callerRank(caller: str): int = if (caller == "public") 0 else if (caller == "wrong-route") 1
+    else if (caller == "direct") 2 else 3
+  def httpRank(http: int): int = if (http == 0) 0 else if (http == 200) 1 else if (http == 404) 2 else 3
+  def resultRank(result: str): int = if (result == "none") 0 else if (result == "pending") 1 else 2
+  def requestKey(r: Request): int = phaseRank(r.phase) * 10000 + callerRank(r.caller) * 1000
+    + r.runId * 100 + httpRank(r.http) * 10 + resultRank(r.result) + r.instance * 100000
+  def arrange(requests: int -> Request, project: bool): int -> Request = if (not(project)) requests else {
+    val a = requests.get(1)
+    val b = requests.get(2)
+    val c = requests.get(3)
+    val ka = requestKey(a)
+    val kb = requestKey(b)
+    val kc = requestKey(c)
+    if (ka <= kb and kb <= kc) Map(1 -> a, 2 -> b, 3 -> c)
+    else if (ka <= kc and kc <= kb) Map(1 -> a, 2 -> c, 3 -> b)
+    else if (kb <= ka and ka <= kc) Map(1 -> b, 2 -> a, 3 -> c)
+    else if (kb <= kc and kc <= ka) Map(1 -> b, 2 -> c, 3 -> a)
+    else if (kc <= ka and ka <= kb) Map(1 -> c, 2 -> a, 3 -> b)
+    else Map(1 -> c, 2 -> b, 3 -> a)
+  }
+  def finalize(r: Request, project: bool): Request = if (project)
+    unusedRequest.with("phase", "done").with("http", r.http).with("runId", if (r.http == 200) r.runId else 0) else r
+  action request(id: int, caller: str): bool = requestWith(id, caller, false)
+  action requestWith(id: int, caller: str, project: bool): bool = {
+    val local = unusedRequest.with("caller", caller).with("instance", stamp(project))
     val rejected = caller == "public" or caller == "wrong-route"
     val cronOff = caller == "cron" and s.mode == "off"
     val cronInvalid = caller == "cron" and (s.mode == "invalid" or not(s.configValid))
     all { ids.contains(id), s.requests.get(id).phase == "unused", Set("public", "wrong-route", "direct", "cron").contains(caller),
-      s' = s.with("requests", s.requests.set(id,
-        if (rejected) local.with("phase", "done").with("http", 404).with("result", "not-found")
-        else if (cronOff) local.with("phase", "done").with("result", "success")
-        else if (cronInvalid) local.with("phase", "done").with("result", "configuration-error")
-        else local.with("phase", "dispatch").with("result", "pending"))) }
+      s' = s.with("requests", arrange(s.requests.set(id,
+        if (rejected) finalize(local.with("phase", "done").with("http", 404).with("result", "not-found"), project)
+        else if (cronOff) finalize(local.with("phase", "done").with("result", "success"), project)
+        else if (cronInvalid) finalize(local.with("phase", "done").with("result", "configuration-error"), project)
+        else local.with("phase", "dispatch").with("result", "pending")), project)) }
   }
-  action dispatch(id: int): bool = {
+  action dispatch(id: int): bool = dispatchWith(id, false)
+  action dispatchWith(id: int, project: bool): bool = {
     val r = s.requests.get(id)
     val fresh = s.active == 0
     val key = if (fresh) s.count + 1 else s.active
@@ -73,19 +117,21 @@ module operator_keeper_lifecycle {
       s' = s.with("active", key).with("count", if (fresh) key else s.count)
         .with("runs", if (fresh) s.runs.set(key, unusedRun.with("phase", "mode").with("instance", s.instance)
           .with("mode", s.mode).with("configValid", s.configValid).with("registry", s.registry).with("projects", s.projects)) else s.runs)
-        .with("requests", s.requests.set(id, r.with("phase", "waiting").with("instance", s.instance).with("runId", key))) }
+        .with("requests", arrange(s.requests.set(id, r.with("phase", "waiting").with("instance", stamp(project)).with("runId", key)), project)) }
   }
-  action selectMode(id: int): bool = {
+  action selectMode(id: int): bool = selectModeWith(id, false)
+  action selectModeWith(id: int, project: bool): bool = {
     val activeRun = s.runs.get(id)
     all { s.active == id, activeRun.phase == "mode",
-      s' = if (activeRun.mode == "off") settle(id, "off")
-        else if (activeRun.mode == "invalid" or not(activeRun.configValid)) settle(id, "throw")
+      s' = if (activeRun.mode == "off") settleWith(id, "off", project)
+        else if (activeRun.mode == "invalid" or not(activeRun.configValid)) settleWith(id, "throw", project)
         else s.with("runs", s.runs.set(id, activeRun.with("phase", "identity"))) }
   }
-  action identity(id: int, storageWorks: bool): bool = {
+  action identity(id: int, storageWorks: bool): bool = identityWith(id, storageWorks, false)
+  action identityWith(id: int, storageWorks: bool, project: bool): bool = {
     val activeRun = s.runs.get(id)
     all { s.active == id, activeRun.phase == "identity",
-      s' = if (not(storageWorks) or (s.journalRegistry != 0 and s.journalRegistry != activeRun.registry)) settle(id, "throw")
+      s' = if (not(storageWorks) or (s.journalRegistry != 0 and s.journalRegistry != activeRun.registry)) settleWith(id, "throw", project)
         else s.with("journalRegistry", activeRun.registry).with("runs", s.runs.set(id, activeRun.with("phase", "core"))) }
   }
   action indexReads(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", s' = s.with("indexed", true) }
@@ -114,49 +160,94 @@ module operator_keeper_lifecycle {
     val activeRun = s.runs.get(id)
     all { s.active == id, activeRun.phase == "core", s' = s.with("runs", s.runs.set(id, activeRun.with("itemError", true))) }
   }
-  action finish(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", not(s.runs.get(id).staged),
-    s' = settle(id, if (s.runs.get(id).itemError) "partial" else "ok") }
-  action fatal(id: int): bool = all { s.active == id, s.runs.get(id).phase == "core", s' = settle(id, "throw") }
-  action deliver(id: int, received: bool): bool = {
+  action finish(id: int): bool = finishWith(id, false)
+  action finishWith(id: int, project: bool): bool = all { s.active == id, s.runs.get(id).phase == "core", not(s.runs.get(id).staged),
+    s' = settleWith(id, if (s.runs.get(id).itemError) "partial" else "ok", project) }
+  action fatal(id: int): bool = fatalWith(id, false)
+  action fatalWith(id: int, project: bool): bool = all { s.active == id, s.runs.get(id).phase == "core",
+    s' = settleWith(id, "throw", project) }
+  action deliver(id: int, received: bool): bool = deliverWith(id, received, false)
+  action deliverWith(id: int, received: bool, project: bool): bool = {
     val request = s.requests.get(id)
     val activeRun = if (request.runId > 0) s.runs.get(request.runId) else unusedRun
     val http = if (activeRun.outcome == "throw") 503 else 200
     all { request.phase == "waiting", activeRun.phase == "settled",
-      s' = s.with("requests", s.requests.set(id,
-        if (not(received)) request.with("phase", "done").with("result", "response-lost")
-        else request.with("http", http).with("phase", if (request.caller == "cron" and http == 200) "body" else "done")
-          .with("result", if (http == 503) "redacted-failure" else if (request.caller == "cron") "pending" else activeRun.outcome))) }
+      s' = s.with("requests", arrange(s.requests.set(id,
+        if (not(received)) finalize(request.with("phase", "done").with("result", "response-lost"), project)
+        else if (request.caller == "cron" and http == 200) request.with("http", http).with("phase", "body").with("result", "pending")
+        else finalize(request.with("http", http).with("phase", "done")
+          .with("result", if (http == 503) "redacted-failure" else activeRun.outcome), project)), project)) }
   }
-  action inspectScheduled(id: int, bodyValid: bool): bool = {
+  action inspectScheduled(id: int, bodyValid: bool): bool = inspectScheduledWith(id, bodyValid, false)
+  action inspectScheduledWith(id: int, bodyValid: bool, project: bool): bool = {
     val request = s.requests.get(id)
     val activeRun = if (request.runId > 0) s.runs.get(request.runId) else unusedRun
     all { request.phase == "body", request.caller == "cron",
-      s' = s.with("requests", s.requests.set(id, request.with("phase", "done")
-        .with("result", if (not(bodyValid)) "response-error" else if (activeRun.outcome == "partial") "unavailable-work" else "success"))) }
+      s' = s.with("requests", arrange(s.requests.set(id, finalize(request.with("phase", "done")
+        .with("result", if (not(bodyValid)) "response-error" else if (activeRun.outcome == "partial") "unavailable-work" else "success"), project)), project)) }
   }
-  action restart(mode: str, valid: bool, registry: int, projects: int): bool = all {
+  action restart(mode: str, valid: bool, registry: int, projects: int): bool = restartWith(mode, valid, registry, projects, false)
+  action restartWith(mode: str, valid: bool, registry: int, projects: int, project: bool): bool = all {
     s.instance == 1, modes.contains(mode), Set(1, 2).contains(registry), Set(1, 2).contains(projects),
     s' = s.with("instance", 2).with("mode", mode).with("configValid", valid).with("registry", registry).with("projects", projects).with("active", 0)
       .with("runs", runIds.mapBy(id => {
         val activeRun = s.runs.get(id)
-        if (activeRun.phase == "settled" or activeRun.phase == "unused") activeRun else activeRun.with("phase", "lost").with("staged", false)
+        if (activeRun.phase == "settled" or activeRun.phase == "unused") activeRun
+        // A lost run is never active again and only its phase is read.
+        else if (project) unusedRun.with("phase", "lost")
+        else activeRun.with("phase", "lost").with("staged", false)
       }))
-      .with("requests", ids.mapBy(id => {
+      .with("requests", arrange(ids.mapBy(id => {
         val request = s.requests.get(id)
         if (request.phase == "waiting" and request.runId > 0 and s.runs.get(request.runId).phase != "settled")
-          request.with("phase", "done").with("result", "interrupted") else request
-      })) }
+          finalize(request.with("phase", "done").with("result", "interrupted"), project) else request
+      }), project)) }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; the configuration choices are bound
+  //   only by configure and restart, after their own guards. TLC no longer
+  //   evaluates every action for all 768 combinations of formerly hoisted
+  //   choices, and the simulator does not retry them for a disabled action.
+  // - project=true: a request's instance is never read; a done request is
+  //   terminal (request needs "unused") and only its http status and, for
+  //   HTTP 200, its run are read (by the invariant). Its result, caller,
+  //   instance and other run IDs are written to fixed values. Settled and
+  //   lost runs are written as described at settleWith and restartWith.
+  // - indexed and projects (state and run copies) are read by no guard,
+  //   update or invariant. step omits indexReads, whose only effect is
+  //   indexed, and restarts with projects 1, which leaves projects at 1.
+  // - Request slots are interchangeable (see arrange): step keeps the
+  //   requests sorted, which reaches a slot permutation of every full-model
+  //   state.
+  // - Configuration classes: every reader treats configValid=false exactly as
+  //   mode "invalid" (request's cron check and selectMode both test "invalid
+  //   or not valid", and "off" is tested first in both), stageAttempt and
+  //   broadcast are reachable only after selectMode accepted a valid config,
+  //   and no invariant reads configValid. step therefore configures and
+  //   restarts with configValid=true, using mode "invalid" for every invalid
+  //   class.
+  // - Registry symmetry: registry values are compared only for equality, and
+  //   journalRegistry starts at 0. Before the first dispatch only configure can
+  //   change the registry, so swapping 1 and 2 maps reachable states to
+  //   reachable states and preserves the invariant. step configures registry
+  //   1 only; restart still chooses a same or different registry.
+  // Each full-model state agrees, up to those symmetries, with a reduced
+  // reachable state on every field a guard, update or invariant reads.
   action step = {
     nondet id = ids.oneOf()
     nondet activeRun = runIds.oneOf()
-    nondet caller = Set("public", "wrong-route", "direct", "cron").oneOf()
-    nondet mode = modes.oneOf()
     nondet yes = Set(false, true).oneOf()
-    nondet registry = Set(1, 2).oneOf()
-    nondet projects = Set(1, 2).oneOf()
-    any { configure(mode, yes, registry), request(id, caller), dispatch(id), selectMode(activeRun), identity(activeRun, yes), indexReads(activeRun),
-      stageAttempt(activeRun), commitAttempt(activeRun, yes), broadcast(activeRun), gasEvidence(activeRun, yes), itemFailure(activeRun), finish(activeRun), fatal(activeRun),
-      deliver(id, yes), inspectScheduled(id, yes), restart(mode, yes, registry, projects), s' = s }
+    any {
+      all { s.count == 0, { nondet mode = modes.oneOf() configure(mode, true, 1) } },
+      { nondet caller = Set("public", "wrong-route", "direct", "cron").oneOf() requestWith(id, caller, true) },
+      dispatchWith(id, true), selectModeWith(activeRun, true), identityWith(activeRun, yes, true),
+      stageAttempt(activeRun), commitAttempt(activeRun, yes), broadcast(activeRun), gasEvidence(activeRun, yes),
+      itemFailure(activeRun), finishWith(activeRun, true), fatalWith(activeRun, true),
+      deliverWith(id, yes, true), inspectScheduledWith(id, yes, true),
+      all { s.instance == 1, {
+        nondet mode = modes.oneOf()
+        nondet registry = Set(1, 2).oneOf()
+        restartWith(mode, true, registry, 1, true) } },
+      s' = s }
   }
   val invariant = all { s.count <= 2, s.instance <= 2, s.safeSigning,
     s.signed == s.nonce, s.liability implies s.signed, s.settledGas implies s.signed and not(s.liability),

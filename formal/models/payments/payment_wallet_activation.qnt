@@ -14,6 +14,8 @@
 // consistency, account binding and signature validity are assumptions here.
 // No action dispatches a payment, signs a transaction or changes an obligation
 // to paid. Readback success describes one observation, not future currentness.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module payment_wallet_activation {
   val ids = Set(1, 2)
   val states = Set("absent", "ready", "processing", "submitted", "paid", "held")
@@ -25,11 +27,15 @@ module payment_wallet_activation {
     authorized: Set[int], witnesses: int -> int,
     outbox: int -> str, initial: int -> str, matching: int -> bool,
     reserved: int -> bool, requests: int -> Request }
-  action init = s' = { configured: false, tip: 1, priorAuthorization: false,
+  val startState = { configured: false, tip: 1, priorAuthorization: false,
     authorized: Set(), witnesses: ids.mapBy(_ => 0),
     outbox: ids.mapBy(_ => "absent"), initial: ids.mapBy(_ => "absent"),
     matching: ids.mapBy(_ => true), reserved: ids.mapBy(_ => true),
     requests: ids.mapBy(_ => idle) }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   def effective(auth: Set[int]): int = if (auth.contains(2)) 2 else if (auth.contains(1)) 1 else s.tip
   action configure(first: str, second: str, secondMatches: bool, secondReserved: bool, authorized: bool): bool = all {
     not(s.configured), states.contains(first), states.contains(second),
@@ -77,15 +83,23 @@ module payment_wallet_activation {
     all { request.phase == "response", s' = s.with("requests", s.requests.set(id,
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
+  // Small shared choices stay hoisted; the configuration choices are bound
+  // only by configure, after its own guard. The transition relation is
+  // unchanged, but TLC no longer evaluates every action for all 288
+  // configuration combinations, and the simulator does not retry them while
+  // configure is disabled.
   action step = {
-    nondet first = states.oneOf()
-    nondet second = states.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
     nondet id = ids.oneOf()
     nondet claim = ids.oneOf()
-    any { configure(first, second, a, b, c), replacement, begin(id, claim), batch(id), batchFailure(id),
+    nondet a = Set(false, true).oneOf()
+    any {
+      all { not(s.configured), {
+        nondet first = states.oneOf()
+        nondet second = states.oneOf()
+        nondet b = Set(false, true).oneOf()
+        nondet c = Set(false, true).oneOf()
+        configure(first, second, a, b, c) } },
+      replacement, begin(id, claim), batch(id), batchFailure(id),
       batchReply(id, a), readback(id, a), respond(id, a), s' = s }
   }
   val invariant = all {
@@ -106,7 +120,7 @@ module payment_wallet_activation {
       all { request.added implies request.admitted and s.authorized.contains(request.claim),
         request.response == "200" implies request.observedEffective == request.claim and s.authorized.contains(request.claim) }
     }) }
-  action ready = init.then(configure("held", "absent", true, true, false))
+  action ready = initState.then(configure("held", "absent", true, true, false))
   action finished(id: int): bool = batch(id).then(batchReply(id, true)).then(readback(id, true)).then(respond(id, true))
 
   run authorizationQueuesEligibleHeldAndAbsentRowsTest = ready.then(begin(1, 1)).then(finished(1))

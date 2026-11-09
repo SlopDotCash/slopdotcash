@@ -37,6 +37,8 @@
 // Existing tests cover historical confirmation and one-time wallet notices;
 // they are partial evidence, not execution of all races below. This model and
 // its scenarios were authored and reviewed without running a parser/checker.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module wallet_claim_publication {
   val actors = Set(1, 2)
   val chains = Set(1, 2, 3, 4)
@@ -69,6 +71,25 @@ module wallet_claim_publication {
     else if (matches(3, claim)) 3 else if (matches(4, claim)) 4 else if (matches(5, claim)) 5
     else if (matches(6, claim)) 6 else 0
   def ending(request: Request, status: str): Request = request.with("phase", "reply").with("desired", status)
+  // Projection used only by step (project=true). begin reads a done request's
+  // attempt, mode, actor and chain. The invariant also reads its returned row,
+  // whether desired is "201", whether outcome is "committed" and, in those two
+  // cases, its claim ID. No other reader exists, so every other field is
+  // written as a fixed representative. The reply phase is read only by
+  // respond, whose projected successor depends on nothing else, and the
+  // invariant has the same value there as in that successor; a projected
+  // reply therefore moves directly to that done state.
+  def finished(request: Request): Request = {
+    val keepsId = request.desired == "201" or request.outcome == "committed"
+    idle.with("phase", "done").with("attempt", request.attempt).with("mode", request.mode)
+      .with("claim", absent.with("actor", request.claim.actor).with("chain", request.claim.chain)
+        .with("id", if (keepsId) request.claim.id else 0))
+      .with("returned", request.returned)
+      .with("desired", if (request.desired == "201") "201" else "other")
+      .with("outcome", if (request.outcome == "committed") "committed" else "none")
+  }
+  def replied(request: Request, project: bool): Request =
+    if (project and request.phase == "reply") finished(request) else request
   def existing(request: Request, id: int): Request = ending(request, "200")
     .with("returned", id).with("disposition", "existing")
   def seed(id: int, actor: int, chain: int, source: str): Claim = { exists: true, id: id,
@@ -101,20 +122,23 @@ module wallet_claim_publication {
       s' = s.with("requests", s.requests.set(slot, idle.with("phase", "authority").with("attempt", prior.attempt + 1)
         .with("mode", mode).with("claim", claim))) }
   }
-  action authority(slot: int, permitted: bool): bool = {
+  action authority(slot: int, permitted: bool): bool = authorityWith(slot, permitted, false)
+  action authorityWith(slot: int, permitted: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "authority", s' = s.with("requests", s.requests.set(slot,
-      if (permitted) request.with("phase", "body") else ending(request, "403"))) }
+      replied(if (permitted) request.with("phase", "body") else ending(request, "403"), project))) }
   }
-  action body(slot: int, valid: bool): bool = {
+  action body(slot: int, valid: bool): bool = bodyWith(slot, valid, false)
+  action bodyWith(slot: int, valid: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val accepted = valid and (request.mode != "operator" or request.claim.observed <= s.now)
     all { request.phase == "body", s' = s.with("requests", s.requests.set(slot,
-      if (accepted) request.with("phase", if (request.mode == "contributor") "tip" else "capture")
+      replied(if (accepted) request.with("phase", if (request.mode == "contributor") "tip" else "capture")
         .with("claim", if (request.mode == "operator") request.claim.with("created", s.now) else request.claim)
-      else ending(request, "400"))) }
+      else ending(request, "400"), project))) }
   }
-  action readTip(slot: int, ok: bool): bool = {
+  action readTip(slot: int, ok: bool): bool = readTipWith(slot, ok, false)
+  action readTipWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val claim = request.claim
     val tip = s.heads.get(lineage(claim.actor, claim.chain))
@@ -123,7 +147,7 @@ module wallet_claim_publication {
       and loginFold(current.login) == loginFold(claim.login)
     val nextValue = if (not(ok)) ending(request, "500") else if (tip != claim.predecessor) ending(request, "409")
       else if (same) existing(request, tip) else request.with("phase", "capture")
-    all { request.phase == "tip", s' = s.with("requests", s.requests.set(slot, nextValue.with("tip", tip))) }
+    all { request.phase == "tip", s' = s.with("requests", s.requests.set(slot, replied(nextValue.with("tip", tip), project))) }
   }
   action capture(slot: int): bool = {
     val request = s.requests.get(slot)
@@ -134,25 +158,28 @@ module wallet_claim_publication {
     all { request.phase == "capture", s' = s.with("requests", s.requests.set(slot,
       request.with("phase", "hash").with("claim", claim))) }
   }
-  action prepare(slot: int, ok: bool): bool = {
+  action prepare(slot: int, ok: bool): bool = prepareWith(slot, ok, false)
+  action prepareWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "hash", s' = s.with("requests", s.requests.set(slot,
-      if (ok) request.with("phase", "digest-read") else ending(request, "500"))) }
+      replied(if (ok) request.with("phase", "digest-read") else ending(request, "500"), project))) }
   }
-  action readDigest(slot: int, ok: bool): bool = {
+  action readDigest(slot: int, ok: bool): bool = readDigestWith(slot, ok, false)
+  action readDigestWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val found = digestRow(request.claim)
     all { request.phase == "digest-read", s' = s.with("requests", s.requests.set(slot,
-      if (not(ok)) ending(request, "500") else if (found != 0) existing(request, found)
-      else request.with("phase", if (request.claim.predecessor == 0) "batch" else "predecessor"))) }
+      replied(if (not(ok)) ending(request, "500") else if (found != 0) existing(request, found)
+      else request.with("phase", if (request.claim.predecessor == 0) "batch" else "predecessor"), project))) }
   }
-  action readPredecessor(slot: int, ok: bool): bool = {
+  action readPredecessor(slot: int, ok: bool): bool = readPredecessorWith(slot, ok, false)
+  action readPredecessorWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val claim = request.claim
     val previous = claimAt(claim.predecessor)
     val matches = previous.exists and previous.actor == claim.actor and previous.chain == claim.chain
     all { request.phase == "predecessor", s' = s.with("requests", s.requests.set(slot,
-      if (not(ok)) ending(request, "500") else if (matches) request.with("phase", "batch") else ending(request, "409"))) }
+      replied(if (not(ok)) ending(request, "500") else if (matches) request.with("phase", "batch") else ending(request, "409"), project))) }
   }
   action batch(slot: int, succeeds: bool): bool = {
     val request = s.requests.get(slot)
@@ -168,27 +195,30 @@ module wallet_claim_publication {
       .with("requests", s.requests.set(slot, request.with("phase", "batch-result")
         .with("outcome", if (commit) "committed" else if (allowed) "rolled-back" else "constraint"))) }
   }
-  action batchResult(slot: int, received: bool, metadataValid: bool): bool = {
+  action batchResult(slot: int, received: bool, metadataValid: bool): bool = batchResultWith(slot, received, metadataValid, false)
+  action batchResultWith(slot: int, received: bool, metadataValid: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val success = request.outcome == "committed" and received and metadataValid
     all { request.phase == "batch-result", s' = s.with("requests", s.requests.set(slot,
-      if (success) ending(request, "201").with("returned", request.claim.id).with("disposition", "created")
-      else request.with("phase", "recovery-digest"))) }
+      replied(if (success) ending(request, "201").with("returned", request.claim.id).with("disposition", "created")
+      else request.with("phase", "recovery-digest"), project))) }
   }
-  action recoverDigest(slot: int, ok: bool): bool = {
+  action recoverDigest(slot: int, ok: bool): bool = recoverDigestWith(slot, ok, false)
+  action recoverDigestWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val found = digestRow(request.claim)
     all { request.phase == "recovery-digest", s' = s.with("requests", s.requests.set(slot,
-      if (not(ok)) ending(request, "500") else if (found != 0) existing(request, found)
-      else request.with("phase", "competing"))) }
+      replied(if (not(ok)) ending(request, "500") else if (found != 0) existing(request, found)
+      else request.with("phase", "competing"), project))) }
   }
-  action readCompeting(slot: int, ok: bool): bool = {
+  action readCompeting(slot: int, ok: bool): bool = readCompetingWith(slot, ok, false)
+  action readCompetingWith(slot: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(slot)
     val claim = request.claim
     val readHead = s.heads.get(lineage(claim.actor, claim.chain))
     val competitor = if (claim.predecessor == 0) readHead != 0 else readHead != claim.predecessor
     all { request.phase == "competing", s' = s.with("requests", s.requests.set(slot,
-      ending(request, if (ok and competitor) "409" else "500"))) }
+      replied(ending(request, if (ok and competitor) "409" else "500"), project))) }
   }
   action respond(slot: int, delivered: bool): bool = {
     val request = s.requests.get(slot)
@@ -197,24 +227,107 @@ module wallet_claim_publication {
   }
   action readCurrent(actor: int, chain: int): bool = all { s.configured, actors.contains(actor), chains.contains(chain), s.reads < 2,
     s' = s.with("reads", s.reads + 1).with("observedCurrent", s.heads.get(lineage(actor, chain))) }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; the request inputs are bound only by
+  //   begin, after its own guards. The transition relation is the same, but
+  //   TLC no longer evaluates every action for every hoisted combination, and
+  //   the simulator does not retry them while begin is disabled.
+  // - An operator request always uses lineage chain 1, so every chain choice
+  //   yields the same successor; step offers chain 1 only.
+  // - A contributor request forces source "registry", and capture overwrites
+  //   its observed and material values before any guard, update or invariant
+  //   reads them; step uses the representatives 0 and 1 that capture keeps
+  //   for material and replaces for observed.
+  // - readCurrent changes only reads and observedCurrent. No other guard,
+  //   update or invariant reads either field, so step omits it; scenarios
+  //   still exercise it. Every full-model state therefore agrees with a
+  //   reduced reachable state on all fields the invariant reads.
+  // - Replies are written through the projection at finished, so step does
+  //   not use respond.
+  // - now is read only by body and capture; the invariant checks its range.
+  //   Once no slot can begin again (attempt 2) or still reach those reads,
+  //   a tick is unobservable, so step offers tick only while one can.
+  // - Local actions first. begin, authority, prepare and batchResult, body for
+  //   a contributor and capture for an operator read only their own slot (and
+  //   the fixed configured flag) and write only that slot. They commute with
+  //   every action of the other slot and of the environment, and no other
+  //   action can disable them. A tick they make unobservable changes only now,
+  //   which nothing reads afterwards. The shared conjuncts of the invariant
+  //   read only history, heads, audits and notices, which local actions do not
+  //   change; a slot's own conjunct reads its own fields and rows and audits,
+  //   which are only ever added and never changed. When some slot has a local
+  //   action, step therefore takes only the local actions of the lowest such
+  //   slot (an ample set). Non-local actions keep their order, so every shared
+  //   state is still reached, and each slot reaches each of its own states with
+  //   no more rows than in the full model, where its conjunct can only be
+  //   harder to satisfy.
+  val clockLive = slots.exists(slot => s.requests.get(slot).attempt < 2
+    or Set("authority", "body", "tip", "capture").contains(s.requests.get(slot).phase))
+  // - Value symmetry. Actor, address and EVM chain (2, 3, 4) values are
+  //   compared only for equality (actor and chain also select a lineage, over
+  //   which the invariant quantifies), and login values only through
+  //   loginFold, whose classes {1, 2} and {3} a swap of 1 and 2 preserves.
+  //   Only the seeded rows and the operator's chain 1 name constants. A
+  //   permutation that fixes every value already present in a row or a
+  //   started request therefore maps reachable states to reachable states and
+  //   preserves the invariant. When begin chooses a value not yet present, it
+  //   uses the smallest such value (login 3 forms its own class). Including
+  //   extra values in the present set only adds choices.
+  val started = slots.filter(slot => s.requests.get(slot).phase != "unused")
+  val presentRows = rows.filter(id => s.history.get(id).exists)
+  val presentClaims = presentRows.map(id => s.history.get(id)).union(started.map(slot => s.requests.get(slot).claim))
+  val presentActors = presentClaims.map(c => c.actor)
+  val presentAddresses = presentClaims.map(c => c.address)
+  val presentLogins = presentClaims.map(c => c.login)
+  val presentChains = presentClaims.map(c => c.chain)
+  // The values already present plus the smallest value that is not.
+  def canonical(domain: Set[int], present: Set[int]): Set[int] =
+    domain.filter(v => present.contains(v) or domain.forall(w => w >= v or present.contains(w)))
+  def localReady(slot: int): bool = {
+    val r = s.requests.get(slot)
+    (s.configured and Set("unused", "done").contains(r.phase) and r.attempt < 2)
+      or Set("authority", "hash", "batch-result").contains(r.phase)
+      or (r.phase == "body" and r.mode == "contributor") or (r.phase == "capture" and r.mode == "operator")
+  }
+  val focus = if (localReady(1)) 1 else if (localReady(2)) 2 else 0
   action step = {
     nondet slot = slots.oneOf()
-    nondet mode = Set("contributor", "operator").oneOf()
-    nondet actor = actors.oneOf()
-    nondet chain = chains.oneOf()
-    nondet address = Set(1, 2).oneOf()
-    nondet login = Set(1, 2, 3).oneOf()
-    nondet predecessor = 0.to(6).oneOf()
-    nondet source = sources.oneOf()
-    nondet observed = 0.to(2).oneOf()
-    nondet material = Set(1, 2).oneOf()
-    nondet seedKind = Set("none", "legacy", "registry", "two-chains", "two-actors").oneOf()
     nondet yes = Set(false, true).oneOf()
     nondet other = Set(false, true).oneOf()
-    any { configure(seedKind), tick, begin(slot, mode, actor, chain, address, login, predecessor, source, observed, material),
-      authority(slot, yes), body(slot, yes), readTip(slot, yes), capture(slot), prepare(slot, yes), readDigest(slot, yes),
-      readPredecessor(slot, yes), batch(slot, yes), batchResult(slot, yes, other), recoverDigest(slot, yes), readCompeting(slot, yes),
-      respond(slot, yes), readCurrent(actor, chain), s' = s }
+    any {
+      all { not(s.configured), {
+        nondet seedKind = Set("none", "legacy", "registry", "two-chains", "two-actors").oneOf()
+        configure(seedKind) } },
+      all { focus == 0, clockLive, tick },
+      all { focus == 0 or focus == slot, local(slot, yes, other) },
+      all { focus == 0, any { readTipWith(slot, yes, true), readDigestWith(slot, yes, true),
+        readPredecessorWith(slot, yes, true), batch(slot, yes), recoverDigestWith(slot, yes, true),
+        readCompetingWith(slot, yes, true) } },
+      s' = s }
+  }
+  // The actions of one slot that read and write only that slot.
+  action local(slot: int, yes: bool, other: bool): bool = {
+    val prior = s.requests.get(slot)
+    any {
+      all { s.configured, Set("unused", "done").contains(prior.phase), prior.attempt < 2, {
+        // A retry must keep the first attempt's mode, actor and chain, so it
+        // binds them from that attempt instead of choosing them again.
+        val retry = prior.attempt > 0
+        nondet fresh = canonical(actors, presentActors).oneOf()
+        val actor = if (retry) prior.claim.actor else fresh
+        nondet address = canonical(Set(1, 2), presentAddresses).oneOf()
+        nondet login = canonical(Set(1, 2), presentLogins).union(Set(3)).oneOf()
+        nondet predecessor = 0.to(6).oneOf()
+        any {
+          all { not(retry and prior.mode != "contributor"), {
+            nondet chosen = Set(1).union(canonical(Set(2, 3, 4), presentChains)).oneOf()
+            val chain = if (retry) prior.claim.chain else chosen
+            begin(slot, "contributor", actor, chain, address, login, predecessor, "registry", 0, 1) } },
+          all { not(retry and prior.mode != "operator"), {
+            nondet source = sources.oneOf() nondet observed = 0.to(2).oneOf() nondet material = Set(1, 2).oneOf()
+            begin(slot, "operator", actor, 1, address, login, predecessor, source, observed, material) } } } } },
+      authorityWith(slot, yes, true), bodyWith(slot, yes, true), capture(slot), prepareWith(slot, yes, true),
+      batchResultWith(slot, yes, other, true) }
   }
   val newRows = rows.filter(id => id > 2 and s.history.get(id).exists)
   val invariant = all {

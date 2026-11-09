@@ -15,6 +15,8 @@
 // Attestation and audit insertion are one atomic batch. A competing or lost
 // batch reply can return the retained first attestation. No payment authority,
 // current key possession, settlement or mandatory payout gate is inferred.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module wallet_possession_completion {
   val ids = Set(1, 2)
   val challengeIds = Set(0, 1, 2)
@@ -31,9 +33,13 @@ module wallet_possession_completion {
   var s: { configured: bool, firstKind: str, now: int, current: int, secondExists: bool,
     challenges: int -> Challenge, issues: int -> Issue, requests: int -> Proof,
     attestations: int -> int, witnesses: int -> int, audits: int -> int }
-  action init = s' = { configured: false, firstKind: "solana", now: 0, current: 1, secondExists: false,
+  val startState = { configured: false, firstKind: "solana", now: 0, current: 1, secondExists: false,
     challenges: challengeIds.mapBy(_ => noChallenge), issues: ids.mapBy(_ => noIssue),
     requests: ids.mapBy(_ => noProof), attestations: ids.mapBy(_ => 0), witnesses: ids.mapBy(_ => 0), audits: ids.mapBy(_ => 0) }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   action configure(kind: str): bool = all { not(s.configured), Set("solana", "off-curve", "evm").contains(kind),
     s' = s.with("configured", true).with("firstKind", kind) }
   def isPresent(claim: int): bool = claim == 1 or (claim == 2 and s.secondExists)
@@ -42,29 +48,49 @@ module wallet_possession_completion {
     else if (kind(claim) == "off-curve") "not-provable-by-signature" else "unproven"
   def endIssue(request: Issue, status: str): Issue = request.with("phase", "response").with("desired", status)
   def endProof(request: Proof, status: str): Proof = request.with("phase", "response").with("desired", status)
+  // Projections used only by step (project=true). Issue and proof requests are
+  // terminal once done. No guard, update or invariant reads a done issue. The
+  // invariant reads only a done proof's claim, consumed, verified and committed
+  // flags and whether its response is 200 or 201. The response phase is read
+  // only by the respond actions. A projected ending therefore moves directly to
+  // a done state that keeps those fields and writes the others as fixed
+  // representatives, with "200" for both success codes. That state is the
+  // delivered successor; the lost one differs only in a response the
+  // invariant then ignores, so its invariant value is implied.
+  def finishIssue(request: Issue, project: bool): Issue = if (project) noIssue.with("phase", "done") else request
+  def issueReplied(request: Issue, project: bool): Issue =
+    if (project and request.phase == "response") noIssue.with("phase", "done") else request
+  def proofReplied(request: Proof, project: bool): Proof =
+    if (project and request.phase == "response") noProof.with("phase", "done").with("claim", request.claim)
+      .with("consumed", request.consumed).with("verified", request.verified).with("committed", request.committed)
+      .with("response", if (Set("200", "201").contains(request.desired)) "200" else "none")
+    else request
   action tick = all { s.configured, s.now < 5, s' = s.with("now", s.now + 1) }
   action successor = all { s.configured, s.current == 1, s.firstKind != "evm",
     s' = s.with("current", 2).with("secondExists", true) }
   action beginIssue(id: int, claim: int, actor: int): bool = all {
     s.configured, ids.contains(id), ids.contains(claim), ids.contains(actor), s.issues.get(id).phase == "unused",
     s' = s.with("issues", s.issues.set(id, noIssue.with("phase", "owner").with("claim", claim).with("actor", actor))) }
-  action issueOwner(id: int): bool = {
+  action issueOwner(id: int): bool = issueOwnerWith(id, false)
+  action issueOwnerWith(id: int, project: bool): bool = {
     val request = s.issues.get(id)
     all { request.phase == "owner", s' = s.with("issues", s.issues.set(id,
-      if (not(isPresent(request.claim)) or request.actor != 1) endIssue(request, "404")
+      issueReplied(if (not(isPresent(request.claim)) or request.actor != 1) endIssue(request, "404")
       else if (kind(request.claim) != "solana") endIssue(request, "409")
-      else request.with("phase", "existing"))) }
+      else request.with("phase", "existing"), project))) }
   }
-  action issueExisting(id: int): bool = {
+  action issueExisting(id: int): bool = issueExistingWith(id, false)
+  action issueExistingWith(id: int, project: bool): bool = {
     val request = s.issues.get(id)
     all { request.phase == "existing", s' = s.with("issues", s.issues.set(id,
-      if (s.attestations.get(request.claim) != 0) endIssue(request, "200")
-      else request.with("phase", "prepare"))) }
+      issueReplied(if (s.attestations.get(request.claim) != 0) endIssue(request, "200")
+      else request.with("phase", "prepare"), project))) }
   }
-  action prepareIssue(id: int, valid: bool): bool = {
+  action prepareIssue(id: int, valid: bool): bool = prepareIssueWith(id, valid, false)
+  action prepareIssueWith(id: int, valid: bool, project: bool): bool = {
     val request = s.issues.get(id)
     all { request.phase == "prepare", s' = s.with("issues", s.issues.set(id,
-      if (valid) request.with("phase", "write").with("stamp", s.now) else endIssue(request, "error"))) }
+      issueReplied(if (valid) request.with("phase", "write").with("stamp", s.now) else endIssue(request, "error"), project))) }
   }
   action issueWrite(id: int): bool = {
     val request = s.issues.get(id)
@@ -73,16 +99,18 @@ module wallet_possession_completion {
         issued: request.stamp, expires: request.stamp + 2, spent: false, known: false }))
         .with("issues", s.issues.set(id, request.with("phase", "written"))) }
   }
-  action issueReply(id: int, received: bool): bool = {
+  action issueReply(id: int, received: bool): bool = issueReplyWith(id, received, false)
+  action issueReplyWith(id: int, received: bool, project: bool): bool = {
     val request = s.issues.get(id)
     all { request.phase == "written", s' = s.with("challenges", s.challenges.set(id,
       s.challenges.get(id).with("known", received))).with("issues", s.issues.set(id,
-        request.with("phase", "done").with("desired", "201").with("response", if (received) "201" else "lost"))) }
+        finishIssue(request.with("phase", "done").with("desired", "201").with("response", if (received) "201" else "lost"), project))) }
   }
-  action issueFailure(id: int): bool = {
+  action issueFailure(id: int): bool = issueFailureWith(id, false)
+  action issueFailureWith(id: int, project: bool): bool = {
     val request = s.issues.get(id)
     all { Set("owner", "existing", "write").contains(request.phase),
-      s' = s.with("issues", s.issues.set(id, endIssue(request, "error"))) }
+      s' = s.with("issues", s.issues.set(id, issueReplied(endIssue(request, "error"), project))) }
   }
   action respondIssue(id: int): bool = {
     val request = s.issues.get(id)
@@ -95,21 +123,24 @@ module wallet_possession_completion {
     s' = s.with("requests", s.requests.set(id, noProof.with("phase", "owner").with("claim", claim).with("actor", actor)
       .with("challenge", challenge).with("bodyValid", body).with("fieldsMatch", fieldValues)
       .with("signatureValid", signature).with("windowMatch", window))) }
-  action proofOwner(id: int): bool = {
+  action proofOwner(id: int): bool = proofOwnerWith(id, false)
+  action proofOwnerWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "owner", s' = s.with("requests", s.requests.set(id,
-      if (not(isPresent(request.claim)) or request.actor != 1) endProof(request, "404")
-      else if (kind(request.claim) == "evm") endProof(request, "409") else request.with("phase", "existing"))) }
+      proofReplied(if (not(isPresent(request.claim)) or request.actor != 1) endProof(request, "404")
+      else if (kind(request.claim) == "evm") endProof(request, "409") else request.with("phase", "existing"), project))) }
   }
-  action proofExisting(id: int): bool = {
+  action proofExisting(id: int): bool = proofExistingWith(id, false)
+  action proofExistingWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "existing", s' = s.with("requests", s.requests.set(id,
-      if (s.attestations.get(request.claim) != 0) endProof(request, "200") else request.with("phase", "body"))) }
+      proofReplied(if (s.attestations.get(request.claim) != 0) endProof(request, "200") else request.with("phase", "body"), project))) }
   }
-  action proofBody(id: int): bool = {
+  action proofBody(id: int): bool = proofBodyWith(id, false)
+  action proofBodyWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "body", s' = s.with("requests", s.requests.set(id,
-      if (request.bodyValid) request.with("phase", "consume").with("stamp", s.now) else endProof(request, "400"))) }
+      proofReplied(if (request.bodyValid) request.with("phase", "consume").with("stamp", s.now) else endProof(request, "400"), project))) }
   }
   action consume(id: int): bool = {
     val request = s.requests.get(id)
@@ -119,31 +150,35 @@ module wallet_possession_completion {
       s' = s.with("challenges", s.challenges.set(request.challenge, challenge.with("spent", challenge.spent or accepted)))
         .with("requests", s.requests.set(id, request.with("phase", "consume-reply").with("consumed", accepted))) }
   }
-  action consumedReply(id: int, received: bool): bool = {
+  action consumedReply(id: int, received: bool): bool = consumedReplyWith(id, received, false)
+  action consumedReplyWith(id: int, received: bool, project: bool): bool = {
     val request = s.requests.get(id)
     val challenge = s.challenges.get(request.challenge)
     all { request.phase == "consume-reply", s' = s.with("requests", s.requests.set(id,
-      if (not(received)) endProof(request, "error")
+      proofReplied(if (not(received)) endProof(request, "error")
       else if (not(request.consumed) or challenge.claim != request.claim) endProof(request, "409")
-      else request.with("phase", "verify"))) }
+      else request.with("phase", "verify"), project))) }
   }
-  action verify(id: int): bool = {
+  action verify(id: int): bool = verifyWith(id, false)
+  action verifyWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     val challenge = s.challenges.get(request.challenge)
     val valid = request.fieldsMatch and request.signatureValid and request.windowMatch
       and kind(request.claim) == "solana" and s.now >= challenge.issued and s.now < challenge.expires
     all { request.phase == "verify", s' = s.with("requests", s.requests.set(id,
-      if (valid) request.with("phase", "hash").with("verified", true) else endProof(request, "400"))) }
+      proofReplied(if (valid) request.with("phase", "hash").with("verified", true) else endProof(request, "400"), project))) }
   }
-  action hashProof(id: int, ok: bool): bool = {
+  action hashProof(id: int, ok: bool): bool = hashProofWith(id, ok, false)
+  action hashProofWith(id: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "hash", s' = s.with("requests", s.requests.set(id,
-      if (ok) request.with("phase", "prewrite") else endProof(request, "error"))) }
+      proofReplied(if (ok) request.with("phase", "prewrite") else endProof(request, "error"), project))) }
   }
-  action prewrite(id: int): bool = {
+  action prewrite(id: int): bool = prewriteWith(id, false)
+  action prewriteWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "prewrite", s' = s.with("requests", s.requests.set(id,
-      if (s.attestations.get(request.claim) != 0) endProof(request, "200") else request.with("phase", "batch"))) }
+      proofReplied(if (s.attestations.get(request.claim) != 0) endProof(request, "200") else request.with("phase", "batch"), project))) }
   }
   action commit(id: int): bool = {
     val request = s.requests.get(id)
@@ -155,44 +190,83 @@ module wallet_possession_completion {
         .with("requests", s.requests.set(id, request.with("phase", if (inserted) "batch-reply" else "catch-read")
           .with("committed", inserted))) }
   }
-  action batchReply(id: int, ok: bool): bool = {
+  action batchReply(id: int, ok: bool): bool = batchReplyWith(id, ok, false)
+  action batchReplyWith(id: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "batch-reply", s' = s.with("requests", s.requests.set(id,
-      if (ok) endProof(request, "201") else request.with("phase", "catch-read"))) }
+      proofReplied(if (ok) endProof(request, "201") else request.with("phase", "catch-read"), project))) }
   }
   action batchFailure(id: int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "batch", s' = s.with("requests", s.requests.set(id, request.with("phase", "catch-read"))) }
   }
-  action catchRead(id: int, ok: bool): bool = {
+  action catchRead(id: int, ok: bool): bool = catchReadWith(id, ok, false)
+  action catchReadWith(id: int, ok: bool, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "catch-read", s' = s.with("requests", s.requests.set(id,
-      endProof(request, if (ok and s.attestations.get(request.claim) != 0) "200" else "error"))) }
+      proofReplied(endProof(request, if (ok and s.attestations.get(request.claim) != 0) "200" else "error"), project))) }
   }
-  action proofFailure(id: int): bool = {
+  action proofFailure(id: int): bool = proofFailureWith(id, false)
+  action proofFailureWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { Set("owner", "existing", "body", "consume", "prewrite").contains(request.phase),
-      s' = s.with("requests", s.requests.set(id, endProof(request, "error"))) }
+      s' = s.with("requests", s.requests.set(id, proofReplied(endProof(request, "error"), project))) }
   }
   action respondProof(id: int, received: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "response", s' = s.with("requests", s.requests.set(id,
       request.with("phase", "done").with("response", if (received) request.desired else "lost"))) }
   }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; the proof inputs are bound only by
+  //   beginProof, after its own unused-slot guard. TLC no longer evaluates every
+  //   action for the full product of choices, and the simulator does not retry
+  //   them while beginProof is disabled.
+  // - fieldsMatch, signatureValid and windowMatch are read only by verify, and
+  //   only as a conjunction, so step chooses one value for all three.
+  // - Endings are written through the projections at issueReplied and
+  //   proofReplied, so step does not use the respond actions.
+  // - now is read only by prepareIssue, proofBody and verify (the invariant
+  //   checks only its range), and secondExists only by the owner checks
+  //   (current is read only by successor's own guard and the invariant, which
+  //   holds because successor sets both together). Once no request can still
+  //   perform those reads, a change is unobservable, so step offers tick and
+  //   successor only while one can.
+  val issueClock = Set("unused", "owner", "existing", "prepare")
+  val proofClock = Set("unused", "owner", "existing", "body", "consume", "consume-reply", "verify")
+  val clockLive = ids.exists(id => issueClock.contains(s.issues.get(id).phase)
+    or proofClock.contains(s.requests.get(id).phase))
+  val ownerLive = ids.exists(id => Set("unused", "owner").contains(s.issues.get(id).phase)
+    or Set("unused", "owner").contains(s.requests.get(id).phase))
+  // - Local actions first. In the consume-reply, hash and batch-reply phases
+  //   the only enabled action of a proof request reads its own fields and the
+  //   immutable claim of its challenge, and writes only its own fields (never
+  //   consumed, verified or committed). It commutes with every other action,
+  //   and no other action can disable it. Every invariant conjunct reads a
+  //   request's own fields, or attestations, audits, challenges and the
+  //   verified and committed flags of a witness, which these actions do not
+  //   change. When a proof has such an action, step takes only that proof's
+  //   action (an ample set), so every other state change keeps its order.
+  val localProof = Set("consume-reply", "hash", "batch-reply")
+  val focus = if (localProof.contains(s.requests.get(1).phase)) 1
+    else if (localProof.contains(s.requests.get(2).phase)) 2 else 0
   action step = {
     nondet id = ids.oneOf()
     nondet claim = ids.oneOf()
     nondet actor = ids.oneOf()
-    nondet ch = challengeIds.oneOf()
-    nondet kind = Set("solana", "off-curve", "evm").oneOf()
     nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
-    nondet d = Set(false, true).oneOf()
-    any { configure(kind), tick, successor, beginIssue(id, claim, actor), issueOwner(id), issueExisting(id), prepareIssue(id, a),
-      issueWrite(id), issueReply(id, a), issueFailure(id), respondIssue(id), beginProof(id, claim, actor, ch, a, b, c, d),
-      proofOwner(id), proofExisting(id), proofBody(id), consume(id), consumedReply(id, a), verify(id), hashProof(id, a),
-      prewrite(id), commit(id), batchReply(id, a), batchFailure(id), catchRead(id, a), proofFailure(id), respondProof(id, a), s' = s }
+    if (focus != 0) any { consumedReplyWith(focus, a, true), hashProofWith(focus, a, true), batchReplyWith(focus, a, true) }
+    else any {
+      all { not(s.configured), { nondet kind = Set("solana", "off-curve", "evm").oneOf() configure(kind) } },
+      all { clockLive, tick }, all { ownerLive, successor }, beginIssue(id, claim, actor), issueOwnerWith(id, true), issueExistingWith(id, true), prepareIssueWith(id, a, true),
+      issueWrite(id), issueReplyWith(id, a, true), issueFailureWith(id, true),
+      all { s.requests.get(id).phase == "unused", {
+        nondet ch = challengeIds.oneOf()
+        nondet valid = Set(false, true).oneOf()
+        beginProof(id, claim, actor, ch, a, valid, valid, valid) } },
+      proofOwnerWith(id, true), proofExistingWith(id, true), proofBodyWith(id, true), consume(id), consumedReplyWith(id, a, true), verifyWith(id, true),
+      hashProofWith(id, a, true), prewriteWith(id, true), commit(id), batchReplyWith(id, a, true), batchFailure(id), catchReadWith(id, a, true),
+      proofFailureWith(id, true), s' = s }
   }
   val invariant = all {
     s.now >= 0, s.now <= 5, s.current == 2 implies s.secondExists,
@@ -208,7 +282,7 @@ module wallet_possession_completion {
         Set("200", "201").contains(request.response) implies s.attestations.get(request.claim) != 0,
         request.committed implies s.witnesses.get(request.claim) == id }
     }) }
-  action ready = init.then(configure("solana"))
+  action ready = initState.then(configure("solana"))
   action issued(id: int, claim: int): bool = beginIssue(id, claim, 1).then(issueOwner(id)).then(issueExisting(id))
     .then(prepareIssue(id, true)).then(issueWrite(id)).then(issueReply(id, true))
   action submitted(id: int, claim: int, ch: int, fieldValues: bool, signature: bool, window: bool): bool =

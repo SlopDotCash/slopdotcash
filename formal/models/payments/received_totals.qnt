@@ -30,6 +30,8 @@
 // Cache failures fall back or leave a successful build usable, as in source.
 // Existing tests cover real migrated reads, sums, tier filtering and paging;
 // interleavings and exact20k boundary classes below are authored, not executed.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module received_totals {
   val actors = Set(1, 2)
   val vaultIds = Set(1, 2, 3, 4)
@@ -45,12 +47,16 @@ module received_totals {
     people: Set[int], logins: int -> int, directUsd: int, vaultUsd: int, other: int,
     vaultPayments: int, status: str, response: str, ready: bool, cache: bool,
     cachedPeople: Set[int], cachedVault: Set[int], cacheServed: bool }
-  action init = s' = { configured: false, phase: "configure", testnets: false,
+  val startState = { configured: false, phase: "configure", testnets: false,
     vault: Set(), direct: Set(), members: actors.mapBy(_ => 1), names: actors.mapBy(_ => 1),
     badVault: 0, badDirect: 0, vaultPrefix: 0, directPrefix: 0, v: noScan, d: noScan,
     acceptedVault: Set(), people: Set(), logins: actors.mapBy(_ => 0), directUsd: 0,
     vaultUsd: 0, other: 0, vaultPayments: 0, status: "none", response: "none", ready: false,
     cache: false, cachedPeople: Set(), cachedVault: Set(), cacheServed: false }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   def actor(row: int): int = if (row == 2) 2 else 1
   def maximum(rows: Set[int]): int = rows.fold(0, (a, b) => if (a > b) a else b)
   def first(rows: Set[int]): Set[int] = rows.filter(row => rows.filter(other => other < row).size() < 2)
@@ -131,20 +137,38 @@ module received_totals {
   action respond(delivered: bool): bool = all { s.phase == "response", s' = s.with("phase", "done")
     .with("response", if (delivered) s.status else "lost").with("ready", delivered and s.status == "200") }
   action cachedRead = all { s.phase == "done", s.cache, not(s.cacheServed), s' = s.with("cacheServed", true) }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Each choice is bound only by the action that reads it, after a guard the
+  //   action itself requires. The transition relation is unchanged, but TLC no
+  //   longer evaluates every action for all configuration combinations, and
+  //   the simulator does not retry them while configure is disabled.
+  // - members, names, vault and direct are read only by the boundary and page
+  //   actions and by the invariant's seen-subset clauses. Once the direct scan
+  //   is complete, no action reads them again, and rows are only appended, so
+  //   a later change cannot falsify a subset clause that held before it. step
+  //   therefore offers membership and appends only during the scans.
+  // - Logins are write-only: names and the scan, direct and result login maps
+  //   are read only to compute other login maps, never by a guard, another
+  //   update or the invariant. So step omits rename, and membership modes 0
+  //   and 1 (visible) and 2 and 3 (hidden) differ only in logins; step uses 1
+  //   (the initial mode) and 2. The login scenarios still use every mode.
+  val scanning = Set("vault-boundary", "vault-page", "direct-boundary", "direct-page").contains(s.phase)
   action step = {
-    nondet nv = Set(0, 1, 2, 3, 4).oneOf()
-    nondet nd = Set(0, 1, 2, 3).oneOf()
-    nondet vp = prefixes.oneOf()
-    nondet dp = prefixes.oneOf()
-    nondet badV = Set(0, 1, 2, 3).oneOf()
-    nondet badD = Set(0, 1, 2, 3).oneOf()
-    nondet mode = Set(0, 1, 2, 3).oneOf()
-    nondet who = actors.oneOf()
-    nondet name = Set(1, 2).oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { configure(nv, nd, vp, dp, badV, badD, yes), membership(mode), rename(who, name),
-      appendVault, appendDirect, vaultBoundary, vaultPage, directBoundary, directPage, readFailure,
-      validateDirect, validateVault, cacheWrite(yes), respond(yes), cachedRead, s' = s }
+    any {
+      all { not(s.configured), {
+        nondet nv = Set(0, 1, 2, 3, 4).oneOf()
+        nondet nd = Set(0, 1, 2, 3).oneOf()
+        nondet vp = prefixes.oneOf()
+        nondet dp = prefixes.oneOf()
+        nondet badV = Set(0, 1, 2, 3).oneOf()
+        nondet badD = Set(0, 1, 2, 3).oneOf()
+        configure(nv, nd, vp, dp, badV, badD, yes) } },
+      all { scanning, { nondet mode = Set(1, 2).oneOf() membership(mode) } },
+      all { scanning, appendVault },
+      all { scanning, appendDirect },
+      vaultBoundary, vaultPage, directBoundary, directPage, readFailure, validateDirect, validateVault,
+      cacheWrite(yes), respond(yes), cachedRead, s' = s }
   }
   val invariant = all {
     s.v.seen.subseteq(s.vault), s.d.seen.subseteq(s.direct), not(s.v.seen.contains(4)),
@@ -159,7 +183,7 @@ module received_totals {
       s.vaultUsd == s.vaultPrefix + s.acceptedVault.filter(row => row != 2).fold(0, (sum, row) => sum + vaultAmount(row))
     }, s.ready implies s.response == "200", s.cache implies s.status == "200",
     s.cacheServed implies s.cache }
-  action small(vp: int, dp: int): bool = init.then(configure(1, 1, vp, dp, 0, 0, false))
+  action small(vp: int, dp: int): bool = initState.then(configure(1, 1, vp, dp, 0, 0, false))
   action scanSmall = vaultBoundary.then(vaultPage).then(vaultPage).then(directBoundary).then(directPage).then(directPage)
   action finish = validateDirect.then(validateVault).then(cacheWrite(false)).then(respond(true))
 

@@ -159,6 +159,64 @@ reasoning, not a machine-checked equivalence theorem.
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
 
+### Reused initial states
+
+Quint cannot translate `init` to TLA+ when another action, such as a shared
+setup action, also uses it (QNT409). Such a model keeps `init` only as the
+initial action and gives the setup actions an `initState` that assigns the
+same `startState` value. Named `run` scenarios may still start from `init`.
+
+### Local choices, terminal projections and dead environment changes
+
+These reductions apply to `wallet_claim_publication`,
+`wallet_possession_completion`, `evm_binding_consent_api`,
+`operator_keeper_lifecycle`, `payment_history`, `payment_wallet_activation`,
+`payment_wallet_registration`, `received_totals` and `solana_binding_api`.
+Each model's `step` comment states its own argument. Direct actions and named
+scenarios keep the original behavior. This is reviewed reasoning, not a
+machine-checked equivalence theorem.
+
+- Local choices. A `nondet` hoisted over the whole `any` makes TLC evaluate
+  every action for the full product of choices. `step` hoists only small
+  shared choices and binds each larger choice inside the one action that
+  reads it, after a guard the action itself requires. The transition relation
+  is unchanged. The leading guard also stops the Quint simulator from retrying
+  every nested choice of a disabled action.
+- Equivalent choices. When a reader sees only a class of values, such as a
+  conjunction of flags or "unavailable" versus any selectable ledger row,
+  `step` offers one representative per class.
+- Terminal projections. A request, page or run that no action can change
+  again is written through a `*With(..., project)` variant. It keeps each
+  field that a guard, update or invariant can still read and writes the
+  others as fixed values. The original action is the `project=false` case.
+- Dead environment changes. Once no request can still read a clock, claim
+  or ledger value, `step` no longer offers the action that changes it. The
+  invariant checks only the value's range, or a subset relation that a later
+  append cannot falsify.
+- Fused endings. Where a projected request moves to its response phase,
+  only the respond action reads that phase, its projected successor depends
+  on nothing else, and the invariant has the same value in both states. The
+  projected ending therefore moves directly to that done state.
+- Interchangeable slots. `operator_keeper_lifecycle` keeps its request slots
+  sorted by an injective key. Nothing reads a slot number and runs never
+  refer to a slot, so every full-model state is a slot permutation of a
+  reduced state.
+- Value symmetry. `wallet_claim_publication` and
+  `payment_wallet_registration` compare actors, addresses, logins and (in the
+  claim model) EVM chains only for equality or a permutation-invariant class.
+  When a request or append chooses a value that no row or started request
+  holds yet, `step` uses the smallest such value. Values named by a constant
+  always count as present.
+- Local actions first. An action that reads and writes only its own request
+  (and fixed configuration) commutes with every other action, and no other
+  action can disable it. When a request has such actions, `step` takes only
+  the local actions of the lowest such request (an ample set). This applies
+  only where every enabled action of that request in that phase is local,
+  and where each invariant conjunct reads one request's own data or shared
+  data that is only ever added. Non-local actions keep their order, so every
+  shared state is still reached, and a request's own conjunct is evaluated
+  with no more shared data than in the full model.
+
 ## Inventory and review
 
 A source is `mapped-abstraction` when a model names it,

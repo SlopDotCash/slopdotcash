@@ -10587,7 +10587,7 @@
     },
     {
       "path": "formal/models/api/wallet_claim_publication.qnt",
-      "sha256": "a3812927332c9d5af7331bab359f1db0a7aede12c857058db14f87c2080b2623",
+      "sha256": "0d92d1bb7ac298ee62cdf275b8fd1427cae6ab6c0a4110ac97a8df281dcf5204",
       "sources": [
         "backend/notifications/events.ts",
         "backend/payments/wallet-registration.ts",
@@ -10637,7 +10637,7 @@
     },
     {
       "path": "formal/models/api/wallet_possession_completion.qnt",
-      "sha256": "59d6d126d073af6bbf175ecc63d1e7de40750a5d22fa88e7a21318ee309e04a1",
+      "sha256": "55853b84f4e9176e24dc1331aefe325baa64637b518b0ff0470ec8ad2d436510",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/handler.ts",
@@ -11257,7 +11257,7 @@
     },
     {
       "path": "formal/models/contributor/contributor_lock_publication.qnt",
-      "sha256": "82bc2f7875cc05faddb0f50d148b9e8bd94bf4ff63ac3f2945b75308c0866db4",
+      "sha256": "59fb17a500a10c937f510701c1fcc860e3f0de8e278f8766eb8ce0733ad1f646",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
@@ -11971,7 +11971,7 @@
     },
     {
       "path": "formal/models/payments/evm_binding_consent_api.qnt",
-      "sha256": "84ec721b199dd75f79c136e63c951df45b65dd95261f36a4f174a9788e98f82e",
+      "sha256": "040daa57272d5cda9ef07111a1f5cd5439b09b1cabc9f232d9b49bd95ff848e0",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/possession.ts",
@@ -12098,7 +12098,7 @@
     },
     {
       "path": "formal/models/payments/operator_keeper_lifecycle.qnt",
-      "sha256": "d3fe8c45e8ba0d8b3a1ecfcf9720f46a666f69c9e73a9f176d2fc84794fb277d",
+      "sha256": "f87b7f5bd6c1580981cfd534796a4b1db5913dcc4a10a53251ffa81286efc634",
       "sources": [
         "scripts/payment-keeper/budget.ts",
         "scripts/payment-keeper/keeper.ts",
@@ -12186,7 +12186,7 @@
     },
     {
       "path": "formal/models/payments/payment_history.qnt",
-      "sha256": "92cd0250eaf23395a4e4ac5058bb001cab62742933db48181e4c4831babd8ada",
+      "sha256": "46daadc37ca6390426e61bd0820a086393a851f5ec1eda6bd47bc26c295079bd",
       "sources": [
         "backend/payments/direct-history.ts",
         "backend/payments/handler.ts",
@@ -12261,7 +12261,7 @@
     },
     {
       "path": "formal/models/payments/payment_wallet_activation.qnt",
-      "sha256": "970a9aa5ed44510771af0de650672e0d7181654230a3f2cd6a3084d223330aca",
+      "sha256": "9721b438a459f1af2a5a12b75670adb629c51900181147725900780156164a26",
       "sources": [
         "backend/payments/handler.ts",
         "migrations/0011_payments.sql",
@@ -12287,7 +12287,7 @@
     },
     {
       "path": "formal/models/payments/payment_wallet_registration.qnt",
-      "sha256": "ebf42cbacedc7a0bd80325757d2677bd14d7682aa13787613a4314c24ea7dab1",
+      "sha256": "d1595d629255d22b17eb39a4214ebc14e217dd05bfd48a5f720e8451dee36185",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/wallet-registration.ts",
@@ -12352,7 +12352,7 @@
     },
     {
       "path": "formal/models/payments/received_totals.qnt",
-      "sha256": "ff6ed5d807657c3edbc761967cd0c6e993b1984ef71f913666eee162434ca065",
+      "sha256": "36dafb62680c789283fc4081ca5032d906102e76740bb3c03e377530f6473f52",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/public-records.ts",
@@ -12456,7 +12456,7 @@
     },
     {
       "path": "formal/models/payments/solana_binding_api.qnt",
-      "sha256": "1357251c3243cb533beb12b3d8f9e6718bfa0befe4ce76d786001d092cb02d38",
+      "sha256": "9b2dfaf84f5b6e1a66b4e189cbc0783fffcbc44a7b0e97363540b19b4c4575bb",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",

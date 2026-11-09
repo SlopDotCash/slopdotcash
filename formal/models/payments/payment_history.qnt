@@ -27,6 +27,8 @@
 // Legacy unpaged direct replies, byte-level malformed envelopes, component
 // lifetime and retaining an earlier good result are outside this model. No
 // tests, parsers or checkers were executed for these definitions.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module payment_history {
   val ids = Set(1, 2)
   val ordinaryIds = Set(1, 2, 3, 4, 5)
@@ -39,10 +41,14 @@ module payment_history {
     hidden: Set[int], invalid: Set[int], unmatched: Set[int], monthly: Set[int],
     pages: int -> Page, through: int, total: int, cursor: int, collected: Set[int],
     ready: bool, failed: bool, privateTablePresent: bool }
-  action init = s' = { configured: false, rail: "vault", scope: "all", testnets: false,
+  val startState = { configured: false, rail: "vault", scope: "all", testnets: false,
     present: Set(1, 2), hidden: Set(2), invalid: Set(), unmatched: Set(), monthly: Set(),
     pages: ids.mapBy(_ => unused), through: -1, total: -1, cursor: 0, collected: Set(),
     ready: false, failed: false, privateTablePresent: false }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   def actor(row: int): int = if (row == 2) 2 else 1
   def project(row: int): int = if (row == 4) 2 else 1
   val highest = s.present.fold(0, (a, b) => if (a > b) a else b)
@@ -105,7 +111,13 @@ module payment_history {
     all { Set("boundary", "count", "page", "validate").contains(page.phase),
       s' = s.with("pages", s.pages.set(id, failedPage(page, "503"))) }
   }
-  action accept(id: int): bool = {
+  action accept(id: int): bool = acceptWith(id, false)
+  // project=true is used only by step. A done page is terminal: no guard or
+  // update reads it, and its invariant clauses read only its own fields and
+  // the fixed rail and invalid set, so they hold after accept exactly when
+  // they held in the state accept started from. Its fields are written as
+  // fixed representatives.
+  action acceptWith(id: int, project: bool): bool = {
     val page = s.pages.get(id)
     val collected = s.collected.union(page.selected)
     val bad = page.result != "200" or (s.through != -1 and s.through != page.through)
@@ -118,23 +130,54 @@ module payment_history {
     all { page.phase == "response", page.after == s.cursor,
       (s.through == -1 and page.requested == -1) or page.requested == s.through,
       not(s.ready), not(s.failed),
-      s' = s.with("pages", s.pages.set(id, page.with("phase", "done")))
+      s' = s.with("pages", s.pages.set(id, if (project) unused.with("phase", "done") else page.with("phase", "done")))
         .with("failed", bad).with("ready", not(bad) and page.next == 0)
         .with("through", if (bad) s.through else page.through).with("total", if (bad) s.total else page.total)
         .with("cursor", if (bad) s.cursor else page.next).with("collected", if (bad) s.collected else collected) }
   }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; each larger choice is bound only by
+  //   the action that reads it, after a guard the action itself requires. The
+  //   transition relation is unchanged, but TLC no longer evaluates every
+  //   action for the full product of choices, and the simulator does not retry
+  //   them for a disabled action.
+  // - privateTablePresent is read by no guard other than appendPrivate's own,
+  //   no update and no invariant, so step omits appendPrivate.
+  // - monthly is read only by readPage, which stores selected ∩ monthly in
+  //   months; months is read only by the invariant's months ⊆ selected clause,
+  //   and selected is never changed after readPage. That clause therefore holds
+  //   for every monthly value, so step omits attachMonth and keeps monthly
+  //   empty. The named month scenarios still exercise attachMonth.
+  // - Done pages are written through the projection at acceptWith.
+  // - Unread configuration. Vault reads never select row 5, so invalid or
+  //   unmatched row 5 behaves as none there. Direct reads ignore hidden,
+  //   unmatched and testnets, so a direct configuration fixes them (public2
+  //   true, unmatched 0, testnets false) and step offers no visibility change.
+  // - present and hidden are read only by boundary, count and readPage (and
+  //   appendRecord's own guard); the invariant's present ⊆ ordinaryIds holds for
+  //   every append. Pages are one-shot, so once no page can still reach those
+  //   reads a change is unobservable, and step offers appendRecord and
+  //   visibility only while one can.
+  val readsLive = ids.exists(id => Set("unused", "boundary", "count", "page").contains(s.pages.get(id).phase))
   action step = {
     nondet id = ids.oneOf()
-    nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
-    nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf()
-    nondet row = Set(0, 1, 2, 3, 4, 5).oneOf()
-    nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
-    nondet rail = Set("vault", "direct").oneOf()
-    nondet n = Set(2, 3, 5).oneOf()
-    nondet filterScope = scopes.oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { configure(rail, n, yes, row, other), scope(filterScope, yes), appendRecord, appendPrivate,
-      visibility(id, yes), attachMonth(row), begin(id, after, through, yes), boundary(id), count(id), readPage(id), validate(id), queryFailure(id), accept(id), s' = s }
+    any {
+      all { not(s.configured), {
+        nondet row = Set(0, 1, 2, 3, 4, 5).oneOf()
+        nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
+        nondet rail = Set("vault", "direct").oneOf()
+        nondet n = Set(2, 3, 5).oneOf()
+        val direct = rail == "direct"
+        configure(rail, n, yes or direct, if (row == 5 and not(direct)) 0 else row,
+          if (direct or other == 5) 0 else other) } },
+      { nondet filterScope = scopes.oneOf() scope(filterScope, yes and s.rail == "vault") },
+      all { readsLive, appendRecord }, all { readsLive, s.rail == "vault", visibility(id, yes) },
+      all { s.pages.get(id).phase == "unused", {
+        nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
+        nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf()
+        begin(id, after, through, yes) } },
+      boundary(id), count(id), readPage(id), validate(id), queryFailure(id), acceptWith(id, true), s' = s }
   }
   val invariant = all {
     s.present.subseteq(ordinaryIds), not(s.collected.contains(6)),
@@ -145,7 +188,7 @@ module payment_history {
         page.selected.forall(row => row > page.after and row <= page.through),
         (page.result == "200" and s.rail == "vault") implies page.selected.intersect(s.invalid).size() == 0 }
     }), s.ready implies not(s.failed) and s.collected.size() == s.total and s.collected.forall(row => row <= s.through) }
-  action base = init.then(configure("vault", 2, false, 0, 0))
+  action base = initState.then(configure("vault", 2, false, 0, 0))
   action queried(id: int): bool = boundary(id).then(count(id)).then(readPage(id)).then(validate(id))
   action firstPage = begin(1, 0, -1, true).then(queried(1))
   action nextPage = begin(2, s.cursor, s.through, true).then(queried(2))

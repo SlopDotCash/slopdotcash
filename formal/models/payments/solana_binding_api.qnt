@@ -38,6 +38,8 @@
 // No exact-once guarantee, payment transition, chain finality or auto-retry is
 // added. Existing real workflow is a partial conformance reference; no tests,
 // parsers, validators, services or providers were run for these definitions.
+// The finite step uses reviewed reductions (see the comment at step and
+// formal/README.md); direct actions and named scenarios keep full behavior.
 module solana_binding_api {
   val ids = Set(1, 2)
   val scopes = Set(1, 2)
@@ -61,10 +63,27 @@ module solana_binding_api {
   var s: { configured: bool, now: int, claim: int, profile: str,
     deployments: bool, owned: bool, ledger: int -> str,
     audits: Set[int], auditStamps: int -> int, effects: Set[int], requests: int -> Request }
-  action init = s' = { configured: false, now: 0, claim: 1, profile: "none",
+  val startState = { configured: false, now: 0, claim: 1, profile: "none",
     deployments: false, owned: false, ledger: scopes.mapBy(_ => "unavailable"),
     audits: Set(), auditStamps: ids.mapBy(_ => -1), effects: Set(), requests: ids.mapBy(_ => idle) }
+  action init = s' = startState
+  // Quint cannot translate init when another action also reuses it (QNT409).
+  // Reusable setup actions start from initState, which sets the same state.
+  action initState = s' = startState
   def ending(request: Request, result: str): Request = request.with("phase", "response").with("desired", result)
+  // Projection used only by step (project=true). Requests are one-shot, so a
+  // done request is terminal. No guard or update reads its response, emptyId
+  // or error text; the invariant reads its desired status only through
+  // desired == "200" and its stamp only when audited. Those fields are written
+  // as fixed representatives. The response phase is read only by respond,
+  // whose projected successor depends on nothing else, and the invariant has
+  // the same value there as in that successor; a projected ending therefore
+  // moves directly to that done state.
+  def finished(request: Request): Request = request.with("phase", "done").with("response", "none")
+    .with("emptyId", false).with("desired", if (request.desired == "200") "200" else "error")
+    .with("stamp", if (request.audited) request.stamp else -1)
+  def endingWith(request: Request, result: str, project: bool): Request =
+    if (project) finished(ending(request, result)) else ending(request, result)
   def ordinaryService(profile: str): bool = Set("ordinary", "both", "ordinary-private-unavailable").contains(profile)
   def privateConfigured(profile: str): bool = Set("private", "private-unavailable", "both", "ordinary-private-unavailable").contains(profile)
   def privateService(profile: str): bool = Set("private", "both").contains(profile)
@@ -83,51 +102,58 @@ module solana_binding_api {
   action begin(id: int, mode: str): bool = all {
     s.configured, ids.contains(id), modes.contains(mode), s.requests.get(id).phase == "unused",
     s' = s.with("requests", s.requests.set(id, idle.with("phase", "origin").with("mode", mode).with("stamp", s.now))) }
-  action origin(id: int, allowed: bool): bool = {
+  action origin(id: int, allowed: bool): bool = originWith(id, allowed, false)
+  action originWith(id: int, allowed: bool, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "origin", s' = s.with("requests", s.requests.set(id,
-      if (allowed) request.with("phase", "session") else ending(request, "403-origin"))) }
+      if (allowed) request.with("phase", "session") else endingWith(request, "403-origin", project))) }
   }
-  action session(id: int, kind: str): bool = {
+  action session(id: int, kind: str): bool = sessionWith(id, kind, false)
+  action sessionWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "session", Set("member", "missing", "expired", "error").contains(kind),
       s' = s.with("requests", s.requests.set(id,
         if (kind == "member") request.with("phase", "expected-actor")
-        else ending(request, if (kind == "error") "503-unavailable" else if (kind == "expired") "401-expired" else "401-sign-in"))) }
+        else endingWith(request, if (kind == "error") "503-unavailable" else if (kind == "expired") "401-expired" else "401-sign-in", project))) }
   }
-  action expectedActor(id: int, kind: str): bool = {
+  action expectedActor(id: int, kind: str): bool = expectedActorWith(id, kind, false)
+  action expectedActorWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "expected-actor", Set("absent", "matching", "invalid", "changed").contains(kind),
       s' = s.with("requests", s.requests.set(id,
         if (Set("absent", "matching").contains(kind)) request.with("phase", "body").with("admitted", true)
-        else ending(request, if (kind == "invalid") "400-actor" else "403-actor"))) }
+        else endingWith(request, if (kind == "invalid") "400-actor" else "403-actor", project))) }
   }
-  action body(id: int, kind: str): bool = {
+  action body(id: int, kind: str): bool = bodyWith(id, kind, false)
+  action bodyWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     val invalid = Set("bad-json", "bad-id").contains(kind)
       or (request.mode == "complete" and Set("no-transaction", "large-transaction", "bad-transaction").contains(kind))
     all { request.phase == "body", inputClasses.contains(kind),
       s' = s.with("requests", s.requests.set(id,
-        if (invalid) ending(request, "400-input") else request.with("phase", "services"))) }
+        if (invalid) endingWith(request, "400-input", project) else request.with("phase", "services"))) }
   }
-  action serviceGate(id: int): bool = {
+  action serviceGate(id: int): bool = serviceGateWith(id, false)
+  action serviceGateWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "services", s' = s.with("requests", s.requests.set(id,
       if (ordinaryService(s.profile) or privateConfigured(s.profile)) request.with("phase", "ordinary-query")
-      else ending(request, "503-attester"))) }
+      else endingWith(request, "503-attester", project))) }
   }
-  action ordinaryQuery(id: int): bool = {
+  action ordinaryQuery(id: int): bool = ordinaryQueryWith(id, false)
+  action ordinaryQueryWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "ordinary-query", s' = s.with("requests", s.requests.set(id,
       if (selectable(1)) selected(request, 1)
       else if (privateConfigured(s.profile)) request.with("phase", "owner-query")
-      else ending(request, "409-not-ready"))) }
+      else endingWith(request, "409-not-ready", project))) }
   }
-  action ownerQuery(id: int): bool = {
+  action ownerQuery(id: int): bool = ownerQueryWith(id, false)
+  action ownerQueryWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "owner-query", s' = s.with("requests", s.requests.set(id,
       if (s.owned) request.with("phase", "audit-write").with("owner", true)
-      else ending(request, "409-not-ready"))) }
+      else endingWith(request, "409-not-ready", project))) }
   }
   action commitAudit(id: int): bool = {
     val request = s.requests.get(id)
@@ -135,33 +161,37 @@ module solana_binding_api {
       s' = s.with("audits", s.audits.union(Set(id))).with("auditStamps", s.auditStamps.set(id, request.stamp))
         .with("requests", s.requests.set(id, request.with("phase", "audit-reply").with("audited", true))) }
   }
-  action auditReply(id: int, received: bool): bool = {
+  action auditReply(id: int, received: bool): bool = auditReplyWith(id, received, false)
+  action auditReplyWith(id: int, received: bool, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "audit-reply", s' = s.with("requests", s.requests.set(id,
-      if (received) request.with("phase", "private-query") else ending(request, "503-unavailable"))) }
+      if (received) request.with("phase", "private-query") else endingWith(request, "503-unavailable", project))) }
   }
-  action privateQuery(id: int): bool = {
+  action privateQuery(id: int): bool = privateQueryWith(id, false)
+  action privateQueryWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "private-query", s' = s.with("requests", s.requests.set(id,
-      if (selectable(2)) selected(request, 2) else ending(request, "409-not-ready"))) }
+      if (selectable(2)) selected(request, 2) else endingWith(request, "409-not-ready", project))) }
   }
   action contextGate(id: int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "context", s' = s.with("requests", s.requests.set(id,
       request.with("phase", if (request.mode == "prepare" and s.deployments) "context-query" else "selected-service"))) }
   }
-  action contextReply(id: int, kind: str): bool = {
+  action contextReply(id: int, kind: str): bool = contextReplyWith(id, kind, false)
+  action contextReplyWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "context-query", Set("matching", "missing", "duplicate", "missing-fields", "error").contains(kind),
       s' = s.with("requests", s.requests.set(id,
         if (kind == "matching") request.with("phase", "selected-service").with("context", true).with("contextClaim", request.claim)
-        else ending(request, if (kind == "error") "503-unavailable" else "503-deployment"))) }
+        else endingWith(request, if (kind == "error") "503-unavailable" else "503-deployment", project))) }
   }
-  action selectedService(id: int): bool = {
+  action selectedService(id: int): bool = selectedServiceWith(id, false)
+  action selectedServiceWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     val available = if (request.scope == 1) ordinaryService(s.profile) else privateService(s.profile)
     all { request.phase == "selected-service", s' = s.with("requests", s.requests.set(id,
-      if (available) request.with("phase", "dispatch") else ending(request, "503-attester"))) }
+      if (available) request.with("phase", "dispatch") else endingWith(request, "503-attester", project))) }
   }
   action dispatch(id: int): bool = {
     val request = s.requests.get(id)
@@ -173,53 +203,112 @@ module solana_binding_api {
   action serviceEffect(id: int): bool = all {
     s.requests.get(id).dispatched, not(s.effects.contains(id)),
     s' = s.with("effects", s.effects.union(Set(id))) }
-  action fetchReply(id: int, kind: str): bool = {
+  action fetchReply(id: int, kind: str): bool = fetchReplyWith(id, kind, false)
+  action fetchReplyWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "inflight", Set("ok", "non-ok", "throw").contains(kind),
       s' = s.with("requests", s.requests.set(id,
         if (kind == "ok") request.with("phase", "json")
-        else ending(request, if (kind == "non-ok") "409-attester" else "503-unavailable"))) }
+        else endingWith(request, if (kind == "non-ok") "409-attester" else "503-unavailable", project))) }
   }
-  action responseJson(id: int, kind: str): bool = {
+  action responseJson(id: int, kind: str): bool = responseJsonWith(id, kind, false)
+  action responseJsonWith(id: int, kind: str, project: bool): bool = {
     val request = s.requests.get(id)
     val accepted = Set("no-transaction", "transaction", "empty-id").contains(kind)
     all { request.phase == "json", envelopes.contains(kind),
       s' = s.with("requests", s.requests.set(id,
-        if (not(accepted)) ending(request, "503-unavailable")
-        else ending(request.with("emptyId", kind == "empty-id")
+        if (not(accepted)) endingWith(request, "503-unavailable", project)
+        else endingWith(request.with("emptyId", kind == "empty-id")
           .with("replyTransaction", request.mode == "prepare" and kind == "transaction")
-          .with("replyContext", request.mode == "prepare" and request.context), "200"))) }
+          .with("replyContext", request.mode == "prepare" and request.context), "200", project))) }
   }
-  action lookupFailure(id: int): bool = {
+  action lookupFailure(id: int): bool = lookupFailureWith(id, false)
+  action lookupFailureWith(id: int, project: bool): bool = {
     val request = s.requests.get(id)
     all { Set("ordinary-query", "owner-query", "audit-write", "private-query").contains(request.phase),
-      s' = s.with("requests", s.requests.set(id, ending(request, "503-unavailable"))) }
+      s' = s.with("requests", s.requests.set(id, endingWith(request, "503-unavailable", project))) }
   }
   action respond(id: int, received: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "response", s' = s.with("requests", s.requests.set(id,
       request.with("phase", "done").with("response", if (received) request.desired else "lost"))) }
   }
+  // Finite step reductions (direct actions and scenarios are unchanged):
+  // - Small shared choices stay hoisted; each larger choice is bound only by
+  //   the action that reads it, after a guard the action itself requires. TLC
+  //   no longer evaluates every action for the full product of unrelated
+  //   choices, and the simulator does not retry them for a disabled action.
+  // - Ledger rows are read only through selectable, which distinguishes only
+  //   "unavailable"; configure therefore uses "prepared" to represent the three
+  //   selectable states. A row, owned or deployments value is fixed when the
+  //   profile makes its only reader unreachable: ordinaryQuery, contextGate and
+  //   ledger row 1 need a profile that passes serviceGate, and ownerQuery and
+  //   ledger row 2 need a configured private service.
+  // - now is read only by begin; claim and ledger only by ordinaryQuery and
+  //   privateQuery (and closeAttempt's own guard). The invariant only checks
+  //   their ranges. Once no request can still perform those reads, a change is
+  //   unobservable, so step offers advance only while a request is unused and
+  //   replaceClaim and closeAttempt only while one has not yet been selected.
+  // - Ending requests are written through the projection at finished; the
+  //   response phase and respond are therefore unused in step.
+  // - Local actions first. In a local phase every enabled action of that
+  //   request reads only fixed configuration and that request's own fields,
+  //   audit, stamp and effect entries, and writes only those; serviceEffect
+  //   after dispatch is the same. Such an action commutes with every action of
+  //   the other request and of the environment, and no other action can
+  //   disable it. Every invariant conjunct reads one request's own data or a
+  //   global range that local actions do not change. When some request has a
+  //   local action, step therefore takes only the local actions of the lowest
+  //   such request (an ample set). Each request still reaches every own state
+  //   of the full model, and non-local reads (begin, ordinaryQuery and
+  //   privateQuery) still interleave with every environment change.
+  val unselected = Set("unused", "origin", "session", "expected-actor", "body", "services",
+    "ordinary-query", "owner-query", "audit-write", "audit-reply", "private-query")
+  val clockLive = ids.exists(id => s.requests.get(id).phase == "unused")
+  val selectionLive = ids.exists(id => unselected.contains(s.requests.get(id).phase))
+  val localPhases = Set("origin", "session", "expected-actor", "body", "services", "owner-query", "audit-write",
+    "audit-reply", "context", "context-query", "selected-service", "dispatch", "inflight", "json")
+  def localReady(id: int): bool = localPhases.contains(s.requests.get(id).phase)
+    or (s.requests.get(id).dispatched and not(s.effects.contains(id)))
+  val focus = if (localReady(1)) 1 else if (localReady(2)) 2 else 0
   action step = {
     nondet id = ids.oneOf()
     nondet scope = scopes.oneOf()
     nondet mode = modes.oneOf()
-    nondet profile = profiles.oneOf()
-    nondet first = rows.oneOf()
-    nondet second = rows.oneOf()
-    nondet input = inputClasses.oneOf()
-    nondet sessionClass = Set("member", "missing", "expired", "error").oneOf()
-    nondet expected = Set("absent", "matching", "invalid", "changed").oneOf()
-    nondet context = Set("matching", "missing", "duplicate", "missing-fields", "error").oneOf()
-    nondet fetch = Set("ok", "non-ok", "throw").oneOf()
-    nondet envelope = envelopes.oneOf()
     nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    any { configure(profile, first, second, a, b), advance, replaceClaim, closeAttempt(scope), begin(id, mode),
-      origin(id, a), session(id, sessionClass), expectedActor(id, expected), body(id, input), serviceGate(id),
-      ordinaryQuery(id), ownerQuery(id), commitAudit(id), auditReply(id, a), privateQuery(id), contextGate(id),
-      contextReply(id, context), selectedService(id), dispatch(id), serviceEffect(id), fetchReply(id, fetch),
-      responseJson(id, envelope), lookupFailure(id), respond(id, a), s' = s }
+    any {
+      all { not(s.configured), {
+        nondet profile = profiles.oneOf()
+        nondet first = Set("prepared", "unavailable").oneOf()
+        nondet second = Set("prepared", "unavailable").oneOf()
+        nondet b = Set(false, true).oneOf()
+        val served = ordinaryService(profile) or privateConfigured(profile)
+        val owner = privateConfigured(profile)
+        configure(profile, if (served) first else "unavailable", if (owner) second else "unavailable",
+          owner and a, served and b) } },
+      all { focus == 0, clockLive, advance }, all { focus == 0, selectionLive, replaceClaim },
+      all { focus == 0, selectionLive, closeAttempt(scope) }, all { focus == 0, begin(id, mode) },
+      all { focus == 0, ordinaryQueryWith(id, true) }, all { focus == 0, privateQueryWith(id, true) },
+      all { focus == 0 or focus == id, local(id, a) }, s' = s }
+  }
+  // The actions of one request in a local phase (and its pending service effect).
+  action local(id: int, a: bool): bool = {
+    val phase = s.requests.get(id).phase
+    any {
+      originWith(id, a, true),
+      all { phase == "session", { nondet sessionClass = Set("member", "missing", "expired", "error").oneOf()
+        sessionWith(id, sessionClass, true) } },
+      all { phase == "expected-actor", { nondet expected = Set("absent", "matching", "invalid", "changed").oneOf()
+        expectedActorWith(id, expected, true) } },
+      all { phase == "body", { nondet input = inputClasses.oneOf() bodyWith(id, input, true) } },
+      serviceGateWith(id, true), ownerQueryWith(id, true), commitAudit(id), auditReplyWith(id, a, true), contextGate(id),
+      all { phase == "context-query", {
+        nondet context = Set("matching", "missing", "duplicate", "missing-fields", "error").oneOf()
+        contextReplyWith(id, context, true) } },
+      selectedServiceWith(id, true), dispatch(id), serviceEffect(id),
+      all { phase == "inflight", { nondet fetch = Set("ok", "non-ok", "throw").oneOf() fetchReplyWith(id, fetch, true) } },
+      all { phase == "json", { nondet envelope = envelopes.oneOf() responseJsonWith(id, envelope, true) } },
+      lookupFailureWith(id, true) }
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.now), scopes.contains(s.claim), s.audits.subseteq(ids), s.effects.subseteq(ids),
@@ -237,8 +326,8 @@ module solana_binding_api {
         request.replyContext implies request.context and request.desired == "200",
         request.desired == "200" implies request.dispatched }
     }) }
-  action ordinary = init.then(configure("ordinary", "prepared", "unavailable", false, true))
-  action privateSetup = init.then(configure("private", "unavailable", "prepared", true, true))
+  action ordinary = initState.then(configure("ordinary", "prepared", "unavailable", false, true))
+  action privateSetup = initState.then(configure("private", "unavailable", "prepared", true, true))
   action admitted(id: int, mode: str): bool = begin(id, mode).then(origin(id, true)).then(session(id, "member"))
     .then(expectedActor(id, "matching")).then(body(id, "valid")).then(serviceGate(id))
   action ordinarySelected(id: int, mode: str): bool = admitted(id, mode).then(ordinaryQuery(id))
