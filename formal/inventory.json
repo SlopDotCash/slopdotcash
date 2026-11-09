@@ -4101,6 +4101,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/vault-setup-test-harness.ts",
+      "sha256": "6028ce803eb9e7473b4f8187fef5505b10fd683ef5ac90124d185550aa7640e8",
+      "models": [],
+      "candidateLines": [40, 45, 51, 66, 71, 91, 92, 122],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Test-only harness: seeds an in-memory SQLite project revision and verified owner wallet and returns the project API dependencies for the owner vault-setup tests. It owns no production state; the vault-setup lifecycle is modeled where ownerVaultSetupService is mapped."
+    },
+    {
       "path": "scripts/verify-identity-schedules.mjs",
       "sha256": "9cd34dae0e4474c7e09c82a88bbad542eb7f0275add0cbcfabb0b44fcfc09a9f",
       "models": ["formal/models/api/identity_schedule_readback.qnt"],

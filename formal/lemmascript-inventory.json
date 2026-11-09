@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 715,
-    "functions": 9879,
+    "files": 716,
+    "functions": 9893,
     "selectedContractTargets": 183,
-    "unprovedFunctions": 9696,
+    "unprovedFunctions": 9710,
     "nonTypeScriptFiles": 53
   },
   "limits": [
@@ -4655,6 +4655,22 @@
 {"name":"fetch","kind":"ArrowFunction","line":217,"sha256":"b4bc85ee9828c8a4ff067aed534e934f55efc56181bd49a418fec4861b9b87a5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@229>","kind":"ArrowFunction","line":229,"sha256":"36ad65813a90c81cd2a9ce29458bc2f18111beb12185cf48fd23207979fc5ef2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"fetch","kind":"ArrowFunction","line":301,"sha256":"c6ea9b42f10861e25fa3c08772ab37bdddf32ab488fab3808c26bca0f336d7e5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+]},
+{"path":"scripts/vault-setup-test-harness.ts","sha256":"6028ce803eb9e7473b4f8187fef5505b10fd683ef5ac90124d185550aa7640e8","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"vaultSetupHarness","kind":"FunctionDeclaration","line":17,"sha256":"dfecb5bed83e15e755656680db2c97e0a9e9e9884906418dc46121cd63e3f6b5","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@34>","kind":"ArrowFunction","line":34,"sha256":"43e596fd7190668231c9e4c263d601c84da7f4422a44bd7374e3fa54cfd83f29","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"now","kind":"ArrowFunction","line":80,"sha256":"fc3fce8899b0ca517f4b5eecdf2008d870103503000d7d8e462f7dc889ab2ed6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"randomId","kind":"ArrowFunction","line":81,"sha256":"5e7f9a4bf7eb2f22abbf2e1b137f5e0bdedec51a690d4f99ef566cde1763bf0d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"sessionActor","kind":"ArrowFunction","line":82,"sha256":"ff67ddec141db292c3642e7571f6a1a24e86e287daa5da2ea7a2aaf309127b7f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"readTokenMetadata","kind":"ArrowFunction","line":83,"sha256":"d8aec32177bcbd488d0835ce2e7ab33f49cdce55aa4b8d3f7c06084da9be8d5c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"fetch","kind":"ArrowFunction","line":87,"sha256":"41361c140b03dd0395bb0735fc0456ae26a76b7538eeb41f328974bc887c78ce","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"vettingClearance","kind":"ArrowFunction","line":91,"sha256":"4d3aa0a59dfccd27558dbbe000eeae3fbd6e904e65d278244f35e2c55b253346","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"repositoryControl","kind":"ArrowFunction","line":92,"sha256":"3330cecebe03aeabeb227f5adae23b8add8bdfb80315fce8df0f5221afffcbf8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"repositoryAccess","kind":"ArrowFunction","line":93,"sha256":"db351ee762fd09e9627ca49daec496d002d928c9083bb7c6975f33dd6913edc6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"projects","kind":"ArrowFunction","line":101,"sha256":"ed36c1938ac9d6607e0522207c993a2cda48f23e5239b0f0acde61352464d4aa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"networks","kind":"ArrowFunction","line":102,"sha256":"c078c1afb77cd7f87afe3f8b6aae580dc6f186a0d4cceca28295e176eb37edfe","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"rpcUrl","kind":"ArrowFunction","line":103,"sha256":"412d661694efc93eeb913a7f753dae51b27d62f69af510bda094c9912a19e26d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"vaultSetup","kind":"FunctionDeclaration","line":109,"sha256":"da6c62ad4e4fd36ca1c7f4fcfb86a22d8077750a15789283b8fa49c80a1a33d6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"scripts/verify-identity-schedules.mjs","sha256":"9cd34dae0e4474c7e09c82a88bbad542eb7f0275add0cbcfabb0b44fcfc09a9f","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"validateIdentitySchedules","kind":"FunctionDeclaration","line":4,"sha256":"2332af1f59bdcbef0c1407fe8e6f6659b4192673d5eb08b058f2009f56655166","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},

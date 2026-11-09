@@ -5,19 +5,11 @@
 // and 7, issue #904). A real factory code mismatch keeps its refusal.
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
 import { toFunctionSelector } from "viem";
-import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import {
-  handleProjectApi,
-  type ProjectApiDependencies,
-} from "../backend/projects/handler";
-import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import type { ReviewedEvmFactory } from "../contracts/evm/factories";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
-import { sha256Hex } from "../src/lib/sha256";
 import { applicationManifest } from "../tests/project-application-manifest";
-import { sqliteD1 } from "../tests/sqlite-d1";
+import { vaultSetupHarness } from "./vault-setup-test-harness";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
@@ -109,11 +101,6 @@ closed.stop(true);
 let rpcUrl = `http://127.0.0.1:${rpc.port}`;
 afterAll(() => rpc.stop(true));
 
-const { db, sqlite } = sqliteD1(
-  readdirSync(new URL("../migrations/", import.meta.url))
-    .filter((name) => name.endsWith(".sql"))
-    .sort(),
-);
 const manifest = applicationManifest("vault-network", "example/vault-network", {
   rewardAsset: {
     network: "base",
@@ -136,98 +123,27 @@ const manifest = applicationManifest("vault-network", "example/vault-network", {
     deployments: [],
   },
 });
-const manifestText = JSON.stringify(manifest);
-sqlite
-  .prepare(
-    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('vault-network',1,?,?,'Fixture',?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW);
-sqlite
-  .prepare(
-    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('vault-network','paused',1,?,?,?,?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW, NOW);
-// The owner's current Base wallet, confirmed by a signed challenge.
-sqlite
-  .prepare(
-    "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,'d1_registry',?,?,?,?,'base')",
-  )
-  .run(
-    CLAIM,
-    OWNER.githubId,
-    OWNER.githubLogin,
-    OWNER_WALLET,
-    "a".repeat(64),
-    NOW,
-    "b".repeat(64),
-    NOW,
-  );
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES('challenge-1',?,?,'fixture',?,?)",
-  )
-  .run(CLAIM, OWNER.githubId, NOW, NOW);
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,'challenge-1','0x00')",
-  )
-  .run(CLAIM, OWNER.githubId, NOW);
-
-const persistence = new CloudflareProjectPersistence(db);
-const deps: ProjectApiDependencies = {
-  persistence,
-  adminGithubIds: new Set(),
-  moderatorGithubIds: new Set(),
-  now: () => new Date(NOW),
-  randomId: () => crypto.randomUUID(),
-  sessionActor: async () => OWNER,
-  readTokenMetadata: async () => {
-    throw new Error("No asset edit in this workflow");
-  },
-  github: {
-    fetch: async () => {
-      throw new Error("Unexpected public lookup");
-    },
-  },
-  vettingClearance: async () => ({ state: "unscanned" }),
-  repositoryControl: async () => ({ state: "matched" }),
-  repositoryAccess: async () => ({
-    installation: "installed",
-    installationId: 42,
-    permission: "admin",
-    roleName: "admin",
-  }),
-  vaultSetup: ownerVaultSetupService({
-    db,
-    projects: () => persistence.listProjects(),
-    networks: () => ["base-mainnet"],
-    rpcUrl: () => rpcUrl,
-    factories: [factory],
-  }),
-};
-async function vaultSetup(step: "review" | "register") {
-  const response = await handleProjectApi(
-    new Request("https://slop.cash/api/v1/project-vaults/vault-network", {
-      method: "POST",
-      headers: {
-        origin: "https://slop.cash",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        step,
-        expectedRevision: 1,
-        network: "base-mainnet",
-        claimId: CLAIM,
-        automatic: false,
-        ...(step === "register"
-          ? { transactionId: `0x${"ab".repeat(32)}` }
-          : {}),
-      }),
-    }),
-    deps,
-  );
-  if (!response) throw new Error("The project API did not answer");
-  return { status: response.status, body: await response.json() };
+const { persistence, vaultSetup: post } = vaultSetupHarness({
+  projectId: "vault-network",
+  manifest,
+  chain: "base",
+  claim: CLAIM,
+  owner: OWNER,
+  ownerWallet: OWNER_WALLET,
+  now: NOW,
+  network: "base-mainnet",
+  rpcUrl: () => rpcUrl,
+  reviewed: { factories: [factory] },
+});
+function vaultSetup(step: "review" | "register") {
+  return post({
+    step,
+    expectedRevision: 1,
+    network: "base-mainnet",
+    claimId: CLAIM,
+    automatic: false,
+    ...(step === "register" ? { transactionId: `0x${"ab".repeat(32)}` } : {}),
+  });
 }
 const retry = {
   error: "vault_network_unavailable",
