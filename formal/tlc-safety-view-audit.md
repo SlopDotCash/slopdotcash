@@ -137,13 +137,27 @@ result and no success message. Test fixtures are not added to the production
 allowlist and prove no application behavior. The same CI command also runs
 the existing no-view false-literal control and two no-view successes.
 
-No version-4 TLC, normal scenario/simulation or real negative-control run has
-occurred yet. Those executions wait for the shared verification lane. Required
-next evidence is the unchanged fifteen journal scenarios and seeded simulation,
-complete version-4 quotient TLC, all real counterexample/no-view controls and
-the source-bound toolchain checks. Report complete quotient counts as quotient
-counts, with the prior failures and external boundaries still explicit.
+At `07582f196fe8fa1dc4671f3abd0a6c6f2c029e4c`, version 4 passed all
+thirteen tool controls (63 assertions), including the real TLC counterexamples
+and unchanged no-view controls. All fifteen full-model scenarios and the seeded
+500-sample, 60-step simulation passed. The original 180-second finite run
+remained incomplete and remains a failed receipt.
+
+A separate run with the same inputs and a 1,800-second allowance completed:
+108,943,297 generated states, 5,727,360 distinct quotient states, zero queued
+states and depth 22. TLC reported no invariant violation in 851,432 ms. The
+receipt SHA-256 is
+`b968c914479fab8bda62783e0f79cf0a0753c36637c63359ac5acea4e6eab634`.
+All input hashes were unchanged and all 434 process IDs observed by the
+numeric diagnostic sampler were absent after completion. This success does
+not replace the original short-run failure or establish a temporal or
+implementation-refinement theorem.
+
+The integrated checker now gives this exact model an explicit 1,800-second
+budget. Other ordinary models retain their existing limits. A complete
+current-source model matrix and browser acceptance are separate gates tracked
+in [PR #2432](https://github.com/SlopDotCash/slopdotcash/pull/2432).
 
 ## Version 4 evidence boundary
 
-Version 3 passed its real counterexample controls and full normal scenarios, but its 180-second graph remained incomplete: 389,105 quotient states and 232,293 queued at depth 9. Version 4 adds only the reviewed memory-candidate projection. A real control now requires a store-candidate change to remain visible. The full journal source is still byte-identical; no model domain, action or invariant is changed. Version 4 execution remains pending. An initial local projection-hash calculation used only four terminator characters and was rejected by the exact-output guard. It was corrected to use the complete module terminator; no binding check was relaxed.
+Version 3 passed its real counterexample controls and full normal scenarios, but its 180-second graph remained incomplete: 389,105 quotient states and 232,293 queued at depth 9. Version 4 adds only the reviewed memory-candidate projection. A real control now requires a store-candidate change to remain visible. The full journal source is still byte-identical; no model domain, action or invariant is changed. Version 4 execution is recorded above. An initial local projection-hash calculation used only four terminator characters and was rejected by the exact-output guard. It was corrected to use the complete module terminator; no binding check was relaxed.
