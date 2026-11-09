@@ -1,5 +1,5 @@
 import type { GitHubActor } from "./leaderboard-types";
-import { githubUserIdFromPack } from "./verified-ids";
+import { githubUserIdFromPack } from "./verified-ids.ts";
 
 /**
  * Returns the numeric GitHub user ID that a GitHub user node ID encodes, or
