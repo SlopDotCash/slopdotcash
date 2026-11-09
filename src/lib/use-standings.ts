@@ -7,6 +7,8 @@ import {
   MAX_STANDINGS_BYTES,
   type PublishedStandings,
 } from "./standings";
+import { SNAPSHOT_STALE_AFTER_MS } from "./use-snapshot";
+import { useTimeBoundary } from "./use-time-boundary";
 
 const STANDINGS_RETRIES = 1;
 const STANDINGS_CACHE_MS = 60_000;
@@ -185,6 +187,13 @@ export function useStandings(enabled: boolean): [StandingsState, () => void] {
       request.release();
     };
   }, [attempt, enabled]);
+
+  // An open page turns stale at the same boundary as the full snapshot.
+  useTimeBoundary(
+    enabled && state.status === "ready"
+      ? Date.parse(state.snapshot.generatedAt) + SNAPSHOT_STALE_AFTER_MS + 1
+      : null,
+  );
 
   return [state, useCallback(() => setAttempt((value) => value + 1), [])];
 }

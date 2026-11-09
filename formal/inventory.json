@@ -5765,11 +5765,14 @@
     },
     {
       "path": "src/lib/use-standings.ts",
-      "sha256": "4f0330c880055f554a6e37260d23e3fa5244ad42acdfd6a15f20b78607afa865",
-      "models": ["formal/models/ui/ui_snapshot_cache.qnt"],
+      "sha256": "a69a7b4affa55c23ef19c7bfbe1e2b346f3ba5b6ffce7de36bc92e3244034cc7",
+      "models": [
+        "formal/models/ui/ui_snapshot_cache.qnt",
+        "formal/models/ui/ui_time_boundary.qnt"
+      ],
       "candidateLines": [
-        1, 21, 22, 24, 31, 40, 57, 77, 82, 87, 89, 93, 101, 110, 115, 124, 141,
-        149, 151, 152, 155, 162, 177, 179, 189
+        1, 23, 24, 26, 33, 42, 59, 79, 84, 89, 91, 95, 103, 112, 117, 126, 143,
+        151, 153, 154, 157, 164, 179, 181, 193, 194, 198
       ],
       "review": "mapped-abstraction"
     },
@@ -12170,11 +12173,12 @@
     },
     {
       "path": "formal/models/ui/ui_time_boundary.qnt",
-      "sha256": "e740064ea3dfd7c826af6ea0dd90949f0003827d89910b94863871a48072359a",
+      "sha256": "019663929c01044c9249f993cdce283b8088957b2acdac040c310fe1b11ec4da",
       "sources": [
         "src/ContributorAllocation.tsx",
         "src/OwnerAwards.tsx",
         "src/lib/use-snapshot.ts",
+        "src/lib/use-standings.ts",
         "src/lib/use-time-boundary.ts"
       ],
       "scenarios": [
