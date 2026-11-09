@@ -41,13 +41,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f9f6d0ad8b07d58bdc676b15a7d3b63521ef35e7a3377cd72420acd508b92ded",
+      "sha256": "a727bd3ea935abd0699615236c6f6d5eb55208f35f9085c8eaac1719cd7c7807",
       "models": [
         "formal/models/ci_coverage.qnt",
         "formal/models/formal_toolchain.qnt",
         "formal/models/release_proof_gate.qnt"
       ],
-      "candidateLines": [1, 39, 47],
+      "candidateLines": [1, 33, 39, 47],
       "review": "mapped-abstraction"
     },
     {
@@ -1665,6 +1665,13 @@
       "statelessReason": "Type-only interface for finalized vault counters. No emitted runtime state; actual atomic reads, identity and reconciliation belong to the EVM/Solana adapters."
     },
     {
+      "path": "formal/tlc-safety-views.json",
+      "sha256": "b804dabcb8abdcc4d6b2389857d5abc7f14edb66e154946462da6a0c7cbd9f8d",
+      "models": ["formal/models/formal_toolchain.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "functions/[[path]].ts",
       "sha256": "652bd21eb8008890191ec89c2f22f7942605539b92d42df6c320fe32661aab7a",
       "models": [],
@@ -2826,13 +2833,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "7ecf75ab18313f5d708a3c2f11a95de2db6876cd5cb52114357f08749f3b05d6",
+      "sha256": "a1be4ee49838c5600f691d6a2d4eb832f50bb4d7d94df58462e22df3c17cb577",
       "models": [
         "formal/models/formal_process.qnt",
         "formal/models/formal_toolchain.qnt",
         "formal/models/formal_translation.qnt"
       ],
-      "candidateLines": [35, 56, 152, 154, 182, 189, 244],
+      "candidateLines": [37, 60, 161, 163, 165, 207, 214, 273],
       "review": "mapped-abstraction"
     },
     {
@@ -3176,9 +3183,9 @@
     },
     {
       "path": "scripts/formal-inventory.mjs",
-      "sha256": "1d5b7c5d1d04ecd87c80fc06c94dc4f42807497c718c204bf6c1413b7746dc0a",
+      "sha256": "fafad2e735ac65fbc3df47239b14a6c873ebd731d899255e1a4e56d75c17a0e9",
       "models": ["formal/models/formal_toolchain.qnt"],
-      "candidateLines": [11, 83, 88, 102, 103, 126, 128, 145, 148, 150, 152],
+      "candidateLines": [11, 85, 90, 104, 105, 128, 130, 147, 150, 152, 154],
       "review": "mapped-abstraction"
     },
     {
@@ -3605,13 +3612,20 @@
     },
     {
       "path": "scripts/quint-local-translator.mjs",
-      "sha256": "69b71a31a94479be4726f9035402fd65bbc2d88fc06e96c0a81c227a3e89121c",
+      "sha256": "1449802dea6f0213620f23f18b9b6709a48c39da53c4390f1fb12bbb0ceb2b7e",
       "models": [
         "formal/models/formal_tla_lexing.qnt",
         "formal/models/formal_toolchain.qnt",
         "formal/models/formal_translation.qnt"
       ],
-      "candidateLines": [42, 97],
+      "candidateLines": [65, 135],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/quint-safety-view.mjs",
+      "sha256": "7236f54095f3d0b2cbdd7260da35462d6d263ee5d8cb66e5eb7730d4f703df27",
+      "models": ["formal/models/formal_toolchain.qnt"],
+      "candidateLines": [7],
       "review": "mapped-abstraction"
     },
     {
@@ -9574,10 +9588,11 @@
     },
     {
       "path": "formal/models/formal_toolchain.qnt",
-      "sha256": "4d855c65700cf4e891cb3a4539694eeb14bb783b8089efe43ee5d07d04c0f054",
+      "sha256": "ab36ba46ecc79e1878b2e5624589792890ff6191860d15bda8546d72cef28472",
       "sources": [
         ".github/workflows/formal.yml",
         ".github/workflows/lemmascript.yml",
+        "formal/tlc-safety-views.json",
         "package.json",
         "scripts/check-formal.mjs",
         "scripts/check-lemmascript.mjs",
@@ -9589,6 +9604,7 @@
         "scripts/lemmascript-integrity.mjs",
         "scripts/lemmascript-inventory.mjs",
         "scripts/quint-local-translator.mjs",
+        "scripts/quint-safety-view.mjs",
         "scripts/setup-lemmascript.sh"
       ],
       "scenarios": [
@@ -9596,9 +9612,15 @@
         "canceledPartialRunReportsFailureTest",
         "changedBodyCannotVerifyTest",
         "changedSourceFailsRunTest",
+        "changedViewAdapterCannotCheckTest",
+        "changedViewSourceCannotCheckTest",
+        "changedViewTlaCannotCheckTest",
         "failedCheckCannotBecomeSuccessTest",
         "failedPartialRunReportsFailureTest",
-        "selectedSuccessIsNotFullCoverageTest"
+        "reviewedSafetyViewCanPassTest",
+        "selectedSuccessIsNotFullCoverageTest",
+        "unknownViewOperatorCannotCheckTest",
+        "unreviewedViewTemporalCannotCheckTest"
       ]
     },
     {

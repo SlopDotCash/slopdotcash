@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "quintAdapterSha256": "30d69d445952c1ff928923155b2caf6a1955243efe21420c467a0fd5bb0179ec",
+  "views": [
+    {
+      "id": "direct-bounty-journal-safety-v1",
+      "model": "formal/models/direct_bounty_journal.qnt",
+      "module": "direct_bounty_journal",
+      "sourceSha256": "549580117b331f06f8bb0950211c650c84a7fbffbcb51045812f0c26d3e38fa3",
+      "translatedSha256": "d7ac95341cfc3820f3e72a9a3983f3c30ed8930a24e3f9a2299c152cc3f587ad",
+      "operator": "SlopJournalSafetyView",
+      "fields": [
+        "store",
+        "memory",
+        "held",
+        "used",
+        "mounted",
+        "before",
+        "touched",
+        "observed",
+        "expected",
+        "wrote"
+      ]
+    }
+  ]
+}

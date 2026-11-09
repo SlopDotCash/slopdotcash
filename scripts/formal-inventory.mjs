@@ -53,6 +53,7 @@ const paths = [
   .filter((path) => path && existsSync(resolve(root, path)))
   .filter(
     (path) =>
+      path === "formal/tlc-safety-views.json" ||
       /^(src|backend|workers|functions|scripts|skills|contracts|migrations|\.github\/workflows)\//u.test(
         path,
       ) ||
@@ -63,7 +64,8 @@ const paths = [
   .filter(
     (path) =>
       /\.(?:[cm]?[jt]sx?|rs|sol|py|sh|sql|ya?ml|toml)$/u.test(path) ||
-      path === "package.json",
+      path === "package.json" ||
+      path === "formal/tlc-safety-views.json",
   )
   .filter((path) => !/(?:^|\/)(?:tests|test|fixtures|target|out)\//u.test(path))
   .filter(

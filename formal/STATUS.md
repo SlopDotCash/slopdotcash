@@ -39,9 +39,16 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-840 production sources, 318 finite models and 1,563 named scenarios, with zero
+842 production sources, 318 finite models and 1,572 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
+
+The journal safety-view follow-up keeps the full journal model unchanged and
+binds one reviewed TLC projection to exact source, generated TLA and adapter
+hashes. Lightweight binding/config tests and the toolchain-model typecheck pass.
+The new quotient, real-TLC counterexample control and six toolchain binding
+scenarios have not run. Earlier 180-second and 600-second full-state journal
+runs remain incomplete; see `tlc-safety-view-audit.md`.
 
 ## Integrated corrections
 

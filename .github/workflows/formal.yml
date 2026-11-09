@@ -30,10 +30,10 @@ jobs:
           bun-version: "1.3.14"
       - name: Install pinned tools without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Refuse false literal proofs and accept genuine folds
+      - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
-        run: bun test scripts/quint-local-translator.test.ts
+        run: bun test scripts/quint-local-translator.test.ts scripts/quint-safety-view.test.ts
       - name: Check source inventory and executable scenarios
         run: bun run formal:check
       - name: Explore finite state graphs
