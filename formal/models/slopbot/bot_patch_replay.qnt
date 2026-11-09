@@ -2,6 +2,7 @@
 // @source workers/slopbot/value-patch-replay.ts
 // @source workers/slopbot/value-accepted-range.ts
 // @source workers/slopbot/value-manifest-identity.ts
+// @source workers/slopbot/git-object.ts
 // Two line positions, exact integer line tokens. Match against original parent,
 // not progressively changed output; repeated old context is ambiguous.
 module bot_patch_replay {
