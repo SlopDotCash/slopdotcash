@@ -86,16 +86,19 @@ test("an identity storage outage leaves publication untouched and does not expir
     [expired, "slop-points-web", "2026-10-26T11:59:00.000Z"],
     [otherAudience, "private-trace-api", "2026-10-26T12:01:00.000Z"],
   ] as const)
-    await persistence.createAssertion({
-      tokenHash: await sha256Hex(token),
-      githubActorId: ME.github,
-      githubLogin: ME.login,
-      githubNodeId: ME.actor,
-      audience,
-      createdAt: "2026-10-26T11:59:30.000Z",
-      expiresAt,
-      consumedAt: null,
-    });
+    await persistence.createAssertion(
+      {
+        tokenHash: await sha256Hex(token),
+        githubActorId: ME.github,
+        githubLogin: ME.login,
+        githubNodeId: ME.actor,
+        audience,
+        createdAt: "2026-10-26T11:59:30.000Z",
+        expiresAt,
+        consumedAt: null,
+      },
+      null,
+    );
   let workerStatus = 0;
   const { sqlite, call, snapshot } = await harness({
     async fetch(request) {

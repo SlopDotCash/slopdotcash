@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "17c0fbc942d8c7d64ebdcef06dcfdd287f371784ce84b9acd433eb7eb75d9bba",
+  "inventorySha256": "13c623e447dbbd4c0b0f8efd38f8b1b48db874177e60b7ab50ccc6bf38c17e76",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2162,6 +2162,7 @@
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -2180,6 +2181,7 @@
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -2198,6 +2200,7 @@
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
+        "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -3171,9 +3174,10 @@
       ],
       "models": [
         "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_assertion_lifecycle.qnt",
         "formal/models/api/identity_callback_completion.qnt"
       ],
-      "lexicallyUnmentionedValues": ["assertion_issued"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

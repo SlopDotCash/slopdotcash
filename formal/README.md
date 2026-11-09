@@ -234,6 +234,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Inbox storage and identity admission | `api_inbox`, `inbox_queries`, `inbox_mark_read`, `api_identity_admission`, `identity_rate_gate` | `backend/notifications/handler.ts`, `workers/identity/rate-limit.ts`, existing migrated notification workflows; direct rate-counter/gate execution evidence remains missing |
 | Scheduled identity cleanup and intake renewal | `identity_intake_renewal`, `identity_scheduled_maintenance` | `workers/identity/index.ts`, `workers/identity/persistence.ts`, `scripts/identity-maintenance.test.ts`; token-fallback and outer scheduled-handler execution evidence remains incomplete |
 | GitHub identity exchange and callback completion | `github_identity_exchange`, `identity_callback_completion` | `workers/identity/index.ts`, `workers/identity/handler.ts`, `workers/identity/persistence.ts`; `workers/identity/failed-callback.test.ts` and `workers/identity/expiry-boundary.test.ts` use an injected resolver and do not exercise real provider exchange |
+| Polling, assertion storage and one-time consumption | `identity_assertion_lifecycle`, `ui_identity_poll_protocol` | `workers/identity/handler.ts`, `workers/identity/persistence.ts`, `src/lib/identity-flow.ts`, `workers/identity/expiry-boundary.test.ts`, existing login and account-closure browser workflows |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -303,6 +304,34 @@ The model does not assert that a successful response proves current row
 availability, browser delivery or assertion issuance. Existing callback tests
 cover selected refusal and expiry paths; they do not establish refinement for
 all modeled races. Both new models and all their scenarios are unexecuted here.
+
+The assertion review found a cross-request replay path in the previous source.
+Two polls could read the completed flow before issuance. After the first poll
+issued its deterministic token, that token could be consumed and its expired
+row removed. A delayed second poll could insert the same token with its later
+captured expiry. Its eventual issuance refusal did not undo the new unconsumed
+row. The insertion now checks the flow is still `callback_complete` in the same
+SQL statement. Production callers must pass the flow ID. The local bridge
+explicitly passes null for its separate random token and local database.
+
+`identity_assertion_lifecycle` retains the former insertion as a negative-control
+scenario outside `step`. It bounds one flow, two polls, two consume requests,
+two assertion-row generations and one cleanup sequence. It separates initial
+poll time, issuance time, consumption time, writes and replies. The
+[SQLite UPSERT contract](https://www.sqlite.org/lang_upsert.html) explains why
+an existing row is retained; the parent-state insertion condition prevents a
+removed row from being recreated after issuance. A migrated-handler regression
+in `workers/identity/expiry-boundary.test.ts` exercises that delayed-poll path.
+Neither that regression nor the models have run here.
+
+The browser polling model bounds one helper invocation and two poll replies;
+that prefix does not impose an application retry limit. It covers fresh and
+resumed authorization, validation, timer cancellation, pending intervals,
+expired assertions, storage-hook failures and the parent cancellation guard
+before session exchange. Storage callbacks express requested effects, not
+durability. The helper validates assertion expiry on receipt; it does not
+refresh server expiry or promise that a later caller-owned hook ends before
+that expiry. No UI behavior changed in this follow-up.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
