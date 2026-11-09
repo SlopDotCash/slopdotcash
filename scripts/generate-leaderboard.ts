@@ -1545,6 +1545,8 @@ function secondaryRateLimitDelayMs(
   return 60_000;
 }
 
+const MAX_RATE_LIMIT_RESET_WAIT_MS = 60 * 60_000;
+
 async function retryDelay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => {
     setTimeout(resolveDelay, milliseconds);
@@ -1655,6 +1657,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #consumedCost = 0;
   #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
+  #waitedResetAt: number | null = null;
 
   #effectiveMaxGenerationCost(): number {
     if (!this.#rateLimit) {
@@ -1720,6 +1723,21 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!Number.isFinite(resetAt)) {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
+    // Another consumer of the shared token can drain the window. Wait for one
+    // reported reset inside the job timeout; a window that is still exhausted
+    // after that reset, or a reset beyond one window, fails closed.
+    const budgetSummary = `${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${this.#rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve}`;
+    if (this.#waitedResetAt === resetAt) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded after waiting for the reset at ${this.#rateLimit.resetAt} (${budgetSummary})`,
+      );
+    }
+    if (resetAt - Date.now() > MAX_RATE_LIMIT_RESET_WAIT_MS) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded and the reset at ${this.#rateLimit.resetAt} is more than 60 minutes away (${budgetSummary})`,
+      );
+    }
+    this.#waitedResetAt = resetAt;
     await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
@@ -1949,11 +1967,11 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       ...rateLimit,
       consumedDuringRun: this.#consumedCost,
     };
+    // Only this run's own window overspend fails here. A remaining balance
+    // below the reserve that this run did not cause is answered by the next
+    // ensureBudget call, which waits for the reported reset.
     const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
-    if (
-      this.#windowConsumedCost > effectiveMaxGenerationCost ||
-      rateLimit.remaining < this.#minimumRateLimitReserve
-    ) {
+    if (this.#windowConsumedCost > effectiveMaxGenerationCost) {
       throw new Error(
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );

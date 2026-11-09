@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "4c4b0275778a6f2134bd5f52cea0008dba718dd627c087cd18a59b137bd869d9",
+      "sha256": "8192d07f56f7d9223dea903d54444c7f44fc43c00bb42b4521b8c1904def787e",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 365, 463, 528, 529, 543, 554, 619,
-        849, 877, 915, 931, 941, 942, 1031, 1131, 1133, 1134, 1298, 1381, 1534,
-        1536, 1566, 1662, 1684, 1755, 1766, 1791, 1860, 1873, 1886, 1895, 1896,
-        1897
+        27, 59, 154, 186, 191, 192, 240, 291, 365, 474, 540, 541, 555, 566, 631,
+        861, 889, 927, 943, 953, 954, 1043, 1143, 1145, 1146, 1310, 1393, 1546,
+        1548, 1578, 1674, 1696, 1767, 1778, 1803, 1872, 1885, 1898, 1907, 1908,
+        1909
       ],
       "review": "mapped-abstraction"
     },
@@ -42,18 +42,18 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "9fdcb9334e386d90e1d34d614c504e6df29d539cf04aa506478a4344e656d4ee",
+      "sha256": "fc2af16d984d5b5e5c9e719a2cb18c1b09618724cdfcbf53da5354058af015e3",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 42, 46, 79, 112, 137, 154, 222],
+      "candidateLines": [1, 71, 75, 137, 170, 195, 212, 280],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "0d05aed5f32c82dbe9844226a9fcac8d56ddb5a96495eeda81c366591af1f315",
+      "sha256": "0040755793c31380f2c0c8e5e1ea6845d253c89ca3f1a8d08f0b3ebe93386267",
       "models": [
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
@@ -126,16 +126,16 @@
     },
     {
       "path": ".github/workflows/vetting-sandbox.yml",
-      "sha256": "e8de44fc56f6637c93fef4ffeb95c21a61540f08b7b458697c08d8398c7cccc1",
+      "sha256": "949491097772d060ca9085c8b34eaf2a76b0cee42c5955016e3baec18a45a943",
       "models": ["formal/models/release/service_release_identity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/windows-installer.yml",
-      "sha256": "4757f4aac9b918bd5698ece2273bf54a3068358b68d17c170bded3c36aa6a28e",
+      "sha256": "f8e0beecff57228f34b399abfd4eb00ef20ea5a6138ded169578dbd2c68c1c6c",
       "models": ["formal/models/release/ci_coverage.qnt"],
-      "candidateLines": [60],
+      "candidateLines": [66],
       "review": "mapped-abstraction"
     },
     {
@@ -2960,13 +2960,13 @@
     },
     {
       "path": "scripts/check-lemmascript.mjs",
-      "sha256": "783f46e190e4ef39825ec6d121befe688bb2dc1baf95cc833c9730d64bcfcf38",
+      "sha256": "d72beebc5ebd64e0e9f1792acb3a56850a22bcee96c0edf80a9c6315444bd483",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/jupiter_generation.qnt"
       ],
-      "candidateLines": [48, 105, 106, 108, 124, 304],
+      "candidateLines": [48, 105, 106, 108, 124, 306],
       "review": "mapped-abstraction"
     },
     {
@@ -3019,7 +3019,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "8cd1f9d5ff8691514cd31ab40bf5d6dad64dc7cdd569eba7b7a1bd0c6589e305",
+      "sha256": "59e4b3ea54305013287696d8df17fc38025d278b961801f4b51dac2f7fa2c794",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3338,7 +3338,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "b4c6800d9cb6ff4ef52b8b5a8131f0708f5d7e697b79d3f251cf0f0678c7070c",
+      "sha256": "21ce1c4639f41c026053e94d6da5943f0799d595bc66cf4f9e89b1e04f94c29d",
       "models": [
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
@@ -3348,12 +3348,12 @@
       "candidateLines": [
         23, 178, 189, 198, 265, 276, 278, 281, 380, 468, 489, 525, 556, 620,
         652, 684, 880, 1108, 1207, 1215, 1273, 1333, 1336, 1529, 1538, 1543,
-        1550, 1633, 1634, 1763, 1764, 1821, 1847, 1865, 1867, 1871, 1903, 1906,
-        1907, 1910, 1912, 1923, 2141, 2144, 2452, 2471, 2569, 2582, 2593, 2594,
-        2771, 2773, 2965, 2981, 2993, 3000, 3026, 3036, 3040, 3044, 3048, 3103,
-        3122, 3149, 3166, 3200, 3201, 3203, 3219, 3236, 3237, 3238, 3247, 3252,
-        3432, 3790, 3812, 3821, 3871, 3906, 3912, 3919, 3988, 4073, 4225, 4440,
-        4450, 4452, 4465, 4494, 4496, 4497, 4501, 4505, 4560, 4614, 4665, 4668
+        1552, 1635, 1636, 1781, 1782, 1839, 1865, 1883, 1885, 1889, 1921, 1924,
+        1925, 1928, 1930, 1941, 2159, 2162, 2470, 2489, 2587, 2600, 2611, 2612,
+        2789, 2791, 2983, 2999, 3011, 3018, 3044, 3054, 3058, 3062, 3066, 3121,
+        3140, 3167, 3184, 3218, 3219, 3221, 3237, 3254, 3255, 3256, 3265, 3270,
+        3450, 3808, 3830, 3839, 3889, 3924, 3930, 3937, 4006, 4091, 4243, 4458,
+        4468, 4470, 4483, 4512, 4514, 4515, 4519, 4523, 4578, 4632, 4683, 4686
       ],
       "review": "mapped-abstraction"
     },
@@ -3946,9 +3946,9 @@
     },
     {
       "path": "scripts/setup-lemmascript.sh",
-      "sha256": "17f0920bf3407b69caa0bc57289b4e10dfdc50ee8b7a11e7dece575b4bce4e49",
+      "sha256": "1920b8a99421c0efd3c08af861514481cb295df7d3e9c345d5ec421296c31d84",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [32],
+      "candidateLines": [39, 40],
       "review": "mapped-abstraction"
     },
     {
