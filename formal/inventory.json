@@ -723,6 +723,7 @@
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [
@@ -739,6 +740,7 @@
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/direct_solana_retirement.qnt",
+        "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/solana_message_buffers.qnt"
       ],
       "candidateLines": [
@@ -783,6 +785,7 @@
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
+        "formal/models/payments/solana_history_retirement.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [
@@ -4639,7 +4642,7 @@
     },
     {
       "path": "src/PayoutConsent.tsx",
-      "sha256": "31cba27ee95d7e6b1fd7f30cf2e9d0cac1fcc4433ee68b437abc9c35bef8545a",
+      "sha256": "3d2d4ca3846fa32c5e34d2124ab3f52f829c48e040896b916897fea34f62dcd4",
       "models": [
         "formal/models/ui/solana_binding_wire.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
@@ -4936,7 +4939,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "5483a1a75c1fe520caaac7b4436c335abf5f5fe906c17301d460973e8a5be035",
+      "sha256": "9dc22adb7a5839d544c2b001323efb5378f0bd5995bf3c13d2a92d450d045144",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -4971,11 +4974,11 @@
         3016, 3017, 3024, 3040, 3062, 3079, 3080, 3081, 3084, 3108, 3109, 3118,
         3149, 3166, 3167, 3168, 3171, 3197, 3198, 3207, 3260, 3323, 3354, 3372,
         3388, 3389, 3391, 3395, 3401, 3404, 3406, 3410, 3447, 3461, 3497, 3501,
-        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3833, 3965, 4104, 4107, 4109,
-        4116, 4121, 4126, 4127, 4129, 4134, 4150, 4178, 4181, 4188, 4226, 4231,
-        4243, 4244, 4250, 4275, 4277, 4279, 4283, 4284, 4288, 4291, 4292, 4294,
-        4312, 4330, 4335, 4338, 4343, 4346, 4348, 4352, 4357, 4382, 4388, 4431,
-        4434, 4439, 4441, 4479, 4481, 4522, 4541
+        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3834, 3966, 4105, 4108, 4110,
+        4117, 4122, 4127, 4128, 4130, 4135, 4151, 4179, 4182, 4189, 4227, 4232,
+        4244, 4245, 4251, 4276, 4278, 4280, 4284, 4285, 4289, 4292, 4293, 4295,
+        4313, 4331, 4336, 4339, 4344, 4347, 4349, 4353, 4358, 4383, 4389, 4432,
+        4435, 4440, 4442, 4480, 4482, 4523, 4542
       ],
       "review": "mapped-abstraction"
     },
@@ -5019,13 +5022,13 @@
     },
     {
       "path": "src/SolanaBountyRecovery.tsx",
-      "sha256": "ae68fdf73391bfad31eb7bc8ff4ed7ff8741f9631facf7d3185713859cb40ad2",
+      "sha256": "17e4591dd9c2dfb0845988df4f7f598c1358cc654d2e05b3fa31263b4a167278",
       "models": [
         "formal/models/ui/solana_message_buffers.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
-      "candidateLines": [1, 32, 34],
+      "candidateLines": [2, 54, 55, 56],
       "review": "mapped-abstraction"
     },
     {
@@ -5120,9 +5123,9 @@
     {
       "path": "src/lib/base58.ts",
       "sha256": "e916260891c521ed9f1828ae7213eada0e05d97e948a8c48065451e9172b3c94",
-      "models": [],
+      "models": ["formal/models/ui/ui_solana_history_recovery.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure byte/text encoding with per-call local accumulators; no retained state or side effects."
     },
     {
@@ -6026,7 +6029,6 @@
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_inbox_mutation_focus.qnt",
-        "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
         "formal/models/ui/ui_submitted_candidate_ownership.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt",
@@ -6067,6 +6069,7 @@
         "formal/models/ui/solana_message_buffers.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_wallet_choice.qnt"
       ],
       "candidateLines": [9, 173, 174, 185, 460, 476, 477, 496, 498, 499, 502],
@@ -6275,9 +6278,9 @@
     {
       "path": "src/lib/wallets.ts",
       "sha256": "62efa3086e17fe626fcd6d5b444933ca56492d15d9e4f2a8d7ccd149b2f5fecb",
-      "models": [],
+      "models": ["formal/models/ui/ui_solana_history_recovery.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted."
     },
     {
@@ -6444,7 +6447,10 @@
     {
       "path": "workers/fee-converter/solana-expiry.ts",
       "sha256": "b327c3873757a838b2415be9b2bebf66ac3216419d00038e147881f5d4cdcccf",
-      "models": ["formal/models/fees/solana_expiry.qnt"],
+      "models": [
+        "formal/models/fees/solana_expiry.qnt",
+        "formal/models/payments/solana_history_retirement.qnt"
+      ],
       "candidateLines": [28, 59, 128, 141, 163],
       "review": "mapped-abstraction"
     },
@@ -11041,6 +11047,47 @@
       ]
     },
     {
+      "path": "formal/models/payments/solana_history_retirement.qnt",
+      "sha256": "8fc7433053aea137ede00bfc85aa6bdd9be43dccb0eeec004478464aae7c6c4a",
+      "sources": [
+        "backend/security/direct-payments.ts",
+        "backend/security/direct-solana-recovery.ts",
+        "backend/security/handler.ts",
+        "workers/fee-converter/solana-expiry.ts"
+      ],
+      "scenarios": [
+        "caughtRpcFailureOverridesAlreadyFoundTest",
+        "challengesContainOnlyMissingRetainedMessagesTest",
+        "completeAbsenceCoverageRetiresAllMessagesTest",
+        "disagreementBetweenFailedReceiptsHoldsTest",
+        "duplicateRetainedMessageIdRefusesTest",
+        "duplicateSignatureIdThrowsTest",
+        "emptyPlanListRefusesTest",
+        "equalLastValidHeightStillRefusesChallengeTest",
+        "failedCoverageReplyKeepsAlreadyRetainedPagesTest",
+        "foundLaterDoesNotEraseEarlierScanWritesTest",
+        "foundObservationOverridesIncompleteEarlierPlanTest",
+        "invalidProviderUrlThrowsBeforeCaughtRpcPhaseTest",
+        "invalidSignatureThrowsBeforeHistoryTest",
+        "mainnetLoopbackExceptionIsRefusedTest",
+        "malformedFailureProofOverridesFoundTest",
+        "malformedLaterObservationOverridesFoundTest",
+        "malformedRetainedMessageRefusesTest",
+        "matchingFailedReceiptsRetireEveryMessageTest",
+        "missingValidityValueIsNotAnExpiryProofTest",
+        "noncanonicalPayerRefusesTest",
+        "nonmainnetDistinctLoopbacksCanReachExpiryChecksTest",
+        "oneFailedReceiptAndAbsenceDoNotUseCoverageTest",
+        "oneLivePlanWithholdsEveryChallengeTest",
+        "over64PlansRefusesTest",
+        "over64SignaturesRefusesTest",
+        "sameOperatorCannotSupplyIndependentHistoryTest",
+        "staleValidityContextHoldsTest",
+        "wrongGenesisHoldsBeforeSignatureValidationTest",
+        "wrongRetainedAnchorHoldsTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/solana_scan_checkpoint.qnt",
       "sha256": "e177ef84b4944110ba13d2e745bfdc497e176e3f3fb163aeb79e5c25fa3d7a89",
       "sources": [
@@ -14874,25 +14921,47 @@
     },
     {
       "path": "formal/models/ui/ui_solana_history_recovery.qnt",
-      "sha256": "907f4d0243f9f051cdac8efd1eb11e78455cff2d90372c7d9b0f80af163d6397",
+      "sha256": "2a27f7705483f8450da7c3ec7f71dd43e2621581c01e6248fdcd62bfa1096b8b",
       "sources": [
         "src/SecurityBounty.tsx",
         "src/SolanaBountyRecovery.tsx",
-        "src/lib/use-action.ts"
+        "src/lib/base58.ts",
+        "src/lib/use-payout-wallets.ts",
+        "src/lib/wallets.ts"
       ],
       "scenarios": [
+        "acceptedVerificationMayFinishAfterDepartureTest",
+        "accountChangeDuringPromptCannotCacheProofTest",
         "actorChangeAfterCaptureRefusesPromptTest",
         "alteredMessageCacheCannotAvoidSigningTest",
+        "cachedSignatureForOtherMessageCannotAvoidSigningTest",
         "foreignCacheCannotAvoidSigningTest",
-        "generationChangeBeforeFinalAuthorizeRefusesRequestTest",
+        "generationChangeInvalidatesCapturedConnectionTest",
+        "invalidCacheOldBehaviorNegativeControlTest",
+        "invalidCachedSignatureIsReplacedTest",
+        "invalidFreshSignatureIsNeverCachedTest",
+        "lateCacheOrPostOldBehaviorNegativeControlTest",
         "malformedCacheStopsBeforePromptTest",
+        "malformedEntryIsAMissRatherThanAPermanentFailureTest",
         "matchingCacheNeedsNoWalletPromptTest",
+        "messagesChangeStopsOldCacheWriteTest",
+        "newCaseCannotReuseOldCaseCacheTest",
+        "newRevisionReconnectReusesExactProofTest",
+        "noncanonicalCacheCannotAvoidSigningTest",
+        "oldFinallyCannotClearNewConnectionBusyTest",
+        "oldFinallyResetNegativeControlTest",
+        "parentAliveDoesNotAuthorizeDepartedChildTest",
         "partialCacheSurvivesSecondPromptRefusalTest",
-        "revisionChangeAfterAuthorizationStillNeedsServerCheckTest",
+        "payerChangeResetsConnectedWalletTest",
+        "resetBetweenAuthorityReturnAndContinuationStopsEffectTest",
+        "revisionChangeBeforeFinalAuthorizeRefusesOldRequestTest",
+        "signOutStopsCachedProofBeforeSubmissionTest",
         "signThenCacheFailureIsVisibleTest",
-        "unmountDuringPromptMayCacheButCannotVerifyTest",
+        "synchronousOwnershipRefusesSecondActionTest",
+        "unmountDuringPromptCannotCacheOrVerifyTest",
         "validOriginalPayerConnectsTest",
         "verificationFailureKeepsCacheForRetryTest",
+        "wrongPayerCacheCannotAvoidSigningTest",
         "wrongPayerCannotConnectTest"
       ]
     },
