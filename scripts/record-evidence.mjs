@@ -19,6 +19,7 @@ import { childEnvironment } from "./child-environment.mjs";
 import {
   beginEvidenceTransaction,
   validateEvidenceBundle,
+  withEvidenceCleanup,
 } from "./evidence-bundle.mjs";
 import {
   assertCommittedBuildManifest,
@@ -241,7 +242,9 @@ async function stopPreview(server) {
     return;
   }
   server.kill("SIGKILL");
-  await waitForProcessExit(server, 3_000);
+  if (!(await waitForProcessExit(server, 3_000))) {
+    throw new Error("[Slop] owned preview did not stop after SIGKILL");
+  }
 }
 
 async function inspectTls() {
@@ -448,8 +451,12 @@ if (mode === "production") {
     await waitForServer(baseUrl, previewServer, previewState, buildFingerprint);
   } catch (error) {
     // error-policy:J6 a failed local preview is terminated before its startup error is rethrown.
-    await stopPreview(previewServer);
-    throw error;
+    await withEvidenceCleanup(
+      async () => {
+        throw error;
+      },
+      [{ label: "preview shutdown", run: () => stopPreview(previewServer) }],
+    );
   }
   verification = {
     schemaVersion: "1",
@@ -467,14 +474,18 @@ try {
   evidenceTransaction = beginEvidenceTransaction(finalEvidenceRoot);
 } catch (error) {
   // error-policy:J6 a local preview is terminated if evidence staging cannot begin.
-  await stopPreview(previewServer);
-  throw error;
+  await withEvidenceCleanup(
+    async () => {
+      throw error;
+    },
+    [{ label: "preview shutdown", run: () => stopPreview(previewServer) }],
+  );
 }
 const evidenceRoot = evidenceTransaction.stagingRoot;
 const videoRoot = join(evidenceRoot, ".video");
-mkdirSync(videoRoot, { recursive: true });
 
-try {
+async function captureEvidence() {
+  mkdirSync(videoRoot, { recursive: true });
   writeFileSync(
     join(evidenceRoot, "site-verification.json"),
     `${JSON.stringify(verification, null, 2)}\n`,
@@ -631,16 +642,17 @@ try {
     }
   }
 
-  try {
-    await capture("after-desktop", { width: 1440, height: 1000 });
-    await capture("walkthrough", { width: 1440, height: 900 }, true, false);
-    await capture("after-mobile", { width: 320, height: 800 });
-    if (previewServer && previewState) {
-      assertPreviewRunning(previewServer, previewState);
-    }
-  } finally {
-    await browser.close();
-  }
+  await withEvidenceCleanup(
+    async () => {
+      await capture("after-desktop", { width: 1440, height: 1000 });
+      await capture("walkthrough", { width: 1440, height: 900 }, true, false);
+      await capture("after-mobile", { width: 320, height: 800 });
+      if (previewServer && previewState) {
+        assertPreviewRunning(previewServer, previewState);
+      }
+    },
+    [{ label: "browser close", run: () => browser.close() }],
+  );
 
   const webmPath = join(evidenceRoot, "walkthrough.webm");
   const mp4Path = join(evidenceRoot, "walkthrough.mp4");
@@ -715,8 +727,10 @@ try {
   }
   validateEvidenceBundle(evidenceRoot, { buildFingerprint, mode });
   evidenceTransaction.publish();
-  console.log(`[Slop] ${mode} evidence written to ${finalEvidenceRoot}`);
-} finally {
-  await stopPreview(previewServer);
-  evidenceTransaction.abort();
 }
+
+await withEvidenceCleanup(captureEvidence, [
+  { label: "preview shutdown", run: () => stopPreview(previewServer) },
+  { label: "evidence staging cleanup", run: () => evidenceTransaction.abort() },
+]);
+console.log(`[Slop] ${mode} evidence written to ${finalEvidenceRoot}`);

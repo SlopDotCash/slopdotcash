@@ -3240,9 +3240,9 @@
     },
     {
       "path": "scripts/evidence-bundle.mjs",
-      "sha256": "1793f9ba3e9753de2c3a73a50954df49afe3282329753c9d5725b39a07776bf2",
+      "sha256": "728080118e1a7c7e856b840660ee6248909b5fb583903aac535cc04bfe485da0",
       "models": ["formal/models/evidence_capture.qnt"],
-      "candidateLines": [215, 220, 222, 225, 226, 240],
+      "candidateLines": [215, 222, 224, 227, 228, 242, 247, 264],
       "review": "mapped-abstraction"
     },
     {
@@ -3708,11 +3708,11 @@
     },
     {
       "path": "scripts/record-evidence.mjs",
-      "sha256": "f421f12c339196dddf0cccc5b74179e3f3181aa99ea56a60166fe4d6c78996c0",
+      "sha256": "a02cddc4da0a6c3270ca5907034b2e89475f44a4e3543b93bf93d464a099d4db",
       "models": ["formal/models/evidence_capture.qnt"],
       "candidateLines": [
-        4, 89, 126, 127, 129, 162, 164, 177, 182, 202, 223, 255, 303, 316, 336,
-        344, 348, 521, 543, 565, 568, 576, 604, 616, 623, 670
+        4, 90, 127, 128, 130, 163, 165, 178, 183, 203, 224, 258, 306, 319, 339,
+        347, 351, 532, 554, 576, 579, 587, 615, 627, 634, 682
       ],
       "review": "mapped-abstraction"
     },
@@ -9815,7 +9815,7 @@
     },
     {
       "path": "formal/models/evidence_capture.qnt",
-      "sha256": "101585d994f6a9a1b58a0de322b4bde9f37db079d7f9146aa0de78877c9cf31f",
+      "sha256": "fcef98e2112e3c9d266a7404e6dd2b5b8ebe3137af6ecc24e17d6e53a44dc5e6",
       "sources": [
         "scripts/evidence-bundle.mjs",
         "scripts/evidence-contract.mjs",
@@ -9824,9 +9824,24 @@
         "scripts/run-e2e.mjs"
       ],
       "scenarios": [
+        "browserCloseFailurePreventsPublicationTest",
+        "captureAndBothFinalizersPreserveFirstErrorTest",
+        "captureFailureSurvivesBrowserCloseFailureTest",
         "cleanCaptureTest",
+        "committedCleanupFailureKeepsNewBundleTest",
+        "concurrentWinnerIsNotOverwrittenTest",
+        "crashAfterCommitKeepsPublishedStateTest",
+        "failedAbortRemainsRetryableTest",
+        "failedPreviousMoveKeepsOldBundleTest",
+        "failedRestorationPreservesBothInputsTest",
         "failedSwapRestoresTest",
-        "interruptedSwapIsExplicitTest"
+        "firstBundleNeedsNoPreviousBackupTest",
+        "interruptedSwapIsExplicitTest",
+        "invalidBundleCannotPublishTest",
+        "postCommitPreviewFailureCannotLogSuccessTest",
+        "previewFailureStillAbortsStagingTest",
+        "protectedAbortDoesNotDeletePublishedBundleTest",
+        "setupFailureUsesOwnedFinalizersTest"
       ]
     },
     {

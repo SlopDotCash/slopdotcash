@@ -467,3 +467,18 @@ old/equal/new/invalid dates, textual selection, statement-time cutoff and
 whole-statement rollback remain distinct. This restores a source mapping that
 the backup model refinement exposed as missing. It is model coverage, not a
 new runtime defect or proof of every timestamp format.
+
+## Evidence publication and finalizer completion
+
+Evidence publication could activate the new bundle, fail while deleting its
+backup, and then report a generic failed publication. It now reports the
+committed outcome. A failed compensating rename preserves both errors and both
+recovery inputs; abort cannot delete a committed or recovery-required bundle.
+
+The recorder created its video directory outside the owned cleanup operation.
+That setup is now inside it. Browser, preview and staging finalizers are each
+attempted while the primary operation error is retained, and success is logged
+only after finalizers complete. The preview's last shutdown wait must confirm
+exit. The 18-scenario model and 15 new native regression definitions remain
+unexecuted; the fixtures do not constitute browser/media acceptance. See
+`evidence-publication-audit.md`.

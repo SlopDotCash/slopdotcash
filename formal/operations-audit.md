@@ -30,6 +30,11 @@ The [audit-retention model](vetting-audit-retention-audit.md) separately covers
 migration 0067's strict one-year cutoff and atomic rejection of a mixed-age
 delete. It changes no retention policy and has no new execution evidence.
 
+The [evidence publication review](evidence-publication-audit.md) separates
+bundle activation, retained recovery inputs and independently attempted
+browser/preview/staging finalizers. Its changed model and new native regression
+definitions have not been executed.
+
 | Model | Source obligations reviewed | Bounds and implementation evidence |
 | --- | --- | --- |
 | `bot_review_lease` | `startReview`, `ownsReviewClaim`, `finishReview`; new/skipped/failed/completed states; expired tokens; immutable provider-cost recording | Three token generations, five clock instants. `workers/slopbot/formal-state.test.ts` replays actual Quint output through production D1 methods and migrated SQLite |

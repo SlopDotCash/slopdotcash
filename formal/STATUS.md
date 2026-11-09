@@ -226,6 +226,18 @@ and `vetting-audit-retention-audit.md`. Current metadata lists 843 sources,
 new models/tests remain unexecuted. Evidence-bundle publication and the peer's
 pending proof/runtime PR retain separate review and acceptance boundaries.
 
+The evidence-publication follow-up refines the existing model from three to
+18 scenarios and adds 15 native regression definitions. Committed publication,
+failed backup cleanup, restoration requiring operator recovery and failed
+finalizers remain distinct. The recorder now attempts every owned finalizer,
+includes video setup in its cleanup scope and refuses an unconfirmed preview
+shutdown. All new and changed scenarios/tests are unexecuted. See
+`evidence-publication-audit.md` for caller validation assumptions and limits.
+The metadata census now contains 843 sources, 361 models and 2,389 scenarios;
+the function inventory has 10,009 bodies in 687 files with 168 selected
+contracts. These counts and source reviews do not establish full refinement
+or application-wide absence of state defects.
+
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
 924 normal model stages and 168 selected function proofs in 33 modules. These
