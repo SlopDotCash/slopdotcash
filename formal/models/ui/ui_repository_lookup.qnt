@@ -7,8 +7,8 @@
 // Valid response means the current request/response decoder accepted its
 // fields. The UI cannot establish coherence between the provider's separate
 // repository identity, owner, branch and license observations. The named-read
-// consistency gap is modeled separately in github_lookup_repository; these
-// request-ownership guards do not detect or repair that gap.
+// consistency boundary is modeled separately in github_lookup_repository;
+// these request-ownership guards do not prove provider consistency.
 // Account inventory and authenticated publication are separate models. Public
 // facts retained in a tab are not account authority. No execution is claimed.
 module ui_repository_lookup {

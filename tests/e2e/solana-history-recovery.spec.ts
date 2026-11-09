@@ -15,6 +15,7 @@ type Snapshot = {
     projectId: string;
     revision: number;
     viewerRoles: string[];
+    allowedActions?: string[];
     settlement: {
       ownerRequest?: {
         payer: { address: string };
@@ -35,6 +36,84 @@ const snapshot = JSON.parse(
   ),
 ) as Snapshot;
 const OWNER = "710000001";
+
+/** Hold decoded data at an inner parent gate, while leaving the parent mounted. */
+async function holdParentGate(
+  page: Page,
+  caseId: string,
+  caseReads: number,
+  followingSessions: number,
+) {
+  await page.waitForLoadState("networkidle");
+  await page.evaluate(({ caseId, caseReads, followingSessions }) => {
+    const state = {
+      cases: 0,
+      remaining: -1,
+      waiting: false,
+      returned: false,
+      release: () => {},
+    };
+    Object.assign(window, { heldPaymentGate: state });
+    const json = Response.prototype.json;
+    Response.prototype.json = async function (this: Response) {
+      const body = await json.call(this);
+      const path = this.url ? new URL(this.url).pathname : "";
+      let hold = false;
+      if (path === `/api/v1/security-cases/${caseId}`) {
+        state.cases += 1;
+        if (state.cases === caseReads) {
+          state.remaining = followingSessions;
+          hold = followingSessions === 0;
+        }
+      } else if (path === "/api/v1/project-session" && state.remaining > 0) {
+        state.remaining -= 1;
+        hold = state.remaining === 0;
+      }
+      if (hold && !state.waiting) {
+        state.waiting = true;
+        await new Promise<void>((resolve) => {
+          state.release = resolve;
+        });
+        state.returned = true;
+      }
+      return body;
+    };
+  }, { caseId, caseReads, followingSessions });
+}
+
+async function departHeldPayment(page: Page, leaveParent = false) {
+  await page.waitForFunction(() =>
+    (window as typeof window & { heldPaymentGate: { waiting: boolean } })
+      .heldPaymentGate.waiting,
+  );
+  if (leaveParent) {
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    await page.goBack();
+    await expect(page).toHaveURL(/\/how-it-works$/u);
+  } else {
+    await page.getByRole("button", { name: "Back to reports", exact: true }).click();
+  }
+  await expect(
+    page.getByRole("button", { name: "Back to reports", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as typeof window & { heldPaymentGate: { release(): void } })
+      .heldPaymentGate.release(),
+  );
+  await page.waitForFunction(() =>
+    (window as typeof window & { heldPaymentGate: { returned: boolean } })
+      .heldPaymentGate.returned,
+  );
+  await page.evaluate(
+    () => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }),
+  );
+}
 
 function installWallet() {
   const bridge = window as unknown as {
@@ -95,8 +174,12 @@ function installWallet() {
   );
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, fallback = false) {
   const record = structuredClone(snapshot.case);
+  if (fallback) {
+    delete record.settlement.ownerRequest;
+    record.allowedActions = ["verify-payment"];
+  }
   // A public deterministic fixture key replaces the captured random payer.
   // Keep the message's payer slot, ID and unsigned transaction consistent.
   const key = createPrivateKey({
@@ -136,6 +219,11 @@ async function setup(page: Page) {
   let onSign: (() => Promise<void>) | undefined;
   const signed: number[][] = [];
   const posted: unknown[] = [];
+  const submittedKey = `slop:bounty-solana:v1:${record.id}:${record.settlement.recovery.generation}:fixture:${OWNER}`;
+  if (fallback)
+    await page.addInitScript(({ key, signature }) => {
+      sessionStorage.setItem(key, JSON.stringify({ signature }));
+    }, { key: submittedKey, signature: "1".repeat(64) });
   await page.exposeFunction("historyWalletAccount", () => ({
     address: record.settlement.recovery.payer,
     publicKey: [...decodeBase58Bytes(record.settlement.recovery.payer)],
@@ -213,6 +301,7 @@ async function setup(page: Page) {
     connect,
     check,
     cacheKey,
+    submittedKey,
     setActor: (value: string) => {
       actor = value;
     },
@@ -458,3 +547,82 @@ test("a failed history-proof cache write is visible and cannot submit an incompl
   expect(flow.signed).toHaveLength(1);
   expect(flow.posted).toHaveLength(0);
 });
+
+for (const boundary of ["authorization", "post-preflight"] as const) {
+  test(`leaving submitted payment recovery during ${boundary} retires the action`, async ({
+    page,
+  }) => {
+    const flow = await setup(page, true);
+    const recovery = page.getByRole("region", {
+      name: "Submitted payment recovery",
+      exact: true,
+    });
+    const input = recovery.getByLabel("Transaction signature 1", { exact: true });
+    await expect(input).toHaveValue("1".repeat(64));
+    const candidate = encodeBase58Bytes(new Uint8Array(64).fill(2));
+    await input.fill(candidate);
+    // The first case GET authorizes candidate persistence. The second is the
+    // parent's verification GET; its post-read session is followed by the
+    // POST wrapper's own session preflight, which must retain child ownership.
+    await holdParentGate(
+      page,
+      flow.record.id,
+      boundary === "authorization" ? 1 : 2,
+      boundary === "authorization" ? 0 : 2,
+    );
+    await recovery
+      .getByRole("button", { name: "Verify submitted payments", exact: true })
+      .click();
+    try {
+      await departHeldPayment(page);
+      expect(flow.posted).toHaveLength(0);
+      const saved = await page.evaluate(
+        (key) => JSON.parse(sessionStorage.getItem(key)!),
+        flow.submittedKey,
+      );
+      expect(saved.signature).toBe("1".repeat(64));
+      if (boundary === "authorization") expect(saved.candidate).toBeUndefined();
+      else expect(saved.candidate).toBe(candidate);
+      await expect(recovery).toHaveCount(0);
+    } finally {
+      await page.evaluate(() =>
+        (window as typeof window & { heldPaymentGate: { release(): void } })
+          .heldPaymentGate.release(),
+      );
+    }
+  });
+}
+
+for (const owner of ["child", "parent"] as const) {
+  test(`leaving the Solana recovery ${owner} during the inner POST preflight prevents dispatch`, async ({
+    page,
+  }) => {
+    const flow = await setup(page);
+    await flow.connect();
+    // Each fresh signature has a pre-sign and pre-cache authorization GET,
+    // followed by a final GET. Then come that GET's identity check, the child's
+    // identity check, and the mutation wrapper's identity preflight.
+    await holdParentGate(
+      page,
+      flow.record.id,
+      flow.record.settlement.recovery.messages.length * 2 + 1,
+      3,
+    );
+    await flow.check();
+    try {
+      await departHeldPayment(page, owner === "parent");
+      expect(flow.posted).toHaveLength(0);
+      expect(flow.signed).toHaveLength(
+        flow.record.settlement.recovery.messages.length,
+      );
+      expect(
+        await page.evaluate((key) => sessionStorage.getItem(key), flow.cacheKey),
+      ).not.toBeNull();
+    } finally {
+      await page.evaluate(() =>
+        (window as typeof window & { heldPaymentGate: { release(): void } })
+          .heldPaymentGate.release(),
+      );
+    }
+  });
+}

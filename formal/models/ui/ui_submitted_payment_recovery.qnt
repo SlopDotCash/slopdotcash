@@ -1,6 +1,5 @@
 // @source src/BountySubmittedPayments.tsx
 // @source src/SecurityBounty.tsx
-// @source src/lib/use-action.ts
 // @evidence tests/e2e/bounty-full-flow.spec.ts
 // @evidence tests/e2e/bounty-solana-flow.spec.ts
 // One fallback instance, two actors/generations/rows, two storage reads.
@@ -8,7 +7,8 @@
 // unboundedStep retains repeated attempts and all three identifier classes.
 // Value 0 means empty/invalid syntax. These are model bounds, not UI limits.
 // Exact chain receipt acceptance is an external predicate, never syntax.
-// Current verification bounds and evidence are recorded with the reconciliation.
+// This row/projection model serializes one action. ui_submitted_payment_lifetime
+// separately explores simultaneous retired/current tokens and nested awaits.
 module ui_submitted_payment_recovery {
   type State = {parentAlive:bool,mounted:bool,boundActor:int,cookieActor:int,generation:int,
     loadScheduled:bool,activeRead:int,readActors:List[int],readGenerations:List[int],pendingReads:Set[int],
@@ -26,7 +26,8 @@ module ui_submitted_payment_recovery {
   def slot(actor:int,generation:int):int=(actor-1)*2+generation-1
   val rowStored=if(s.rowActor>0)s.store[slot(s.rowActor,s.rowGeneration)] else List(0,0)
   val visibleHashes=s.values.select(value=>value>0 and not(s.confirmed.contains(value)))
-  val canVerify=s.mounted and not(s.busy) and visibleHashes.length()>0
+  val canVerify=s.mounted and s.phase=="idle" and not(s.busy) and visibleHashes.length()>0
+  val currentCheck=s.mounted and s.checkGeneration==s.generation
   // Async captures live only until that invocation returns. Clearing them
   // preserves behavior without retaining obsolete callback history.
   def finishedCheck(state:State):State=state.with("phase","idle").with("busy",false)
@@ -51,13 +52,14 @@ module ui_submitted_payment_recovery {
           if(project)List(0,0) else List(first,second)))
       else s,id)}
   action storageReply(id:int,first:int,second:int):bool=storageReplyWithProjection(id,first,second,false)
-  // The effect cancels an old read but does not clear existing rows or actor.
+  // Layout replacement clears old rows before the new context's read.
   action storageReadFailure(id:int):bool=all{s.pendingReads.contains(id),
     s'=finishedRead(if(s.mounted and id==s.activeRead)
       s.with("activeRead",0).with("error",true)
       else s,id)}
   action generationChanges=all{s.generation==1,s.mounted,
-    s'=s.with("generation",2).with("loadScheduled",true).with("activeRead",0)}
+    s'=s.with("generation",2).with("loadScheduled",true).with("activeRead",0)
+      .with("rowActor",0).with("rowGeneration",0).with("values",List(0,0)).with("error",false)}
   action cookieChanges(actor:int):bool=all{actor>=0,actor<=2,s'=s.with("cookieActor",actor)}
   action confirmed(value:int):bool=all{value>0,value<=3,
     s'=s.with("confirmed",s.confirmed.union(Set(value)))}
@@ -73,11 +75,13 @@ module ui_submitted_payment_recovery {
       .with("checkSlot",slot(s.rowActor,s.rowGeneration)).with("checkRows",s.values).with("checkHashes",visibleHashes)}
   action boundedBeginVerify=all{s.checks<2,beginVerify}
   action identityReply=all{s.phase=="identity",
-    s'=if(s.checkActor>0 and s.checkActor==s.cookieActor)
+    s'=if(not(currentCheck))finishedCheck(s)
+      else if(s.checkActor>0 and s.checkActor==s.cookieActor)
       s.with("phase","authorize")
       else finishedCheck(s).with("error",true)}
   action authorityReply(allowed:bool,serverGeneration:int):bool=all{s.phase=="authorize",
-    s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
+    s'=if(not(currentCheck))finishedCheck(s)
+      else if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
       s.with("phase","persist")
       else finishedCheck(s).with("error",true)}
   // The actual storage loop has no await. Represent it as one action, while
@@ -88,21 +92,23 @@ module ui_submitted_payment_recovery {
   action persistCandidatesWithProjection(writes:int,project:bool):bool=all{s.phase=="persist",writes>=0,writes<=2,
     val stored=s.with("store",s.store.replaceAt(s.checkSlot,
       if(project)List(0,0) else writtenRows(writes)))
-    s'=if(writes==2)stored.with("phase","verify-preflight")
+    s'=if(not(currentCheck))finishedCheck(s)
+      else if(writes==2)stored.with("phase","verify-preflight")
       else finishedCheck(stored).with("error",true)}
   action persistCandidates(writes:int):bool=persistCandidatesWithProjection(writes,false)
   // verifyExistingPayment performs another actor-bound fresh GET before POST.
   action verifyPreflight(allowed:bool,serverGeneration:int):bool=all{s.phase=="verify-preflight",
-    s'=if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
+    s'=if(not(currentCheck))finishedCheck(s)
+      else if(s.parentAlive and s.cookieActor==s.boundActor and allowed and serverGeneration==s.checkGeneration)
       s.with("phase","post").with("postStarted",true).with("postAuthorized",true)
       else finishedCheck(s).with("error",true)}
   action verificationReply(exactReceipt:bool):bool=all{s.phase=="post",
     s'=finishedCheck(s)
       .with("recorded",s.recorded or exactReceipt)
-      .with("error",not(exactReceipt and s.parentAlive and s.cookieActor==s.boundActor))
-      .with("responseDelivered",exactReceipt and s.parentAlive and s.cookieActor==s.boundActor)}
-  // Removing just the fallback does not cancel its already-started promise.
-  // The enclosing provider, if alive, still checks the actor on API reads.
+      .with("error",currentCheck and not(exactReceipt and s.parentAlive and s.cookieActor==s.boundActor))
+      .with("responseDelivered",currentCheck and exactReceipt and s.parentAlive and s.cookieActor==s.boundActor)}
+  // A retired child may retain an already-dispatched backend effect, but it
+  // cannot start candidate writes or a new verification request.
   action leaveFallback=s'=s.with("mounted",false).with("activeRead",0)
   action closePrivateParent=s'=s.with("parentAlive",false).with("mounted",false).with("activeRead",0)
   action chooseStorageReply(maxHash:int,project:bool):bool={nondet id=1.to(2).oneOf() nondet first=0.to(maxHash).oneOf()
@@ -139,8 +145,8 @@ module ui_submitted_payment_recovery {
     not(s.mounted) implies not(canVerify)}
   run staleStorageReplyDoesNotReplaceNewGenerationTest=init.then(readStorage).then(generationChanges).then(readStorage)
     .then(storageReply(2,2,0)).then(storageReply(1,1,0)).expect(s.rowGeneration==2 and s.values==List(2,0))
-  run generationRefreshRetainsOldRowsUntilReplyTest=init.then(readStorage).then(storageReply(1,1,0)).then(generationChanges)
-    .expect(s.rowGeneration==1 and s.generation==2 and s.values==List(1,0))
+  run generationRefreshClearsOldRowsBeforeReplyTest=init.then(readStorage).then(storageReply(1,1,0)).then(generationChanges)
+    .expect(s.rowGeneration==0 and s.generation==2 and s.values==List(0,0))
   run rawSessionMismatchStopsBeforeCandidateWritesTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(beginVerify).then(cookieChanges(2)).then(identityReply)
     .expect(s.error and rowStored==List(1,0) and not(s.postStarted))
@@ -158,26 +164,24 @@ module ui_submitted_payment_recovery {
     .expect(s.values==List(2,0) and s.checkHashes==List(1) and rowStored==List(1,0))
   run confirmedIdentifiersAreNotResubmittedTest=init.then(readStorage).then(storageReply(1,1,2)).then(confirmed(1))
     .then(beginVerify).expect(s.checkHashes==List(2))
-  run fallbackDepartureMayFinishSameActorVerificationTest=init.then(readStorage).then(storageReply(1,2,0))
+  run fallbackDeparturePreventsCandidateWritesTest=init.then(readStorage).then(storageReply(1,2,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(leaveFallback)
-    .then(persistCandidates(2)).then(verifyPreflight(true,1)).then(verificationReply(true))
-    .expect(s.responseDelivered and not(s.mounted))
+    .then(persistCandidates(2)).expect(not(s.postStarted) and not(s.mounted) and s.store[0]==List(2,0))
   run parentDepartureStopsFinalPreflightTest=init.then(readStorage).then(storageReply(1,2,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
-    .then(closePrivateParent).then(verifyPreflight(true,1)).expect(s.error and not(s.postStarted))
+    .then(closePrivateParent).then(verifyPreflight(true,1)).expect(not(s.postStarted))
   run parentDepartureAfterPostDoesNotDeliverSuccessTest=init.then(readStorage).then(storageReply(1,2,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
     .then(verifyPreflight(true,1)).then(closePrivateParent).then(verificationReply(true))
-    .expect(s.recorded and not(s.responseDelivered) and s.error)
-  run failedReloadRetainsExistingRowsTest=init.then(readStorage).then(storageReply(1,1,0))
+    .expect(s.recorded and not(s.responseDelivered))
+  run failedNewGenerationReadCannotRestoreOldRowsTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(generationChanges).then(readStorage).then(storageReadFailure(2))
-    .expect(s.rowGeneration==1 and s.values==List(1,0) and s.error)
-  run oldActionWritesOnlyCapturedGenerationAfterNewReadTest=init.then(readStorage).then(storageReply(1,1,0))
+    .expect(s.rowGeneration==0 and s.values==List(0,0) and s.error)
+  run oldActionCannotWriteAfterNewGenerationReadTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(edit(0,2)).then(beginVerify).then(identityReply).then(generationChanges).then(readStorage)
-    .then(storageReply(2,3,0)).then(authorityReply(true,1)).then(persistCandidates(2))
-    .expect(s.rowGeneration==2 and s.values==List(3,0) and s.store[0]==List(2,0) and s.store[1]==List(3,0))
-    .then(verifyPreflight(true,2))
-    .expect(s.error and not(s.postStarted) and s.checkSlot==0 and s.store[0]==List(2,0) and s.store[1]==List(3,0))
+    .then(storageReply(2,3,0)).then(authorityReply(true,1))
+    .expect(s.rowGeneration==2 and s.values==List(3,0) and s.store[0]==List(1,0)
+      and s.store[1]==List(3,0) and not(s.postStarted))
   run editsDuringVerificationKeepCapturedPostBodyTest=init.then(readStorage).then(storageReply(1,1,0))
     .then(beginVerify).then(identityReply).then(authorityReply(true,1)).then(persistCandidates(2))
     .then(verifyPreflight(true,1)).then(edit(0,2))

@@ -4,18 +4,26 @@
 // @source backend/projects/github-lookup.ts
 // @source src/lib/project-proposal.ts
 // @evidence scripts/project-registry-api.test.ts
+// @evidence scripts/project-application-github-check.test.ts
 // @evidence tests/e2e/project-proposal.spec.ts
 // Two request slots, each with one retry after its prior cache put settles;
 // two authenticated actors, two canonical repository paths, one origin and
 // two public-data/login versions. Four cache entries represent owned lists
-// keyed by actor ID and repository facts keyed by lowercased path. Query and
-// path-case variants intentionally share a key. TTL expiry is an explicit
-// removal action, not a wall-clock/HTTP-cache implementation proof.
+// keyed by actor ID and repository facts keyed by lowercased path in the
+// repository-node-v1 namespace. A separate two-entry legacy cache represents
+// old REST/name-based bytes, including a late put by the prior deployment;
+// the current reader never selects those keys. Owned-list keys do not change.
+// Query and path-case variants intentionally share a key. TTL expiry is an
+// explicit removal action, not a wall-clock/HTTP-cache implementation proof.
 // GET session is separate: it returns200/null without requireActor. Known
 // lookup routes authenticate and validate an optional expected actor BEFORE
 // cache access. Unmatched project routes return404 without a session read;
 // non-GET project requests first require same-origin JSON transport.
-// Successful cache bytes are public GitHub facts, never project authority.
+// Successful current-generation cache bytes are public GitHub facts, never
+// project authority. Public reads use the configured public-only credential;
+// there is no Slopbot installation-token fallback. Actual credential scope is
+// a deployment assumption. Older cache bytes need not satisfy the current
+// immutable-node identity checks and cannot bypass them on a current miss.
 // The client policy is private,max-age=300; stored edge copies retain public
 // s-maxage=300. The current browser client explicitly uses cache:no-store.
 // The session gates spending, not a continuous account observation. Owned
@@ -26,6 +34,8 @@
 // Provider identity/JSON/branch/license/page predicates are delegated to the
 // github-lookup model. Provider errors retain their status; generic throws are
 // 500. A missing owned actor becomes502, a missing repository remains404.
+// providerReads counts abstract reader completions, not individual HTTP calls;
+// missing-credential validation before HTTP belongs to the lookup model.
 // One moderator-selected account is modeled only through the pre-enforcement
 // prefix: role check, lookup and optional expected-ID comparison. The later
 // recordEnforcement call, multi-account deduplication and writes are excluded.
@@ -51,9 +61,11 @@ module api_project_lookup_routes {
     providerReads: 0, login: 0, payload: 0, subject: 0, selected: 0,
     selectedExpected: 0, status: 0, policy: "none", hit: false, delivered: false }
   var s: { session: int, loginVersion: int -> int, dataVersion: int,
-    admins: Set[int], moderators: Set[int], requests: int -> Request, cache: int -> Entry }
+    admins: Set[int], moderators: Set[int], requests: int -> Request,
+    cache: int -> Entry, legacyCache: int -> Entry }
   action init = s' = { session: 1, loginVersion: ids.mapBy(_ => 1), dataVersion: 1,
-    admins: Set(1), moderators: Set(1), requests: ids.mapBy(_ => idle), cache: keys.mapBy(_ => empty) }
+    admins: Set(1), moderators: Set(1), requests: ids.mapBy(_ => idle),
+    cache: keys.mapBy(_ => empty), legacyCache: ids.mapBy(_ => empty) }
   def reply(request: Request, status: int): Request = request.with("phase", "response")
     .with("status", status).with("policy", if (status == 200 and Set("owned", "repository").contains(request.route)) "private-300" else "no-store")
   def errorStatus(outcome: str): int = if (outcome == "organization") 422
@@ -64,6 +76,11 @@ module api_project_lookup_routes {
   action changeData = all { s.dataVersion == 1, s' = s.with("dataVersion", 2) }
   action revokeModerator(actor: int): bool = all { ids.contains(actor), s' = s.with("moderators", s.moderators.exclude(Set(actor))) }
   action expire(key: int): bool = all { keys.contains(key), s' = s.with("cache", s.cache.set(key, empty)) }
+  // Environment: bytes from the old deployment remain under the old key.
+  // This is not a write performed by the current githubLookup function.
+  action legacyPut(repository: int, version: int): bool = all {
+    ids.contains(repository), ids.contains(version),
+    s' = s.with("legacyCache", s.legacyCache.set(repository, { version, subject: 0 })) }
   // expected0=absent,1/2=the named actor,3=malformed header. Repository0 is a
   // syntactically invalid but route-shaped owner/name; valid paths are1/2.
   action begin(id: int, route: str, method: str, expected: int, repository: int, transport: bool, cached: bool, wait: bool): bool = {
@@ -171,7 +188,7 @@ module api_project_lookup_routes {
     nondet result = Set("hit", "miss", "error").oneOf()
     nondet outcome = outcomes.oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { switchSession(actor), rename(id), changeData, revokeModerator(id), expire(key),
+    any { switchSession(actor), rename(id), changeData, revokeModerator(id), expire(key), legacyPut(id, repository),
       begin(id, route, method, expected, repository, yes, yes, yes), dispatch(id), session(id, yes, yes), cacheRead(id, result),
       validate(id), actorReply(id, outcome), dataReply(id, outcome), buffer(id, yes), put(id, yes), selectionInput(id, repository, yes),
       selectionReply(id, outcome, id), respond(id, yes), s' = s }
@@ -251,4 +268,11 @@ module api_project_lookup_routes {
   run knownSelectionHandsOffWithoutInventingAnEnforcementResultTest = init.then(begin(1, "actor-selection", "POST", 0, 1, true, true, false))
     .then(dispatch(1)).then(session(1, true, true)).then(selectionInput(1, 1, true)).then(revokeModerator(1)).then(selectionReply(1, "found", 1))
     .expect(s.requests.get(1).phase == "enforcement-handoff" and s.requests.get(1).status == 0 and invariant)
+  run legacyRepositoryCacheCannotHitCurrentNamespaceTest = init.then(legacyPut(1, 1))
+    .then(start(1, "repository")).then(cacheRead(1, "hit").fail())
+  run currentRepositoryReadIgnoresLegacyBytesAndLateLegacyPutTest = init.then(legacyPut(1, 1)).then(changeData)
+    .then(repository(1)).then(put(1, true)).then(respond(1, true)).then(legacyPut(1, 1))
+    .then(start(2, "repository")).then(cacheRead(2, "hit"))
+    .expect(s.legacyCache.get(1).version == 1 and s.cache.get(3).version == 2
+      and s.requests.get(1).providerReads == 1 and s.requests.get(2).payload == 2 and invariant)
 }

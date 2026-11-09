@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8e82a2be22c195982a7199619b8802c338a356e5448b2f52dc1b1fe6116a20d3",
+  "inventorySha256": "67c6fd654a9f56295575563411f16f90c3853519f358eae02bf3ed21da5c1251",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2411,7 +2411,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 261,
+      "line": 262,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2430,6 +2430,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden"],
@@ -2437,7 +2438,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 958,
+      "line": 959,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2456,6 +2457,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
@@ -2463,7 +2465,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 973,
+      "line": 974,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2482,6 +2484,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["complete"],
@@ -2489,7 +2492,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 975,
+      "line": 976,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2508,6 +2511,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["return", "uphold"],
@@ -2515,7 +2519,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 991,
+      "line": 992,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2534,6 +2538,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected"],
@@ -2541,7 +2546,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1030,
+      "line": 1031,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -2574,6 +2579,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [
@@ -2595,7 +2601,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1348,
+      "line": 1354,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2614,6 +2620,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -2621,7 +2628,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1616,
+      "line": 1622,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2640,6 +2647,7 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["request-information"],
@@ -2952,7 +2960,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 332,
+      "line": 316,
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
@@ -2968,7 +2976,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 337,
+      "line": 321,
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
@@ -2978,7 +2986,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 345,
+      "line": 329,
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
@@ -2991,7 +2999,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 356,
+      "line": 340,
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
@@ -3001,7 +3009,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 365,
+      "line": 349,
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],

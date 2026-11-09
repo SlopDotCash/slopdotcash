@@ -718,13 +718,23 @@ and strict branch-head reads never guess a commit. The models represent two
 actors, two repositories and representative first/final page classes rather
 than every provider record or real clock.
 
-The repository lookup model also records an unresolved consistency defect:
-metadata captures an immutable repository ID, but later branch and license
-reads use its mutable name. A rename and name reuse can mix those observations.
-`consistentNamedReads` is deliberately a separate, unmet property; the model's
-structural invariant is not a claim that the returned bundle is coherent.
-Later authority checks do not repair the earlier lookup result. A supported
-identity-bound transport still needs implementation and conformance evidence.
+Repository lookup now binds branch and license-object reads to the captured
+global node ID using GitHub's documented [direct node lookup](https://docs.github.com/en/graphql/guides/using-global-node-ids).
+Every page must return the same numeric and node identity and public visibility.
+Repeated or missing cursors, partial GraphQL errors and incomplete branches
+refuse the lookup. Separate pages can still observe changing branch heads;
+identity binding does not make GitHub reads an atomic snapshot.
+Repository-fact cache entries use a new namespace, so a pre-change named-read
+result cannot bypass the new lookup checks after deployment. Owned-repository
+list cache keys remain tied to the authenticated actor.
+
+License verification keeps the exact commit and byte contract. The captured
+repository node supplies the root LICENSE blob OID at the observed commit;
+the REST license response must name that blob, and its decoded bytes must hash
+to the same Git object. A changed name cannot supply unrelated license bytes.
+Only then are the existing SPDX classification and SHA-256 published. Failure
+in this optional stage leaves the license unknown; it does not fabricate one.
+These source changes and their regression definitions remain unexecuted.
 
 Repository authority reads now request an installation token scoped to the
 expected immutable repository ID, with metadata read permission only. A name
@@ -733,10 +743,18 @@ collaborator permission through that token. GitHub documents both
 [token repository and permission limits](https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-an-installation-access-token-for-an-app)
 and the [metadata permission for collaborator reads](https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#get-repository-permissions-for-a-user).
 These are provider assumptions; the authored internal-route regression does
-not establish live enforcement. This change does not alter the separate
-public-content relay, whose metadata-publicness check and resource read are
-still separate observations. Identity and visibility changes across those
-reads remain open review work.
+not establish live enforcement. Public lookup and vetting reads use the
+separate public-only read token required by the PRD. The installation-token
+public-content relay and its internal route have been removed. A configured
+token's actual scope remains a deployment boundary; its name does not prove
+that it lacks private access. No read failure upgrades to installation access.
+
+Saved-payment verification passes its child action owner through the parent's
+private reads and the final POST preflight. Closing or replacing the child
+retires that owner during layout cleanup, before any later continuation can
+rewrite the candidate cache or start verification. Solana history recovery
+uses the same parent gate. A request already sent remains a backend operation;
+view departure prevents later work and publication, not its committed effects.
 
 Project creation and revision editors now retire publication ownership in
 layout cleanup. A session preflight that completes after committed departure

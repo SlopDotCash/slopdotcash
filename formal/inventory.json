@@ -261,12 +261,12 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "37678f7eb78b893313c5d40eacba0ef49551508556f1db845f5ed4441a6f6990",
+      "sha256": "8b70368dbd1a2d6497dc2b0d38e0d33a95319b6ead58bc94f401b00e99a32c3b",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [99],
+      "candidateLines": [100],
       "review": "mapped-abstraction"
     },
     {
@@ -546,7 +546,7 @@
     },
     {
       "path": "backend/projects/github-lookup.ts",
-      "sha256": "3015ffdfbc08a2b7c201578c021eb6540ce9d40d4f455bbffc08355651974215",
+      "sha256": "ac60fa731590deb4c4fabe5c62051076565250f48a7b690378e82f88d58cd225",
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
@@ -554,12 +554,12 @@
         "formal/models/api/github_lookup_owned.qnt",
         "formal/models/api/github_lookup_repository.qnt"
       ],
-      "candidateLines": [29, 62, 63, 75, 86, 209, 254, 474],
+      "candidateLines": [29, 62, 63, 75, 86, 209, 254, 335, 644],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "4ccd87747261a95a24b3d15aff060a38d3687a78a8ec4e97c92fa5249b211aa4",
+      "sha256": "093a905c96615e1186090ea01457edee07cddd834aadff32a93bd366e2161a79",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -588,18 +588,18 @@
         1628, 1634, 1640, 1676, 1684, 1687, 1688, 1733, 1734, 1735, 1752, 1796,
         1803, 1815, 1852, 1871, 1875, 1928, 2063, 2067, 2094, 2114, 2115, 2122,
         2126, 2158, 2172, 2190, 2207, 2239, 2248, 2392, 2418, 2567, 2624, 2664,
-        2675, 2676, 2789, 2797, 2815, 3009
+        2675, 2676, 2789, 2797, 2815, 3011
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/projects/repository-access.ts",
-      "sha256": "5f0595bdb6157ba1f83aeeb0d3b16569a68fae9e3f233a04df79112e3bd72b95",
+      "sha256": "d212d41868629c9a84b99876198c9c553903eb6f19665115171b428af6aa1ed0",
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/slopbot/bot_repository_authority_scope.qnt"
       ],
-      "candidateLines": [30],
+      "candidateLines": [24],
       "review": "mapped-abstraction"
     },
     {
@@ -3014,7 +3014,7 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "8f3a3e52452961ea9e663e585788089f68b9175fe46c594192be10810b00b7d2",
+      "sha256": "df55eab11546f843e2bc116b68bc478ea312705cf01f3f51b81724348ab736d8",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -4416,13 +4416,14 @@
     },
     {
       "path": "src/BountySubmittedPayments.tsx",
-      "sha256": "d8b463f29aa4778f91175ec68ee2c7569a0a00bfc004a5d3d9c1bbceb4a01c42",
+      "sha256": "20d81f36367a072afe3b6991e9225b4433df3bc74420371b7c30005d1235b92d",
       "models": [
         "formal/models/ui/ui_submitted_candidate_ownership.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
-      "candidateLines": [1, 33, 34, 36, 127],
+      "candidateLines": [1, 33, 34, 35, 36, 51, 154],
       "review": "mapped-abstraction"
     },
     {
@@ -5017,7 +5018,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "1a92e2037ec16536d45efaf932e2acfb0b874439fa550d4f3e257fd1847ae60c",
+      "sha256": "182b86179a84759ffae0af65c455d136b3325c9f36ac824eb4ef435616639fe8",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -5033,30 +5034,31 @@
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "candidateLines": [
-        27, 31, 137, 222, 229, 252, 254, 261, 274, 275, 277, 284, 288, 302, 305,
-        307, 315, 324, 326, 332, 338, 339, 340, 343, 345, 348, 369, 371, 372,
-        374, 381, 384, 388, 389, 390, 392, 394, 397, 399, 401, 402, 403, 406,
-        407, 410, 416, 417, 420, 426, 429, 433, 437, 449, 452, 453, 456, 528,
-        617, 627, 630, 668, 669, 673, 680, 685, 702, 727, 728, 735, 788, 958,
-        973, 1011, 1016, 1038, 1113, 1114, 1115, 1116, 1133, 1144, 1151, 1157,
-        1158, 1166, 1168, 1173, 1200, 1204, 1240, 1278, 1284, 1340, 1341, 1348,
-        1351, 1373, 1393, 1394, 1395, 1399, 1462, 1463, 1464, 1468, 1554, 1607,
-        1614, 1634, 1635, 1636, 1643, 1714, 1719, 1728, 1738, 1748, 1752, 1756,
-        1758, 1803, 1804, 1808, 1811, 1864, 1872, 1900, 1901, 1906, 1907, 1912,
-        1913, 1918, 1970, 1977, 1987, 1988, 2036, 2047, 2048, 2049, 2051, 2055,
-        2061, 2114, 2120, 2125, 2127, 2131, 2170, 2174, 2180, 2206, 2207, 2208,
-        2209, 2210, 2211, 2212, 2356, 2527, 2531, 2559, 2756, 2831, 2832, 2957,
-        3016, 3017, 3024, 3040, 3062, 3079, 3080, 3081, 3084, 3108, 3109, 3118,
-        3149, 3166, 3167, 3168, 3171, 3197, 3198, 3207, 3260, 3323, 3354, 3372,
-        3388, 3389, 3391, 3395, 3401, 3404, 3406, 3410, 3447, 3461, 3497, 3501,
-        3503, 3506, 3580, 3582, 3614, 3636, 3660, 3835, 3967, 4106, 4109, 4111,
-        4118, 4123, 4128, 4129, 4131, 4136, 4152, 4180, 4183, 4190, 4228, 4233,
-        4245, 4246, 4252, 4277, 4279, 4281, 4285, 4286, 4290, 4293, 4294, 4296,
-        4314, 4332, 4337, 4340, 4345, 4348, 4350, 4354, 4359, 4384, 4390, 4433,
-        4436, 4441, 4443, 4481, 4483, 4524, 4543
+        27, 32, 138, 223, 230, 253, 255, 262, 275, 276, 278, 285, 289, 303, 306,
+        308, 316, 325, 327, 333, 339, 340, 341, 344, 346, 349, 370, 372, 373,
+        375, 382, 385, 389, 390, 391, 393, 395, 398, 400, 402, 403, 404, 407,
+        408, 411, 417, 418, 421, 427, 430, 434, 438, 450, 453, 454, 457, 529,
+        618, 628, 631, 669, 670, 674, 681, 686, 703, 728, 729, 736, 789, 959,
+        974, 1012, 1017, 1039, 1114, 1115, 1116, 1117, 1139, 1150, 1157, 1163,
+        1164, 1172, 1174, 1179, 1206, 1210, 1246, 1284, 1290, 1346, 1347, 1354,
+        1357, 1379, 1399, 1400, 1401, 1405, 1468, 1469, 1470, 1474, 1560, 1613,
+        1620, 1640, 1641, 1642, 1649, 1720, 1725, 1734, 1744, 1754, 1758, 1762,
+        1764, 1809, 1810, 1814, 1817, 1870, 1878, 1906, 1907, 1912, 1913, 1918,
+        1919, 1924, 1976, 1983, 1993, 1994, 2042, 2053, 2054, 2055, 2057, 2061,
+        2067, 2120, 2126, 2131, 2133, 2137, 2176, 2180, 2186, 2212, 2213, 2214,
+        2215, 2216, 2217, 2218, 2362, 2533, 2537, 2565, 2762, 2837, 2838, 2963,
+        3022, 3023, 3030, 3046, 3068, 3085, 3086, 3087, 3090, 3114, 3115, 3124,
+        3155, 3172, 3173, 3174, 3177, 3203, 3204, 3213, 3266, 3329, 3360, 3378,
+        3394, 3395, 3397, 3401, 3407, 3410, 3412, 3416, 3456, 3476, 3514, 3518,
+        3520, 3523, 3597, 3599, 3631, 3653, 3677, 3857, 3989, 4128, 4131, 4140,
+        4145, 4150, 4151, 4153, 4158, 4181, 4210, 4213, 4220, 4261, 4266, 4278,
+        4279, 4285, 4310, 4312, 4314, 4318, 4319, 4323, 4326, 4327, 4329, 4347,
+        4365, 4370, 4373, 4378, 4381, 4383, 4387, 4392, 4417, 4423, 4466, 4469,
+        4474, 4476, 4514, 4516, 4557, 4576
       ],
       "review": "mapped-abstraction"
     },
@@ -5100,13 +5102,13 @@
     },
     {
       "path": "src/SolanaBountyRecovery.tsx",
-      "sha256": "17e4591dd9c2dfb0845988df4f7f598c1358cc654d2e05b3fa31263b4a167278",
+      "sha256": "cd7ba7e1db4b630a24b056c02ea06e82e09c663d70fa5005280f9ef8c6a7159f",
       "models": [
         "formal/models/ui/solana_message_buffers.qnt",
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
-      "candidateLines": [2, 54, 55, 56],
+      "candidateLines": [2, 55, 56, 57],
       "review": "mapped-abstraction"
     },
     {
@@ -5774,11 +5776,11 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "13ba85f93d980366cb676c9a50df621f309fc807339f4c44d8046a41d5b70151",
+      "sha256": "c3e852a9f9ec23915c429eabfbb2e86fcbb0be141236291128422e3643ec858f",
       "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
       "candidateLines": [
-        10, 30, 31, 44, 159, 185, 186, 197, 198, 306, 307, 308, 322, 331, 332,
-        337, 341, 356, 365, 405, 406
+        10, 30, 31, 44, 159, 185, 186, 197, 198, 290, 291, 292, 306, 315, 316,
+        321, 325, 340, 349, 389, 390
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -6116,7 +6118,6 @@
         "formal/models/ui/ui_inbox_mutation_focus.qnt",
         "formal/models/ui/ui_submission_controls.qnt",
         "formal/models/ui/ui_submitted_candidate_ownership.qnt",
-        "formal/models/ui/ui_submitted_payment_recovery.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [1, 5, 10, 11],
@@ -7425,14 +7426,13 @@
     },
     {
       "path": "workers/slopbot/repository-access.ts",
-      "sha256": "4854f880c2cf6d5b24f0b65be4e6fde2cb8b86bb88647b7177f8d828e96ca75d",
+      "sha256": "90b5af5eb8d2156936c3f56c7ee1e55c97674734dd30d81b768c28c467d7e6dd",
       "models": [
         "formal/models/slopbot/bot_repository_access.qnt",
         "formal/models/slopbot/bot_repository_authority_scope.qnt"
       ],
       "candidateLines": [
-        27, 28, 30, 72, 74, 89, 91, 109, 135, 136, 154, 155, 157, 230, 251, 290,
-        299, 301, 302, 309, 310, 312, 323, 329, 330, 333, 342
+        22, 23, 25, 64, 66, 81, 83, 99, 125, 126, 144, 145, 147, 218, 239
       ],
       "review": "mapped-abstraction"
     },
@@ -8042,13 +8042,13 @@
     },
     {
       "path": "workers/vetting-flags/qualification.ts",
-      "sha256": "fb0c22ddc9382c6e992560e8b7732335c730fa68b5de19cfbd7a0ebf5e7cea3c",
+      "sha256": "01a9137f041ae9f0b3fb7b9824bbbba3aee2339139a0c899761bdfa645903d7e",
       "models": ["formal/models/vetting/qualification_fixture.qnt"],
       "candidateLines": [
-        103, 188, 193, 259, 280, 310, 322, 334, 347, 354, 365, 369, 374, 379,
-        386, 387, 393, 394, 395, 396, 397, 399, 411, 414, 421, 425, 426, 443,
-        444, 448, 453, 454, 461, 463, 465, 470, 471, 480, 485, 505, 509, 559,
-        563, 583, 593, 598, 610, 619, 625, 632
+        108, 177, 182, 248, 269, 299, 311, 323, 336, 343, 354, 358, 363, 368,
+        375, 376, 382, 383, 384, 385, 386, 388, 400, 403, 410, 414, 415, 432,
+        433, 437, 442, 443, 450, 452, 454, 459, 460, 469, 474, 494, 498, 548,
+        552, 572, 582, 587, 599, 608, 614, 621
       ],
       "review": "mapped-abstraction"
     },
@@ -8726,7 +8726,7 @@
     },
     {
       "path": "formal/models/api/api_project_lookup_routes.qnt",
-      "sha256": "24e5a21a42e05d7d68dd6dcdd0e488cabe824bb4030efecd5e39357f8f8a340a",
+      "sha256": "30cb2227a48da3b7d961e551307e4c0051d5dd84b8a4b32a4d46b3f97d4c22e0",
       "sources": [
         "backend/http.ts",
         "backend/projects/edge-cache.ts",
@@ -8741,10 +8741,12 @@
         "cachePutFailureKeepsSuccessfulResponseTest",
         "cacheReadFailureFallsBackToProviderTest",
         "canonicalRepositoryKeySharesFactsAcrossActorsTest",
+        "currentRepositoryReadIgnoresLegacyBytesAndLateLegacyPutTest",
         "expectedActorMismatchPrecedesCacheTest",
         "invalidRepositoryRefusesOnMissTest",
         "knownSelectionHandsOffWithoutInventingAnEnforcementResultTest",
         "latePublicCacheWriteCanOverwriteNewerSnapshotTest",
+        "legacyRepositoryCacheCannotHitCurrentNamespaceTest",
         "malformedExpectedActorIs400Test",
         "missingOwnedActorIsUnavailableNotEmptySuccessTest",
         "missingRepositoryIs404AndNotCachedTest",
@@ -9167,15 +9169,19 @@
     },
     {
       "path": "formal/models/api/github_lookup_repository.qnt",
-      "sha256": "6ef283a5921099e67b9adc1697e4ae072ce1f4e92fe43b06dc8ea7cf11b34639",
+      "sha256": "b6ce16999d04a2fd33fbcf6990ce2ea2a25e0cf3f54c2ba09e29408beec93a2e",
       "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
       "scenarios": [
+        "absentBranchTargetCannotReuseEarlierCommitTest",
         "absentDefaultBranchRefusesBeforeLicenseTest",
         "absentRepositoryIs404Test",
+        "changedHeadNodeKeepsUnknownLicenseTest",
+        "changedLicenseNodeKeepsUnknownLicenseTest",
+        "claimedCorrectOidWithDifferentBytesRemainsUnknownTest",
         "completeRepositoryLicenseUsesPinnedCommitTest",
-        "credentialBearingBranchLinkRefusesTest",
         "defaultHeadMayAdvanceAfterBranchListTest",
-        "extraBranchLinkParameterRefusesTest",
+        "earlierCursorCycleRefusesTest",
+        "emptyNextCursorRefusesTest",
         "incompleteMetadataDoesNotExposeFactsTest",
         "invalidBranchCommitRefusesWholeLookupTest",
         "invalidBranchNameRefusesWholeLookupTest",
@@ -9184,17 +9190,23 @@
         "laterPageFailureDoesNotExposeEarlierBranchesTest",
         "laterPresentCommitWinsDuplicateNameTest",
         "licenseRateLimitKeepsKnownBranchesTest",
-        "missingLicenseKeepsRepositoryFactsTest",
-        "numericIdBranchLinkStillUsesNamedReadTest",
-        "optionalMissingCommitDoesNotEraseEarlierShaTest",
-        "renameReuseCanMixNamedBranchFactsTest",
+        "mismatchedNumericIdentityRefusesFactsTest",
+        "missingLicenseObjectKeepsRepositoryFactsTest",
+        "missingPublicTokenMakesNoReadTest",
+        "missingRestLicenseKeepsRepositoryFactsTest",
+        "nonFileLicenseRemainsUnknownTest",
+        "oldNamedReadMixNegativeControlTest",
+        "partialGraphqlResponseRefusesFactsTest",
+        "privateNodeRefusesFactsTest",
+        "renameReuseCannotReplaceNodeBranchesTest",
+        "repeatedNextCursorRefusesTest",
+        "reusedNodeIdentityRefusesFactsTest",
         "strictHeadLookupReturnsExactShaTest",
         "strictHeadMissingCommitThrowsTest",
         "strictHeadRateLimitThrowsTest",
         "strictHeadTransportCannotGuessTest",
         "twentiethPageWithNextRefusesPartialBranchesTest",
-        "wrongLicensePathRemainsUnknownTest",
-        "wrongPathBranchLinkRefusesTest"
+        "wrongLicenseBlobOidRemainsUnknownTest"
       ]
     },
     {
@@ -12926,7 +12938,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_repository_authority_scope.qnt",
-      "sha256": "422a79a00ccc36b2a6d0a9f9ee822fbf79fa38678f7d28d8ef7ebf5a4f444ebc",
+      "sha256": "de2ea7473dc66d1532d582183e3b81a2e679edaa7fac87acc86b0288d2c1bb2c",
       "sources": [
         "backend/projects/repository-access.ts",
         "src/lib/project-contracts.ts",
@@ -15552,7 +15564,7 @@
     },
     {
       "path": "formal/models/ui/ui_repository_lookup.qnt",
-      "sha256": "85710ac2778364d0af3dd223b5b2f4fb00e72cdfa56ab9aacedd0af81358a4d4",
+      "sha256": "419861a42ad5a9c751db77e3b5f646212676894ca0f2b047393797bb9b243531",
       "sources": ["src/ProjectProposalPage.tsx", "src/lib/project-proposal.ts"],
       "scenarios": [
         "absentCommitMapDoesNotInventEvidenceTest",
@@ -15790,7 +15802,7 @@
     },
     {
       "path": "formal/models/ui/ui_solana_history_recovery.qnt",
-      "sha256": "4d12467d900c3b09e35a6c2767dd42b7ae78528d2cd103952d3787c2a2bf351f",
+      "sha256": "7e4e9b8a3e19d96c3ec5846290448b41c0ef8efeec551a2f1b24e487cc9432f6",
       "sources": [
         "backend/security/handler.ts",
         "src/SecurityBounty.tsx",
@@ -15802,9 +15814,11 @@
       "scenarios": [
         "acceptedVerificationMayFinishAfterDepartureTest",
         "accountChangeDuringPromptCannotCacheProofTest",
+        "actorAfterInnerObservationNeedsServerFenceTest",
         "actorChangeAfterCaptureRefusesPromptTest",
         "alteredMessageCacheCannotAvoidSigningTest",
         "cachedSignatureForOtherMessageCannotAvoidSigningTest",
+        "childDepartureDuringInnerPostIdentityTest",
         "foreignCacheCannotAvoidSigningTest",
         "generationChangeInvalidatesCapturedConnectionTest",
         "invalidCacheOldBehaviorNegativeControlTest",
@@ -15820,11 +15834,14 @@
         "noncanonicalCacheCannotAvoidSigningTest",
         "oldFinallyCannotClearNewConnectionBusyTest",
         "oldFinallyResetNegativeControlTest",
+        "oldInnerParentAwaitCouldDispatchAfterChildTest",
         "oldParentRevisionOmissionCouldPromptStaleViewNegativeControlTest",
         "parentAliveDoesNotAuthorizeDepartedChildTest",
+        "parentDepartureAfterInnerIdentityReturnTest",
         "partialCacheSurvivesSecondPromptRefusalTest",
         "payerChangeResetsConnectedWalletTest",
         "refreshedRevisionReconnectReusesValidatedCacheTest",
+        "replacementAfterInnerIdentityCannotPostTest",
         "resetBetweenAuthorityReturnAndContinuationStopsEffectTest",
         "revisionChangeBeforeFinalAuthorizeRefusesOldRequestTest",
         "revisionChangeDuringPromptStopsCacheWriteTest",
@@ -15835,6 +15852,7 @@
         "signOutStopsCachedProofBeforeSubmissionTest",
         "signThenCacheFailureIsVisibleTest",
         "synchronousOwnershipRefusesSecondActionTest",
+        "unknownInnerPostIdentityRefusesTest",
         "unmountDuringPromptCannotCacheOrVerifyTest",
         "validOriginalPayerConnectsTest",
         "verificationFailureKeepsCacheForRetryTest",
@@ -15918,24 +15936,44 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_submitted_payment_lifetime.qnt",
+      "sha256": "d27a0607471a38b0202f2e24a246674129b18ce408bbf603ef8007ca757e4aab",
+      "sources": ["src/BountySubmittedPayments.tsx", "src/SecurityBounty.tsx"],
+      "scenarios": [
+        "actorChangeAfterPostObservationIsServerFencedTest",
+        "alreadyDispatchedEffectSurvivesDepartureTest",
+        "completeCurrentOwnerTest",
+        "departureAfterAuthorizationReturnTest",
+        "departureAfterPostSessionObservationTest",
+        "departureBeforeIdentityReturnsTest",
+        "departureDuringAuthorizationTest",
+        "departureDuringVerificationGetTest",
+        "editsDuringAuthorizationKeepCapturedCandidateTest",
+        "oldChildContinuationWritesAfterDepartureTest",
+        "oldFailureCannotReplaceNewErrorStateTest",
+        "oldFinallyCannotClearNewActionTest",
+        "oldParentHelperStartsPostAfterDepartureTest",
+        "parentDepartureAfterPostHelperReturnTest",
+        "refusedAuthorityDoesNotWriteTest",
+        "replacementContextKeepsItsOwnCandidateTest",
+        "storageFailureDoesNotDispatchTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_submitted_payment_recovery.qnt",
-      "sha256": "e3679a163af9556b67d689564d453a9c68e4f61ff78b5677ec1bb7b0e6aeaf12",
-      "sources": [
-        "src/BountySubmittedPayments.tsx",
-        "src/SecurityBounty.tsx",
-        "src/lib/use-action.ts"
-      ],
+      "sha256": "79db9a5b362745f122631630d54c0208855bf17ff779e6892120cdc590a01ceb",
+      "sources": ["src/BountySubmittedPayments.tsx", "src/SecurityBounty.tsx"],
       "scenarios": [
         "confirmedIdentifiersAreNotResubmittedTest",
         "deliveredResponseDoesNotKeepPrivateViewAuthorizedTest",
         "editDuringRequestDoesNotChangeCapturedHashesTest",
         "editsDuringVerificationKeepCapturedPostBodyTest",
         "failedAuthorizationCanRetryTest",
-        "failedReloadRetainsExistingRowsTest",
-        "fallbackDepartureMayFinishSameActorVerificationTest",
+        "failedNewGenerationReadCannotRestoreOldRowsTest",
+        "fallbackDeparturePreventsCandidateWritesTest",
         "generationChangeBetweenPreflightsRefusesPostTest",
-        "generationRefreshRetainsOldRowsUntilReplyTest",
-        "oldActionWritesOnlyCapturedGenerationAfterNewReadTest",
+        "generationRefreshClearsOldRowsBeforeReplyTest",
+        "oldActionCannotWriteAfterNewGenerationReadTest",
         "parentActorCheckRefusesNewCookieActorTest",
         "parentDepartureAfterPostDoesNotDeliverSuccessTest",
         "parentDepartureStopsFinalPreflightTest",

@@ -31,9 +31,10 @@
 // Parent authorization, session observation and the next caller continuation
 // are separate. The caller rechecks ownership after the helper returns.
 // Parent and child lifetimes differ: case navigation can remove this child
-// while its parent stays active. Once verify is invoked while current, its
-// external effect may complete after departure. No rollback of an already
-// handed-off request is claimed. A pre-connected state is used for bounded
+// while its parent stays active. The owner also crosses the parent's inner
+// POST identity await. Only an already-dispatched external effect may complete
+// after departure; invoking verify alone is not dispatch. No rollback of an
+// already handed-off request is claimed. A pre-connected state is used for bounded
 // two-check retry scenarios; connection is exercised separately and the third
 // slot permits reconnecting after a stale preflight before reusing cached proof.
 // Old unverified-cache, late-effect and stale-finally actions are negative
@@ -49,10 +50,11 @@ module ui_solana_history_recovery {
   type Op = { phase: str, mode: str, context: int, scope: int, actor: int,
     payer: int, body: int, revision: int, observedRevision: int, index: int, next: str, authorized: bool,
     local: int -> Proof, ready: Set[int], candidate: Proof, prompts: int,
-    dispatched: bool, backendAccepted: bool }
+    dispatched: bool, backendAccepted: bool, postActor: int, postCookie: int }
   val idle: Op = { phase: "unused", mode: "check", context: 1, scope: 1, actor: 1,
     payer: 1, body: 1, revision: 1, observedRevision: 0, index: 1, next: "none", authorized: false,
-    local: indices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false, backendAccepted: false }
+    local: indices.mapBy(_ => absent), ready: Set(), candidate: absent, prompts: 0, dispatched: false, backendAccepted: false,
+    postActor: -1, postCookie: 0 }
   var s: { child: bool, parent: bool, context: int, scope: int, revision: int,
     serverRevision: int, serverChanges: int, refreshes: int,
     payer: int, body: int, actor: int, allowed: bool, wallet: bool,
@@ -176,22 +178,39 @@ module ui_solana_history_recovery {
       else s.with("operations", s.operations.set(id, if (op.index == 1) op.with("index", 2).with("phase", "loop-authorize")
         else op.with("phase", "final-authorize"))) }
   }
-  action dispatch(id: int): bool = {
+  action beginVerification(id: int): bool = {
     val op = operation(id)
     all { op.phase == "verify", op.ready == indices,
       s' = if (not(current(id))) stopped(id, "none")
-        else s.with("verifyRequests", s.verifyRequests + 1)
-          .with("operations", s.operations.set(id, op.with("phase", "verify-await").with("dispatched", true))) }
+        else s.with("operations", s.operations.set(id, op.with("phase", "post-identity"))) }
   }
+  action postIdentityObserved(id: int, available: bool): bool = all { operation(id).phase == "post-identity",
+    s' = s.with("operations", s.operations.set(id, operation(id).with("phase", "post-observed")
+      .with("postActor", if (available) s.actor else -1))) }
+  action postIdentityReturned(id: int): bool = all { operation(id).phase == "post-observed",
+    s' = s.with("operations", s.operations.set(id, operation(id).with("phase", "post-returned"))) }
+  action dispatchCurrent(id: int): bool = all { operation(id).phase == "post-returned",
+    s' = if (not(current(id))) stopped(id, "none")
+      else if (not(s.parent) or operation(id).postActor != operation(id).actor) stopped(id, "identity")
+      else s.with("verifyRequests", s.verifyRequests + 1).with("operations", s.operations.set(id,
+        operation(id).with("phase", "verify-await").with("dispatched", true).with("postCookie", s.actor))) }
+  // Earlier scenarios use this convenience; step explores each inner await.
+  action dispatch(id: int): bool = if (current(id)) beginVerification(id)
+    .then(postIdentityObserved(id, true)).then(postIdentityReturned(id)).then(dispatchCurrent(id))
+    else all { operation(id).phase == "verify", s' = stopped(id, "none") }
   action externalEffect(id: int): bool = all { operation(id).dispatched, not(s.effects.contains(id)),
     operation(id).revision == s.serverRevision,
+    operation(id).postCookie == operation(id).actor, operation(id).postCookie > 0,
     s' = s.with("effects", s.effects.union(Set(id)))
       .with("operations", s.operations.set(id, operation(id).with("backendAccepted", true))) }
   action backendRefusesStale(id: int): bool = all { operation(id).phase == "verify-await",
     not(operation(id).backendAccepted), operation(id).revision != s.serverRevision,
     s' = stopped(id, "stale-revision") }
+  action backendRefusesActor(id: int): bool = all { operation(id).phase == "verify-await",
+    operation(id).postCookie != operation(id).actor, s' = stopped(id, "identity") }
   action verifyReturns(id: int, succeeds: bool): bool = all { operation(id).phase == "verify-await",
     not(succeeds) or operation(id).backendAccepted or operation(id).revision == s.serverRevision,
+    not(succeeds) or operation(id).postCookie == operation(id).actor,
     s' = stopped(id, if (succeeds) "none" else "verification") }
   action serverRevisionAdvances = all { s.serverChanges < 1,
     s' = s.with("serverRevision", s.serverRevision + 1).with("serverChanges", s.serverChanges + 1) }
@@ -234,7 +253,8 @@ module ui_solana_history_recovery {
     nondet yes = Set(false, true).oneOf()
     any { connected, seed(seedKind), start(id, mode), identityReply(id, yes), readCache(id), authorize(id), parentObservation(id), parentCompletion(id, yes),
       sessionReply(id, yes), continueAuthorized(id), walletReturns(id, yes), lookup(id, yes), signatureReturns(id, kind), cacheWrite(id, yes),
-      advance(id), dispatch(id), externalEffect(id), backendRefusesStale(id), verifyReturns(id, yes), serverRevisionAdvances, contextChanges(contextKind), accountChanges,
+      advance(id), beginVerification(id), postIdentityObserved(id, yes), postIdentityReturned(id), dispatchCurrent(id),
+      externalEffect(id), backendRefusesStale(id), backendRefusesActor(id), verifyReturns(id, yes), serverRevisionAdvances, contextChanges(contextKind), accountChanges,
       signOut, accessLost, unmount, parentUnmount, s' = s }
   }
   val invariant = all { s.busy == s.active, not(s.badEffect), s.verifyRequests <= 3,
@@ -359,4 +379,26 @@ module ui_solana_history_recovery {
     .then(serverRevisionAdvances).then(parentObservation(1)).then(oldParentCompletionWithoutRevision(1))
     .then(sessionReply(1, true)).then(continueAuthorized(1)).then(lookup(1, true))
     .expect(s.revision == 1 and s.serverRevision == 2 and operation(1).prompts == 1 and not(invariant))
+  action readyToVerify(id: int): bool = existing(id).then(existing(id)).then(authority(id)).then(beginVerification(id))
+  run childDepartureDuringInnerPostIdentityTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, true)).then(unmount)
+    .then(postIdentityReturned(1)).then(dispatchCurrent(1)).expect(s.verifyRequests == 0 and invariant)
+  run parentDepartureAfterInnerIdentityReturnTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, true)).then(postIdentityReturned(1))
+    .then(parentUnmount).then(dispatchCurrent(1)).expect(s.verifyRequests == 0 and invariant)
+  run replacementAfterInnerIdentityCannotPostTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, true)).then(postIdentityReturned(1))
+    .then(contextChanges("revision")).then(dispatchCurrent(1)).expect(s.verifyRequests == 0 and invariant)
+  run unknownInnerPostIdentityRefusesTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, false)).then(postIdentityReturned(1))
+    .then(dispatchCurrent(1)).expect(s.verifyRequests == 0 and s.error == "identity" and invariant)
+  run actorAfterInnerObservationNeedsServerFenceTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, true)).then(accountChanges)
+    .then(postIdentityReturned(1)).then(dispatchCurrent(1)).then(backendRefusesActor(1))
+    .expect(s.verifyRequests == 1 and s.effects == Set() and s.error == "identity" and invariant)
+  action oldUnownedInnerDispatch(id: int): bool = all { operation(id).phase == "post-returned",
+    s' = s.with("verifyRequests", s.verifyRequests + 1).with("badEffect", not(current(id))) }
+  run oldInnerParentAwaitCouldDispatchAfterChildTest = init.then(connected).then(seed("both-valid")).then(begin(1))
+    .then(readyToVerify(1)).then(postIdentityObserved(1, true)).then(postIdentityReturned(1))
+    .then(unmount).then(oldUnownedInnerDispatch(1)).expect(s.verifyRequests == 1 and not(invariant))
 }

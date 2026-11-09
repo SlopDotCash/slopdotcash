@@ -43,9 +43,10 @@ export function SolanaBountyRecovery({
   generation: number;
   payer: string;
   messages: Message[];
-  authorize: () => Promise<void>;
+  authorize: (isCurrent?: () => boolean) => Promise<void>;
   verify: (
     signatures: { messageId: string; signature: string }[],
+    isCurrent?: () => boolean,
   ) => Promise<void>;
 }) {
   const wallets = usePayoutWallets().filter(
@@ -85,7 +86,7 @@ export function SolanaBountyRecovery({
   };
   const connect = (provider: PayoutWallet) =>
     void run(async (isCurrent) => {
-      await authorize();
+      await authorize(isCurrent);
       if (!isCurrent()) return;
       const connection = await provider.connect();
       if (!isCurrent()) return;
@@ -102,7 +103,7 @@ export function SolanaBountyRecovery({
       const payerBytes = solanaAddressBytes(payer);
       const checkAuthority = async () => {
         if (!isCurrent()) return false;
-        await authorize();
+        await authorize(isCurrent);
         if (!isCurrent()) return false;
         const current = await currentProjectSession();
         if (!isCurrent()) return false;
@@ -148,7 +149,7 @@ export function SolanaBountyRecovery({
         signatures.push({ messageId: message.messageId, signature });
       }
       if (!(await checkAuthority()) || !isCurrent()) return;
-      await verify(signatures);
+      await verify(signatures, isCurrent);
     });
   return (
     <div className="direct-bounty-payment">
