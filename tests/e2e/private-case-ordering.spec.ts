@@ -23,6 +23,14 @@ function deferred() {
   return { wait, release, started, requested };
 }
 
+function caseListResponse(page: Page) {
+  return page.waitForResponse(
+    (value) =>
+      new URL(value.url()).pathname === "/api/v1/security-cases" &&
+      value.request().method() === "GET",
+  );
+}
+
 async function releaseAction(
   page: Page,
   held: ReturnType<typeof deferred>,
@@ -36,11 +44,7 @@ async function releaseAction(
   );
   // onDone starts this parent refresh after the response's identity checks.
   // Network completion alone does not mean the application callback ran.
-  const callbackRefresh = page.waitForResponse(
-    (value) =>
-      new URL(value.url()).pathname === "/api/v1/security-cases" &&
-      value.request().method() === "GET",
-  );
+  const callbackRefresh = caseListResponse(page);
   held.release();
   await (await response).finished();
   await (await callbackRefresh).finished();
@@ -193,12 +197,14 @@ async function privateCase(page: Page, diagnostics: Diagnostics) {
     },
     async refreshError() {
       failRead = true;
+      const refreshed = caseListResponse(page);
       await detail
         .getByRole("button", { name: "Run the analysis again", exact: true })
         .click();
       await expect(detail.getByRole("alert")).toContainText(
         "Showing the last loaded case",
       );
+      await (await refreshed).finished();
     },
     async change(value: string) {
       const form = detail.locator('form[data-case-action="remediation"]');
@@ -233,10 +239,12 @@ test("private case refuses an older action after a newer accepted revision", asy
     await expect(fixture.detail.locator(".security-next-step")).toContainText(
       "Case revision 2",
     );
+    const newerRefresh = caseListResponse(page);
     await fixture.change("retest");
     await expect(fixture.detail.locator(".security-next-step")).toContainText(
       "Case revision 3",
     );
+    await (await newerRefresh).finished();
     await releaseAction(page, oldAction, 1);
     await page.waitForLoadState("networkidle");
     await expect(fixture.detail.locator(".security-next-step")).toContainText(
@@ -266,10 +274,12 @@ test("an equal private case action joins its current fresh read", async ({
       "Case revision 2",
     );
     const fresh = fixture.holdRead();
+    const analysisRefresh = caseListResponse(page);
     await fixture.detail
       .getByRole("button", { name: "Run the analysis again", exact: true })
       .click();
     await fresh.requested;
+    await (await analysisRefresh).finished();
     const readCount = fixture.reads;
     await releaseAction(page, oldAction, 1);
     await expect(
