@@ -51,9 +51,16 @@ Before deleting an object, the worker checks that every exact part exists in
 that day's backup and verifies its digest and size against the immutable
 inventory. It deletes only canonical scanner keys and verifies their absence.
 A durable deletion receipt is written afterward. A failed or interrupted
-object can be retried: its backup is checked again and already absent parts
-remain absent. Manifests, case closures and deletion receipts are retained.
+object can be retried: its backup is checked again and absent parts need no
+second delete. Manifests, case closures and deletion receipts are retained.
 A missing backup, invalid key or failed delete prevents completion.
+
+An upload admitted before expiry can still finish after that receipt and
+restore raw bytes. The D1 claim fences new references, not in-flight R2 writes.
+This unresolved race is modeled in `vetting_object_lifecycle` and
+`vetting_upload_completion`; current receipts prove the observed deletion only.
+Storage-generation isolation and recovery of writes with unknown outcomes
+remain required before physical retirement can be claimed.
 
 Keep `max_concurrency = 1` and `max_batch_size = 1` on the queue. Do not call
 backup or cleanup routines concurrently from another service. The active D1
