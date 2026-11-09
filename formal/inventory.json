@@ -287,17 +287,18 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "d88a63a760037ea70703fc161daa5a5d0983779ac0b8fdc104557da50dc58bff",
+      "sha256": "0981be82762924d6df6e2c4e81ef1c93b2e5fffd2ef2f79feaed784e13485097",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
+        "formal/models/payments/payment_dispatch.qnt",
         "formal/models/payments/payment_history.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt"
       ],
       "candidateLines": [
         107, 212, 279, 323, 328, 375, 397, 403, 426, 448, 619, 640, 654, 774,
-        830, 868, 877, 888, 1027, 1090, 1107, 1197, 1198, 1252
+        830, 868, 877, 892, 1031, 1094, 1111, 1201, 1202, 1256
       ],
       "review": "mapped-abstraction"
     },
@@ -807,7 +808,10 @@
     {
       "path": "backend/security/payment-database.ts",
       "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
-      "models": ["formal/models/api/api_award_recovery.qnt"],
+      "models": [
+        "formal/models/api/api_award_recovery.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -1224,6 +1228,7 @@
       "path": "contracts/evm/monthly-reserve.ts",
       "sha256": "e0508db9544286bba4a3339738422d1839ef5dc418b7d5eba121a81f9b69eee2",
       "models": [
+        "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1309,6 +1314,7 @@
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/evm_factory_authority.qnt",
+        "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/contracts/evm_proxy_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
         "formal/models/payments/authority_rotation.qnt",
@@ -1513,7 +1519,10 @@
     {
       "path": "contracts/solana/monthly-commitment.ts",
       "sha256": "d8907d3546117dc0f9cd604237d70583e4483d526225c5110dd378f63abadccb",
-      "models": ["formal/models/rewards/monthly_reserve.qnt"],
+      "models": [
+        "formal/models/contracts/solana_monthly_allocation.qnt",
+        "formal/models/rewards/monthly_reserve.qnt"
+      ],
       "candidateLines": [92, 102, 115, 140, 152],
       "review": "mapped-abstraction"
     },
@@ -1521,6 +1530,7 @@
       "path": "contracts/solana/monthly-reserve.ts",
       "sha256": "543d4ca777266b3209b3ecf18ec142b194d251331dfd84e970df61ce10306059",
       "models": [
+        "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1571,6 +1581,7 @@
       "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
+        "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
@@ -2262,7 +2273,10 @@
     {
       "path": "migrations/0057_private_security_payments.sql",
       "sha256": "99bfc406d747e486db01f59ce9456a958dcbf56322dbf34903e6939c9bfc0026",
-      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
       "candidateLines": [
         13, 20, 57, 88, 94, 96, 98, 101, 104, 105, 110, 113, 117, 137, 139, 150,
         152
@@ -2526,7 +2540,10 @@
     {
       "path": "migrations/0083_monthly_execution_attempts.sql",
       "sha256": "be50317ebf5b448510041960bd6e7a7ef79acf3d9c08f7c206bbfc9892806ead",
-      "models": ["formal/models/rewards/monthly_execution_recovery.qnt"],
+      "models": [
+        "formal/models/rewards/monthly_commit_cursor.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
       "candidateLines": [17, 19],
       "review": "mapped-abstraction"
     },
@@ -3468,12 +3485,15 @@
     },
     {
       "path": "scripts/payment-keeper/budget.ts",
-      "sha256": "4e94ae2f6cdbea21d8dcb9148c66d1d70dc8895b5e21a0c009d02fa5c77ca253",
-      "models": ["formal/models/payments/operator_keeper.qnt"],
+      "sha256": "8301544417ebeeedd3c6329f833f53e15e8503a71c29888666d8cfd9e8698c14",
+      "models": [
+        "formal/models/payments/keeper_gas_budget.qnt",
+        "formal/models/payments/operator_keeper.qnt"
+      ],
       "candidateLines": [
-        30, 84, 116, 154, 181, 231, 235, 245, 251, 289, 290, 293, 305, 327, 353,
-        358, 363, 367, 371, 376, 387, 427, 430, 432, 436, 437, 438, 439, 441,
-        448, 461
+        35, 114, 147, 185, 212, 262, 266, 276, 282, 320, 321, 324, 336, 358,
+        384, 389, 394, 398, 402, 407, 418, 458, 461, 463, 467, 468, 469, 470,
+        472, 479, 492
       ],
       "review": "mapped-abstraction"
     },
@@ -6434,7 +6454,8 @@
         "formal/models/fees/earned_fee_history.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
-        "formal/models/fees/native_budget.qnt"
+        "formal/models/fees/native_budget.qnt",
+        "formal/models/payments/keeper_gas_budget.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6691,9 +6712,11 @@
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/keeper_gas_budget.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
@@ -6747,6 +6770,7 @@
       "path": "workers/payment-executor/monthly.ts",
       "sha256": "cadf8fe152a30da4899219716ff59d3472387043bf250772bff3805df565c392",
       "models": [
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -6832,6 +6856,7 @@
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
@@ -8779,6 +8804,27 @@
       ]
     },
     {
+      "path": "formal/models/contracts/evm_monthly_reserve.qnt",
+      "sha256": "3175fa5e6d7d2eccd32bc00f07dbb0632b41dc4e27b82d8614ee30199f8ff8e1",
+      "sources": [
+        "contracts/evm/monthly-reserve.ts",
+        "contracts/evm/src/ProjectEscrow.sol"
+      ],
+      "scenarios": [
+        "closedWindowRefusedTest",
+        "duplicateSourceAcrossPeriodsTest",
+        "leafSurvivesOptOutAndWindowTest",
+        "otherPeriodLeafRevertsReservationTest",
+        "partialReleaseThenFittingLeafTest",
+        "pendingBlocksManualAwardTest",
+        "reattestedReservationLandsTest",
+        "reservationNeedsFreeBalanceTest",
+        "sequenceChangeRevertsReservationTest",
+        "staleExpectedReleaseRefusedTest",
+        "wholeUntouchedReleaseTest"
+      ]
+    },
+    {
       "path": "formal/models/contracts/evm_owner_action.qnt",
       "sha256": "c399c3a041b18a241503278684ae39827c8de3df45635b724e8dd5116602e75c",
       "sources": ["src/lib/evm-vault-actions.ts"],
@@ -8926,6 +8972,30 @@
         "existingConfigReusedTest",
         "initializeConfirmReadTest",
         "wrongFixtureRolesRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contracts/solana_monthly_allocation.qnt",
+      "sha256": "db746dfa9844abf7e55d67aff249a6f0d7331ddb742da51f7aa2c2fe6ff89307",
+      "sources": [
+        "contracts/solana/monthly-commitment.ts",
+        "contracts/solana/monthly-reserve.ts",
+        "contracts/solana/programs/slop-escrow/src/lib.rs"
+      ],
+      "scenarios": [
+        "actorZeroReleasesTest",
+        "commitThenPayTest",
+        "eachSourceSettlesOnceTest",
+        "legacyExpiredMonthKeepsOutstandingTest",
+        "migratedGrossOneRefusedTest",
+        "migratedPrincipalStaysReservedTest",
+        "otherActorAfterFreezeStaysReservedTest",
+        "otherActorBeforeFreezeReleasesTest",
+        "outstandingBlocksHandCommitTest",
+        "partialReserveReleaseThenFittingLeafTest",
+        "sameAwardReleasesTest",
+        "smallerAwardAfterFreezeStaysReservedTest",
+        "staleExpectedReserveReleaseTest"
       ]
     },
     {
@@ -9445,7 +9515,7 @@
     },
     {
       "path": "formal/models/payments/binding_cancellation.qnt",
-      "sha256": "9503d81d700ea9327f8db0d01b3cfd04e522688fc782294d4ea0195bed68ce9d",
+      "sha256": "e5c0ee67f703412e0be79bcbac8c6abe99151cd1f5a5fcbc66974bc6a4aef08b",
       "sources": [
         "workers/payment-executor/binding-recovery.ts",
         "workers/payment-executor/binding-shared.ts",
@@ -9456,7 +9526,9 @@
         "codeAccountRefusedTest",
         "noReceiptStillHeldTest",
         "obsoleteOnlyTest",
-        "originalWinsAfterCancelTest"
+        "originalRevertedClearsPointerTest",
+        "originalWinsAfterCancelTest",
+        "supersededClearsPointerTest"
       ]
     },
     {
@@ -9477,7 +9549,7 @@
     },
     {
       "path": "formal/models/payments/bounty_payment.qnt",
-      "sha256": "85fa4b7aba4200aa746dde1acace2af81989b17f341199e7879c9570d6b9abad",
+      "sha256": "5bc0044fef8ea9114b6ed8da08c5dae5caa8db683ef18f736317c52a4efc0888",
       "sources": [
         "backend/security/direct-payments.ts",
         "backend/security/verified-direct-recovery.ts",
@@ -9490,11 +9562,12 @@
         "cancelledResearcherRequestPaysNewWalletOnceTest",
         "completeTest",
         "feeLegCannotRedirectTest",
-        "lowerNonceBlocksFeeCancellationTest",
+        "lowerNonceBlocksResearcherCancellationTest",
         "noResendAfterPaidTest",
         "paidResearcherLegNotReissuedTest",
         "partialRemainsUnpaidTest",
         "researcherSuccessorAfterCancellationTest",
+        "researcherWaitsForFeeNonceTest",
         "successorWithoutCancellationRefusedTest",
         "unpaidFeeLegSuccessorTest",
         "unverifiedLandedLegBlocksSuccessorTest"
@@ -9589,7 +9662,7 @@
     },
     {
       "path": "formal/models/payments/direct_payer_nonce.qnt",
-      "sha256": "7efdb9f6324627a9940495713ac4f725a55fc80441951a53888a85dd1d18c397",
+      "sha256": "29d61f2772a7e214ffad7826366d2e98cbacd49189567e9b38d197a5c3d6c169",
       "sources": [
         "backend/security/direct-payments.ts",
         "migrations/0112_direct_payment_recovery.sql",
@@ -9741,6 +9814,28 @@
       ]
     },
     {
+      "path": "formal/models/payments/keeper_gas_budget.qnt",
+      "sha256": "64d14ba08f3ca5d667f83c6ad24c3f695f27a54d73f9f88199bdcb240b1c97e4",
+      "sources": [
+        "scripts/payment-keeper/budget.ts",
+        "workers/fee-converter/verified-native-liability.ts",
+        "workers/payment-executor/core.ts"
+      ],
+      "scenarios": [
+        "finalizeZeroesSiblingsTest",
+        "overrunStopsSigningTest",
+        "overrunWithinTransactionBudgetTest",
+        "replacementMustNameOriginalTest",
+        "replacementSharesLiabilityTest",
+        "settledYesterdayFreesTodayTest",
+        "solanaExpiryChargedOnObservationDayTest",
+        "solanaHasNoReplacementTest",
+        "unknownCarriesAcrossMidnightTest",
+        "unsignedBlocksReconcileTest",
+        "unsignedOriginalCannotBeReplacedTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/operator_keeper.qnt",
       "sha256": "4963eda559bfe477487fb102c3c37abded7863e55b036a14979455e013f33c5f",
       "sources": [
@@ -9778,30 +9873,37 @@
     },
     {
       "path": "formal/models/payments/payment_dispatch.qnt",
-      "sha256": "6f3a3c3f6b9ee355da51f017d5be962fa8001d6a951c57d8a2de64c297c04cd6",
+      "sha256": "ce74d4658ec2030dcde4c7127ec0c91f410dcd10168731ad6e9bd35ab1899149",
       "sources": [
         "backend/payments/dispatch.ts",
+        "backend/payments/handler.ts",
         "backend/payments/ledger.ts",
         "backend/payments/verified-evidence.ts",
+        "backend/security/payment-database.ts",
         "migrations/0011_payments.sql",
         "migrations/0017_robinhood_chain.sql",
         "migrations/0021_multi_asset_vault_snapshots.sql",
+        "migrations/0057_private_security_payments.sql",
         "workers/payments/reconcile.ts",
         "workers/payments/scanner.ts",
         "workers/security-payments/index.ts"
       ],
       "scenarios": [
+        "ambiguousCannotSubmitTest",
+        "ambiguousClearsLeaseTest",
         "ambiguousRetryTest",
         "conflictingResponseTest",
         "externalPaidBesideRecordedTxTest",
         "externalPaidWithoutRecordedTxTest",
+        "guardedReleaseKeepsUncertainHoldTest",
         "lateOriginalAfterWalletReplacementTest",
         "noResponseAfterPaidTest",
         "noSecondReceiptAfterExternalPaidTest",
         "paidIsAbsorbingTest",
         "staleConflictCannotHoldCompletedTest",
         "staleFailurePreservesSubmittedSuccessorTest",
-        "staleLeaseRefusedTest"
+        "staleLeaseRefusedTest",
+        "unguardedReleaseIsReparkedTest"
       ]
     },
     {
@@ -10647,6 +10749,25 @@
         "src/lib/weighted-allocation.ts"
       ],
       "scenarios": ["conservedTest", "sampledAllocationTest", "tieTest"]
+    },
+    {
+      "path": "formal/models/rewards/monthly_commit_cursor.qnt",
+      "sha256": "64da5530e2fda80ecc2182bccc2fa245e104590472cf5edd5aedc36359a695db",
+      "sources": [
+        "migrations/0083_monthly_execution_attempts.sql",
+        "workers/payment-executor/core.ts",
+        "workers/payment-executor/monthly.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "closedWindowNotAdmittedTest",
+        "completeOnlyAfterLeavesTest",
+        "legacyCompletesOnSecondPassTest",
+        "newestFirstReservesBeforeOlderLeafTest",
+        "oldestFirstRevertsReservationTest",
+        "prerequisiteAddedForLruCandidateTest",
+        "prerequisiteFailureStillRunsOriginalTest"
+      ]
     },
     {
       "path": "formal/models/rewards/monthly_coordinator.qnt",

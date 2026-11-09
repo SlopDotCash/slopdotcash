@@ -13,8 +13,13 @@
 // Ghost state: `issued` holds (nonce, case, leg) for every request any
 // generation of any case ever offered. Bounds: one payer on one network, two
 // cases, one successor or renewal each, pending nonce advanced by unrelated
-// payer activity at most twice. Nonce strings are canonical decimals, so the
-// SQL `ORDER BY length(nonce) DESC, nonce DESC` maximum is the integer maximum.
+// payer activity at most twice. The triggers store
+// lower(json_extract(t.value,'$.nonce')), the canonical lowercase unpadded
+// 0x-hex nonce of direct-evm.ts, whose length-then-lexicographic order equals
+// integer order, so the SQL `ORDER BY length(nonce) DESC, nonce DESC` maximum
+// is the integer maximum. The initial intent passes the reserved pair
+// reversed (direct-payments.ts `[nonces[1], nonces[0]]`): the researcher leg
+// (leg_index 0) takes base+1 and the fee leg (leg_index 1) takes base.
 module direct_payer_nonce {
   type R = { nonce: int, caseId: int, gen: int, leg: int }
   type S = { pending: int, reservations: Set[R], read: int -> int, gen: int -> int,
@@ -41,10 +46,10 @@ module direct_payer_nonce {
     val b = s.read.get(c)
     all { b > 0, s.gen.get(c) == -1, free(b), free(b + 1), slotFree(c, 0, 0), slotFree(c, 0, 1),
       s' = s.with("reservations", s.reservations.union(Set(
-          { nonce: b, caseId: c, gen: 0, leg: 0 }, { nonce: b + 1, caseId: c, gen: 0, leg: 1 })))
+          { nonce: b + 1, caseId: c, gen: 0, leg: 0 }, { nonce: b, caseId: c, gen: 0, leg: 1 })))
         .with("gen", s.gen.set(c, 0)).with("read", s.read.set(c, 0))
-        .with("nonce0", s.nonce0.set(c, b)).with("nonce1", s.nonce1.set(c, b + 1))
-        .with("issued", s.issued.union(Set((b, c, 0), (b + 1, c, 1)))) } }
+        .with("nonce0", s.nonce0.set(c, b + 1)).with("nonce1", s.nonce1.set(c, b))
+        .with("issued", s.issued.union(Set((b + 1, c, 0), (b, c, 1)))) } }
   // Successor replacing one leg's nonce after its retirement proof.
   action successor(c: int, leg: int): bool = {
     val b = s.read.get(c)
@@ -82,11 +87,11 @@ module direct_payer_nonce {
     .then(prepare(1)).then(prepare(2).fail())
   run retryAfterConflictTakesFreshNoncesTest = init.then(readBase(1)).then(readBase(2))
     .then(prepare(1)).then(dropRead(2)).then(readBase(2)).then(prepare(2))
-    .expect(s.nonce0.get(2) == 3 and s.nonce1.get(2) == 4 and invariant)
+    .expect(s.nonce0.get(2) == 4 and s.nonce1.get(2) == 3 and invariant)
   run pendingAboveReservationsTest = init.then(external).then(external).then(readBase(1)).then(prepare(1))
-    .expect(s.nonce0.get(1) == 3 and invariant)
+    .expect(s.nonce1.get(1) == 3 and s.nonce0.get(1) == 4 and invariant)
   run successorReservesOnlyChangedLegTest = init.then(readBase(1)).then(prepare(1)).then(readBase(1))
-    .then(successor(1, 0)).expect(s.nonce0.get(1) == 3 and s.nonce1.get(1) == 2
+    .then(successor(1, 0)).expect(s.nonce0.get(1) == 3 and s.nonce1.get(1) == 1
       and s.reservations.size() == 3 and invariant)
   run staleSuccessorReadRefusedTest = init.then(readBase(1)).then(prepare(1)).then(readBase(1))
     .then(readBase(2)).then(prepare(2)).then(successor(1, 1).fail())

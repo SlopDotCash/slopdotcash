@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "b579c61746050d1abfb273f19e7beb54af95f728693e4567b6ab4fb3aed24b4b",
+  "inventorySha256": "2da132a0a7ac3ee36cc4fcbdd216e942f85db60f5db10b795b8a84ba46dd4843",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -972,14 +972,11 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["held", "paid", "processing", "ready", "submitted"],
-      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
-      "lexicallyUnmentionedValues": [
-        "held",
-        "paid",
-        "processing",
-        "ready",
-        "submitted"
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
       ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -988,12 +985,14 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["failed", "finalized", "prepared", "submitted", "unknown"],
-      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "failed",
         "finalized",
         "prepared",
-        "submitted",
         "unknown"
       ],
       "review": "candidate-only"
@@ -1004,8 +1003,11 @@
       "name": "state",
       "kind": "sql-check",
       "values": ["paid", "reserved"],
-      "models": ["formal/models/payments/security_rail_exclusivity.qnt"],
-      "lexicallyUnmentionedValues": ["paid", "reserved"],
+      "models": [
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/security_rail_exclusivity.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["reserved"],
       "review": "candidate-only"
     },
     {
@@ -3154,11 +3156,7 @@
       "kind": "string-union",
       "values": ["original_finalized", "original_reverted", "superseded"],
       "models": ["formal/models/payments/binding_cancellation.qnt"],
-      "lexicallyUnmentionedValues": [
-        "original_finalized",
-        "original_reverted",
-        "superseded"
-      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -3171,9 +3169,11 @@
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/keeper_gas_budget.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
+        "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["required"],
