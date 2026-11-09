@@ -75,6 +75,8 @@ export interface IdentityPersistence {
   ): Promise<OAuthFlow | null>;
   createAssertion(
     assertion: IdentityAssertion,
+    /** Required for deterministic production assertions; null for independent local tokens. */
+    flowId: string | null,
   ): Promise<IdentityAssertion | null>;
   markAssertionIssued(flowId: string, issuedAt: string): Promise<boolean>;
   consumeAssertion(

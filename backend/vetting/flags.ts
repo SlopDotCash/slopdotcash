@@ -227,7 +227,8 @@ export class ProjectFlagStore {
              created_at
            )
            SELECT ?, id, ?, ?, revision, manifest_sha256, ?, ?, ?, ?
-             FROM projects WHERE id = ? AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+             FROM projects WHERE id = ? AND revision = ? AND manifest_sha256 = ?
+               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
         )
         .bind(
           input.flagId,
@@ -238,6 +239,8 @@ export class ProjectFlagStore {
           input.evidenceUrl,
           input.at,
           input.project.id,
+          input.project.revision,
+          input.project.manifestSha256,
           input.reporter.githubId,
         ),
       this.db

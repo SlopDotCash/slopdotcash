@@ -1,5 +1,5 @@
 import { ImagePlus, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   assertProjectImage,
   MAX_PROJECT_IMAGE_LENGTH,
@@ -21,7 +21,11 @@ export function ProjectImageField({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const active = useRef(true);
-  useEffect(() => {
+  const change = useRef(onChange);
+  useLayoutEffect(() => {
+    change.current = onChange;
+  }, [onChange]);
+  useLayoutEffect(() => {
     active.current = true;
     return () => {
       active.current = false;
@@ -62,7 +66,8 @@ export function ProjectImageField({
         if (format === "image/jpeg") image = canvas.toDataURL(format, 0.8);
         if (image.length > MAX_PROJECT_IMAGE_LENGTH)
           image = canvas.toDataURL(format, 0.5);
-        onChange(assertProjectImage(image));
+        // Decoding may span a parent save. Use its latest committed draft base.
+        change.current(assertProjectImage(image));
       } finally {
         bitmap.close();
       }

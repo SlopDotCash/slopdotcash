@@ -18,7 +18,11 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { archivedPaidCycleIndex } from "../fixtures";
+import {
+  archivedPaidCycleIndex,
+  cycleIndexFixture,
+  snapshotFixture,
+} from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -405,7 +409,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     }),
   );
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", (route) => {
     if (route.request().method() !== "PUT")
@@ -919,7 +923,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     return route.fulfill({ json: { revision, project } });
   });
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -2038,6 +2042,161 @@ test("refuses retired and unknown paths and recovers to projects", async ({
     );
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   }
+});
+
+test("cycle filters drop unavailable selections while retaining a published month", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.goto(
+    `/cycles?project=absent-project&month=${index.cycles[0].cycleId}&state=banana`,
+    { waitUntil: "networkidle" },
+  );
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+  await expect(page.getByLabel("Month", { exact: true })).toHaveValue(
+    index.cycles[0].cycleId,
+  );
+  await expect(
+    page.getByText("No cycles match these filters.", { exact: false }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(
+    new RegExp(`/cycles\\?month=${index.cycles[0].cycleId}$`, "u"),
+  );
+  await page.getByLabel("Month", { exact: true }).selectOption("");
+  await expect(page).toHaveURL(/\/cycles$/u);
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+});
+
+test("a retired project's recorded cycle opens without the live leaderboard", async ({
+  page,
+  diagnostics,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  const project = PROJECTS.find((entry) => entry.id === cycle.projectId);
+  if (!project) throw new Error("Missing archived project fixture");
+  await page.route("**/data/fixture-project-registry.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        projects: PROJECTS.map((entry) =>
+          entry.id === project.id
+            ? { ...entry, status: "paused", listingTier: "retired" }
+            : entry,
+        ),
+      },
+    }),
+  );
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  let leaderboardReads = 0;
+  diagnostics.allowResponse(503, "GET", "/data/leaderboard.json");
+  await page.route("**/data/leaderboard.json?**", (route) => {
+    leaderboardReads += 1;
+    return route.fulfill({ status: 503, body: "Unavailable live leaderboard" });
+  });
+  await page.goto("/cycles", { waitUntil: "networkidle" });
+  await page
+    .locator(`a[href="/cycles/${cycle.projectId}/${cycle.cycleId}"]`)
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: `${project.name} · July 2026`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    `https://slop.cash/cycles/${cycle.projectId}/${cycle.cycleId}`,
+  );
+  const breadcrumb = page.locator(".breadcrumb").getByRole("link");
+  await expect(breadcrumb).toHaveAttribute(
+    "href",
+    `/cycles?project=${cycle.projectId}`,
+  );
+  await breadcrumb.click();
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+  await expect(page.getByLabel("Project", { exact: true })).toHaveValue(
+    cycle.projectId,
+  );
+  expect(leaderboardReads).toBe(0);
+});
+
+test("an unavailable cycle index refuses a live substitute and retries the record", async ({
+  page,
+  diagnostics,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  let unavailable = true;
+  let leaderboardReads = 0;
+  diagnostics.allowResponse(503, "GET", "/data/cycles/index.json");
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    unavailable
+      ? route.fulfill({ status: 503, body: "Unavailable cycle index" })
+      : route.fulfill({ json: index }),
+  );
+  await page.route("**/data/leaderboard.json?**", (route) => {
+    leaderboardReads += 1;
+    return route.fulfill({
+      status: 503,
+      body: "Unexpected leaderboard request",
+    });
+  });
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toHaveCount(0);
+  expect(leaderboardReads).toBe(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  expect(leaderboardReads).toBe(0);
+});
+
+test("a cycle published during the live fallback still shows its frozen record", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  let indexReads = 0;
+  await page.route("**/data/cycles/index.json?**", (route) => {
+    indexReads += 1;
+    return route.fulfill({
+      json: indexReads === 1 ? cycleIndexFixture() : index,
+    });
+  });
+  await page.route("**/data/leaderboard.json?**", (route) =>
+    route.fulfill({ json: snapshotFixture() }),
+  );
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".project-leader-row")).toHaveCount(0);
+  expect(indexReads).toBeGreaterThanOrEqual(2);
 });
 
 test("a missing cycle becomes noindex once its data resolves", async ({

@@ -1,5 +1,8 @@
 // @source src/ProjectRiskFlag.tsx
 // Own flag status, submission/withdrawal, and observed pause remain distinct.
+// This component currently has no mount in the application. These scenarios
+// describe its dormant local abstraction, not an available user journey.
+// Active flag admission/reinstatement uses the separate vetting API models.
 module ui_risk_flag {
   var s: { phase: str, signedIn: bool, evidence: bool, ownFlag: bool, paused: bool, busy: bool }
   action init = s' = { phase: "loading", signedIn: false, evidence: false, ownFlag: false, paused: false, busy: false }

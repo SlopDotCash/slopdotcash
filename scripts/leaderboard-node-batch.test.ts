@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, spyOn, test } from "bun:test";
 import {
   executeNodeBatch,
   GitHubGraphqlClient,
@@ -148,7 +148,7 @@ test("a window drained by another consumer waits for the reported reset instead 
   expect(client.getRateLimit().remaining).toBe(4999);
 });
 
-test("a window still exhausted after its reset, or a reset beyond one window, fails closed", async () => {
+test("a window still exhausted after its reported reset fails closed", async () => {
   const resetAt = new Date(Date.now() + 200).toISOString();
   const still = rateLimitedTransport([{ remaining: 99, resetAt }]);
   const client = new GitHubGraphqlClient("fixture-token", still.fetcher);
@@ -158,19 +158,6 @@ test("a window still exhausted after its reset, or a reset beyond one window, fa
     `safety budget exceeded after waiting for the reset at ${resetAt}`,
   );
   expect(still.requests).toHaveLength(2);
-
-  const distant = rateLimitedTransport([
-    {
-      remaining: 99,
-      resetAt: new Date(Date.now() + 2 * 3_600_000).toISOString(),
-    },
-  ]);
-  const late = new GitHubGraphqlClient("fixture-token", distant.fetcher);
-  await late.execute(QUERY, { ids: ["PR_1"] });
-  await expect(late.execute(QUERY, { ids: ["PR_2"] })).rejects.toThrow(
-    "would exceed 60 minutes of total reset waiting",
-  );
-  expect(distant.requests).toHaveLength(1);
 });
 
 test("a full window drained by another consumer during the run waits instead of failing", async () => {
@@ -192,20 +179,53 @@ test("a full window drained by another consumer during the run waits instead of 
   expect(client.getRateLimit().remaining).toBe(4999);
 });
 
-test("repeated drains cannot chain reset waits past 60 minutes in total", async () => {
-  const firstReset = Date.now() + 200;
-  const secondReset = firstReset + 3_599_000;
-  const { fetcher, requests } = rateLimitedTransport([
-    { remaining: 99, resetAt: new Date(firstReset).toISOString() },
-    { remaining: 99, resetAt: new Date(secondReset).toISOString() },
-  ]);
-  const client = new GitHubGraphqlClient("fixture-token", fetcher);
-  await client.execute(QUERY, { ids: ["PR_1"] });
-  await client.execute(QUERY, { ids: ["PR_2"] });
-  await expect(client.execute(QUERY, { ids: ["PR_3"] })).rejects.toThrow(
-    "would exceed 60 minutes of total reset waiting",
+test("multiple valid reset windows can exceed an hour of total waiting", async () => {
+  const start = new Date("2026-11-09T00:00:00.000Z").getTime();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const waits: number[] = [];
+  setSystemTime(start);
+  // Keep the native overloads and promisified entry point; only long delays
+  // use the controlled clock, and every handler is delegated unchanged.
+  const advanceTimeout = Object.assign(
+    (
+      ...[callback, delay, ...args]: Parameters<typeof globalThis.setTimeout>
+    ) => {
+      if (delay !== undefined && delay >= 60_000) {
+        waits.push(delay);
+        setSystemTime(Date.now() + delay);
+        return nativeSetTimeout(callback, 0, ...args);
+      }
+      return nativeSetTimeout(callback, delay, ...args);
+    },
+    { __promisify__: nativeSetTimeout.__promisify__ },
+  ) as typeof globalThis.setTimeout;
+  const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+    advanceTimeout,
   );
-  expect(requests).toHaveLength(2);
+  try {
+    const resetAt = (minutes: number) =>
+      new Date(start + minutes * 60_000).toISOString();
+    const { fetcher, requests } = rateLimitedTransport([
+      { remaining: 99, resetAt: resetAt(40) },
+      { remaining: 99, resetAt: resetAt(80) },
+      { remaining: 4999, resetAt: resetAt(120) },
+    ]);
+    const client = new GitHubGraphqlClient("fixture-token", fetcher, {
+      requestTimeoutMs: 10_000,
+    });
+    await client.execute(QUERY, { ids: ["PR_1"] });
+    await client.execute(QUERY, { ids: ["PR_2"] });
+    await client.execute(QUERY, { ids: ["PR_3"] });
+    expect(requests).toHaveLength(3);
+    expect(waits).toHaveLength(2);
+    expect(waits.reduce((total, wait) => total + wait, 0)).toBeGreaterThan(
+      60 * 60_000,
+    );
+    expect(client.getRateLimit().remaining).toBe(4999);
+  } finally {
+    timers.mockRestore();
+    setSystemTime();
+  }
 });
 
 test("this run's own window overspend still fails immediately", async () => {

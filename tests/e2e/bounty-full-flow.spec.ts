@@ -4,6 +4,7 @@ import type {
   Browser,
   Locator,
   Page,
+  Request,
 } from "@playwright/test";
 import { rewardFields } from "../../src/lib/project-proposal";
 import { privateBountyTerms } from "../../src/lib/security-bounty-proposal";
@@ -973,6 +974,83 @@ test(`a private ${assetSymbol} bounty runs from reporter intake to partial recov
     ).toBeDisabled();
     expect(walletSends).toHaveLength(1);
     await recoveredHash.fill(feeTransaction);
+    // The fallback must not reconstruct a nonce row removed while its real
+    // authorization GET waits. A late wallet decline can remove this record.
+    const savedJournal = await maintainer.evaluate((id) => {
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (
+          key?.startsWith(`slop:bounty-send:v1:${id}:`) &&
+          key.includes(":pay:")
+        ) {
+          const raw = sessionStorage.getItem(key);
+          if (raw && Object.keys(JSON.parse(raw)).length === 1)
+            return { key, raw };
+        }
+      }
+      throw new Error("Missing single pending bounty journal");
+    }, caseId);
+    let releaseAuthorization!: () => void;
+    let authorizationStarted!: () => void;
+    const authorizationHeld = new Promise<void>((resolve) => {
+      releaseAuthorization = resolve;
+    });
+    const authorizationRead = new Promise<void>((resolve) => {
+      authorizationStarted = resolve;
+    });
+    let staleVerificationPosts = 0;
+    const observeVerification = (sent: Request) => {
+      if (
+        sent.method() === "POST" &&
+        new URL(sent.url()).pathname ===
+          `/api/v1/security-cases/${caseId}/actions` &&
+        sent.postDataJSON()?.action === "verify-payment"
+      )
+        staleVerificationPosts++;
+    };
+    maintainer.on("request", observeVerification);
+    const caseRoute = `**/api/v1/security-cases/${caseId}`;
+    await maintainer.route(caseRoute, async (route) => {
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      authorizationStarted();
+      await authorizationHeld;
+      await route.fulfill({ response });
+    });
+    try {
+      await savedFee
+        .getByRole("button", { name: "Verify submitted payments", exact: true })
+        .click();
+      await authorizationRead;
+      await maintainer.evaluate(({ key }) => {
+        // DirectBountyPayment retains the journal key when its last declined
+        // nonce is removed. Do not substitute an invalid-storage error.
+        sessionStorage.setItem(key, "{}");
+      }, savedJournal);
+      releaseAuthorization();
+      await expect(savedFee.getByRole("alert")).toContainText(
+        "The saved transaction changed. Reload before checking it again.",
+      );
+      expect(
+        await maintainer.evaluate(
+          (key) => sessionStorage.getItem(key),
+          savedJournal.key,
+        ),
+      ).toBe("{}");
+      expect((await readCase("security")).paymentState).not.toBe("paid");
+      expect(staleVerificationPosts).toBe(0);
+      expect(walletSends).toHaveLength(1);
+    } finally {
+      maintainer.off("request", observeVerification);
+      releaseAuthorization();
+      await maintainer.unroute(caseRoute);
+      await maintainer.evaluate(
+        ({ key, raw }) => sessionStorage.setItem(key, raw),
+        savedJournal,
+      );
+    }
+    // Restoring the unchanged retained request lets the same mounted editor
+    // retry with its entered hash; the normal real-API flow continues below.
     let lost = false;
     const actionUrl = `${new URL(maintainer.url()).origin}/api/v1/security-cases/${caseId}/actions`;
     const lostRequest = new RegExp(

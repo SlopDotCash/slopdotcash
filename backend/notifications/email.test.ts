@@ -10,7 +10,10 @@ import {
   dispatchActivityMail,
   parseActivityMailConfig,
 } from "../../workers/notify/activity";
-import { reconcileSecurityMail } from "../../workers/notify/security";
+import {
+  claimDueDeliveries,
+  reconcileSecurityMail,
+} from "../../workers/notify/security";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import type { SecurityD1Database } from "../security/case-store";
 import { ProjectFlagStore } from "../vetting/flags";
@@ -445,6 +448,69 @@ test("optional-mail ambiguity retries only with attempt-bound independent eviden
   expect(h.rows()[0].attempts).toBe(5);
   h.sqlite.close();
 });
+
+test.each(["destination", "final check"] as const)(
+  "an activity attempt retired before its %s does not send",
+  async (stage) => {
+    const h = setup();
+    try {
+      h.event("retired-before-send", "wallet_changed");
+      let retired = false;
+      let staleClaims = 0;
+      const retire = async () => {
+        if (retired) return;
+        retired = true;
+        h.advance(300_001);
+        for await (const _row of claimDueDeliveries(h.db, "activity", h.now))
+          staleClaims += 1;
+      };
+      h.mail.db = {
+        ...h.db,
+        prepare(query: string) {
+          const statement = h.db.prepare(query);
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async run() {
+                  if (
+                    stage === "destination" &&
+                    query.startsWith(
+                      "UPDATE activity_notification_outbox SET destination_digest",
+                    )
+                  )
+                    await retire();
+                  return bound.run();
+                },
+                async first<T>() {
+                  if (
+                    stage === "final check" &&
+                    query.startsWith(
+                      "SELECT id FROM activity_notification_outbox",
+                    )
+                  )
+                    await retire();
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      };
+      await dispatchActivityMail(h.mail);
+      expect(retired).toBe(true);
+      expect(staleClaims).toBe(0);
+      expect(h.sent).toEqual([]);
+      expect(h.rows()).toEqual([
+        expect.objectContaining({ state: "ambiguous", attempts: 1 }),
+      ]);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
 
 test("an essential notice retries a not-yet-effective destination on a bounded schedule; optional mail does not", async () => {
   const h = setup();

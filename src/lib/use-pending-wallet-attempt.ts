@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   clearPendingAttempt,
   createPendingAttempt,
@@ -19,7 +19,7 @@ export function usePendingWalletAttempt<P extends PendingAttempt>(
   unreadable: (error: unknown) => string,
 ) {
   const mounted = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

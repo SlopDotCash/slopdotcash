@@ -1500,9 +1500,6 @@ function secondaryRateLimitDelayMs(
   return 60_000;
 }
 
-// Total time one run may spend waiting for GraphQL window resets.
-const MAX_RATE_LIMIT_RESET_WAIT_MS = 60 * 60_000;
-
 async function retryDelay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => {
     setTimeout(resolveDelay, milliseconds);
@@ -1614,7 +1611,6 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
   #waitedResetAt: number | null = null;
-  #resetWaitedMs = 0;
 
   #effectiveMaxGenerationCost(): number {
     if (!this.#rateLimit) {
@@ -1687,10 +1683,8 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!Number.isFinite(resetAt)) {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
-    // Another consumer of the shared token can drain the window. Wait for the
-    // reported reset while this run's total reset waiting stays within 60
-    // minutes; a window still exhausted after the reset it waited for fails
-    // closed.
+    // Another consumer of the shared token can drain the window. Wait for each
+    // reported reset; a window still exhausted after that same reset fails.
     const budgetSummary = `${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${this.#rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve}`;
     if (this.#waitedResetAt === resetAt) {
       throw new Error(
@@ -1698,13 +1692,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       );
     }
     const waitMs = Math.max(0, resetAt - Date.now() + 1_000);
-    if (this.#resetWaitedMs + waitMs > MAX_RATE_LIMIT_RESET_WAIT_MS) {
-      throw new Error(
-        `GitHub GraphQL safety budget exceeded and waiting for the reset at ${this.#rateLimit.resetAt} would exceed 60 minutes of total reset waiting (${budgetSummary})`,
-      );
-    }
     this.#waitedResetAt = resetAt;
-    this.#resetWaitedMs += waitMs;
     await retryDelay(waitMs);
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;

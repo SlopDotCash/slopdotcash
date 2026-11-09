@@ -239,7 +239,16 @@ test("evidence deep links load only after sign-in and select one reasoned reader
 }, info) => {
   diagnostics.allowPreviewApiMisses();
   let signedIn = false;
-  await session(page, () => signedIn);
+  let viewer = "4242";
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: signedIn
+          ? { githubId: viewer, githubLogin: "operator", admin: true }
+          : null,
+      },
+    }),
+  );
   const body = "Harmless evidence: <script>never execute</script>\n";
   const hash = createHash("sha256").update(body).digest("hex");
   const second = "Other harmless evidence\n";
@@ -247,9 +256,27 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   const base = "operator/vetting-evidence/scan-layout/run-layout";
   let inventoryReads = 0;
   let inventoryDenied = false;
+  let holdNextInventory = false;
+  let releaseInventory = () => {};
+  let inventoryStarted = () => {};
+  const heldInventory = new Promise<void>((resolve) => {
+    inventoryStarted = resolve;
+  });
+  const inventoryRelease = new Promise<void>((resolve) => {
+    releaseInventory = resolve;
+  });
   let wrongBytes = true;
   const grants: unknown[] = [];
-  await page.route("**/api/v1/operator/vetting-evidence?**", (route) => {
+  let holdNextGrant = false;
+  let releaseGrant = () => {};
+  let grantStarted = () => {};
+  const heldGrant = new Promise<void>((resolve) => {
+    grantStarted = resolve;
+  });
+  const grantRelease = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  await page.route("**/api/v1/operator/vetting-evidence?**", async (route) => {
     inventoryReads++;
     if (inventoryDenied)
       return route.fulfill({
@@ -259,6 +286,11 @@ test("evidence deep links load only after sign-in and select one reasoned reader
           message: "Vetting operator access required.",
         },
       });
+    if (holdNextInventory) {
+      holdNextInventory = false;
+      inventoryStarted();
+      await inventoryRelease;
+    }
     return route.fulfill({
       json: {
         retentionBoundary: "Private retained evidence.",
@@ -292,11 +324,20 @@ test("evidence deep links load only after sign-in and select one reasoned reader
       },
     });
   });
-  await page.route(`**/api/v1/${base}/*/grant`, (route) => {
+  await page.route(`**/api/v1/${base}/*/grant`, async (route) => {
     grants.push({
       path: new URL(route.request().url()).pathname,
       body: route.request().postDataJSON(),
     });
+    if (holdNextGrant) {
+      holdNextGrant = false;
+      grantStarted();
+      await grantRelease;
+      return route.fulfill({
+        status: 403,
+        json: { error: "actor_changed", message: "Your account changed." },
+      });
+    }
     return route.fulfill({ json: { grant: "single-read-test-grant" } });
   });
   await page.route(`**/api/v1/${base}/*/body`, (route) => {
@@ -420,6 +461,74 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   ).toBeVisible();
   await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
     0,
+  );
+  holdNextInventory = true;
+  const nextInventory = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/operator/vetting-evidence",
+  );
+  const lookup = page.getByRole("button", {
+    name: "Inspect evidence inventory",
+  });
+  if (!(await lookup.isVisible()))
+    await page.getByText("Find evidence", { exact: true }).click();
+  await lookup.click();
+  await heldInventory;
+  try {
+    // The previous operator's response must not populate a silently changed
+    // session. The following operator is denied by this presentation fixture.
+    viewer = "4343";
+    inventoryDenied = true;
+  } finally {
+    releaseInventory();
+  }
+  await (await nextInventory).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(
+    page.getByRole("heading", { name: "Evidence inventory" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText(
+    "Vetting operator access required.",
+  );
+  viewer = "4242";
+  inventoryDenied = false;
+  await page.reload({ waitUntil: "networkidle" });
+  await page
+    .getByRole("button", {
+      name: `Select Second object, ${otherHash.slice(0, 12)}`,
+    })
+    .click();
+  await page
+    .getByLabel("Reason to inspect Second object")
+    .fill("Inspect after renewed operator identity");
+  diagnostics.allowResponse(403, "POST", `/api/v1/${base}/${otherHash}/grant`);
+  holdNextGrant = true;
+  const refusedGrant = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/${base}/${otherHash}/grant`,
+  );
+  await page.getByRole("button", { name: "Read Second object" }).click();
+  await heldGrant;
+  try {
+    viewer = "4343";
+    inventoryDenied = true;
+  } finally {
+    releaseGrant();
+  }
+  await (await refusedGrant).finished();
+  await expect(
+    page.getByRole("heading", { name: "Evidence inventory" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("alert")).toContainText(
+    "Vetting operator access required.",
   );
 });
 

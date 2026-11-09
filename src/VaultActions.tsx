@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -22,7 +22,9 @@ import {
   transactionUrl,
 } from "./lib/payments/contracts";
 import {
+  clearPendingAttempt,
   type PendingAttempt,
+  updatePendingRecord,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
 import {
@@ -108,16 +110,21 @@ export function VaultActions({
     saved,
     storedPending,
     pending,
+    setPending,
     storageError,
+    remember,
     clear,
-    submit,
-    recordRecoveryHash,
     clearUnreadable,
   } = usePendingWalletAttempt<Pending>(
     key,
     (raw) => readPending(raw, solana),
     (error) => errorMessage(error, "The wallet request failed."),
   );
+  const depositAllowed = useRef(canDeposit);
+  // The shared hook retires the view; publish permission changes at commit.
+  useLayoutEffect(() => {
+    depositAllowed.current = canDeposit;
+  }, [canDeposit]);
   const [wallet, setWallet] = useState<VaultConnection | null>(
     connectedWallet ?? null,
   );
@@ -223,20 +230,34 @@ export function VaultActions({
           ? { solanaBlockhash: current.solanaPlan.blockhash }
           : {}),
       };
-      await submit(
-        intent,
-        async (beforeSend) => {
-          if (solana) {
-            if (!current.solanaPlan || step !== "send")
-              throw new Error("Review the Solana action again.");
-            return sendSolanaVaultAction(
-              deployment,
-              wallet,
-              current.solanaPlan,
-              beforeSend,
+      let requested = false;
+      try {
+        const beforeSend = () => {
+          if (!mounted.current)
+            throw new Error(
+              "The wallet view was closed. Review before sending.",
             );
-          }
-          return sendVaultAction(
+          if (operation === "deposit" && !depositAllowed.current)
+            throw new Error("New deposits are currently unavailable.");
+          if (!remember(intent))
+            throw new Error(
+              "The saved request changed. Reload before continuing.",
+            );
+          if (mounted.current) setRecoveryHash("");
+          requested = true;
+        };
+        let hash: string;
+        if (solana) {
+          if (!current.solanaPlan || step !== "send")
+            throw new Error("Review the Solana action again.");
+          hash = await sendSolanaVaultAction(
+            deployment,
+            wallet,
+            current.solanaPlan,
+            beforeSend,
+          );
+        } else {
+          hash = await sendVaultAction(
             deployment,
             wallet,
             operation,
@@ -245,16 +266,36 @@ export function VaultActions({
             beforeSend,
             payoutPolicy,
           );
-        },
-        {
-          submitted: (hash) => ({ ...intent, hash, hashSource: "wallet" }),
-          notify: setNotice,
-          onBeforeSend: () => setRecoveryHash(""),
-          unclear:
+        }
+        const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
+        try {
+          if (!remember(submitted, intent) && mounted.current)
+            setNotice(
+              `Submitted ${hash}. Keep this hash; the saved request changed.`,
+            );
+        } catch {
+          if (mounted.current) {
+            setPending(submitted);
+            setNotice(
+              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
+            );
+          }
+        }
+        if (mounted.current) setReview(null);
+      } catch (caught) {
+        if ((caught as { code?: unknown } | null)?.code === 4001) {
+          if (requested) {
+            if (mounted.current) clear(intent);
+            else clearPendingAttempt(key, intent);
+          }
+          throw new Error("You declined the wallet request. Nothing was sent.");
+        }
+        if (requested)
+          throw new Error(
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
-        },
-      );
-      if (mounted.current) setReview(null);
+          );
+        throw caught;
+      }
     });
   const check = () =>
     run(async () => {
@@ -295,12 +336,22 @@ export function VaultActions({
             hash,
             hashSource: "recovery",
           };
-          if (!recordRecoveryHash(captured, candidate)) {
+          let stored: boolean;
+          try {
+            stored = updatePendingRecord(key, captured, candidate);
+          } catch {
+            setPending(candidate);
             setNotice(
               `Not saved on this device. Keep this ${solana ? "signature" : "hash"}: ${hash}.`,
             );
             return;
           }
+          if (!stored)
+            throw new Error(
+              "The saved request changed. Reload before continuing.",
+            );
+          storedPending.current = candidate;
+          setPending(candidate);
         }
         setNotice(
           pending.hashSource === "wallet"

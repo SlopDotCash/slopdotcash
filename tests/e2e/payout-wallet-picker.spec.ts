@@ -83,10 +83,14 @@ async function providers(
     connected = evmAddress,
     permissions = "picker",
     rejectSignature = 0,
+    holdConnect = false,
+    mutateMessage = false,
   }: {
     connected?: string;
     permissions?: "picker" | "unsupported" | "rejected";
     rejectSignature?: number;
+    holdConnect?: boolean;
+    mutateMessage?: boolean;
   } = {},
 ) {
   await page.addInitScript(
@@ -97,8 +101,11 @@ async function providers(
       connected,
       permissions,
       rejectSignature,
+      holdConnect,
+      mutateMessage,
     }) => {
       const calls: string[] = [];
+      const connection = { pending: false, release: () => {} };
       const evm = (name: string) => {
         let account = connected;
         let signatures = 0;
@@ -106,6 +113,17 @@ async function providers(
           request: async ({ method }: { method: string }) => {
             calls.push(`${name}:${method}`);
             if (reject) throw new Error("Wallet request rejected by user.");
+            if (
+              holdConnect &&
+              name === "MetaMask" &&
+              method === "eth_requestAccounts"
+            ) {
+              connection.pending = true;
+              await new Promise<void>((resolve) => {
+                connection.release = () => resolve();
+              });
+              connection.pending = false;
+            }
             if (method === "personal_sign" && ++signatures === rejectSignature)
               throw new Error("Wallet signature rejected by user.");
             if (method === "wallet_requestPermissions") {
@@ -147,7 +165,11 @@ async function providers(
             }),
           );
       };
-      Object.assign(window, { ethereum: phantom, walletCalls: calls });
+      Object.assign(window, {
+        ethereum: phantom,
+        walletCalls: calls,
+        walletConnection: connection,
+      });
       window.addEventListener("eip6963:requestProvider", announce);
       const account = {
         address: solanaAddress,
@@ -155,31 +177,36 @@ async function providers(
         chains: ["solana:mainnet"],
         features: ["solana:signMessage"],
       };
-      const solana = (name: string) => ({
-        name,
-        version: "1.0.0",
-        icon: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22/%3E",
-        chains: ["solana:mainnet"],
-        accounts: [],
-        features: {
-          "standard:connect": {
-            version: "1.0.0",
-            connect: async () => {
-              calls.push(`${name}:connect`);
-              return { accounts: [account] };
+      const solana = (name: string) => {
+        const wallet = {
+          name,
+          version: "1.0.0",
+          icon: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22/%3E",
+          chains: ["solana:mainnet"],
+          accounts: [] as Array<typeof account>,
+          features: {
+            "standard:connect": {
+              version: "1.0.0",
+              connect: async () => {
+                calls.push(`${name}:connect`);
+                wallet.accounts = [account];
+                return { accounts: [account] };
+              },
+            },
+            "solana:signMessage": {
+              version: "1.0.0",
+              signMessage: async ({ message }: { message: Uint8Array }) => {
+                calls.push(`${name}:signMessage`);
+                if (mutateMessage) message[0] ^= 1;
+                return [
+                  { signedMessage: message, signature: new Uint8Array(64) },
+                ];
+              },
             },
           },
-          "solana:signMessage": {
-            version: "1.0.0",
-            signMessage: async ({ message }: { message: Uint8Array }) => {
-              calls.push(`${name}:signMessage`);
-              return [
-                { signedMessage: message, signature: new Uint8Array(64) },
-              ];
-            },
-          },
-        },
-      });
+        };
+        return wallet;
+      };
       window.addEventListener("wallet-standard:app-ready", (event) => {
         const api = (event as CustomEvent).detail;
         api.register(solana("Phantom"));
@@ -212,6 +239,8 @@ async function providers(
       connected,
       permissions,
       rejectSignature,
+      holdConnect,
+      mutateMessage,
     },
   );
 }
@@ -458,6 +487,94 @@ test("conflicting EIP-6963 UUID removes both providers without wallet requests",
   ).toEqual([]);
 });
 
+test("an announcement conflict during connect cannot register the returned address", async ({
+  page,
+}) => {
+  const writes = await payments(page);
+  await providers(page, false, { holdConnect: true });
+  await page.goto("/account#wallets");
+  const dialog = await openPicker(page, "EVM");
+  await dialog.getByRole("button", { name: "MetaMask", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { walletConnection: { pending: boolean } })
+            .walletConnection.pending,
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    (window as unknown as { announceImpostor(): void }).announceImpostor();
+    (
+      window as unknown as { walletConnection: { release(): void } }
+    ).walletConnection.release();
+  });
+  await expect(page.getByRole("alert")).toContainText(
+    "Conflicting wallet details",
+  );
+  expect(writes).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["MetaMask:eth_requestAccounts"]);
+});
+
+test("a withdrawn Wallet Standard provider cannot prompt for registration consent", async ({
+  page,
+}) => {
+  const writes = await payments(page);
+  await providers(page);
+  await page.route("**/api/v1/payments/wallets/challenge", async (route) => {
+    await page.evaluate(() =>
+      (window as unknown as { removeBackpack(): void }).removeBackpack(),
+    );
+    await route.fulfill({
+      json: {
+        address: solanaAddress,
+        chain: "solana",
+        challengeId: "fixture-challenge",
+        message: "Fixture payout routing confirmation",
+      },
+    });
+  });
+  await page.goto("/account#wallets");
+  const dialog = await openPicker(page, "Solana");
+  await dialog.getByRole("button", { name: "Backpack", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "The signing wallet changed",
+  );
+  expect(writes.map((write) => write.path)).toEqual(["wallets/register"]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["Backpack:connect"]);
+});
+
+test("mutating and echoing the signing buffer cannot authorize a different message", async ({
+  page,
+}) => {
+  const writes = await payments(page);
+  await providers(page, false, { mutateMessage: true });
+  await page.goto("/account#wallets");
+  const dialog = await openPicker(page, "Solana");
+  await dialog.getByRole("button", { name: "Backpack", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Your wallet changed the message",
+  );
+  expect(writes.map((write) => write.path)).toEqual([
+    "wallets/register",
+    "wallets/challenge",
+  ]);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { walletCalls: string[] }).walletCalls,
+    ),
+  ).toEqual(["Backpack:connect", "Backpack:signMessage"]);
+});
+
 test("mixed standard and legacy discovery keeps every distinct wallet", {
   tag: "@desktop-only",
 }, async ({ page }) => {
@@ -519,17 +636,18 @@ test("mixed standard and legacy discovery keeps every distinct wallet", {
           chains: ["solana:mainnet"],
           features: ["solana:signMessage"],
         };
-        (event as CustomEvent).detail.register({
+        const wallet = {
           name: "Phantom",
           version: "1.0.0",
           icon: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22/%3E",
           chains: ["solana:mainnet"],
-          accounts: [],
+          accounts: [] as Array<typeof account>,
           features: {
             "standard:connect": {
               version: "1.0.0",
               connect: async () => {
                 calls.push("Phantom:connect");
+                wallet.accounts = [account];
                 return { accounts: [account] };
               },
             },
@@ -543,7 +661,8 @@ test("mixed standard and legacy discovery keeps every distinct wallet", {
               },
             },
           },
-        });
+        };
+        (event as CustomEvent).detail.register(wallet);
       });
     },
     { evmAddress, solanaAddress },
@@ -576,6 +695,7 @@ test("mixed standard and legacy discovery keeps every distinct wallet", {
     "Coinbase:personal_sign",
     "Coinbase:personal_sign",
     "Coinbase:personal_sign",
+    "Solflare:connect",
     "Solflare:connect",
     "Solflare:signMessage",
   ]);

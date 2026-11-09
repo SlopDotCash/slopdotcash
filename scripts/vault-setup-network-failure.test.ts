@@ -5,11 +5,21 @@
 // and 7, issue #904). A real factory code mismatch keeps its refusal.
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { toFunctionSelector } from "viem";
+import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
+import {
+  handleProjectApi,
+  type ProjectApiDependencies,
+} from "../backend/projects/handler";
+import { ownerVaultSetupService } from "../backend/projects/vault-setup";
+import { buildCreateVaultCalldata } from "../contracts/evm/adapter";
 import type { ReviewedEvmFactory } from "../contracts/evm/factories";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
+import { sha256Hex } from "../src/lib/sha256";
+import { registryProjectDigest } from "../src/lib/vault-setup";
 import { applicationManifest } from "../tests/project-application-manifest";
-import { vaultSetupHarness } from "../tests/vault-setup-harness";
+import { sqliteD1 } from "../tests/sqlite-d1";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
@@ -49,6 +59,15 @@ const factory: ReviewedEvmFactory = {
     factoryImplementationCodeSha256: codeSha256(code[address("8")]),
   },
 };
+const reviewedFactories = [factory];
+const SECOND_FACTORY = address("b");
+const CREATED_VAULT = address("a");
+const CREATION_HASH = `0x${"ab".repeat(32)}`;
+const BLOCK_HASH = `0x${"cd".repeat(32)}`;
+let creationData = "0x";
+let creationStatus: "pending" | "failed" | "valid" = "valid";
+let vaultGetters: Record<string, string> = {};
+const creationMethods: string[] = [];
 const getters = Object.fromEntries(
   Object.entries({
     "registrar()": factory.registrar,
@@ -65,7 +84,7 @@ const getters = Object.fromEntries(
 
 // "limited": every read answers HTTP 429. "factory": the factory facts are
 // served and every transaction, receipt and block read answers HTTP 429.
-let mode: "limited" | "factory" = "limited";
+let mode: "limited" | "factory" | "creation" = "limited";
 let reads = 0;
 const rpc = Bun.serve({
   hostname: "127.0.0.1",
@@ -78,14 +97,45 @@ const rpc = Bun.serve({
     };
     const answer = (result: unknown) =>
       Response.json({ jsonrpc: "2.0", id: 1, result });
-    if (mode === "factory") {
+    if (mode === "creation") {
+      creationMethods.push(method);
+      if (method === "eth_getTransactionReceipt")
+        return answer(
+          creationStatus === "pending"
+            ? null
+            : {
+                transactionHash: CREATION_HASH,
+                blockNumber: "0x1",
+                blockHash: BLOCK_HASH,
+                status: creationStatus === "failed" ? "0x0" : "0x1",
+              },
+        );
+      if (method === "eth_getTransactionByHash")
+        return answer({
+          hash: CREATION_HASH,
+          from: OWNER_WALLET,
+          to: SECOND_FACTORY,
+          input: creationData,
+          value: "0x0",
+          blockHash: BLOCK_HASH,
+        });
+      if (method === "eth_getBlockByNumber")
+        return answer({ number: "0x1", hash: BLOCK_HASH });
+    }
+    if (mode === "factory" || mode === "creation") {
       if (method === "eth_chainId") return answer("0x2105");
       if (method === "eth_getCode")
         return answer(code[String(params[0]).toLowerCase()] ?? "0x");
       if (method === "eth_getStorageAt" && params[1] === IMPLEMENTATION_SLOT)
-        return answer(word(address("8")));
+        return answer(
+          word(params[0] === CREATED_VAULT ? address("7") : address("8")),
+        );
       if (method === "eth_call" && typeof params[0] === "object")
-        return answer(getters[params[0].data.slice(0, 10)] ?? "0x");
+        return answer(
+          (params[0].to?.toLowerCase() === CREATED_VAULT
+            ? vaultGetters
+            : getters)[params[0].data.slice(0, 10)] ?? "0x",
+        );
     }
     return new Response("rate limited", { status: 429 });
   },
@@ -101,17 +151,27 @@ closed.stop(true);
 let rpcUrl = `http://127.0.0.1:${rpc.port}`;
 afterAll(() => rpc.stop(true));
 
+const { db, sqlite } = sqliteD1(
+  readdirSync(new URL("../migrations/", import.meta.url))
+    .filter((name) => name.endsWith(".sql"))
+    .sort(),
+);
 const manifest = applicationManifest("vault-network", "example/vault-network", {
   rewardAsset: {
     network: "base",
     kind: "stablecoin",
     address: ESCROW_NETWORKS["base-mainnet"].asset,
     symbol: "USDC",
+    decimals: 6,
+    chainId: ESCROW_NETWORKS["base-mainnet"].chainId,
+    cluster: null,
+    verifiedAt: NOW,
   },
   reward: {
     ...(applicationManifest("vault-network", "example/vault-network")
       .reward as Record<string, unknown>),
     chain: "base",
+    feeBasisPoints: 200,
   },
   escrow: {
     schemaVersion: "1",
@@ -123,27 +183,98 @@ const manifest = applicationManifest("vault-network", "example/vault-network", {
     deployments: [],
   },
 });
-const { persistence, vaultSetup: post } = vaultSetupHarness({
-  projectId: "vault-network",
-  manifest,
-  chain: "base",
-  claim: CLAIM,
-  owner: OWNER,
-  ownerWallet: OWNER_WALLET,
-  now: NOW,
-  network: "base-mainnet",
-  rpcUrl: () => rpcUrl,
-  reviewed: { factories: [factory] },
-});
-function vaultSetup(step: "review" | "register") {
-  return post({
-    step,
-    expectedRevision: 1,
-    network: "base-mainnet",
-    claimId: CLAIM,
-    automatic: false,
-    ...(step === "register" ? { transactionId: `0x${"ab".repeat(32)}` } : {}),
-  });
+const manifestText = JSON.stringify(manifest);
+sqlite
+  .prepare(
+    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('vault-network',1,?,?,'Fixture',?)",
+  )
+  .run(manifestText, sha256Hex(manifestText), NOW);
+sqlite
+  .prepare(
+    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('vault-network','paused',1,?,?,?,?)",
+  )
+  .run(manifestText, sha256Hex(manifestText), NOW, NOW);
+// The owner's current Base wallet, confirmed by a signed challenge.
+sqlite
+  .prepare(
+    "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,'d1_registry',?,?,?,?,'base')",
+  )
+  .run(
+    CLAIM,
+    OWNER.githubId,
+    OWNER.githubLogin,
+    OWNER_WALLET,
+    "a".repeat(64),
+    NOW,
+    "b".repeat(64),
+    NOW,
+  );
+sqlite
+  .prepare(
+    "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES('challenge-1',?,?,'fixture',?,?)",
+  )
+  .run(CLAIM, OWNER.githubId, NOW, NOW);
+sqlite
+  .prepare(
+    "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,'challenge-1','0x00')",
+  )
+  .run(CLAIM, OWNER.githubId, NOW);
+
+const persistence = new CloudflareProjectPersistence(db);
+const deps: ProjectApiDependencies = {
+  persistence,
+  adminGithubIds: new Set(),
+  moderatorGithubIds: new Set(),
+  now: () => new Date(NOW),
+  randomId: () => crypto.randomUUID(),
+  sessionActor: async () => OWNER,
+  readTokenMetadata: async () => {
+    throw new Error("No asset edit in this workflow");
+  },
+  github: {
+    fetch: async () => {
+      throw new Error("Unexpected public lookup");
+    },
+  },
+  vettingClearance: async () => ({ state: "unscanned" }),
+  repositoryControl: async () => ({ state: "matched" }),
+  repositoryAccess: async () => ({
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  }),
+  vaultSetup: ownerVaultSetupService({
+    db,
+    projects: () => persistence.listProjects(),
+    networks: () => ["base-mainnet"],
+    rpcUrl: () => rpcUrl,
+    factories: reviewedFactories,
+  }),
+};
+async function vaultSetup(step: "review" | "register") {
+  const response = await handleProjectApi(
+    new Request("https://slop.cash/api/v1/project-vaults/vault-network", {
+      method: "POST",
+      headers: {
+        origin: "https://slop.cash",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        step,
+        expectedRevision: 1,
+        network: "base-mainnet",
+        claimId: CLAIM,
+        automatic: false,
+        ...(step === "register"
+          ? { transactionId: `0x${"ab".repeat(32)}` }
+          : {}),
+      }),
+    }),
+    deps,
+  );
+  if (!response) throw new Error("The project API did not answer");
+  return { status: response.status, body: await response.json() };
 }
 const retry = {
   error: "vault_network_unavailable",
@@ -194,4 +325,69 @@ test("an unreadable RPC is a retry, while a factory mismatch still refuses", asy
     log.mockRestore();
   }
   expect((await persistence.getProject("vault-network"))?.revision).toBe(1);
+});
+
+test("registration tries the next reviewed EVM factory for the exact creation", async () => {
+  const { monthlyCapMinor } = manifest.reward as { monthlyCapMinor: string };
+  const asset = ESCROW_NETWORKS["base-mainnet"].asset as string;
+  rpcUrl = `http://127.0.0.1:${rpc.port}`;
+  code[address("5")] = "0x6080604052";
+  code[SECOND_FACTORY] = code[address("5")];
+  code[CREATED_VAULT] = "0x60806040526000";
+  const common = { ...factory, codeSha256: codeSha256(code[CREATED_VAULT]) };
+  reviewedFactories.splice(0, reviewedFactories.length, common, {
+    ...common,
+    factory: SECOND_FACTORY,
+  });
+  creationData = buildCreateVaultCalldata({
+    projectId: `0x${registryProjectDigest("vault-network")}`,
+    asset,
+    monthlyCap: monthlyCapMinor,
+    automaticMonthly: false,
+  });
+  vaultGetters = Object.fromEntries(
+    Object.entries({
+      "token()": asset,
+      "owner()": OWNER_WALLET,
+      "feeRecipient()": factory.feeRecipient,
+      "factory()": SECOND_FACTORY,
+      "bindingDelay()": "0",
+      "purpose()": "0",
+      "projectId()": registryProjectDigest("vault-network"),
+      "monthlyCap()": BigInt(monthlyCapMinor).toString(16),
+      "monthlyEnabled()": "0",
+    }).map(([signature, value]) => [
+      toFunctionSelector(signature),
+      word(value),
+    ]),
+  );
+  creationMethods.length = 0;
+  mode = "creation";
+  try {
+    creationStatus = "pending";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: { status: "pending" },
+    });
+    creationStatus = "failed";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 422,
+      body: { error: "vault_creation_failed" },
+    });
+    creationStatus = "valid";
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: {
+        status: "registered",
+        deployment: { factory: SECOND_FACTORY, vault: CREATED_VAULT },
+      },
+    });
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(creationMethods.some((method) => /send|sign/iu.test(method))).toBe(
+      false,
+    );
+  } finally {
+    reviewedFactories.splice(0, reviewedFactories.length, factory);
+    mode = "factory";
+  }
 });

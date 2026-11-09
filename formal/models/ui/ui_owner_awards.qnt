@@ -2,6 +2,7 @@
 // @source src/lib/use-time-boundary.ts
 // Automatic cutoff is a local render boundary and a separate server guard.
 // Manual finalization remains possible; a scheduled allocation is not payment.
+// Request/session/lifetime admission is refined by ui_owner_private_requests.
 // `canManage` is the server's owner-or-admin verdict for the viewer. A
 // maintainer may read awards but never edits, saves or finalizes them.
 module ui_owner_awards {

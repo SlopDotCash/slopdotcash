@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
 import {
+  currentProjectSession,
   ProjectApiError,
   projectApiRequest,
   useProjectMaintainer,
@@ -94,40 +95,97 @@ function ExistingBountyVault({
     | { status: "error"; message: string }
     | {
         status: "ready";
+        actorId: string;
         funds: PrivateFunds | null;
         canSetup: boolean;
         refreshError?: string;
       }
   >({ status: "loading" });
   const [reload, setReload] = useState(0);
+  const generation = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [project, reload],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh repeats the private balance read.
   useEffect(() => {
     let active = true;
+    const currentGeneration = generation.current;
+    const owns = () => active && generation.current === currentGeneration;
     // A balance refresh must not unmount the wallet action and erase its
     // finalized result or an in-flight recovery form.
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
     );
-    projectApiRequest<{ funds: PrivateFunds | null; canSetup: boolean }>(
-      "GET",
-      `project-vaults/${project.id}?purpose=security-bounty`,
-    ).then(
-      (result) => {
-        if (active) setState({ status: "ready", ...result });
-      },
-      (error: unknown) => {
-        if (!active) return;
+    const load = async () => {
+      let actorId: string | null = null;
+      let identityVerified = false;
+      try {
+        const session = await currentProjectSession();
+        if (!owns()) return;
+        if (!session) throw new Error("Sign in to view private bounty funds.");
+        actorId = session.githubId;
+        setState((previous) =>
+          previous.status === "ready" && previous.actorId === actorId
+            ? previous
+            : { status: "loading" },
+        );
+        let result:
+          | { funds: PrivateFunds | null; canSetup: boolean }
+          | undefined;
+        let failure: unknown;
+        let failed = false;
+        try {
+          result = await projectApiRequest<{
+            funds: PrivateFunds | null;
+            canSetup: boolean;
+          }>(
+            "GET",
+            `project-vaults/${project.id}?purpose=security-bounty`,
+            undefined,
+            { expectedActorGithubId: actorId },
+          );
+        } catch (cause) {
+          failed = true;
+          failure = cause;
+          if (
+            owns() &&
+            cause instanceof ProjectApiError &&
+            [401, 403, 404, 410].includes(cause.status)
+          )
+            setState({ status: "error", message: errorMessage(cause) });
+        }
+        if (!owns()) return;
+        const current = await currentProjectSession();
+        if (!owns()) return;
+        if (current?.githubId !== actorId)
+          throw new Error(
+            "Your account changed. Refresh private bounty funds.",
+          );
+        identityVerified = true;
+        if (failed) throw failure;
+        if (!result) throw new Error("Bounty funds could not load.");
+        setState({ status: "ready", ...result, actorId });
+      } catch (error: unknown) {
+        if (!owns()) return;
         const message = errorMessage(error, "Bounty funds could not load.");
         const temporary =
+          identityVerified &&
           error instanceof ProjectApiError &&
           (error.status === 0 || error.status >= 500);
         setState((previous) =>
-          temporary && previous.status === "ready"
+          temporary &&
+          previous.status === "ready" &&
+          previous.actorId === actorId
             ? { ...previous, canSetup: false, refreshError: message }
             : { status: "error", message },
         );
-      },
-    );
+      }
+    };
+    void load();
     return () => {
       active = false;
     };

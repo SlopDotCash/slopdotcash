@@ -408,10 +408,14 @@ async function authorizeSubmission(
   const owned = await ownSubmission(deps, id, actor);
   const body = await readBody(request);
   exactKeys(body, []);
-  await approvedReportForForward(deps, id);
   const row = await settle(deps, owned);
   if (row.state === "receipt-verified" || row.state === "abandoned")
     fail(409, "submission_closed", "This submission is finished");
+  // A send in progress may still need reconciliation. Renew its read grant
+  // without requiring the saved body or permission to send a new copy. Send
+  // rechecks the current report and approval before claiming another attempt.
+  if (!["submitting", "uncertain", "submitted"].includes(row.state))
+    await approvedReportForForward(deps, id);
   const flow = await beginAuthorization(
     request,
     intake,

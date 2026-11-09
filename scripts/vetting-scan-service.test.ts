@@ -25,7 +25,10 @@ import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-per
 import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
-import { evidenceLocation } from "../backend/vetting/evidence-chunks";
+import {
+  EvidenceStorage,
+  type EvidenceStorageRow,
+} from "../backend/vetting/evidence-storage";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -1500,15 +1503,19 @@ for (const kind of [
       const original = await retainedNativeFixture();
       const row = sqlite
         .query(
-          "SELECT object_key, sha256, storage, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
+          "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
         )
-        .get(original.result.assessmentId, original[kind]) as {
-        object_key: string;
-        sha256: string;
-        storage: string;
-        size_bytes: number;
-      };
-      const key = evidenceLocation(row);
+        .get(
+          original.result.assessmentId,
+          original[kind],
+        ) as EvidenceStorageRow;
+      const key = await new EvidenceStorage(
+        retained.evidence.deps.db,
+        retained.evidence.deps.bucket!,
+        () => clock,
+        () => crypto.randomUUID(),
+      ).partKey(row);
+      if (key === null) throw new Error("Missing published evidence target");
       if (damage === "missing") await retained.bucket.delete(key);
       else {
         const object = await retained.bucket.head(key);
@@ -1702,14 +1709,17 @@ test("scan reuse requires the original report to remain in private R2", async ()
   if (!original) throw new Error("Missing original scan");
   const object = sqlite
     .query(
-      "SELECT object_key, sha256, storage FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
+      "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
     )
-    .get(original.id) as {
-    object_key: string;
-    sha256: string;
-    storage: string;
-  };
-  await retained.bucket.delete(evidenceLocation(object));
+    .get(original.id) as EvidenceStorageRow;
+  const key = await new EvidenceStorage(
+    retained.evidence.deps.db,
+    retained.evidence.deps.bucket!,
+    () => clock,
+    () => crypto.randomUUID(),
+  ).partKey(object);
+  if (key === null) throw new Error("Missing published evidence target");
+  await retained.bucket.delete(key);
   provider.calls = [];
   emptyCommit("Same source after evidence loss");
   await requestInvestigation();

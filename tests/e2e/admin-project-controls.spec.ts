@@ -298,3 +298,52 @@ test("canceling an enforcement preview returns to an editable form without recor
   ).toHaveLength(0);
   await expectAccessible(page);
 });
+
+for (const malformed of ["rows", "amount"] as const) {
+  test(`invalid fee conversion ${malformed} stays in the report error state and can retry`, async ({
+    page,
+  }) => {
+    await adminFixture(page, () => []);
+    let invalid = true;
+    await page.route("**/api/v1/admin/fee-conversions", (route) =>
+      route.fulfill({
+        json: invalid
+          ? malformed === "rows"
+            ? { routes: null, totals: [] }
+            : {
+                routes: [
+                  { network: "base", targetToken: "token", status: "usdc" },
+                ],
+                totals: [
+                  {
+                    network: "base",
+                    token: "token",
+                    targetToken: "token",
+                    conversions: 1,
+                    amountIn: "1",
+                    amountOut: "not-an-amount",
+                  },
+                ],
+              }
+          : { routes: [], totals: [], extraServerMetadata: true },
+      }),
+    );
+    await page.goto("/admin?section=fees", { waitUntil: "networkidle" });
+    const report = page.getByRole("region", {
+      name: "Fee conversions",
+      exact: true,
+    });
+    await expect(report.getByRole("alert")).toContainText(
+      "The fee conversion report is invalid.",
+    );
+    await expect(
+      page.getByRole("link", { name: "Projects", exact: true }),
+    ).toBeVisible();
+    invalid = false;
+    await report.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(report.getByRole("alert")).toHaveCount(0);
+    await expect(
+      report.getByRole("button", { name: "Retry", exact: true }),
+    ).toHaveCount(0);
+  });
+}

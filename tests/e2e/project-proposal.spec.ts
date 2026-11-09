@@ -2,8 +2,8 @@
  * The setup wizard reads public GitHub facts through the same-origin
  * /api/v1/project-github API. The preview lane has no Pages Functions, so the
  * route below runs the real server lookup code against fixtures of GitHub's
- * REST responses; the page, validation, manifest and handoff are the real
- * application, and the browser never calls api.github.com.
+ * REST and immutable-node GraphQL responses; the page, validation, manifest
+ * and handoff are real, and the browser never calls api.github.com.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -20,7 +20,13 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
-import { patchProposalDraft, readProposalDraft } from "./project-draft-fixture";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  patchProposalDraft,
+  readProposalDraft,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -28,8 +34,16 @@ const deployment = deploymentOrigins(
 
 const LICENSE_TEXT = "MIT License\n\nCopyright (c) Example Research\n";
 const COMMIT = "c".repeat(40);
+const PUBLIC_GITHUB_TOKEN = "public-only-read-token-fixture";
+const LICENSE_BLOB = createHash("sha1")
+  .update(`blob ${Buffer.byteLength(LICENSE_TEXT)}\0`)
+  .update(LICENSE_TEXT)
+  .digest("hex");
 
-type GithubFixture = (url: URL) => Promise<Response> | Response;
+type GithubFixture = (
+  url: URL,
+  init: RequestInit,
+) => Promise<Response> | Response;
 
 /** Uses the picker's organization/URL entry mode; valid input looks up itself. */
 async function enterRepository(page: Page, repository: string) {
@@ -51,8 +65,10 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
       "/api/v1/project-github/".length,
     );
     const fetcher = async (url: string, init: RequestInit) => {
-      expect(new Headers(init.headers).get("authorization")).toBeNull();
-      return github(new URL(url));
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        `Bearer ${PUBLIC_GITHUB_TOKEN}`,
+      );
+      return github(new URL(url), init);
     };
     try {
       const body =
@@ -60,14 +76,14 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
           ? {
               repositories: await listOwnedRepositories(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 "example",
               ),
             }
           : {
               repository: await lookupGitHubRepository(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 path.replace(/^repositories\//u, ""),
               ),
             };
@@ -99,7 +115,7 @@ async function routeGitHub(
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#f65b22"/></svg>',
     }),
   );
-  await serveGithubLookups(page, async (url) => {
+  await serveGithubLookups(page, async (url, init) => {
     if (url.pathname === "/repos/example/open-protein") {
       await beforeRepository?.();
       return Response.json(
@@ -126,29 +142,59 @@ async function routeGitHub(
         },
       );
     }
-    if (url.pathname === "/repos/example/open-protein/branches")
-      return Response.json(
-        [integrationBranch, "main", "development"].map((name) => ({
-          name,
-          commit: { sha: COMMIT },
-        })),
-      );
-    if (
-      url.pathname ===
-      `/repos/example/open-protein/branches/${encodeURIComponent(integrationBranch)}`
-    )
-      return Response.json({ commit: { sha: COMMIT } });
+    if (url.pathname === "/graphql") {
+      expect(init.method).toBe("POST");
+      const { query, variables } = JSON.parse(String(init.body));
+      expect(variables.id).toBe("R_fixture");
+      const branch = (name: string) => ({
+        name,
+        prefix: "refs/heads/",
+        target: { __typename: "Commit", oid: COMMIT },
+      });
+      let value: Record<string, unknown>;
+      if (query.includes("ProjectRepositoryBranches")) {
+        expect(variables.cursor).toBeNull();
+        value = {
+          refs: {
+            nodes: [...new Set([integrationBranch, "main", "development"])].map(
+              branch,
+            ),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      } else if (query.includes("ProjectRepositoryHead")) {
+        expect(variables.qualifiedName).toBe(`refs/heads/${integrationBranch}`);
+        value = { ref: branch(integrationBranch) };
+      } else {
+        expect(query).toContain("ProjectRepositoryLicense");
+        expect(variables.expression).toBe(`${COMMIT}:LICENSE`);
+        value = { object: { __typename: "Blob", oid: LICENSE_BLOB } };
+      }
+      return Response.json({
+        data: {
+          node: {
+            __typename: "Repository",
+            id: "R_fixture",
+            fullDatabaseId: "123456789",
+            isPrivate: false,
+            ...value,
+          },
+        },
+      });
+    }
     if (url.pathname === "/repos/example/open-protein/license") {
       expect(url.searchParams.get("ref")).toBe(COMMIT);
       return Response.json({
         path: licensePath,
+        type: "file",
+        sha: LICENSE_BLOB,
         encoding: "base64",
         content: Buffer.from(LICENSE_TEXT).toString("base64"),
         license: { spdx_id: "MIT" },
       });
     }
     if (url.pathname === "/users/example/repos")
-      return owned ? owned(url) : Response.json([]);
+      return owned ? owned(url, init) : Response.json([]);
     return Response.json({}, { status: 500 });
   });
 }
@@ -215,6 +261,194 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+});
+
+async function prepareCreationReview(page: Page) {
+  await routeGitHub(page);
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await enterRepository(page, "example/open-protein");
+  await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page
+    .getByLabel("Short description")
+    .fill("Reproducible protein-folding benchmarks.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
+}
+
+test("committed proposal unmount retires creation before dispatch", async ({
+  page,
+}) => {
+  let writes = 0;
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  await holdProjectSessionUntilUnmount(page, ".proposal-form");
+  await page.evaluate(() => {
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", "/projects/new");
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await leaveEditorWithHeldSession(page);
+    await expect(page.locator(".proposal-form")).toHaveCount(0);
+    expect(writes).toBe(0);
+  } finally {
+    await releaseHeldEditorSession(page);
+  }
+});
+
+test("project creation refuses a silent account change before dispatch", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let writes = 0;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  actor = "4343";
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  expect(writes).toBe(0);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("an accepted project creation is not displayed under a later account", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let accepted = 0;
+  let release = () => {};
+  let started = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    accepted += 1;
+    started();
+    await held;
+    await route.fulfill({
+      status: 201,
+      json: {
+        project: { id: "open-protein", revision: 1 },
+        setup: CREATED_SETUP,
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await waiting;
+  try {
+    actor = "4343";
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+  expect(accepted).toBe(1);
+});
+
+test("a stale session observation cannot authorize creation for a new actor", async ({
+  page,
+  diagnostics,
+}) => {
+  let actor = "4242";
+  let replaceAfterSessionRead = false;
+  let attempts = 0;
+  diagnostics.allowResponse(403, "POST", "/api/v1/projects");
+  await page.route("**/api/v1/project-session", (route) => {
+    const observed = actor;
+    // Return the previous observation once; the following API request belongs
+    // to the changed actor in this explicit identity-provider double.
+    if (replaceAfterSessionRead) {
+      replaceAfterSessionRead = false;
+      actor = "4343";
+    }
+    return route.fulfill({
+      json: {
+        session: {
+          githubId: observed,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    });
+  });
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(actor).toBe("4343");
+    attempts += 1;
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    await route.fulfill({
+      status: 403,
+      json: {
+        error: "actor_changed",
+        message:
+          "The signed-in account changed. Retry with the current account.",
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  replaceAfterSessionRead = true;
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "signed-in account changed",
+  );
+  expect(attempts).toBe(1);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
 });
 
 for (const integrationBranch of ["release/2026+10", "개발/다음"]) {

@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -54,7 +55,10 @@ import {
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
-import { useProjectSession } from "./lib/project-api";
+import {
+  notifyProjectSessionChanged,
+  useProjectSession,
+} from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
@@ -404,6 +408,7 @@ export function PointsNav() {
         });
         clearAllDrafts();
         setMe(null);
+        notifyProjectSessionChanged();
         setOpen(false);
       },
       () => "Could not sign out. Retry.",
@@ -739,7 +744,7 @@ function JoinPoints({
   const [message, setMessage] = useState("");
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
-  useEffect(() => () => active.current?.abort(), []);
+  useLayoutEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     if (!me)
       setMessage((current) =>

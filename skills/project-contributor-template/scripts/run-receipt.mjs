@@ -2869,7 +2869,7 @@ function finishRun(options) {
     fail("run state does not match this project, repository, model, or lane");
   }
   const completedAt = canonicalIso();
-  if (Date.parse(completedAt) + CLOCK_SKEW_MS < Date.parse(state.startedAt)) {
+  if (Date.parse(completedAt) < Date.parse(state.startedAt)) {
     fail("system clock moved backward during the run");
   }
   const usage = options.usageUnavailable
@@ -2927,9 +2927,16 @@ function finishRun(options) {
     lane: options.lane,
     repositoryRootHash: state.repositoryRootHash,
   };
+  // A committed receipt is immutable. Refuse an invalid candidate before it
+  // can become the winner that every later finish must read and validate.
+  const validatedCandidate = validateCompletedState(
+    completed,
+    options,
+    repositoryRoot,
+  );
   const created = atomicJson(completedPath, completed, directories.pending);
   const winner = created
-    ? validateCompletedState(completed, options, repositoryRoot)
+    ? validatedCandidate
     : validateCompletedState(
         readStateFile(completedPath),
         options,

@@ -1010,6 +1010,7 @@ async function currentAuthority(
   deps: ProjectApiDependencies,
   manifest: ProjectDefinition,
   actor: GithubActor,
+  identityMismatch: "throw" | "deny" = "throw",
 ): Promise<{ authority: SetupAuthority; access: AccessCheck }> {
   const access = await readRepositoryAccess(
     deps.repositoryAccess,
@@ -1033,8 +1034,14 @@ async function currentAuthority(
       access: { state: "retry", message },
     };
   }
-  if (control.state === "mismatch")
+  if (control.state === "mismatch") {
+    if (identityMismatch === "deny")
+      return {
+        authority: { state: "denied", message: control.reason },
+        access,
+      };
     fail(422, "invalid_manifest", control.reason);
+  }
   return { authority, access };
 }
 
@@ -1122,16 +1129,16 @@ async function runSetupCheck(
   let checked = options.authority;
   if (checked === undefined) {
     try {
-      checked = await currentAuthority(deps, project.manifest, actor);
+      checked = await currentAuthority(deps, project.manifest, actor, "deny");
     } catch (error) {
-      // A repository that no longer matches its manifest is a denial here,
-      // shown with its reason, not a failed status read.
+      // A known identity mismatch returns denied with its observed access.
+      // An unexpected reader failure remains unavailable, never a denial.
       const message =
         typeof error === "object" && error !== null && "message" in error
           ? String(error.message)
-          : "GitHub repository facts do not match this project";
+          : "GitHub could not be checked. Try again.";
       checked = {
-        authority: { state: "denied", message },
+        authority: { state: "retry", message },
         access: { state: "retry", message },
       };
     }
@@ -1234,6 +1241,7 @@ async function createProject(
   );
   const actor = actorOf(session);
   assertNewProjectManifest(manifest, actor);
+  const enforcementGeneration = await deps.persistence.enforcementGeneration();
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(manifest, actor, enforcements);
   assertRepositoryUnrestricted(manifest, enforcements);
@@ -1243,28 +1251,42 @@ async function createProject(
   });
   const checked = await currentAuthority(deps, manifest, actor);
   requireAuthority(checked);
-  const created = await deps.persistence.createProject({
-    manifest,
-    manifestText: text,
-    manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
-    reason: `Created through self-service setup by @${actor.githubLogin}. ${checked.authority.message}`,
-    actor,
-    at: deps.now().toISOString(),
-    referrer,
-  });
+  const at = deps.now().toISOString();
+  const manifestSha256 = await sha256Hex(new TextEncoder().encode(text));
+  const created = await deps.persistence.createProject(
+    {
+      manifest,
+      manifestText: text,
+      manifestSha256,
+      reason: `Created through self-service setup by @${actor.githubLogin}. ${checked.authority.message}`,
+      actor,
+      at,
+      referrer,
+    },
+    enforcementGeneration,
+  );
   if (created === "conflict")
     fail(
       409,
       "registry_conflict",
-      "The project id or repository is already listed",
+      "The project id, repository or restrictions changed. Reload before creating it.",
     );
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
     await deps.persistence.enforcementGeneration(),
   );
-  const project = await deps.persistence.getProject(manifest.id);
-  if (project === null) fail(500, "internal_error", "Project vanished");
+  const project: ProjectRecord = {
+    id: manifest.id,
+    status: "paused",
+    revision: 1,
+    manifest,
+    manifestSha256,
+    createdAt: at,
+    updatedAt: at,
+    sourceApplicationId: null,
+    referrer,
+  };
   const scanRequest = await queueScan(
     deps,
     project,
@@ -1743,10 +1765,8 @@ async function publishOwnerRevision(
     scanRequest,
     allowActivation: false,
   });
-  const published = await deps.persistence.getProject(projectId);
-  if (published === null) fail(500, "internal_error", "Project vanished");
   return json(200, {
-    project: adminProject(published),
+    project: adminProject(updated),
     changes: {
       presentation: changes.presentation,
       executable: changes.executable,
@@ -1869,6 +1889,7 @@ async function publishPendingApplication(
   assertNewProjectManifest(application.manifest, actor, {
     storedApplication: true,
   });
+  const enforcementGeneration = await deps.persistence.enforcementGeneration();
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(application.manifest, actor, enforcements);
   assertRepositoryUnrestricted(application.manifest, enforcements);
@@ -1879,25 +1900,38 @@ async function publishPendingApplication(
   );
   const checked = await currentAuthority(deps, application.manifest, actor);
   requireAuthority(checked);
-  const result = await deps.persistence.publishApplication({
-    applicationId,
-    actor,
-    reason: `Published by its applicant through self-service setup. ${checked.authority.message}`,
-    at: deps.now().toISOString(),
-  });
+  const at = deps.now().toISOString();
+  const result = await deps.persistence.publishApplication(
+    {
+      applicationId,
+      actor,
+      reason: `Published by its applicant through self-service setup. ${checked.authority.message}`,
+      at,
+    },
+    enforcementGeneration,
+  );
   if (result === "conflict")
     fail(
       409,
       "registry_conflict",
-      "The project id or repository is already listed, or the application was published",
+      "The project id, repository or restrictions changed, or the application was published. Reload before retrying.",
     );
   await purgeProjectCache(
     deps.cache,
     new URL(request.url).origin,
     await deps.persistence.enforcementGeneration(),
   );
-  const project = await deps.persistence.getProject(application.projectId);
-  if (project === null) fail(500, "internal_error", "Project vanished");
+  const project: ProjectRecord = {
+    id: application.projectId,
+    status: "paused",
+    revision: 1,
+    manifest: application.manifest,
+    manifestSha256: application.manifestSha256,
+    createdAt: at,
+    updatedAt: at,
+    sourceApplicationId: application.id,
+    referrer: application.referrer,
+  };
   const scanRequest = await queueScan(
     deps,
     project,
@@ -2095,6 +2129,8 @@ async function appendRevision(
         `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`,
       );
   }
+  const manifestSha256 = await sha256Hex(new TextEncoder().encode(text));
+  const at = deps.now().toISOString();
   const result = await deps.persistence.appendProjectRevision(
     {
       projectId,
@@ -2105,10 +2141,10 @@ async function appendRevision(
         : { expectedClearanceGeneration }),
       manifest,
       manifestText: text,
-      manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
+      manifestSha256,
       reason: input.reason.slice(0, 1000),
       actor,
-      at: deps.now().toISOString(),
+      at,
     },
     enforcementGeneration,
   );
@@ -2120,9 +2156,17 @@ async function appendRevision(
     new URL(request.url).origin,
     await deps.persistence.enforcementGeneration(),
   );
-  const updated = await deps.persistence.getProject(projectId);
-  if (updated === null) fail(500, "internal_error", "Project vanished");
-  return updated;
+  // Return the revision this request committed. Reading the mutable head here
+  // can return a later writer's revision and make the editor silently rebase
+  // an in-flight draft onto work it never reviewed.
+  return {
+    ...current,
+    status: manifest.status,
+    revision: current.revision + 1,
+    manifest,
+    manifestSha256,
+    updatedAt: at,
+  };
 }
 
 function publicRestriction(
@@ -2829,11 +2873,13 @@ async function githubLookup(
   const session = await requireSession(request, deps);
   // Public GitHub facts are the same for every caller, so the edge cache is
   // shared; the session only gates who may spend the lookup budget.
+  // Repository facts use a fresh namespace: prior deployments may retain
+  // name-based responses that bypassed the immutable-node reader.
   const url = new URL(request.url);
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
       ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
-      : `${url.origin}${url.pathname.toLowerCase()}`,
+      : `${url.origin}/api/v1/project-github/repository-node-v1/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
   );
   const build = async () => {
     if (parts[1] === "owned-repositories") {

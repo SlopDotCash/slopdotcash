@@ -1,16 +1,219 @@
 /** Actual Pages/D1/R2 signed transport and native browser attachment workflow. */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import type { Page } from "@playwright/test";
 import { fixtureRepository } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
 import { signedVettingHeaders } from "../vetting-fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
+/** Release the final identity response between DOM commit and passive effects. */
+async function holdFinalEvidenceSession(page: Page, sessionNumber: number) {
+  await page.evaluate((sessionNumber) => {
+    const state = {
+      reads: 0,
+      waiting: false,
+      removed: false,
+      returned: false,
+      clicks: [] as string[],
+      release: () => {},
+    };
+    Object.assign(window, { heldEvidenceSession: state });
+    const json = Response.prototype.json;
+    Response.prototype.json = async function (this: Response) {
+      const value = await json.call(this);
+      if (this.url.endsWith("/api/v1/project-session")) {
+        state.reads += 1;
+        if (state.reads === sessionNumber) {
+          state.waiting = true;
+          await new Promise<void>((resolve) => {
+            state.release = resolve;
+          });
+          state.returned = true;
+        }
+      }
+      return value;
+    };
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (
+        this.href.startsWith("blob:") ||
+        /\/api\/v1\/operator\/vetting-evidence\/.*\/download$/u.test(this.href)
+      )
+        state.clicks.push(this.href);
+      click.call(this);
+    };
+    const observer = new MutationObserver(() => {
+      if (state.waiting && !document.querySelector(".evidence-object")) {
+        state.removed = true;
+        state.release();
+        observer.disconnect();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }, sessionNumber);
+}
+
+for (const mode of ["streamed", "buffered"] as const) {
+  test(`committed departure cancels the final ${mode} evidence download`, async ({
+    page,
+    diagnostics,
+  }) => {
+    // This exercises the real page, hash check, identity helper and native
+    // anchor boundary. The existing registry test below covers real D1/R2
+    // grants and bytes; these small HTTP fixtures control only the race.
+    diagnostics.allowPreviewApiMisses();
+    const bytes = Buffer.from([0, 1, 2, 3, 250, 251, 252, 253]);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const label = `${mode} evidence fixture`;
+    const base = `/api/v1/operator/vetting-evidence/committed-reader/run/${hash}`;
+    const path = "/vetting-evidence?assessmentId=committed-reader&runId=run";
+    let grants = 0;
+    let bodyReads = 0;
+    let nativeReads = 0;
+    let downloads = 0;
+    page.on("download", () => {
+      downloads += 1;
+    });
+    await page.route("**/api/v1/project-session", (route) =>
+      route.fulfill({
+        json: {
+          session: { githubId: "4242", githubLogin: "operator", admin: true },
+        },
+      }),
+    );
+    await page.route("**/api/v1/operator/vetting-evidence?**", (route) =>
+      route.fulfill({
+        json: {
+          retentionBoundary: "Private retained fixture evidence.",
+          runs: [
+            {
+              assessmentId: "committed-reader",
+              runId: "run",
+              manifestSha256: "a".repeat(64),
+              expiresAt: null,
+              policy: { version: "fixture" },
+              objects: [
+                {
+                  sha256: hash,
+                  sizeBytes: bytes.length,
+                  kind: "artifact",
+                  label,
+                  contentType: "application/octet-stream",
+                  state: "stored-unverified",
+                  streamed: mode === "streamed",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    await page.route(
+      `**${base}/${mode === "streamed" ? "download-grant" : "grant"}`,
+      (route) => {
+        grants += 1;
+        expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+          "4242",
+        );
+        return route.fulfill({
+          json: mode === "streamed" ? {} : { grant: "fixture-grant" },
+        });
+      },
+    );
+    await page.route(`**${base}/body`, (route) => {
+      bodyReads += 1;
+      expect(route.request().headers()["x-vetting-read-grant"]).toBe(
+        "fixture-grant",
+      );
+      return route.fulfill({
+        contentType: "application/octet-stream",
+        body: bytes,
+      });
+    });
+    await page.route(`**${base}/download`, (route) => {
+      nativeReads += 1;
+      return route.fulfill({
+        body: bytes,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": 'attachment; filename="abandoned-fixture.bin"',
+        },
+      });
+    });
+    await page.goto(path, { waitUntil: "networkidle" });
+    await page
+      .getByRole("button", {
+        name: `Select ${label}, ${hash.slice(0, 12)}`,
+        exact: true,
+      })
+      .click();
+    await page
+      .getByLabel(`Reason to inspect ${label}`)
+      .fill("Inspect exact fixture bytes without execution");
+    await holdFinalEvidenceSession(page, mode === "streamed" ? 2 : 3);
+    await page.evaluate((path) => {
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", path);
+    }, path);
+    try {
+      await page
+        .getByRole("button", { name: `Download ${label}`, exact: true })
+        .click();
+      await page.waitForFunction(
+        () =>
+          (
+            window as typeof window & {
+              heldEvidenceSession: { waiting: boolean };
+            }
+          ).heldEvidenceSession.waiting,
+      );
+      await page.goBack();
+      await page.waitForFunction(() => {
+        const state = (
+          window as typeof window & {
+            heldEvidenceSession: { removed: boolean; returned: boolean };
+          }
+        ).heldEvidenceSession;
+        return state.removed && state.returned;
+      });
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      await expect(page).toHaveURL(/\/how-it-works$/u);
+      expect(grants).toBe(1);
+      expect(bodyReads).toBe(mode === "buffered" ? 1 : 0);
+      expect(nativeReads).toBe(0);
+      expect(downloads).toBe(0);
+      expect(
+        await page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                heldEvidenceSession: { clicks: string[] };
+              }
+            ).heldEvidenceSession.clicks,
+        ),
+      ).toEqual([]);
+    } finally {
+      await page.evaluate(() =>
+        (
+          window as typeof window & { heldEvidenceSession: { release(): void } }
+        ).heldEvidenceSession.release(),
+      );
+    }
+  });
+}
+
 test("large private evidence downloads with a single-use browser grant @registry", async ({
   page,
   request,
   baseURL,
+  diagnostics,
 }, info) => {
   const origin = new URL(baseURL!).origin;
   const suffix = info.project.name.replaceAll(/[^a-z0-9-]/g, "-");
@@ -187,6 +390,69 @@ test("large private evidence downloads with a single-use browser grant @registry
       exact: true,
     })
     .focus();
+  let releaseGrant = () => {};
+  let grantStarted = () => {};
+  const grantWaiting = new Promise<void>((resolve) => {
+    grantStarted = resolve;
+  });
+  const grantRelease = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  const grantPath = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download-grant`;
+  await page.route(`**${grantPath}`, async (route) => {
+    const response = await route.fetch();
+    grantStarted();
+    await grantRelease;
+    await route.fulfill({ response });
+  });
+  const abandonedDownloads: string[] = [];
+  const observeAbandoned = (download: { suggestedFilename(): string }) => {
+    abandonedDownloads.push(download.suggestedFilename());
+  };
+  page.on("download", observeAbandoned);
+  const delayedGrant = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === grantPath,
+  );
+  await page.keyboard.press("Enter");
+  await grantWaiting;
+  try {
+    // Leave through the actual SPA control while the real grant reply waits.
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Evidence inventory" }),
+    ).toHaveCount(0);
+  } finally {
+    releaseGrant();
+  }
+  await (await delayedGrant).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  expect(abandonedDownloads).toEqual([]);
+  page.off("download", observeAbandoned);
+  await page.unroute(`**${grantPath}`);
+  await page.goto(
+    `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
+    { waitUntil: "networkidle" },
+  );
+  await page
+    .getByRole("button", {
+      name: `Select Synthetic VM disk overlay, ${sha.slice(0, 12)}`,
+      exact: true,
+    })
+    .click();
+  await item
+    .getByRole("textbox")
+    .fill("Inspect the complete synthetic disk overlay without execution");
+  await item
+    .getByRole("button", {
+      name: "Download Synthetic VM disk overlay",
+      exact: true,
+    })
+    .focus();
   const downloadPromise = page.waitForEvent("download");
   await page.keyboard.press("Enter");
   const downloaded = await downloadPromise;
@@ -207,9 +473,28 @@ test("large private evidence downloads with a single-use browser grant @registry
     contentType: "application/json",
   });
   const cookies = await page.context().cookies();
+  const downloadPath = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download`;
   expect(
-    cookies.some((cookie) => cookie.name === "__Secure-vetting-read-grant"),
-  ).toBe(false);
+    cookies.some(
+      (cookie) =>
+        cookie.name === "__Secure-vetting-read-grant" &&
+        cookie.path === downloadPath,
+    ),
+  ).toBe(true);
+  // Responses retain the cookie so a delayed download cannot clear a newer
+  // grant. Its D1 row is already spent: a real same-origin browser request,
+  // including both session and path-scoped grant cookies, cannot replay it.
+  diagnostics.allowResponse(403, "GET", downloadPath);
+  const replay = await page.evaluate(async (path) => {
+    const response = await fetch(path, {
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+    });
+    const body = (await response.json()) as { error: string };
+    return { status: response.status, error: body.error };
+  }, downloadPath);
+  expect(replay).toEqual({ status: 403, error: "grant_invalid" });
   // Enlarge text at the current CSS viewport; this is not browser zoom.
   const restoreText = await enlargeText(page.locator("body"));
   await page.evaluate(

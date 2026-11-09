@@ -1,9 +1,10 @@
 /**
  * Serves each project's generated skills, guides, routing manifests,
  * archives, terms, and the project discovery index from the current D1
- * revision and the canonical templates. Only the security-vetting clearance
- * reads GitHub, to compare the cleared commit with the live integration-branch
- * head; each skill request also verifies its retained private evidence.
+ * revision and the canonical templates. Normal admission persists for the
+ * admitted repository and rechecks retained private evidence unless an explicit
+ * exemption applies. Fresh branch/template pins belong to the separate
+ * reinstatement path; ordinary publication does not request reinstatement.
  */
 
 import type {
@@ -87,10 +88,11 @@ export type SkillPublicationDependencies = {
   listEnforcements(): Promise<ProjectEnforcement[]>;
   loadTemplate(): Promise<SkillTemplateSource>;
   /**
-   * Security vetting of the revision's exact content, integration-branch head
-   * and the digest of the template inputs the skills render from (VET-01,
-   * VET-07). Only "cleared" serves a skill. Discovery also requires an
-   * active project so the index matches installer refusal of paused work.
+   * Current admission clearance for this captured revision and template input
+   * digest. The persistence layer applies permanent-admission, investigation,
+   * exemption and retained-evidence rules. Only "cleared" serves a skill.
+   * Discovery also requires an active project so it matches installer refusal
+   * of paused work.
    */
   vettingClearance(
     project: ProjectRecord,

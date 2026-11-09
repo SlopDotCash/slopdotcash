@@ -196,7 +196,9 @@ try {
   );
   await send("retention");
   const retention = await wait("retention");
-  assert.equal(retention.deletedCompleteObjects, 2);
+  assert.equal(retention.deletedCompleteObjects, 0);
+  assert.equal(retention.heldLegacyReferences, 21);
+  assert.equal(retention.legacyPhysicalDeletionRefused, true);
   await send("retention");
   assert.equal(
     JSON.stringify(await wait("retention")),

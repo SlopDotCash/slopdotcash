@@ -82,6 +82,8 @@ module api_private_intake {
     s' = s.with("phase",
       if (outcome == "created") "submitted" else if (outcome == "rejected") "failed"
       else if (outcome == "rate-limited") "draft" else "uncertain") }
+  // An empty listing is an observation, not proof no copy can appear later;
+  // api_submission_recovery retains late copies and claim/readback races.
   // reconcileSubmission lists by marker with the grant; an empty settled
   // listing reopens the draft, a match adopts the earliest advisory.
   action reconcile(found: bool): bool = all { s.phase == "uncertain", granted,
