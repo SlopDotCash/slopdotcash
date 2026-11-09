@@ -3243,15 +3243,15 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "a4a3fe41dd4f77c1046bc29231e5b9121b13c5f6b1133f50f3244a1730dad238",
+      "sha256": "f05f7bee8294b46be56a47b7e267dea3169397b404ad0a7dd6ce36d186645dff",
       "models": [
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 247, 253, 256, 259,
-        260, 261, 262, 351, 626, 633, 634, 636, 641, 645, 649
+        2, 40, 67, 104, 126, 129, 142, 149, 158, 166, 174, 252, 258, 261, 264,
+        265, 266, 267, 356, 631, 638, 639, 641, 646, 650, 664, 665, 669
       ],
       "review": "mapped-abstraction"
     },
@@ -3268,6 +3268,14 @@
       "models": ["formal/models/release/static_asset_generation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/generate-standings.ts",
+      "sha256": "9c780411e54ef68139a60b1cc48e2b91263f81b7860c18d588fd07e7d5fd54b9",
+      "models": [],
+      "candidateLines": [6, 46, 47],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "One deterministic derivation per call inside prepare-publication.mjs: reads the prepared snapshot and cycle index, validates the result, and replaces one derived file through a temporary file and rename. It retains no state and has no retry; publication order and failure are modeled for prepare-publication.mjs in release_publication."
     },
     {
       "path": "scripts/github-pagination.ts",
@@ -3495,7 +3503,7 @@
     },
     {
       "path": "scripts/prepare-publication.mjs",
-      "sha256": "28c774b7ebbbf289f1f19ff48c176812a2dc7a29165786367dccd6a99bee33ab",
+      "sha256": "3c78297c98dd365a6f59b7e413c16b9d3648ded75704e7ba31a0d7a82ddf44eb",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4097,7 +4105,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "69be46c6627af337ae67948b56195421b4049c4f96d56b22e35c0610788b70fc",
+      "sha256": "cb8d38e7af3fc58f7dc35d4b8a171a7dc6cf36974fde07bcf2951297f17fcd3b",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -4108,13 +4116,13 @@
         "formal/models/ui/ui_project_work.qnt"
       ],
       "candidateLines": [
-        13, 15, 283, 293, 303, 314, 323, 324, 325, 326, 327, 329, 330, 389, 444,
-        445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 935,
-        936, 938, 1028, 1043, 1057, 1067, 1097, 1100, 1162, 1165, 1167, 1171,
-        1172, 1180, 1200, 1208, 1209, 1216, 1252, 1296, 1299, 1316, 1317, 1360,
-        1362, 1382, 1384, 1439, 1440, 1443, 1444, 1447, 1448, 1463, 1467, 1472,
-        1474, 1478, 1479, 1530, 1562, 1564, 1589, 1590, 1607, 1608, 1616, 1617,
-        1628, 1631, 1642
+        13, 15, 286, 296, 306, 317, 326, 327, 328, 329, 330, 332, 333, 392, 447,
+        448, 449, 452, 475, 542, 573, 610, 650, 654, 656, 697, 754, 807, 938,
+        939, 941, 1031, 1046, 1060, 1070, 1100, 1103, 1165, 1168, 1170, 1174,
+        1175, 1183, 1203, 1211, 1212, 1219, 1255, 1299, 1302, 1319, 1320, 1363,
+        1365, 1385, 1387, 1442, 1443, 1446, 1447, 1450, 1451, 1468, 1472, 1477,
+        1479, 1483, 1484, 1540, 1575, 1577, 1602, 1603, 1620, 1621, 1629, 1630,
+        1641, 1644, 1655
       ],
       "review": "mapped-abstraction"
     },
@@ -4430,28 +4438,28 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "8b53d8f2ef67ed46c04f3c6a6376a1258a3191cee015164d742e6ca004a652f6",
+      "sha256": "9bd16424746a1fafea55f89f371ed68fb0cacda1343cff181f2d51df2f49f4ea",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 18, 83, 98, 99, 100, 102, 108, 118, 127, 130, 138, 139, 141, 142,
-        158, 160, 207, 208, 209, 212, 213, 214, 215, 232, 238, 245, 253, 263,
-        270, 277, 291, 311, 328, 346, 347, 348, 353, 377, 378, 383, 386, 387,
-        388, 389, 390, 392, 393, 409, 415, 472, 473, 478, 480, 510, 511, 512,
-        514, 516, 519, 528, 530, 532, 534, 536, 539, 540, 544, 546, 548, 558,
-        559, 564, 566, 578, 579, 609, 613, 614, 624, 625, 636, 638, 645, 649,
-        654, 655, 679, 685, 737, 738, 739, 740, 742, 743, 755, 829, 842, 847,
-        856, 926, 964, 970, 980, 989, 994, 996, 999, 1005, 1006, 1017, 1026,
-        1034, 1036, 1037, 1045, 1048, 1049, 1050, 1051, 1053, 1054, 1057, 1058,
-        1069, 1078, 1102, 1106, 1115, 1137, 1138, 1139, 1148, 1232, 1242, 1247,
-        1265, 1267, 1269, 1272, 1273, 1274, 1276, 1344, 1348, 1450, 1451, 1452,
-        1482, 1483, 1522, 1524, 1525, 1526, 1528, 1535, 1537, 1541, 1543, 1545,
-        1554, 1555, 1561, 1567, 1572, 1581, 1582, 1583, 1584, 1586, 1587, 1590,
-        1591, 1593, 1594, 1598, 1606, 1607, 1608, 1609, 1612, 1616, 1627, 1628,
-        1633
+        14, 18, 90, 105, 106, 107, 109, 120, 130, 139, 142, 150, 151, 153, 154,
+        170, 172, 235, 236, 237, 240, 241, 242, 243, 262, 279, 284, 296, 301,
+        304, 311, 325, 345, 362, 380, 381, 382, 387, 411, 412, 417, 420, 421,
+        422, 423, 424, 426, 427, 443, 449, 506, 507, 512, 514, 544, 545, 546,
+        548, 550, 553, 562, 564, 566, 568, 570, 573, 574, 578, 580, 582, 592,
+        593, 598, 600, 612, 613, 643, 647, 648, 658, 659, 670, 672, 679, 683,
+        688, 689, 713, 719, 771, 772, 773, 774, 776, 777, 789, 863, 876, 881,
+        890, 960, 998, 1004, 1014, 1023, 1028, 1030, 1033, 1039, 1040, 1051,
+        1060, 1068, 1070, 1071, 1079, 1082, 1083, 1084, 1085, 1087, 1088, 1091,
+        1092, 1103, 1112, 1136, 1140, 1149, 1171, 1172, 1173, 1182, 1234, 1235,
+        1274, 1284, 1289, 1307, 1309, 1311, 1314, 1315, 1319, 1321, 1389, 1393,
+        1495, 1496, 1497, 1527, 1528, 1567, 1569, 1570, 1571, 1573, 1580, 1582,
+        1586, 1588, 1590, 1599, 1600, 1606, 1612, 1617, 1626, 1627, 1628, 1629,
+        1631, 1632, 1635, 1636, 1638, 1639, 1643, 1651, 1652, 1653, 1654, 1657,
+        1661, 1672, 1673, 1678
       ],
       "review": "mapped-abstraction"
     },
@@ -4475,15 +4483,16 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "2a963a06e809765b35e2e941a6207eb51c0283f1c6cffd9ce9a9a95f6ed086bd",
+      "sha256": "9d98cd4e210ab502843aeedde46926cee309557ebc3e3f81a87a856c9b43cdd7",
       "models": [
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "candidateLines": [
-        2, 43, 45, 170, 232, 233, 235, 236, 238, 240, 245, 250, 251, 257, 259,
-        261, 262, 263, 269, 271, 273, 352, 433, 443, 444, 449, 463, 465, 470,
-        473, 477, 485, 489, 508, 596, 604, 608, 612, 614, 622, 624, 721
+        2, 43, 45, 170, 233, 234, 236, 242, 243, 245, 246, 248, 250, 255, 260,
+        261, 267, 269, 271, 272, 273, 279, 281, 283, 362, 443, 453, 454, 459,
+        473, 475, 480, 483, 487, 495, 499, 518, 606, 614, 618, 622, 624, 632,
+        634, 731
       ],
       "review": "mapped-abstraction"
     },
@@ -4510,28 +4519,28 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
+      "sha256": "f817601ff774440d9d9a0410ed9b89368a4e1c234335c6316c3d48ae5e11bd6a",
       "models": ["formal/models/ui/ui_resources.qnt"],
       "candidateLines": [
-        1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 69, 74, 81, 82, 85, 98, 99, 100,
-        105, 110, 122, 129, 136, 140, 145, 148, 155, 158, 168, 267, 269, 272,
-        291, 292, 295, 307, 328, 346, 347, 362, 364, 368, 371, 374, 387, 397,
-        418, 425, 434, 435, 441, 442, 443, 444
+        1, 34, 35, 38, 39, 43, 47, 51, 56, 60, 68, 73, 80, 81, 84, 96, 103, 115,
+        122, 135, 138, 145, 148, 158, 254, 256, 259, 281, 282, 291, 312, 330,
+        331, 346, 348, 352, 355, 358, 371, 381, 402, 409, 418, 419, 425, 426,
+        427, 428
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/Profiles.tsx",
-      "sha256": "1d6e2c473618ca40ca9d3c53f744c4b1e373b499784793f5aaee28a69b0755f9",
+      "sha256": "af3266bbc447eeb44871946c24a14ff1232db81ea6c09b0614377ef523582bcb",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        1, 61, 62, 69, 75, 76, 78, 83, 110, 112, 113, 123, 143, 144, 149, 151,
-        155, 156, 161, 163, 166, 167, 267, 279, 281, 284, 300, 304, 340, 347,
-        392, 418, 419, 426, 427, 428, 431, 434, 435, 437, 438, 441, 444, 445,
-        454
+        1, 61, 62, 69, 75, 76, 78, 83, 111, 113, 114, 124, 144, 145, 150, 152,
+        156, 157, 162, 164, 167, 168, 268, 280, 282, 285, 301, 305, 341, 348,
+        393, 419, 420, 427, 428, 429, 432, 435, 436, 438, 439, 442, 445, 446,
+        455
       ],
       "review": "mapped-abstraction"
     },
@@ -4623,11 +4632,11 @@
     },
     {
       "path": "src/ProjectWork.tsx",
-      "sha256": "9108c3b36f1dfc4146d19af94144cdc6be49df1accb265ae8d3143ee986f542f",
+      "sha256": "e5087a4e7d3004c3e6afaaba2a1887e1a81a495025e139358ad48fecc1e927b1",
       "models": ["formal/models/ui/ui_project_work.qnt"],
       "candidateLines": [
-        9, 10, 13, 14, 16, 21, 23, 24, 29, 37, 39, 42, 43, 48, 49, 50, 53, 54,
-        59, 60, 62, 63
+        9, 10, 13, 14, 16, 21, 22, 28, 30, 33, 34, 39, 40, 41, 44, 45, 50, 51,
+        53, 54
       ],
       "review": "mapped-abstraction"
     },
@@ -5289,6 +5298,14 @@
       "statelessReason": "One immutable configured recipient constant; no state transition."
     },
     {
+      "path": "src/lib/points-members.ts",
+      "sha256": "dd225300d01fbe01dbd7d9968415a944b63eb580826a96bb669d72345d327bcb",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure derivation and validation of the published member record from supplied journal members; no retained state, I/O, lifecycle or mutation. Journal publication is modeled in journal_publication."
+    },
+    {
       "path": "src/lib/points-summary.ts",
       "sha256": "d76e32eb79853776299155aa7b78fd18041091ee2dae10eb321625bc11a7d276",
       "models": [],
@@ -5311,7 +5328,7 @@
     },
     {
       "path": "src/lib/profile-activity.ts",
-      "sha256": "cd8c8a60741ae4060269313eab55f2aa5a18d8bbe072a1d0e017276f4b497050",
+      "sha256": "d1aef15b5dee13e7731fb37b70ea51f4d9e8cd93991fd8d9d3fec77300ab9d95",
       "models": ["formal/models/ui/ui_profile_history.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -5679,6 +5696,14 @@
       "statelessReason": "Static canonical source repository URL; no transitions."
     },
     {
+      "path": "src/lib/standings.ts",
+      "sha256": "ea6111140c737ac7d5a1977f8df5bb0eb09d3cc284ffa4a16fd513d989f67d7e",
+      "models": [],
+      "candidateLines": [147],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure derivation and validation of the published standings from a supplied snapshot and cycle index; no retained state, I/O, lifecycle or mutation. The browser read cache is modeled in ui_snapshot_cache."
+    },
+    {
       "path": "src/lib/use-action.ts",
       "sha256": "2ab920b0a8d22dcea44e6a544556775a44559d81989788fcf2a407f01e1dae64",
       "models": [
@@ -5735,6 +5760,19 @@
       "candidateLines": [
         1, 26, 27, 29, 40, 56, 69, 74, 87, 96, 126, 128, 132, 140, 150, 155,
         168, 185, 193, 195, 196, 199, 206, 219, 221, 232, 233, 237
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/use-standings.ts",
+      "sha256": "a69a7b4affa55c23ef19c7bfbe1e2b346f3ba5b6ffce7de36bc92e3244034cc7",
+      "models": [
+        "formal/models/ui/ui_snapshot_cache.qnt",
+        "formal/models/ui/ui_time_boundary.qnt"
+      ],
+      "candidateLines": [
+        1, 23, 24, 26, 33, 42, 59, 79, 84, 89, 91, 95, 103, 112, 117, 126, 143,
+        151, 153, 154, 157, 164, 179, 181, 193, 194, 198
       ],
       "review": "mapped-abstraction"
     },
@@ -5936,7 +5974,7 @@
     },
     {
       "path": "vite.config.ts",
-      "sha256": "998b9c2116e71b8f301bc2219d1cbccd68be9a4953c9bb8f4d7cd7b00ea54b6a",
+      "sha256": "9999d43e16e853d0ac1730348376aee7d92f653a212caaf4167662136a2f23fb",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [255],
       "review": "mapped-abstraction"
@@ -11994,8 +12032,8 @@
     },
     {
       "path": "formal/models/ui/ui_snapshot_cache.qnt",
-      "sha256": "a100607886c47157b5303f58e68ae0984416a7028b952f1d771837b5b6f60aae",
-      "sources": ["src/lib/use-snapshot.ts"],
+      "sha256": "942b14f4dc4377dbc00586234a584aacf1a865ec4563e2a67e8a12ba0c4fc9b1",
+      "sources": ["src/lib/use-snapshot.ts", "src/lib/use-standings.ts"],
       "scenarios": [
         "cachedMountTest",
         "failedForcedRefreshKeepsVisibleRecordTest",
@@ -12135,11 +12173,12 @@
     },
     {
       "path": "formal/models/ui/ui_time_boundary.qnt",
-      "sha256": "e740064ea3dfd7c826af6ea0dd90949f0003827d89910b94863871a48072359a",
+      "sha256": "019663929c01044c9249f993cdce283b8088957b2acdac040c310fe1b11ec4da",
       "sources": [
         "src/ContributorAllocation.tsx",
         "src/OwnerAwards.tsx",
         "src/lib/use-snapshot.ts",
+        "src/lib/use-standings.ts",
         "src/lib/use-time-boundary.ts"
       ],
       "scenarios": [

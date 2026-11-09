@@ -8,7 +8,11 @@ import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
 import { assertProfiles } from "../../src/lib/profiles";
 import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
-import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
+import {
+  archivedPaidCycleIndex,
+  publishedStandings,
+  snapshotFixture,
+} from "../fixtures";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 
@@ -66,6 +70,10 @@ async function profileRecords(
   await page.route("**/data/profiles.json", (r) =>
     r.fulfill({ json: profiles }),
   );
+  await page.route("**/data/standings.json?**", (r) =>
+    r.fulfill({ json: publishedStandings(snapshot, cycles) }),
+  );
+  // Cycle pages still read the complete snapshot; serve the same fixture.
   await page.route("**/data/leaderboard.json?**", (r) =>
     r.fulfill({ json: snapshot }),
   );
@@ -100,10 +108,11 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   page,
 }, info) => {
   const site = await serveProfileSite(page);
-  const { snapshot, current, walletRequests } = await profileRecords(page);
+  const { snapshot, cycles, current, walletRequests } =
+    await profileRecords(page);
   await page.clock.install({ time: Date.now() });
   diagnostics.allow(
-    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/leaderboard\.json\?attempt=\d+&retry=\d+&at=\d+$/u,
+    /^(?:console Failed to load resource: the server responded with a status of 503 .* at |503 GET )https:\/\/[^ ]+\/data\/standings\.json\?attempt=\d+&retry=\d+&at=\d+$/u,
   );
   await page.route(`${site}/api/v1/points/**`, (route) =>
     route.fulfill({ json: null }),
@@ -116,26 +125,32 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   );
   const reads = {
     ledger: 0,
+    snapshot: 0,
     index: 0,
     shards: 0,
+    members: 0,
     directory: 0,
     session: 0,
     member: 0,
   };
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (path === "/data/leaderboard.json") reads.ledger++;
+    if (path === "/data/standings.json") reads.ledger++;
+    // The profile shows a few snapshot values, so it never reads the
+    // complete multi-part leaderboard snapshot.
+    if (/^\/data\/leaderboard(?:\.json|\/)/u.test(path)) reads.snapshot++;
     if (path === "/data/points.json") reads.index++;
     if (/^\/data\/points\/[0-9a-f]\.json$/u.test(path)) reads.shards++;
+    if (path === "/data/points-members.json") reads.members++;
     if (path === "/data/profiles.json") reads.directory++;
     if (path === "/api/v1/points/me") reads.session++;
     if (path === "/api/v1/points/member") reads.member++;
   });
   let unavailable = false;
-  await page.route("**/data/leaderboard.json?**", (route) =>
+  await page.route("**/data/standings.json?**", (route) =>
     unavailable
-      ? route.fulfill({ status: 503, body: "Snapshot unavailable" })
-      : route.fulfill({ json: snapshot }),
+      ? route.fulfill({ status: 503, body: "Standings unavailable" })
+      : route.fulfill({ json: publishedStandings(snapshot, cycles) }),
   );
   await page.goto(`${site}/contributors/${current.login}`, {
     waitUntil: "networkidle",
@@ -149,7 +164,11 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   );
   const initial = { ...reads, wallet: walletRequests.length };
   expect(initial.ledger).toBeGreaterThan(0);
-  expect(initial.shards).toBe(16);
+  expect(initial.snapshot).toBe(0);
+  // The profile reads the published member record, not the journal shards.
+  expect(initial.members).toBe(1);
+  expect(initial.index).toBe(0);
+  expect(initial.shards).toBe(0);
   const document = await page.evaluate(() => performance.timeOrigin);
   async function revisit() {
     await page
@@ -167,8 +186,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   await expect(history).toBeVisible();
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(document);
   expect(reads.ledger).toBe(initial.ledger);
-  expect(reads.index).toBe(initial.index);
-  expect(reads.shards).toBe(initial.shards);
+  expect(reads.members).toBe(initial.members);
   expect(reads.directory).toBeGreaterThan(initial.directory);
   expect(reads.session).toBeGreaterThan(initial.session);
   expect(reads.member).toBeGreaterThan(initial.member);
@@ -189,8 +207,9 @@ test("warm profiles reuse public records until expiry and recover a failed refre
     /^[\d,]+$/u,
   );
   expect(reads.ledger).toBeGreaterThan(warm.ledger);
-  expect(reads.index).toBeGreaterThan(warm.index);
-  expect(reads.shards).toBeGreaterThan(warm.shards);
+  expect(reads.members).toBeGreaterThan(warm.members);
+  expect(reads.index).toBe(0);
+  expect(reads.shards).toBe(0);
   const expired = { ...reads };
   unavailable = false;
   await failedRefresh
@@ -199,6 +218,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   await expect(failedRefresh).toHaveCount(0);
   await expect(history).toBeVisible();
   expect(reads.ledger).toBeGreaterThan(expired.ledger);
+  expect(reads.snapshot).toBe(0);
   await info.attach("public-cache-read-counts", {
     body: JSON.stringify({ initial, warm, expired, recovered: reads }),
     contentType: "application/json",
@@ -431,7 +451,7 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   });
   const pastCycle = history.getByRole("link", { name: /July 2026/u });
   const pastRecord = pastCycle.locator("xpath=ancestor::li");
-  // The points shards finish before each navigation, so none is canceled.
+  // The member record finishes before each navigation, so none is canceled.
   const pointsLoading = page
     .getByRole("region", { name: "Slop Points" })
     .getByText("Loading points…");
@@ -446,8 +466,15 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   ).toHaveCount(0);
   await pastCycle.focus();
   await expect(pastCycle).toBeFocused();
+  // The cycle page reads the complete snapshot itself; let that read finish
+  // so the navigation back cancels no request.
+  const cycleRead = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
+  );
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/cycles\/eliza\/2026-07$/u);
+  await cycleRead;
+  await expect(page.locator("main.route-cycle")).toBeVisible();
   await page.goBack();
   await expect(pastCycle).toBeVisible();
   await expect(pointsLoading).toHaveCount(0);

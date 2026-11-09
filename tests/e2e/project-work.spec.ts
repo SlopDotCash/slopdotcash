@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
 import { assertLeaderboardSnapshot } from "../../src/lib/leaderboard";
-import { cycleIndexFixture, snapshotFixture } from "../fixtures";
+import {
+  cycleIndexFixture,
+  publishedStandings,
+  snapshotFixture,
+} from "../fixtures";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.use({ video: "on" });
@@ -9,6 +13,9 @@ async function serve(page: Page, snapshot = snapshotFixture()) {
   assertLeaderboardSnapshot(snapshot);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshot }),
+  );
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: publishedStandings(snapshot) }),
   );
   await page.route("**/data/cycles/index.json?**", (route) =>
     route.fulfill({ json: cycleIndexFixture() }),
@@ -204,8 +211,8 @@ test("loading and failed work can recover through Retry", async ({
 }) => {
   diagnostics.allowPreviewApiMisses();
   diagnostics.allow(
-    /^503 GET http:\/\/127\.0\.0\.1:\d+\/data\/leaderboard\.json\?/u,
-    /^console Failed to load resource: the server responded with a status of 503 .+ at http:\/\/127\.0\.0\.1:\d+\/data\/leaderboard\.json\?/u,
+    /^503 GET http:\/\/127\.0\.0\.1:\d+\/data\/standings\.json\?/u,
+    /^console Failed to load resource: the server responded with a status of 503 .+ at http:\/\/127\.0\.0\.1:\d+\/data\/standings\.json\?/u,
   );
   // Each of the two injected 503s aborts its parallel cycle-index read.
   const canceledCycle =
@@ -218,11 +225,11 @@ test("loading and failed work can recover through Retry", async ({
     release = resolve;
   });
   let calls = 0;
-  await page.route("**/data/leaderboard.json?**", async (route) => {
+  await page.route("**/data/standings.json?**", async (route) => {
     calls += 1;
     if (calls === 1) await pending;
     if (calls <= 2) await route.fulfill({ status: 503, body: "Unavailable" });
-    else await route.fulfill({ json: snapshot });
+    else await route.fulfill({ json: publishedStandings(snapshot) });
   });
   await page.goto("/projects/eliza");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
@@ -265,7 +272,17 @@ test("work remains available before a project's reward cycle starts", async ({
   diagnostics,
 }) => {
   diagnostics.allowPreviewApiMisses();
-  await serve(page);
+  const snapshot = snapshotFixture();
+  await serve(page, snapshot);
+  // The publication builds the standings from the same registry, so a cycle
+  // that has not started publishes no project standing.
+  const standings = publishedStandings(snapshot);
+  standings.projects = standings.projects.filter(
+    (project) => project.projectId !== "eliza",
+  );
+  await page.route("**/data/standings.json?**", (route) =>
+    route.fulfill({ json: standings }),
+  );
   await page.route("**/data/fixture-project-registry.json", async (route) => {
     const response = await route.fetch();
     const registry = await response.json();

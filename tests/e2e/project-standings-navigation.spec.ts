@@ -8,6 +8,7 @@ import {
   pointKey,
   pointMembers,
 } from "../../src/lib/points";
+import { publishedPointsMembers } from "../../src/lib/points-members";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { cycleIndexFixture } from "../fixtures";
@@ -136,6 +137,15 @@ async function fixtures(page: Page, paymentRead = () => {}) {
       route.fulfill({ contentType: "application/json", body: part }),
     );
   const members = pointMembers(journal);
+  await page.route("**/data/points-members.json", (route) =>
+    route.fulfill({
+      json: publishedPointsMembers(
+        journal,
+        members,
+        sha256Hex(JSON.stringify(index)),
+      ),
+    }),
+  );
   await page.route("**/data/points-summary.json", (route) =>
     route.fulfill({
       json: {

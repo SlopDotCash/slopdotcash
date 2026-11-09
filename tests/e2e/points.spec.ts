@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
-import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
+import {
+  assertPointsJournal,
+  pointMembers,
+  pointRevisionId,
+} from "../../src/lib/points";
+import { publishedPointsMembers } from "../../src/lib/points-members";
 import { expect, expectAccessible, test } from "./fixtures";
 
 async function serveSingleAward(page: Page) {
@@ -27,17 +32,26 @@ async function serveSingleAward(page: Page) {
       sha256: createHash("sha256").update(text).digest("hex"),
     };
   });
+  const index = {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: journal.generatedAt,
+    coverage: journal.coverage,
+    revisionCount: 1,
+    shards: shards.map(({ text: _text, ...entry }) => entry),
+  };
   await page.clock.install({ time: new Date("2026-07-31T00:00:00.000Z") });
   await page.route("**/data/points.json", (route) =>
+    route.fulfill({ json: index }),
+  );
+  // The contributor page reads the member record derived from this journal.
+  await page.route("**/data/points-members.json", (route) =>
     route.fulfill({
-      json: {
-        schemaVersion: "1",
-        ruleVersion: journal.ruleVersion,
-        generatedAt: journal.generatedAt,
-        coverage: journal.coverage,
-        revisionCount: 1,
-        shards: shards.map(({ text: _text, ...entry }) => entry),
-      },
+      json: publishedPointsMembers(
+        journal,
+        pointMembers(journal),
+        createHash("sha256").update(JSON.stringify(index)).digest("hex"),
+      ),
     }),
   );
   await page.route("**/data/points/*.json", (route) => {
