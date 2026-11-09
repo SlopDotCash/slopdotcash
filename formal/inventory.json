@@ -1784,7 +1784,10 @@
     {
       "path": "migrations/0006_private_intake_status.sql",
       "sha256": "b44ce94fd2d00a26ff8173afc4d93b486da1590fd58afd317b47299e269e75e9",
-      "models": ["formal/models/api/api_trace.qnt"],
+      "models": [
+        "formal/models/api/api_trace.qnt",
+        "formal/models/api/identity_intake_renewal.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6474,7 +6477,9 @@
       "sha256": "8a0e3ac108b97bfec933e77dc2cda6fd7fcb162da7411c7e42f4f1edc77300fe",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
-        "formal/models/api/identity_rate_gate.qnt"
+        "formal/models/api/identity_intake_renewal.qnt",
+        "formal/models/api/identity_rate_gate.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
         27, 52, 58, 93, 95, 97, 103, 123, 128, 142, 147, 311, 352, 356, 358,
@@ -6485,7 +6490,10 @@
     {
       "path": "workers/identity/persistence.ts",
       "sha256": "7535abbcc24daaf8eff90863b4e1f0021bfe34c7a05a0db71adace672c9dcd82",
-      "models": ["formal/models/api/api_identity.qnt"],
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt"
+      ],
       "candidateLines": [
         17, 46, 77, 79, 90, 109, 123, 130, 131, 132, 148, 149, 151, 169, 170,
         197, 236, 237, 238, 252, 263, 267, 271, 275, 279
@@ -6497,7 +6505,8 @@
       "sha256": "807e247b1f0c69247efe4221241828ab6e524b7865079eb88052a2190306cab7",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
-        "formal/models/api/identity_rate_gate.qnt"
+        "formal/models/api/identity_rate_gate.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [43, 46, 85],
       "review": "mapped-abstraction"
@@ -8611,6 +8620,32 @@
       ]
     },
     {
+      "path": "formal/models/api/identity_intake_renewal.qnt",
+      "sha256": "0228f8de141cf4c26ffed3673f419c16e83b04eaef84214c8ae912a7899b2900",
+      "sources": [
+        "migrations/0006_private_intake_status.sql",
+        "workers/identity/index.ts"
+      ],
+      "scenarios": [
+        "anonymousEnabledObservationRenewsTest",
+        "anonymousRetryCannotRecurseTest",
+        "equalTimestampPreservesFirstStoredValueTest",
+        "failedWriteReplyDoesNotUndoObservationTest",
+        "invalidBodySkipsWithoutWriteTest",
+        "laterValidObservationReplacesDisabledValueTest",
+        "malformedTokenUsesAnonymousWithoutSendingTokenTest",
+        "olderCandidateReturnsRenewedWithoutReplacingNewerTest",
+        "rateLimitedTokenDoesNotFallBackTest",
+        "retryAfterFailureCanRenewTest",
+        "skipPreservesPreviousObservationTest",
+        "unauthorizedTokenGetsOneAnonymousRetryTest",
+        "unreachableTokenDoesNotFallBackTest",
+        "validDisabledObservationIsRenewedTest",
+        "validTokenObservationRenewsTest",
+        "writeFailureRetainsEarlierObservationTest"
+      ]
+    },
+    {
       "path": "formal/models/api/identity_rate_gate.qnt",
       "sha256": "75161eb524c18ee3e8ffacdba5af271587fa60d3f1b7971379b1c4da6e7f8615",
       "sources": [
@@ -8644,6 +8679,35 @@
         "restorationIsNotRecursiveTest",
         "restoredScheduleVerifiedTest",
         "successfulWriteNeedsReadbackTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/identity_scheduled_maintenance.qnt",
+      "sha256": "eaf6882cb34a6f757846c592332126deb2c7ca5305af2447fb92f640413a0fbe",
+      "sources": [
+        "workers/identity/index.ts",
+        "workers/identity/persistence.ts",
+        "workers/identity/rate-limit.ts"
+      ],
+      "scenarios": [
+        "cleanupFailureDoesNotStopRenewalCommitTest",
+        "cleanupFailurePreservesCommittedPrefixTest",
+        "emptyOrLiveCleanupStageCanSucceedWithoutDeletionTest",
+        "failedRenewalReplyRetainsTheCommittedObservationTest",
+        "innerJoinWaitsForRenewalEvenAfterCleanupFailsTest",
+        "invalidOriginStillLetsReportingSettleTest",
+        "laterInvocationRequiresFreshReportingSettlementTest",
+        "laterInvocationRetriesAfterPartialCleanupTest",
+        "lostDeleteReplyCanLeaveItsEffectCommittedTest",
+        "nonzeroReportingFailureCountFailsTheOuterJobTest",
+        "noopRenewalPreservesTheStoredObservationTest",
+        "otherOriginDoesNotRunFixedSiteRenewalTest",
+        "otherOriginOnlyCleansIdentityStateTest",
+        "outerJoinWaitsForReportingEvenAfterMaintenanceFailsTest",
+        "rejectedRenewalDoesNotStopCleanupTest",
+        "reportingFailureDoesNotStopMaintenanceTest",
+        "skippedRenewalDoesNotStopCleanupTest",
+        "validDisabledRenewalCanCompleteScheduledJobTest"
       ]
     },
     {

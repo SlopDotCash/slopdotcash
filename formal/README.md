@@ -196,6 +196,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Direct-payment and monthly completion | `direct_preparation_completion`, `direct_recovery_completion`, `direct_bounty_journal`, `monthly_owner_completion`, `ui_submitted_candidate_ownership` | `backend/security/direct-payments.ts`, `backend/payments/monthly.ts`, `src/lib/pending-attempt.ts`, existing EVM/Solana payment workflows |
 | Notifications and inference accounting | `notification_attempt_ownership`, `notification_admin_fanout`, `notification_escalation`, `bot_inference_reservations`, `bot_value_attempt_recovery`, `bot_value_precall_authority` | `workers/notify/security.ts`, `workers/notify/activity.ts`, `workers/slopbot/value-budget.ts`, migration `0118_slopbot_value_attempt_completion.sql`, existing notification and value-pipeline tests |
 | Inbox storage and identity admission | `api_inbox`, `inbox_queries`, `inbox_mark_read`, `api_identity_admission`, `identity_rate_gate` | `backend/notifications/handler.ts`, `workers/identity/rate-limit.ts`, existing migrated notification workflows; direct rate-counter/gate execution evidence remains missing |
+| Scheduled identity cleanup and intake renewal | `identity_intake_renewal`, `identity_scheduled_maintenance` | `workers/identity/index.ts`, `workers/identity/persistence.ts`, `scripts/identity-maintenance.test.ts`; token-fallback and outer scheduled-handler execution evidence remains incomplete |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -220,6 +221,29 @@ Cleanup and reordered requests can therefore produce a returned snapshot whose
 expiry is already past the response-time clock. Its finite bound applies per
 counter generation, not to every possible wall-clock window. No stronger
 clock policy or approximate edge guarantee is inferred.
+
+The scheduled Worker and operator CLI have different renewal outcomes. A
+valid disabled observation can successfully complete Worker renewal; the CLI
+can report that disabled result as a failure. The Worker conditionally stores
+only newer timestamps, so its returned observation may differ from a newer
+singleton already retained in D1. Cleanup runs six sequential deletes, not one
+transaction. Earlier deletions can remain committed when a later stage fails.
+The inner cleanup/renewal join and outer maintenance/reporting join await their
+independent outcomes. A failed job does not imply that all effects rolled back
+or that its other branch never ran. A later invocation is modeled explicitly;
+no automatic host retry or provider success is assumed.
+
+`identity_intake_renewal` bounds two invocations and timestamp ranks 0–2, with
+at most one authenticated request and one anonymous fallback per invocation.
+`identity_scheduled_maintenance` bounds two jobs and six ordered cleanup
+statements. The existing maintenance test is only partial implementation
+evidence; direct token-fallback, concurrent renewal and outer reporting paths
+still need execution evidence. The
+[ECMAScript all-settled contract](https://tc39.es/ecma262/multipage/control-abstraction-objects.html#sec-promise.allsettled)
+explains the joins, while the
+[Workers scheduled-handler contract](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
+defines the host entry point. Neither reference proves this implementation's
+conformance. The models and their 34 scenarios remain unexecuted here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
