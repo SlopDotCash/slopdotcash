@@ -6,6 +6,14 @@
 // @evidence backend/payments/direct-history.workflow.mjs
 // Frontend page assembly only. Source-only: every scenario is unexecuted.
 // Three records, three pages per invocation and one retry. Amounts are integers.
+//
+// Finite step reduction (direct actions and scenarios are unchanged): every
+// invalid page reply has the same successor, rejected(s, "page"), which reads
+// only the current state. step offers it once through a malformed-row reply
+// and enumerates only well-shaped replies. A well-shaped direct page is valid
+// only when its amount equals the row sum, and a vault page never reads the
+// amount, so step passes that sum (direct) or 0 (vault). Every other amount,
+// negative header or malformed shape reached the same rejected successor.
 module ui_payment_page_assembly {
   type State = { mode: str, phase: str, pages: int, retry: int,
     through: int, total: int, after: int, incoming: List[int], offset: int,
@@ -80,18 +88,24 @@ module ui_payment_page_assembly {
   action lateReply = all { s.phase == "cancelled", s' = s }
   action retry = all { s.phase == "error", s.retry == 0,
     s' = initial(s.mode, 1) }
-  action step = {
-    nondet rows = batches.oneOf()
-    nondet through = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet total = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet nextValue = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet shape = Set(false, true).oneOf()
-    nondet headers = Set(false, true).oneOf()
-    nondet amount = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
-    any { vaultMode, originRefusal, requestPage, transportFailure,
-      receivePage(rows, through, total, nextValue, shape, headers, amount),
-      receiveLegacy(rows, shape, headers), appendRow, finishPage,
-      cancelWaiting, lateReply, retry, s' = s }
+  action step = any {
+    vaultMode,
+    originRefusal,
+    requestPage,
+    transportFailure,
+    all { s.phase == "waiting", { nondet rows = batches.oneOf() nondet through = Set(0, 1, 2, 3).oneOf()
+      nondet total = Set(0, 1, 2, 3).oneOf() nondet nextValue = Set(-1, 0, 1, 2, 3).oneOf()
+      receivePage(rows, through, total, nextValue, true, true,
+        if (s.mode == "vault") 0 else totalAmount(rows)) } },
+    receivePage(List(), 0, 0, -1, false, true, 0),
+    all { s.phase == "waiting", { nondet rows = batches.oneOf() nondet shape = Set(false, true).oneOf()
+      nondet headers = Set(false, true).oneOf() receiveLegacy(rows, shape, headers) } },
+    appendRow,
+    finishPage,
+    cancelWaiting,
+    lateReply,
+    retry,
+    s' = s,
   }
   val invariant = all {
     s.pages >= 0, s.pages <= 3, s.retry >= 0, s.retry <= 1,
