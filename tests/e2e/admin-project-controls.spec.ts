@@ -2,6 +2,7 @@ import type { Page, Request } from "@playwright/test";
 import type { EnforcementPreview } from "../../src/lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 /**
  * Admin list search, the delist confirmation and the enforcement preview
@@ -19,29 +20,7 @@ function record(
   revision: number,
   moderation: "moderator" | "unconfigured",
 ) {
-  return {
-    id: project.id,
-    status: project.status,
-    revision,
-    manifest: project,
-    manifestSha256: "a".repeat(64),
-    createdAt: "2026-10-22T00:00:00.000Z",
-    updatedAt: "2026-10-22T00:00:00.000Z",
-    sourceApplicationId: null,
-    enforcement: {
-      state: "clear",
-      appeal: "none",
-      projectAppeal: "none",
-      since: null,
-      restrictedBy: [],
-      nextSequence: 1,
-      revisionPending: false,
-      moderation,
-      decisionRequired: false,
-      bannedMaintainers: [],
-      records: [],
-    },
-  };
+  return adminProjectRecord(project, { revision, moderation });
 }
 
 /** Serves an admin session and a mutable admin project list. */
