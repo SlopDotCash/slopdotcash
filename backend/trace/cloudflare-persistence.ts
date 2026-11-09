@@ -25,6 +25,7 @@ import type {
   WalletPossessionAttestationRecord,
   WalletPossessionChallengeRecord,
 } from "./contracts";
+import { validIsoTimestamp } from "./validation";
 
 type R2Head = {
   size: number;
@@ -1156,6 +1157,7 @@ export async function privateIntakeStatus(
   db: D1Database,
   now = new Date(),
 ): Promise<PrivateIntakeStatus> {
+  const observedAt = now.getTime();
   let row: { enabled: number; verified_at: string } | null;
   try {
     row = await db
@@ -1170,10 +1172,10 @@ export async function privateIntakeStatus(
   if (
     !row ||
     ![0, 1].includes(row.enabled) ||
-    typeof row.verified_at !== "string"
+    !validIsoTimestamp(row.verified_at)
   )
     return { status: "unavailable" };
-  const age = now.getTime() - Date.parse(row.verified_at);
+  const age = observedAt - Date.parse(row.verified_at);
   if (!Number.isFinite(age) || age < -300000 || age > 24 * 60 * 60 * 1000)
     return { status: "unavailable" };
   return {

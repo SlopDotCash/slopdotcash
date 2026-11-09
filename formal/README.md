@@ -1547,6 +1547,34 @@ tested or verified here:
   GitHub identity truth and secret-memory erasure remain explicit boundaries;
   the model does not turn an injected response into live provider acceptance.
 
+- `identity_intake_renewal` now has 24 scenarios for authenticated and anonymous
+  reads, one credential fallback, response disposal, bounded parsing and the
+  monotonic database write. The Worker disposes refused responses before retry
+  or return and rejects an explicitly unsuccessful database result. A successful
+  no-op still describes the candidate observation, not proof that it replaced a
+  newer stored row. Twenty-seven regression cases are unexecuted; cancellation
+  failure does not prove a released network resource.
+- `private_intake_observation` adds 24 scenarios for public readiness reads and
+  the separate trace-upload gate. The reader captures its clock before awaiting
+  storage and validates the existing UTC timestamp formats before applying the
+  inclusive 24-hour age and five-minute future tolerances. Twenty reader, route
+  and upload cases are unexecuted. The model distinguishes readable whole-second
+  observations from canonical millisecond writer timestamps; it does not claim
+  that SQL renewal repairs arbitrary legacy or malformed timestamp strings.
+- `operator_intake_renewal` now has 19 scenarios for bounded provider metadata,
+  temporary SQL, command outcomes, cleanup and disabled observations. The operator
+  command validates the response shape, disposes HTTP refusals and restricts the
+  temporary SQL file's permissions. Thirteen regression definitions are
+  unexecuted. Successful command completion reports the observed candidate;
+  monotonic SQL may retain a newer row. A lost reply or cleanup failure does not
+  roll back a committed write. No remote command or provider was exercised.
+- `ui_intake_handoff` now has 27 scenarios for request ownership, component
+  lifetimes, rechecks and expiry. Accepted readiness keeps its original monotonic
+  deadline during a pending recheck. Old requests and queued expiry callbacks
+  cannot replace or expire a newer answer. Six browser regression definitions
+  are unexecuted. Private Slop intake remains independent of the optional GitHub
+  handoff's freshness; browser behavior and before/after video remain open.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

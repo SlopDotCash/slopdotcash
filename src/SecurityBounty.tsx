@@ -281,6 +281,8 @@ type ReadinessState =
       stale: boolean;
       /** A fresh check is running; the page keeps the last answer. */
       rechecking: boolean;
+      /** Monotonic deadline captured when this answer was accepted. */
+      expiresAt: number;
     };
 
 const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
@@ -302,7 +304,18 @@ function IntakeHandoff({
   session: ProjectSessionState;
 }) {
   const [state, setState] = useState<ReadinessState>({ status: "checking" });
+  const mounted = useRef(false);
+  const generation = useRef(0);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, [project.id]);
   const check = useCallback((): Promise<Readiness | null> => {
+    if (!mounted.current) return Promise.resolve(null);
+    const current = ++generation.current;
     setState((current) =>
       current.status === "checked"
         ? { ...current, rechecking: true }
@@ -313,15 +326,18 @@ function IntakeHandoff({
       `security-programs/${encodeURIComponent(project.id)}/intake`,
     ).then(
       (value) => {
+        if (!mounted.current || generation.current !== current) return null;
         setState({
           status: "checked",
           value,
           stale: value.stale === true,
           rechecking: false,
+          expiresAt: performance.now() + value.maxAgeSeconds * 1000,
         });
         return value;
       },
       (error: unknown) => {
+        if (!mounted.current || generation.current !== current) return null;
         setState((current) =>
           current.status === "checked"
             ? { ...current, stale: true, rechecking: false }
@@ -334,20 +350,27 @@ function IntakeHandoff({
   useEffect(() => {
     void check();
   }, [check]);
-  // The answer expires on this device's clock from when it arrived, so a
-  // skewed clock cannot hide or extend it. The edge serves it at most
-  // the edge TTL old; the server subtracts that TTL from observation freshness.
+  // The answer expires from when it was accepted, even while a recheck is
+  // pending. Wall-clock changes cannot hide or extend it. The edge serves it
+  // at most the edge TTL old, subtracted from the observation's freshness.
+  const observation =
+    state.status === "checked" && !state.stale ? state.value : null;
+  const expiresAt = state.status === "checked" ? state.expiresAt : null;
   useEffect(() => {
-    if (state.status !== "checked" || state.stale) return;
+    if (observation === null || expiresAt === null) return;
     const timer = window.setTimeout(
       () =>
         setState((current) =>
-          current.status === "checked" ? { ...current, stale: true } : current,
+          current.status === "checked" &&
+          current.value === observation &&
+          current.expiresAt === expiresAt
+            ? { ...current, stale: true }
+            : current,
         ),
-      state.value.maxAgeSeconds * 1000,
+      Math.max(0, expiresAt - performance.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [state]);
+  }, [observation, expiresAt]);
   const checkAgain = (busy: boolean) => (
     <button
       className="text-button"

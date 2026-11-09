@@ -102,6 +102,14 @@ function classifyRejection(response: Response): PrivateIntakeSkipReason {
   return "rejected";
 }
 
+async function discardPrivateIntakeResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Disposal cannot replace the observed refusal or stop its one fallback.
+  }
+}
+
 function rateLimitKey(request: Request): string {
   const connectingIp = request.headers.get("cf-connecting-ip");
   return connectingIp !== null && connectingIp.length <= 64
@@ -362,6 +370,7 @@ export async function renewPrivateIntakeStatus(options: {
       classifyRejection(response) === "unauthorized"
     ) {
       tokenRejected = true;
+      await discardPrivateIntakeResponse(response);
       response = await fetchPrivateIntakeStatus(fetchImpl);
     }
   }
@@ -369,12 +378,10 @@ export async function renewPrivateIntakeStatus(options: {
     return { status: "skipped", reason: "unreachable", tokenRejected };
   }
   if (!response.ok) {
-    return {
-      status: "skipped",
-      reason: classifyRejection(response),
-      httpStatus: response.status,
-      tokenRejected,
-    };
+    const reason = classifyRejection(response);
+    const httpStatus = response.status;
+    await discardPrivateIntakeResponse(response);
+    return { status: "skipped", reason, httpStatus, tokenRejected };
   }
   let value: unknown;
   try {
@@ -396,12 +403,14 @@ export async function renewPrivateIntakeStatus(options: {
   }
   const enabled = (value as { enabled: boolean }).enabled;
   const verifiedAt = now().toISOString();
-  await db
+  const result = await db
     .prepare(
       "INSERT INTO private_intake_status(singleton, enabled, verified_at) VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET enabled = excluded.enabled, verified_at = excluded.verified_at WHERE excluded.verified_at > private_intake_status.verified_at",
     )
     .bind(enabled ? 1 : 0, verifiedAt)
     .run();
+  if (!result.success)
+    throw new Error("Private intake observation could not be stored");
   return { status: "renewed", enabled, verifiedAt, tokenRejected };
 }
 

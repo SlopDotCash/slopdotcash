@@ -1139,13 +1139,14 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "e8d65ebe12a07480a13ea16d2ace27a5411d4f8f41bb63d2372a86502e031734",
+      "sha256": "7caf2d13a03cf4205becb651b4b83b18b2cdd2f80656277473dc3c6c199d5796",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/operator_intake_renewal.qnt",
+        "formal/models/api/private_intake_observation.qnt",
         "formal/models/api/trace_event_finalization.qnt",
         "formal/models/api/trace_object_storage.qnt",
         "formal/models/api/trace_run_creation.qnt",
@@ -1156,12 +1157,12 @@
         "formal/models/vetting/vetting_upload_completion.qnt"
       ],
       "candidateLines": [
-        65, 160, 283, 284, 287, 305, 316, 321, 344, 382, 395, 398, 420, 421,
-        426, 429, 459, 460, 463, 464, 480, 483, 505, 532, 539, 542, 546, 565,
-        593, 627, 628, 629, 663, 690, 701, 707, 709, 719, 727, 741, 742, 747,
-        752, 772, 776, 778, 817, 822, 838, 846, 847, 853, 854, 860, 885, 891,
-        893, 992, 1020, 1048, 1063, 1064, 1066, 1084, 1098, 1103, 1106, 1167,
-        1168, 1175, 1178, 1180
+        66, 161, 284, 285, 288, 306, 317, 322, 345, 383, 396, 399, 421, 422,
+        427, 430, 460, 461, 464, 465, 481, 484, 506, 533, 540, 543, 547, 566,
+        594, 628, 629, 630, 664, 691, 702, 708, 710, 720, 728, 742, 743, 748,
+        753, 773, 777, 779, 818, 823, 839, 847, 848, 854, 855, 861, 886, 892,
+        894, 993, 1021, 1049, 1064, 1065, 1067, 1085, 1099, 1104, 1107, 1169,
+        1170, 1177, 1180, 1182
       ],
       "review": "mapped-abstraction"
     },
@@ -1186,6 +1187,7 @@
         "formal/models/api/api_trace_intent_admission.qnt",
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
+        "formal/models/api/private_intake_observation.qnt",
         "formal/models/api/trace_bearer_tokens.qnt",
         "formal/models/api/trace_event_finalization.qnt",
         "formal/models/api/trace_route_authorization.qnt",
@@ -1205,7 +1207,10 @@
     {
       "path": "backend/trace/validation.ts",
       "sha256": "f4a1481ac90130c3f4e239a21599736ffba433bd823e4e71ae9b84e098858a4d",
-      "models": ["formal/models/api/api_trace.qnt"],
+      "models": [
+        "formal/models/api/api_trace.qnt",
+        "formal/models/api/private_intake_observation.qnt"
+      ],
       "candidateLines": [28, 31, 33],
       "review": "mapped-abstraction"
     },
@@ -2108,7 +2113,8 @@
       "sha256": "b44ce94fd2d00a26ff8173afc4d93b486da1590fd58afd317b47299e269e75e9",
       "models": [
         "formal/models/api/api_trace.qnt",
-        "formal/models/api/identity_intake_renewal.qnt"
+        "formal/models/api/identity_intake_renewal.qnt",
+        "formal/models/api/private_intake_observation.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4361,9 +4367,9 @@
     },
     {
       "path": "scripts/renew-private-intake.mjs",
-      "sha256": "90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249",
+      "sha256": "f498d3f7eb96ff70dc2ab5648dd2e9b285a429cb6758c9b8c6df6fdfde165b6e",
       "models": ["formal/models/api/operator_intake_renewal.qnt"],
-      "candidateLines": [23, 24, 25, 30, 33, 52, 53],
+      "candidateLines": [14, 48, 50, 56, 57, 58, 59, 65, 68, 88, 92],
       "review": "mapped-abstraction"
     },
     {
@@ -4800,6 +4806,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -5457,7 +5464,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "6a186a6f5922ac218645a6ea719871073e6e6a2c98637242155f347401fa431d",
+      "sha256": "44810323b4f29182f902cd980f9305758e3bd4a17d0f05231c88dd7d2389ceaa",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -5477,27 +5484,27 @@
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "candidateLines": [
-        27, 32, 139, 224, 231, 254, 256, 263, 276, 277, 279, 286, 290, 304, 307,
-        309, 317, 326, 328, 334, 340, 341, 342, 345, 347, 350, 371, 373, 374,
-        376, 383, 386, 390, 391, 392, 394, 396, 399, 401, 403, 404, 405, 408,
-        409, 412, 418, 419, 422, 428, 431, 435, 439, 451, 454, 455, 458, 530,
-        619, 629, 632, 670, 671, 675, 682, 687, 704, 729, 730, 737, 790, 960,
-        975, 1013, 1018, 1040, 1115, 1116, 1117, 1118, 1140, 1151, 1158, 1164,
-        1165, 1173, 1175, 1180, 1207, 1211, 1247, 1285, 1291, 1347, 1348, 1355,
-        1358, 1380, 1400, 1401, 1402, 1406, 1486, 1487, 1488, 1492, 1568, 1621,
-        1628, 1648, 1649, 1650, 1657, 1728, 1733, 1742, 1752, 1762, 1766, 1770,
-        1772, 1817, 1818, 1822, 1825, 1878, 1886, 1914, 1915, 1920, 1921, 1926,
-        1927, 1932, 1984, 1991, 2001, 2002, 2050, 2061, 2062, 2063, 2065, 2069,
-        2075, 2128, 2134, 2139, 2141, 2145, 2184, 2188, 2194, 2220, 2221, 2222,
-        2223, 2224, 2225, 2226, 2370, 2541, 2545, 2573, 2770, 2845, 2846, 2975,
-        3034, 3035, 3042, 3058, 3080, 3097, 3098, 3099, 3102, 3126, 3127, 3136,
-        3167, 3184, 3185, 3186, 3189, 3215, 3216, 3225, 3278, 3341, 3372, 3390,
-        3402, 3403, 3405, 3409, 3415, 3418, 3420, 3424, 3492, 3512, 3550, 3554,
-        3556, 3559, 3633, 3635, 3667, 3689, 3713, 3849, 3981, 4120, 4123, 4132,
-        4137, 4142, 4143, 4145, 4150, 4173, 4202, 4205, 4212, 4253, 4258, 4270,
-        4271, 4277, 4302, 4304, 4306, 4310, 4311, 4315, 4318, 4319, 4321, 4339,
-        4357, 4362, 4365, 4370, 4373, 4375, 4379, 4384, 4409, 4415, 4458, 4461,
-        4466, 4468, 4506, 4508, 4549, 4568
+        27, 32, 139, 224, 231, 254, 256, 263, 276, 277, 279, 288, 292, 306, 320,
+        322, 331, 342, 344, 350, 354, 357, 358, 359, 361, 364, 394, 396, 397,
+        399, 406, 409, 413, 414, 415, 417, 419, 422, 424, 426, 427, 428, 431,
+        432, 435, 441, 442, 445, 451, 454, 458, 462, 474, 477, 478, 481, 553,
+        642, 652, 655, 693, 694, 698, 705, 710, 727, 752, 753, 760, 813, 983,
+        998, 1036, 1041, 1063, 1138, 1139, 1140, 1141, 1163, 1174, 1181, 1187,
+        1188, 1196, 1198, 1203, 1230, 1234, 1270, 1308, 1314, 1370, 1371, 1378,
+        1381, 1403, 1423, 1424, 1425, 1429, 1509, 1510, 1511, 1515, 1591, 1644,
+        1651, 1671, 1672, 1673, 1680, 1751, 1756, 1765, 1775, 1785, 1789, 1793,
+        1795, 1840, 1841, 1845, 1848, 1901, 1909, 1937, 1938, 1943, 1944, 1949,
+        1950, 1955, 2007, 2014, 2024, 2025, 2073, 2084, 2085, 2086, 2088, 2092,
+        2098, 2151, 2157, 2162, 2164, 2168, 2207, 2211, 2217, 2243, 2244, 2245,
+        2246, 2247, 2248, 2249, 2393, 2564, 2568, 2596, 2793, 2868, 2869, 2998,
+        3057, 3058, 3065, 3081, 3103, 3120, 3121, 3122, 3125, 3149, 3150, 3159,
+        3190, 3207, 3208, 3209, 3212, 3238, 3239, 3248, 3301, 3364, 3395, 3413,
+        3425, 3426, 3428, 3432, 3438, 3441, 3443, 3447, 3515, 3535, 3573, 3577,
+        3579, 3582, 3656, 3658, 3690, 3712, 3736, 3872, 4004, 4143, 4146, 4155,
+        4160, 4165, 4166, 4168, 4173, 4196, 4225, 4228, 4235, 4276, 4281, 4293,
+        4294, 4300, 4325, 4327, 4329, 4333, 4334, 4338, 4341, 4342, 4344, 4362,
+        4380, 4385, 4388, 4393, 4396, 4398, 4402, 4407, 4432, 4438, 4481, 4484,
+        4489, 4491, 4529, 4531, 4572, 4591
       ],
       "review": "mapped-abstraction"
     },
@@ -7385,7 +7392,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "sha256": "dcd47e67bfda60622cc408021f0cfd7179657ae19d5879945ca7e43c50f38c07",
+      "sha256": "1ddd25bfcea1257739e7b5803f96f121d48a1cc9b967d349ae15f666ae92d8e9",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
         "formal/models/api/github_identity_exchange.qnt",
@@ -7394,8 +7401,8 @@
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
-        28, 53, 59, 89, 91, 93, 99, 119, 124, 138, 143, 328, 369, 373, 375, 384,
-        387, 395, 401, 405, 431, 443, 446, 452, 462, 463, 464, 516
+        28, 53, 59, 89, 91, 93, 99, 127, 132, 146, 151, 336, 378, 382, 384, 391,
+        394, 402, 408, 414, 440, 452, 455, 461, 471, 472, 473, 525
       ],
       "review": "mapped-abstraction"
     },
@@ -10449,7 +10456,7 @@
     },
     {
       "path": "formal/models/api/identity_intake_renewal.qnt",
-      "sha256": "101a95a4f642174e67fe77f01337c39364cee2b2008ca707dda127b98c8d1c9d",
+      "sha256": "ca4e8ccbf1b6db00524987ae08693f497efb36ef89529f6b479d188a1fdcf21e",
       "sources": [
         "migrations/0006_private_intake_status.sql",
         "workers/identity/index.ts"
@@ -10457,14 +10464,22 @@
       "scenarios": [
         "anonymousEnabledObservationRenewsTest",
         "anonymousRetryCannotRecurseTest",
+        "bothHttpResponsesAccountedForTest",
+        "directClockSamplesAfterBodyTest",
         "equalTimestampPreservesFirstStoredValueTest",
+        "failedCancellationStillFallsBackTest",
         "failedWriteReplyDoesNotUndoObservationTest",
+        "fallbackWaitsForDisposalTest",
+        "falseDatabaseResultNeverRenewsTest",
+        "finalCancellationFailurePreservesRefusalTest",
+        "finalRefusalWaitsForDisposalTest",
         "invalidBodySkipsWithoutWriteTest",
         "laterValidObservationReplacesDisabledValueTest",
         "malformedTokenUsesAnonymousWithoutSendingTokenTest",
         "olderCandidateReturnsRenewedWithoutReplacingNewerTest",
         "rateLimitedTokenDoesNotFallBackTest",
         "retryAfterFailureCanRenewTest",
+        "scheduledClockStaysCapturedTest",
         "skipPreservesPreviousObservationTest",
         "unauthorizedTokenGetsOneAnonymousRetryTest",
         "unreachableTokenDoesNotFallBackTest",
@@ -10735,15 +10750,31 @@
     },
     {
       "path": "formal/models/api/operator_intake_renewal.qnt",
-      "sha256": "0fb361edb6baef57d54fa762a378917fa5a93118b1f190ae8f2936a2a4fb74c7",
+      "sha256": "d7cb9ae353e7f3357dc3e50f1e9c04e10563f2ca05d50cd85a0d107a473042e0",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "scripts/renew-private-intake.mjs"
       ],
       "scenarios": [
+        "cancellationFailurePreservesHttpRefusalTest",
+        "cleanupFailureAfterCommitDoesNotRollbackTest",
+        "cleanupFailureCanMaskEarlierCommandFailureTest",
+        "commandFailureAfterCommitKeepsObservationTest",
+        "commandFailureBeforeCommitPreservesPriorStateTest",
+        "completedInvocationDoesNotRepeatWranglerTest",
+        "concurrentNewerObservationWinsTest",
         "disabledObservationStoredBeforeFailureTest",
+        "enabledObservationCompletesAfterCleanupTest",
+        "httpRefusalDisposesBeforeFailureTest",
+        "invalidClockCreatesNoSqlTest",
+        "malformedOrOversizedBodyWritesNothingTest",
+        "missingCredentialStopsBeforeRequestTest",
         "oldTimestampDoesNotReplaceTest",
-        "outageDoesNotRefreshHealthTest"
+        "outageDoesNotRefreshHealthTest",
+        "outputFailureCannotRollbackCommittedObservationTest",
+        "scratchCreationFailureWritesNothingTest",
+        "sqlWriteFailureAttemptsCleanupTest",
+        "transportFailureWritesNothingTest"
       ]
     },
     {
@@ -10861,6 +10892,42 @@
       "sha256": "87cb97863a3c7a23370d638dcb9b78e50f9d1c9163ded21950d3e152fe2dbfc8",
       "sources": ["workers/identity/handler.ts"],
       "scenarios": ["completeTest", "decryptFailureTest", "expireTest"]
+    },
+    {
+      "path": "formal/models/api/private_intake_observation.qnt",
+      "sha256": "c0dbc27a537b60c01a0d65350ebb9877563d1806edc547e3585566d2cea1c7cc",
+      "sources": [
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/handler.ts",
+        "backend/trace/validation.ts",
+        "migrations/0006_private_intake_status.sql"
+      ],
+      "scenarios": [
+        "callerClockMutationCannotChangePendingReadTest",
+        "currentEnabledIsVerifiedTest",
+        "disableDuringBodyDoesNotRepeatCapturedGateTest",
+        "disabledStillReturnsDiagnosticSuccessTest",
+        "disabledUploadReadsNoBytesTest",
+        "exactAgeBoundaryIsVerifiedTest",
+        "exactFutureSkewIsVerifiedTest",
+        "excessiveFutureSkewIsUnavailableTest",
+        "invalidCapabilityPrecedesObservationTest",
+        "invalidEnabledValueIsUnavailableTest",
+        "invalidTimestampIsUnavailableTest",
+        "lostStorageReplyDoesNotClaimRollbackTest",
+        "missingRowIsUnavailableTest",
+        "nextReadObservesDisabledRenewalTest",
+        "oldMutableClockCouldChangeReadDecisionTest",
+        "oldParseableNonIsoCouldClaimVerifiedTest",
+        "oneMillisecondStaleIsUnavailableTest",
+        "queryFailureReturnsNoPermissionTest",
+        "renewalAfterSelectDoesNotRewriteSnapshotTest",
+        "renewedUploadCanRequestStorageTest",
+        "reservationRefusalMakesNoStorageRequestTest",
+        "staleUploadReadsNoBytesTest",
+        "standingRefusalPrecedesObservationTest",
+        "wholeSecondUtcCanBeReadWithoutInferringReplacementOrderTest"
+      ]
     },
     {
       "path": "formal/models/api/project_setup_status.qnt",
@@ -18094,18 +18161,36 @@
     },
     {
       "path": "formal/models/ui/ui_intake_handoff.qnt",
-      "sha256": "c649a6d34047341de7e39b1ad3874a741f16888d3d584d32eb393eadaf2baac3",
-      "sources": ["src/SecurityBounty.tsx"],
+      "sha256": "3d6ebc9083b97f7f492e2cb17a5294dbc80ebfd10f48f7cee93ce0fe5e0e5162",
+      "sources": ["src/App.tsx", "src/SecurityBounty.tsx"],
       "scenarios": [
-        "expiryHidesOnlyGitHubLinkTest",
+        "departedReadCannotPublishTest",
+        "departedTimerCannotStaleNewProjectTest",
+        "expiryHidesOnlyGithubLinkTest",
         "failedRecheckRetainsStoredRouteTest",
+        "freshHealthyReplyHasNoRecheckButtonTest",
         "githubWithoutStoredIntakeTest",
         "independentStoredIntakeTest",
+        "initialErrorCanRetryToStoredIntakeTest",
         "initialFailureHasRetryTest",
+        "missingUrlCanRetryWithoutInventingLinkTest",
+        "newAnswerUsesItsOwnAcceptanceDeadlineTest",
+        "newerFailureDoesNotBecomeInitialLoadingTest",
+        "oldProjectReplyCannotReplaceRemountedProjectTest",
+        "oldRecheckExtendedFreshnessTest",
+        "oldTimerPoisonedNewReplyTest",
+        "pendingRecheckStillExpiresOriginalAnswerTest",
+        "queuedOldTimerCannotStaleNewAnswerTest",
+        "recheckDoesNotExtendOriginalDeadlineTest",
         "recheckRetainsDraftAndStaleObservationTest",
-        "staleReadyResponseCannotShowLinkTest",
+        "replayedEffectRejectsOldFailureTest",
+        "replayedEffectRejectsOldSuccessTest",
+        "serverStaleReadyCannotShowLinkTest",
+        "signedOutStillGetsPublicGithubLinkTest",
         "successfulRecheckRestoresFreshLinkTest",
-        "unmountClearsTimerAndIgnoresLateReplyTest"
+        "unavailableStoredIntakeShowsNoFormTest",
+        "wallClockJumpCannotChangeExpiryTest",
+        "zeroAgeQueuesImmediateExpiryTest"
       ]
     },
     {

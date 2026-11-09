@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "cf9b6565a6b57cdc7396ec638d22e0de40cd46ba893ac2d88c8f7880e1a4076f",
+  "inventorySha256": "9acc8b5c2790b8caf46c07ef653f5d2c594124e9e6e89f6d92f08ad6e0cc17c4",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2166,6 +2166,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2190,6 +2191,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2513,7 +2515,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 960,
+      "line": 983,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2540,7 +2542,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 975,
+      "line": 998,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2567,7 +2569,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 977,
+      "line": 1000,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2594,7 +2596,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 993,
+      "line": 1016,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2621,7 +2623,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1032,
+      "line": 1055,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -2676,7 +2678,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1355,
+      "line": 1378,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2703,7 +2705,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1630,
+      "line": 1653,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
