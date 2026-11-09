@@ -875,101 +875,10 @@ describe("durable private report controls", () => {
       confirmation: true,
     });
     expect(prepared.status).toBe(409);
-    expect(prepared.body.error).toBe("full_award_unpayable");
+    expect(prepared.body.error).toBe("rail_unavailable");
     expect(
       t.sqlite.query("SELECT * FROM security_award_reservations").all(),
     ).toEqual([]);
-  });
-
-  test("a full-award case never enters the direct payment rail", async () => {
-    const t = fixture({
-      split: { researcherBasisPoints: 10000, slopBasisPoints: 0 },
-      sponsor: { name: "slop.cash", githubId: null },
-      settlement: undefined,
-    });
-    // A reviewed direct route exists for this asset; it must still refuse.
-    t.deps.directPayments = (network) =>
-      network === "base-mainnet"
-        ? {
-            rpcUrl: "http://127.0.0.1:9",
-            feeRecipient: "0x00000000000000000000000000000000000000fe",
-          }
-        : null;
-    const submission = required((await t.create()).body.submission);
-    expect(
-      (
-        await t.caseAction(submission.caseId, {
-          action: "decide",
-          outcome: "confirmed",
-          severity: "critical",
-          loss: "verified-potential",
-          inScope: true,
-          reason: "The isolated reproduction proves the qualifying finding.",
-          relatedParty: false,
-          rootCauseKey: "vault-drain",
-        })
-      ).status,
-    ).toBe(200);
-    const awarded = await t.caseAction(submission.caseId, {
-      action: "award",
-      decision: "amount",
-      grossMinor: "10000000000",
-      paymentDeadline: "2026-11-30T00:00:00.000Z",
-      confirmation: true,
-      reason: "Award the published platform bounty to the first reporter.",
-    });
-    expect(awarded.status).toBe(200);
-    expect(awarded.body.case?.awardState).toBe("pending");
-    expect(
-      t.sqlite.query("SELECT * FROM security_direct_awards").all(),
-    ).toEqual([]);
-    // A case approved before this gate (or by any other path) still gets no
-    // consent or payment plan.
-    t.sqlite
-      .query(
-        "INSERT INTO security_direct_awards(case_id,project_id,root_cause_key,terms,gross_base,approved_at) SELECT id,project_id,root_cause_key,terms,'10000000000',? FROM security_cases WHERE id=?",
-      )
-      .run(START, submission.caseId);
-    t.sqlite
-      .query("UPDATE security_cases SET award_state='approved' WHERE id=?")
-      .run(submission.caseId);
-    const ownerView = required(
-      (await t.call(OWNER, "GET", `security-cases/${submission.caseId}`)).body
-        .case,
-    );
-    expect(ownerView.allowedActions).not.toContain("prepare-payment");
-    const reporterView = required(
-      (await t.call(REPORTER, "GET", `security-cases/${submission.caseId}`))
-        .body.case,
-    );
-    expect(reporterView.allowedActions).not.toContain("consent-payment");
-    const current = required(reporterView).revision;
-    const consent = await t.call(
-      REPORTER,
-      "POST",
-      `security-cases/${submission.caseId}/actions`,
-      {
-        action: "consent-payment",
-        network: "base-mainnet",
-        confirmation: true,
-        expectedRevision: current,
-        idempotencyKey: "full-award-consent-0001",
-      },
-    );
-    expect(consent.status).toBe(409);
-    expect(consent.body.error).toBe("full_award_unpayable");
-    const prepared = await t.caseAction(submission.caseId, {
-      action: "prepare-payment",
-      network: "base-mainnet",
-      confirmation: true,
-    });
-    expect(prepared.status).toBe(409);
-    expect(prepared.body.error).toBe("full_award_unpayable");
-    for (const table of [
-      "security_payment_consents",
-      "security_direct_payments",
-    ])
-      expect(t.sqlite.query(`SELECT * FROM ${table}`).all()).toEqual([]);
   });
 
   test("saves a Slop receipt, screens and routes without GitHub, keeping the body private", async () => {

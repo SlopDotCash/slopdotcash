@@ -442,60 +442,6 @@ for (const scenario of [
           .get(id)?.intent ?? "null",
       ) as DirectIntent;
     }
-    if (scenario === "full-award") {
-      // No full-award payment path is approved and released (PRD section 8;
-      // section 11 activation gates). The award stays chosen and unpayable
-      // even though a direct route exists for this asset and network.
-      const id = "sc_full_award_unpayable";
-      seedCase(id, "root-one");
-      const awarded = await act(OWNER, id, "award", {
-        decision: "amount",
-        grossMinor: gross,
-        paymentDeadline: new Date(Date.now() + 86400000).toISOString(),
-        confirmation: true,
-        reason: "Choose the full award without a payment path.",
-      });
-      assert.equal(awarded.status, 200, JSON.stringify(awarded.body));
-      assert.equal(awarded.body.case.awardState, "pending");
-      sqlite
-        .prepare("UPDATE security_cases SET award_state='approved' WHERE id=?")
-        .run(id);
-      const consent = await act(REPORTER, id, "consent-payment", {
-        network,
-        confirmation: true,
-      });
-      assert.equal(consent.status, 409, JSON.stringify(consent.body));
-      assert.equal(consent.body.error, "full_award_unpayable");
-      const prepared = await act(OWNER, id, "prepare-payment", {
-        network,
-        confirmation: true,
-      });
-      assert.equal(prepared.status, 409, JSON.stringify(prepared.body));
-      assert.equal(prepared.body.error, "full_award_unpayable");
-      for (const table of [
-        "security_direct_awards",
-        "security_payment_consents",
-        "security_direct_payments",
-      ])
-        assert.equal(
-          sqlite
-            .query<{ n: number }, []>(`SELECT COUNT(*) n FROM ${table}`)
-            .get()?.n,
-          0,
-          `${table} must stay empty for a full-award case`,
-        );
-      console.log(
-        JSON.stringify({
-          scenario,
-          network,
-          gross,
-          fullAwardUnpayable: true,
-          liveFunds: false,
-        }),
-      );
-      sqlite.close();
-      continue;
-    }
     // Pause only the final planning RPC response. The request and its result
     // still come from the actual Anvil node; concurrent changes use migrated
     // SQLite and the same API as the rest of this workflow.
@@ -706,7 +652,7 @@ for (const scenario of [
       data: string;
       value: string;
     }[];
-    assert.equal(transactions.length, 2);
+    assert.equal(transactions.length, scenario === "full-award" ? 1 : 2);
     const next = "sc_direct_payment_2";
     seedCase(next, "root-two");
     assert.equal(
@@ -1279,6 +1225,71 @@ for (const scenario of [
         );
       }
     }
+    if (scenario === "full-award") {
+      const oldIntent = JSON.parse(
+        sqlite
+          .query<{ intent: string }, [string]>(
+            "SELECT intent FROM security_direct_payments WHERE case_id=?",
+          )
+          .get(next)?.intent ?? "null",
+      ) as DirectIntent;
+      assert.ok(oldIntent.transactions?.[0]?.nonce);
+      const checkpoint = await rpc("evm_snapshot");
+      const delegate = `0x${"d".repeat(40)}`;
+      await rpc("anvil_setCode", [delegate, "0x00"]);
+      await rpc("anvil_setCode", [payer, `0xef0100${delegate.slice(2)}`]);
+      const delegatedHash = (await rpc("eth_sendTransaction", [
+        { ...oldIntent.transactions[0], to: payer, value: "0x0", data: "0x" },
+      ])) as string;
+      await rpc("anvil_mine", ["0x80"]);
+      const delegated = await act(OWNER, next, "recover-payment", {
+        confirmation: true,
+        cancellationTransactionId: delegatedHash,
+      });
+      assert.equal(
+        delegated.status,
+        409,
+        "a delegated wallet's successful self-call cannot prove no award moved",
+      );
+      assert.equal(delegated.body.error, "cancellation_unverified");
+      assert.equal(await rpc("evm_revert", [checkpoint]), true);
+      const consumed = (await rpc("eth_sendTransaction", [
+        { ...oldIntent.transactions[0], to: payer, value: "0x0", data: "0x" },
+      ])) as string;
+      await rpc("anvil_mine", ["0x80"]);
+      const blocked = (await call(OWNER, `security-cases/${next}`)).body.case
+        .settlement;
+      assert.equal(blocked.recovery?.mode, "retirement-required");
+      assert.equal(
+        blocked.recovery.consented,
+        true,
+        "same verified wallet retains its original consent",
+      );
+      const recovered = await act(OWNER, next, "recover-payment", {
+        confirmation: true,
+        cancellationTransactionId: consumed,
+      });
+      assert.equal(recovered.status, 200, JSON.stringify(recovered.body));
+      const replacement = recovered.body.case.settlement.ownerRequest;
+      assert.equal(
+        replacement.transfers[0].recipient.toLowerCase(),
+        recipient.toLowerCase(),
+      );
+      assert.notEqual(
+        replacement.transactions?.[0].nonce,
+        oldIntent.transactions[0].nonce,
+      );
+      const payment = (await rpc("eth_sendTransaction", [
+        replacement.transactions?.[0],
+      ])) as string;
+      await rpc("anvil_mine", ["0x80"]);
+      const paid = await act(OWNER, next, "verify-payment", {
+        confirmation: true,
+        transactionIds: [payment],
+      });
+      assert.equal(paid.status, 200, JSON.stringify(paid.body));
+      assert.equal(paid.body.case.paymentState, "paid");
+    }
     if (scenario === "native") {
       const id = "sc_direct_payment_4",
         plan = await prepareCase(id, "root-four");
@@ -1557,6 +1568,12 @@ for (const scenario of [
             }
           : {}),
         ...(scenario === "token" ? { revertedNonceSuccessorPaid: true } : {}),
+        ...(scenario === "full-award"
+          ? {
+              sameWalletSpentNonceRecovered: true,
+              delegatedCancellationRejected: true,
+            }
+          : {}),
         liveFunds: false,
       }),
     );

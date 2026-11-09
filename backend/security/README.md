@@ -443,10 +443,6 @@ prepares an unsigned plan from their verified wallet. The plan freezes the
 approved amount, asset, payer, reporter and canonical platform fee recipient.
 It includes one or two EVM transfers, or one Solana transaction with the exact
 native/SPL transfers. Slop does not sign or broadcast it.
-A full-award case never uses this path: no full-award payment path is approved
-and released, so the award stays chosen and unpayable. Consent, preparation and
-recovery refuse with `full_award_unpayable`; verification of transfers already
-sent remains available.
 
 The browser connects the payer's EVM or Solana wallet and presents only that
 retained request. It rechecks the account and case before a wallet prompt.
