@@ -10,14 +10,21 @@
 // the reopen; an upheld appeal covers its revision or a debit recorded at or
 // before the appeal opened. A later head's debit after either stands.
 // bot_appeal models the appeal lifecycle and assumes an existing debit.
+// A close job rechecks the reopen of its own reviewed revision after
+// recordPenalty; reviews are leased per review key, so an older revision's
+// job can finish after a later head was closed and debited. Its reversal
+// passes that revision and the latest reopen time (confirmedReopenCoverage),
+// so it covers only that revision's debit or one recorded at or before the
+// reopen. `reopenAt` keeps each reopened revision's event time.
 module bot_penalty_once {
   type Row = { present: bool, rev: int, at: int, reversed: bool, reason: str }
   var s: { now: int, closes: Set[int], reopens: Set[int], open: bool, head: int,
     row: Row, inserts: int, appealRev: int, appealAt: int, appealDone: bool,
-    insertedAfterReopen: bool }
+    insertedAfterReopen: bool, reopenAt: int -> int }
   action init = s' = { now: 0, closes: Set(), reopens: Set(), open: true, head: 1,
     row: { present: false, rev: 0, at: 0, reversed: false, reason: "none" }, inserts: 0,
-    appealRev: 0, appealAt: 0, appealDone: false, insertedAfterReopen: false }
+    appealRev: 0, appealAt: 0, appealDone: false, insertedAfterReopen: false,
+    reopenAt: Map() }
   def covers(rev: int, at: int): bool = s.row.present and not(s.row.reversed)
     and (s.row.at <= at or s.row.rev == rev)
   action tick = all { s.now < 2, s' = s.with("now", s.now + 1) }
@@ -31,11 +38,14 @@ module bot_penalty_once {
         .with("inserts", s.inserts + 1) }
   action reopen = all { not(s.open), s.head.in(s.closes), not(s.head.in(s.reopens)),
     s' = s.with("open", true).with("reopens", s.reopens.union(Set(s.head)))
+      .with("reopenAt", s.reopenAt.put(s.head, s.now))
       .with("row", if (covers(s.head, s.now))
         s.row.with("reversed", true).with("reason", "maintainer_reopen") else s.row) }
-  // The close path rechecks the reopen after recording; uncovered reversal.
-  action lateReopenReversal = all { s.head.in(s.reopens), s.row.present, not(s.row.reversed),
-    s' = s.with("row", s.row.with("reversed", true).with("reason", "maintainer_reopen")) }
+  // The close job of revision r rechecks r's reopen after recording and
+  // reverses only what that reopen covers.
+  action lateReopenReversal(r: int): bool = all { r.in(s.closes), r.in(s.reopens),
+    s' = if (covers(r, s.reopenAt.get(r)))
+      s.with("row", s.row.with("reversed", true).with("reason", "maintainer_reopen")) else s }
   action push = all { s.open, s.head == 1, 1.in(s.closes), s' = s.with("head", 2) }
   action appeal(r: int): bool = all { r.in(s.closes), s.appealRev == 0,
     s' = s.with("appealRev", r).with("appealAt", s.now) }
@@ -44,7 +54,7 @@ module bot_penalty_once {
       s.row.with("reversed", true).with("reason", "appeal_upheld") else s.row) }
   action step = {
     nondet r = Set(1, 2).oneOf()
-    any { tick, close, record(r), reopen, lateReopenReversal, push, appeal(r), uphold, s' = s }
+    any { tick, close, record(r), reopen, lateReopenReversal(r), push, appeal(r), uphold, s' = s }
   }
   val invariant = all {
     s.inserts <= 1,
@@ -54,6 +64,12 @@ module bot_penalty_once {
     not(s.row.reversed) implies s.row.reason == "none",
     s.head == 2 implies 1.in(s.reopens),
     (s.head == 2 and s.row.rev == 1) implies s.row.reversed,
+    s.reopenAt.keys() == s.reopens,
+    // A reopen reversal always had a covering reopen: the debit's own
+    // revision, or a reopen at or after the debit was recorded. A later
+    // head's debit after every reopen stands.
+    (s.row.reversed and s.row.reason == "maintainer_reopen") implies
+      (s.row.rev.in(s.reopens) or s.reopens.exists(r => s.row.at <= s.reopenAt.get(r))),
   }
   temporal reversalFinalProperty = always(s.row.reversed implies always(s.row.reversed))
   run spamCloseDebitsOnceAcrossReplaysTest = init.then(close).then(record(1)).then(record(1))
@@ -69,6 +85,12 @@ module bot_penalty_once {
   run newerHeadDebitSurvivesOlderAppealTest = init.then(close).then(reopen).then(push)
     .then(appeal(1)).then(tick).then(close).then(record(2)).then(uphold)
     .expect(s.row.present and s.row.rev == 2 and not(s.row.reversed) and s.appealDone)
+  // rev 1's close job finds its reopen only after rev 2 was closed and debited.
+  run olderCloseJobKeepsLaterHeadDebitTest = init.then(close).then(reopen).then(push)
+    .then(tick).then(close).then(record(2)).then(lateReopenReversal(1))
+    .expect(s.row.present and s.row.rev == 2 and not(s.row.reversed))
+  run lateReopenReversesOwnRevisionDebitTest = init.then(close).then(record(1)).then(reopen)
+    .then(lateReopenReversal(1)).expect(s.row.reversed and s.row.reason == "maintainer_reopen")
   run appealUpholdReversesCoveredDebitTest = init.then(close).then(record(1)).then(appeal(1))
     .then(uphold).expect(s.row.reversed and s.row.reason == "appeal_upheld")
 }

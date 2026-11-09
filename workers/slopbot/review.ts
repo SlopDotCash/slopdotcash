@@ -96,6 +96,7 @@ import {
   scopeAllowed,
 } from "./registry";
 import {
+  confirmedReopenCoverage,
   confirmedReopenFor,
   confirmReopen,
   reopenSource,
@@ -1215,8 +1216,20 @@ export async function reviewItem(
                 closedAt,
               })
             : null;
-        if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
-          await reversePenalty(db, issue.node_id, "maintainer_reopen");
+        const lateReopen = await confirmedReopenCoverage(
+          db,
+          issue.node_id,
+          context.revision,
+        );
+        if (lateReopen) {
+          // Only this revision's debit or one recorded at or before the
+          // reopen: a later head's debit stands.
+          await reversePenalty(
+            db,
+            issue.node_id,
+            "maintainer_reopen",
+            lateReopen,
+          );
           await reconcileConfirmedReopen(env, job, context);
           await store.finishReview(db, closeKey, token, "completed", {
             verdict: recovery.verdict,
@@ -1936,8 +1949,15 @@ async function runReview(
           closedAt: closedAt as Date,
         })
       : null;
-    if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
-      await reversePenalty(db, issue.node_id, "maintainer_reopen");
+    const lateReopen = await confirmedReopenCoverage(
+      db,
+      issue.node_id,
+      context.revision,
+    );
+    if (lateReopen) {
+      // Only this revision's debit or one recorded at or before the reopen:
+      // a later head's debit stands.
+      await reversePenalty(db, issue.node_id, "maintainer_reopen", lateReopen);
       return reopenedAfterClose();
     }
     await upsertComment(
