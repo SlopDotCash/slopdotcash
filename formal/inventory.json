@@ -493,6 +493,7 @@
       "path": "backend/projects/cloudflare-persistence.ts",
       "sha256": "28dab7898ead475eed67c27dbcad31437948dc525a1fe861df21a0af8e02856c",
       "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
@@ -517,6 +518,7 @@
       "path": "backend/projects/edge-cache.ts",
       "sha256": "5b51c883a9f8a0e00bda1e0d96cde539c9df6c9748d694e5b6fed6d1464ed998",
       "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
@@ -547,6 +549,7 @@
       "path": "backend/projects/handler.ts",
       "sha256": "4ccd87747261a95a24b3d15aff060a38d3687a78a8ec4e97c92fa5249b211aa4",
       "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
@@ -622,6 +625,7 @@
       "path": "backend/projects/vault-setup.ts",
       "sha256": "f3f2b359fc4e6057c935bf4b9a20f96a1189f99d53927e072d3f4a06cb48bd77",
       "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
         "formal/models/contracts/vault_setup_resolution.qnt"
       ],
@@ -788,7 +792,8 @@
       "sha256": "73a7abf37cc3c6330cbd4022ee9a1c08f1fba47b8e6b1327212895b041bceaf2",
       "models": [
         "formal/models/api/api_private_authorization.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/submission_receipt_verification.qnt"
       ],
       "candidateLines": [
         76, 313, 352, 357, 358, 361, 380, 395, 422, 473, 500, 502, 504, 505,
@@ -805,6 +810,7 @@
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/notification_escalation.qnt",
+        "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/security_payment_projection.qnt",
@@ -826,12 +832,12 @@
     },
     {
       "path": "backend/security/intake-grant.ts",
-      "sha256": "2866cdd4d68f3bdf729038dfc9777570623f00fdc93b456bc3268042cf18f92f",
+      "sha256": "331adad4970504152b6c47af9004e4714b51639eb9f0abf8e2e1386c79b7e3b8",
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt"
       ],
-      "candidateLines": [165, 171, 178, 241, 244],
+      "candidateLines": [161, 167, 174, 240, 243],
       "review": "mapped-abstraction"
     },
     {
@@ -896,6 +902,8 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_report_forward_revision.qnt",
         "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_authorization_wrappers.qnt",
+        "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
@@ -918,19 +926,21 @@
     },
     {
       "path": "backend/security/submissions.ts",
-      "sha256": "7b8732490e81c0955c34635a59b25d5b1451ddbbd2e4ee50b7b74f01e8e1a332",
+      "sha256": "c00048a0d78f81fd3cfb427d73ca92ff93203e14af97f238ac64061bd6b9d287",
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_authorization_wrappers.qnt",
+        "formal/models/api/submission_receipt_verification.qnt"
       ],
       "candidateLines": [
         13, 89, 149, 160, 167, 180, 183, 196, 221, 241, 252, 259, 263, 266, 271,
         277, 289, 319, 339, 346, 350, 352, 357, 364, 367, 370, 420, 425, 427,
-        517, 531, 532, 546, 563, 581, 625, 677, 689, 692, 698, 701, 731, 763,
-        769, 784, 786, 787, 788, 791, 841, 842, 892, 910, 933, 934, 935, 939,
-        955, 969, 972, 985, 1003, 1009, 1011, 1014, 1015, 1020, 1049, 1087,
-        1099, 1110, 1126, 1150, 1152, 1164, 1224, 1241, 1243, 1246, 1255, 1274,
-        1282, 1290, 1311, 1329, 1333
+        517, 531, 532, 546, 563, 581, 624, 629, 681, 693, 696, 702, 705, 735,
+        767, 773, 788, 790, 791, 792, 795, 845, 846, 896, 914, 937, 938, 939,
+        943, 959, 973, 976, 989, 1007, 1013, 1015, 1018, 1019, 1024, 1053, 1091,
+        1103, 1114, 1130, 1154, 1156, 1168, 1228, 1245, 1247, 1250, 1259, 1278,
+        1286, 1294, 1315, 1333, 1337
       ],
       "review": "mapped-abstraction"
     },
@@ -2375,7 +2385,9 @@
       "sha256": "1502a8c8aedfc1f8a9007789ffa9cd3dad0a19fbc8a6bd64614b45ef89c066f7",
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_authorization_wrappers.qnt",
+        "formal/models/api/submission_receipt_verification.qnt"
       ],
       "candidateLines": [
         4, 21, 41, 44, 45, 46, 55, 59, 63, 64, 70, 71, 82, 88, 99, 100, 105,
@@ -2791,7 +2803,8 @@
       "models": [
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_submission_recovery.qnt"
+        "formal/models/api/api_submission_recovery.qnt",
+        "formal/models/api/submission_receipt_verification.qnt"
       ],
       "candidateLines": [
         42, 45, 46, 71, 87, 96, 97, 101, 102, 116, 117, 170, 175, 177, 179, 181,
@@ -6200,6 +6213,7 @@
       "path": "src/lib/vault-setup.ts",
       "sha256": "5b1728c03318a4f85bf684db47451cc04ab183e86ebcece23fae94cd5c045b8f",
       "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
         "formal/models/contracts/vault_setup_resolution.qnt"
       ],
@@ -8448,6 +8462,46 @@
       ]
     },
     {
+      "path": "formal/models/api/api_owner_vault_lifecycle.qnt",
+      "sha256": "f58e4359b44d6e8ac66bc2f348457549d716c4d0c5053a8dfd6453140e72176f",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/edge-cache.ts",
+        "backend/projects/handler.ts",
+        "backend/projects/vault-setup.ts",
+        "src/lib/vault-setup.ts"
+      ],
+      "scenarios": [
+        "absentHistoricalRevisionRefusesTest",
+        "cacheDeleteFailureDoesNotUndoRegistrationTest",
+        "capOnlyEditAllowsOldCreationTest",
+        "changedPolicyRefusesHistoricalCreationTest",
+        "concurrentOwnerEditWinsAtCasTest",
+        "enforcementAfterValidationWinsAtCasTest",
+        "existingBountyKeepsOrdinarySlotIndependentTest",
+        "existingEvmTransactionCaseFoldsBeforeExpectedValidationTest",
+        "invalidGetPurposeRefusesTest",
+        "laterHeadDoesNotReplaceOwnReceiptTest",
+        "lostBatchReplyRecoversWithoutSecondChainCallTest",
+        "lostHttpReplyKeepsStoredVaultTest",
+        "lostWalletDoesNotAppendTest",
+        "missingProjectRefusesTest",
+        "newBanDuringChainRefusesAppendTest",
+        "ordinaryNetworksNeedOwnerTest",
+        "otherNetworkCannotReplayExistingTransactionTest",
+        "pendingChainDoesNotAppendTest",
+        "postCommitReadFailureKeepsStoredVaultTest",
+        "replayStillNeedsServiceTest",
+        "replayStillNeedsValidBasicBodyTest",
+        "restrictedBountyReadRemainsAvailableTest",
+        "restrictedOrdinaryReadRefusesTest",
+        "roleObservationIsNotContinuousLockTest",
+        "solanaTransactionCaseIsDistinctTest",
+        "staleReviewRefusesTest",
+        "twoRegistrationsAppendOnceTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_payment_wallet_protocol.qnt",
       "sha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
       "sources": [
@@ -8503,7 +8557,7 @@
     },
     {
       "path": "formal/models/api/api_private_authorization.qnt",
-      "sha256": "27c8b39b75e522ff97db29d1dd32911a279696ac3480c7d8f03889f53bc96266",
+      "sha256": "0cf2d50b3d19098f619b6731fa256696e7ff5cf8a6ab109b799e895a9c706cc4",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
@@ -8511,18 +8565,36 @@
       ],
       "scenarios": [
         "boundGrantTest",
+        "browserMayExpireOnlyCurrentFlowTest",
         "callbackAfterSignOutCannotReadTest",
         "callbackWithoutSiteCookieTest",
         "callbackWrongAccountRefusedTest",
         "changedActorRefusedTest",
+        "exchangeFailureKeepsFlowTest",
         "expiredFlowRefusedTest",
+        "expiredFlowServerRefusalTest",
         "expiredGrantRefusedTest",
+        "grantCookieStillUsesLastSuccessfulResponseTest",
         "grantOutlivesFlowTest",
         "grantReadDoesNotConsumeTest",
+        "inFlightFailureCannotClearNewFlowTest",
+        "inFlightFlowUsesCapturedDeadlineTest",
+        "inFlightSuccessCannotClearNewFlowTest",
+        "invalidCodeSyntaxNeverExchangesTest",
+        "malformedFlowIsRefusedWithoutClearingCookieTest",
+        "oldInFlightClearDestroysNewFlowNegativeControlTest",
+        "oldMismatchClearDestroysNewFlowNegativeControlTest",
+        "presentedActorMismatchDoesNotMintGrantTest",
+        "providerMismatchDoesNotMintGrantTest",
         "providerWrongAccountRefusedTest",
         "sameActorNewSessionRefusedTest",
+        "sealingFailureKeepsFlowTest",
+        "staleNonceCannotClearNewFlowTest",
         "switchedAccountTest",
-        "switchedReportTest"
+        "switchedReportTest",
+        "tamperedGrantNeverReadsTest",
+        "usedCodeCannotMintAgainTest",
+        "userReadFailureKeepsFlowTest"
       ]
     },
     {
@@ -9501,6 +9573,69 @@
         "unrelatedPathFallsThroughTest",
         "unsupportedMethodFallsThroughWithoutLookupTest",
         "unverifiedArtifactReturns503Test"
+      ]
+    },
+    {
+      "path": "formal/models/api/submission_authorization_wrappers.qnt",
+      "sha256": "0df6863c746d08c56047a06f7d213b4e5cfa8e6e3a65aee83f10e8c6f6310730",
+      "sources": [
+        "backend/security/report-intake.ts",
+        "backend/security/submissions.ts",
+        "migrations/0059_private_security_submissions.sql"
+      ],
+      "scenarios": [
+        "abandonedSubmissionCannotAuthorizeTest",
+        "adoptedSlopAdvisoryConflictsWithOriginalCreateShapeTest",
+        "authorizationResponseCanBeLostWithoutDeletingRowTest",
+        "banAtInsertCreatesNeitherRowNorEventTest",
+        "capturedPendingRenewalDoesNotAuthorizeLaterHeldDraftTest",
+        "closedReceiptRefusesBeforeBodyReadTest",
+        "concurrentSameKeyCreateRetainsOneRowTest",
+        "decorationFailureDoesNotUndoCreatedDraftTest",
+        "flowFailureDoesNotUndoCreatedDraftTest",
+        "foreignActorCannotAuthorizeRetainedRowTest",
+        "freshCreateCommitsRowAndEventTest",
+        "heldDraftCannotAuthorizeNewForwardTest",
+        "heldFailedDraftCannotAuthorizeNewForwardTest",
+        "lostInsertReplyRetainsRecoverableDraftTest",
+        "matchingKeyReplayStartsNewAuthorizationTest",
+        "observedPendingSubmissionRefusesNewCreateTest",
+        "submittedRenewalBypassesNewForwardBodyGateTest",
+        "submittingRenewalBypassesNewForwardBodyGateTest",
+        "uncertainRenewalBypassesNewForwardBodyGateTest",
+        "unreadableDraftCannotAuthorizeNewForwardTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/submission_receipt_verification.qnt",
+      "sha256": "4438d6c551f11770c3dfe5bece42f99bc97a8593b5b52b8d5c93a2de3b0b8576",
+      "sources": [
+        "backend/security/github-advisories.ts",
+        "backend/security/handler.ts",
+        "backend/security/report-intake.ts",
+        "backend/security/submissions.ts",
+        "migrations/0059_private_security_submissions.sql",
+        "migrations/0101_durable_security_intake.sql"
+      ],
+      "scenarios": [
+        "anotherCaseKeepsItsIdentityPrivateTest",
+        "authorMismatchCreatesNoCaseTest",
+        "batchFailureDoesNotPartiallyCreateCaseTest",
+        "changedSubmissionRefusesCapturedCaseWriteTest",
+        "concurrentVerificationReturnsExistingReceiptTest",
+        "directNonPrivateReportRefusesTest",
+        "directNotFoundFailsTest",
+        "directReportCreatesOneAtomicCaseTest",
+        "durableReportLinksExistingCaseTest",
+        "futureReceiptRefusesTest",
+        "historicalPolicyFailureWritesNothingTest",
+        "lostBatchResultKeepsAtomicReceiptTest",
+        "lostReplyKeepsCommittedReceiptTest",
+        "missingContactsKeepsEvidenceWithoutOwnerlessCaseTest",
+        "missingSlopMarkerRefusesTest",
+        "slopNotFoundRemainsRecoverableTest",
+        "staleReadResolvesAtRevisionBoundTest",
+        "unavailableContactsKeepsDurableCaseTest"
       ]
     },
     {
