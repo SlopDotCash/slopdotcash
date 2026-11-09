@@ -6,9 +6,51 @@ import { availableParallelism } from "node:os";
  */
 
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_PUBLIC_GITHUB_TOKEN } from "./tests/github-api-fixture.mjs";
 
 const firefoxStreamWorkflows =
   /admin placement and explicit bounty type|a manual Points award reaches private Inbox review|private security bounty programs keep cases restricted|an escalated contribution appeal opens from the moderator Inbox/;
+
+// Workflows whose assertions are pure browser logic (request ordering, account
+// binding, clock and session transitions) with no layout or viewport claim.
+// They run once at the desktop width; the 320 px project would only repeat
+// the same requests and state transitions. Referral claims are deferred from
+// launch (CLAUDE.md, owner decision of 27 October 2026), so they keep one
+// desktop run.
+const desktopOnlySpecs = [
+  "contributor-allocation",
+  "email-preference-actor-binding",
+  "inbox-report-account-change",
+  "inbox-reports-session",
+  "inbox-response-owner",
+  "leaderboard-transport",
+  "legacy-routes",
+  "points-dispute-decision",
+  "points-refresh",
+  "private-case-ordering",
+  "private-report-composition",
+  "profile-review-exclusions",
+  "referral-claims",
+  "reward-asset-amount",
+  "reward-token-navigation",
+  "security-draft-signout",
+  "security-intake-review",
+  "signed-out-reads",
+  "solana-history-recovery",
+  "ui-clock-transitions",
+  "ui-session-focus",
+  "ui-state-boundaries",
+  "wallet-readback",
+].map((name) => `**/${name}.spec.ts`);
+
+// Firefox runs these workflows at both widths (see projects below); Chromium
+// would repeat the same draft and focus transitions.
+const firefoxOnlySpecs = [
+  "**/email-preferences.spec.ts",
+  "**/bounty-full-flow.spec.ts",
+  "**/email-editor-focus.spec.ts",
+  "**/project-draft-storage.spec.ts",
+];
 
 const externalBaseUrl =
   process.env.SLOP_BASE_URL ??
@@ -128,10 +170,11 @@ const registryArguments = registryPersistTo
         ? ` --binding PROJECT_MODERATOR_GITHUB_IDS=${registryModerators}`
         : ""
     }${
-      // The loopback fixture also answers the Surplus analysis provider, so
-      // private analysis and appeal triage run in every registry run.
+      // This synthetic public token is bound only alongside the validated
+      // loopback GitHub fixture. No production credential enters this lane.
+      // The fixture also answers private analysis and appeal triage.
       registryGitHub
-        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub} --binding REWARD_RPC_BASE=${registryGitHub}/__fixture/reward-rpc/base`
+        ? ` --binding SLOP_GITHUB_API_ORIGIN=${registryGitHub} --binding SLOP_GITHUB_READ_TOKEN=${E2E_PUBLIC_GITHUB_TOKEN} --binding SURPLUS_API_KEY=e2e-fixture-analysis-key --binding SLOP_ANALYSIS_API_ORIGIN=${registryGitHub} --binding REWARD_RPC_BASE=${registryGitHub}/__fixture/reward-rpc/base`
         : ""
     }${
       registryIntakeKey
@@ -218,7 +261,8 @@ export default defineConfig({
         stdout: "pipe",
         stderr: "pipe",
       },
-  // Every spec runs at the 1440 px desktop and the 320 px mobile viewport; the
+  // Every spec runs at the 1440 px desktop and the 320 px mobile viewport,
+  // except desktopOnlySpecs and @desktop-only cases, which run at 1440 px; the
   // 1024 px laptop and 768 px tablet viewports run representative @breakpoint layouts.
   // The email and project discovery workflows observed Chromium no-store
   // stream EOF and ERR_ABORTED
@@ -276,10 +320,7 @@ export default defineConfig({
     {
       name: "chromium-desktop",
       grepInvert: firefoxStreamWorkflows,
-      testIgnore: [
-        "**/email-preferences.spec.ts",
-        "**/bounty-full-flow.spec.ts",
-      ],
+      testIgnore: firefoxOnlySpecs,
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: chromiumLaunchOptions,
@@ -289,10 +330,7 @@ export default defineConfig({
     {
       name: "chromium-mobile",
       grepInvert: new RegExp(`@desktop-only|${firefoxStreamWorkflows.source}`),
-      testIgnore: [
-        "**/email-preferences.spec.ts",
-        "**/bounty-full-flow.spec.ts",
-      ],
+      testIgnore: [...firefoxOnlySpecs, ...desktopOnlySpecs],
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: chromiumLaunchOptions,

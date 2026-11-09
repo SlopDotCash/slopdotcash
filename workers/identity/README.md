@@ -1,9 +1,10 @@
 # Slop identity Worker
 
 `slop-identity` is the only component that handles GitHub sign-in. It uses the
-GitHub authorization-code flow with PKCE and returns a one-time, 90-second
-identity assertion. It never accepts an existing PAT, `gh auth token`, workflow
-token, or GitHub device token.
+GitHub authorization-code flow with PKCE and returns a one-time identity
+assertion. Its 90-second expiry starts at the poll's captured creation time.
+Request delays reduce the remaining usable time. It never accepts an existing
+PAT, `gh auth token`, workflow token, or GitHub device token.
 
 The public authority is fixed to `https://identity.slop.cash`. The only OAuth
 callback is:
@@ -68,7 +69,8 @@ Before the callback completes, HTTP 202 returns:
 {"status":"pending","retryAfterSeconds":2}
 ```
 
-After verified GitHub sign-in, exactly one poll returns HTTP 200:
+After verified GitHub sign-in, at most one poll can claim the completed flow.
+A successful reply returns HTTP 200:
 
 ```json
 {
@@ -101,12 +103,19 @@ returns the separate ten-minute contributor session described in
   ciphertext before contacting GitHub.
 - GitHub's authorization code and user access token exist only in the callback
   request/runtime. The access token is used once to read `/user`, is never
-  persisted or returned, and is cleared before returning.
+  persisted or returned, and its local variable is cleared before returning.
+  This assignment does not revoke the token or erase other runtime references.
 - No OAuth scopes are requested. The only retained identity is the immutable
-  numeric GitHub actor ID and validated login.
+  numeric GitHub actor ID, validated login and optional validated User node ID.
 - Poll capabilities and assertions are stored only as SHA-256 digests.
-- Assertions are fixed to `private-trace-api`, consumed atomically, and never
+- Assertions are bound to `private-trace-api` or `slop-points-web`, consumed
+  atomically for that audience, and never
   carry an operator role. The identity Worker has no role-issuance endpoint.
+- A production assertion can be inserted only while its flow is
+  `callback_complete`. This condition is checked in the insertion statement.
+  A delayed poll cannot recreate the deterministic token after another poll
+  issues it and expiry cleanup removes its row. The local bridge uses a
+  separate random token in the local database and has no production assertion.
 - Worker-native counters provide an approximate edge shield at 60 OAuth starts
   and 600 polls per minute per connecting address and Cloudflare location. D1
   atomically enforces the exact product limits of 12 starts and 120 polls per

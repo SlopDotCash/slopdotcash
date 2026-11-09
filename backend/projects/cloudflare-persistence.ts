@@ -20,6 +20,22 @@ import {
   notifyReinstatementReviewers,
 } from "../notifications/events";
 import type { NewProjectInput, ProjectPersistence } from "./contracts";
+
+/**
+ * Every input of admission clearance that the registry stores and can change:
+ * each assessment and its state, and each exemption with its revocation.
+ * Enforcement records are fenced separately by the enforcement generation;
+ * grandfathered projects are a frozen migration set. Binds the project id
+ * twice.
+ */
+const CLEARANCE_GENERATION = `json_array(
+  (SELECT json_group_array(json_array(id, state)) FROM
+    (SELECT id, state FROM vetting_assessments WHERE project_id = ? ORDER BY rowid)),
+  (SELECT json_group_array(json_array(id, revoked)) FROM
+    (SELECT g.id AS id, r.exemption_id IS NOT NULL AS revoked
+       FROM vetting_admission_exemptions g
+       LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id
+      WHERE g.project_id = ? ORDER BY g.rowid)))`;
 export type ProjectD1Database = D1TransactionalDatabase<D1Statement>;
 
 type ProjectRow = {
@@ -381,14 +397,19 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
       : null;
   }
 
-  async createProject(input: NewProjectInput): Promise<"created" | "conflict"> {
+  async createProject(
+    input: NewProjectInput,
+    expectedEnforcementGeneration: number,
+  ): Promise<"created" | "conflict"> {
+    const current =
+      "(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?";
     const statements = [
       this.db
         .prepare(
           `INSERT INTO project_revisions (
              project_id, revision, manifest, manifest_sha256, reason,
              actor_github_id, actor_github_login, created_at
-           ) VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
+           ) SELECT ?, 1, ?, ?, ?, ?, ?, ? WHERE ${current}`,
         )
         .bind(
           input.manifest.id,
@@ -398,11 +419,12 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubId,
           input.actor.githubLogin,
           input.at,
+          expectedEnforcementGeneration,
         ),
       this.db
         .prepare(
           `INSERT INTO projects (${PROJECT_COLUMNS})
-           VALUES (?, 'paused', 1, ?, ?, ?, ?, NULL, ?, ?)`,
+           SELECT ?, 'paused', 1, ?, ?, ?, ?, NULL, ?, ? WHERE ${current}`,
         )
         .bind(
           input.manifest.id,
@@ -412,18 +434,19 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.at,
           input.referrer?.githubId ?? null,
           input.referrer?.githubLogin ?? null,
+          expectedEnforcementGeneration,
         ),
       ...repositoryKeys(input.manifest).map((key) =>
         this.db
           .prepare(
-            "INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)",
+            `INSERT INTO project_repositories (repository_key, project_id) SELECT ?, ? WHERE ${current}`,
           )
-          .bind(key, input.manifest.id),
+          .bind(key, input.manifest.id, expectedEnforcementGeneration),
       ),
     ];
     try {
-      await this.db.batch(statements);
-      return "created";
+      const results = await this.db.batch(statements);
+      return results[1]?.meta?.changes === 1 ? "created" : "conflict";
     } catch (error) {
       if (isConstraintConflict(error)) return "conflict";
       throw error;
@@ -432,12 +455,14 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
 
   async publishApplication(
     input: DecisionInput,
+    expectedEnforcementGeneration: number,
   ): Promise<"published" | "conflict"> {
     const application = await this.getApplication(input.applicationId);
     if (application === null || application.status !== "pending") {
       return "conflict";
     }
-    const pending = `EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending')`;
+    const pending = `EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending')
+      AND (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?`;
     const manifestText = JSON.stringify(application.manifest);
     const reason = `Published application ${application.id}${input.reason ? `: ${input.reason}` : ""}`;
     const statements = [
@@ -457,6 +482,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubLogin,
           input.at,
           application.id,
+          expectedEnforcementGeneration,
         ),
       this.db
         .prepare(
@@ -473,6 +499,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           application.referrer?.githubId ?? null,
           application.referrer?.githubLogin ?? null,
           application.id,
+          expectedEnforcementGeneration,
         ),
       ...repositoryKeys(application.manifest).map((key) =>
         this.db
@@ -480,14 +507,20 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
             `INSERT INTO project_repositories (repository_key, project_id)
              SELECT ?, ? WHERE ${pending}`,
           )
-          .bind(key, application.projectId, application.id),
+          .bind(
+            key,
+            application.projectId,
+            application.id,
+            expectedEnforcementGeneration,
+          ),
       ),
       this.db
         .prepare(
           `UPDATE project_applications
               SET status = 'approved', decided_at = ?, decided_by_github_id = ?,
                   decided_by_github_login = ?, decision_reason = ?
-            WHERE id = ? AND status = 'pending'`,
+            WHERE id = ? AND status = 'pending'
+              AND (SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?`,
         )
         .bind(
           input.at,
@@ -495,6 +528,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           input.actor.githubLogin,
           input.reason,
           application.id,
+          expectedEnforcementGeneration,
         ),
     ];
     try {
@@ -513,14 +547,24 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
     const nextRevision = input.expectedRevision + 1;
     // The revision applies only while no enforcement record has landed since
     // the caller read the restrictions it checked.
+    // An activation checked against admission clearance applies only while
+    // no assessment or exemption of the project has changed since that read,
+    // so a revocation or investigation during the check cannot be overtaken.
+    const fenced = input.expectedClearanceGeneration !== undefined;
     const unrestricted =
       "(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) = ?" +
       (input.applicationId
         ? " AND EXISTS (SELECT 1 FROM project_applications WHERE id = ? AND status = 'pending' AND expected_revision = ?)"
-        : "");
-    const applicationBindings = input.applicationId
-      ? [input.applicationId, input.expectedRevision]
-      : [];
+        : "") +
+      (fenced ? ` AND ${CLEARANCE_GENERATION} = ?` : "");
+    const applicationBindings = [
+      ...(input.applicationId
+        ? [input.applicationId, input.expectedRevision]
+        : []),
+      ...(fenced
+        ? [input.projectId, input.projectId, input.expectedClearanceGeneration]
+        : []),
+    ];
     const current = `EXISTS (SELECT 1 FROM projects WHERE id = ? AND revision = ?) AND ${unrestricted}`;
     try {
       const results = await this.db.batch([
@@ -700,6 +744,16 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
           banEnforcementId: release.ban_enforcement_id,
         })),
     }));
+  }
+
+  async clearanceGeneration(projectId: string): Promise<string> {
+    const row = await this.db
+      .prepare(`SELECT ${CLEARANCE_GENERATION} AS generation`)
+      .bind(projectId, projectId)
+      .first<{ generation: string }>();
+    if (row === null || typeof row.generation !== "string")
+      throw new Error("Clearance generation is unavailable");
+    return row.generation;
   }
 
   async enforcementGeneration(): Promise<number> {

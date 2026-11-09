@@ -1,4 +1,6 @@
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
+import { gitObjectSha1 } from "./git-object";
+import type { EvidenceClient, FileChange } from "./value-evidence-types";
 
 function addedLines(file: FileChange): string[] | null {
   if (
@@ -136,10 +138,7 @@ export function addedValuePatchRecovery(
         let bytes: Uint8Array;
         let text: string;
         try {
-          bytes = Uint8Array.from(
-            atob(source.content.replace(/\s+/gu, "")),
-            (c) => c.charCodeAt(0),
-          );
+          bytes = decodeBase64(source.content.replace(/\s+/gu, ""));
           totalBytes += bytes.length;
           text = new TextDecoder("utf-8", {
             fatal: true,
@@ -154,15 +153,7 @@ export function addedValuePatchRecovery(
           text.includes("\0")
         )
           continue;
-        const prefix = new TextEncoder().encode(`blob ${bytes.length}\0`);
-        const object = new Uint8Array(prefix.length + bytes.length);
-        object.set(prefix);
-        object.set(bytes, prefix.length);
-        const digest = [
-          ...new Uint8Array(await crypto.subtle.digest("SHA-1", object)),
-        ]
-          .map((value) => value.toString(16).padStart(2, "0"))
-          .join("");
+        const digest = await gitObjectSha1("blob", bytes);
         if (digest !== source.sha) continue;
         const lines = text === "" ? [] : text.split("\n");
         if (text.endsWith("\n")) lines.pop();

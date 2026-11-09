@@ -120,15 +120,6 @@ export function priceImpactCeiling(
     : 0n;
 }
 
-//@ verify
-//@ pure
-//@ requires value >= 0 && percent >= 0
-//@ ensures \result >= 0
-//@ ensures (\result - 1) * 100 < value * percent && value * percent <= \result * 100
-export function ceilPercent(value: bigint, percent: bigint): bigint {
-  return (value * percent + 99n) / 100n;
-}
-
 /** Preserve transaction/rent charges while excluding the intended principal. */
 //@ verify
 //@ requires fee >= 0 && rent >= 0 && before >= 0 && after >= 0 && principal >= 0

@@ -1,6 +1,12 @@
 import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
-import type { Signer } from "../../workers/payment-executor/core";
+import { executionGasCost, nativeFeeTotal } from "../../src/lib/verified-money";
+import {
+  type NativeLiabilityEntry,
+  type NativeSettlementDay,
+  nativeDailyLiability,
+} from "../../workers/fee-converter/verified-native-liability";
+import type { Signer } from "../../workers/payment-executor/binding-shared";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
 import {
   positiveBudgetFits,
@@ -74,20 +80,7 @@ function reserve(
       []
     >("SELECT id,day,settled_day,maximum,actual,expiry_evidence FROM gas")
     .all();
-  let committed = 0n;
-  // Unresolved same-nonce attempts reserve their largest worst-case charge once.
-  const unresolved = new Map<string, bigint>();
-  for (const row of rows) {
-    // Unknown sends keep their whole reserve across UTC day boundaries.
-    if (row.actual === null) {
-      // Finalized expiry cannot prove a zero fee. Charge the full reservation on
-      // its observation day, then release only future-day liability.
-      if (row.expiry_evidence === null) {
-        const group = nonceGroup(row.id);
-        const value = BigInt(row.maximum);
-        if ((unresolved.get(group) ?? 0n) < value) unresolved.set(group, value);
-      } else if (row.settled_day === day) committed += BigInt(row.maximum);
-    } else if (row.settled_day === day) committed += BigInt(row.actual);
+  for (const row of rows)
     if (
       row.actual !== null &&
       BigInt(row.actual) > BigInt(row.maximum) &&
@@ -96,10 +89,49 @@ function reserve(
       throw new Error(
         "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge",
       );
-  }
-  const group = nonceGroup(id);
-  if ((unresolved.get(group) ?? 0n) < maximum) unresolved.set(group, maximum);
-  for (const value of unresolved.values()) committed += value;
+  // Unresolved same-nonce attempts share one bucket, charged once at its
+  // largest worst-case maximum (verified-native-liability.ts).
+  const buckets = new Map<string, number>();
+  const bucketFor = (group: string) => {
+    let bucket = buckets.get(group);
+    if (bucket === undefined) {
+      bucket = buckets.size;
+      buckets.set(group, bucket);
+    }
+    return bucket;
+  };
+  const settlement = (settledDay: string | null): NativeSettlementDay =>
+    settledDay === null
+      ? { kind: "undated" }
+      : { kind: "dated", day: settledDay };
+  const entries: NativeLiabilityEntry[] = rows.map((row) =>
+    row.actual !== null
+      ? {
+          kind: "actual",
+          settlement: settlement(row.settled_day),
+          amount: BigInt(row.actual),
+        }
+      : // Finalized expiry cannot prove a zero fee. Charge the full reservation
+        // on its observation day, then release only future-day liability.
+        row.expiry_evidence !== null
+        ? {
+            kind: "actual",
+            settlement: settlement(row.settled_day),
+            amount: BigInt(row.maximum),
+          }
+        : // Unknown sends keep their whole reserve across UTC day boundaries.
+          {
+            kind: "unsettled",
+            bucket: bucketFor(nonceGroup(row.id)),
+            maximum: BigInt(row.maximum),
+          },
+  );
+  entries.push({
+    kind: "unsettled",
+    bucket: bucketFor(nonceGroup(id)),
+    maximum,
+  });
+  const committed = nativeDailyLiability(buckets.size, entries, day);
   if (
     !withinBudget(
       maximum,
@@ -303,17 +335,22 @@ export async function reconcileGas(
       if (requireL1Fee && receipt.l1Fee === undefined)
         throw new Error("Finalized L2 data fee unavailable");
       settledAt = Number(BigInt(block.timestamp));
-      actual =
-        BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice) +
-        BigInt(receipt.l1Fee ?? "0x0") +
-        (requireL1Fee
+      actual = nativeFeeTotal(
+        executionGasCost(
+          BigInt(receipt.gasUsed),
+          BigInt(receipt.effectiveGasPrice),
+        ),
+        0n,
+        BigInt(receipt.l1Fee ?? "0x0"),
+        requireL1Fee
           ? await baseOracleFee(
               rpcUrl,
               "0x275aedd2",
               BigInt(receipt.gasUsed),
               receipt.blockNumber,
             )
-          : 0n);
+          : 0n,
+      );
     } else {
       const tx = (await rpc(rpcUrl, "getTransaction", [
         row.transaction_id,

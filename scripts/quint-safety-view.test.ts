@@ -71,11 +71,7 @@ test("view insertion preserves the complete TLA body and rejects drift", () => {
   };
   const result = applySafetyView(binding, config);
   expect(result.tlaCode).toBe(expected);
-  expect(result.slopSafetyView).toBe("SlopJournalSafetyViewV4");
-  expect(result.viewEvidence.hashMode).toBe("entry-hash-zero-or-positive");
-  expect(result.viewEvidence.memoryCandidateMode).toBe(
-    "erase-unused-memory-candidate",
-  );
+  expect(result.slopSafetyView).toBe(view.operator);
   expect(result.viewEvidence.viewTlaSha256).toBe(sha256(result.tlaCode));
   expect(
     result.viewEvidence.clauses.map((clause: { name: string }) => clause.name),

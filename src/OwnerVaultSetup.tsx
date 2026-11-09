@@ -6,6 +6,13 @@ import type { EscrowDeployment } from "./lib/escrow-policy.mjs";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
+import {
+  clearPendingAttempt,
+  createPendingAttempt,
+  type PendingAttempt,
+  updatePendingRecord,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
@@ -18,12 +25,13 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
-type Pending = {
+type Pending = PendingAttempt & {
   version: 1;
   input: VaultSetupInput & { expectedRevision: number };
   review: VaultSetupReview;
@@ -60,6 +68,7 @@ function restore(key: string): Pending | null {
   const value = JSON.parse(text) as Pending;
   if (
     value.version !== 1 ||
+    !validPendingAttemptId(value.attemptId) ||
     !value.input ||
     !value.review ||
     typeof value.review.owner !== "string" ||
@@ -89,12 +98,24 @@ export function OwnerVaultSetup({
   const bounty = payoutPolicy === "security-bounty";
   const key = `slop:vault-setup:v1:${project.id}${bounty ? ":security-bounty" : ""}`;
   const [saved] = useState(() => {
+    let raw: string | null = null;
     try {
-      return { pending: restore(key), error: "" };
+      raw = sessionStorage.getItem(key);
+      return { pending: restore(key), error: "", raw };
     } catch (error) {
-      return { pending: null, error: String(error) };
+      return { pending: null, error: String(error), raw };
     }
   });
+  const mounted = useRef(true);
+  const action = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      action.current += 1;
+    };
+  }, []);
+  const storedPending = useRef<Pending | null>(saved.pending);
   const [pending, setPending] = useState<Pending | null>(saved.pending);
   const { busy, error, setError, run: act } = useAction(saved.error);
   const [info, setInfo] = useState<{
@@ -169,24 +190,52 @@ export function OwnerVaultSetup({
       active = false;
     };
   }, [project.id, payoutPolicy, reload]);
-  const run = (action: () => Promise<void>) => {
+  const run = (work: (current: () => boolean) => Promise<void>) => {
+    if (!mounted.current) return;
+    const request = ++action.current;
+    const current = () => mounted.current && action.current === request;
     setNotice("");
-    return act(action, (caught) => {
-      setFailedCreation(
-        (caught as { code?: string })?.code === "vault_creation_failed",
-      );
-      return errorMessage(caught, "The wallet request failed.");
-    });
+    return act(
+      async () => {
+        try {
+          await work(current);
+        } catch (caught) {
+          if (current()) throw caught;
+        }
+      },
+      (caught) => {
+        if (current())
+          setFailedCreation(
+            (caught as { code?: string })?.code === "vault_creation_failed",
+          );
+        return errorMessage(caught, "The wallet request failed.");
+      },
+    );
   };
 
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
+  const remember = (
+    value: Pending,
+    current: () => boolean,
+    previous?: Pending,
+  ) => {
+    const stored = previous
+      ? updatePendingRecord(key, previous, value)
+      : createPendingAttempt(key, value);
+    if (!stored) return false;
+    storedPending.current = value;
+    if (current()) setPending(value);
+    return true;
+  };
+  const clear = (expected: Pending, current: () => boolean) => {
+    if (!clearPendingAttempt(key, expected)) return false;
+    storedPending.current = null;
+    if (current()) setPending(null);
+    return true;
   };
   const connect = (provider: PayoutWallet) =>
-    run(async () => {
+    run(async (current) => {
       const connected = await provider.connect();
+      if (!current()) return;
       if (pending && !sameWallet(connected.address, pending.review.owner))
         throw new Error("Reconnect the wallet used for this vault request.");
       setWallet(connected);
@@ -203,7 +252,7 @@ export function OwnerVaultSetup({
     : undefined;
   const recoveryClaim = ownerClaims.length === 1 ? ownerClaims[0] : undefined;
   const reviewCreation = (existingOnly = false) =>
-    run(async () => {
+    run(async (current) => {
       const selectedClaim = existingOnly ? recoveryClaim : claim;
       if (!info || !selectedClaim)
         throw new Error(
@@ -220,6 +269,7 @@ export function OwnerVaultSetup({
         ...input,
         step: "review",
       })) as unknown as { review: VaultSetupReview };
+      if (!current()) return;
       const checked = checkedVaultSetupReview(
         result.review,
         project,
@@ -233,18 +283,23 @@ export function OwnerVaultSetup({
       setReview({ version: 1, input, review: checked, hash: null });
     });
   const create = () =>
-    run(async () => {
+    run(async (current) => {
       if (!wallet || !review) throw new Error("Connect and review first.");
       if (review.review.family === "evm") {
         if (!wallet.evmRequest) throw new Error("Choose an EVM wallet.");
         const accounts = await wallet.evmRequest("eth_accounts", []);
+        if (!current()) return;
         if (
           !Array.isArray(accounts) ||
           String(accounts[0]).toLowerCase() !==
-            review.review.owner.toLowerCase() ||
-          BigInt(String(await wallet.evmRequest("eth_chainId", []))) !==
-            BigInt(review.review.chainId)
+            review.review.owner.toLowerCase()
         )
+          throw new Error(
+            `Connect the reviewed wallet on ${networkLabel(review.input.network)}.`,
+          );
+        const chainId = await wallet.evmRequest("eth_chainId", []);
+        if (!current()) return;
+        if (BigInt(String(chainId)) !== BigInt(review.review.chainId))
           throw new Error(
             `Connect the reviewed wallet on ${networkLabel(review.input.network)}.`,
           );
@@ -253,6 +308,7 @@ export function OwnerVaultSetup({
         ...review.input,
         step: "review",
       })) as unknown as { review: VaultSetupReview };
+      if (!current()) return;
       checkedVaultSetupReview(
         fresh.review,
         project,
@@ -276,8 +332,26 @@ export function OwnerVaultSetup({
         throw new Error("The creation request changed. Review again.");
       // Refresh Solana's transaction lifetime only after the owner, policy and
       // exact creation instructions still match the review above.
-      const ready = { ...review, review: fresh.review };
-      remember(ready);
+      const ready: Pending = {
+        ...review,
+        attemptId: crypto.randomUUID(),
+        review: fresh.review,
+      };
+      const attempt = vaultSetupAttempt(key, ready);
+      let requested = false;
+      const beforeSend = () => {
+        if (!current())
+          throw new Error(
+            "The vault setup view was closed. Review before sending.",
+          );
+        if (!attempt.begin())
+          throw new Error(
+            "The saved vault request changed. Reload before continuing.",
+          );
+        storedPending.current = ready;
+        if (current()) setPending(ready);
+        requested = true;
+      };
       try {
         let hash: unknown;
         if (ready.review.family === "solana") {
@@ -288,10 +362,11 @@ export function OwnerVaultSetup({
             wallet,
             ready.review.transaction.transaction,
             solanaVaultCreationMessage(ready.review),
-            () => remember(ready),
+            beforeSend,
           );
         } else {
           if (!wallet.evmRequest) throw new Error("Choose an EVM wallet.");
+          beforeSend();
           hash = await wallet.evmRequest("eth_sendTransaction", [
             ready.review.transaction,
           ]);
@@ -303,27 +378,67 @@ export function OwnerVaultSetup({
           throw new Error(
             "The wallet did not return a transaction hash. Recover it from wallet activity.",
           );
-        remember({ ...ready, hash });
-        setRecoveryHash(hash);
-        setReview(null);
-        setNotice("Creation sent. Check registration once it is finalized.");
+        const submitted = { ...ready, hash };
+        try {
+          if (attempt.submitted(hash)) {
+            storedPending.current = submitted;
+            if (current()) {
+              setPending(submitted);
+              setNotice(
+                "Creation sent. Check registration once it is finalized.",
+              );
+            }
+          } else if (current())
+            setNotice(
+              `Creation sent: ${hash}. The saved request changed. Keep this hash with your wallet activity.`,
+            );
+        } catch {
+          if (current())
+            setNotice(
+              `Creation sent: ${hash}. Keep this hash; browser storage could not save it.`,
+            );
+        }
+        if (current()) {
+          setRecoveryHash(hash);
+          setReview(null);
+        }
       } catch (e) {
-        if ((e as { code?: number })?.code === 4001) remember(null);
+        if (
+          requested &&
+          (e as { code?: number })?.code === 4001 &&
+          attempt.declined()
+        ) {
+          storedPending.current = null;
+          if (current()) setPending(null);
+        }
         throw e;
       }
     });
   const register = () =>
-    run(async () => {
-      const current = pending ?? review;
-      if (!current) throw new Error("Review the existing vault first.");
+    run(async (current) => {
+      const viewed = pending ?? review;
+      if (!viewed) throw new Error("Review the existing vault first.");
       const hash = recoveryHash.trim();
-      if (!isVaultCreationId(current.input.network, hash))
+      if (!isVaultCreationId(viewed.input.network, hash))
         throw new Error(
           "Enter the creation transaction hash from your wallet.",
         );
-      remember({ ...current, hash });
+      const captured = storedPending.current;
+      if (pending && !captured)
+        throw new Error(
+          "The saved vault request changed. Reload before continuing.",
+        );
+      const submitted: Pending = {
+        ...viewed,
+        ...(pending ? {} : { attemptId: crypto.randomUUID() }),
+        hash,
+      };
+      if (!remember(submitted, current, captured ?? undefined))
+        throw new Error(
+          "The saved vault request changed. Reload before continuing.",
+        );
       const result = (await request(`project-vaults/${project.id}`, {
-        ...current.input,
+        ...submitted.input,
         step: "register",
         transactionId: hash,
       })) as unknown as {
@@ -333,6 +448,11 @@ export function OwnerVaultSetup({
         notice?: string;
         revision?: number;
       };
+      if (!current()) return;
+      if (JSON.stringify(restore(key)) !== JSON.stringify(submitted))
+        throw new Error(
+          "The saved vault request changed. Reload before continuing.",
+        );
       if (result.status === "pending") {
         setNotice("The creation is not finalized yet. Wait, then check again.");
         return;
@@ -351,8 +471,11 @@ export function OwnerVaultSetup({
         result.notice,
         Number(result.revision),
       );
-      remember(null);
-      setReview(null);
+      if (!clear(submitted, current) && current())
+        throw new Error(
+          "The saved vault request changed. Reload before continuing.",
+        );
+      if (current()) setReview(null);
     });
   const active = pending ?? review;
   return (
@@ -382,11 +505,17 @@ export function OwnerVaultSetup({
       {failedCreation ? (
         <button
           type="button"
-          onClick={() => {
-            remember(null);
-            setReview(null);
-            setFailedCreation(false);
-          }}
+          onClick={() =>
+            void run(async (current) => {
+              const captured = storedPending.current;
+              if (captured && !clear(captured, current))
+                throw new Error(
+                  "The saved vault request changed. Reload before continuing.",
+                );
+              setReview(null);
+              setFailedCreation(false);
+            })
+          }
         >
           Review a new creation request
         </button>
@@ -394,10 +523,16 @@ export function OwnerVaultSetup({
       {saved.error ? (
         <button
           type="button"
-          onClick={() => {
-            sessionStorage.removeItem(key);
-            location.reload();
-          }}
+          onClick={() =>
+            void run(async () => {
+              if (sessionStorage.getItem(key) !== saved.raw)
+                throw new Error(
+                  "The saved vault request changed. Reload before continuing.",
+                );
+              sessionStorage.removeItem(key);
+              location.reload();
+            })
+          }
         >
           I checked wallet activity; clear the unreadable saved request
         </button>
@@ -422,6 +557,7 @@ export function OwnerVaultSetup({
                   value={network}
                   disabled={busy}
                   onChange={(e) => {
+                    action.current += 1;
                     setNetwork(e.target.value);
                     setWallet(null);
                     setReview(null);
@@ -453,7 +589,10 @@ export function OwnerVaultSetup({
                 className="button secondary-button"
                 type="button"
                 disabled={busy}
-                onClick={() => setWallet(null)}
+                onClick={() => {
+                  action.current += 1;
+                  setWallet(null);
+                }}
               >
                 Choose another wallet
               </button>
@@ -473,7 +612,10 @@ export function OwnerVaultSetup({
                   <select
                     value={automatic ? "on" : "off"}
                     disabled={busy}
-                    onChange={(e) => setAutomatic(e.target.value === "on")}
+                    onChange={(e) => {
+                      action.current += 1;
+                      setAutomatic(e.target.value === "on");
+                    }}
                   >
                     <option value="on">On</option>
                     <option value="off">Off</option>
@@ -578,7 +720,10 @@ export function OwnerVaultSetup({
                   ref={hashInput}
                   value={recoveryHash}
                   disabled={busy}
-                  onChange={(e) => setRecoveryHash(e.target.value)}
+                  onChange={(e) => {
+                    action.current += 1;
+                    setRecoveryHash(e.target.value);
+                  }}
                 />
               </label>
               <button
@@ -592,14 +737,19 @@ export function OwnerVaultSetup({
               {pending && !pending.hash ? (
                 <UnsentTransactionRecovery
                   disabled={busy}
-                  onClear={() => {
-                    remember(null);
-                    setReview(null);
-                    setRecoveryHash("");
-                    setNotice(
-                      "Local request cleared. Review again before sending.",
-                    );
-                  }}
+                  onClear={() =>
+                    void run(async (current) => {
+                      if (!clear(pending, current))
+                        throw new Error(
+                          "The saved vault request changed. Reload before continuing.",
+                        );
+                      setReview(null);
+                      setRecoveryHash("");
+                      setNotice(
+                        "Local request cleared. Review again before sending.",
+                      );
+                    })
+                  }
                 />
               ) : null}
             </>
@@ -609,7 +759,10 @@ export function OwnerVaultSetup({
               type="button"
               className="button secondary-button"
               disabled={busy}
-              onClick={() => setReview(null)}
+              onClick={() => {
+                action.current += 1;
+                setReview(null);
+              }}
             >
               Change review
             </button>
@@ -622,6 +775,7 @@ export function OwnerVaultSetup({
           className="button secondary-button"
           disabled={busy}
           onClick={() => {
+            action.current += 1;
             setError("");
             setReload((n) => n + 1);
           }}

@@ -8,6 +8,15 @@
 // Draft -1 is unset; explicit empty draft 0 never falls back to a stored hash.
 // Attempt 3 is an exact-match legacy record. A signature is not finality.
 // Source-authored only: no parser, scenario, simulation or TLC was run.
+// Finite reductions in `step` only (direct actions are unchanged):
+// - `warnings` is write-only: no guard, invariant clause or other field reads
+//   it. `step` passes track=false, which leaves it empty; named scenarios use
+//   the tracking actions and still assert the exact warning set.
+// - Draft 4 and draft 0 are indistinguishable. `draft` is read only by
+//   `selected`; both values are >= 0 (no stored fallback) and both fail
+//   `validSignature`, so `beginCheck` refuses either and never captures it.
+//   `step` edits only 0..3; `invalidDraftMatchesExplicitEmptyTest` checks the
+//   equivalence directly.
 module ui_solana_payment_pending {
   type Record = {attempt:int,signature:int,candidate:int}
   type State = {alive:Set[int],keys:List[int],slots:List[Record],local:List[Record],ack:List[Record],
@@ -33,6 +42,8 @@ module ui_solana_payment_pending {
   def validSignature(value:int):bool=value>=1 and value<=3
   def selected(id:int):int=if(s.draft[id-1]>=0)s.draft[id-1]
     else if(s.local[id-1].candidate>0)s.local[id-1].candidate else s.local[id-1].signature
+  def warn(state:State,id:int,track:bool):State=
+    if(track and s.alive.contains(id))state.with("warnings",state.warnings.union(Set(id))) else state
   def finishedWallet(state:State):State=state.with("walletOpen",false).with("walletKey",0).with("walletIntent",empty)
   def finishedCheck(state:State,id:int):State=state.with("checks",state.checks.exclude(Set(id)))
     .with("captured",state.captured.replaceAt(id-1,empty)).with("checkSignature",state.checkSignature.replaceAt(id-1,0))
@@ -51,37 +62,40 @@ module ui_solana_payment_pending {
     s'=s.with("preflight",true).with("prepared",1)}
   action rejectDepartedPreflight=all{s.preflight,not(s.alive.contains(1)),s'=s.with("preflight",false)}
   // beforeSend is a final mounted check followed by synchronous empty-slot creation.
-  action beforePrompt(storageWorks:bool):bool=all{s.preflight,s.alive.contains(1),
+  action beforePromptTracked(storageWorks:bool,track:bool):bool=all{s.preflight,s.alive.contains(1),
     s'=if(storageWorks and s.slots[0]==empty)
       s.with("preflight",false).with("walletOpen",true).with("walletKey",1).with("walletIntent",intent)
         .with("slots",s.slots.replaceAt(0,intent)).with("local",s.local.replaceAt(0,intent)).with("ack",s.ack.replaceAt(0,intent))
-      else s.with("preflight",false).with("warnings",s.warnings.union(Set(1)))}
+      else warn(s.with("preflight",false),1,track)}
+  action beforePrompt(storageWorks:bool):bool=beforePromptTracked(storageWorks,true)
   // A wallet tail rereads its own slot and merges the signature with the latest
   // candidate. A different recorded signature is never silently replaced.
-  action walletReturns(storageWorks:bool):bool={
+  action walletReturnsTracked(storageWorks:bool,track:bool):bool={
     val key=if(s.walletKey>0)s.walletKey else 1
     val current=s.slots[key-1]
     val owns=current.attempt==s.walletIntent.attempt and (current.signature==0 or current.signature==1)
     val updated=current.with("signature",1)
     all{s.walletOpen,
-    s'=if(not(owns))finishedWallet(s.with("warnings",if(s.alive.contains(1))s.warnings.union(Set(1)) else s.warnings))
-      else if(not(storageWorks))finishedWallet(s.with("warnings",if(s.alive.contains(1))s.warnings.union(Set(1)) else s.warnings)
+    s'=if(not(owns))finishedWallet(warn(s,1,track))
+      else if(not(storageWorks))finishedWallet(warn(s,1,track)
         .with("local",if(s.alive.contains(1))s.local.replaceAt(0,s.walletIntent.with("signature",1)) else s.local))
       else finishedWallet(s.with("slots",s.slots.replaceAt(s.walletKey-1,updated))
         .with("ack",s.ack.replaceAt(0,updated)).with("local",if(s.alive.contains(1))s.local.replaceAt(0,updated) else s.local))}}
-  action walletDeclines(storageWorks:bool):bool={val key=if(s.walletKey>0)s.walletKey else 1
+  action walletReturns(storageWorks:bool):bool=walletReturnsTracked(storageWorks,true)
+  action walletDeclinesTracked(storageWorks:bool,track:bool):bool={val key=if(s.walletKey>0)s.walletKey else 1
     all{s.walletOpen,
     s'=if(storageWorks and s.slots[key-1]==s.walletIntent)
       finishedWallet(s.with("slots",s.slots.replaceAt(key-1,empty)).with("ack",s.ack.replaceAt(0,empty))
         .with("local",if(s.alive.contains(1))s.local.replaceAt(0,empty) else s.local))
-      else finishedWallet(s.with("warnings",if(s.alive.contains(1))s.warnings.union(Set(1)) else s.warnings))}}
+      else finishedWallet(warn(s,1,track))}}
+  action walletDeclines(storageWorks:bool):bool=walletDeclinesTracked(storageWorks,true)
   action beginCheck(id:int):bool=all{s.alive.contains(id),not(id==1 and s.walletOpen),not(s.checks.contains(id)),
     s.local[id-1].attempt>0,s.ack[id-1].attempt>0,validSignature(selected(id)),
     s'=s.with("checks",s.checks.union(Set(id))).with("captured",s.captured.replaceAt(id-1,s.ack[id-1]))
       .with("checkSignature",s.checkSignature.replaceAt(id-1,selected(id)))}
   // guard(true) is awaited before this point. The exact acknowledged snapshot
   // must still match; a failed H write leaves ack as the earlier no-H record.
-  action finishCheck(id:int,authorized:bool,storageWorks:bool):bool={
+  action finishCheckTracked(id:int,authorized:bool,storageWorks:bool,track:bool):bool={
     val key=if(s.keys[id-1]>0)s.keys[id-1] else 1
     val accepted=s.alive.contains(id) and authorized and storageWorks and s.slots[key-1]==s.captured[id-1]
     val updated=s.local[id-1].with("candidate",s.checkSignature[id-1])
@@ -89,19 +103,22 @@ module ui_solana_payment_pending {
     s'=if(accepted)finishedCheck(s.with("slots",s.slots.replaceAt(key-1,updated))
       .with("ack",s.ack.replaceAt(id-1,updated)).with("local",s.local.replaceAt(id-1,updated))
       .with("verified",s.verified.replaceAt(id-1,s.checkSignature[id-1])),id)
-      else finishedCheck(s.with("warnings",if(s.alive.contains(id))s.warnings.union(Set(id)) else s.warnings),id)}}
+      else finishedCheck(warn(s,id,track),id)}}
+  action finishCheck(id:int,authorized:bool,storageWorks:bool):bool=finishCheckTracked(id,authorized,storageWorks,true)
   // Explicit browser site-data removal and a new live document's later request
   // are environmental boundaries, not an added reset control in this component.
   action clearSiteData=all{s.clears==0,s'=s.with("slots",s.slots.replaceAt(0,empty)).with("clears",1)}
   action newDocumentRequest=all{s.slots[0]==empty,s.clears==1,s.replacements==0,
     s'=s.with("slots",s.slots.replaceAt(0,otherRecord)).with("replacements",1)}
-  action chooseEdit={nondet id=1.to(2).oneOf() nondet value=0.to(4).oneOf() edit(id,value)}
+  action chooseEdit={nondet id=1.to(2).oneOf() nondet value=0.to(3).oneOf() edit(id,value)}
   action chooseCheck={nondet id=1.to(2).oneOf() beginCheck(id)}
-  action chooseFinish={nondet id=1.to(2).oneOf() nondet authorized=Set(false,true).oneOf()
-    nondet storageWorks=Set(false,true).oneOf() finishCheck(id,authorized,storageWorks)}
+  // The two flags affect State only through their conjunction.
+  action chooseFinish={nondet id=1.to(2).oneOf()
+    any{finishCheckTracked(id,true,true,false),finishCheckTracked(id,false,false,false)}}
   action step=any{depart(1),depart(2),mountSecond(1),mountSecond(2),reloadSecond,chooseEdit,prepare,
-    rejectDepartedPreflight,beforePrompt(true),beforePrompt(false),walletReturns(true),walletReturns(false),
-    walletDeclines(true),walletDeclines(false),chooseCheck,chooseFinish,clearSiteData,newDocumentRequest,s'=s}
+    rejectDepartedPreflight,beforePromptTracked(true,false),beforePromptTracked(false,false),
+    walletReturnsTracked(true,false),walletReturnsTracked(false,false),
+    walletDeclinesTracked(true,false),walletDeclinesTracked(false,false),chooseCheck,chooseFinish,clearSiteData,newDocumentRequest,s'=s}
   val invariant=all{s.prepared<=1,s.clears<=1,s.replacements<=1,s.reloads<=1,
     s.slots.length()==2,s.local.length()==2,s.ack.length()==2,
     Set(0,1).forall(i=>s.slots[i].attempt>=0 and s.slots[i].attempt<=3 and s.slots[i].signature>=0 and s.slots[i].signature<=3 and s.slots[i].candidate>=0 and s.slots[i].candidate<=3),
@@ -147,6 +164,19 @@ module ui_solana_payment_pending {
   run anotherActorMessageSlotIsIsolatedTest=pendingWallet.then(mountSecond(2)).then(edit(2,2)).then(beginCheck(2))
     .then(walletReturns(true)).then(finishCheck(2,true,true)).expect(s.slots[0].signature==1 and s.slots[1]==otherRecord)
   run invalidEditorInputDoesNotStartVerificationTest=legacy.then(edit(1,4)).then(beginCheck(1).fail())
+  // Draft 4 and explicit empty 0 leave every other field equal, are both
+  // refused by beginCheck, and are both replaced by the same later edit.
+  run invalidDraftMatchesExplicitEmptyTest=pendingWallet.then(walletReturns(true)).then(edit(1,4))
+    .expect(selected(1)==4 and not(validSignature(selected(1))) and s.local[0].signature==1)
+    .then(beginCheck(1).fail())
+  run invalidDraftIsReplacedLikeExplicitEmptyTest=pendingWallet.then(walletReturns(true)).then(edit(1,4))
+    .then(edit(1,2)).then(beginCheck(1)).expect(s.checkSignature[0]==2)
+  run explicitEmptyIsReplacedLikeInvalidDraftTest=pendingWallet.then(walletReturns(true)).then(edit(1,0))
+    .expect(selected(1)==0 and not(validSignature(selected(1))) and s.local[0].signature==1)
+    .then(edit(1,2)).then(beginCheck(1)).expect(s.checkSignature[0]==2)
+  run untrackedWarningsLeaveOtherFieldsTest=pendingWallet.then(depart(1)).then(mountSecond(1))
+    .then(edit(2,2)).then(beginCheck(2)).then(walletReturnsTracked(true,false)).then(finishCheckTracked(2,true,true,false))
+    .expect(s.warnings==Set() and s.slots[0].signature==1 and s.slots[0].candidate==0 and s.verified[1]==0)
   run explicitEmptyDoesNotReuseWalletSignatureTest=pendingWallet.then(walletReturns(true))
     .then(edit(1,0)).then(beginCheck(1).fail())
 }

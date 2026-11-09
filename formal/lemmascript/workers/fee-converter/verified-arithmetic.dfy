@@ -219,22 +219,6 @@ lemma priceImpactCeiling_ensures(inputValue: int, outputValue: int)
 {
 }
 
-function ceilPercent(value: int, percent: int): int
-  requires (value >= 0)
-  requires (percent >= 0)
-{
-  JSTruncDiv(((value * percent) + 99), 100)
-}
-
-lemma ceilPercent_ensures(value: int, percent: int)
-  requires (value >= 0)
-  requires (percent >= 0)
-  ensures (ceilPercent(value, percent) >= 0)
-  ensures (((ceilPercent(value, percent) - 1) * 100) < (value * percent))
-  ensures ((value * percent) <= (ceilPercent(value, percent) * 100))
-{
-}
-
 function solanaNativeFee(fee: int, rent: int, before: int, after: int, principal: int): int
   requires (fee >= 0)
   requires (rent >= 0)

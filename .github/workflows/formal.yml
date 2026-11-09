@@ -7,10 +7,19 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: "24.15.0"
+  BUN_VERSION: "1.3.14"
+
+# Every model runs the same per-model commands as `bun run formal:check` and
+# `bun run formal:verify` (`check-formal.mjs [--verify] --model=NAME`). Shards
+# only split the sorted model list; the quint job refuses the result unless
+# every current model has exactly one passing check and verification report
+# bound to this checkout's model, source and tool bytes.
 jobs:
-  quint:
+  inventory:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -20,26 +29,250 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "24.15.0"
+          node-version: ${{ env.NODE_VERSION }}
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
           java-version: "21"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: "1.3.14"
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Install pinned tools without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Restore the Apalache distribution
+        # The local translator checks the approved JAR digest on every use.
+        id: apalache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.quint/apalache-dist-0.62.4
+          key: apalache-0.62.4-e5223915
+      - name: Download the pinned Apalache distribution with retries
+        if: steps.apalache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if node -e '
+              const { dirname, join } = require("node:path");
+              const root = dirname(require.resolve("@informalsystems/quint/package.json"));
+              const { fetchApalache } = require(join(root, "dist/src/apalache.js"));
+              fetchApalache("0.62.4", 0).then((result) => {
+                if (result.isLeft()) {
+                  console.error(result.value);
+                  process.exit(1);
+                }
+              });
+            '; then
+              exit 0
+            fi
+            echo "::warning::Apalache download attempt $attempt failed."
+            sleep $((attempt * 10))
+          done
+          exit 1
       - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
         run: bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts
-      - name: Check source inventory and executable scenarios
-        run: bun run formal:check
-      - name: Explore finite state graphs
+      - name: Check source inventory and state catalog
         run: |
+          bun run formal:coverage
+          bun run formal:states
+
+  models:
+    name: models ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    # The slowest single model has a 30-minute verifier allowance.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the proof checkout
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install pinned tools without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Restore the Apalache distribution
+        # The local translator checks the approved JAR digest on every use.
+        id: apalache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.quint/apalache-dist-0.62.4
+          key: apalache-0.62.4-e5223915
+      - name: Download the pinned Apalache distribution with retries
+        if: steps.apalache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if node -e '
+              const { dirname, join } = require("node:path");
+              const root = dirname(require.resolve("@informalsystems/quint/package.json"));
+              const { fetchApalache } = require(join(root, "dist/src/apalache.js"));
+              fetchApalache("0.62.4", 0).then((result) => {
+                if (result.isLeft()) {
+                  console.error(result.value);
+                  process.exit(1);
+                }
+              });
+            '; then
+              exit 0
+            fi
+            echo "::warning::Apalache download attempt $attempt failed."
+            sleep $((attempt * 10))
+          done
+          exit 1
+      - name: Check scenarios and explore finite state graphs
+        env:
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+        run: |
+          set -euo pipefail
           java -version
-          bun run formal:verify
+          mapfile -t models < <(node --input-type=module -e '
+            import { listModels } from "./scripts/formal-models.mjs";
+            const [index, total] = process.argv.slice(1).map(Number);
+            if (!Number.isSafeInteger(total) || total < 1 || !(index >= 0 && index < total))
+              throw new Error("Invalid model shard");
+            for (const [position, path] of listModels(process.cwd()).entries())
+              if (position % total === index)
+                console.log(path.slice(path.lastIndexOf("/") + 1, -".qnt".length));
+          ' "$SHARD_INDEX" "$SHARD_TOTAL")
+          test "${#models[@]}" -gt 0
+          echo "Shard $((SHARD_INDEX + 1))/$SHARD_TOTAL: ${#models[@]} models"
+          failed=()
+          for model in "${models[@]}"; do
+            node scripts/check-formal.mjs "--model=$model" || failed+=("check $model")
+          done
+          for model in "${models[@]}"; do
+            node scripts/check-formal.mjs --verify "--model=$model" || failed+=("verify $model")
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            printf '::error::Failed: %s\n' "${failed[@]}"
+            exit 1
+          fi
+      - name: Retain shard reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: quint-state-shard-${{ github.run_id }}-${{ matrix.shard }}
+          path: evidence/formal
+          if-no-files-found: error
+          # A re-run of one failed shard replaces only that shard's reports.
+          overwrite: true
+          retention-days: 3
+
+  quint:
+    needs: [inventory, models]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify the proof checkout
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Collect shard reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: quint-state-shard-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/quint-shards
+          merge-multiple: true
+      - name: Require one passing check and verification for every model
+        env:
+          SHARD_REPORTS: ${{ runner.temp }}/quint-shards
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { listModels, modelSources } from "./scripts/formal-models.mjs";
+
+          const root = process.cwd();
+          const shards = process.env.SHARD_REPORTS;
+          const digest = (path) =>
+            createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+          const problems = [];
+          const merged = {};
+          for (const [prefix, stages] of [["checks", 3], ["verification", 1]]) {
+            const results = [];
+            let base = null;
+            for (const path of listModels(root)) {
+              const name = path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
+              const file = join(shards, `${prefix}-${name}.json`);
+              if (!existsSync(file)) {
+                problems.push(`${prefix}: no report for ${path}`);
+                continue;
+              }
+              const report = JSON.parse(readFileSync(file, "utf8"));
+              const sources = modelSources(readFileSync(join(root, path), "utf8"));
+              const stale = Object.entries(report.toolHashes ?? {}).some(
+                ([tool, hash]) => digest(tool) !== hash,
+              );
+              const ok =
+                report.schemaVersion === 1 &&
+                report.canceled === false &&
+                report.inputsUnchanged === true &&
+                !stale &&
+                Array.isArray(report.results) &&
+                report.results.length === stages &&
+                report.results.every(
+                  (result) =>
+                    result.passed === true &&
+                    result.model === path &&
+                    result.sha256 === digest(path) &&
+                    sources.every((source) => result.sources?.[source] === digest(source)),
+                );
+              if (!ok) problems.push(`${prefix}: ${path} did not pass for this checkout`);
+              base ??= report;
+              if (JSON.stringify(report.toolHashes) !== JSON.stringify(base.toolHashes) ||
+                  report.javaVersion !== base.javaVersion ||
+                  report.quintVersion !== base.quintVersion ||
+                  report.mode !== base.mode)
+                problems.push(`${prefix}: ${path} used different tools`);
+              results.push(...(report.results ?? []));
+            }
+            if (base)
+              merged[prefix] = {
+                ...base,
+                generatedAt: new Date().toISOString(),
+                canceled: false,
+                inputsUnchanged: problems.length === 0,
+                results,
+              };
+          }
+          mkdirSync(join(root, "evidence/formal"), { recursive: true });
+          for (const [prefix, report] of Object.entries(merged))
+            writeFileSync(
+              join(root, "evidence/formal", `${prefix}.json`),
+              `${JSON.stringify(report, null, 2)}\n`,
+            );
+          if (problems.length) {
+            for (const problem of problems) console.log(`::error::${problem}`);
+            process.exit(1);
+          }
+          console.log(
+            `${merged.checks.results.length} check stages and ${merged.verification.results.length} verifications passed for ${listModels(root).length} models.`,
+          );
+          NODE
       - name: Retain verification commands and results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -47,4 +280,12 @@ jobs:
           name: quint-state-results-${{ github.run_id }}
           path: evidence/formal
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
+      - name: Require the inventory and every model shard
+        env:
+          INVENTORY_RESULT: ${{ needs.inventory.result }}
+          MODELS_RESULT: ${{ needs.models.result }}
+        run: |
+          test "$INVENTORY_RESULT" = success
+          test "$MODELS_RESULT" = success

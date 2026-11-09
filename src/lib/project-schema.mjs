@@ -140,7 +140,7 @@ const OPTIONAL_PROJECT_KEYS = [
   "securityBounty",
   "slopbot",
 ];
-export const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
+const MAX_MONTHLY_CAP_MINOR = 1_000_000_000_000_000n;
 
 /**
  * The platform fee of a new reward policy: 10% of an external prize share,

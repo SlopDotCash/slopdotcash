@@ -8,9 +8,9 @@ import { penaltyDebit } from "../verified-policy";
 import type { Category } from "./contracts";
 import type { D1Database } from "./persistence";
 
-export const PENALTY_TABLE_VERSION = "slopbot-penalties-v1";
+const PENALTY_TABLE_VERSION = "slopbot-penalties-v1";
 
-export type PenaltyRule = {
+type PenaltyRule = {
   /** "label" means Slopbot never closes this category. */
   action: "close" | "label";
   debitThirds: number;
@@ -185,7 +185,7 @@ export type PublishedPenaltyHistory = PublishedPenalty & {
   reversal: "appeal_upheld" | "maintainer_reopen" | null;
 };
 
-export const PENALTY_PAGE_SIZE = 100;
+const PENALTY_PAGE_SIZE = 100;
 
 /** The unreversed debits of one project in item node ID order. A reversed
  * debit is absent, so the next published score no longer applies it. */

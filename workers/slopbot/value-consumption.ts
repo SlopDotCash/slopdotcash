@@ -15,9 +15,9 @@ import {
 } from "./value-context";
 import {
   findRepository,
-  type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   type StoredValueRecord,
   type ValueJournalRecord,

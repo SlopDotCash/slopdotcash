@@ -15,9 +15,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   EvmMonthlyAlreadyAdmitted,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
@@ -28,8 +29,7 @@ import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import {
@@ -45,11 +45,10 @@ import {
   coordinateMonthlyPayments,
   MonthlyPaymentError,
   monthlyOwnerService,
+  verifyProjectAuthority,
 } from "./monthly";
-import {
-  type MonthlyAttestationPlan,
-  prepareMonthlyAttestation,
-} from "./monthly-attestation";
+import { prepareMonthlyAttestation } from "./monthly-attestation";
+import type { MonthlyAttestationPlan } from "./monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);
@@ -141,7 +140,11 @@ const coordinate = (now: Date, configured = schedule) =>
     schedule: configured,
     now,
   });
-const owner = (verifyAuthority = async () => {}) =>
+const owner = (
+  verifyAuthority: Parameters<
+    typeof monthlyOwnerService
+  >[0]["verifyAuthority"] = async () => true,
+) =>
   monthlyOwnerService({
     db,
     ...projects(),
@@ -364,11 +367,12 @@ for (const [boundary, initiallyOff] of [
     const prepare = db.prepare.bind(db);
     let armed = true;
     const optOut = async () => {
-      if (!armed) return;
+      if (!armed) return true;
       armed = false;
       expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
         automatic: false,
       });
+      return true;
     };
     if (boundary === "write")
       db.prepare = (sql) => {
@@ -454,6 +458,7 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
             "owner_required",
             "The current project steward must authorize the change.",
           );
+        return true;
       },
     });
     let reachedInsert = () => {};
@@ -573,6 +578,97 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
     }
   });
 }
+
+test("write collaborators on an organization project may read monthly awards but not change them", async () => {
+  // The same D1 project, owned by an organization: the steward is not a
+  // person, so current repository permission decides who acts.
+  const steward = {
+    ...project.manifest.steward.github,
+    type: "Organization" as const,
+  };
+  const orgManifest = {
+    ...project.manifest,
+    steward: { ...project.manifest.steward, github: steward },
+  };
+  const facts = {
+    id: Number(orgManifest.authority.repositoryId),
+    node_id: orgManifest.authority.repositoryNodeId,
+    owner: {
+      id: Number(steward.actorId),
+      node_id: steward.nodeId,
+      type: steward.type,
+      login: steward.login,
+    },
+  };
+  let permission = "write";
+  let userId = OWNER;
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    String(input).endsWith("/permission")
+      ? Response.json({ permission, user: { id: Number(userId) } })
+      : Response.json(facts)) as typeof fetch;
+  try {
+    const service = owner((_current, who, level) =>
+      verifyProjectAuthority(orgManifest, who, undefined, level),
+    );
+    const refused = async (action: Promise<unknown>) => {
+      const error = await action.then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(MonthlyPaymentError);
+      expect((error as MonthlyPaymentError).code).toBe("owner_required");
+    };
+    const read = await service.view(project.id, "2026-11", actor);
+    expect(read.automatic).toBe(true);
+    // The awards UI hides owner controls the API would refuse.
+    expect(read.canManage).toBe(false);
+    permission = "maintain";
+    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+      false,
+    );
+    await refused(service.setAutomatic(project.id, actor, false));
+    permission = "write";
+    await refused(service.setAutomatic(project.id, actor, false));
+    await refused(
+      service.changeAllocation(project.id, "2026-11", actor, {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence: 0,
+      }),
+    );
+    await refused(service.finalize(project.id, "2026-11", actor, 0));
+    await refused(
+      service.releaseReserve(project.id, "2026-11", actor, {
+        network: "base-sepolia",
+        manifestSha256: project.manifestSha256,
+      }),
+    );
+    expect(
+      sqlite.query("SELECT COUNT(*) AS n FROM monthly_payment_settings").get(),
+    ).toEqual({ n: 0 });
+    // A repository admin is the owner of an organization project.
+    permission = "admin";
+    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+      true,
+    );
+    expect(await service.setAutomatic(project.id, actor, false)).toEqual({
+      automatic: false,
+    });
+    // The steward with write access is also the owner.
+    permission = "write";
+    userId = steward.actorId;
+    const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
+    expect(
+      (await service.view(project.id, "2026-11", stewardActor)).canManage,
+    ).toBe(true);
+    // Without any maintainer permission the read itself is refused.
+    permission = "read";
+    await refused(service.view(project.id, "2026-11", stewardActor));
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+});
 
 test("an unchanged paused project still permits owner opt-out and allocation edits", async () => {
   clock = beforeCutoff;
@@ -1584,7 +1680,7 @@ describe("monthly coordinator", () => {
       db,
       ...projects(),
       networks: () => [solanaDeployment.network],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () => schedule,
       now: () => clock,
     });
@@ -3288,6 +3384,7 @@ test("reserve release requires current authority and refuses a revision changed 
           "not_owner",
           "Current GitHub authority is required.",
         );
+      return true;
     },
     releaseReserve: async (input) => {
       expect(input).toEqual({
@@ -3453,8 +3550,9 @@ test("an allocation queued across its automatic cutoff cannot change the propose
     .toISOString()
     .slice(0, 7);
   const end = Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1);
-  const deadline = Math.ceil(Date.now() / 1000) * 1000 + 3000;
   const local = await createMonthlyAllocationFixture({ deployment, period });
+  // Measured after the fixture, so its setup time never eats the margin.
+  const deadline = Math.ceil(Date.now() / 1000) * 1000 + 1000;
   const prepare = local.db.prepare.bind(local.db);
   let queued = false;
   local.db.prepare = (query) => {
@@ -3482,7 +3580,7 @@ test("an allocation queued across its automatic cutoff cannot change the propose
       getProject: local.getProject,
       restricted: local.restricted,
       networks: () => ["base-sepolia"],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () =>
         parseMonthlySchedule(
           JSON.stringify({

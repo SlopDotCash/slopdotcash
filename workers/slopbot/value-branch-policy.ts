@@ -1,13 +1,7 @@
-import type { EvidenceClient } from "./value-evidence";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
+import type { EvidenceClient, ValueBranchPolicy } from "./value-evidence-types";
 
-/** Historical authority comes from accepted base policy, never a PR's head. */
-export interface ValueBranchPolicy {
-  baseSha: string;
-  path: "CONTRIBUTING.md";
-  text: string;
-}
-
-export function declaredIntegrationBranch(text: string): string | null {
+function declaredIntegrationBranch(text: string): string | null {
   // Recognize an explicit policy sentence, not examples in fenced code blocks.
   const branches = new Set<string>();
   let fence: { marker: string; length: number } | null = null;
@@ -71,9 +65,7 @@ export async function collectBranchPolicy(
     typeof file.content !== "string"
   )
     throw new Error("Complete historical branch policy is unavailable");
-  const bytes = Uint8Array.from(atob(file.content.replace(/\s/gu, "")), (c) =>
-    c.charCodeAt(0),
-  );
+  const bytes = decodeBase64(file.content.replace(/\s/gu, ""));
   if (bytes.length !== file.size)
     throw new Error("Historical branch policy size mismatch");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

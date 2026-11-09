@@ -1,3 +1,5 @@
+import type { Page, Route } from "@playwright/test";
+import type { ProjectSetupStatus } from "../../src/lib/project-contracts";
 import { PROJECT_SKILL_TEMPLATES } from "../../src/lib/project-schema.mjs";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { CONTRIBUTION } from "../project-application-manifest";
@@ -5,6 +7,60 @@ import { projectImageApiFixture } from "../project-image-api-fixture.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
 test.use({ video: "on" });
+
+async function accessFixture(page: Page) {
+  const registered = PROJECTS.find((project) => project.id === "eliza");
+  if (!registered) throw new Error("Missing project fixture");
+  const project = {
+    ...registered,
+    contribution: { ...CONTRIBUTION },
+    skill: {
+      ...registered.skill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.contributor,
+      publishAtRoot: false,
+    },
+    reviewSkill: {
+      ...registered.reviewSkill,
+      sourcePath: PROJECT_SKILL_TEMPLATES.reviewer,
+    },
+  };
+  const api = await projectImageApiFixture(project);
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route("**/.well-known/slop/projects.json", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
+  );
+  await page.route("**/api/v1/points/me", (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.route(
+    /\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u,
+    async (route) => {
+      const response = await accessResponse(api, route);
+      await route.fulfill({
+        status: response.status,
+        headers: Object.fromEntries(response.headers),
+        body: await response.text(),
+      });
+    },
+  );
+  return api;
+}
+
+async function accessResponse(
+  api: Awaited<ReturnType<typeof projectImageApiFixture>>,
+  route: Route,
+) {
+  const request = route.request();
+  return api.fetch(
+    new Request(request.url(), {
+      method: request.method(),
+      headers: request.headers(),
+      ...(request.method() === "GET" ? {} : { body: request.postData() }),
+    }),
+  );
+}
 
 for (const denied of [false, true]) {
   test(
@@ -146,3 +202,362 @@ for (const denied of [false, true]) {
     },
   );
 }
+
+for (const boundary of ["viewer", "final-session", "admission"] as const) {
+  test(`project access refuses a different actor at ${boundary}`, async ({
+    page,
+    diagnostics,
+  }) => {
+    const api = await accessFixture(page);
+    let actor = boundary === "admission" ? "4243" : "4242";
+    let accessReads = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    diagnostics.allowCanceledBackgroundReads();
+    if (boundary === "admission")
+      diagnostics.allowResponse(403, "GET", "/api/v1/project-setup/eliza");
+    await page.route("**/api/v1/project-session", (route) =>
+      route.fulfill({
+        json: {
+          session: {
+            githubId: actor,
+            githubLogin: "fixture-owner",
+            admin: false,
+          },
+        },
+      }),
+    );
+    await page.route("**/api/v1/project-setup/eliza", async (route) => {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        boundary === "admission" ? "4243" : "4242",
+      );
+      const response = await accessResponse(api, route);
+      accessReads += 1;
+      if (boundary === "final-session") await held;
+      if (boundary === "viewer") {
+        expect(response.status).toBe(200);
+        await route.fulfill({ json: { viewer: { githubId: "4243" } } });
+      } else {
+        if (boundary === "admission") expect(response.status).toBe(403);
+        await route.fulfill({
+          status: response.status,
+          headers: Object.fromEntries(response.headers),
+          body: await response.text(),
+        });
+      }
+    });
+    try {
+      await page.goto("/projects/eliza/manage", {
+        waitUntil: "domcontentloaded",
+      });
+      await expect.poll(() => accessReads).toBeGreaterThan(0);
+      if (boundary === "final-session") {
+        actor = "4243";
+        release();
+      }
+      if (boundary === "admission")
+        await expect(
+          page.getByText(
+            "Project settings are available only to this project's maintainers.",
+            { exact: true },
+          ),
+        ).toBeVisible();
+      else
+        await expect(
+          page.getByRole("button", { name: "Retry access check", exact: true }),
+        ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Publish changes", exact: true }),
+      ).toHaveCount(0);
+    } finally {
+      release();
+      await api.dispose();
+    }
+  });
+}
+
+for (const outcome of ["refused", "temporary", "changed-actor"] as const) {
+  test(`setup refresh handles ${outcome} without publishing another actor's status`, async ({
+    page,
+    diagnostics,
+  }) => {
+    const api = await accessFixture(page);
+    let actor = "4242";
+    let checks = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    diagnostics.allowCanceledBackgroundReads();
+    if (outcome !== "changed-actor")
+      diagnostics.allowResponse(
+        outcome === "refused" ? 403 : 503,
+        "POST",
+        "/api/v1/project-setup/eliza/check",
+      );
+    await page.route("**/api/v1/project-session", (route) =>
+      route.fulfill({
+        json: {
+          session: {
+            githubId: actor,
+            githubLogin: "fixture-owner",
+            admin: false,
+          },
+        },
+      }),
+    );
+    await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        "4242",
+      );
+      checks += 1;
+      if (checks === 2 && outcome !== "changed-actor") {
+        await route.fulfill({
+          status: outcome === "refused" ? 403 : 503,
+          json: {
+            error: "fixture_refresh",
+            message: "Setup refresh unavailable.",
+          },
+        });
+        return;
+      }
+      const response = await accessResponse(api, route);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { setup: ProjectSetupStatus };
+      if (checks === 2 && outcome === "changed-actor") await held;
+      await route.fulfill({
+        json:
+          checks === 1
+            ? {
+                setup: {
+                  ...body.setup,
+                  state: "waiting",
+                  nextAction: {
+                    kind: "wait_for_scan",
+                    message: "Fixture scan is queued.",
+                    href: null,
+                  },
+                  checks: {
+                    ...body.setup.checks,
+                    scan: {
+                      state: "queued",
+                      message: "Fixture scan is queued.",
+                    },
+                  },
+                },
+              }
+            : body,
+      });
+    });
+    try {
+      await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+      const panel = page.locator(".project-setup-status");
+      await expect(
+        panel.getByText("Fixture scan is queued.", { exact: true }).first(),
+      ).toBeVisible();
+      await panel
+        .getByRole("button", { name: "Check again", exact: true })
+        .click();
+      await expect.poll(() => checks).toBe(2);
+      if (outcome === "changed-actor") {
+        actor = "4243";
+        release();
+        await expect(panel.getByRole("alert")).toContainText(
+          "Your account changed.",
+        );
+      } else {
+        await expect(panel.getByRole("alert")).toContainText(
+          "Setup refresh unavailable.",
+        );
+      }
+      if (outcome === "temporary") {
+        await expect(
+          panel.getByText("Fixture scan is queued.", { exact: true }).first(),
+        ).toBeVisible();
+        await panel
+          .getByRole("button", { name: "Try again", exact: true })
+          .click();
+        await expect(
+          panel.getByRole("heading", {
+            name: "Setup status: Ready",
+            exact: true,
+          }),
+        ).toBeVisible();
+      } else {
+        await expect(panel.locator(".setup-checks")).toHaveCount(0);
+        await expect(
+          panel.getByRole("button", { name: "Try again", exact: true }),
+        ).toBeEnabled();
+      }
+    } finally {
+      release();
+      await api.dispose();
+    }
+  });
+}
+
+test("a confirmed setup identity mismatch retains the observed installation", async ({
+  page,
+}) => {
+  const api = await accessFixture(page);
+  const reason = "Repository or steward facts do not match GitHub";
+  await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+    const response = await accessResponse(api, route);
+    const body = (await response.json()) as { setup: ProjectSetupStatus };
+    await route.fulfill({
+      json: {
+        setup: {
+          ...body.setup,
+          state: "action_required",
+          nextAction: { kind: "ask_maintainer", message: reason, href: null },
+          checks: {
+            ...body.setup.checks,
+            authority: { state: "denied", message: reason },
+          },
+        },
+      },
+    });
+  });
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    const panel = page.locator(".project-setup-status");
+    await expect(
+      panel.getByRole("heading", {
+        name: "Setup status: Action needed",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("status").filter({ hasText: reason }),
+    ).toBeVisible();
+    await expect(panel.getByText("Installed", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Unavailable", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+  } finally {
+    await api.dispose();
+  }
+});
+
+test("committed setup unmount retires a preflight before it can send another check", async ({
+  page,
+}) => {
+  const api = await accessFixture(page);
+  let checks = 0;
+  await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+    checks += 1;
+    const response = await accessResponse(api, route);
+    const body = (await response.json()) as { setup: ProjectSetupStatus };
+    await route.fulfill({
+      json: {
+        setup: {
+          ...body.setup,
+          state: "waiting",
+          nextAction: {
+            kind: "wait_for_scan",
+            message: "Fixture scan is queued.",
+            href: null,
+          },
+          checks: {
+            ...body.setup.checks,
+            scan: { state: "queued", message: "Fixture scan is queued." },
+          },
+        },
+      },
+    });
+  });
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    const panel = page.locator(".project-setup-status");
+    await expect(
+      panel.getByRole("button", { name: "Check again", exact: true }),
+    ).toBeEnabled();
+    expect(checks).toBe(1);
+    await page.evaluate(() => {
+      type HeldSetupRead = {
+        waiting: boolean;
+        released: boolean;
+        removed: boolean;
+        release: () => void;
+      };
+      const state: HeldSetupRead = {
+        waiting: false,
+        released: false,
+        removed: false,
+        release: () => {},
+      };
+      (
+        window as typeof window & { heldSetupRead: HeldSetupRead }
+      ).heldSetupRead = state;
+      const readJson = Response.prototype.json;
+      Response.prototype.json = async function (this: Response) {
+        const value = await readJson.call(this);
+        if (!state.waiting && this.url.endsWith("/api/v1/project-session")) {
+          state.waiting = true;
+          await new Promise<void>((resolve) => {
+            state.release = () => {
+              state.released = true;
+              resolve();
+            };
+          });
+        }
+        return value;
+      };
+      // Mutation observers run after DOM commit, before the next passive
+      // cleanup task. Release the already parsed body at that exact boundary.
+      const observer = new MutationObserver(() => {
+        if (state.waiting && !document.querySelector(".project-setup-status")) {
+          state.removed = true;
+          state.release();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+    // Seed same-document history while leaving the current route unchanged.
+    // Native Back then schedules the route outside a discrete React click;
+    // its DOM-removal observer can run before passive effect cleanup.
+    await page.evaluate(() => {
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", "/projects/eliza/manage");
+    });
+    await panel
+      .getByRole("button", { name: "Check again", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        (window as typeof window & { heldSetupRead: { waiting: boolean } })
+          .heldSetupRead.waiting,
+    );
+    await page.goBack();
+    await page.waitForFunction(() => {
+      const state = (
+        window as typeof window & {
+          heldSetupRead: { removed: boolean; released: boolean };
+        }
+      ).heldSetupRead;
+      return state.removed && state.released;
+    });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await expect(panel).toHaveCount(0);
+    await expect(page).toHaveURL(/\/how-it-works$/u);
+    expect(checks).toBe(1);
+  } finally {
+    await page.evaluate(() =>
+      (
+        window as typeof window & {
+          heldSetupRead?: { release: () => void };
+        }
+      ).heldSetupRead?.release(),
+    );
+    await api.dispose();
+  }
+});

@@ -6,7 +6,7 @@ import {
   verifyPayment,
 } from "../../contracts/evm/adapter";
 import type { EvmChain } from "./evm";
-import type { Qualification, VaultRecord } from "./upgrade-verification";
+import type { Qualification, VaultRecord } from "./upgrade-qualification";
 
 const PAID = toEventSelector(
   "Paid(bytes32,uint64,address,uint64,uint128,uint128,uint128)",

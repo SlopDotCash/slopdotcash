@@ -2,6 +2,7 @@
 // @source backend/payments/possession.ts
 // @source workers/payment-executor/core.ts
 // @source workers/payment-executor/solana.ts
+// @source workers/payment-executor/binding-shared.ts
 // ProjectEscrow.bindDestination/cancelBinding/pay and Solana bind_wallet/veto_binding.
 // Two wallet identities, version <=3; zero production delay is explicit.
 module payment_binding {

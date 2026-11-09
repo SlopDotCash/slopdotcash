@@ -27,7 +27,7 @@ import {
   SolanaWalletActionError,
 } from "./wallet-transactions";
 
-export interface SolanaCommitmentIntent {
+interface SolanaCommitmentIntent {
   wallet: string;
   sourceDigest: string;
   githubUserId: string;

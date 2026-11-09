@@ -1,27 +1,22 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
-import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { resolve } from "node:path";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Actual worker dispatcher, leases, attempts and native D1. A controlled clock
 // represents a 61-second first executor call; no wall-clock wait or live send.
-const folder = await mkdtemp(join(tmpdir(), "slop-dispatch-clock-"));
 const stamp = "2026-10-29T00:00:02.000Z";
 const ids = [`0x${"a".repeat(64)}`, `0x${"b".repeat(64)}`];
 const retirementId = `0x${"d".repeat(64)}`;
-let runtime;
+let worker;
 try {
-  const entry = join(folder, "worker.ts");
-  const output = join(folder, "worker.mjs");
-  await writeFile(
-    entry,
-    `import {runPaymentDispatch,recoverUncertainAttempts} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
+  worker = await startHandlerWorker({
+    d1: "dispatch-clock",
+    outbound() {
+      throw new Error("Unexpected external request");
+    },
+    entrySource: `import {runPaymentDispatch,recoverUncertainAttempts} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
 import {dispatchPayment} from ${JSON.stringify(resolve("backend/payments/dispatch.ts"))};
 const NativeDate=Date;
 let clock=NativeDate.parse(${JSON.stringify(stamp)});
@@ -68,35 +63,8 @@ export default {async fetch(request,env){
   await runPaymentDispatch({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',PAYMENT_RPC_URLS:'{}',EVM_PAYMENT_EXECUTOR:service});
   return Response.json({probeCalls,probeOutcome,leaseUntil,now:new Date().toISOString()});
 }};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    { encoding: "utf8", env: childEnvironment(), timeout: 30_000 },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "dispatch-clock" },
-      outboundService() {
-        throw new Error("Unexpected external request");
-      },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort())
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
+  });
+  const { runtime, db } = worker;
   const vault = `0x${"2".repeat(40)}`;
   const deployment = {
     network: "base-sepolia",
@@ -311,6 +279,5 @@ export default {async fetch(request,env){
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(folder, { recursive: true, force: true });
+  await worker?.dispose();
 }

@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import { expiryTraversalStep, matchingExpiryCoverage } from "./verified-expiry";
 /** Owner-approved #905 policy: two independent, history-qualified RPC observations. */
 export type RecoveryRpc = <T>(method: string, params: unknown[]) => Promise<T>;
@@ -44,10 +45,7 @@ export interface ExpiryCoverageStore {
   ): Promise<void>;
 }
 function digest(value: unknown) {
-  return Array.from(
-    sha256(new TextEncoder().encode(JSON.stringify(value))),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(value))));
 }
 interface HistoryBlock {
   blockhash: string;

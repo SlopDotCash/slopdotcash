@@ -108,7 +108,7 @@ export type ScannerEvidence = {
  * snake_case error type or digit-only token counts) can appear, so the
  * category is safe to log beside a retry.
  */
-export type ReviewFailureCategory =
+type ReviewFailureCategory =
   | `provider-http-${number}`
   | `provider-http-${number}-${string}`
   | "timeout"
@@ -261,7 +261,7 @@ export function validateProfile(profile: ScannerProfile) {
  * states. The message itself is never kept, so no provider or source text can
  * reach the category.
  */
-export function providerErrorDetail(body: string): string | null {
+function providerErrorDetail(body: string): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);

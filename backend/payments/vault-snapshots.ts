@@ -20,7 +20,7 @@ export interface SnapshotDeployment {
   /** Solana only: the adapter reads, and reports as `vault`, the project PDA. */
   projectPda?: string | null;
 }
-export type VaultTotalsReader<D extends SnapshotDeployment> = (
+type VaultTotalsReader<D extends SnapshotDeployment> = (
   deployment: D,
   rpcUrl: string,
 ) => Promise<VaultTotals>;

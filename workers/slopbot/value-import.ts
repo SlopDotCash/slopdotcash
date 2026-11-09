@@ -28,12 +28,10 @@ import {
   subscriptionCutoff,
   type ValueSettingsEnv,
 } from "./value-settings";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import { publishWorkUnitAssessment } from "./value-work-unit-publication";
 import type { WorkUnitAssessmentResult } from "./value-work-unit-review";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);

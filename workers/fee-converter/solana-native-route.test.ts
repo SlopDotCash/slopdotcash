@@ -4,7 +4,6 @@ import { solanaBase58, solanaBase64 } from "../../contracts/solana/adapter";
 import { SOLANA_NATIVE_ASSET } from "../../contracts/solana/native";
 import { ata } from "../../contracts/solana/transactions";
 import type { ConversionRow } from "./core";
-import { JUPITER_PROGRAM, parseTransaction } from "./solana";
 import { LOOKUP_TABLE_PROGRAM, resolveSolanaAccounts } from "./solana-accounts";
 import { WRAPPED_SOL, wrapNativeRoute } from "./solana-native-route";
 import {
@@ -15,6 +14,7 @@ import {
   finalizedRouteCredit,
   type RouteReceipt,
 } from "./solana-route-receipt";
+import { JUPITER_PROGRAM, parseTransaction } from "./solana-transaction";
 
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const SYSTEM = "11111111111111111111111111111111";

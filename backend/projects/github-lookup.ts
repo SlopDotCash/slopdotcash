@@ -254,40 +254,164 @@ function unknownLicense(
   return { ...facts, license: { state: "unknown", reason } };
 }
 
-/** Returns complete branch options, never a partial list after a failed page. */
-async function repositoryBranches(
+type RepositoryIdentity = { numericId: number; nodeId: string };
+
+const REPOSITORY_BRANCHES_QUERY = `
+  query ProjectRepositoryBranches($id: ID!, $cursor: String) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        refs(refPrefix: "refs/heads/", first: 100, after: $cursor,
+             orderBy: {field: ALPHABETICAL, direction: ASC}) {
+          nodes { name prefix target { __typename oid } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }`;
+
+const REPOSITORY_HEAD_QUERY = `
+  query ProjectRepositoryHead($id: ID!, $qualifiedName: String!) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        ref(qualifiedName: $qualifiedName) {
+          name prefix target { __typename oid }
+        }
+      }
+    }
+  }`;
+
+const REPOSITORY_LICENSE_QUERY = `
+  query ProjectRepositoryLicense($id: ID!, $expression: String!) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        object(expression: $expression) { __typename oid }
+      }
+    }
+  }`;
+
+/**
+ * A name can be reused between requests. Every dependent read instead starts
+ * from the captured global node ID; an error or partial GraphQL result cannot
+ * supply facts. The token must have public-only access (PRD section 9);
+ * its permission scope is a deployment requirement, not inferable from bytes.
+ */
+async function repositoryNode(
   fetcher: GithubFetch,
-  token: string | undefined,
-  repository: string,
-  repositoryId: number,
+  token: string,
+  identity: RepositoryIdentity,
+  query: string,
+  variables: Record<string, string | null>,
   apiOrigin: string,
-): Promise<{ branches: string[]; branchCommits: Record<string, string> }> {
-  const path = `/repos/${repository}/branches`;
-  const branches = new Set<string>();
-  const branchCommits = new Map<string, string>();
-  for (let page = 1; page <= MAX_REPOSITORY_BRANCH_PAGES; page++) {
-    const response = await fetcher(
-      `${apiOrigin}${path}?per_page=100&page=${page}`,
-      requestInit(token),
+): Promise<Record<string, unknown>> {
+  const init = requestInit(token);
+  const response = await fetcher(`${apiOrigin}/graphql`, {
+    ...init,
+    method: "POST",
+    headers: {
+      ...githubHeaders(token, "slop.cash-project-setup"),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      variables: { ...variables, id: identity.nodeId },
+    }),
+  });
+  if (limited(response))
+    throw new GithubLookupError(
+      503,
+      "github_rate_limited",
+      "GitHub limited lookups.",
     );
-    if (limited(response))
+  if (!response.ok)
+    throw new GithubLookupError(
+      502,
+      "github_unavailable",
+      `GitHub returned ${response.status}.`,
+    );
+  const value = await readBoundedJson(
+    response,
+    2 * 1024 * 1024,
+    "GitHub repository",
+  );
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const body = value as Record<string, unknown>;
+    if (
+      Array.isArray(body.errors) &&
+      body.errors.some(
+        (error) =>
+          error &&
+          typeof error === "object" &&
+          ((error as { type?: unknown }).type === "RATE_LIMITED" ||
+            (error as { extensions?: { type?: unknown } }).extensions?.type ===
+              "RATE_LIMITED"),
+      )
+    )
       throw new GithubLookupError(
         503,
         "github_rate_limited",
-        "GitHub limited branch lookups.",
+        "GitHub limited lookups.",
       );
-    if (!response.ok)
-      throw new GithubLookupError(
-        502,
-        "github_unavailable",
-        "GitHub branches could not be read. Try again.",
-      );
-    const values = await readBoundedJson(
-      response,
-      2 * 1024 * 1024,
-      "GitHub branches",
+    const data = body.data as { node?: Record<string, unknown> } | undefined;
+    const node = data?.node;
+    if (
+      (body.errors === undefined ||
+        (Array.isArray(body.errors) && body.errors.length === 0)) &&
+      node &&
+      typeof node === "object" &&
+      !Array.isArray(node) &&
+      node.__typename === "Repository" &&
+      node.id === identity.nodeId &&
+      (node.fullDatabaseId === String(identity.numericId) ||
+        node.fullDatabaseId === identity.numericId) &&
+      node.isPrivate === false
+    )
+      return node;
+  }
+  throw new GithubLookupError(
+    502,
+    "github_unavailable",
+    "GitHub returned incomplete repository facts.",
+  );
+}
+
+/** Returns complete branch options, never a partial list after a failed page. */
+async function repositoryBranches(
+  fetcher: GithubFetch,
+  token: string,
+  identity: RepositoryIdentity,
+  apiOrigin: string,
+): Promise<{ branches: string[]; branchCommits: Record<string, string> }> {
+  const branches = new Set<string>();
+  const branchCommits = new Map<string, string>();
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 1; page <= MAX_REPOSITORY_BRANCH_PAGES; page++) {
+    const node = await repositoryNode(
+      fetcher,
+      token,
+      identity,
+      REPOSITORY_BRANCHES_QUERY,
+      { cursor },
+      apiOrigin,
     );
-    if (!Array.isArray(values) || values.length > 100)
+    const refs = node.refs as { nodes?: unknown; pageInfo?: unknown } | null;
+    const values = refs?.nodes;
+    const pageInfo = refs?.pageInfo as
+      | { hasNextPage?: unknown; endCursor?: unknown }
+      | undefined;
+    if (
+      !Array.isArray(values) ||
+      values.length > 100 ||
+      !pageInfo ||
+      typeof pageInfo.hasNextPage !== "boolean" ||
+      (pageInfo.endCursor !== null && typeof pageInfo.endCursor !== "string")
+    )
       throw new GithubLookupError(
         502,
         "github_unavailable",
@@ -297,7 +421,8 @@ async function repositoryBranches(
       if (
         !branch ||
         typeof branch !== "object" ||
-        !validIntegrationBranch(branch.name)
+        !validIntegrationBranch(branch.name) ||
+        branch.prefix !== "refs/heads/"
       )
         throw new GithubLookupError(
           502,
@@ -305,49 +430,36 @@ async function repositoryBranches(
           "GitHub returned an invalid branch name.",
         );
       branches.add(branch.name);
-      if (branch.commit !== undefined) {
-        const sha = branch.commit?.sha;
-        if (typeof sha !== "string" || !/^[0-9a-f]{40}$/u.test(sha))
-          throw new GithubLookupError(
-            502,
-            "github_unavailable",
-            "GitHub returned an invalid branch commit.",
-          );
-        branchCommits.set(branch.name, sha);
-      }
+      const sha = branch.target?.oid;
+      if (
+        branch.target?.__typename !== "Commit" ||
+        typeof sha !== "string" ||
+        !/^[0-9a-f]{40}$/u.test(sha)
+      )
+        throw new GithubLookupError(
+          502,
+          "github_unavailable",
+          "GitHub returned an invalid branch commit.",
+        );
+      branchCommits.set(branch.name, sha);
     }
-    let next: URL | null;
-    try {
-      const link = nextLink(response.headers.get("link"));
-      next = link === null ? null : new URL(link);
-    } catch {
-      throw new GithubLookupError(
-        502,
-        "github_unavailable",
-        "GitHub returned an invalid branch page link.",
-      );
-    }
-    if (next === null)
+    if (!pageInfo.hasNextPage)
       return {
         branches: [...branches],
         branchCommits: Object.fromEntries(branchCommits),
       };
     if (
-      next.origin !== apiOrigin ||
-      (next.pathname !== path &&
-        next.pathname !== `/repositories/${repositoryId}/branches`) ||
-      next.username !== "" ||
-      next.password !== "" ||
-      next.hash !== "" ||
-      next.searchParams.size !== 2 ||
-      next.searchParams.get("per_page") !== "100" ||
-      next.searchParams.get("page") !== String(page + 1)
+      typeof pageInfo.endCursor !== "string" ||
+      pageInfo.endCursor.length === 0 ||
+      cursors.has(pageInfo.endCursor)
     )
       throw new GithubLookupError(
         502,
         "github_unavailable",
-        "GitHub returned an invalid branch page link.",
+        "GitHub returned an invalid branch page cursor.",
       );
+    cursor = pageInfo.endCursor;
+    cursors.add(cursor);
   }
   throw new GithubLookupError(
     502,
@@ -371,6 +483,12 @@ export async function lookupGitHubRepository(
       "invalid_request",
       "Enter the repository as owner/name.",
     );
+  if (token === undefined || token.trim().length === 0)
+    throw new GithubLookupError(
+      503,
+      "github_unavailable",
+      "The public GitHub lookup credential is not configured.",
+    );
   const repo = await githubJson(
     fetcher,
     token,
@@ -387,6 +505,7 @@ export async function lookupGitHubRepository(
   if (
     repo.private !== false ||
     !Number.isSafeInteger(repo.id) ||
+    Number(repo.id) <= 0 ||
     typeof repo.node_id !== "string" ||
     !/^[A-Za-z0-9_=-]{1,100}$/u.test(repo.node_id) ||
     typeof repo.full_name !== "string" ||
@@ -403,11 +522,11 @@ export async function lookupGitHubRepository(
       "github_unavailable",
       "GitHub returned incomplete repository facts.",
     );
+  const identity = { numericId: Number(repo.id), nodeId: repo.node_id };
   const { branches, branchCommits } = await repositoryBranches(
     fetcher,
     token,
-    repo.full_name,
-    Number(repo.id),
+    identity,
     apiOrigin,
   );
   if (!branches.includes(repo.default_branch))
@@ -432,16 +551,49 @@ export async function lookupGitHubRepository(
     },
   };
   try {
-    const branch = await githubJson(
+    const head = await repositoryNode(
       fetcher,
       token,
-      `/repos/${repo.full_name}/branches/${branchPath(repo.default_branch)}`,
+      identity,
+      REPOSITORY_HEAD_QUERY,
+      { qualifiedName: `refs/heads/${repo.default_branch}` },
       apiOrigin,
     );
-    const commitSha = (branch?.commit as Record<string, unknown> | undefined)
-      ?.sha;
-    if (typeof commitSha !== "string" || !/^[0-9a-f]{40}$/u.test(commitSha))
+    const branch = head.ref as {
+      name?: unknown;
+      prefix?: unknown;
+      target?: { __typename?: unknown; oid?: unknown };
+    } | null;
+    const commitSha = branch?.target?.oid;
+    if (
+      branch?.name !== repo.default_branch ||
+      branch.prefix !== "refs/heads/" ||
+      branch.target?.__typename !== "Commit" ||
+      typeof commitSha !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(commitSha)
+    )
       return unknownLicense(facts, "The default branch could not be read.");
+    const source = await repositoryNode(
+      fetcher,
+      token,
+      identity,
+      REPOSITORY_LICENSE_QUERY,
+      { expression: `${commitSha}:LICENSE` },
+      apiOrigin,
+    );
+    const blob = source.object as {
+      __typename?: unknown;
+      oid?: unknown;
+    } | null;
+    if (
+      blob?.__typename !== "Blob" ||
+      typeof blob.oid !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(blob.oid)
+    )
+      return unknownLicense(
+        facts,
+        "GitHub found no root LICENSE blob at the captured commit.",
+      );
     const license = await githubJson(
       fetcher,
       token,
@@ -453,6 +605,11 @@ export async function lookupGitHubRepository(
       return unknownLicense(
         facts,
         `The license file is ${String(license.path)}. A manifest records only a root LICENSE file.`,
+      );
+    if (license.type !== "file" || license.sha !== blob.oid)
+      return unknownLicense(
+        facts,
+        "The license response does not match the captured repository commit.",
       );
     const spdx = (license.license as Record<string, unknown> | undefined)
       ?.spdx_id;
@@ -468,6 +625,24 @@ export async function lookupGitHubRepository(
     const bytes = Uint8Array.from(binary, (character) =>
       character.charCodeAt(0),
     );
+    // GitHub's SPDX classification comes from these LICENSE contents. Match
+    // the raw Git object too: a reused name must not supply another file, or
+    // claim the expected oid while returning different bytes.
+    const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
+    const gitObject = new Uint8Array(header.byteLength + bytes.byteLength);
+    gitObject.set(header);
+    gitObject.set(bytes, header.byteLength);
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-1", gitObject),
+    );
+    const blobOid = Array.from(digest, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    if (blobOid !== blob.oid)
+      return unknownLicense(
+        facts,
+        "The license bytes do not match the captured repository commit.",
+      );
     return {
       ...facts,
       license: {

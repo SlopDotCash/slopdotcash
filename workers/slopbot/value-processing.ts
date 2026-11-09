@@ -43,7 +43,7 @@ const VALUE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
  * attempt, capped at one day, so a block that persists stops costing an hourly
  * run without turning the outcome into a final zero.
  */
-export function valueRetryDelayMs(attempt: number): number {
+function valueRetryDelayMs(attempt: number): number {
   const step = Math.max(Math.trunc(attempt), 1) - 1;
   return Math.min(VALUE_RETRY_BASE_MS * 2 ** step, VALUE_RETRY_MAX_MS);
 }
@@ -171,7 +171,8 @@ export async function finishValueRequest(
          AND r.owner=claimed.owner AND r.repo=claimed.repo
          AND (r.delivery_id=owner.delivery_id OR r.received_at<=?3)
        WHERE owner.delivery_id=?1 AND owner.claim_token=?2
-         AND owner.state='running' AND owner.lease_until>?7
+         AND owner.state='running'
+         AND owner.lease_until>max(?7,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        ON CONFLICT(delivery_id) DO UPDATE SET claim_token=excluded.claim_token,
          state=excluded.state,outcome=excluded.outcome,retry_at=excluded.retry_at,
          -- The delivery_id predicate is load-bearing, not redundant: the SELECT

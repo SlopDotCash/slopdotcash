@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { sha256Hex } from "../../workers/identity/crypto";
 import { escalateAppeal } from "../../workers/slopbot/appeals";
 import { handleNotificationsApi } from "../notifications/handler";
 import { handlePointsApi } from "./handler";
@@ -582,6 +582,66 @@ test.each(["before restart", "after the initial restart read"])(
   },
 );
 
+test("one dispute that throws does not stop the rest of its batch", async () => {
+  const { processPendingPointsDisputes } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const { id: _, ...record } = h.revision;
+  const otherRecord = {
+    ...record,
+    sourceDigest: "b".repeat(64),
+    award: { ...record.award, key: "alpha:manual:43", sourceId: "other" },
+  };
+  h.insert({ ...otherRecord, id: pointRevisionId(otherRecord) });
+  const first = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The first manual credit needs review.",
+    })
+  ).json();
+  const second = await (
+    await h.call("", {
+      revisionId: pointRevisionId(otherRecord),
+      reason: "The second manual credit needs review.",
+    })
+  ).json();
+  // The first dispute's lease claim throws before its try block, so
+  // processPointsDispute throws for it. This is an ordinary thrown error, not
+  // the unrecorded-model-call rethrow; the batch must continue either way.
+  const db: typeof h.db = {
+    ...h.db,
+    prepare(sql) {
+      const statement = h.db.prepare(sql);
+      if (!sql.includes("SET claim_token=?,claim_until=?")) return statement;
+      return {
+        ...statement,
+        bind(...values) {
+          if (values[2] === first.id)
+            throw new Error("synthetic claim failure");
+          return statement.bind(...values);
+        },
+      };
+    },
+  };
+  const failure = await processPendingPointsDisputes({
+    SLOPBOT_DB: db,
+    SLOPBOT_APP_ID: "unused",
+    SLOPBOT_APP_PRIVATE_KEY: "unused",
+    PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+  }).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toHaveLength(1);
+  const escalated = (key: string) =>
+    h.sqlite
+      .query(
+        "SELECT escalated_at IS NOT NULL AS escalated FROM points_disputes WHERE appeal_key=?",
+      )
+      .get(key);
+  expect(escalated(first.id)).toEqual({ escalated: 0 });
+  expect(escalated(second.id)).toEqual({ escalated: 1 });
+});
+
 test("signed-out and cross-origin requests cannot create a dispute", async () => {
   const h = await fixture();
   expect(
@@ -994,4 +1054,34 @@ test("triage resolves the current repository path after a project rename or tran
   } finally {
     globalThis.fetch = nativeFetch;
   }
+});
+
+test("the dispute list finds awards recorded under the other node spelling of the member", async () => {
+  const h = await fixture();
+  // The member signed in with the legacy node ID; this award was recorded
+  // with the current spelling of the same GitHub user 42.
+  const record: Omit<PointRevision, "id"> = {
+    ...h.revision,
+    sourceDigest: "b".repeat(64),
+    award: {
+      ...h.revision.award,
+      key: "alpha:manual:42-current",
+      actor: { id: "U_kgDOAAAAKg", login: owner.githubLogin },
+      sourceId: "manual-award-42-current",
+      workUnitId: "manual-award-42-current",
+    },
+  };
+  const current: PointRevision = { ...record, id: pointRevisionId(record) };
+  h.insert(current);
+  const listed = (await (await h.call("")).json()) as {
+    awards: { revisionId: string }[];
+  };
+  expect(listed.awards.map((award) => award.revisionId).sort()).toEqual(
+    [h.revision.id, current.id].sort(),
+  );
+  // Another member's list never includes them.
+  const other = (await (await h.call("", undefined, otherToken)).json()) as {
+    awards: unknown[];
+  };
+  expect(other.awards).toEqual([]);
 });

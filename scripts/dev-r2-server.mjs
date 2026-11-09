@@ -81,6 +81,7 @@ try {
       response.writeHead(200, {
         "content-type": "application/octet-stream",
         "x-r2-size": String(object.size),
+        "x-r2-etag": object.etag,
         "x-r2-metadata": Buffer.from(
           JSON.stringify(object.customMetadata ?? {}),
         ).toString("base64"),

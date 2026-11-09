@@ -1,5 +1,6 @@
 import { compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
+import { periodBounds } from "./payments/monthly-allocation";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. November 2026 and
@@ -220,13 +221,7 @@ export function cycleBounds(cycleId: string): { from: number; to: number } {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError(`Invalid reward cycle id: ${cycleId}`);
   }
-  const [yearText, monthText] = cycleId.split("-");
-  const year = Number(yearText);
-  const monthIndex = Number(monthText) - 1;
-  return {
-    from: Date.UTC(year, monthIndex, 1),
-    to: Date.UTC(year, monthIndex + 1, 1),
-  };
+  return periodBounds(cycleId);
 }
 
 function emptyUsage(): ProjectUsageSummary {

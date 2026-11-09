@@ -31,7 +31,10 @@ import {
   notificationTitle,
   parseNotificationsResponse,
 } from "./lib/notifications";
-import { currentProjectSession } from "./lib/project-api";
+import {
+  currentProjectSession,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { formatDateTime, RoutePageHeader, SignInPanel } from "./Presentation";
 
@@ -59,6 +62,7 @@ async function loadInbox(
   // visit never sends a notifications request the browser logs as a 401. When
   // the first session read fails, the response still needs a fresh matching session.
   const session = await currentProjectSession().catch(() => undefined);
+  signal.throwIfAborted();
   if (session === null) return { status: "signed-out" };
   const response = await fetchWithDeadline(
     `/api/v1/notifications${cursor ? `?${new URLSearchParams({ cursor })}` : ""}`,
@@ -78,7 +82,9 @@ async function loadInbox(
   const value = parseNotificationsResponse(
     await readBoundedJson(response, 1_048_576, "inbox"),
   );
+  signal.throwIfAborted();
   const current = await currentProjectSession();
+  signal.throwIfAborted();
   if (current === null) return { status: "signed-out" };
   if (
     value.recipientGithubId !== current.githubId ||
@@ -142,14 +148,21 @@ export default function InboxPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [previousPages, setPreviousPages] = useState<(string | null)[]>([]);
   const [state, setState] = useState<InboxState>({ status: "loading" });
-  const { busy, error: actionError, run } = useAction();
+  const {
+    busy,
+    error: actionError,
+    setError: setActionError,
+    run,
+  } = useAction();
   const actionActive = useRef(false);
   const [message, setMessage] = useState("");
   const generation = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
       // Departed actions cannot clear drafts owned by a later private view.
       generation.current += 1;
+      loadController.current?.abort();
     },
     [],
   );
@@ -194,7 +207,9 @@ export default function InboxPage() {
   );
   const load = useCallback(() => {
     const current = ++generation.current;
+    loadController.current?.abort();
     const controller = new AbortController();
+    loadController.current = controller;
     setState({ status: "loading" });
     loadInbox(controller.signal, cursor).then(
       (next) => {
@@ -222,8 +237,25 @@ export default function InboxPage() {
         }
       },
     );
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (loadController.current === controller) loadController.current = null;
+    };
   }, [cursor, receive, acceptRecipient]);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        // Signout supersedes even an active write; its accepted server effect stays.
+        generation.current += 1;
+        loadController.current?.abort();
+        loadController.current = null;
+        acceptRecipient(null);
+        setState({ status: "signed-out" });
+        setMessage("");
+        setActionError(null);
+      }),
+    [acceptRecipient, setActionError],
+  );
   useEffect(() => load(), [load]);
   useEffect(() => {
     const refresh = () => {
@@ -259,6 +291,7 @@ export default function InboxPage() {
     setMessage("");
     setState({ status: "loading" });
     const ownsView = async () => {
+      if (generation.current !== current) return false;
       try {
         const session = await currentProjectSession();
         if (generation.current !== current) return false;
@@ -296,7 +329,10 @@ export default function InboxPage() {
             return;
           }
           if (!(await ownsView())) return;
-          const next = await loadInbox(new AbortController().signal, cursor);
+          const controller = new AbortController();
+          loadController.current?.abort();
+          loadController.current = controller;
+          const next = await loadInbox(controller.signal, cursor);
           if (generation.current === current) {
             receive(next);
             if (
@@ -352,6 +388,8 @@ export default function InboxPage() {
                 key={`incomplete:${recipient}`}
                 actorId={recipient}
                 initial={state.value.incompleteAssessments}
+                onChange={load}
+                onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>
           ) : null}
@@ -362,6 +400,7 @@ export default function InboxPage() {
                 key={`${recipient}:${window.location.search}`}
                 actorId={recipient}
                 onChange={load}
+                onIdentityChange={reportsIdentityChanged}
               />
             </Suspense>
           ) : null}
@@ -375,63 +414,62 @@ export default function InboxPage() {
           </Suspense>
         </div>
       ) : null}
-      <>
-        {state.status === "ready" ? (
-          <InboxList
-            busy={busy}
-            response={state.value}
-            onMark={(keys, done) =>
-              void act((actorId) => markRead(keys, actorId), done)
-            }
-            onAcknowledge={(notification) =>
-              void act(
-                (actorId) => acknowledgeSecurity(notification, actorId),
-                "Security notice acknowledged.",
-              )
-            }
-          />
-        ) : null}
-        {state.status === "ready" &&
-        (previousPages.length > 0 || state.value.nextCursor) ? (
-          <nav aria-label="Notification pages" className="handoff-actions">
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || previousPages.length === 0}
-              onClick={() => {
-                setCursor(previousPages.at(-1) ?? null);
-                setPreviousPages((pages) => pages.slice(0, -1));
-                setMessage("");
-              }}
-            >
-              Newer notifications
-            </button>
-            <button
-              type="button"
-              className="button secondary-button"
-              disabled={busy || !state.value.nextCursor}
-              onClick={() => {
-                setPreviousPages((pages) => [...pages, cursor]);
-                setCursor(state.value.nextCursor ?? null);
-                setMessage("");
-              }}
-            >
-              Older notifications
-            </button>
-          </nav>
-        ) : null}
-        {message ? <p role="status">{message}</p> : null}
-        {actionError ? (
-          <p className="form-error" role="alert">
-            {actionError}
-          </p>
-        ) : null}
-        {state.status === "ready" ? (
-          <p>
-            <a href="/account#notifications">Email preferences</a>
-          </p>
-        ) : null}
-      </>
+
+      {state.status === "ready" ? (
+        <InboxList
+          busy={busy}
+          response={state.value}
+          onMark={(keys, done) =>
+            void act((actorId) => markRead(keys, actorId), done)
+          }
+          onAcknowledge={(notification) =>
+            void act(
+              (actorId) => acknowledgeSecurity(notification, actorId),
+              "Security notice acknowledged.",
+            )
+          }
+        />
+      ) : null}
+      {state.status === "ready" &&
+      (previousPages.length > 0 || state.value.nextCursor) ? (
+        <nav aria-label="Notification pages" className="handoff-actions">
+          <button
+            type="button"
+            className="button secondary-button"
+            disabled={busy || previousPages.length === 0}
+            onClick={() => {
+              setCursor(previousPages.at(-1) ?? null);
+              setPreviousPages((pages) => pages.slice(0, -1));
+              setMessage("");
+            }}
+          >
+            Newer notifications
+          </button>
+          <button
+            type="button"
+            className="button secondary-button"
+            disabled={busy || !state.value.nextCursor}
+            onClick={() => {
+              setPreviousPages((pages) => [...pages, cursor]);
+              setCursor(state.value.nextCursor ?? null);
+              setMessage("");
+            }}
+          >
+            Older notifications
+          </button>
+        </nav>
+      ) : null}
+      {message ? <p role="status">{message}</p> : null}
+      {actionError ? (
+        <p className="form-error" role="alert">
+          {actionError}
+        </p>
+      ) : null}
+      {state.status === "ready" ? (
+        <p>
+          <a href="/account#notifications">Email preferences</a>
+        </p>
+      ) : null}
     </main>
   );
 }

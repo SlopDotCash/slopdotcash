@@ -7,6 +7,7 @@ import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletWithFeatures } from "@wallet-standard/base";
 import type { StandardConnectFeature } from "@wallet-standard/features";
 import { useEffect, useState } from "react";
+import { bytesToHex, encodeBase64 } from "./byte-encoding";
 import type { EscrowFamily } from "./escrow-policy.mjs";
 
 type EthereumWallet = {
@@ -113,6 +114,7 @@ function evmWallet(
       const addresses = await provider.request({
         method: "eth_requestAccounts",
       });
+      if (!trusted()) throw new Error(conflictMessage);
       if (!Array.isArray(addresses) || typeof addresses[0] !== "string")
         throw new Error("Your wallet did not return an address.");
       const address = addresses[0].toLowerCase();
@@ -124,7 +126,7 @@ function evmWallet(
         },
         async sign(message) {
           if (!trusted()) throw new Error(conflictMessage);
-          const hex = `0x${Array.from(new TextEncoder().encode(message), (n) => n.toString(16).padStart(2, "0")).join("")}`;
+          const hex = `0x${bytesToHex(new TextEncoder().encode(message))}`;
           const signature = await provider.request({
             method: "personal_sign",
             params: [hex, address],
@@ -252,35 +254,38 @@ export function usePayoutWallets(): PayoutWallet[] {
               throw new Error(
                 "Your wallet did not return a Solana account that can sign messages.",
               );
-            return {
-              address: account.address,
-              async solanaSignMessage(message: Uint8Array) {
-                const current = wallet.accounts.find(
-                  (entry) => entry.address === account.address,
+            const address = account.address;
+            const signMessage = async (message: Uint8Array) => {
+              const expected = Uint8Array.from(message);
+              const current = wallet.accounts.find(
+                (entry) => entry.address === address,
+              );
+              if (
+                !standard.get().includes(wallet) ||
+                !current?.features.includes("solana:signMessage")
+              )
+                throw new Error(
+                  "The signing wallet changed. Reconnect before continuing.",
                 );
-                if (
-                  !standard.get().includes(wallet) ||
-                  !current?.features.includes("solana:signMessage")
+              const [result] = await supported.features[
+                "solana:signMessage"
+              ].signMessage({ account: current, message: expected.slice() });
+              if (
+                !result ||
+                result.signature.length !== 64 ||
+                result.signedMessage.length !== expected.length ||
+                result.signedMessage.some(
+                  (byte, index) => byte !== expected[index],
                 )
-                  throw new Error(
-                    "The signing wallet changed. Reconnect before continuing.",
-                  );
-                const [result] = await supported.features[
-                  "solana:signMessage"
-                ].signMessage({ account: current, message });
-                if (
-                  !result ||
-                  result.signature.length !== 64 ||
-                  result.signedMessage.length !== message.length ||
-                  result.signedMessage.some(
-                    (byte, index) => byte !== message[index],
-                  )
-                )
-                  throw new Error(
-                    "Your wallet changed the message. Use a wallet that signs it exactly.",
-                  );
-                return result.signature;
-              },
+              )
+                throw new Error(
+                  "Your wallet changed the message. Use a wallet that signs it exactly.",
+                );
+              return Uint8Array.from(result.signature);
+            };
+            return {
+              address,
+              solanaSignMessage: signMessage,
               ...("solana:signTransaction" in wallet.features &&
               account.features.includes("solana:signTransaction")
                 ? {
@@ -289,7 +294,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                       chain: `solana:${string}`,
                     ) {
                       const current = wallet.accounts.find(
-                        (entry) => entry.address === account.address,
+                        (entry) => entry.address === address,
                       );
                       if (
                         !standard.get().includes(wallet) ||
@@ -330,7 +335,7 @@ export function usePayoutWallets(): PayoutWallet[] {
                       beforeSend: () => void,
                     ) {
                       const current = wallet.accounts.find(
-                        (entry) => entry.address === account.address,
+                        (entry) => entry.address === address,
                       );
                       if (
                         !standard.get().includes(wallet) ||
@@ -371,21 +376,10 @@ export function usePayoutWallets(): PayoutWallet[] {
                   }
                 : {}),
               async sign(message) {
-                const bytes = new TextEncoder().encode(message);
-                const [result] = await supported.features[
-                  "solana:signMessage"
-                ].signMessage({ account, message: bytes });
-                if (
-                  !result ||
-                  result.signedMessage.length !== bytes.length ||
-                  result.signedMessage.some(
-                    (byte, index) => byte !== bytes[index],
-                  )
-                )
-                  throw new Error(
-                    "Your wallet changed the message. Use a wallet that signs it exactly.",
-                  );
-                return btoa(String.fromCharCode(...result.signature));
+                const signature = await signMessage(
+                  new TextEncoder().encode(message),
+                );
+                return encodeBase64(signature);
               },
             };
           },
@@ -406,27 +400,29 @@ export function usePayoutWallets(): PayoutWallet[] {
           family: "solana",
           async connect() {
             const { publicKey } = await provider.connect();
-            return {
-              address: publicKey.toString(),
-              async solanaSignMessage(message: Uint8Array) {
-                const current = await provider.connect();
-                if (current.publicKey.toString() !== publicKey.toString())
-                  throw new Error(
-                    "The signing wallet changed. Reconnect before continuing.",
-                  );
-                const result = await provider.signMessage(message, "utf8");
-                if (result.signature.length !== 64)
-                  throw new Error(
-                    "Your wallet did not return a valid signature.",
-                  );
-                return result.signature;
-              },
-              async sign(message) {
-                const result = await provider.signMessage(
-                  new TextEncoder().encode(message),
-                  "utf8",
+            const address = publicKey.toString();
+            const signMessage = async (message: Uint8Array) => {
+              const requested = Uint8Array.from(message);
+              const current = await provider.connect();
+              if (current.publicKey.toString() !== address)
+                throw new Error(
+                  "The signing wallet changed. Reconnect before continuing.",
                 );
-                return btoa(String.fromCharCode(...result.signature));
+              const result = await provider.signMessage(requested, "utf8");
+              if (result.signature.length !== 64)
+                throw new Error(
+                  "Your wallet did not return a valid signature.",
+                );
+              return Uint8Array.from(result.signature);
+            };
+            return {
+              address,
+              solanaSignMessage: signMessage,
+              async sign(message) {
+                const signature = await signMessage(
+                  new TextEncoder().encode(message),
+                );
+                return encodeBase64(signature);
               },
             };
           },

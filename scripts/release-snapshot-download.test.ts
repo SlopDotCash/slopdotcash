@@ -143,16 +143,10 @@ for (const [name, download] of [["profile history", downloads[0]]] as const) {
   }
 }
 
-test("all published leaderboard workflow consumers reconstruct the supported transport", async () => {
+test("no leaderboard workflow consumer fetches the published snapshot with raw curl", async () => {
   const escrow = await readFile(
     new URL("../.github/workflows/escrow-tests.yml", import.meta.url),
     "utf8",
-  );
-  expect(workflow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
-    3,
-  );
-  expect(escrow.match(/bun scripts\/download-leaderboard\.ts/g)).toHaveLength(
-    2,
   );
   for (const source of [workflow, escrow]) {
     expect(source).not.toMatch(

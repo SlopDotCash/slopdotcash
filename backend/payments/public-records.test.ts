@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { deploymentOrigins } from "../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { isReceivedTotals } from "../../src/lib/received-totals";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1TransactionalDatabase } from "../d1";
 import { handlePaymentsApi } from "./handler";
@@ -271,6 +272,7 @@ test("received totals add every disclosed transfer and finalized USDC vault paym
       .run(when);
     const result = await f.read("received");
     expect(result.status).toBe(200);
+    expect(isReceivedTotals(result.body)).toBe(true);
     expect(result.body.totals).toEqual({
       usdMicro: "10980000",
       directMicro: "10000000",

@@ -26,7 +26,7 @@ import type { ProfileReadmeWalletProof } from "../src/lib/rewards";
  * README proofs in cycle proposals merged before this rule. They are pinned by
  * exact bytes, so an edit of a merged proposal cannot add a new one.
  */
-export const LEGACY_README_PROOFS: readonly {
+const LEGACY_README_PROOFS: readonly {
   projectId: string;
   cycleId: string;
   actorId: string;

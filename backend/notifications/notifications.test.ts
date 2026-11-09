@@ -71,27 +71,33 @@ describe("notification events", () => {
       }) as unknown as ProjectDefinition;
     const alpha = manifestOf("alpha");
     expect(
-      await persistence.createProject({
-        manifest: alpha,
-        manifestText: JSON.stringify(alpha),
-        manifestSha256: "a".repeat(64),
-        reason: "Created through self-service setup",
-        actor: creator,
-        at: T,
-        referrer: null,
-      }),
+      await persistence.createProject(
+        {
+          manifest: alpha,
+          manifestText: JSON.stringify(alpha),
+          manifestSha256: "a".repeat(64),
+          reason: "Created through self-service setup",
+          actor: creator,
+          at: T,
+          referrer: null,
+        },
+        await persistence.enforcementGeneration(),
+      ),
     ).toBe("created");
     // The same id or repository cannot be listed twice.
     expect(
-      await persistence.createProject({
-        manifest: alpha,
-        manifestText: JSON.stringify(alpha),
-        manifestSha256: "a".repeat(64),
-        reason: "Created again",
-        actor: creator,
-        at: T,
-        referrer: null,
-      }),
+      await persistence.createProject(
+        {
+          manifest: alpha,
+          manifestText: JSON.stringify(alpha),
+          manifestSha256: "a".repeat(64),
+          reason: "Created again",
+          actor: creator,
+          at: T,
+          referrer: null,
+        },
+        await persistence.enforcementGeneration(),
+      ),
     ).toBe("conflict");
     // An application stored before self-service setup is published by its
     // applicant, once, with no approval notice.
@@ -106,8 +112,18 @@ describe("notification events", () => {
       reason: "Published by its applicant",
       at: T,
     };
-    expect(await persistence.publishApplication(publish)).toBe("published");
-    expect(await persistence.publishApplication(publish)).toBe("conflict");
+    expect(
+      await persistence.publishApplication(
+        publish,
+        await persistence.enforcementGeneration(),
+      ),
+    ).toBe("published");
+    expect(
+      await persistence.publishApplication(
+        publish,
+        await persistence.enforcementGeneration(),
+      ),
+    ).toBe("conflict");
     expect(await persistence.projectCreator("alpha")).toEqual(creator);
     expect(await persistence.projectCreator("beta")).toEqual(creator);
     expect(

@@ -7,7 +7,7 @@ import { readBoundedJson } from "../../src/lib/browser-json";
 import { EMAIL_ADDRESS } from "./contracts";
 import { inboxNoticeMime } from "./security";
 
-export type EnrollmentMailDependencies = {
+type EnrollmentMailDependencies = {
   db: NotificationsDependencies["db"];
   now(): Date;
   fromAddress: string;
@@ -130,7 +130,7 @@ export async function sendEmailVerification(
 }
 
 /** This capability only disables this exact verified destination's consent. */
-export async function unsubscribeEmail(
+async function unsubscribeEmail(
   deps: Pick<EnrollmentMailDependencies, "db" | "now">,
   token: string,
 ): Promise<boolean> {

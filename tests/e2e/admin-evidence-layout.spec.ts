@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 async function session(page: Page, signedIn = () => true) {
   await page.route("**/api/v1/project-session", (route) =>
@@ -75,31 +76,7 @@ test("selected admin project can queue after a superseded pending scan and prese
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
       json: {
-        projects: [
-          {
-            id: project.id,
-            status: project.status,
-            revision: 1,
-            manifest: project,
-            manifestSha256: "a".repeat(64),
-            createdAt: "2026-10-22T00:00:00.000Z",
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
-        ],
+        projects: [adminProjectRecord(project)],
       },
     }),
   );
@@ -262,7 +239,16 @@ test("evidence deep links load only after sign-in and select one reasoned reader
 }, info) => {
   diagnostics.allowPreviewApiMisses();
   let signedIn = false;
-  await session(page, () => signedIn);
+  let viewer = "4242";
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: signedIn
+          ? { githubId: viewer, githubLogin: "operator", admin: true }
+          : null,
+      },
+    }),
+  );
   const body = "Harmless evidence: <script>never execute</script>\n";
   const hash = createHash("sha256").update(body).digest("hex");
   const second = "Other harmless evidence\n";
@@ -270,9 +256,27 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   const base = "operator/vetting-evidence/scan-layout/run-layout";
   let inventoryReads = 0;
   let inventoryDenied = false;
+  let holdNextInventory = false;
+  let releaseInventory = () => {};
+  let inventoryStarted = () => {};
+  const heldInventory = new Promise<void>((resolve) => {
+    inventoryStarted = resolve;
+  });
+  const inventoryRelease = new Promise<void>((resolve) => {
+    releaseInventory = resolve;
+  });
   let wrongBytes = true;
   const grants: unknown[] = [];
-  await page.route("**/api/v1/operator/vetting-evidence?**", (route) => {
+  let holdNextGrant = false;
+  let releaseGrant = () => {};
+  let grantStarted = () => {};
+  const heldGrant = new Promise<void>((resolve) => {
+    grantStarted = resolve;
+  });
+  const grantRelease = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  await page.route("**/api/v1/operator/vetting-evidence?**", async (route) => {
     inventoryReads++;
     if (inventoryDenied)
       return route.fulfill({
@@ -282,6 +286,11 @@ test("evidence deep links load only after sign-in and select one reasoned reader
           message: "Vetting operator access required.",
         },
       });
+    if (holdNextInventory) {
+      holdNextInventory = false;
+      inventoryStarted();
+      await inventoryRelease;
+    }
     return route.fulfill({
       json: {
         retentionBoundary: "Private retained evidence.",
@@ -315,11 +324,20 @@ test("evidence deep links load only after sign-in and select one reasoned reader
       },
     });
   });
-  await page.route(`**/api/v1/${base}/*/grant`, (route) => {
+  await page.route(`**/api/v1/${base}/*/grant`, async (route) => {
     grants.push({
       path: new URL(route.request().url()).pathname,
       body: route.request().postDataJSON(),
     });
+    if (holdNextGrant) {
+      holdNextGrant = false;
+      grantStarted();
+      await grantRelease;
+      return route.fulfill({
+        status: 403,
+        json: { error: "actor_changed", message: "Your account changed." },
+      });
+    }
     return route.fulfill({ json: { grant: "single-read-test-grant" } });
   });
   await page.route(`**/api/v1/${base}/*/body`, (route) => {
@@ -444,4 +462,227 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
     0,
   );
+  holdNextInventory = true;
+  const nextInventory = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/v1/operator/vetting-evidence",
+  );
+  const lookup = page.getByRole("button", {
+    name: "Inspect evidence inventory",
+  });
+  if (!(await lookup.isVisible()))
+    await page.getByText("Find evidence", { exact: true }).click();
+  await lookup.click();
+  await heldInventory;
+  try {
+    // The previous operator's response must not populate a silently changed
+    // session. The following operator is denied by this presentation fixture.
+    viewer = "4343";
+    inventoryDenied = true;
+  } finally {
+    releaseInventory();
+  }
+  await (await nextInventory).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(
+    page.getByRole("heading", { name: "Evidence inventory" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText(
+    "Vetting operator access required.",
+  );
+  viewer = "4242";
+  inventoryDenied = false;
+  await page.reload({ waitUntil: "networkidle" });
+  await page
+    .getByRole("button", {
+      name: `Select Second object, ${otherHash.slice(0, 12)}`,
+    })
+    .click();
+  await page
+    .getByLabel("Reason to inspect Second object")
+    .fill("Inspect after renewed operator identity");
+  diagnostics.allowResponse(403, "POST", `/api/v1/${base}/${otherHash}/grant`);
+  holdNextGrant = true;
+  const refusedGrant = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/${base}/${otherHash}/grant`,
+  );
+  await page.getByRole("button", { name: "Read Second object" }).click();
+  await heldGrant;
+  try {
+    viewer = "4343";
+    inventoryDenied = true;
+  } finally {
+    releaseGrant();
+  }
+  await (await refusedGrant).finished();
+  await expect(
+    page.getByRole("heading", { name: "Evidence inventory" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("alert")).toContainText(
+    "Vetting operator access required.",
+  );
+});
+
+test("each evidence read sends its reason and shows the verified text or exact bytes", async ({
+  page,
+  diagnostics,
+}, info) => {
+  diagnostics.allowPreviewApiMisses();
+  await session(page);
+  const text = "Retained scanner note\nline two\n";
+  const textHash = createHash("sha256").update(text).digest("hex");
+  const binary = Buffer.from([0, 1, 2, 250, 251, 252, 253, 254, 255]);
+  const binaryHash = createHash("sha256").update(binary).digest("hex");
+  const base = "operator/vetting-evidence/scan-reasons/run-reasons";
+  await page.route("**/api/v1/operator/vetting-evidence?**", (route) =>
+    route.fulfill({
+      json: {
+        retentionBoundary: "Private retained evidence.",
+        runs: [
+          {
+            assessmentId: "scan-reasons",
+            runId: "run-reasons",
+            manifestSha256: "d".repeat(64),
+            expiresAt: null,
+            policy: { version: "evidence-v1" },
+            objects: [
+              {
+                sha256: textHash,
+                sizeBytes: Buffer.byteLength(text),
+                kind: "trace",
+                label: "Scanner note",
+                contentType: "text/plain",
+                state: "stored-unverified",
+              },
+              {
+                sha256: binaryHash,
+                sizeBytes: binary.byteLength,
+                kind: "archive",
+                label: "Binary sample",
+                contentType: "application/octet-stream",
+                state: "stored-unverified",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  const grants: { object: string; body: unknown }[] = [];
+  await page.route(`**/api/v1/${base}/*/grant`, (route) => {
+    const object = new URL(route.request().url()).pathname.split("/").at(-2);
+    grants.push({ object: object ?? "", body: route.request().postDataJSON() });
+    return route.fulfill({ json: { grant: `grant-${grants.length}` } });
+  });
+  let releaseBody: (() => void) | undefined;
+  const bodyReads: string[] = [];
+  await page.route(`**/api/v1/${base}/*/body`, async (route) => {
+    bodyReads.push(route.request().headers()["x-vetting-read-grant"]);
+    if (route.request().url().includes(binaryHash))
+      return route.fulfill({
+        contentType: "application/octet-stream",
+        body: binary,
+      });
+    await new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    return route.fulfill({ contentType: "text/plain", body: text });
+  });
+  await page.goto(
+    "/vetting-evidence?assessmentId=scan-reasons&runId=run-reasons",
+    { waitUntil: "networkidle" },
+  );
+  await page
+    .getByRole("button", {
+      name: `Select Scanner note, ${textHash.slice(0, 12)}`,
+    })
+    .click();
+  const reason = page.getByRole("textbox", {
+    name: "Reason to inspect Scanner note",
+    exact: true,
+  });
+  const read = page.getByRole("button", {
+    name: "Read Scanner note",
+    exact: true,
+  });
+  // A reason shorter than eight characters cannot request a grant.
+  await reason.fill("short");
+  await read.click();
+  expect(
+    await reason.evaluate((input: HTMLInputElement) => input.validity.tooShort),
+  ).toBe(true);
+  expect(grants).toEqual([]);
+
+  await reason.fill("Confirm the scanner flagged this note");
+  await read.click();
+  // While the single-use body is read, the action shows its verification.
+  const verifying = page.getByRole("button", {
+    name: "Verifying evidence…",
+    exact: true,
+  });
+  await expect(verifying).toBeDisabled();
+  await expect.poll(() => bodyReads).toEqual(["grant-1"]);
+  releaseBody?.();
+  const content = page.getByRole("textbox", {
+    name: "Scanner note verified content",
+    exact: true,
+  });
+  await expect(content).toHaveValue(text);
+  await expect(content).toHaveAttribute("readonly", "");
+  await expect(page.getByRole("status")).toHaveText(
+    "Complete bytes verified. Text is displayed without execution.",
+  );
+  await expect(read).toBeEnabled();
+  expect(grants).toEqual([
+    {
+      object: textHash,
+      body: { reason: "Confirm the scanner flagged this note" },
+    },
+  ]);
+  await expectAccessible(page);
+  await page.screenshot({
+    path: info.outputPath("verified-text.png"),
+    fullPage: true,
+  });
+
+  // Binary evidence is verified, then saved, never displayed.
+  await page
+    .getByRole("button", {
+      name: `Select Binary sample, ${binaryHash.slice(0, 12)}`,
+    })
+    .click();
+  await expect(content).toHaveCount(0);
+  await page
+    .getByRole("textbox", {
+      name: "Reason to inspect Binary sample",
+      exact: true,
+    })
+    .fill("Compare the archive with the release");
+  const download = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Download Binary sample", exact: true })
+    .click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toBe(`${binaryHash}.bin`);
+  await expect(page.getByRole("status")).toHaveText(
+    "Exact bytes verified. Download requested; do not execute the file.",
+  );
+  await expect(
+    page.getByRole("textbox", { name: "Binary sample verified content" }),
+  ).toHaveCount(0);
+  expect(grants.at(-1)).toEqual({
+    object: binaryHash,
+    body: { reason: "Compare the archive with the release" },
+  });
+  expect(bodyReads).toEqual(["grant-1", "grant-2"]);
+  await expectAccessible(page);
 });

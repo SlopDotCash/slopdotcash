@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
 import type { TargetRepository } from "../src/lib/repositories.mjs";
-import {
-  collectValueEvidence,
-  type FileChange,
-} from "../workers/slopbot/value-evidence";
+import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import type { FileChange } from "../workers/slopbot/value-evidence-types";
 
 const base = "a".repeat(40);
 const head = "b".repeat(40);

@@ -2,6 +2,11 @@ import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { expectHeaderRow } from "../header-row";
 import { expect, expectAccessible, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -457,4 +462,89 @@ test("a refused sign-in names its next action and closes the blank popup", async
   }
   expect(starts).toEqual([]);
   expect(polls).toBe(2);
+});
+
+test("committed sign-in departure cannot exchange a resolved identity assertion", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  const expiresAt = new Date(Date.now() + 240_000).toISOString();
+  const flowId = `flow_${"f".repeat(24)}`;
+  let joins = 0;
+  await page.context().route(`${deployment.identity}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/v1/oauth/start")
+      return route.fulfill({
+        json: {
+          flowId,
+          pollCapability: "p".repeat(48),
+          expiresAt,
+          pollAfterSeconds: 1,
+          authorizationUrl: `${deployment.identity}/v1/oauth/authorize?flow_id=${flowId}&state=${"s".repeat(48)}`,
+        },
+      });
+    if (path === "/v1/oauth/authorize")
+      return route.fulfill({
+        contentType: "text/html",
+        body: "<title>Synthetic OAuth completion</title>",
+      });
+    return route.fulfill({
+      json: {
+        status: "complete",
+        assertionType: "SlopIdentity",
+        assertion: `slop_assert_v1_${"a".repeat(48)}`,
+        expiresAt,
+      },
+    });
+  });
+  await page.route(`${deployment.site}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/v1/points/join") {
+      joins++;
+      return route.fulfill({
+        json: {
+          actor: { id: "U_departed", login: "departed" },
+          joinedAt: "2026-10-01T00:00:00Z",
+          public: true,
+          welcome: 0,
+        },
+      });
+    }
+    if (path === "/api/v1/points/me") return route.fulfill({ json: null });
+    if (path === "/api/v1/project-session")
+      return route.fulfill({ json: { session: null } });
+    if (path.startsWith("/api/"))
+      throw new Error(`Unexpected sign-in request: ${path}`);
+    return route.fulfill({
+      path: join(
+        process.cwd(),
+        "dist",
+        route.request().resourceType() === "document" ? "index.html" : path,
+      ),
+    });
+  });
+  await page.goto(`${deployment.site}/how-it-works`, {
+    waitUntil: "networkidle",
+  });
+  await page.evaluate(() => {
+    window.history.pushState(null, "", "/login");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(
+    page.getByRole("button", { name: "Continue with GitHub", exact: true }),
+  ).toBeVisible();
+  await holdProjectSessionUntilUnmount(page, ".login-page", "/v1/oauth/poll");
+  const popupReady = page.waitForEvent("popup");
+  await page
+    .getByRole("button", { name: "Continue with GitHub", exact: true })
+    .click();
+  const popup = await popupReady;
+  try {
+    await leaveEditorWithHeldSession(page);
+    expect(joins).toBe(0);
+  } finally {
+    await releaseHeldEditorSession(page);
+    if (!popup.isClosed()) await popup.close();
+  }
 });

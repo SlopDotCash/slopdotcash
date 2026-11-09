@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
 import { pointRevisionId } from "../../src/lib/points";
 import { expect, expectAccessible, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 test("a manual Points award reaches private Inbox review and an independent moderator @registry", async ({
   page,
@@ -12,7 +16,8 @@ test("a manual Points award reaches private Inbox review and an independent mode
   diagnostics.allowCanceledBackgroundReads();
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   const moderatorToken = process.env.SLOP_E2E_MODERATOR_TOKEN;
-  if (!persist || !moderatorToken)
+  const outsiderToken = process.env.SLOP_E2E_OWNER_TOKEN;
+  if (!persist || !moderatorToken || !outsiderToken)
     throw new Error("Missing local registry fixture");
   const q = (value: unknown) => `'${String(value).replaceAll("'", "''")}'`;
   const sql = (command: string) =>
@@ -89,6 +94,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
   });
   let releaseIntake!: () => void;
   let intakeStarted!: () => void;
+  let intakeKey: string | undefined;
   const intakeWaiting = new Promise<void>((resolve) => {
     intakeStarted = resolve;
   });
@@ -98,6 +104,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
   await page.route("**/api/v1/points/disputes", async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     const response = await route.fetch();
+    intakeKey = ((await response.json()) as { id: string }).id;
     intakeStarted();
     await intakeRelease;
     await route.fulfill({ response });
@@ -112,9 +119,29 @@ test("a manual Points award reaches private Inbox review and an independent mode
     await expect(page.getByLabel("Reason", { exact: true })).toHaveValue(
       "The accepted manual work was assigned to the wrong month.",
     );
+    // Change the actual session without focus/navigation while A's committed
+    // response is held. Its own completion must tear down A's private form.
+    await page.evaluate((value) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: Replace only this isolated local session.
+      document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
+    }, outsiderToken);
   } finally {
     releaseIntake();
   }
+  await expect(
+    page.getByRole("heading", { name: "Review Points" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Reason", { exact: true })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/points(?:Dispute)?=/u);
+  if (!intakeKey)
+    throw new Error("The committed Points receipt was not captured");
+  await page.evaluate((value) => {
+    // biome-ignore lint/suspicious/noDocumentCookie: Restore only this isolated local session.
+    document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
+  }, session);
+  await page.goto(`/inbox?pointsDispute=${encodeURIComponent(intakeKey)}`, {
+    waitUntil: "load",
+  });
   await expect(page).toHaveURL(/pointsDispute=points-dispute/u);
   // The local Slopbot fixture has no model route. Its unavailable response
   // must retain the private receipt and offer recovery, never fake a draft.
@@ -163,8 +190,6 @@ test("a manual Points award reaches private Inbox review and an independent mode
   sql(
     `UPDATE points_disputes SET draft='uphold',draft_confidence=0.7,drafted_at=${q(now)},escalated_at=${q(now)},escalation='Original work needs review' WHERE appeal_key=${q(key)}; ${notice};`,
   );
-  const outsiderToken = process.env.SLOP_E2E_OWNER_TOKEN;
-  if (!outsiderToken) throw new Error("Missing unrelated fixture session");
   const deniedContext = await browser.newContext({
     viewport: test.info().project.use.viewport,
   });
@@ -260,9 +285,48 @@ test("a manual Points award reaches private Inbox review and an independent mode
       await expect(moderator.getByLabel("Decision reason")).toHaveValue(
         "The retained source needs a date correction. Preserve the award until it is appended.",
       );
+      await holdProjectSessionUntilUnmount(moderator, "#points-decision");
     } finally {
       releaseDecision();
     }
+    await moderator.waitForFunction(
+      () =>
+        (
+          window as typeof window & {
+            heldEditorSession: { waiting: boolean };
+          }
+        ).heldEditorSession.waiting,
+    );
+    // The real POST has committed. Its final session is parsed but held until
+    // query navigation removes the old decision component from the live Inbox.
+    await moderator.evaluate(() => {
+      window.history.pushState(null, "", "/inbox?points");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await moderator.waitForFunction(() => {
+      const value = (
+        window as typeof window & {
+          heldEditorSession: { removed: boolean; released: boolean };
+        }
+      ).heldEditorSession;
+      return value.removed && value.released;
+    });
+    await moderator.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    await expect(moderator).toHaveURL(/\/inbox\?points$/u);
+    await expect(moderator.getByLabel("Decision reason")).toHaveCount(0);
+    await moderator.evaluate((key) => {
+      window.history.pushState(
+        null,
+        "",
+        `/inbox?pointsDispute=${encodeURIComponent(key)}`,
+      );
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, key);
     await expect(
       moderator.getByText("Dispute upheld", { exact: true }),
     ).toBeVisible();
@@ -283,6 +347,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
       page.getByRole("button", { name: "Uphold dispute", exact: true }),
     ).toHaveCount(0);
   } finally {
+    await releaseHeldEditorSession(moderator);
     await context.close();
   }
 });

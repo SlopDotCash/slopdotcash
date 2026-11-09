@@ -110,11 +110,11 @@ checks. Funding is reported separately; a project works without it.
   The current Pages client requests the repository's public identity fields
   with `includeRepository=1` and reuses that authenticated read. It does not
   make a second anonymous request for the primary repository. The
-  repository lookup on `/projects/new` and the vetting branch-head pin also
-  read through the repository's installation (`/v1/repository-read`), and
-  make the ordinary GitHub read only when Slopbot is not installed or does
-  not answer. Tokens never
-  leave the Worker. Deploy the Worker before Pages: requests without the flag
+  repository lookup on `/projects/new` and the vetting branch-head pin use
+  the separate public-only GitHub read token. They never borrow an
+  installation token: repository visibility can change between reads.
+  Installation tokens never leave the Worker. Deploy the Worker before Pages:
+  requests without the flag
   retain the old response, while a current Pages client refuses a response
   without the required identity fields. Without the binding the check reports
   `retry`.
@@ -241,8 +241,12 @@ disabled; the asset is display metadata until a reviewed payout path exists.
 
 `/projects/new` reads repository facts through the same-origin
 `project-github` routes, which need a site session. The server reads public
-GitHub data, with the optional `SLOP_GITHUB_READ_TOKEN` secret for a higher
-rate limit, and caches each answer for five minutes. The browser never calls
+GitHub data, using `SLOP_GITHUB_READ_TOKEN` in production and staging, and
+caches each answer for five minutes. The credential must grant read-only
+public access, without private-repository or organization authority; its
+deployment scope is an external assumption, not inferred from its name.
+Local fixture transports may inject a synthetic token. No failed public read
+falls back to a Slopbot installation token. The browser never calls
 `api.github.com` for setup.
 
 ## Trust rules
@@ -264,8 +268,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   identity from the authenticated Slopbot read. The repository id, node id,
   name, visibility and owner must match the manifest, or the request is
   refused. Every other repository and every alias of an older project still
-  requires a public lookup (`SLOP_GITHUB_READ_TOKEN` is optional). An alias
-  must name the repository it is listed under, with at most 5 names in all.
+  requires a public lookup (with `SLOP_GITHUB_READ_TOKEN` in production and
+  staging). An alias must name the repository it is listed under, with at
+  most 5 names in all.
 - `/projects/new` and `/admin` preview the exact generated contributor and
   reviewer skills.
 - A revision activates, or changes its skill inputs while active, and its

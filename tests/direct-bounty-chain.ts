@@ -1,12 +1,15 @@
 /** Disposable external-wallet actions for the real Pages/D1 bounty browser flow. */
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ReviewedEvmFactory } from "../contracts/evm/factories";
 import { childEnvironment } from "../scripts/child-environment.mjs";
 import { REWARD_ASSET_NETWORKS } from "../src/lib/reward-asset.mjs";
+import {
+  type BountyWalletActor,
+  seedVerifiedWalletRows,
+} from "./bounty-wallet-seed";
 
 const { REVIEWED_EVM_FACTORIES } = createRequire(import.meta.url)(
   "../contracts/evm/factories.ts",
@@ -207,44 +210,13 @@ export async function startLocalDirectEvmFixture(port: number) {
 /** Seed only the already-tested wallet-possession boundary in disposable local D1. */
 export function seedVerifiedBountyWallets(
   persistTo: string,
-  actors: { githubId: string; githubLogin: string; address: string }[],
+  actors: BountyWalletActor[],
 ) {
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const hash = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
-  const statements: string[] = [];
-  for (const actor of actors) {
-    if (
-      !/^\d+$/u.test(actor.githubId) ||
-      !/^0x[\da-f]{40}$/iu.test(actor.address)
-    )
-      throw new Error("Invalid local wallet actor");
-    const id = `direct-browser-${actor.githubId}`;
-    const challenge = `${id}-challenge`,
-      at = new Date().toISOString();
-    statements.push(
-      `INSERT OR IGNORE INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(${[id, actor.githubId, actor.githubLogin, actor.address, "d1_registry", hash(id), at, hash(`${id}:${actor.address}`), at, "base"].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(${[challenge, id, actor.githubId, "disposable browser fixture", new Date(Date.now() + 86_400_000).toISOString(), at].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(${[id, actor.githubId, at, challenge, "disposable verified wallet fixture"].map(quote).join(",")});`,
-    );
-  }
-  execFileSync(
-    "node",
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "d1",
-      "execute",
-      "slop-private",
-      "--local",
-      "--persist-to",
-      persistTo,
-      "--command",
-      statements.join("\n"),
-    ],
-    { stdio: "pipe" },
-  );
+  seedVerifiedWalletRows(persistTo, actors, {
+    chain: "base",
+    idPrefix: "direct-browser-",
+    valid: (actor) =>
+      /^\d+$/u.test(actor.githubId) && /^0x[\da-f]{40}$/iu.test(actor.address),
+    invalidMessage: "Invalid local wallet actor",
+  });
 }

@@ -26,6 +26,7 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import {
   assertEscrowPolicy,
   type EscrowDeployment,
@@ -218,6 +219,284 @@ test("an admin revision still replaces the listed project with that id", async (
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
 });
 
+function firstPublicationManifest(id: string) {
+  // Historical applications already contain the verified asset fields.
+  return applicationManifest(id, `example/${id}`, {
+    rewardAsset: {
+      network: "ethereum",
+      kind: "stablecoin",
+      address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      symbol: "USDC",
+      decimals: 6,
+      chainId: "1",
+      cluster: null,
+      verifiedAt: NOW,
+    },
+  });
+}
+
+test("an owner publication returns its committed revision when another writer advances the head", async () => {
+  const t = registry();
+  await t.create("publication-receipt", "example/publication-receipt");
+  const initial = await t.persistence.getProject("publication-receipt");
+  if (!initial) throw new Error("Missing project");
+  const editedDuringSave = {
+    ...initial.manifest,
+    headline: "A further unsaved owner edit.",
+  };
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  let interleave = true;
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    const result = await append(input, generation);
+    if (interleave && result === "updated") {
+      interleave = false;
+      const manifest = {
+        ...input.manifest,
+        description: "A separate maintainer updated this description.",
+      };
+      const text = JSON.stringify(manifest);
+      expect(
+        await append(
+          {
+            projectId: input.projectId,
+            expectedRevision: input.expectedRevision + 1,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
+            reason: "Concurrent reviewed maintainer revision",
+            actor: { githubId: ADMIN, githubLogin: "admin" },
+            at: NOW,
+          },
+          generation,
+        ),
+      ).toBe("updated");
+    }
+    return result;
+  };
+  try {
+    const published = await t.call(
+      "PUT",
+      "projects/publication-receipt",
+      OWNER,
+      {
+        expectedRevision: initial.revision,
+        manifest: {
+          ...initial.manifest,
+          headline: "The submitted owner edit.",
+        },
+      },
+    );
+    expect(published.status).toBe(200);
+    const receipt = published.body.project as {
+      revision: number;
+      manifest: ProjectDefinition;
+    };
+    expect(receipt.revision).toBe(2);
+    expect(receipt.manifest.headline).toBe("The submitted owner edit.");
+    expect(receipt.manifest.description).toBe(initial.manifest.description);
+    const latest = await t.persistence.getProject(initial.id);
+    expect(latest?.revision).toBe(3);
+    expect(latest?.manifest.description).toBe(
+      "A separate maintainer updated this description.",
+    );
+    const retry = await t.call("PUT", "projects/publication-receipt", OWNER, {
+      expectedRevision: receipt.revision,
+      manifest: editedDuringSave,
+    });
+    expect(retry.status).toBe(409);
+    expect(retry.body.error).toBe("stale_revision");
+    expect((await t.persistence.getProject(initial.id))?.revision).toBe(3);
+  } finally {
+    t.persistence.appendProjectRevision = append;
+    t.sqlite.close();
+  }
+});
+
+test.each(["create", "stored application"] as const)(
+  "a concurrent maintainer ban refuses %s before first publication",
+  async (flow) => {
+    const t = registry();
+    const id = "enforcement-race";
+    const manifest = firstPublicationManifest(id);
+    const applicationId = "app_enforcementrace0001";
+    if (flow === "stored application") {
+      const text = JSON.stringify(manifest);
+      t.sqlite
+        .query(
+          `INSERT INTO project_applications
+           (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+            applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+           VALUES(?,?,?,?,?,?,?,?,?,'pending','pending')`,
+        )
+        .run(
+          applicationId,
+          id,
+          `example/${id}`,
+          text,
+          await sha256Hex(new TextEncoder().encode(text)),
+          "Accepted useful contributions",
+          OWNER,
+          "owner",
+          NOW,
+        );
+    }
+    const control = t.deps.repositoryControl;
+    let banPending = true;
+    t.deps.repositoryControl = async (...args) => {
+      const result = await control(...args);
+      if (banPending) {
+        banPending = false;
+        seedParticipationBan(
+          t.sqlite,
+          { githubId: OWNER, githubLogin: "owner" },
+          { githubId: ADMIN, githubLogin: "admin" },
+          NOW,
+        );
+      }
+      return result;
+    };
+    try {
+      const publish = () =>
+        flow === "create"
+          ? t.call("POST", "projects", OWNER, { manifest })
+          : t.call(
+              "POST",
+              `project-applications/${applicationId}/publish`,
+              OWNER,
+              {},
+            );
+      const refused = await publish();
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toBe("registry_conflict");
+      expect(await t.persistence.getProject(id)).toBeNull();
+      expect(
+        t.sqlite
+          .query("SELECT COUNT(*) n FROM project_revisions WHERE project_id=?")
+          .get(id),
+      ).toEqual({ n: 0 });
+      expect(
+        t.sqlite
+          .query(
+            "SELECT COUNT(*) n FROM project_repositories WHERE project_id=?",
+          )
+          .get(id),
+      ).toEqual({ n: 0 });
+      if (flow === "stored application")
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("pending");
+      const next = await publish();
+      expect(next.status).toBe(403);
+      expect(next.body.error).toBe("maintainer_banned");
+    } finally {
+      t.deps.repositoryControl = control;
+      t.sqlite.close();
+    }
+  },
+);
+
+test.each(["create", "stored application"] as const)(
+  "accepted %s keeps its own setup revision when another writer advances the head",
+  async (flow) => {
+    const t = registry();
+    const id = "creation-receipt";
+    const applicationId = "app_creationreceipt0001";
+    const manifest = firstPublicationManifest(id);
+    if (flow === "stored application") {
+      const text = JSON.stringify(manifest);
+      t.sqlite
+        .query(
+          `INSERT INTO project_applications
+           (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+            applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+           VALUES(?,?,?,?,?,?,?,?,?,'pending','pending')`,
+        )
+        .run(
+          applicationId,
+          id,
+          `example/${id}`,
+          text,
+          await sha256Hex(new TextEncoder().encode(text)),
+          "Accepted useful contributions",
+          OWNER,
+          "owner",
+          NOW,
+        );
+    }
+    const create = t.persistence.createProject.bind(t.persistence);
+    const publish = t.persistence.publishApplication.bind(t.persistence);
+    let committedManifestText: string | null = null;
+    const advance = async () => {
+      const current = await t.persistence.getProject(id);
+      if (!current) throw new Error("Accepted creation is missing");
+      committedManifestText =
+        (await t.persistence.getRevisionText(id, 1))?.manifestText ?? null;
+      const later = {
+        ...current.manifest,
+        headline: "A later independent revision.",
+      };
+      const text = JSON.stringify(later);
+      expect(
+        await t.persistence.appendProjectRevision(
+          {
+            projectId: id,
+            expectedRevision: 1,
+            manifest: later,
+            manifestText: text,
+            manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
+            reason: "Independent change after first publication",
+            actor: { githubId: ADMIN, githubLogin: "admin" },
+            at: NOW,
+          },
+          await t.persistence.enforcementGeneration(),
+        ),
+      ).toBe("updated");
+    };
+    t.persistence.createProject = async (...args) => {
+      const result = await create(...args);
+      if (result === "created") await advance();
+      return result;
+    };
+    t.persistence.publishApplication = async (...args) => {
+      const result = await publish(...args);
+      if (result === "published") await advance();
+      return result;
+    };
+    t.state.clearance = CLEARED;
+    try {
+      const result =
+        flow === "create"
+          ? await t.call("POST", "projects", OWNER, { manifest })
+          : await t.call(
+              "POST",
+              `project-applications/${applicationId}/publish`,
+              OWNER,
+              {},
+            );
+      // Activation uses captured revision 1 and refuses the later revision 2.
+      // The accepted first publication is durable despite this response error.
+      expect(result.status).toBe(409);
+      expect(result.body.error).toBe("stale_revision");
+      expect(t.state.scans).toEqual([
+        expect.stringMatching(/^creation-receipt@1:/u),
+      ]);
+      expect((await t.persistence.getProject(id))?.revision).toBe(2);
+      expect(committedManifestText).not.toBeNull();
+      expect<string | null | undefined>(
+        (await t.persistence.getRevisionText(id, 1))?.manifestText,
+      ).toBe(committedManifestText);
+      if (flow === "stored application")
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("approved");
+    } finally {
+      t.persistence.createProject = create;
+      t.persistence.publishApplication = publish;
+      t.sqlite.close();
+    }
+  },
+);
+
 test("creation requires the Slopbot installation, then queues the first scan and returns one status", async () => {
   const { create, persistence, state } = registry();
   // Owner decision D11: no installation read, no project.
@@ -331,6 +610,82 @@ test("setup activates a project only with installation write access and a clean 
     activatedRevision: null,
   });
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
+});
+
+test("setup distinguishes a confirmed identity mismatch from a provider outage without weakening write refusals", async () => {
+  const t = registry();
+  try {
+    await t.create("identity-status", "example/identity-status");
+    t.state.clearance = CLEARED;
+    t.state.scans = [];
+    const initial = await t.persistence.getProject("identity-status");
+    if (!initial) throw new Error("Project missing");
+    const reason = "Repository or steward facts do not match GitHub";
+    t.state.control = { state: "mismatch", reason };
+    const denied = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(denied.status).toBe(200);
+    expect(denied.body.setup).toMatchObject({
+      revision: 1,
+      status: "paused",
+      state: "action_required",
+      nextAction: { kind: "ask_maintainer", message: reason },
+      checks: {
+        authority: { state: "denied", message: reason },
+        installation: { state: "installed" },
+      },
+      activatedRevision: null,
+    });
+    const write = await t.call("PUT", "projects/identity-status", OWNER, {
+      expectedRevision: initial.revision,
+      manifest: {
+        ...initial.manifest,
+        headline: "A changed project headline.",
+      },
+    });
+    expect(write.status).toBe(422);
+    expect(write.body.error).toBe("invalid_manifest");
+
+    t.deps.repositoryControl = async () => {
+      throw new Error("Synthetic GitHub outage");
+    };
+    const unavailable = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(unavailable.status).toBe(200);
+    expect(unavailable.body.setup).toMatchObject({
+      state: "retry",
+      nextAction: { kind: "retry_installation" },
+      checks: {
+        authority: { state: "retry" },
+        installation: { state: "retry" },
+      },
+      activatedRevision: null,
+    });
+    expect(t.state.scans).toEqual([]);
+    expect((await t.persistence.getProject(initial.id))?.revision).toBe(1);
+    t.deps.repositoryControl = async () => ({ state: "matched" });
+    const recovered = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(recovered.body.setup).toMatchObject({
+      state: "ready",
+      revision: 2,
+      activatedRevision: 2,
+    });
+  } finally {
+    t.sqlite.close();
+  }
 });
 
 test("an owner records and revokes explicit closure consent with current authority and immutable revisions", async () => {
@@ -3018,4 +3373,66 @@ test("both project revision routes reject overlapping aliases of one excluded Gi
       current.revision,
     );
   }
+});
+
+// PRD section 8: activation requires current admission clearance. An
+// investigation or exemption revocation that lands after the activation check
+// fences the guarded write, so the project stays paused.
+test("an admission investigation queued during the activation check prevents activation", async () => {
+  const t = registry();
+  await t.create("clearance-race", "example/clearance-race");
+  const project = await t.persistence.getProject("clearance-race");
+  if (!project) throw new Error("Project required");
+  let calls = 0;
+  t.deps.vettingClearance = async () => {
+    calls += 1;
+    // The second read is the guarded revision's own gate. The investigation
+    // lands right after it answers with the earlier clean result.
+    if (calls === 2)
+      t.sqlite
+        .prepare(
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        )
+        .run(
+          "vet_00000000000000000000000000000099",
+          project.id,
+          project.revision,
+          project.manifestSha256,
+          "c".repeat(64),
+          "a".repeat(40),
+          "d".repeat(64),
+          ADMIN,
+          "admin",
+          NOW,
+          "Explicit security investigation",
+        );
+    return CLEARED;
+  };
+  const result = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(calls).toBe(2);
+  expect(result.status).toBe(409);
+  expect(result.body.error).toBe("stale_revision");
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 1,
+    status: "paused",
+  });
+  // Without a change after the check, the same activation applies.
+  t.deps.vettingClearance = async () => CLEARED;
+  const retried = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(retried.status).toBe(200);
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 2,
+    status: "active",
+  });
 });

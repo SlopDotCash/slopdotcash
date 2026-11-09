@@ -3,10 +3,10 @@ import { afterEach, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { onRequest } from "../functions/api/v1/[[path]]";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -120,6 +120,8 @@ test("organization maintainers reach private monthly awards after an approved re
       projectId: project.id,
       period: "2026-11",
       automatic: true,
+      // A maintainer who is not the steward or an admin cannot change awards.
+      canManage: false,
       proposal: null,
       run: null,
     });

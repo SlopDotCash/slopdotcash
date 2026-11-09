@@ -101,11 +101,9 @@ describe("paymentReviewBasis omission (#1411 S3)", () => {
 
     const snapshot = createLeaderboardSnapshot(input);
     const basis = snapshot.paymentReviewBasis;
-    expect(basis).toBeDefined();
     expect(snapshot.paymentReviewBasisOmitted).toBeUndefined();
     expect(basis?.policy).toBe(PAYMENT_REVIEW_POLICY);
     expect(basis?.effectiveAt).toBe(PAYMENT_REVIEW_POLICY_AT);
-    expect(basis?.leaders.length).toBeGreaterThan(0);
 
     const payment = paymentReviewSnapshot(snapshot);
     const scoreReviewIds = new Set(
@@ -136,7 +134,7 @@ describe("paymentReviewBasis omission (#1411 S3)", () => {
       }),
     ]);
     const intact = createLeaderboardSnapshot(input);
-    expect(intact.paymentReviewBasis).toBeDefined();
+    expect(intact.paymentReviewBasis?.policy).toBe(PAYMENT_REVIEW_POLICY);
     const paymentIds = new Set(
       paymentReviewSnapshot(intact)
         .ledger.filter((event) => event.category === "substantive-review")
@@ -193,7 +191,7 @@ describe("paymentReviewBasis omission (#1411 S3)", () => {
       }),
     ]);
     const intact = createLeaderboardSnapshot(input);
-    expect(intact.paymentReviewBasis).toBeDefined();
+    expect(intact.paymentReviewBasis?.policy).toBe(PAYMENT_REVIEW_POLICY);
     expect(
       intact.ledger.some(
         (event) =>

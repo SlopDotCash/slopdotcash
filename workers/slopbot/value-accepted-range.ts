@@ -1,5 +1,9 @@
 import { valueBlobReader } from "./value-blob";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type {
+  AcceptedValueRange,
+  EvidenceClient,
+  FileChange,
+} from "./value-evidence-types";
 import {
   hasCompleteValuePatch,
   valueAdditionCount,
@@ -7,18 +11,6 @@ import {
   valuePatch,
 } from "./value-patch";
 import { readValueTree } from "./value-tree";
-
-export interface AcceptedValueRange {
-  headSha: string;
-  mergeSha: string;
-  parentSha: string;
-  files: {
-    path: string;
-    blobSha: string | null;
-    mode?: string;
-    alreadyPresent: boolean;
-  }[];
-}
 
 /** A stacked squash may omit dependency changes already in its parent. Prove
  * every submitted path survives unchanged, and every omitted change was already

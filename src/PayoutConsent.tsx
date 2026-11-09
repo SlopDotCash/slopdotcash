@@ -1,10 +1,11 @@
 import { ArrowDown, ShieldCheck, Vault, Wallet } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
 import { ChainIcon } from "./ChainIcon";
 import { Link } from "./Link";
 import { readBoundedJson } from "./lib/browser-json";
+import { decodeBase64, encodeBase64 } from "./lib/byte-encoding";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
@@ -14,36 +15,54 @@ import {
   verifyPreparedSolanaBinding,
   verifySignedSolanaBinding,
 } from "./lib/payout-consent";
-import { apiRequest } from "./lib/project-api";
+import {
+  apiRequest,
+  currentProjectSession,
+  ProjectApiError,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { sameWalletAddress } from "./lib/wallets";
 
-async function request(path: string, body: unknown) {
+async function request(
+  path: string,
+  body: unknown,
+  actorId: string,
+  signal: AbortSignal,
+) {
   const response = await apiRequest(`payments/wallets/${path}`, {
     body,
+    signal,
     timeoutMs: 45_000,
+    headers: { "x-slop-expected-github-id": actorId },
   });
+  if (response.status === 401)
+    throw new ProjectApiError(401, "unauthorized", "Sign in again.");
+  const value = (await readBoundedJson(
+    response,
+    16_384,
+    "payout consent",
+  )) as Record<string, unknown>;
+  if (response.status === 403 && value?.error === "actor_changed")
+    throw new ProjectApiError(403, "actor_changed", "Your account changed.");
   if (!response.ok)
     throw new Error(
-      response.status === 401
-        ? "Sign in again, then review your payout wallet."
-        : response.status === 409
-          ? "The wallet changed or is still being prepared. Reload this page and review again."
-          : "Payout consent is unavailable. Your award stays reserved. Retry later.",
+      response.status === 409
+        ? "The wallet changed or is still being prepared. Reload this page and review again."
+        : "Payout consent is unavailable. Your award stays reserved. Retry later.",
     );
-  return (await readBoundedJson(response, 16_384, "payout consent")) as Record<
-    string,
-    unknown
-  >;
+  return value;
 }
 
 /** Consent authorizes only this vault's destination binding; finalized payment is a separate result. */
 export function PayoutConsent({
   payment,
   account,
+  onAccessLost,
 }: {
   payment: AccountPayment;
   account: PaymentsAccount;
+  onAccessLost(signedOut: boolean): void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -55,6 +74,7 @@ export function PayoutConsent({
   const actionButton = useRef<HTMLButtonElement>(null);
   const result = useRef<HTMLParagraphElement>(null);
   const wasOpen = useRef(false);
+  const operation = useRef<AbortController | null>(null);
   useEffect(() => {
     if (open) {
       dialog.current?.showModal();
@@ -74,15 +94,65 @@ export function PayoutConsent({
       w.family === network?.family &&
       (w.family !== "solana" || w.solanaBinding),
   );
+  const reviewKey = JSON.stringify([
+    account.githubUserId,
+    claim?.claimId,
+    claim?.address,
+    payment.id,
+    payment.chain,
+    payment.network,
+    payment.vault,
+    payment.state,
+  ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(() => {
+    const reset = () => {
+      operation.current?.abort();
+      operation.current = null;
+      setBusy(false);
+      setOpen(false);
+      setError("");
+      setNotice("");
+    };
+    reset();
+    const unsubscribe = subscribeProjectSessionChange(reset);
+    return () => {
+      unsubscribe();
+      operation.current?.abort();
+      operation.current = null;
+    };
+  }, [reviewKey]);
   if (!network || !claim || !payment.vault || payment.state !== "reserved")
     return null;
   async function authorize(provider: PayoutWallet) {
-    if (!claim || !network) return;
+    if (!claim || !network || operation.current) return;
+    const controller = new AbortController();
+    operation.current = controller;
+    const isCurrent = () =>
+      operation.current === controller && !controller.signal.aborted;
+    const checkActor = async () => {
+      if (!isCurrent()) return false;
+      const session = await currentProjectSession();
+      if (!isCurrent()) return false;
+      if (session === null)
+        throw new ProjectApiError(401, "unauthorized", "Sign in again.");
+      if (session.githubId !== account.githubUserId)
+        throw new ProjectApiError(
+          403,
+          "actor_changed",
+          "Your account changed.",
+        );
+      return true;
+    };
+    const requestConsent = (path: string, body: unknown) =>
+      request(path, body, account.githubUserId, controller.signal);
     setBusy(true);
     setError("");
     setNotice("");
     try {
+      if (!(await checkActor()) || !isCurrent()) return;
       const wallet = await provider.connect();
+      if (!(await checkActor()) || !isCurrent()) return;
       if (!sameWalletAddress(network.family, wallet.address, claim.address))
         throw new Error(
           "Connect your confirmed payout address. To change it, use Account wallets first.",
@@ -95,7 +165,8 @@ export function PayoutConsent({
           network: payment.network,
           vault: payment.vault,
         };
-        const challenge = await request("bind-challenge", consent);
+        const challenge = await requestConsent("bind-challenge", consent);
+        if (!isCurrent()) return;
         const typed = challenge.typedData as ReturnType<
           typeof evmBindingTypedData
         >;
@@ -116,7 +187,9 @@ export function PayoutConsent({
           throw new Error(
             "The payout consent names a different account, address, network or vault. Refresh and review again.",
           );
+        if (!(await checkActor()) || !isCurrent()) return;
         const accounts = await rpc("eth_accounts", []);
+        if (!isCurrent()) return;
         if (
           !Array.isArray(accounts) ||
           typeof accounts[0] !== "string" ||
@@ -132,18 +205,21 @@ export function PayoutConsent({
           throw new Error(
             `Switch your wallet to ${networkLabel(payment.network)}, then review again.`,
           );
+        if (!(await checkActor()) || !isCurrent()) return;
         const signature = await rpc("eth_signTypedData_v4", [
           claim.address,
           JSON.stringify(expected),
         ]);
+        if (!(await checkActor()) || !isCurrent()) return;
         if (typeof signature !== "string")
           throw new Error("Your wallet did not return a signature.");
-        const result = await request("bind-authorize", {
+        const result = await requestConsent("bind-authorize", {
           ...consent,
           expectedVersion: expected.message.expectedVersion,
           expiresAt: expected.message.expiresAt,
           signature,
         });
+        if (!(await checkActor()) || !isCurrent()) return;
         if (result.authorized !== true)
           throw new Error(
             "Payout consent was not stored. Refresh and review again.",
@@ -156,16 +232,15 @@ export function PayoutConsent({
           throw new Error(
             "Choose a wallet that can sign a Solana binding transaction.",
           );
-        const prepared = await request("solana-bind/prepare", {
+        const prepared = await requestConsent("solana-bind/prepare", {
           obligationId: payment.id,
         });
+        if (!isCurrent()) return;
         if (typeof prepared.transaction !== "string")
           throw new Error(
             "The binding is already pending or unavailable. Reload this page before trying again.",
           );
-        const bytes = Uint8Array.from(atob(prepared.transaction), (c) =>
-          c.charCodeAt(0),
-        );
+        const bytes = decodeBase64(prepared.transaction);
         const context = prepared.bindingContext as SolanaBindingContext;
         if (
           !context ||
@@ -179,13 +254,21 @@ export function PayoutConsent({
         verifyPreparedSolanaBinding(bytes, context);
         const chain =
           `solana:${payment.network === "solana-mainnet" ? "mainnet" : payment.network.slice(7)}` as `solana:${string}`;
-        const signed = await wallet.solanaSign(bytes, chain);
+        if (!(await checkActor()) || !isCurrent()) return;
+        // Wallets may modify their input and retain the returned buffer. Keep
+        // both our reviewed message and the result private across later awaits.
+        const signed = Uint8Array.from(
+          await wallet.solanaSign(bytes.slice(), chain),
+        );
+        if (!isCurrent()) return;
         // The attester must receive the exact prepared message and its existing signature.
         verifySignedSolanaBinding(bytes, signed, claim.address);
-        const result = await request("solana-bind/complete", {
+        if (!(await checkActor()) || !isCurrent()) return;
+        const result = await requestConsent("solana-bind/complete", {
           obligationId: payment.id,
-          transaction: btoa(String.fromCharCode(...signed)),
+          transaction: encodeBase64(signed),
         });
+        if (!(await checkActor()) || !isCurrent()) return;
         if (typeof result.transactionId !== "string")
           throw new Error(
             "Binding submission could not be verified. Reload this page before retrying.",
@@ -196,11 +279,22 @@ export function PayoutConsent({
       }
       setOpen(false);
     } catch (e) {
+      if (!isCurrent()) return;
+      if (
+        e instanceof ProjectApiError &&
+        (e.status === 401 || e.code === "actor_changed")
+      ) {
+        onAccessLost(e.status === 401);
+        return;
+      }
       setError(
         errorMessage(e, "Payout consent failed. Your award stays reserved."),
       );
     } finally {
-      setBusy(false);
+      if (isCurrent()) {
+        operation.current = null;
+        setBusy(false);
+      }
     }
   }
   return (

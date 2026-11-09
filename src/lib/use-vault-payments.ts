@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { browserDeployment } from "./browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./browser-json";
 import { isEscrowChain } from "./escrow-policy.mjs";
+import { readCompletePages } from "./paged-history";
 import {
   isBaseUnits,
   type PublicVaultPayment,
@@ -52,63 +53,41 @@ export function useVaultPayments(scope: PublicPaymentScope) {
         !browserDeployment.browserOrigins.has(window.location.origin)
       )
         throw new Error("Project payment records unavailable");
-      const payments: PublicVaultPayment[] = [];
-      const ids = new Set<string>();
-      let after = 0;
-      let through: number | null = null;
-      let total: number | null = null;
-      for (;;) {
-        const query =
-          through === null ? "" : `?after=${after}&through=${through}`;
-        const response = await fetchWithDeadline(
-          `/api/v1/payments/${path}${query}`,
-          { signal, cache: "no-store" },
-        );
-        if (!response.ok)
-          throw new Error("Project payment records unavailable");
-        const value = (await readBoundedJson(
-          response,
-          1_048_576,
-          "project payments",
-        )) as PublicVaultPaymentPage;
-        if (
-          !value ||
-          !Array.isArray(value.payments) ||
-          !value.payments.every(isPayment) ||
-          value.payments.length > 100 ||
-          !Number.isSafeInteger(value.through) ||
-          value.through < 0 ||
-          !Number.isSafeInteger(value.total) ||
-          value.total < 0 ||
-          (through !== null && value.through !== through) ||
-          (total !== null && value.total !== total) ||
-          (value.next !== null &&
-            (value.payments.length === 0 ||
-              !Number.isSafeInteger(value.next) ||
-              value.next <= after ||
-              value.next > value.through))
-        )
-          throw new Error("Project payment history could not be verified");
-        through = value.through;
-        total = value.total;
-        for (const payment of value.payments) {
-          if (ids.has(payment.id))
-            throw new Error("Duplicate project payment record");
-          ids.add(payment.id);
-          payments.push(payment);
-        }
-        if (
-          payments.length > total ||
-          (value.next !== null && payments.length >= total)
-        )
-          throw new Error("Project payment history count does not match");
-        if (value.next === null) {
-          if (payments.length !== total)
-            throw new Error("Incomplete project payment history");
-          return { payments: payments.reverse(), path };
-        }
-        after = value.next;
-      }
+      const payments = await readCompletePages<PublicVaultPayment>({
+        fetchPage: async (query) => {
+          const response = await fetchWithDeadline(
+            `/api/v1/payments/${path}${query}`,
+            { signal, cache: "no-store" },
+          );
+          if (!response.ok)
+            throw new Error("Project payment records unavailable");
+          const value = (await readBoundedJson(
+            response,
+            1_048_576,
+            "project payments",
+          )) as PublicVaultPaymentPage;
+          if (
+            !value ||
+            !Array.isArray(value.payments) ||
+            !value.payments.every(isPayment)
+          )
+            throw new Error("Project payment history could not be verified");
+          return {
+            rows: value.payments,
+            through: value.through,
+            total: value.total,
+            next: value.next,
+          };
+        },
+        key: (payment) => payment.id,
+        errors: {
+          history: "Project payment history could not be verified",
+          duplicate: "Duplicate project payment record",
+          count: "Project payment history count does not match",
+          incomplete: "Incomplete project payment history",
+        },
+      });
+      return { payments: payments.reverse(), path };
     },
     [path],
   );

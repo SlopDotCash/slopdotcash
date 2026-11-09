@@ -1,18 +1,12 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
-import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { resolve } from "node:path";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Real dispatcher/migrations/native D1. The executor binding is a transport
 // fixture; the compiled EVM suite separately proves the root/leaf ordering.
-const folder = await mkdtemp(join(tmpdir(), "slop-monthly-order-"));
 const time = "2027-01-05T00:00:00.000Z";
 const cutoffNow = new Date();
 const cutoffPeriod = new Date(
@@ -22,13 +16,29 @@ const cutoffPeriod = new Date(
   .slice(0, 7);
 const requests = [];
 let failCurrent = false;
-let runtime;
+let worker;
 try {
-  const entry = join(folder, "worker.ts");
-  const output = join(folder, "worker.mjs");
-  await writeFile(
-    entry,
-    `import {runMonthlyCommitments} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
+  worker = await startHandlerWorker({
+    d1: "monthly-order",
+    serviceBindings: {
+      EXECUTOR: async (request) => {
+        const { plan } = await request.json();
+        const { projectId, period, network } = plan.request;
+        const admit = new URL(request.url).searchParams.get("admit");
+        requests.push({ projectId, period, network, admit });
+        if (failCurrent && projectId === "batch-25" && period === "2026-12")
+          return new Response(null, { status: 503 });
+        return Response.json({
+          transactionId: period === "2026-12" ? "fixture-root" : "fixture-leaf",
+          alreadyCommitted: period !== "2026-12",
+          complete: false,
+        });
+      },
+    },
+    outbound() {
+      throw new Error("Unexpected external request");
+    },
+    entrySource: `import {runMonthlyCommitments} from ${JSON.stringify(resolve("workers/payments/index.ts"))};
 import {monthlyOwnerService} from ${JSON.stringify(resolve("backend/payments/monthly.ts"))};
 import {CloudflareProjectPersistence} from ${JSON.stringify(resolve("backend/projects/cloudflare-persistence.ts"))};
 export default {async fetch(request,env){try {
@@ -50,7 +60,7 @@ if(new URL(request.url).pathname==='/cutoff') {
   };
   const service=monthlyOwnerService({db:wrapped,
     getProject:(id)=>new CloudflareProjectPersistence(env.DB).getProject(id),
-    restricted:async()=>false,networks:()=>['base-sepolia'],verifyAuthority:async()=>{},
+    restricted:async()=>false,networks:()=>['base-sepolia'],verifyAuthority:async()=>true,
     schedule:()=>({firstPeriod:period,cutoffSecondsAfterPeriodEnd:(deadline-Date.UTC(year,month,1))/1000}),
     now:()=>new Date()});
   try {
@@ -61,51 +71,8 @@ if(new URL(request.url).pathname==='/cutoff') {
 }
 await runMonthlyCommitments({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',PAYMENT_RPC_URLS:'{}',MONTHLY_PAYMENT_SCHEDULE:JSON.stringify({firstPeriod:'2026-11',cutoffSecondsAfterPeriodEnd:259200}),EVM_PAYMENT_EXECUTOR:env.EXECUTOR},new Date(${JSON.stringify(time)}));
 return new Response(null,{status:204});}catch{return new Response(null,{status:503});}}};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    { encoding: "utf8", env: childEnvironment(), timeout: 30_000 },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "monthly-order" },
-      serviceBindings: {
-        EXECUTOR: async (request) => {
-          const { plan } = await request.json();
-          const { projectId, period, network } = plan.request;
-          const admit = new URL(request.url).searchParams.get("admit");
-          requests.push({ projectId, period, network, admit });
-          if (failCurrent && projectId === "batch-25" && period === "2026-12")
-            return new Response(null, { status: 503 });
-          return Response.json({
-            transactionId:
-              period === "2026-12" ? "fixture-root" : "fixture-leaf",
-            alreadyCommitted: period !== "2026-12",
-            complete: false,
-          });
-        },
-      },
-      outboundService() {
-        throw new Error("Unexpected external request");
-      },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort())
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
+  });
+  const { runtime, db } = worker;
   for (let index = 0; index < 27; index++) {
     const id =
       index === 26 ? "zz-unrelated" : `batch-${String(index).padStart(2, "0")}`;
@@ -339,6 +306,5 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(folder, { recursive: true, force: true });
+  await worker?.dispose();
 }

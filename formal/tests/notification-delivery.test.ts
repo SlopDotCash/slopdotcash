@@ -1,11 +1,13 @@
 /** Real migrated D1 statements and delivery functions; no mail provider is called. */
 import { expect, test } from "bun:test";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   claimDueDeliveries,
   reconcileSecurityMail,
   recordDelivery,
+  recordDeliveryDestination,
+  retryWithoutProviderCall,
 } from "../../workers/notify/security";
 
 function fixture() {
@@ -21,7 +23,7 @@ function fixture() {
   const row = () =>
     sqlite
       .query(
-        "SELECT state,attempts,destination_digest FROM activity_notification_outbox WHERE id=?",
+        "SELECT state,attempts,destination_digest,next_attempt_at FROM activity_notification_outbox WHERE id=?",
       )
       .get(id);
   async function claim() {
@@ -116,6 +118,88 @@ test("delivery model: accepted rejection, later ambiguity, stale evidence and du
           "SELECT COUNT(*) AS n FROM activity_notification_delivery_events WHERE evidence_reference=?",
         )
         .get(finalProof.evidenceReference),
+    ).toEqual({ n: 1 });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("delivery model: retired workers cannot change successor metadata or duplicate a completion receipt", async () => {
+  const h = fixture();
+  try {
+    const first = (await h.claim())[0];
+    expect(
+      await recordDeliveryDestination(
+        h.deps.db,
+        first,
+        "a".repeat(64),
+        "activity",
+      ),
+    ).toBe(true);
+    h.advance(300_001);
+    expect(await h.claim()).toEqual([]);
+    expect(
+      await reconcileSecurityMail(
+        h.deps,
+        {
+          deliveryId: h.id,
+          attempt: 1,
+          destinationDigest: "a".repeat(64),
+          evidenceReference: "retired-attempt-not-accepted",
+          outcome: "not-accepted",
+        },
+        "activity",
+      ),
+    ).toBe(true);
+    h.advance(60_001);
+    const second = (await h.claim())[0];
+    expect(
+      await recordDeliveryDestination(
+        h.deps.db,
+        second,
+        "b".repeat(64),
+        "activity",
+      ),
+    ).toBe(true);
+    expect(
+      await recordDelivery(
+        h.deps,
+        second,
+        "provider-accepted",
+        null,
+        "activity",
+      ),
+    ).toBe(true);
+    // Even a repeated completion in the same millisecond appends no event.
+    expect(
+      await recordDelivery(
+        h.deps,
+        second,
+        "provider-accepted",
+        null,
+        "activity",
+      ),
+    ).toBe(false);
+    const retained = h.row();
+    h.advance(10_000);
+    expect(
+      await recordDeliveryDestination(
+        h.deps.db,
+        first,
+        "a".repeat(64),
+        "activity",
+      ),
+    ).toBe(false);
+    expect(await retryWithoutProviderCall(h.deps, first, "activity")).toBe(
+      "superseded",
+    );
+    expect(h.row()).toEqual(retained);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM activity_notification_delivery_events WHERE state='provider-accepted'",
+        )
+        .get(),
     ).toEqual({ n: 1 });
   } finally {
     h.sqlite.close();

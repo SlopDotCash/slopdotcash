@@ -37,8 +37,7 @@ export const VALUE_SCORING_APPROVED_HISTORY_FROM =
  * use the approved September scope above. Remove this hold in a reviewed
  * source change after that evidence is complete; no runtime flag enables it.
  */
-export const VALUE_SCORING_POLICY_EFFECTIVE_AT =
-  "2026-11-01T00:00:00.000Z" as const;
+const VALUE_SCORING_POLICY_EFFECTIVE_AT = "2026-11-01T00:00:00.000Z" as const;
 export const REVIEW_CREDIT_POOL_RULE = "credited-bands-capped-at-size" as const;
 /** The smallest review pool of a pull request with a credited reviewer. */
 const MIN_REVIEW_CREDIT_POOL_THIRDS = 1 as const;
@@ -107,7 +106,7 @@ function reviewCreditPoolThirds(
  * remainder method. Equal remainders go to the earlier position, so callers
  * pass weights in credited-reviewer order. The shares always sum to the pool.
  */
-export function allocateReviewCredit(
+function allocateReviewCredit(
   poolThirds: number,
   weights: readonly number[],
 ): number[] {

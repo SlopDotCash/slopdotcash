@@ -347,3 +347,130 @@ export function requireProofIntegrity(generated, proof) {
       throw Error(`Unsupported added declaration ${added.name}`);
   }
 }
+
+const specOperators = ["<==>", "==>", "===", "!==", "==", "!=", ">=", "<="];
+const reflexiveOperators = new Set(["<==>", "==>", "===", "==", ">=", "<="]);
+
+function stripOuterParentheses(text) {
+  let value = text;
+  while (value.startsWith("(") && value.endsWith(")")) {
+    let depth = 0;
+    let wraps = true;
+    for (let i = 0; i < value.length; i++) {
+      if (value[i] === "(") depth++;
+      else if (value[i] === ")") depth--;
+      if (depth === 0 && i < value.length - 1) {
+        wraps = false;
+        break;
+      }
+    }
+    if (!wraps) break;
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
+ * Top-level parts split on `separator` (`==>`, `&&` or `||`), each with its
+ * top-level comparison operators and whether it holds a top-level `?:`.
+ * The `==>` inside `<==>` is not a separator.
+ */
+function topLevelParts(text, separator = "&&") {
+  const conjuncts = [];
+  let depth = 0;
+  let start = 0;
+  let current = [];
+  let ternary = false;
+  for (let i = 0; i < text.length; ) {
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < text.length && text[i] !== quote)
+        i += text[i] === "\\" ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    if (c === ")" || c === "]" || c === "}") depth--;
+    if (depth === 0) {
+      if (
+        text.startsWith(separator, i) &&
+        !(separator === "==>" && text[i - 1] === "<")
+      ) {
+        conjuncts.push({
+          text: text.slice(start, i),
+          operators: current,
+          ternary,
+        });
+        current = [];
+        ternary = false;
+        i += separator.length;
+        start = i;
+        continue;
+      }
+      if (c === "?") ternary = true;
+      const operator = specOperators.find((candidate) =>
+        text.startsWith(candidate, i),
+      );
+      if (operator) {
+        current.push({ operator, at: i - start });
+        i += operator.length;
+        continue;
+      }
+    }
+    i++;
+  }
+  conjuncts.push({ text: text.slice(start), operators: current, ternary });
+  return conjuncts;
+}
+
+function tautology(expression) {
+  const text = stripOuterParentheses(expression.replace(/\s+/g, ""));
+  if (text === "true") return true;
+  // Split loosest first: `==>`, then `||`, then `&&`.
+  const implication = topLevelParts(text, "==>");
+  // A conditional expression is not split, so its branches are not misread.
+  if (implication.some((part) => part.ternary)) return false;
+  // `A ==> B` holds for every input when B does or B is A (`==>` is
+  // right-associative).
+  if (implication.length > 1) {
+    const consequent = implication
+      .slice(1)
+      .map((part) => part.text)
+      .join("==>");
+    return (
+      stripOuterParentheses(implication[0].text) ===
+        stripOuterParentheses(consequent) || tautology(consequent)
+    );
+  }
+  // A disjunction holds for every input when any disjunct does.
+  const disjuncts = topLevelParts(text, "||");
+  if (disjuncts.length > 1)
+    return disjuncts.some((part) => tautology(part.text));
+  // A tautological conjunct proves nothing about the code.
+  const parts = topLevelParts(text);
+  if (parts.length > 1) return parts.some((part) => tautology(part.text));
+  const [{ operators }] = parts;
+  if (operators.length !== 1) return false;
+  const [{ operator, at }] = operators;
+  if (!reflexiveOperators.has(operator)) return false;
+  const left = stripOuterParentheses(text.slice(0, at));
+  const right = stripOuterParentheses(text.slice(at + operator.length));
+  return left.length > 0 && left === right;
+}
+
+/**
+ * Rejects a contract clause that holds for every input, such as
+ * `ensures true`, `\\result == \\result`, `x ==> x`, `p || true` or
+ * `p ==> true`, including one such top-level conjunct or disjunct. A
+ * tautological clause proves nothing about the code.
+ */
+export function requireMeaningfulSpecifications(source) {
+  for (const match of source.matchAll(
+    /\/\/@\s+(requires|ensures|invariant)\s+(.*)$/gm,
+  )) {
+    if (tautology(match[2]))
+      throw new Error(`Tautological ${match[1]} clause: ${match[2].trim()}`);
+  }
+}

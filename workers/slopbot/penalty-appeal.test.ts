@@ -157,6 +157,12 @@ type Run = {
   reopen: (senderId?: number, occurredAt?: string) => Promise<Job>;
   head: (sha: string) => void;
   base: (sha: string) => void;
+  commits: (
+    count: number,
+    implementerAt?: number,
+    comparisonCount?: number,
+  ) => void;
+  forcePushOnCommits: (sha: string, implementerAt?: number) => void;
   loseNextLabelDelete: () => void;
   maintainerPermission: (value: boolean | "unavailable") => void;
   writes: string[];
@@ -303,6 +309,21 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   } = {};
   let head = "b".repeat(40);
   let comparisonBase = "c".repeat(40);
+  let commitCount = 1;
+  let implementerCommit = 1;
+  let comparedCommitCount: number | undefined;
+  let forcePushOnCommits: { sha: string; implementerAt: number } | null = null;
+  const commitRows = () =>
+    Array.from({ length: commitCount }, (_, index) => ({
+      sha:
+        index === commitCount - 1
+          ? head
+          : (index + 1).toString(16).padStart(40, "0"),
+      author: {
+        node_id: `U_${index + 1 === implementerCommit ? IMPLEMENTER : OUTSIDER}`,
+      },
+    }));
+  const retainedCommitRanges = new Map<string, ReturnType<typeof commitRows>>();
   let loseLabelDelete = false;
   let maintainerPermission: boolean | "unavailable" = true;
   let pauseReopen: (() => Promise<void>) | null = null;
@@ -593,6 +614,16 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         (duplicate && path.endsWith("/pulls/4"))
       )
         return Response.json({
+          node_id: path.endsWith("/pulls/4")
+            ? "PR_prior"
+            : path.endsWith("/pulls/6")
+              ? "PR_second"
+              : "PR_local",
+          number: path.endsWith("/pulls/4")
+            ? 4
+            : path.endsWith("/pulls/6")
+              ? 6
+              : 5,
           draft: false,
           merged,
           head: {
@@ -609,13 +640,22 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
           additions: 1,
           deletions: 0,
           changed_files: reportedFiles,
+          commits: commitCount,
         });
       if (path.endsWith("/branches/main"))
         return Response.json({ commit: { sha: comparisonBase } });
-      if (path.includes("/compare/"))
+      if (path.includes("/compare/")) {
+        const comparedHead = path.split("...").at(-1) ?? "";
+        const comparedCommits =
+          retainedCommitRanges.get(comparedHead) ?? commitRows();
         return Response.json({
           base_commit: { sha: comparisonBase },
           merge_base_commit: { sha: comparisonBase },
+          total_commits: comparedCommitCount ?? commitCount,
+          commits: comparedCommits.slice(
+            (Number(url.searchParams.get("page") ?? 1) - 1) * 100,
+            Number(url.searchParams.get("page") ?? 1) * 100,
+          ),
           files:
             !emptyComparison &&
             (url.searchParams.get("page") === "1" ||
@@ -629,6 +669,7 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
                 ]
               : [],
         });
+      }
       const user = path.match(/^\/user\/(\d+)$/u);
       if (user && login(Number(user[1])))
         return Response.json({
@@ -640,8 +681,21 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
         return Response.json([
           { node_id: "PRR_reviewer", user: { node_id: `U_${REVIEWER}` } },
         ]);
-      if (path.endsWith("/pulls/5/commits"))
-        return Response.json([{ author: { node_id: `U_${IMPLEMENTER}` } }]);
+      if (path.endsWith("/pulls/5/commits")) {
+        if (forcePushOnCommits) {
+          retainedCommitRanges.set(head, commitRows());
+          head = forcePushOnCommits.sha;
+          implementerCommit = forcePushOnCommits.implementerAt;
+          forcePushOnCommits = null;
+        }
+        const page = Number(url.searchParams.get("page") ?? 1);
+        // GitHub's PR endpoint stops at 250 even when metadata reports more.
+        return Response.json(
+          commitRows()
+            .slice(0, 250)
+            .slice((page - 1) * 100, page * 100),
+        );
+      }
       if (path.endsWith("/permission"))
         return maintainerPermission === "unavailable"
           ? new Response(null, { status: 503 })
@@ -1031,6 +1085,14 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
       base: (sha) => {
         comparisonBase = sha;
       },
+      commits: (count, implementerAt = 1, comparisonCount) => {
+        commitCount = count;
+        implementerCommit = implementerAt;
+        comparedCommitCount = comparisonCount;
+      },
+      forcePushOnCommits: (sha, implementerAt = 1) => {
+        forcePushOnCommits = { sha, implementerAt };
+      },
       loseNextLabelDelete: () => {
         loseLabelDelete = true;
       },
@@ -1375,6 +1437,95 @@ for (const actor of [AUTHOR, MAINTAINER, REVIEWER, IMPLEMENTER, OUTSIDER]) {
     });
   });
 }
+
+for (const count of [1, 251]) {
+  test(`an implementation author on commit ${count} can dispute a retained single assessment`, async () => {
+    await closedItem(async (run) => {
+      const digest = run.seedValue();
+      const history = run.sql("SELECT * FROM slopbot_value_journal");
+      // Only the final commit names this actor. For 251 commits, that author
+      // exists only in the complete comparison, beyond the PR listing cap.
+      run.commits(count, count);
+      expect(
+        await run.deliver(
+          run.job("appeal", { senderId: IMPLEMENTER, subject: "value" }),
+        ),
+      ).toBe("value dispute drafted (uphold)");
+      expect(run.sql("SELECT appeal_key FROM slopbot_appeals")).toEqual([
+        {
+          appeal_key: `value-appeal:single:${digest}:${IMPLEMENTER}:${run.repositoryId}:5`,
+        },
+      ]);
+      expect(run.sql("SELECT * FROM slopbot_value_journal")).toEqual(history);
+      expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+      expect(run.writes.some((write) => write.startsWith("PATCH "))).toBe(
+        false,
+      );
+    });
+  });
+}
+
+test("an incomplete long-PR author comparison retries before opening a value dispute", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    run.commits(251, 251, 250);
+    const request = run.job("appeal", {
+      senderId: IMPLEMENTER,
+      subject: "value",
+    });
+    await expect(run.deliver(request)).rejects.toThrow(
+      "appeal job was retried",
+    );
+    expect(run.modelInputs).toHaveLength(0);
+    expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
+    expect(
+      run.sql("SELECT * FROM slopbot_actions WHERE action = 'appeal'"),
+    ).toEqual([]);
+    run.commits(251, 251);
+    expect(await run.deliver(request)).toBe("value dispute drafted (uphold)");
+    expect(run.modelInputs).toHaveLength(1);
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+  });
+});
+
+test("a same-count force push cannot authorize a dispute of the previous head", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    run.commits(1, 0);
+    // Metadata still reports the retained head. The next mutable commit-list
+    // read sees a new head and author, while the pinned comparison retains the
+    // original commit. A matching count alone must not authorize that actor.
+    run.forcePushOnCommits("e".repeat(40), 1);
+    await expect(
+      run.deliver(
+        run.job("appeal", { senderId: IMPLEMENTER, subject: "value" }),
+      ),
+    ).rejects.toThrow("appeal job was retried");
+    expect(run.modelInputs).toHaveLength(0);
+    expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
+    expect(
+      run.sql("SELECT * FROM slopbot_actions WHERE action = 'appeal'"),
+    ).toEqual([]);
+    expect(run.sql("SELECT * FROM slopbot_penalties")).toEqual([]);
+  });
+});
+
+test("a long-PR implementation author cannot use commits from a changed head", async () => {
+  await closedItem(async (run) => {
+    run.seedValue();
+    run.head("a".repeat(40));
+    run.commits(251, 251);
+    expect(
+      await run.deliver(
+        run.job("appeal", { senderId: IMPLEMENTER, subject: "value" }),
+      ),
+    ).toBe(
+      "only an affected contributor, reviewer or maintainer can dispute this assessment",
+    );
+    expect(run.modelInputs).toHaveLength(0);
+    expect(run.sql("SELECT * FROM slopbot_appeals")).toEqual([]);
+  });
+});
 
 test("a value dispute retry retains the original assessment after a correction", async () => {
   await closedItem(async (run) => {
@@ -4070,6 +4221,47 @@ test("a lost close response reconciles GitHub evidence without another PATCH or 
     ).toEqual([{ n: 1 }]);
     expect(run.sql(PENALTY)).toHaveLength(1);
     expect(run.comments.at(-1)).toContain("Slopbot closed this item");
+  });
+}, 30000);
+
+test("a lost close response reconciles under its recorded key after the policy digest changes", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextClose({ loseResponse: true });
+    const first = run.review().catch((error: unknown) => error);
+    await paused.entered;
+    paused.release();
+    expect(await first).toBeInstanceOf(Error);
+    const [recorded] = run.sql(
+      "SELECT review_key FROM slopbot_close_attempts",
+    ) as { review_key: string }[];
+    expect(recorded?.review_key).toBeString();
+    // A repository policy change after the close yields a new review key.
+    run.repositoryConfig(
+      JSON.stringify({
+        version: 1,
+        audience: "protection",
+        closure: true,
+        dailyCloseCap: 7,
+      }),
+    );
+    const calls = run.modelInputs.length;
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.modelInputs).toHaveLength(calls);
+    expect(
+      run.writes.filter(
+        (write) => write === "PATCH /repos/SlopDotCash/asi/pulls/5",
+      ),
+    ).toHaveLength(1);
+    expect(
+      run.sql("SELECT review_key, state FROM slopbot_close_attempts"),
+    ).toEqual([{ review_key: recorded?.review_key, state: "confirmed" }]);
+    expect(
+      run.sql(
+        `SELECT status FROM slopbot_reviews WHERE review_key = '${recorded?.review_key}'`,
+      ),
+    ).toEqual([{ status: "completed" }]);
+    expect(run.sql(PENALTY)).toHaveLength(1);
   });
 }, 30000);
 

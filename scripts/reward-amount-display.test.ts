@@ -12,9 +12,7 @@ const usdc = { kind: "stablecoin" as const, decimals: 6, symbol: "USDC" };
 
 describe("formatRewardMinor", () => {
   test("shows a native amount in that coin", () => {
-    const shown = formatRewardMinor(oneEth, eth);
-    expect(shown).toBe("1 ETH");
-    expect(shown).not.toBe(formatMicroUsdc(oneEth));
+    expect(formatRewardMinor(oneEth, eth)).toBe("1 ETH");
   });
 
   test("shows a token amount in that token, including a fractional unit", () => {

@@ -7,7 +7,12 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 test.beforeEach(async ({ diagnostics }) => {
   diagnostics.allowPreviewApiMisses();
@@ -163,13 +168,20 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
         },
       }),
   );
-  await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
-  );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
   );
   let status = 401;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session:
+          status === 401
+            ? null
+            : { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
+  );
   let empty = false;
   let sequence = 0;
   let frozen = false;
@@ -186,6 +198,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     period: "2026-09",
     manifestSha256: "a".repeat(64),
     automatic,
+    canManage: true,
     cutoffAt,
     deployment: null,
     asset: {
@@ -510,7 +523,11 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
       }),
   );
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: {
+        session: { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
   );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
@@ -529,6 +546,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
           period: "2026-09",
           manifestSha256: "a".repeat(64),
           automatic: false,
+          canManage: true,
           cutoffAt: null,
           deployment,
           asset: null,
@@ -673,6 +691,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
 async function serveDecemberReview(
   page: Page,
   cycleIndex: CycleIndex,
+  canManage = true,
 ): Promise<void> {
   const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
@@ -689,7 +708,11 @@ async function serveDecemberReview(
       }),
   );
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: {
+        session: { githubId: "123", githubLogin: "owner", admin: false },
+      },
+    }),
   );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),
@@ -702,8 +725,16 @@ async function serveDecemberReview(
     period,
     manifestSha256: "a".repeat(64),
     automatic: true,
+    canManage,
     cutoffAt: "2026-12-04T00:00:00.000Z",
-    deployment: null,
+    // A served deployment would show the reserve repair to an owner.
+    deployment: canManage
+      ? null
+      : {
+          network: "base-sepolia",
+          vault: `0x${"1".repeat(40)}`,
+          owner: `0x${"2".repeat(40)}`,
+        },
     asset: {
       network: "base-sepolia",
       assetAddress: `0x${"1".repeat(40)}`,
@@ -747,6 +778,176 @@ async function serveDecemberReview(
   }
 }
 
+async function ownedNovember(page: Page) {
+  await serveDecemberReview(page, {
+    schemaVersion: "1",
+    generatedAt: "2026-12-02T00:00:00.000Z",
+    cycles: [],
+  });
+  let actor = "123";
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: actor, githubLogin: "owner", admin: false },
+      },
+    }),
+  );
+  const response = page.waitForResponse(
+    (value) =>
+      new URL(value.url()).pathname ===
+      "/api/v1/payments/projects/eliza/monthly/2026-11",
+  );
+  await openMonthlyAwards(page);
+  const value = await (await response).json();
+  await expect(page.getByLabel("Award for first-contributor")).toBeVisible();
+  return {
+    value,
+    changeActor: (next: string) => {
+      actor = next;
+    },
+  };
+}
+
+for (const status of [200, 403]) {
+  test(`an owner allocation ${status} response cannot retain the prior actor's private view`, async ({
+    page,
+    diagnostics,
+  }) => {
+    const fixture = await ownedNovember(page);
+    let release = () => {},
+      started = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const path = "/api/v1/payments/projects/eliza/monthly/2026-11/allocations";
+    if (status === 403) diagnostics.allowResponse(403, "POST", path);
+    await page.route(`**${path}`, async (route) => {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        "123",
+      );
+      started();
+      await held;
+      await route.fulfill({
+        status,
+        json:
+          status === 200
+            ? fixture.value
+            : {
+                message:
+                  "Current GitHub maintainer authority could not be verified.",
+              },
+      });
+    });
+    await page.getByLabel("Award for first-contributor").fill("1.8");
+    await page
+      .getByRole("button", { name: "Save first-contributor", exact: true })
+      .click();
+    await waiting;
+    try {
+      fixture.changeActor("456");
+    } finally {
+      release();
+    }
+    const awards = page.getByRole("region", { name: "Monthly awards" });
+    await expect(
+      awards.getByRole("list", { name: "Allocations", exact: true }),
+    ).toHaveCount(0);
+    await expect(awards.getByLabel("Award for first-contributor")).toHaveCount(
+      0,
+    );
+    await expect(awards.getByRole("alert")).toContainText("account changed");
+    await expect(awards).not.toContainText("Allocation saved privately.");
+  });
+}
+
+test("a same-actor allocation outage retains the unsaved draft", async ({
+  page,
+  diagnostics,
+}) => {
+  await ownedNovember(page);
+  const path = "/api/v1/payments/projects/eliza/monthly/2026-11/allocations";
+  diagnostics.allowResponse(503, "POST", path);
+  await page.route(`**${path}`, (route) =>
+    route.fulfill({
+      status: 503,
+      json: { message: "Allocation service unavailable." },
+    }),
+  );
+  const input = page.getByLabel("Award for first-contributor");
+  await input.fill("1.8");
+  await page
+    .getByRole("button", { name: "Save first-contributor", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Allocation service unavailable.",
+  );
+  await expect(input).toHaveValue("1.8");
+  await expect(input).toBeEnabled();
+});
+
+test("a departed allocation save keeps server acceptance without changing the new route", async ({
+  page,
+  diagnostics,
+}) => {
+  const fixture = await ownedNovember(page);
+  // The destination's background snapshot can be replaced during navigation.
+  diagnostics.allow(
+    new RegExp(
+      `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(new URL(page.url()).origin)}/data/leaderboard\\.json(?:\\?[^ ]*)?$`,
+      "u",
+    ),
+  );
+  let accepted = 0;
+  let release = () => {},
+    started = () => {},
+    delivered = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const finished = new Promise<void>((resolve) => {
+    delivered = resolve;
+  });
+  await page.route(
+    "**/api/v1/payments/projects/eliza/monthly/2026-11/allocations",
+    async (route) => {
+      accepted += 1;
+      started();
+      await held;
+      await route.fulfill({ json: fixture.value });
+      delivered();
+    },
+  );
+  await page.getByLabel("Award for first-contributor").fill("1.8");
+  await page
+    .getByRole("button", { name: "Save first-contributor", exact: true })
+    .click();
+  await waiting;
+  try {
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(page).toHaveURL(/\/$/u);
+  } finally {
+    release();
+  }
+  await finished;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  expect(accepted).toBe(1);
+  await expect(page).toHaveURL(/\/$/u);
+  await expect(
+    page.getByText("Allocation saved privately.", { exact: true }),
+  ).toHaveCount(0);
+});
+
 test("a monthly proposal with no public cycle is reachable", async ({
   page,
 }) => {
@@ -772,6 +973,31 @@ test("a monthly proposal with no public cycle is reachable", async ({
   await expect(
     page.getByRole("button", { name: "Next award month" }),
   ).toBeDisabled();
+});
+
+test("a maintainer without owner authority sees monthly awards without owner controls", async ({
+  page,
+}) => {
+  // Write and maintain collaborators may read awards, but the API refuses
+  // every owner action, so the page must not offer those controls.
+  await serveDecemberReview(
+    page,
+    { schemaVersion: "1", generatedAt: "2026-12-02T00:00:00.000Z", cycles: [] },
+    false,
+  );
+  await openMonthlyAwards(page);
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards.getByText("View only")).toBeVisible();
+  await expect(awards).toContainText("Finalizes");
+  await expect(awards).not.toContainText("You can finalize earlier.");
+  await expect(awards).not.toContainText(
+    /finalize (this|each) month manually/i,
+  );
+  await expect(awards.getByRole("textbox")).toHaveCount(0);
+  for (const name of [/automatic finalization/, /^Save /, /^Finalize awards/])
+    await expect(awards.getByRole("button", { name })).toHaveCount(0);
+  await expect(page.getByText("Repair a stuck monthly reserve")).toHaveCount(0);
 });
 
 test("a stale public cycle does not lock the review month or discard its draft", async ({
@@ -853,3 +1079,51 @@ test("a stale public cycle does not lock the review month or discard its draft",
     fullPage: true,
   });
 });
+
+for (const operation of ["read", "save"] as const) {
+  test(`committed owner-awards departure refuses a resolved ${operation} preflight`, async ({
+    page,
+  }) => {
+    const fixture = await ownedNovember(page);
+    await page.waitForLoadState("networkidle");
+    let reads = 0;
+    let writes = 0;
+    await page.route(
+      "**/api/v1/payments/projects/eliza/monthly/2026-11",
+      (route) => {
+        reads++;
+        return route.fallback();
+      },
+    );
+    await page.route(
+      "**/api/v1/payments/projects/eliza/monthly/2026-11/allocations",
+      (route) => {
+        writes++;
+        return route.fulfill({ json: fixture.value });
+      },
+    );
+    if (operation === "save")
+      await page.getByLabel("Award for first-contributor").fill("1.8");
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    await holdProjectSessionUntilUnmount(page, ".owner-awards");
+    try {
+      await page
+        .getByRole("button", {
+          name:
+            operation === "read" ? "Refresh awards" : "Save first-contributor",
+          exact: true,
+        })
+        .click();
+      await leaveEditorWithHeldSession(page);
+      expect(reads).toBe(0);
+      expect(writes).toBe(0);
+      await expect(page.locator(".owner-awards")).toHaveCount(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+    }
+  });
+}

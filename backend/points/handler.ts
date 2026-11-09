@@ -1,8 +1,5 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import {
-  type DeploymentTier,
-  deploymentOrigins,
-} from "../../src/lib/deployment";
+import { deploymentOrigins } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import { randomToken } from "../../workers/identity/crypto";
@@ -16,27 +13,10 @@ import {
   readJsonObject,
 } from "../http";
 import { consumeIdentityAssertion } from "../identity-assertion";
-import {
-  handlePointsDisputes,
-  type PointsDisputeDependencies,
-} from "./disputes";
-import { handleX, type XConfiguration } from "./x";
+import type { PointsDependencies } from "./dependencies";
+import { handlePointsDisputes } from "./disputes";
+import { handleX } from "./x";
 
-export interface PointsDependencies {
-  tier?: DeploymentTier;
-  db: D1Database;
-  rateLimitSecret: string;
-  identity: { fetch(request: Request): Promise<Response> };
-  now?: () => Date;
-  /** Trusted deployment origins; never request-supplied. */
-  allowedOrigins?: readonly string[];
-  x?: XConfiguration;
-  xFetch?: (input: string, init: RequestInit) => Promise<Response>;
-  disputes?: Pick<
-    PointsDisputeDependencies,
-    "moderators" | "process" | "waitUntil"
-  >;
-}
 const SESSION_COOKIE = "__Host-slop_points";
 function json(status: number, body: unknown, cookie?: string) {
   return jsonResponse(status, body, {

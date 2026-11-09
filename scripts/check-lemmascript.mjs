@@ -12,6 +12,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  requireMeaningfulSpecifications,
   requireProofIntegrity,
   requireProofObligations,
 } from "./lemmascript-integrity.mjs";
@@ -235,6 +236,7 @@ try {
         `Unsupported trusted/omitted source directive in ${file}`,
       );
     }
+    requireMeaningfulSpecifications(source);
     const generated = readFileSync(join(root, `${artifact}.gen`), "utf8");
     const proof = readFileSync(join(root, artifact), "utf8");
     requireProofIntegrity(generated, proof);
@@ -246,7 +248,9 @@ try {
         "check",
         "--backend=dafny",
         "--time-limit=30",
-        "--extra-flags=--isolate-assertions",
+        // Modules run one at a time; Dafny otherwise uses half the cores.
+        // Core count changes scheduling only, never the proof result.
+        "--extra-flags=--isolate-assertions --cores=100%",
         file,
       ],
       label,

@@ -31,10 +31,12 @@ import {
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import {
+  apiErrorResponse,
   cookieValue,
   isSameOriginJsonWrite,
   json,
   readJsonObject,
+  requireActor,
 } from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
@@ -53,7 +55,10 @@ import {
   verifyPaymentWalletSignature,
 } from "./possession";
 import { publicReceivedTotals, publicVaultPayments } from "./public-records";
-import { handleSolanaFunding } from "./solana-funding";
+import {
+  FundingVaultNotFoundError,
+  handleSolanaFunding,
+} from "./solana-funding";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -85,7 +90,7 @@ function isMonthlyCommitmentInput(
   );
 }
 
-export interface PaymentsDependencies {
+interface PaymentsDependencies {
   tier?: DeploymentTier;
   /** The owner's private monthly allocations; absent where they are not served. */
   monthly?: MonthlyOwnerService;
@@ -160,6 +165,31 @@ async function directTransfers(
     .bind(value)
     .first<{ items: string }>();
   return JSON.parse(row?.items ?? "[]") as DirectTransfer[];
+}
+/**
+ * The public history cursor: only `after` and `through`, and `after` only with
+ * `through`. A non-canonical number becomes NaN, which the reader rejects with
+ * a RangeError. Returns null for a refused query.
+ */
+function pageCursor(
+  request: Request,
+): { after: number; through: number | null } | null {
+  const query = new URL(request.url).searchParams;
+  const cursor = (key: string) => {
+    const raw = query.get(key);
+    return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
+      ? Number(raw)
+      : Number.NaN;
+  };
+  if (
+    [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
+    (query.has("after") && !query.has("through"))
+  )
+    return null;
+  return {
+    after: query.has("after") ? cursor("after") : 0,
+    through: query.has("through") ? cursor("through") : null,
+  };
 }
 export async function handlePaymentsApi(
   request: Request,
@@ -432,20 +462,8 @@ export async function handlePaymentsApi(
       );
     if (directRoute && request.method === "GET") {
       if (request.headers.get("x-slop-direct-history") === "paged") {
-        const query = new URL(request.url).searchParams;
-        const cursor = (key: string) => {
-          const raw = query.get(key);
-          return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-            ? Number(raw)
-            : Number.NaN;
-        };
-        if (
-          [...query.keys()].some(
-            (key) => !["after", "through"].includes(key),
-          ) ||
-          (query.has("after") && !query.has("through"))
-        )
-          return json(400, { error: "invalid_payment_cursor" });
+        const page = pageCursor(request);
+        if (!page) return json(400, { error: "invalid_payment_cursor" });
         try {
           return json(
             200,
@@ -453,8 +471,8 @@ export async function handlePaymentsApi(
               deps.db,
               directRoute[2] ? "github_user_id" : "project_id",
               directRoute[2] ?? directRoute[1],
-              query.has("after") ? cursor("after") : 0,
-              query.has("through") ? cursor("through") : null,
+              page.after,
+              page.through,
             ),
           );
         } catch (error) {
@@ -486,18 +504,8 @@ export async function handlePaymentsApi(
       // A private or closed membership is excluded by the projection itself,
       // so its actor read is an ordinary empty page. A distinct refusal would
       // reveal that the GitHub ID has a private Slop membership.
-      const query = new URL(request.url).searchParams;
-      const cursor = (key: string) => {
-        const raw = query.get(key);
-        return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-          ? Number(raw)
-          : Number.NaN;
-      };
-      if (
-        [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
-        (query.has("after") && !query.has("through"))
-      )
-        return json(400, { error: "invalid_payment_cursor" });
+      const page = pageCursor(request);
+      if (!page) return json(400, { error: "invalid_payment_cursor" });
       try {
         return json(
           200,
@@ -508,8 +516,8 @@ export async function handlePaymentsApi(
               : kind === "actors"
                 ? { githubUserId: value }
                 : null,
-            query.has("after") ? cursor("after") : 0,
-            query.has("through") ? cursor("through") : null,
+            page.after,
+            page.through,
             // Production excludes testnet networks, mirroring the /totals,
             // /vault, and /received deployment-tier rules. Staging keeps them
             // because it pays in testnet stablecoins.
@@ -531,6 +539,13 @@ export async function handlePaymentsApi(
           ? "session_expired"
           : "not_signed_in",
       });
+    // Bind optional UI account snapshots before any authenticated read or
+    // mutation. The header narrows this session; it never selects an actor.
+    try {
+      await requireActor(request, { sessionActor: async () => member });
+    } catch (caught) {
+      return apiErrorResponse(caught, { label: "payments account refusal" });
+    }
     const solanaCommitmentRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/solana-commitment$/.exec(
         path,
@@ -877,9 +892,13 @@ export async function handlePaymentsApi(
             body.claimId,
             member.githubId,
           ),
+        // A hold the dispatcher parked under an uncertain attempt on another
+        // claim stays held until recovery reconciles that attempt (the same
+        // guard as workers/security-payments). Releasing it here only lets the
+        // next dispatch park it again and repeat the held notices.
         deps.db
           .prepare(
-            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
+            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' AND NOT EXISTS(SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id=o.id AND attempt.state IN ('prepared','unknown','submitted') AND attempt.claim_id<>w.id) ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
           )
           .bind(now, body.claimId, member.githubId),
       ]);
@@ -1267,7 +1286,12 @@ export async function handlePaymentsApi(
       return json(200, account);
     }
     return json(404, { error: "not_found" });
-  } catch {
+  } catch (error) {
+    if (error instanceof FundingVaultNotFoundError)
+      return json(404, {
+        error: "funding_vault_not_found",
+        message: "This project has no such vault on a served network.",
+      });
     console.error("payments API failure");
     return json(503, { error: "payments_unavailable" });
   }

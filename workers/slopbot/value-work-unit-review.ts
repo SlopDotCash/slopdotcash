@@ -12,10 +12,8 @@ import {
 } from "./value-inference";
 import { valueModelSource } from "./value-model-source";
 import type { SubscriptionResult } from "./value-producer";
-import {
-  validateWorkUnitPartition,
-  type WorkUnitEvidence,
-} from "./value-work-unit";
+import { validateWorkUnitPartition } from "./value-work-unit";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 export interface WorkUnitAssessment {
   units: { claimIds: string[]; assessment: ValueAssessment }[];

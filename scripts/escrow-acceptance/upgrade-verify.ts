@@ -10,11 +10,8 @@ import {
   requireEnv,
   sourceCommit,
 } from "./shared";
-import {
-  type Qualification,
-  UPGRADE_SCHEMA,
-  verifyUpgrade,
-} from "./upgrade-verification";
+import { type Qualification, UPGRADE_SCHEMA } from "./upgrade-qualification";
+import { verifyUpgrade } from "./upgrade-verification";
 
 const [network, input, expectedSource, expectedDigest, output, ...extra] =
   process.argv.slice(2);

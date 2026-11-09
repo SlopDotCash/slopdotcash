@@ -8,6 +8,8 @@ import type { R2Bucket } from "../trace/cloudflare-persistence";
 
 /** Every upload, read and backup request handles at most one part this size. */
 export const EVIDENCE_CHUNK_BYTES = 8 * 1024 * 1024;
+export const EVIDENCE_RETIREMENT_METADATA_KEY = "evidenceRetirement";
+export const EVIDENCE_RETIREMENT_METADATA_VALUE = "v1";
 /**
  * Where an evidence row's bytes live in R2: its content-addressed key for
  * `storage = 'content'`, otherwise its historical run-scoped `object_key`.
@@ -39,6 +41,19 @@ export type EvidenceChunk = {
   sha256: string;
   sizeBytes: number;
 };
+
+/** Only our verified read may bind corruption to the observed R2 ETag. */
+export class EvidenceCorruptionError extends Error {
+  readonly status = 409;
+  readonly code = "evidence_corrupt";
+  readonly observedEtag: string | undefined;
+
+  constructor(message: string, etag: unknown) {
+    super(message);
+    this.observedEtag =
+      typeof etag === "string" && etag.length > 0 ? etag : undefined;
+  }
+}
 
 export function chunkLayout(value: unknown, size: number): EvidenceChunk[] {
   // No total size limit (owner decision, 28 October 2026); only each part is
@@ -83,6 +98,7 @@ export async function verifiedPart(
   key: string,
   digest: string,
   size: number,
+  allowRetirementMarker = false,
 ): Promise<Uint8Array> {
   if (size > EVIDENCE_CHUNK_BYTES || size < 0)
     throw new Error("Evidence part exceeds bounded read size");
@@ -92,37 +108,106 @@ export async function verifiedPart(
       status: 404,
       code: "evidence_missing",
     });
-  if (object.size !== size || object.customMetadata?.sha256 !== digest)
-    throw Object.assign(new Error("Evidence metadata changed"), {
-      status: 409,
-      code: "evidence_corrupt",
-    });
-  const result = new Uint8Array(size);
   const reader = object.body.getReader();
-  let offset = 0;
   try {
+    if (
+      !allowRetirementMarker &&
+      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
+        EVIDENCE_RETIREMENT_METADATA_VALUE
+    )
+      throw Object.assign(new Error("Evidence target has retired"), {
+        status: 410,
+        code: "evidence_retired",
+      });
+    if (object.size !== size || object.customMetadata?.sha256 !== digest)
+      throw new EvidenceCorruptionError(
+        "Evidence metadata changed",
+        object.etag,
+      );
+    const result = new Uint8Array(size);
+    let offset = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (offset + value.byteLength > size) {
-        await reader.cancel();
-        throw Object.assign(new Error("Evidence length changed"), {
-          status: 409,
-          code: "evidence_corrupt",
-        });
-      }
+      if (offset + value.byteLength > size)
+        throw new EvidenceCorruptionError(
+          "Evidence length changed",
+          object.etag,
+        );
       result.set(value, offset);
       offset += value.byteLength;
     }
+    if (offset !== size || bytesToHex(sha256(result)) !== digest)
+      throw new EvidenceCorruptionError("Evidence bytes changed", object.etag);
+    return result;
+  } catch (error) {
+    // Rejecting metadata or a body must relinquish the acquired R2 stream.
+    // Cleanup failure cannot replace the read/integrity error that caused it.
+    try {
+      await reader.cancel();
+    } catch {
+      // error-policy:J3 preserve the primary evidence refusal.
+    }
+    throw error;
   } finally {
     reader.releaseLock();
   }
-  if (offset !== size || bytesToHex(sha256(result)) !== digest)
-    throw Object.assign(new Error("Evidence bytes changed"), {
-      status: 409,
-      code: "evidence_corrupt",
+}
+
+/**
+ * Back up the actual bounded R2 body even if its declared evidence digest is
+ * wrong. The returned digest describes observed bytes, never scan clearance.
+ */
+export async function observedPart(bucket: R2Bucket, key: string) {
+  const object = await bucket.get(key);
+  if (!object)
+    throw Object.assign(new Error("Evidence backup source is missing"), {
+      status: 404,
+      code: "evidence_missing",
     });
-  return result;
+  const reader = object.body.getReader();
+  try {
+    if (
+      object.customMetadata?.[EVIDENCE_RETIREMENT_METADATA_KEY] ===
+      EVIDENCE_RETIREMENT_METADATA_VALUE
+    )
+      throw Object.assign(new Error("Evidence target has retired"), {
+        status: 410,
+        code: "evidence_retired",
+      });
+    if (
+      !Number.isSafeInteger(object.size) ||
+      object.size < 0 ||
+      object.size > EVIDENCE_CHUNK_BYTES
+    )
+      throw new Error("Evidence backup source exceeds bounded part size");
+    const bytes = new Uint8Array(object.size);
+    let offset = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.byteLength > bytes.byteLength)
+        throw new Error("Evidence backup source length changed");
+      bytes.set(value, offset);
+      offset += value.byteLength;
+    }
+    if (offset !== bytes.byteLength)
+      throw new Error("Evidence backup source length changed");
+    return {
+      bytes,
+      sha256: bytesToHex(sha256(bytes)),
+      sizeBytes: bytes.byteLength,
+    };
+  } catch (error) {
+    try {
+      await reader.cancel();
+    } catch {
+      /* error-policy:J3 preserve the original backup refusal. */
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** Whole-file integrity is the SHA of ordered original bytes, never part hashes. */
@@ -132,17 +217,20 @@ export async function verifyParts(
   chunks: EvidenceChunk[],
   digest: string,
 ) {
+  return verifyPartSequence(chunks, digest, (chunk) =>
+    verifiedPart(bucket, chunkKey(key, chunk), chunk.sha256, chunk.sizeBytes),
+  );
+}
+
+/** Resolve each current part independently, while retaining ordered whole hashing. */
+export async function verifyPartSequence(
+  chunks: EvidenceChunk[],
+  digest: string,
+  read: (chunk: EvidenceChunk) => Promise<Uint8Array>,
+) {
   const hash = sha256.create();
   try {
-    for (const chunk of chunks)
-      hash.update(
-        await verifiedPart(
-          bucket,
-          chunkKey(key, chunk),
-          chunk.sha256,
-          chunk.sizeBytes,
-        ),
-      );
+    for (const chunk of chunks) hash.update(await read(chunk));
     if (bytesToHex(hash.digest()) !== digest)
       throw Object.assign(new Error("Complete evidence digest changed"), {
         status: 409,

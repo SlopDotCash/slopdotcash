@@ -3,7 +3,7 @@
  */
 
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { FileChange, ValueEvidence } from "./value-evidence";
+import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,
@@ -12,7 +12,7 @@ import {
   valuePatch,
 } from "./value-patch";
 import { hasRetainedMergeReference } from "./value-retained-reference";
-import type { WorkUnitSource } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
 import {
   type CandidateHunkFile,
   type HunkCandidate,
@@ -118,7 +118,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
-export async function retainedCopySources(
+async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
 ): Promise<WorkUnitSource[]> {
@@ -170,7 +170,7 @@ export async function retainedCopySources(
  * hunk offsets may change when other accepted fixes precede a copied commit.
  * This identifies exact retained edits for review, not their semantic value.
  */
-export function retainedEditIdentity(file: FileChange): string | null {
+function retainedEditIdentity(file: FileChange): string | null {
   if (
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||

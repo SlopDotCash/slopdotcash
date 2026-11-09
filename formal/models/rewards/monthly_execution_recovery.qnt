@@ -4,6 +4,7 @@
 // @source workers/payment-executor/monthly.ts
 // @source workers/payment-executor/core.ts
 // @source workers/payment-executor/solana-monthly.ts
+// @source workers/payment-executor/solana.ts
 // New execution attempts cannot alter the frozen allocation. Any retained attempt may win admission.
 module monthly_execution_recovery {
   type S={frozenRoot:int,sequence:int,attempts:Set[int],admitted:int,leafDone:bool,enabled:bool}

@@ -69,48 +69,29 @@ import {
 import { REVIEW_VALUE_THIRDS, VALUE_TIERS } from "./value-assessment";
 
 export type {
-  AttributionAssessment,
-  AttributionAssessmentOptions,
-  AttributionCoverage,
-  CapUsageBucket,
   CapUsageStatus,
-  EvidenceAssessment,
   EvidenceCategory,
-  EvidenceFinding,
   GitHubActor,
   GitHubActorKind,
   GitHubLabel,
   GitHubTextSource,
-  HeldWorkUnit,
-  InvalidAttributionMarker,
   IssueRecord,
   LeaderboardEntry,
   LeaderboardInput,
-  LeaderboardMethodology,
   LeaderboardSnapshot,
   LeaderboardSourceMetadata,
   MergedPullRequestOutcome,
   MergedPullRequestReviewRecord,
   ModelAttribution,
-  PenaltyFeedRecord,
-  PublishedPenalty,
   PullRequestFile,
   PullRequestRecord,
   PullRequestReview,
-  ReviewExclusion,
-  ReviewExclusionReason,
   ScoreCategory,
   ScoreEvent,
   ScoreOpportunity,
-  ScoreOpportunityKind,
   UnavailableSource,
   VerifiedEvidenceArtifact,
   WorkItem,
-  WorkItemCandidateExclusion,
-  WorkItemClaimStatus,
-  WorkItemEvidenceStatus,
-  WorkItemModelStatus,
-  WorkItemSelection,
 } from "./leaderboard-types";
 
 /**
@@ -119,6 +100,12 @@ export type {
  * prove every award, exclusion, cap, and provenance rule without network access.
  */
 
+import {
+  LEADERBOARD_REPOSITORY,
+  LEADERBOARD_SCHEMA_VERSION,
+  REVIEW_EXCLUSION_REASONS,
+  SCORE_RULE_VERSION,
+} from "./leaderboard-constants";
 import {
   isDeclaredModelIdentifier,
   isExactClientIdentifier,
@@ -131,7 +118,6 @@ import { findProject } from "./projects.mjs";
 import {
   findRegisteredRepository,
   findRegisteredRepositoryById,
-  PRIMARY_REPOSITORY,
   REGISTERED_REPOSITORIES,
   type RepositoryId,
   TARGET_REPOSITORIES,
@@ -155,24 +141,19 @@ import {
   parseScoreRatificationBlock,
   type ScoreRatificationRecord,
 } from "./score-records";
+import {
+  mergedPullRequestCredit,
+  shareScoreThirds as verifiedShareScoreThirds,
+} from "./verified-scoring";
 
-export {
-  PRIMARY_REPOSITORY,
-  type RepositoryId,
-  TARGET_REPOSITORIES,
-  type TargetRepository,
-} from "./repositories.mjs";
+export { TARGET_REPOSITORIES } from "./repositories.mjs";
 
-/** Backward-compatible alias for the primary registry repository. */
-export const LEADERBOARD_REPOSITORY = PRIMARY_REPOSITORY?.id ?? null;
-export const LEADERBOARD_SCHEMA_VERSION = "6" as const;
-export const SCORE_RULE_VERSION = "slop-score-v2" as const;
 export const SCORE_V2_EFFECTIVE_AT = "2026-08-01T00:00:00.000Z" as const;
 const USAGE_NEUTRAL_EVIDENCE_POLICY_AT = "2026-08-19T00:00:00.000Z" as const;
 // SCR-05: from this instant an unratified merge starts at small credit, and an
 // ordinary formal review scores only when the code changed after it requested
 // changes, at most once per pull request and at triage weight.
-export const OUTCOME_FIRST_POLICY_AT = "2026-10-01T00:00:00.000Z" as const;
+const OUTCOME_FIRST_POLICY_AT = "2026-10-01T00:00:00.000Z" as const;
 // #683: first successful production deployment of SCR-05 (run 38001124966).
 export const PAYMENT_REVIEW_POLICY_AT = "2026-10-09T23:21:35.388Z" as const;
 export const PAYMENT_REVIEW_POLICY = "scr-05-payments-production-v1" as const;
@@ -183,9 +164,9 @@ export const PAYMENT_REVIEW_BASIS_OMITTED_REASON =
 // project reward views still exclude everything before their reward start.
 export const SCORE_WINDOW_DAYS = 35;
 export const VERIFICATION_WINDOW_DAYS = 35;
-export const MATERIAL_TEST_ADDITIONS = 10;
-export const MATERIAL_TEST_CHURN = 20;
-export const CLAIM_MAX_AGE_DAYS = 7;
+const MATERIAL_TEST_ADDITIONS = 10;
+const MATERIAL_TEST_CHURN = 20;
+const CLAIM_MAX_AGE_DAYS = 7;
 export const SCORE_CAPS = {
   mergedPullRequests: null,
   resolvedIssues: 5,
@@ -202,13 +183,13 @@ export const DETAILED_MERGED_PULL_REQUESTS_PER_MONTH = 5;
  * The maintainer's merge is the acceptance; an assessment can size it but
  * cannot erase it. The minimum is not an assessed tier.
  */
-export const MIN_VALUE_MERGE_THIRDS = 1 as const;
+const MIN_VALUE_MERGE_THIRDS = 1 as const;
 
 /**
  * Provisional score thirds for a v2 merge without a maintainer slop-score
  * record: micro before OUTCOME_FIRST_POLICY_AT, small from then on.
  */
-export function unratifiedMergeScoreThirds(mergedAt: string): 1 | 3 {
+function unratifiedMergeScoreThirds(mergedAt: string): 1 | 3 {
   return parseIsoTime(mergedAt) >= parseIsoTime(OUTCOME_FIRST_POLICY_AT)
     ? 3
     : 1;
@@ -224,7 +205,7 @@ export function mergedPullRequestPoints(ordinal: number): number {
       "merged pull request ordinal must be a positive integer",
     );
   }
-  return Math.max(1, Math.ceil(10 / Math.sqrt(ordinal)));
+  return mergedPullRequestCredit(ordinal);
 }
 
 // GitHub appends a mutable ?u= cache key to avatar URLs whenever a user
@@ -237,30 +218,6 @@ export function canonicalActorAvatarUrl(value: string): string {
   url.search = version === null ? "" : `v=${version}`;
   return url.toString();
 }
-
-export const REVIEW_EXCLUSION_REASONS = [
-  "missing-reviewer",
-  "bot-reviewer",
-  "missing-pull-request-author",
-  "bot-pull-request-author",
-  "self-review",
-  "missing-submission-time",
-  "unmerged-pull-request",
-  "post-merge",
-  "non-decision",
-  "insufficient-substance",
-  "already-awarded-reviewer",
-  "evaluated-contribution-award",
-  "external-prize-policy",
-  "reviewer-cycle-cap",
-  "unchanged-outcome",
-  "pull-request-review-awarded",
-  "review-credit-reviewer-limit",
-  "review-credit-zero-share",
-  "review-credit-outside-window",
-  "review-credit-before-policy",
-  "review-credit-account-banned",
-] as const;
 
 function exactEvidenceBonusRun(
   event: ScoreEvent,
@@ -650,7 +607,7 @@ export function isBotActor(actor: GitHubActor | null): boolean {
   return actor?.kind === "Bot";
 }
 
-export function isRecognizedTestFile(path: string): boolean {
+function isRecognizedTestFile(path: string): boolean {
   const normalized = path.toLowerCase();
   if (
     /(^|\/)__snapshots__\//.test(normalized) ||
@@ -667,7 +624,7 @@ export function isRecognizedTestFile(path: string): boolean {
   );
 }
 
-export function materialTestStats(files: PullRequestFile[] | null): {
+function materialTestStats(files: PullRequestFile[] | null): {
   additions: number;
   churn: number;
 } {
@@ -694,9 +651,7 @@ export function hasMaterialTestChange(
 }
 
 /** Open PRs with non-trivial test progress that still miss the published bar. */
-export function isNearMaterialTestChange(
-  files: PullRequestFile[] | null,
-): boolean {
+function isNearMaterialTestChange(files: PullRequestFile[] | null): boolean {
   if (hasMaterialTestChange(files)) {
     return false;
   }
@@ -722,7 +677,7 @@ function addEvidenceClaim(
   claims.set(identity, current);
 }
 
-export function assessEvidence(
+function assessEvidence(
   sources: GitHubTextSource[],
   verifiedEvidence: VerifiedEvidenceArtifact[] = [],
 ): EvidenceAssessment {
@@ -937,7 +892,7 @@ function declaredModel(model: string): string {
  * Exact-model lists never carry a declaration that names no model. The
  * attribution record itself keeps the provider and client that were declared.
  */
-export function exactModelIdentifiers(
+function exactModelIdentifiers(
   attributions: readonly Pick<ModelAttribution, "identifier" | "model">[],
 ): string[] {
   return attributions
@@ -1075,7 +1030,7 @@ function markerFooterError(
   return null;
 }
 
-export function assessModelAttribution(
+function assessModelAttribution(
   sources: GitHubTextSource[],
   options: AttributionAssessmentOptions = {},
 ): AttributionAssessment {
@@ -1384,7 +1339,7 @@ export function pullRequestTextSources(
   );
 }
 
-export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {
+function issueTextSources(issue: IssueRecord): GitHubTextSource[] {
   return dedupeByNodeId([
     {
       id: `${issue.id}:body`,
@@ -1400,7 +1355,7 @@ export function issueTextSources(issue: IssueRecord): GitHubTextSource[] {
   ]).map((source) => ({ ...source, artifactUrl: issue.url }));
 }
 
-export function qualifiesResolvedIssue(issue: IssueRecord): boolean {
+function qualifiesResolvedIssue(issue: IssueRecord): boolean {
   if (!issue.closedAt) {
     return false;
   }
@@ -1444,7 +1399,7 @@ function reviewExclusionReason(
  * Open-PR review that already chose APPROVED/CHANGES_REQUESTED but still needs
  * substantive rationale or an inline comment to qualify after merge.
  */
-export function isExpandableReviewOpportunity(
+function isExpandableReviewOpportunity(
   review: PullRequestReview,
   pullRequest: PullRequestRecord,
 ): boolean {
@@ -1992,7 +1947,7 @@ function sameActor(
  * Parses the single `<!-- evidence-head:<40 hex> -->` marker used to bind a
  * PR body evidence package to an exact head. Zero or multiple markers → null.
  */
-export function parseEvidenceHeadOid(body: string): string | null {
+function parseEvidenceHeadOid(body: string): string | null {
   const matches = [
     ...String(body ?? "").matchAll(
       /<!--\s*evidence-head:([a-f0-9]{40})\s*-->/gi,
@@ -2833,13 +2788,7 @@ export function shareScoreThirds(
   ) {
     throw new TypeError("score shares need positive integer inputs");
   }
-  const base = Math.floor(total / actors);
-  if (base === 0 && minimumPerActor === 1)
-    return Array.from({ length: actors }, () => 1);
-  return Array.from(
-    { length: actors },
-    (_, index) => base + (index < total % actors ? 1 : 0),
-  );
+  return verifiedShareScoreThirds(total, actors, minimumPerActor);
 }
 
 export function createLeaderboardSnapshot(
@@ -6644,7 +6593,7 @@ function assertOpportunityValue(
   }
 }
 
-export type RetainedAttributionRejection =
+type RetainedAttributionRejection =
   | "invalid-attribution"
   | "receipt-verification-failed"
   | "not-machine-marker"
@@ -6663,7 +6612,7 @@ export type RetainedAttributionRejection =
  * published on. Nothing stored is trusted: the receipt is verified again and
  * every binding must hold, or the first failed binding is named.
  */
-export function replayRetainedReviewAttribution(
+function replayRetainedReviewAttribution(
   event: ScoreEvent,
   candidate: ModelAttribution,
   verifyRunReceipt: (receipt: unknown) => ProjectRunReceipt,

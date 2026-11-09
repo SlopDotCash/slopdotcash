@@ -4,13 +4,18 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { localBackendOrigin, loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
-import { currentProjectSession, ProjectApiError } from "./lib/project-api";
+import {
+  currentProjectSession,
+  ProjectApiError,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 
 type PendingVerification = {
@@ -36,6 +41,7 @@ type State =
   | { status: "error"; message: string }
   | { status: "ready"; value: Preference; actor: string };
 const PATH = "/api/v1/notifications/email";
+class EmailAccountError extends Error {}
 
 function preference(value: unknown): Preference {
   const body = value as Record<string, unknown> | null;
@@ -181,6 +187,8 @@ export function InboxEmail({
           const value = preference(
             await readBoundedJson(response, 4096, "email preference"),
           );
+          if (generation.current !== current || controller.signal.aborted)
+            return;
           // A preference read without a bound actor must not enable the
           // switch: the next save would carry no expected-actor header.
           if (session === null) throw new Error("The account check failed.");
@@ -212,6 +220,16 @@ export function InboxEmail({
     },
     [accountActor, resetIdentity, setError],
   );
+  // Retire request ownership in the removal commit, before a resolved actor
+  // check can resume. Loading and focus subscriptions remain passive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+      controllerRef.current?.abort();
+    },
+    [load],
+  );
   useEffect(() => {
     load();
     const refresh = () => {
@@ -219,30 +237,60 @@ export function InboxEmail({
     };
     window.addEventListener("focus", refresh);
     return () => {
-      generation.current += 1;
-      controllerRef.current?.abort();
       window.removeEventListener("focus", refresh);
     };
   }, [load]);
 
-  async function checkActor(actor: string) {
+  async function checkActor(actor: string, expectedGeneration: number) {
+    if (generation.current !== expectedGeneration) return false;
     let current: Awaited<ReturnType<typeof currentProjectSession>>;
     try {
       current = await currentProjectSession();
     } catch {
+      if (generation.current !== expectedGeneration) return false;
       setState({ status: "error", message: "The account check failed." });
-      throw new Error("The account check failed. Retry before changing email.");
+      throw new EmailAccountError(
+        "The account check failed. Retry before changing email.",
+      );
     }
+    if (generation.current !== expectedGeneration) return false;
     if (!current) {
       resetIdentity();
       setState({ status: "signed-out" });
-      throw new Error("Your session expired.");
+      throw new EmailAccountError("Your session expired.");
     }
     if (current.githubId !== actor) {
       resetIdentity();
       load();
-      throw new Error("The inbox account changed. Retry.");
+      setError("The inbox account changed. Retry.");
+      throw new EmailAccountError("The inbox account changed. Retry.");
     }
+    return true;
+  }
+
+  function runCurrent(
+    expectedGeneration: number,
+    actor: string,
+    action: () => Promise<void>,
+  ) {
+    void run(async () => {
+      try {
+        if (generation.current !== expectedGeneration) return;
+        await action();
+      } catch (cause) {
+        if (generation.current !== expectedGeneration) return;
+        let failure = cause;
+        if (!(cause instanceof EmailAccountError)) {
+          try {
+            if (!(await checkActor(actor, expectedGeneration))) return;
+          } catch (identityFailure) {
+            failure = identityFailure;
+          }
+        }
+        if (generation.current === expectedGeneration)
+          setError(errorMessage(failure));
+      }
+    });
   }
 
   function save(field: "enabled" | "securityEnabled") {
@@ -261,69 +309,70 @@ export function InboxEmail({
         : previous.securityEnabled;
     if (!previous[field] && previous.availability !== "verified") return;
     const current = generation.current;
-    void run(
-      async () => {
-        await checkActor(actor);
-        if (generation.current !== current) return;
-        const response = await fetchWithDeadline(PATH, {
-          method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
-          redirect: "error",
-          headers: {
-            "content-type": "application/json",
-            "x-slop-expected-github-id": actor,
-          },
-          body: JSON.stringify(
-            (enabled || securityEnabled) && previous.availability === "verified"
-              ? {
-                  enabled,
-                  securityEnabled,
-                  destinationVersion: previous.destinationVersion,
-                }
-              : { enabled, securityEnabled },
-          ),
-        });
-        if (response.status === 401) {
-          resetIdentity();
-          setState({ status: "signed-out" });
-          return;
-        }
-        if (response.status === 403) {
-          resetIdentity();
-          load();
-          throw new Error("The inbox account changed. Retry.");
-        }
-        if (response.status === 409) {
-          load();
-          throw new Error(
-            "Your verified destination changed. Review it before turning on email.",
-          );
-        }
-        if (!response.ok)
-          throw new Error("Your preference could not be saved. Please retry.");
-        const result = (await readBoundedJson(
-          response,
-          4096,
-          "saved email preference",
-        )) as { enabled?: unknown; securityEnabled?: unknown } | null;
-        if (
-          result?.enabled !== enabled ||
-          result?.securityEnabled !== securityEnabled
-        )
-          throw new Error(
-            "The saved preference could not be verified. Please retry.",
-          );
-        if (generation.current !== current) return;
-        await checkActor(actor);
-        setState({
-          status: "ready",
-          value: { ...previous, enabled, securityEnabled },
-          actor,
-        });
-      },
-      (cause) => errorMessage(cause, "Your preference could not be saved."),
-    );
+    runCurrent(current, actor, async () => {
+      if (!(await checkActor(actor, current))) return;
+      if (generation.current !== current) return;
+      const response = await fetchWithDeadline(PATH, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        headers: {
+          "content-type": "application/json",
+          "x-slop-expected-github-id": actor,
+        },
+        body: JSON.stringify(
+          (enabled || securityEnabled) && previous.availability === "verified"
+            ? {
+                enabled,
+                securityEnabled,
+                destinationVersion: previous.destinationVersion,
+              }
+            : { enabled, securityEnabled },
+        ),
+      });
+      if (generation.current !== current) return;
+      if (response.status === 401) {
+        resetIdentity();
+        setState({ status: "signed-out" });
+        return;
+      }
+      if (response.status === 403) {
+        resetIdentity();
+        load();
+        setError("The inbox account changed. Retry.");
+        return;
+      }
+      if (response.status === 409) {
+        load();
+        setError(
+          "Your verified destination changed. Review it before turning on email.",
+        );
+        return;
+      }
+      if (!response.ok)
+        throw new Error("Your preference could not be saved. Please retry.");
+      const result = (await readBoundedJson(
+        response,
+        4096,
+        "saved email preference",
+      )) as { enabled?: unknown; securityEnabled?: unknown } | null;
+      if (
+        result?.enabled !== enabled ||
+        result?.securityEnabled !== securityEnabled
+      )
+        throw new Error(
+          "The saved preference could not be verified. Please retry.",
+        );
+      if (generation.current !== current) return;
+      if (!(await checkActor(actor, current))) return;
+      if (generation.current !== current) return;
+      setState({
+        status: "ready",
+        value: { ...previous, enabled, securityEnabled },
+        actor,
+      });
+    });
   }
 
   function editAddress() {
@@ -352,8 +401,8 @@ export function InboxEmail({
       idempotencyKey: requestKey.current,
       ...choices,
     };
-    void run(async () => {
-      await checkActor(actor);
+    runCurrent(current, actor, async () => {
+      if (!(await checkActor(actor, current))) return;
       if (generation.current !== current) return;
       const response = await fetchWithDeadline(`${PATH}/verification`, {
         method: "POST",
@@ -378,7 +427,8 @@ export function InboxEmail({
         "email verification",
       );
       if (generation.current !== current) return;
-      await checkActor(actor);
+      if (!(await checkActor(actor, current))) return;
+      if (generation.current !== current) return;
       if (response.status === 429) {
         const retryAfter = (result as { retryAfter?: unknown } | null)
           ?.retryAfter;
@@ -694,9 +744,34 @@ export function InboxEmailAction() {
   const [done, setDone] = useState(false);
   const { busy, error, setError, run } = useAction();
   const generation = useRef(0);
+  const mounted = useRef(true);
+  // Retire session checks and token writes in the removal commit, before a
+  // resolved promise can resume. Event subscriptions remain passive.
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, []);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        if (!mounted.current || action?.kind !== "verify") return;
+        // Preserve the link for a later sign-in, but retire its old actor and work.
+        generation.current += 1;
+        setActor(null);
+        setDone(false);
+        setError(null);
+      }),
+    [action, setError],
+  );
   useEffect(() => {
     const capture = () => {
-      if (!/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash))
+      if (
+        !mounted.current ||
+        !/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash)
+      )
         return;
       generation.current += 1;
       setAction(readEmailAction());
@@ -707,7 +782,6 @@ export function InboxEmailAction() {
     window.addEventListener("hashchange", capture);
     window.addEventListener("popstate", capture);
     return () => {
-      generation.current += 1;
       window.removeEventListener("hashchange", capture);
       window.removeEventListener("popstate", capture);
     };
@@ -717,9 +791,10 @@ export function InboxEmailAction() {
     setError(null);
     setActor(undefined);
     let active = true;
+    const current = generation.current;
     currentProjectSession().then(
       (session) => {
-        if (!active) return;
+        if (!active || generation.current !== current) return;
         if (
           session &&
           action.actor !== null &&
@@ -741,7 +816,7 @@ export function InboxEmailAction() {
         }
       },
       () => {
-        if (active)
+        if (active && generation.current === current)
           setError("Your account could not be checked. Reload to retry.");
       },
     );
@@ -816,7 +891,9 @@ export function InboxEmailAction() {
         setDone(true);
       } catch (caught) {
         // A replacement link owns its own status, error and retained token.
-        if (generation.current === current) throw caught;
+        // Publish under this guard instead of handing a rejection to the
+        // shared hook, whose later catch does not know this action's generation.
+        if (generation.current === current) setError(errorMessage(caught));
       }
     });
   };

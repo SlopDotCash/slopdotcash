@@ -239,6 +239,16 @@ activate intake or prove that GitHub or Surplus is available.
   `__Secure-slop_intake_grant` cookie (path `/api/v1/security-submissions`,
   2 hours) bound to the submission and the site session. No access or
   refresh token is stored in D1. GitHub records the reporter as the author.
+  Callbacks leave the encrypted flow cookie until its original ten-minute
+  expiry, so an older response cannot delete a newer pending authorization.
+  State, PKCE, account and expiry checks still apply. Code replay protection
+  is the provider's OAuth responsibility, not cookie deletion:
+  [RFC 6749 section 4.1.2](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.2)
+  requires one-use authorization codes; [GitHub's token-error documentation](https://docs.github.com/en/apps/oauth-apps/maintaining-oauth-apps/troubleshooting-oauth-app-access-token-request-errors)
+  describes rejected verification codes. The local fixture models consumed
+  codes; this is not live-provider evidence. The browser still has one grant
+  cookie: a later successful authorization replaces the earlier grant, so a
+  different submission may require authorization again.
 - `security_submissions` (migration 0059) holds no report content. States:
   `draft`, `submitting`, `uncertain`, `submitted`, `receipt-verified`,
   `failed`, `abandoned`. Every transition is a revision compare-and-set

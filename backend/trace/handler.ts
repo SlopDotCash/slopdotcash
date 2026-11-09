@@ -52,7 +52,7 @@ import {
   isExactModelIdentifier,
   isExactProviderIdentifier,
   normalizedContentType,
-  readJsonObject,
+  readStrictJsonObject,
   readTraceBody,
   validEventKind,
   validGitSha,
@@ -338,7 +338,7 @@ async function createContributorWalletClaim(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertWriter(actor);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const chain = body.chain === undefined ? "solana" : body.chain;
   if (!isWalletChain(chain)) {
     fail(400, "invalid_request", "Invalid wallet chain");
@@ -433,16 +433,12 @@ async function createContributorWalletClaim(
   );
 }
 
-/**
- * Issues a single-use challenge for the authenticated actor's own claim. The
- * lifetime and every bound field come from server state, never from the
- * request, so a caller cannot widen its replay window or bind another claim.
- */
-async function createWalletPossessionChallenge(
+/** The writer's own Solana wallet claim; any other claim is not found. */
+async function ownedSolanaClaim(
   actor: AuthenticatedActor,
   claimId: string,
   deps: TraceApiDependencies,
-): Promise<Response> {
+): Promise<WalletClaim> {
   assertWriter(actor);
   if (!validIdentifier(claimId))
     fail(400, "invalid_request", "Invalid claim id");
@@ -457,6 +453,20 @@ async function createWalletPossessionChallenge(
       "Wallet possession proofs currently support Solana only",
     );
   }
+  return claim;
+}
+
+/**
+ * Issues a single-use challenge for the authenticated actor's own claim. The
+ * lifetime and every bound field come from server state, never from the
+ * request, so a caller cannot widen its replay window or bind another claim.
+ */
+async function createWalletPossessionChallenge(
+  actor: AuthenticatedActor,
+  claimId: string,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  const claim = await ownedSolanaClaim(actor, claimId, deps);
   if (!isSignableSolanaAddress(claim.walletAddress)) {
     fail(
       409,
@@ -516,26 +526,13 @@ async function createWalletPossessionAttestation(
   claimId: string,
   deps: TraceApiDependencies,
 ): Promise<Response> {
-  assertWriter(actor);
-  if (!validIdentifier(claimId))
-    fail(400, "invalid_request", "Invalid claim id");
-  const claim = await deps.persistence.getWalletClaim(claimId);
-  if (claim === null || claim.githubId !== actor.githubId) {
-    fail(404, "not_found", "Wallet claim not found");
-  }
-  if (claim.chain !== "solana") {
-    fail(
-      409,
-      "unsupported_chain",
-      "Wallet possession proofs currently support Solana only",
-    );
-  }
+  const claim = await ownedSolanaClaim(actor, claimId, deps);
   const existing =
     await deps.persistence.getWalletPossessionAttestation(claimId);
   if (existing !== null) {
     return json(200, publicWalletPossession(claim.walletAddress, existing));
   }
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const submitted = body.challenge;
   if (
     typeof submitted !== "object" ||
@@ -669,7 +666,7 @@ async function createFallbackWalletClaim(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertOperator(actor);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const githubId = body.githubActorId;
   const githubLogin = body.githubLogin;
   const walletAddress = body.address;
@@ -823,7 +820,7 @@ async function createRun(
 ): Promise<Response> {
   assertWriter(actor);
   await assertParticipationAllowed(actor, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const now = deps.now().toISOString();
   const result = await deps.persistence.createRun({
     id: deps.randomId(),
@@ -894,7 +891,7 @@ async function createTraceIntent(
   if (run.state === "finalized") {
     fail(409, "run_finalized", "A finalized run cannot be changed");
   }
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const sha256 = requiredString(body, "sha256", validSha256);
   if (run.traceSha256 !== null && run.traceSha256 !== sha256) {
     fail(409, "trace_conflict", "The run already has a different trace");
@@ -940,6 +937,11 @@ async function createTraceIntent(
   });
   if (result.status === "conflict") {
     await assertParticipationAllowed(actor, deps);
+    const current = await ensureOwner(deps.persistence, actor, runId);
+    if (current.state === "finalized")
+      fail(409, "run_finalized", "A finalized run cannot be changed");
+    if (current.traceSha256 !== null && current.traceSha256 !== sha256)
+      fail(409, "trace_conflict", "The run already has a different trace");
     fail(409, "idempotency_conflict", "Idempotency key was reused");
   }
   return json(result.status === "created" ? 201 : 200, {
@@ -1119,7 +1121,7 @@ async function appendEvent(
   await assertParticipationAllowed(actor, deps);
   const run = await ensureOwner(deps.persistence, actor, runId);
   if (run.state === "finalized") fail(409, "run_finalized", "Run is finalized");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const kind = body.kind;
   if (!validEventKind(kind)) fail(400, "invalid_request", "Invalid event kind");
   const occurredAt = requiredString(body, "occurredAt", validIsoTimestamp);
@@ -1171,7 +1173,7 @@ async function reconcileWalletBinding(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertOperator(actor);
-  const { scope, reason, ...input } = await readJsonObject(request);
+  const { scope, reason, ...input } = await readStrictJsonObject(request);
   if (
     (scope !== "ordinary" && scope !== "security-bounty") ||
     !isBindingRecoveryInput(input) ||

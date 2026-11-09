@@ -1,10 +1,10 @@
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
-  acceptsPayoutFee,
   isBaseUnits,
   type PaymentChain,
   type PayoutPolicy,
 } from "../../src/lib/payments/contracts";
+import { payoutAmountsAccepted } from "../../src/lib/verified-money";
 import type { D1TransactionalDatabase as D1Database, D1Statement } from "../d1";
 import {
   notifyAwardReserved,
@@ -161,13 +161,13 @@ export async function indexPaymentEvent(
     !isBaseUnits(event.grossMicro) ||
     event.grossMicro === "0" ||
     !/^(0|[1-9]\d*)$/.test(event.feeMicro) ||
-    !acceptsPayoutFee(
+    !/^(0|[1-9]\d*)$/.test(event.netMicro) ||
+    !payoutAmountsAccepted(
       BigInt(event.grossMicro),
       BigInt(event.feeMicro),
-      policy?.payoutPolicy,
+      BigInt(event.netMicro),
+      policy?.payoutPolicy === "security-bounty",
     ) ||
-    (BigInt(event.grossMicro) - BigInt(event.feeMicro)).toString() !==
-      event.netMicro ||
     !/^[a-f0-9]{64}$/.test(event.sourceDigest)
   )
     throw new Error("Chain event mismatch");

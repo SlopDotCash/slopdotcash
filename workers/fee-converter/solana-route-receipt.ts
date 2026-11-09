@@ -11,12 +11,12 @@ import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { ConversionRow } from "./core";
 import { assertJupiterRoute } from "./jupiter-route";
-import { parseTransaction } from "./solana";
 import {
   associatedAccountCreations,
   retainedRouteExpectation,
   type SolanaAccountProof,
 } from "./solana-accounts";
+import { parseTransaction } from "./solana-transaction";
 import {
   firstDebitedHolding,
   type RouteTokenBalance,

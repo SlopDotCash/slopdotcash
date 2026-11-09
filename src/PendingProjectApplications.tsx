@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
+  currentProjectSession,
   listProjectSetup,
   ProjectApiError,
   type ProjectApplication,
@@ -18,24 +19,79 @@ type Publication =
       result: Awaited<ReturnType<typeof publishStoredApplication>>;
     };
 
+const ACCOUNT_CHANGED = "Your account changed. Reload your saved applications.";
+
+async function requireApplicationActor(actorId: string) {
+  const session = await currentProjectSession();
+  if (session?.githubId !== actorId)
+    throw new ProjectApiError(409, "account_changed", ACCOUNT_CHANGED);
+}
+
+function lostApplicationAccess(cause: unknown) {
+  return (
+    cause instanceof ProjectApiError &&
+    (cause.code === "account_changed" ||
+      [401, 403, 404, 410].includes(cause.status))
+  );
+}
+
 function PendingApplication({
   application,
+  actorId,
+  onAccountLost,
 }: {
   application: ProjectApplication;
+  actorId: string;
+  onAccountLost: (message: string) => void;
 }) {
   const [publication, setPublication] = useState<Publication>({
     status: "idle",
   });
   const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const isRevision = application.expectedRevision !== undefined;
   async function publish() {
-    if (inFlight.current) return;
+    if (!mounted.current || inFlight.current) return;
     inFlight.current = true;
     setPublication({ status: "submitting" });
     try {
-      const result = await publishStoredApplication(application.id);
+      await requireApplicationActor(actorId);
+      if (!mounted.current) return;
+      const result = await publishStoredApplication(application.id, actorId);
+      if (!mounted.current) return;
+      await requireApplicationActor(actorId);
+      if (!mounted.current) return;
       setPublication({ status: "published", result });
     } catch (cause) {
+      if (!mounted.current) return;
+      if (lostApplicationAccess(cause)) {
+        onAccountLost(
+          cause instanceof ProjectApiError &&
+            ["account_changed", "actor_changed"].includes(cause.code)
+            ? ACCOUNT_CHANGED
+            : errorMessage(
+                cause,
+                "Saved applications are unavailable. Reload them.",
+              ),
+        );
+        return;
+      }
+      try {
+        await requireApplicationActor(actorId);
+      } catch {
+        if (mounted.current)
+          onAccountLost(
+            "Your private session could not be checked. Reload your saved applications.",
+          );
+        return;
+      }
+      if (!mounted.current) return;
       setPublication({
         status: "error",
         message: errorMessage(
@@ -97,6 +153,7 @@ function PendingApplication({
       ) : null}
       {publication.status === "published" ? (
         <ProjectSetupStatusPanel
+          actorId={actorId}
           compact
           projectId={publication.result.project.id}
           initial={publication.result.setup}
@@ -107,7 +164,7 @@ function PendingApplication({
   );
 }
 
-function PendingApplicationsForAccount() {
+function PendingApplicationsForAccount({ actorId }: { actorId: string }) {
   const [attempt, setAttempt] = useState(0);
   const [load, setLoad] = useState<
     | { status: "loading" }
@@ -118,8 +175,10 @@ function PendingApplicationsForAccount() {
   useEffect(() => {
     let active = true;
     setLoad({ status: "loading" });
-    void listProjectSetup().then(
-      ({ applications }) => {
+    void listProjectSetup(actorId)
+      .then(async ({ applications }) => {
+        if (!active) return;
+        await requireApplicationActor(actorId);
         if (active)
           setLoad({
             status: "ready",
@@ -127,19 +186,18 @@ function PendingApplicationsForAccount() {
               (application) => application.status === "pending",
             ),
           });
-      },
-      (cause) => {
+      })
+      .catch((cause) => {
         if (active)
           setLoad({
             status: "error",
             message: errorMessage(cause, "Saved applications could not load."),
           });
-      },
-    );
+      });
     return () => {
       active = false;
     };
-  }, [attempt]);
+  }, [attempt, actorId]);
   if (
     load.status === "loading" ||
     (load.status === "ready" && load.applications.length === 0)
@@ -165,7 +223,12 @@ function PendingApplicationsForAccount() {
         </div>
       ) : (
         load.applications.map((application) => (
-          <PendingApplication key={application.id} application={application} />
+          <PendingApplication
+            key={application.id}
+            application={application}
+            actorId={actorId}
+            onAccountLost={(message) => setLoad({ status: "error", message })}
+          />
         ))
       )}
     </section>
@@ -179,6 +242,9 @@ export function PendingProjectApplications({
   projectSession: ProjectSessionState;
 }) {
   return projectSession.status === "signed-in" ? (
-    <PendingApplicationsForAccount key={projectSession.session.githubId} />
+    <PendingApplicationsForAccount
+      key={projectSession.session.githubId}
+      actorId={projectSession.session.githubId}
+    />
   ) : null;
 }
