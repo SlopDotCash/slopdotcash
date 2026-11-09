@@ -34,10 +34,17 @@ async function releaseAction(
       value.request().method() === "POST" &&
       value.request().postDataJSON().expectedRevision === expectedRevision,
   );
+  // onDone starts this parent refresh after the response's identity checks.
+  // Network completion alone does not mean the application callback ran.
+  const callbackRefresh = page.waitForResponse(
+    (value) =>
+      new URL(value.url()).pathname === "/api/v1/security-cases" &&
+      value.request().method() === "GET",
+  );
   held.release();
   await (await response).finished();
-  // Wait for the response callback and React's next rendered frame. A page
-  // that was already network-idle can otherwise pass before the late reply.
+  await (await callbackRefresh).finished();
+  // Give the callback's state updates a rendered frame after its refresh.
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
