@@ -43,6 +43,7 @@ import {
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import type { PaymentDeployment } from "../payments/index";
 import { finalizedEvmRevert } from "../payments/reconcile";
+import { nextReplacementFees as verifiedReplacementFees } from "../verified-fee-replacement";
 import { reconcileBindingWinner } from "./binding-recovery";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 import type { MonthlyAuthorization } from "./monthly";
@@ -1009,9 +1010,6 @@ async function broadcast(
  */
 const FEE_BUMP_POLICY = {
   waitMs: 10 * 60_000,
-  stepPercent: 125n,
-  minimumPercent: 110n,
-  capMultiple: 3n,
   maxFeePerGas: 10_000_000_000n,
 } as const;
 type FeeReplacement = {
@@ -1041,31 +1039,26 @@ function nextReplacementFees(
   original: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
   latest: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
 ) {
-  const policy = FEE_BUMP_POLICY;
-  const step = (value: bigint, cap: bigint) => {
-    const raised = (value * policy.stepPercent + 99n) / 100n;
-    return raised < cap ? raised : cap;
-  };
-  const feeCap =
-    original.maxFeePerGas * policy.capMultiple < policy.maxFeePerGas
-      ? original.maxFeePerGas * policy.capMultiple
-      : policy.maxFeePerGas;
-  const next = {
-    maxFeePerGas: step(latest.maxFeePerGas, feeCap),
-    maxPriorityFeePerGas: step(
-      latest.maxPriorityFeePerGas,
-      original.maxPriorityFeePerGas * policy.capMultiple,
-    ),
-  };
-  const minimum = (value: bigint) =>
-    (value * policy.minimumPercent + 99n) / 100n;
   if (
-    next.maxFeePerGas < minimum(latest.maxFeePerGas) ||
-    next.maxPriorityFeePerGas < minimum(latest.maxPriorityFeePerGas) ||
-    next.maxPriorityFeePerGas > next.maxFeePerGas
+    original.maxFeePerGas <= 0n ||
+    original.maxPriorityFeePerGas < 0n ||
+    latest.maxFeePerGas <= 0n ||
+    latest.maxPriorityFeePerGas < 0n
   )
     return null;
-  return next;
+  const next = verifiedReplacementFees(
+    original.maxFeePerGas,
+    original.maxPriorityFeePerGas,
+    latest.maxFeePerGas,
+    latest.maxPriorityFeePerGas,
+    FEE_BUMP_POLICY.maxFeePerGas,
+  );
+  return next.ok
+    ? {
+        maxFeePerGas: next.maxFeePerGas,
+        maxPriorityFeePerGas: next.maxPriorityFeePerGas,
+      }
+    : null;
 }
 
 /** Recheck every stored replacement against the original before any broadcast. */

@@ -7,7 +7,7 @@ import {
 import {
   bountyFeeAmount,
   ordinaryFeeAmount,
-  ordinaryFeeMatches,
+  payoutFeeAccepted,
 } from "../verified-money";
 
 export { formatBaseUnits };
@@ -173,10 +173,9 @@ export function acceptsPayoutFee(
   fee: bigint,
   policy: PayoutPolicy = "ordinary",
 ): boolean {
-  const expected = payoutFee(gross, policy);
-  return policy === "ordinary"
-    ? ordinaryFeeMatches(gross, fee)
-    : fee === expected;
+  // Refuses an invalid gross, an inexact bounty, or an unknown policy first.
+  payoutFee(gross, policy);
+  return payoutFeeAccepted(gross, fee, policy === "security-bounty");
 }
 export function isAssetDecimals(value: unknown): value is number {
   return (

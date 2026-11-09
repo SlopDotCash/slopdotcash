@@ -155,6 +155,10 @@ import {
   parseScoreRatificationBlock,
   type ScoreRatificationRecord,
 } from "./score-records";
+import {
+  mergedPullRequestCredit,
+  shareScoreThirds as verifiedShareScoreThirds,
+} from "./verified-scoring";
 
 export {
   PRIMARY_REPOSITORY,
@@ -224,7 +228,7 @@ export function mergedPullRequestPoints(ordinal: number): number {
       "merged pull request ordinal must be a positive integer",
     );
   }
-  return Math.max(1, Math.ceil(10 / Math.sqrt(ordinal)));
+  return mergedPullRequestCredit(ordinal);
 }
 
 // GitHub appends a mutable ?u= cache key to avatar URLs whenever a user
@@ -2833,13 +2837,7 @@ export function shareScoreThirds(
   ) {
     throw new TypeError("score shares need positive integer inputs");
   }
-  const base = Math.floor(total / actors);
-  if (base === 0 && minimumPerActor === 1)
-    return Array.from({ length: actors }, () => 1);
-  return Array.from(
-    { length: actors },
-    (_, index) => base + (index < total % actors ? 1 : 0),
-  );
+  return verifiedShareScoreThirds(total, actors, minimumPerActor);
 }
 
 export function createLeaderboardSnapshot(

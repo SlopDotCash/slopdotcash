@@ -12,6 +12,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  requireMeaningfulSpecifications,
   requireProofIntegrity,
   requireProofObligations,
 } from "./lemmascript-integrity.mjs";
@@ -235,6 +236,7 @@ try {
         `Unsupported trusted/omitted source directive in ${file}`,
       );
     }
+    requireMeaningfulSpecifications(source);
     const generated = readFileSync(join(root, `${artifact}.gen`), "utf8");
     const proof = readFileSync(join(root, artifact), "utf8");
     requireProofIntegrity(generated, proof);

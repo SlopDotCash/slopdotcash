@@ -734,3 +734,20 @@ export function planFlagScanReinstatement(
     appealAfter: appeal === "requested" ? "granted" : "none",
   };
 }
+
+/**
+ * True exactly when the project is quarantined and contributor flags placed
+ * the latest quarantine or ban record. Only such a pause reinstates on a
+ * clean fresh scan; a moderator decides every other restriction.
+ */
+//@ verify
+//@ ensures \result ==> state == "quarantined"
+//@ ensures \result <==> state == "quarantined" && LastRestriction(records) >= 0 && records[LastRestriction(records)].actorRole == "contributor-flags"
+export function pausedByFlagsOnly(
+  records: readonly EnforcementHistoryRow[],
+  state: string,
+): boolean {
+  if (state !== "quarantined") return false;
+  const latest = latestRestrictionSource(records);
+  return latest >= 0 && records[latest].actorRole === "contributor-flags";
+}
