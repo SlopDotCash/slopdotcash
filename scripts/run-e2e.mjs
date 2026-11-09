@@ -98,6 +98,7 @@ async function runPhase(
     },
     signal: cancellation.signal,
     interruptSignal: "SIGINT",
+    browserOwnership: true,
   });
   cancellation.record(status);
   return status;

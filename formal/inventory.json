@@ -2819,6 +2819,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/browser-process-ownership.mjs",
+      "sha256": "5cf153ad764c543d8efb247356bb6023e50614840cbecf63d16a5d6f27aadb7a",
+      "models": ["formal/models/formal_process.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "sha256": "7473361e7e3c67bbf9e7fc780b7a8f3693a1cb11656fa505a84961292293315a",
       "models": [
@@ -3711,21 +3718,22 @@
     },
     {
       "path": "scripts/run-e2e-phase.mjs",
-      "sha256": "4cf44919ee35a4e08e3232706ca1bd54e209d26d2dc8675d65a2b35571c73e1d",
+      "sha256": "a0d4e5375c988400fc1b58557ef24382441b5bb8dcdc9ab9bea10bae3656f5ad",
       "models": [
         "formal/models/evidence_capture.qnt",
         "formal/models/formal_process.qnt",
         "formal/models/integration_pipeline.qnt"
       ],
       "candidateLines": [
-        13, 20, 25, 34, 112, 115, 122, 125, 126, 130, 164, 172, 189, 191, 216,
-        223, 248, 269, 270, 273, 275, 277, 289, 293, 300, 305
+        22, 29, 34, 43, 121, 124, 131, 134, 135, 139, 205, 215, 250, 261, 262,
+        274, 293, 295, 315, 322, 348, 369, 371, 375, 378, 380, 382, 394, 398,
+        405, 410
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "987cd79ab5a1d7e5af2d9e86f0e9251af709cf4d2e1a9236e943db6614bba217",
+      "sha256": "cd3e70857e1196ba771400046271481233f6395faed5d9b5a21f1897da196e85",
       "models": [
         "formal/models/ci_browser_evidence.qnt",
         "formal/models/evidence_capture.qnt",
@@ -3734,8 +3742,8 @@
         "formal/models/runner_cancellation.qnt"
       ],
       "candidateLines": [
-        54, 63, 64, 65, 66, 85, 102, 103, 196, 273, 319, 321, 431, 500, 528,
-        600, 601, 614, 630, 636, 666, 667, 701
+        54, 63, 64, 65, 66, 85, 103, 104, 197, 274, 320, 322, 432, 501, 529,
+        601, 602, 615, 631, 637, 667, 668, 702
       ],
       "review": "mapped-abstraction"
     },
@@ -9547,8 +9555,9 @@
     },
     {
       "path": "formal/models/formal_process.qnt",
-      "sha256": "b1e99b28390ebe027fe5db19bc862d70399fb658fa969908aa27a92ea33eaf48",
+      "sha256": "5c740c489aaacf2b51dda1e0dd8256c6c3c2ba428df369243748de2866b8b2aa",
       "sources": [
+        "scripts/browser-process-ownership.mjs",
         "scripts/check-formal.mjs",
         "scripts/check-lemmascript.mjs",
         "scripts/run-e2e-phase.mjs",
@@ -9557,13 +9566,18 @@
       "scenarios": [
         "canceledCleanupCannotPassTest",
         "changedGroupCannotBeKilledTest",
+        "changedNormalExitOwnerCannotBeKilledTest",
+        "changedNormalExitOwnerRefusesSuccessTest",
         "cleanSuccessTest",
         "cleanupFailureIsExplicitTest",
         "cooperativeBrowserInterruptClosesServerTest",
         "exitedLauncherStillOwnsChildTest",
         "failureCannotPublishSuccessTest",
         "forcedBrowserCleanupStopsCapturedGroupTest",
+        "missingExitCheckpointCannotPassTest",
         "normalBrowserClosesManagedServerTest",
+        "normalExitCheckpointRetainsDetachedServerTest",
+        "refusedCheckpointCannotPassTest",
         "timeoutKillsDescendantTest",
         "uncooperativeBrowserCannotClaimCleanupTest",
         "unknownGroupCannotBeKilledTest"

@@ -30,9 +30,11 @@ leader identity or missing ownership evidence refuses the signal and prints a
 cleanup error. It never searches by name or kills an unowned port holder.
 
 The same five-second grace and cleanup limits remain. Forced cleanup also waits
-for the recorded detached groups. Ordinary non-interrupt exits keep their
-existing path. The Windows task-tree behavior is unchanged. Signal cancellation
-still returns failure even when cleanup succeeds.
+for the recorded detached groups. That cancellation-only checkpoint retained
+the old ordinary-exit path; the subsequent [normal-exit correction](browser-normal-exit-cleanup-audit.md)
+adds a cooperative ownership checkpoint for browser launchers. The Windows
+task-tree behavior is unchanged. Signal cancellation still returns failure even
+when cleanup succeeds.
 
 ## Evidence
 
