@@ -1777,6 +1777,25 @@ for (const route of [
           "href",
           `/projects/${project.participation.successorProjectId}`,
         );
+      } else if (project.participation?.state !== "permission-required") {
+        const start = page.locator("#start");
+        await expect(
+          start.getByRole("heading", { name: "Project paused", exact: true }),
+        ).toBeVisible();
+        await expect(
+          start.getByText(
+            "Do not install this project's skill or start work.",
+            {
+              exact: true,
+            },
+          ),
+        ).toBeVisible();
+        await expect(
+          start.getByRole("link", {
+            name: "Project owner: review setup",
+            exact: true,
+          }),
+        ).toHaveAttribute("href", `/projects/${project.slug}/manage`);
       }
 
       await test.info().attach(`${project.id}-paused-project`, {
