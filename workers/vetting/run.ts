@@ -422,6 +422,22 @@ async function retainEvidence(
 }
 
 /** A policy refusal completes the assignment as incomplete and notifies its owner. */
+/** Signs and publishes one composed result through the operator journal. */
+async function publishComposed(config: ScanServiceConfig, result: unknown) {
+  const { connection } = config;
+  const body = JSON.stringify(result);
+  return publishResult({
+    origin: connection.origin,
+    body,
+    approvedSha256: await sha256Hex(encoder.encode(body)),
+    signer: connection,
+    journalDirectory: config.journalDirectory,
+    journal: config.journal,
+    at: connection.now?.(),
+    fetch: connection.fetch,
+  });
+}
+
 async function publishAcquisitionRefusal(
   config: ScanServiceConfig,
   refusal: QueuedAcquisitionRefusal,
@@ -453,17 +469,7 @@ async function publishAcquisitionRefusal(
       contentType: "application/json",
     },
   ]).catch(() => false);
-  const body = JSON.stringify(composed.result);
-  const receipt = await publishResult({
-    origin: connection.origin,
-    body,
-    approvedSha256: await sha256Hex(encoder.encode(body)),
-    signer: connection,
-    journalDirectory: config.journalDirectory,
-    journal: config.journal,
-    at: connection.now?.(),
-    fetch: connection.fetch,
-  });
+  const receipt = await publishComposed(config, composed.result);
   return {
     assessmentId,
     state: "published",
@@ -522,17 +528,7 @@ async function scanOne(
       return retry(assessmentId, "reuse", error);
     }
     if (reused) {
-      const body = JSON.stringify(reused);
-      const receipt = await publishResult({
-        origin: connection.origin,
-        body,
-        approvedSha256: await sha256Hex(encoder.encode(body)),
-        signer: connection,
-        journalDirectory: config.journalDirectory,
-        journal: config.journal,
-        at: connection.now?.(),
-        fetch: connection.fetch,
-      });
+      const receipt = await publishComposed(config, reused);
       return {
         assessmentId,
         state: "published",
@@ -657,17 +653,7 @@ async function scanOne(
     // The intake refuses a clean result without its evidence; retry it.
     if (!retained && composed.result.disposition === "clean")
       return { assessmentId, state: "retry", step: "evidence" };
-    const body = JSON.stringify(composed.result);
-    const receipt = await publishResult({
-      origin: connection.origin,
-      body,
-      approvedSha256: await sha256Hex(encoder.encode(body)),
-      signer: connection,
-      journalDirectory: config.journalDirectory,
-      journal: config.journal,
-      at: connection.now?.(),
-      fetch: connection.fetch,
-    });
+    const receipt = await publishComposed(config, composed.result);
     return {
       assessmentId,
       state: "published",
