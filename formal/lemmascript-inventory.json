@@ -330,10 +330,10 @@
 {"name":"vaultCounterHeader","kind":"FunctionDeclaration","line":170,"sha256":"56441df00632acef9955ae360c60b7aef5aa9250df92c77eb69f90d040dba85e","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"firstDecreasedCounter","kind":"FunctionDeclaration","line":186,"sha256":"17800d6a5f784bdeaec528d59a82c94f496efa138053fd5f51df696031c21431","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
-{"path":"backend/payments/wallet-registration.ts","sha256":"597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"registerPaymentWallet","kind":"FunctionDeclaration","line":7,"sha256":"8352e6d10937c2ec5905c2b5497f22d3476c0d9da10ec9920fafbe65558428a8","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
+{"path":"backend/payments/wallet-registration.ts","sha256":"7ebddc0a7a2ef63dd20f7602d56e3d76151b519756fcb870e3260665b30ff1fb","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"registerPaymentWallet","kind":"FunctionDeclaration","line":7,"sha256":"58539ef2b8175e9c56f4c248609df91d1aa1d2eb4a55ae26b15f8ae5e5f76427","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
 {"name":"tip","kind":"ArrowFunction","line":14,"sha256":"bf90742fc3212a68071305a9bd710f0564c9fc230690dbdf94440de7efee47f8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"canonicalWalletClaimDigests","kind":"FunctionDeclaration","line":78,"sha256":"60f3b6cfe7439179b336f58a05b82d6ad07ca95ae2716cb4512ec2ed18cd5854","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"name":"canonicalWalletClaimDigests","kind":"FunctionDeclaration","line":80,"sha256":"60f3b6cfe7439179b336f58a05b82d6ad07ca95ae2716cb4512ec2ed18cd5854","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"backend/points/disputes.ts","sha256":"deeed15066a2a88aff6a959b49d481fe258d0ddcf7587cb8543996737f75722a","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"retainedPointRevision","kind":"FunctionDeclaration","line":23,"sha256":"e6faad20f215f905a73a0110c7b802a79993016cae89ceb9e56479d8a7d714ef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},

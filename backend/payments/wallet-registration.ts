@@ -66,11 +66,13 @@ export async function registerPaymentWallet(
     },
   );
   if (result.status !== "conflict") return { claimId: result.value.id };
-  // A concurrent registration replaced the same predecessor first.
+  // A concurrent write replaced the same predecessor first. Only a registry
+  // winner can proceed to the wallet challenge; a historical import needs a
+  // retry that appends its registry successor.
   const winner = await tip();
   if (winner === null)
     throw new Error("A wallet registration conflict left no current claim");
-  return winner.wallet_address === address
+  return winner.source === "d1_registry" && winner.wallet_address === address
     ? { claimId: winner.id }
     : { claimId: winner.id, conflict: true };
 }

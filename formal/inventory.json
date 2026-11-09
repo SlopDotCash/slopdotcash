@@ -301,6 +301,8 @@
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
         "formal/models/payments/payment_history.qnt",
+        "formal/models/payments/payment_wallet_activation.qnt",
+        "formal/models/payments/payment_wallet_registration.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt"
       ],
@@ -406,7 +408,7 @@
     },
     {
       "path": "backend/payments/wallet-registration.ts",
-      "sha256": "597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc",
+      "sha256": "7ebddc0a7a2ef63dd20f7602d56e3d76151b519756fcb870e3260665b30ff1fb",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/wallet_claim_publication.qnt",
@@ -414,11 +416,12 @@
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
         "formal/models/payments/payment_binding.qnt",
+        "formal/models/payments/payment_wallet_registration.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
-      "candidateLines": [68],
+      "candidateLines": [68, 71],
       "review": "mapped-abstraction"
     },
     {
@@ -954,7 +957,8 @@
         "formal/models/api/trace_event_finalization.qnt",
         "formal/models/api/trace_run_creation.qnt",
         "formal/models/api/wallet_claim_publication.qnt",
-        "formal/models/api/wallet_possession_completion.qnt"
+        "formal/models/api/wallet_possession_completion.qnt",
+        "formal/models/payments/payment_wallet_registration.qnt"
       ],
       "candidateLines": [
         61, 156, 279, 280, 283, 301, 312, 317, 340, 378, 391, 394, 416, 417,
@@ -1870,7 +1874,8 @@
       "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
-        "formal/models/payments/payment_dispatch.qnt"
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/payment_wallet_activation.qnt"
       ],
       "candidateLines": [
         1, 7, 10, 17, 18, 26, 32, 40, 41, 43, 44, 48, 50, 59, 61, 63, 75, 77
@@ -2702,7 +2707,8 @@
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
-        "formal/models/payments/effective_wallet_history.qnt"
+        "formal/models/payments/effective_wallet_history.qnt",
+        "formal/models/payments/payment_wallet_activation.qnt"
       ],
       "candidateLines": [2],
       "review": "mapped-abstraction"
@@ -10647,6 +10653,69 @@
         "staleRetirementKeepsPaidTest",
         "staleRetirementKeepsPreparedTest",
         "staleRetirementKeepsSubmittedTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_wallet_activation.qnt",
+      "sha256": "970a9aa5ed44510771af0de650672e0d7181654230a3f2cd6a3084d223330aca",
+      "sources": [
+        "backend/payments/handler.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0100_effective_payment_wallets.sql"
+      ],
+      "scenarios": [
+        "authorizationQueuesEligibleHeldAndAbsentRowsTest",
+        "authorizedSuccessorChangesReadbackWithoutErasingHistoryTest",
+        "batchFailureKeepsOutboxAndAuthorizationUnchangedTest",
+        "confirmedSnapshotCanPrecedeAuthorizedReplacementTest",
+        "failedReadbackDoesNotUndoAtomicBatchTest",
+        "lostBatchReplyDoesNotUndoAuthorizationOrQueuedWorkTest",
+        "lostSuccessResponseRetainsFirstAuthorizationTest",
+        "otherActorOrChainRowIsUnchangedTest",
+        "paidAndReadyOutboxesRemainUnchangedTest",
+        "paidObligationDoesNotQueueAgainTest",
+        "processingAndSubmittedOutboxesRemainUnchangedTest",
+        "replacementAfterAuthorizationDoesNotEraseItTest",
+        "replacementBeforeBatchRejectsUnsignedOldClaimTest",
+        "secondValidChallengeCannotRewriteFirstAuthorizationTest",
+        "unsignedSuccessorKeepsPriorAuthorizedClaimEffectiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/payment_wallet_registration.qnt",
+      "sha256": "116bcef8eb2e8c744c165b9c9252721aa12fdeafc2d188a03d48305207543f61",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/wallet-registration.ts",
+        "backend/trace/cloudflare-persistence.ts"
+      ],
+      "scenarios": [
+        "conflictWinnerSnapshotMayChangeBeforeReplyTest",
+        "differentActorsRemainSeparateTest",
+        "differentAddressConflictReturns409Test",
+        "differentAddressHistoricalWinnerRefusesTest",
+        "differentChainsRemainSeparateTest",
+        "differentLoginsRecoverSameAddressWinnerTest",
+        "differentTimestampsRecoverSameAddressWinnerTest",
+        "failedConflictWinnerReadPreservesHistoryTest",
+        "failedHashCreatesNothingTest",
+        "failedInitialTipReadCreatesNothingTest",
+        "helperCreatedReceiptCanBecomeOldBeforeReplyTest",
+        "helperDigestReplayDoesNotRequireCurrentTipTest",
+        "helperFailureAfterCommitRetainsClaimTest",
+        "helperFailureBeforeCommitCanRetryTest",
+        "historicalSameAddressGetsRegistrySuccessorTest",
+        "identicalConcurrentDigestReturnsExistingTest",
+        "initialNoopSnapshotCanBecomeOldBeforeReplyTest",
+        "lostHttpSuccessRetainsClaimForRetryTest",
+        "newRegistryClaimReturns200Test",
+        "oldSameAddressConditionCouldReturnHistoricalClaimTest",
+        "preparedRequestMayRemainPendingTest",
+        "requestTimestampSurvivesTipAndHashDelayTest",
+        "retryAfterCommittedHelperFailureUsesNoopTest",
+        "retryConvertsHistoricalWinnerToRegistryTest",
+        "sameAddressHistoricalWinnerNowRefusesTest",
+        "sameAddressIgnoresRenamedLoginTest"
       ]
     },
     {
