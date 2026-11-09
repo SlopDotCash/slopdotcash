@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import type { EscrowChain as Network } from "../../src/lib/escrow-policy.mjs";
 import { positiveBudgetFits } from "../verified-budget";
-import type { Network } from "./config";
 import type { SolanaAccountProof } from "./solana-accounts";
 import {
   type ExpiryCoverage,

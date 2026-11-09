@@ -1,5 +1,6 @@
 import { valueFileReader } from "./value-blob";
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 
 export type ValueContextSelection = string | { path: string; ref: string };
 

@@ -1,4 +1,5 @@
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 import { readValueTreeRootProof } from "./value-tree";
 
 export const NO_CHANGE_PROMOTION_CONTEXT =

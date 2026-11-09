@@ -1,5 +1,5 @@
 import { valueFileReader } from "./value-blob";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type { EvidenceClient, FileChange } from "./value-evidence-types";
 import {
   hasCompleteValuePatch,
   valueAdditionCount,

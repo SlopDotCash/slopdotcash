@@ -1,4 +1,4 @@
-import type { EvidenceClient } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 
 /** Bounded immutable Git blob verification shared by acceptance proofs. */
 export function valueFileReader(client: EvidenceClient, repository: string) {

@@ -26,12 +26,12 @@ import {
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
 import type { valueHistory } from "../workers/slopbot/value-journal";
 import type { ValueMergeRecipe } from "../workers/slopbot/value-merge-profile";
-import type { WorkUnitSource } from "../workers/slopbot/value-work-unit";
 import {
   consumeWorkUnitHistory,
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,

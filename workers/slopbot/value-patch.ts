@@ -1,4 +1,4 @@
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type { EvidenceClient, FileChange } from "./value-evidence-types";
 
 function addedLines(file: FileChange): string[] | null {
   if (

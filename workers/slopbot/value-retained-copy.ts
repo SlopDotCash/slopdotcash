@@ -3,7 +3,8 @@
  */
 
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { FileChange, ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence";
+import type { FileChange } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,
@@ -12,7 +13,7 @@ import {
   valuePatch,
 } from "./value-patch";
 import { hasRetainedMergeReference } from "./value-retained-reference";
-import type { WorkUnitSource } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
 import {
   type CandidateHunkFile,
   type HunkCandidate,

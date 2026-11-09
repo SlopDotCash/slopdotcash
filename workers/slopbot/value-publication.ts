@@ -14,10 +14,10 @@ import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
 import {
   collectValueEvidence,
-  type EvidenceClient,
   findRepository,
   type ValueEvidence,
 } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
 import {
   reuseMergeResolution,

@@ -8,7 +8,6 @@ import {
   collectAcceptedValueRange,
 } from "./value-accepted-range";
 import {
-  type AddedBinaryProof,
   addedBinaryRecovery,
   binarySourceLimitations,
   needsAddedBinaryProof,
@@ -19,6 +18,7 @@ import {
   type ValueBranchPolicy,
 } from "./value-branch-policy";
 import { githubLinkDestinations } from "./value-commit-hints";
+import type { EvidenceClient, FileChange } from "./value-evidence-types";
 import {
   needsAddedValueComparison,
   needsFullValueComparison,
@@ -54,12 +54,6 @@ import {
   type RetainedMergeReference,
 } from "./value-retained-reference";
 
-// Shared by the installation worker and the historical reviewer. Missing or
-// moving evidence prevents assessment; pagination limits never imply coverage.
-export interface EvidenceClient {
-  get<T>(path: string): Promise<T | null>;
-  graphql?<T>(query: string, variables: Record<string, unknown>): Promise<T>;
-}
 interface Actor {
   node_id: string;
   login: string;
@@ -103,33 +97,6 @@ interface Comment {
   created_at: string;
   updated_at: string;
   pull_request_review_id?: number;
-}
-export interface FileChange {
-  filename: string;
-  previous_filename?: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  patch?: string;
-  blob_url: string | null;
-  fullComparison?: {
-    baseSha: string;
-    headSha: string;
-    before: { blobSha: string; text: string };
-    after: { blobSha: string; text: string };
-  };
-  removedComparison?: {
-    baseSha: string;
-    headSha: string;
-    before: { blobSha: string; text: string };
-  };
-  addedComparison?: {
-    baseSha: string;
-    headSha: string;
-    after: { blobSha: string; text: string };
-  };
-  unchangedRename?: { baseSha: string; headSha: string; blobSha: string };
-  addedBinary?: AddedBinaryProof;
 }
 interface Commit {
   sha: string;

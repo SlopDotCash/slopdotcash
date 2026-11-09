@@ -1,5 +1,6 @@
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 import {
   collectIndirectValueRetention,
   type IndirectRetainedFile,

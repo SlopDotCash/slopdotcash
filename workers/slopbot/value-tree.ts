@@ -1,4 +1,4 @@
-import type { EvidenceClient } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 
 interface Entry {
   path: string;

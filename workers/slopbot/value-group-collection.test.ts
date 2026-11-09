@@ -7,7 +7,7 @@ import {
   collectNoChangePromotion,
   NO_CHANGE_PROMOTION_CONTEXT,
 } from "./value-no-change-promotion";
-import type { WorkUnitSource } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 // Synthetic Git evidence exercises group collection only; no model output
 // is supplied. The fixture mirrors accepted-promotion.test.ts: PR #1 is the

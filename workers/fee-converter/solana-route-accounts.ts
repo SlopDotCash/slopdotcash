@@ -13,14 +13,15 @@ import {
   TOKEN_PROGRAM,
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import {
-  assertJupiterRoute,
-  type JupiterRouteExpectation,
-} from "./jupiter-route";
+import { assertJupiterRoute } from "./jupiter-route";
 import {
   associatedAccountCreations,
   type SolanaAccountProof,
 } from "./solana-accounts";
+import type {
+  JupiterRouteExpectation,
+  RouteAccountObservation,
+} from "./solana-route-types";
 import type { ParsedTransaction } from "./solana-transaction";
 
 const SYSTEM = "11111111111111111111111111111111";
@@ -34,15 +35,6 @@ interface AccountState {
   executable: boolean;
   lamports: number;
   data: Uint8Array;
-  slot: number;
-}
-export interface RouteAccountObservation {
-  address: string;
-  owner: string | null;
-  executable: boolean | null;
-  lamports: string | null;
-  dataSha256: string | null;
-  dataLength: number;
   slot: number;
 }
 interface Holding {

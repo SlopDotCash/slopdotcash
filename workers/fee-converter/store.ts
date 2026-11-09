@@ -20,6 +20,7 @@ import type {
   FeeVault,
   SendReplacement,
 } from "./core";
+import { LOCK_MS } from "./core";
 import { assertJupiterRoute } from "./jupiter-route";
 import {
   retainedRouteExpectation,
@@ -47,12 +48,6 @@ interface D1Statement {
 export interface FeeD1Database {
   prepare(query: string): D1Statement;
 }
-
-/**
- * One lease covers a whole run. core.ts sizes its own renewal interval from
- * this so a run never signs after the lease it holds has expired.
- */
-export const LOCK_MS = 14 * 60 * 1000;
 
 const COLUMNS: [keyof ConversionRow, string][] = [
   ["id", "id"],

@@ -13,10 +13,8 @@ import {
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { validateEvidenceAssessment } from "./value-review";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 // Synthetic Git evidence exercises grouping only; no model output is supplied.
 const base = "0".repeat(40);

@@ -13,7 +13,6 @@
 import { FeeCapTooLowError } from "viem";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
-import { LOCK_MS } from "./store";
 import {
   acceptableMinimum,
   remainingBudget,
@@ -312,6 +311,12 @@ const QUOTE_ABANDON_MS = 60 * 60 * 1000;
  */
 export const REPLACEMENT_WAIT_MS = 3 * 60 * 1000;
 const RESCALE_ATTEMPTS = 3;
+/**
+ * One lease covers a whole run. The store holds it for this long, and the run
+ * sizes its own renewal interval from it so it never signs after the lease it
+ * holds has expired.
+ */
+export const LOCK_MS = 14 * 60 * 1000;
 /**
  * How long a run may go without renewing its lease. A run renews at a chunk
  * boundary once this much time has passed, so a chunk that starts always has

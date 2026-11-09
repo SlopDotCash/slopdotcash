@@ -1,4 +1,4 @@
-import type { EvidenceClient } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 
 /** Historical authority comes from accepted base policy, never a PR's head. */
 export interface ValueBranchPolicy {
