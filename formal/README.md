@@ -239,6 +239,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Service-binding identity and contributor-token exchange | `identity_consumer_exchange` | `backend/identity-assertion.ts`, `backend/points/handler.ts`, `backend/trace/handler.ts`, `backend/trace/auth.ts`, existing publication and account-closure workflows |
 | Trace token validation and request admission | `trace_bearer_tokens`, `trace_route_authorization` | `backend/trace/auth.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, the binding-recovery path in `backend/security/payments.integration.ts` |
 | Trace creation, progress events and finalization | `trace_run_creation`, `trace_event_finalization` | `backend/trace/cloudflare-persistence.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, `scripts/project-self-service.test.ts` |
+| Wallet-claim publication and possession evidence | `wallet_claim_publication`, `wallet_possession_completion` | `backend/trace/handler.ts`, `backend/trace/cloudflare-persistence.ts`, `src/lib/wallet-possession.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `scripts/wallet-possession.test.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -394,6 +395,27 @@ and foreign runs both return 404. Statement commits remain distinct from
 metadata, readback and response delivery. Existing workflows cover selected
 creation, ban and finalization paths; concurrent event and partial-reply
 conformance remains incomplete. The new models are unexecuted here.
+
+Wallet publication distinguishes the current unsuperseded claim from a returned
+historical digest match. A backdated successor can still be the current leaf.
+Actor and chain separate each lineage. Contributor predecessor checks precede
+the registry same-address/login no-op; the payment registration adapter has a
+separate no-op rule. New claims, audits and wallet-change notices share a batch.
+Retries can recover a committed claim after missing metadata or a lost reply.
+The claim model bounds two actors, four chain labels, two request slots with
+one retry each, and six retained rows.
+
+Possession remains additive evidence for an immutable claim. A successor keeps
+the older claim's evidence. Challenge consumption precedes signature, binding
+and exact issued-window validation, so invalid submissions can burn a challenge
+without creating evidence. Two valid challenges for one claim can be consumed,
+but the attestation and audit batch preserves one record. The possession model
+bounds two claims, challenges and submission slots with clock ranks 0–5. It
+does not authorize payment or assert continued key possession. The PRD now
+names the retired `protocol/wallet-possession.md` document precisely, preserving
+the runtime and callers that the recorded owner decision kept. These models
+remain unexecuted. A valid inactive map index also replaces the creation model's
+out-of-domain sentinel; that source-only correction has not been parsed here.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

@@ -223,7 +223,8 @@
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
-        "formal/models/api/points_dispute_lease.qnt"
+        "formal/models/api/points_dispute_lease.qnt",
+        "formal/models/api/wallet_claim_publication.qnt"
       ],
       "candidateLines": [
         15, 27, 100, 108, 109, 135, 138, 147, 153, 166, 221, 250, 258, 267, 276,
@@ -408,6 +409,7 @@
       "sha256": "597181cfccedaf7057b67258e18d1b0b3f1264e1b14ad919459bb45b307ed2bc",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
+        "formal/models/api/wallet_claim_publication.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
         "formal/models/payments/direct_recovery_completion.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
@@ -950,7 +952,9 @@
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/operator_intake_renewal.qnt",
         "formal/models/api/trace_event_finalization.qnt",
-        "formal/models/api/trace_run_creation.qnt"
+        "formal/models/api/trace_run_creation.qnt",
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/api/wallet_possession_completion.qnt"
       ],
       "candidateLines": [
         61, 156, 279, 280, 283, 301, 312, 317, 340, 378, 391, 394, 416, 417,
@@ -986,7 +990,9 @@
         "formal/models/api/trace_bearer_tokens.qnt",
         "formal/models/api/trace_event_finalization.qnt",
         "formal/models/api/trace_route_authorization.qnt",
-        "formal/models/api/trace_run_creation.qnt"
+        "formal/models/api/trace_run_creation.qnt",
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/api/wallet_possession_completion.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
@@ -1789,7 +1795,10 @@
     {
       "path": "migrations/0003_wallet_claim_registry.sql",
       "sha256": "7d90dcec430c705f53ba70f79ea433a8e0067c3a0ec940d230d00c29b933b8fb",
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/wallet_claim_publication.qnt"
+      ],
       "candidateLines": [9, 34, 61, 62, 67, 68],
       "review": "mapped-abstraction"
     },
@@ -1820,7 +1829,10 @@
     {
       "path": "migrations/0007_wallet_possession_attestations.sql",
       "sha256": "d6d50c5e0d736757394b56ccd2a8c4a47e8b4a84f1084be1786dbdb023b33ee2",
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/wallet_possession_completion.qnt"
+      ],
       "candidateLines": [4, 6, 7, 43, 44, 49, 50],
       "review": "mapped-abstraction"
     },
@@ -1846,7 +1858,10 @@
     {
       "path": "migrations/0010_wallet_claim_chain.sql",
       "sha256": "859db09eac09eb4a52d77d717456c03d5be3421ece9b9bcf0caae2a054fb0f5c",
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/wallet_claim_publication.qnt"
+      ],
       "candidateLines": [3, 24, 25],
       "review": "mapped-abstraction"
     },
@@ -1900,7 +1915,10 @@
     {
       "path": "migrations/0017_robinhood_chain.sql",
       "sha256": "31f935e6f6c10e7c89c160b1d6993cb1390af1d2035ac635abaea51677c850ca",
-      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "candidateLines": [
         5, 7, 11, 13, 28, 65, 84, 85, 89, 90, 94, 95, 111, 113, 114, 123, 126,
         127, 129, 131, 132, 136, 138, 147, 157, 160, 161, 170, 187, 192, 200,
@@ -1938,7 +1956,10 @@
     {
       "path": "migrations/0021_multi_asset_vault_snapshots.sql",
       "sha256": "028e708fc45161cf5db0261495927c882ecca381d921443a6985906496514230",
-      "models": ["formal/models/payments/payment_dispatch.qnt"],
+      "models": [
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/payments/payment_dispatch.qnt"
+      ],
       "candidateLines": [
         1, 15, 20, 21, 33, 70, 89, 90, 94, 95, 99, 100, 116, 118, 119, 132, 135,
         145, 147, 149, 150, 155, 158, 167, 177, 180, 181, 185, 213
@@ -6164,7 +6185,10 @@
     {
       "path": "src/lib/wallet-possession.ts",
       "sha256": "a9ab1c39b9f06b6709cb85d6f6a2b2927d3b6779a42663e2e79e84b5b17620d3",
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/api/wallet_possession_completion.qnt"
+      ],
       "candidateLines": [48, 213, 263],
       "review": "mapped-abstraction"
     },
@@ -9291,7 +9315,7 @@
     },
     {
       "path": "formal/models/api/trace_run_creation.qnt",
-      "sha256": "ff5c39c69d1905c5a38671fba7a9cb484a9f78e91d7e0c2809e944972e521c00",
+      "sha256": "ce622e9ec688059fc5a8d9b51d3c903c7cddccf6b1900ea5edd08bee3de216a2",
       "sources": [
         "backend/d1.ts",
         "backend/projects/account-bans.ts",
@@ -9330,6 +9354,88 @@
         "retryAfterRefusedInsertCanCreateAfterReinstatementTest",
         "sameClientPayloadWithDifferentKeysCreatesDistinctRunsTest",
         "sameKeyAcrossActorsDoesNotConflictTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/wallet_claim_publication.qnt",
+      "sha256": "74d8f33bbfd3f0e1488cfff8478afaf6ad72806c4f06d2eb7e70a6329c97065f",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/payments/wallet-registration.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/handler.ts",
+        "migrations/0003_wallet_claim_registry.sql",
+        "migrations/0010_wallet_claim_chain.sql",
+        "migrations/0017_robinhood_chain.sql",
+        "migrations/0021_multi_asset_vault_snapshots.sql"
+      ],
+      "scenarios": [
+        "anotherActorsPredecessorRefusesTest",
+        "anotherChainsPredecessorRefusesTest",
+        "badMetadataDoesNotUndoAtomicPublicationTest",
+        "batchFailureRollsBackClaimAuditAndNoticeTest",
+        "caseOnlyLoginDifferenceIsNoopTest",
+        "changedLoginAppendsRegistryClaimTest",
+        "committedBatchLostReplyRecoversExistingTest",
+        "concurrentSuccessorsCannotForkTest",
+        "contributorCreatesRootWithAtomicSideEffectsTest",
+        "currentReadIsAnObservationNotLiveHeadTest",
+        "differentConcurrentRootsConflictTest",
+        "emptyLineageReadsAsMissingTest",
+        "futureOperatorObservationRefusesTest",
+        "historicalDigestReplayCanReturnNoncurrentRecordTest",
+        "historicalSameAddressNeedsRegistrySuccessorTest",
+        "identicalConcurrentRootsRecoverOneDigestTest",
+        "independentChainsKeepIndependentHeadsTest",
+        "invalidBodyPreventsClaimTest",
+        "lostContributorResponseNeedsRefreshedPredecessorTest",
+        "missingAuthorityPreventsClaimTest",
+        "missingPredecessorRefusesTest",
+        "noopResponseCanFollowAnotherReplacementTest",
+        "olderObservationCanBeTheNewestLineageLeafTest",
+        "operatorAlwaysUsesSolanaLineageTest",
+        "operatorCannotAppendToAnOldPredecessorTest",
+        "operatorKeepsClockCapturedBeforeHashingTest",
+        "pendingHashDoesNotPublishClaimTest",
+        "predecessorMismatchRefusesBeforeNoopTest",
+        "recoveryReadFailureKeepsCommittedRowsTest",
+        "refreshedContributorRetryReturnsNoopTest",
+        "returnedCreatedRecordMayAlreadyHaveSuccessorTest",
+        "sameAddressRegistryClaimIsNoopTest",
+        "separateActorsKeepIndependentRootsTest",
+        "timestampDifferencePreventsLogicalDuplicateDigestReplayTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/wallet_possession_completion.qnt",
+      "sha256": "6b66deb909b57d18e4084812f78b3364e81d1d473642267e3cc45f2f78a91ceb",
+      "sources": [
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/handler.ts",
+        "migrations/0007_wallet_possession_attestations.sql",
+        "src/lib/wallet-possession.ts"
+      ],
+      "scenarios": [
+        "challengeForOtherClaimIsBurnedThenRefusedTest",
+        "consumedReplyLossDoesNotRestoreChallengeTest",
+        "evmClaimCannotIssueSolanaChallengeTest",
+        "existingAttestationReturnsBeforeSubmittedBodyValidationTest",
+        "existingProofDoesNotIssueAnotherChallengeTest",
+        "expiredChallengeIsNotConsumedTest",
+        "expiryAfterConsumptionPreventsVerificationTest",
+        "failedBatchCanUseAnotherIssuedChallengeTest",
+        "failedBatchReplyCanRecoverCommittedAttestationTest",
+        "failedCatchReadLeavesCommittedEvidenceTest",
+        "invalidSignatureBurnsChallengeWithoutEvidenceTest",
+        "lostSuccessResponseLeavesPublicEvidenceTest",
+        "mismatchedPayloadBurnsChallengeTest",
+        "offCurveClaimIsNotProvableBySignatureTest",
+        "otherActorCannotIssueChallengeTest",
+        "secondSubmissionOfSpentChallengeRefusesTest",
+        "shiftedSignedWindowCannotPublishTest",
+        "successorPreservesOldPossessionEvidenceTest",
+        "twoValidChallengesShareOneImmutableAttestationTest",
+        "validProofPublishesOneAttestationAndAuditTest"
       ]
     },
     {

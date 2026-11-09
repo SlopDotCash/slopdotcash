@@ -611,7 +611,7 @@ The public repository picker uses the read-only `SLOP_GITHUB_READ_TOKEN` in prod
 
 Local development uses durable isolated report storage, background assessment, API flows, and real authorization. The existing GitHub App supplies a loopback-bound single-use identity handoff. Local and production stores remain separate; local handoffs cannot create production assertions. Require no separate developer App or local production secret. Do not silently send real mail or enable a production signer.
 
-The old wallet-possession protocol, isolated test identity stack, and v1 secure-VM vetting pipeline remain retired. Keep `deck.slop.cash` detached.
+The obsolete `protocol/wallet-possession.md` document, isolated test identity stack, and v1 secure-VM vetting pipeline remain retired. Retain the runtime wallet-possession verifier and its callers. Keep `deck.slop.cash` detached.
 
 ### Decisions still required
 
