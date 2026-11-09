@@ -366,11 +366,11 @@ jobs:
         run: bun run verify:code
 
       - name: Check the formal models
-        # The Quint models in formal/ carry the state invariants the review
-        # accepted. Nothing else runs them, so a change to a model or to the
-        # handler it maps to can break an invariant with this job green.
-        # `formal:check` uses the TypeScript backend; `formal:verify` needs
-        # Java 21 and a checker download, so it stays a local command.
+        # `verify:code` above already runs `formal:check`, so this repeats it.
+        # It stays a step of its own so a weakened model fails as a model, in
+        # a named step, and not as an unnamed failure inside the test run.
+        # `formal:verify` needs Java 21 and an 80-minute job of its own, so the
+        # deploy gate keeps the cheap half.
         run: bun run formal:check
 
       - name: Run installer lifecycle end-to-end checks
