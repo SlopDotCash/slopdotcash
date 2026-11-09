@@ -1175,6 +1175,34 @@ tested or verified here:
   This fixes a focus event restarting private reads after removal. Four browser
   regression cases are defined; execution, before/after video and the required
   UI checks remain outstanding. Existing layout, labels and controls are intact.
+- `funding_routes` now validates an entire historical route collection in 15
+  scenarios, preserving input order, exact timestamp boundaries and duplicate
+  refusal without implying a live route rotation. `funding_address_validation`
+  adds 21 address/signature format scenarios and keeps Robinhood wallet validity
+  separate from the direct-route refusal. Nine parser/consumer regression
+  definitions include the production 32-row bound and published
+  [BIP350 vectors](https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki#test-vectors).
+  Current funding still uses escrow; these checks grant no wallet authority.
+- `readme_proof_binding` now has 26 scenarios for full canonical proof equality,
+  exact legacy tuples, actor-scoped prior proof collection and the separate
+  baseline, cycle-import and preparation-import paths. A skipped unbound row
+  differs from a malformed admitted row aborting the whole output. Seven
+  historical-import regression definitions are unexecuted; reviewed artifact
+  provenance remains a caller assumption, and observations grant no payment
+  or wallet authority.
+- `allocation_funding` now separates current-basis derivation/validation from
+  legacy amount arithmetic in 18 scenarios. A current basis always carries
+  zero manifest-backed principal and no instrument; a configured cap is not
+  a verified vault balance. The amount helper validates only its three copied
+  fields. Eighteen pure-function regression cases cover exact big integers,
+  zero overrides, rejected current bases and captured-value isolation.
+- `ui_wallet_choice` now models the rendered family and picker plus mixed-chain
+  reconciliation in 21 scenarios. Address-change consent uses the connection's
+  captured rows; a later confirmation uses current rows for registration skips.
+  Two browser cases cover a confirmed matching chain, a different pending
+  address and a missing chain. A successful operation requests refresh rather
+  than optimistically marking the whole card confirmed. This batch changes no
+  runtime or interface, and none of its models or regression definitions ran.
 
 ## Acceptance requirements and limits
 

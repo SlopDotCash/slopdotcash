@@ -2165,7 +2165,10 @@
     {
       "path": "migrations/0015_wallet_observations.sql",
       "sha256": "821fbd25b4e6f705141a8242dd3a8d96bfe16c0dd2b31c52f2711f78e424d5cf",
-      "models": ["formal/models/api/api_wallet_claims.qnt"],
+      "models": [
+        "formal/models/api/api_wallet_claims.qnt",
+        "formal/models/release/readme_proof_binding.qnt"
+      ],
       "candidateLines": [16, 22],
       "review": "mapped-abstraction"
     },
@@ -4036,7 +4039,8 @@
       "sha256": "f38f8534397edc898a2645f99dea1e33868fdc6e9832f44e3f8360c9f9ef7ef5",
       "models": [
         "formal/models/payments/historical_disclosure.qnt",
-        "formal/models/points/source_import.qnt"
+        "formal/models/points/source_import.qnt",
+        "formal/models/release/readme_proof_binding.qnt"
       ],
       "candidateLines": [56, 85, 268],
       "review": "mapped-abstraction"
@@ -4098,6 +4102,7 @@
       "sha256": "37780a83d90c1c000e30eed5b35d1588f7b72fc7e075775483366723fd638892",
       "models": [
         "formal/models/payments/unsafe_destination_history.qnt",
+        "formal/models/release/readme_proof_binding.qnt",
         "formal/models/rewards/prior_cycle_carry.qnt"
       ],
       "candidateLines": [172, 173, 176, 190, 268, 273, 295, 330, 347, 348, 350],
@@ -4468,7 +4473,10 @@
     {
       "path": "scripts/sync-cycle-index.ts",
       "sha256": "d1af855146a7f60aa167519bc47368ca842935547f5cce477d7bb8b3148c62d9",
-      "models": ["formal/models/rewards/cycle_snapshot_publication.qnt"],
+      "models": [
+        "formal/models/release/readme_proof_binding.qnt",
+        "formal/models/rewards/cycle_snapshot_publication.qnt"
+      ],
       "candidateLines": [
         15, 18, 123, 195, 265, 471, 496, 531, 534, 558, 572, 623, 763, 829, 878,
         883, 887, 891, 894, 899, 902, 904, 918, 921, 924
@@ -5566,7 +5574,10 @@
     {
       "path": "src/lib/base58.ts",
       "sha256": "e916260891c521ed9f1828ae7213eada0e05d97e948a8c48065451e9172b3c94",
-      "models": ["formal/models/ui/ui_solana_history_recovery.qnt"],
+      "models": [
+        "formal/models/rewards/funding_address_validation.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure byte/text encoding with per-call local accumulators; no retained state or side effects."
@@ -5603,9 +5614,9 @@
     {
       "path": "src/lib/canonical-json.ts",
       "sha256": "fc2e0042c9f198bcc8b7630614964ff02118be19a86a640d45639d245872a9c9",
-      "models": [],
+      "models": ["formal/models/release/readme_proof_binding.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Recursive deterministic serialization over the supplied value; no retained state or I/O."
     },
     {
@@ -5703,6 +5714,7 @@
       "models": [
         "formal/models/payments/payout_readiness.qnt",
         "formal/models/payments/payout_rpc_probe.qnt",
+        "formal/models/rewards/allocation_funding.qnt",
         "formal/models/rewards/escrow_policy_history.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"
       ],
@@ -5752,7 +5764,10 @@
     {
       "path": "src/lib/funding-address.mjs",
       "sha256": "8e43a5dc90642fd990462bf80b84acf728e347db1d67ab45e4232b6e8b6852cd",
-      "models": ["formal/models/rewards/funding_routes.qnt"],
+      "models": [
+        "formal/models/rewards/funding_address_validation.qnt",
+        "formal/models/rewards/funding_routes.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5987,10 +6002,7 @@
     {
       "path": "src/lib/owner-commitment-actions.ts",
       "sha256": "011cef42a5fb3a48242408d0194a91982c19d699b19b2b675b2542a5ed2241ee",
-      "models": [
-        "formal/models/rewards/allocation_funding.qnt",
-        "formal/models/ui/ui_monthly_preparation_lifetime.qnt"
-      ],
+      "models": ["formal/models/ui/ui_monthly_preparation_lifetime.qnt"],
       "candidateLines": [56, 128, 181, 205, 207],
       "review": "mapped-abstraction"
     },
@@ -6260,6 +6272,7 @@
       "sha256": "bf68e6b1d422f38c5e27b0492cc8327fc8b79abf8d7b668200199606653c65a1",
       "models": [
         "formal/models/payments/payout_readiness.qnt",
+        "formal/models/rewards/funding_routes.qnt",
         "formal/models/slopbot/reporting_refresh_job.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
@@ -6317,9 +6330,9 @@
     {
       "path": "src/lib/record-validation.mjs",
       "sha256": "986a5652c4495382f7eb93a66fd6b782109ef6ebed15a3b88c26bf3722248f9f",
-      "models": [],
+      "models": ["formal/models/rewards/funding_routes.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure record/key/string/integer/time validation primitives; no retained state or I/O."
     },
     {
@@ -6364,17 +6377,17 @@
     {
       "path": "src/lib/reward-asset.mjs",
       "sha256": "8c61a441cc24d53a7721ca3c4744ae437777e05050d539e9be0c443347d768d4",
-      "models": [],
+      "models": ["formal/models/rewards/funding_address_validation.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure reward-asset choice construction, schema validation and same-object comparison. No I/O or persistent state. Authoritative asset verification and activation remain registry/chain state transitions and are not exempted here."
     },
     {
       "path": "src/lib/reward-cap.mjs",
       "sha256": "f19153ad0785f3236bdd362174a4a89c2b5d76dca516e7b4a61b06e329dc2031",
-      "models": [],
+      "models": ["formal/models/rewards/allocation_funding.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure lookup of a supplied project's exact cycle cap override; no mutation or rollover state. Cap enforcement remains in monthly allocation and vault models."
     },
     {
@@ -6394,7 +6407,10 @@
     {
       "path": "src/lib/rewards.ts",
       "sha256": "f162c89e3f6530cdee2dfcddfbe4c7ae84bfff6ca31647fca3212c7ebd269fa5",
-      "models": ["formal/models/rewards/historical_reward.qnt"],
+      "models": [
+        "formal/models/release/readme_proof_binding.qnt",
+        "formal/models/rewards/historical_reward.qnt"
+      ],
       "candidateLines": [
         103, 130, 174, 591, 603, 604, 605, 615, 699, 700, 701, 785, 806, 835,
         838, 842, 849, 856, 863, 865, 878, 920, 932, 957, 960, 1075, 1079, 1080,
@@ -6710,9 +6726,9 @@
     {
       "path": "src/lib/verified-base-units.ts",
       "sha256": "34f4e4788a51399f0a0d15233ee7500f3864e49f93f2ed6c8ad328f286dfc11a",
-      "models": [],
+      "models": ["formal/models/rewards/allocation_funding.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure canonical decimal base-unit text check against the uint128 vault limit. No I/O, mutation or lifecycle."
     },
     {
@@ -6765,9 +6781,9 @@
     {
       "path": "src/lib/verified-ids.ts",
       "sha256": "8595c158c1f9eeaae46f3317d0550a210ca89c07f7f9928b71f070e75456bf6e",
-      "models": [],
+      "models": ["formal/models/rewards/funding_address_validation.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure character and byte checks for EVM account text and GitHub user MessagePack payloads. No I/O, cache or lifecycle; callers decode node IDs and own identity state."
     },
     {
@@ -6863,7 +6879,10 @@
     {
       "path": "src/lib/wallets.ts",
       "sha256": "daab8185e616c3e8f8d143d3215aee61863ea59651b0f9f1a249fe36f3b387f3",
-      "models": ["formal/models/ui/ui_solana_history_recovery.qnt"],
+      "models": [
+        "formal/models/rewards/funding_address_validation.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted."
@@ -13811,12 +13830,43 @@
     },
     {
       "path": "formal/models/release/readme_proof_binding.qnt",
-      "sha256": "1f32f9d8900a089a97e32cf5295fdd2d58400bff753d2e718d20fc3c24e4805d",
-      "sources": ["scripts/readme-proof-binding.ts"],
+      "sha256": "571f361cdb30a88d008943840a130cca677a32af5c2325b6fb7cd9c44f14f1da",
+      "sources": [
+        "migrations/0015_wallet_observations.sql",
+        "scripts/prepare-payments-import.ts",
+        "scripts/prior-cycle-accrual.ts",
+        "scripts/readme-proof-binding.ts",
+        "scripts/sync-cycle-index.ts",
+        "src/lib/canonical-json.ts",
+        "src/lib/rewards.ts"
+      ],
       "scenarios": [
+        "actorBoundOtherProofUsesManifestValidationTest",
+        "alteredChainRefusedTest",
+        "alteredCommitRefusedTest",
+        "alteredObservationTimeRefusedTest",
         "alteredProofRefusedTest",
+        "alteredSourceUrlRefusedTest",
+        "canonicalPropertyOrderDoesNotChangeIdentityTest",
+        "changedBaselineActorOrLoginRefusesEvenPinnedProofTest",
+        "correctedRetryDropsEarlierStagedRowsTest",
+        "exactLegacyPinStillQualifiesWithDifferentPriorTest",
+        "exactLegacyTupleQualifiesWithoutPriorProofTest",
         "frozenProofSurvivesRenameTest",
-        "reusedLoginNotAuthorityTest"
+        "importChecksFrozenLoginBeforeBindingTest",
+        "importSkipsUnboundRowAndKeepsBoundObservationTest",
+        "laterMalformedObservationReturnsNoSqlPrefixTest",
+        "legacyActorCannotBeChangedTest",
+        "legacyCycleCannotBeChangedTest",
+        "legacyProjectCannotBeChangedTest",
+        "malformedManifestRefusesBeforeBindingTest",
+        "noSourceRecordsReturnEmptySqlTest",
+        "nonReadmeImportRowIsSkippedBeforeShapeValidationTest",
+        "preparationStillValidatesObservationTest",
+        "priorProofCollectionIncludesNoncarriedRowsTest",
+        "reusedLoginNotAuthorityTest",
+        "reviewedPreparationDoesNotRequireCyclePinTest",
+        "sourceRecordsWithoutObservationsRefuseTest"
       ]
     },
     {
@@ -13968,13 +14018,34 @@
     },
     {
       "path": "formal/models/rewards/allocation_funding.qnt",
-      "sha256": "f9578efeb4301e37612fa7b317a5efd347e0f9108b25f72c529dc4e105957e90",
+      "sha256": "b03bab6da2aa5782cbc2b92f5ff2a2939214450c84b3d6bb91a848b328d33deb",
       "sources": [
         "src/lib/allocation-funding-basis.mjs",
         "src/lib/allocation-funding.ts",
-        "src/lib/owner-commitment-actions.ts"
+        "src/lib/escrow-policy.mjs",
+        "src/lib/reward-cap.mjs",
+        "src/lib/verified-base-units.ts"
       ],
-      "scenarios": ["capPreservedTest", "pledgeZeroTest"]
+      "scenarios": [
+        "amountHelperDoesNotAdmitItsResultAsCurrentBasisTest",
+        "capPreservedTest",
+        "correctedInputCanBeEvaluatedAgainTest",
+        "currentCommittedBasisStillHasZeroPrincipalTest",
+        "extraBasisKeysRefusedTest",
+        "helperIgnoresExtraBasisMetadataTest",
+        "instrumentMakesCurrentBasisInvalidTest",
+        "invalidCapRefusesEvenPledgedStateTest",
+        "invalidCycleRefusesDerivationTest",
+        "invalidStateRefusesAllAmountModesTest",
+        "legacyAmountBelowCapIsUnchangedTest",
+        "matchingMonthUsesExactOverrideTest",
+        "noncanonicalAmountRefusesArithmeticTest",
+        "nonzeroSuppliedBasisIsRejectedTest",
+        "otherMonthUsesDefaultCapTest",
+        "pledgeZeroTest",
+        "projectChangeDoesNotRewriteCapturedBasisTest",
+        "zeroOverrideIsNotTreatedAsMissingTest"
+      ]
     },
     {
       "path": "formal/models/rewards/bucket_aggregation.qnt",
@@ -14126,10 +14197,64 @@
       ]
     },
     {
+      "path": "formal/models/rewards/funding_address_validation.qnt",
+      "sha256": "4724a829cc51318cfbb1016e1588b6704418b19c8ad628c9a0b696e583eacd73",
+      "sources": [
+        "src/lib/base58.ts",
+        "src/lib/funding-address.mjs",
+        "src/lib/reward-asset.mjs",
+        "src/lib/verified-ids.ts",
+        "src/lib/wallets.ts"
+      ],
+      "scenarios": [
+        "bitcoinFutureVersionLengthAcceptedTest",
+        "bitcoinPaddingRefusedTest",
+        "bitcoinTaprootBech32mAcceptedTest",
+        "bitcoinTaprootWrongLengthRefusedTest",
+        "bitcoinUppercaseRefusedTest",
+        "bitcoinV0Bech32AcceptedTest",
+        "bitcoinV0Bech32mRefusedTest",
+        "bitcoinVersion17RefusedTest",
+        "bitcoinWrongNetworkRefusedTest",
+        "lowercaseNonzeroEvmAcceptedTest",
+        "robinhoodWalletAddressRemainsSupportedTest",
+        "signatureIsNotAnAddressTest",
+        "signatureRequires64DecodedBytesTest",
+        "signatureWrongDecodedLengthRefusedTest",
+        "solanaAddressWrongDecodedLengthRefusedTest",
+        "solanaAlphabetRefusedTest",
+        "solanaDecodedAddressAcceptedTest",
+        "solanaTextLengthAloneInsufficientTest",
+        "unsupportedAddressNetworkRefusedTest",
+        "uppercaseEvmRefusedTest",
+        "zeroEvmRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/rewards/funding_routes.qnt",
-      "sha256": "2e19f4858a0108cf95a3cbd7476af640cf193be1bd904c47b223fc9cbea16d77",
-      "sources": ["src/lib/funding-address.mjs"],
-      "scenarios": ["overlappingRefusedTest", "preservedHistoryTest"]
+      "sha256": "72ee73e9e5f9e1fc542ad90b00ecf571b67f50eda9b0b2de2a71137b243d6c8f",
+      "sources": [
+        "src/lib/funding-address.mjs",
+        "src/lib/project-schema.mjs",
+        "src/lib/record-validation.mjs"
+      ],
+      "scenarios": [
+        "crossNetworkSameSpellingCanCoexistTest",
+        "directRobinhoodRouteStillRefusesTest",
+        "duplicateAddressRefusesEvenDisjointIntervalsTest",
+        "emptyHistoryIsValidTest",
+        "equalStartAndEndRefusesTest",
+        "invalidAddressRefusesBeforeHistoryTest",
+        "nonarrayRefusesTest",
+        "noncanonicalTimeRefusesBeforeIntervalComparisonTest",
+        "openPriorRouteCannotOverlapLaterRouteTest",
+        "overlappingRefusedTest",
+        "oversizedCollectionRefusesBeforeRowsTest",
+        "preservedHistoryTest",
+        "unknownFieldsRefuseTest",
+        "unsortedInputKeepsItsOriginalOrderTest",
+        "wrongAssetRefusesTest"
+      ]
     },
     {
       "path": "formal/models/rewards/historical_reward.qnt",
@@ -18595,9 +18720,31 @@
     },
     {
       "path": "formal/models/ui/ui_wallet_choice.qnt",
-      "sha256": "ceeace7c168810bca581f29c98b31b65e2322dad93a76207eb4294ea084af648",
+      "sha256": "5cfde9d85c53c1724b94b0a22e7bf1498c18d9ce03dc5a6cba89a0cd180e0f1d",
       "sources": ["src/Earnings.tsx", "src/lib/use-payout-wallets.ts"],
-      "scenarios": ["chooseTest", "conflictTest", "discoveryTest"]
+      "scenarios": [
+        "allThreeChainsRequiredForConfirmedTest",
+        "distinctAuthorizedAddressesRemainAttentionTest",
+        "emptyCardHasConnectAndNoProviderEffectTest",
+        "emptyPickerOffersInstallLinksTest",
+        "lateDiscoveryChangesOpenPickerOnlyTest",
+        "laterConsentUsesCurrentRowsForRegistrationTest",
+        "matchingConfirmedChainsNeedNoSignaturesTest",
+        "matchingPendingChainStillNeedsConfirmationTest",
+        "mixedRowsRequireConsentForAnyDifferentAddressTest",
+        "newReadDoesNotRewriteCapturedConsentTest",
+        "partialFailureKeepsRefreshAndErrorTest",
+        "pendingConsentBlocksOtherFamilyPickerTest",
+        "pickerCancelCallsNoProviderTest",
+        "rejectedConnectionDoesNotRegisterTest",
+        "removedProviderDoesNotAutomaticallyCancelCapturedConnectionTest",
+        "retrySkipsReconciledEarlierChainTest",
+        "solanaUsesItsSingleChainTest",
+        "successfulRequestsDoNotOptimisticallyRewriteCardTest",
+        "unconfirmedAddressUsesConnectTest",
+        "unconfirmedDifferentAddressStillNeedsConsentTest",
+        "wrongFamilyChoiceCannotConnectTest"
+      ]
     },
     {
       "path": "formal/models/vetting/isolated_execution.qnt",

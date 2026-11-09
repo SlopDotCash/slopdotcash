@@ -940,6 +940,67 @@ test("connecting the saved address confirms it without an extra step", {
   });
 });
 
+for (const decision of ["keep", "register"] as const)
+  test(`a mixed EVM family requires consent for a different pending chain before ${decision}`, {
+    tag: "@desktop-only",
+  }, async ({ page }) => {
+    const writes = await payments(page, [
+      {
+        chain: "base", claimId: "confirmed-base",
+        address: evmAddress, authorized: true,
+      },
+      {
+        chain: "robinhood", claimId: "pending-robinhood",
+        address: savedAddress, authorized: false,
+      },
+      // Ethereum is missing. One confirmed matching chain cannot make the
+      // whole family confirmed or bypass the different pending address.
+    ]);
+    await providers(page);
+    await page.goto("/account#wallets");
+    const card = page.getByRole("article", { name: "EVM wallet", exact: true });
+    await expect(card).toHaveAttribute("data-state", "attention");
+    await expect(
+      card.getByRole("img", { name: "Base, confirmed", exact: true }),
+    ).toBeVisible();
+    await expect(
+      card.getByRole("img", { name: "Robinhood Chain, not confirmed", exact: true }),
+    ).toBeVisible();
+    await chooseMetaMask(page, "Change");
+    const confirmation = page.getByRole("region", {
+      name: "Register a different EVM address?", exact: true,
+    });
+    await expect(confirmation).toContainText(`Saved address${savedAddress}`);
+    await expect(confirmation).toContainText(`Wallet account${evmAddress}`);
+    expect(writes).toEqual([]);
+    await confirmation
+      .getByRole("button", {
+        name: decision === "keep" ? "Keep saved address" : "Register wallet account",
+        exact: true,
+      })
+      .click();
+    if (decision === "keep") {
+      await expect(
+        page.getByRole("button", { name: "Change EVM wallet", exact: true }),
+      ).toBeFocused();
+      expect(writes).toEqual([]);
+      expect(await walletCalls(page)).not.toContain("MetaMask:personal_sign");
+    } else {
+      await expect(
+        page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
+      ).toBeVisible();
+      expect(writes
+        .filter((write) => write.path === "wallets/register")
+        .map((write) => write.body)).toEqual([
+        { chain: "robinhood", address: evmAddress },
+        { chain: "ethereum", address: evmAddress },
+      ]);
+      // This fixture deliberately retains the previous account response.
+      // An action message alone must not optimistically upgrade the card.
+      await expect(card).toHaveAttribute("data-state", "attention");
+    }
+  });
+
 for (const rejectedSignature of [2, 3]) {
   test(`a rejected EVM signature ${rejectedSignature} stays visible after partial confirmation and can resume`, {
     tag: "@desktop-only",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "009dab1483d360abb260aa2813b15eda34e0a00d2eb3a6c0b2a887856887bb9f",
+  "inventorySha256": "7369800e8ca88205ab538de812ae8f9cf52e249608bbaaa0341c5fbf465183dc",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2057,6 +2057,7 @@
       "values": ["under-review", "unresolved-proposals"],
       "models": [
         "formal/models/payments/unsafe_destination_history.qnt",
+        "formal/models/release/readme_proof_binding.qnt",
         "formal/models/rewards/prior_cycle_carry.qnt"
       ],
       "lexicallyUnmentionedValues": ["under-review", "unresolved-proposals"],
@@ -3132,7 +3133,10 @@
       "name": "status",
       "kind": "string-union",
       "values": ["approved", "proposed"],
-      "models": ["formal/models/rewards/historical_reward.qnt"],
+      "models": [
+        "formal/models/release/readme_proof_binding.qnt",
+        "formal/models/rewards/historical_reward.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
