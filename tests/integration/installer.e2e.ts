@@ -1,5 +1,7 @@
 /// <reference types="bun-types" />
 import { fixtureProject } from "../fixture-overlay.mjs";
+import { fixtureCheckout } from "../fixture-checkout";
+import { childEnvironment } from "../../scripts/child-environment.mjs";
 /**
  * Exercises installer authorization and lifecycle transitions against a
  * deterministic file-backed GitHub authority and real generated ZIP archives.
@@ -17,6 +19,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -51,6 +54,179 @@ const revisionB = "b".repeat(40);
 const revisionC = "c".repeat(40);
 const revisionD = "d".repeat(40);
 const roots: string[] = [];
+
+const quickValidator = join(repositoryRoot, "scripts/skill-validation/quick_validate.py");
+const validValidationSkill = "---\nname: local-validation\ndescription: Validate the local skill fixture.\n---\n";
+let validationPython: string | undefined;
+
+/** Use the dependency installed by the installer CI job, never install it here. */
+function pinnedValidationPython(): string {
+  if (validationPython) return validationPython;
+  const python = testPython();
+  const result = spawnSync(python, ["-B", "-c", "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)"], {
+    env: childEnvironment(process.env), encoding: "utf8", timeout: 10_000,
+  });
+  if (result.status !== 0) throw new Error("Validator integration requires the existing PyYAML 6.0.3 test runtime; it does not install dependencies");
+  validationPython = python;
+  return python;
+}
+
+function validationFixture(content: string | Buffer = validValidationSkill) {
+  const root = freshRoot("quick-validator");
+  const skill = join(root, "skill");
+  mkdirSync(skill);
+  const markdown = join(skill, "SKILL.md");
+  writeFileSync(markdown, content);
+  return {
+    root, skill, markdown,
+    run: (environment: Record<string, string> = {}, target = skill) => spawnSync(
+      pinnedValidationPython(), ["-B", quickValidator, target], {
+        cwd: root, env: childEnvironment(process.env, environment), encoding: "utf8", timeout: 10_000,
+      },
+    ),
+  };
+}
+
+describe("skill validation command boundaries", () => {
+  for (const newline of ["\n", "\r\n", "\r"]) {
+    it(`accepts the existing frontmatter newline convention ${JSON.stringify(newline)}`, () => {
+      const fixture = validationFixture(validValidationSkill.replaceAll("\n", newline));
+      const result = fixture.run();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Skill is valid!");
+    });
+  }
+
+  it("accepts exactly 1 MiB of raw bytes and refuses one additional byte", () => {
+    const prefix = Buffer.from(validValidationSkill);
+    const exact = Buffer.concat([prefix, Buffer.alloc(1024 * 1024 - prefix.length, "x")]);
+    const fixture = validationFixture(exact);
+    const accepted = fixture.run();
+    expect(accepted.status, accepted.stderr).toBe(0);
+    writeFileSync(fixture.markdown, Buffer.concat([exact, Buffer.from("x")]));
+    const refused = fixture.run();
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toContain("1 MiB validation limit");
+  });
+
+  for (const mutation of ["grow", "replace"] as const) {
+    it(`refuses captured bytes when SKILL.md ${mutation}s after its bounded stat`, () => {
+      const fixture = validationFixture();
+      const injection = join(fixture.root, "injection");
+      mkdirSync(injection);
+      const marker = join(fixture.root, "mutation-observed");
+      // Inject only in this Python child. The actual entrypoint, file reads,
+      // byte bound, UTF-8 and YAML validator are unchanged. is_symlink uses a
+      // non-following stat, which must not consume the explicit size-check cut.
+      writeFileSync(join(injection, "sitecustomize.py"), `
+import os
+from pathlib import Path
+original_stat = Path.stat
+seen = 0
+target = ${JSON.stringify(fixture.markdown)}
+marker = ${JSON.stringify(marker)}
+def cut_after_size(self, *args, **kwargs):
+    global seen
+    result = original_stat(self, *args, **kwargs)
+    if str(self) == target and kwargs.get("follow_symlinks", True):
+        seen += 1
+        if seen == 3:
+            if ${JSON.stringify(mutation)} == "grow":
+                with self.open("ab") as output:
+                    output.write(b"x" * (1024 * 1024 + 1))
+            else:
+                replacement = Path(target + ".replacement")
+                replacement.write_bytes(self.read_bytes() + b"x" * (1024 * 1024 + 1))
+                os.replace(replacement, self)
+            Path(marker).write_text("mutated", encoding="utf-8")
+    return result
+Path.stat = cut_after_size
+`);
+      const result = fixture.run({ PYTHONPATH: injection });
+      expect(readFileSync(marker, "utf8")).toBe("mutated");
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("1 MiB validation limit");
+      expect(result.stdout).not.toContain("Skill is valid!");
+      writeFileSync(fixture.markdown, validValidationSkill);
+      const retried = fixture.run();
+      expect(retried.status, retried.stderr).toBe(0);
+    });
+  }
+
+  for (const input of [
+    { label: "UTF-8", content: Buffer.concat([Buffer.from(validValidationSkill), Buffer.from([0xff])]), message: "valid UTF-8" },
+    { label: "nonmapping YAML", content: "---\n- name\n- description\n---\n", message: "YAML dictionary" },
+    { label: "missing description", content: "---\nname: local-validation\n---\n", message: "Missing 'description'" },
+    { label: "name hyphens", content: "---\nname: local--validation\ndescription: Local fixture\n---\n", message: "consecutive hyphens" },
+    { label: "description markup", content: "---\nname: local-validation\ndescription: Local <fixture>\n---\n", message: "angle brackets" },
+  ]) {
+    it(`refuses ${input.label} through the actual Python command`, () => {
+      const result = validationFixture(input.content).run();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(input.message);
+      expect(result.stdout).not.toContain("Skill is valid!");
+    });
+  }
+
+  it("accepts the name and description length boundaries after trimming", () => {
+    const source = (name: string, description: string) => `---\nname: ${JSON.stringify(name)}\ndescription: ${JSON.stringify(description)}\n---\n`;
+    const fixture = validationFixture(source(` ${"a".repeat(64)} `, ` ${"x".repeat(1024)} `));
+    expect(fixture.run().status).toBe(0);
+    writeFileSync(fixture.markdown, source("a".repeat(65), "x".repeat(1024)));
+    expect(fixture.run().stdout).toContain("Name is too long");
+    writeFileSync(fixture.markdown, source("a".repeat(64), "x".repeat(1025)));
+    expect(fixture.run().stdout).toContain("Description is too long");
+  });
+
+  it("refuses symlink directories and symlink SKILL.md files", () => {
+    const fixture = validationFixture();
+    const linked = join(fixture.root, "linked-skill");
+    symlinkSync(fixture.skill, linked);
+    expect(fixture.run({}, linked).stdout).toContain("real directory");
+    const retained = join(fixture.root, "retained.md");
+    writeFileSync(retained, validValidationSkill);
+    unlinkSync(fixture.markdown);
+    symlinkSync(retained, fixture.markdown);
+    expect(fixture.run().stdout).toContain("regular file");
+  });
+
+  for (const mode of ["configured", "fallback", "deduplicated"] as const) {
+    it(`stops real site preparation after ${mode} runtime selection when validation exits nonzero`, () => {
+      const root = fixtureCheckout(`packaging-validator-${mode}-`);
+      roots.push(root);
+      const bin = join(root, "runtime-bin");
+      mkdirSync(bin);
+      const journal = join(root, "runtime-journal");
+      const executable = (name: string, probeExit: number) => {
+        const path = join(bin, name);
+        writeExecutable(path, `#!/bin/sh
+printf '%s|%s\\n' ${shellQuote(name)} "$*" >> ${shellQuote(journal)}
+if [ "$1" = "-c" ]; then exit ${probeExit}; fi
+exit 23
+`);
+        return path;
+      };
+      const configured = executable("configured-python", mode === "fallback" ? 1 : 0);
+      executable("python3", 0);
+      const publicSkill = join(root, "public/SKILL.md");
+      mkdirSync(dirname(publicSkill), { recursive: true });
+      writeFileSync(publicSkill, "previous bootstrap bytes");
+      const result = spawnSync(process.execPath, ["--no-env-file", join(root, "scripts/prepare-site.mjs")], {
+        cwd: root,
+        env: childEnvironment(process.env, { PATH: bin, SLOP_PYTHON: mode === "deduplicated" ? "python3" : configured }),
+        encoding: "utf8", timeout: 30_000,
+      });
+      expect(result.status).not.toBe(0);
+      const calls = readFileSync(journal, "utf8").trim().split("\n");
+      const chosen = mode === "configured" ? "configured-python" : "python3";
+      expect(calls.length).toBe(mode === "fallback" ? 3 : 2);
+      expect(calls[0]).toContain(`${mode === "deduplicated" ? "python3" : "configured-python"}|-c import yaml,sys;`);
+      expect(calls[calls.length - 1]).toContain(`${chosen}|-B ${join(root, "scripts/skill-validation/quick_validate.py")} ${join(root, "skills/slop")}`);
+      expect(readFileSync(publicSkill, "utf8")).toBe("previous bootstrap bytes");
+      expect(result.stdout).not.toContain("prepared the project skill templates");
+    }, 60_000);
+  }
+});
 
 interface ArtifactOptions {
   archiveFiles?: Record<string, Buffer | string>;

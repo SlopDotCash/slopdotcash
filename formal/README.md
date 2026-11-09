@@ -1204,6 +1204,42 @@ tested or verified here:
   than optimistically marking the whole card confirmed. This batch changes no
   runtime or interface, and none of its models or regression definitions ran.
 
+- `skill_validation_runtime` now follows interpreter selection, the pinned
+  PyYAML requirement, direct-child completion and packaging publication in 18
+  scenarios. Interpreter identity and descendant-process exit remain separate
+  assumptions. `skill_validation_content` adds 36 scenarios for actual bytes,
+  UTF-8/newline handling, frontmatter, YAML, field validation and CLI reporting.
+  The validator now bounds the binary read after its initial size hint, so a
+  file that grows or is replaced cannot bypass the existing 1 MiB limit.
+  It preserves universal-newline behavior. Sixteen installer/validator and
+  packaging regression definitions are unexecuted; selection of `uv` does not
+  establish that a later dependency resolution will succeed.
+- `chain_range_scan` now models the stateless range helper in 12 scenarios:
+  inclusive sequential pages, the last partial range, empty ranges, ordered
+  duplicate results, failure and a new invocation restarting the original
+  range. A failed invocation returns no accumulated prefix. Covered ranges
+  record successful requests, not complete provider delivery. Five callback
+  regression definitions are unexecuted. Persistent EVM and Solana scanner
+  checkpoints retain their separate models.
+- `source_correction_preview` now covers original-evidence binding, recovered
+  review continuity, duplicate namespaces, raw versus payment-review bases,
+  fixed-pool deltas and independently rebound quality proposals in 40
+  scenarios. Recovered events are not automatically ratified. The 12-scenario
+  `source_correction_cli` keeps the publication precheck separate from later
+  create-only output: concurrent publication can follow the observation,
+  failed output may leave a partial file, and a lost log can leave a complete
+  file that retry cannot overwrite. Seven real-helper/CLI regression cases
+  are unexecuted. These historical previews do not change active preparations,
+  history, approval or payment authority; cryptographic and parsing predicates
+  retain their stated delegated contracts.
+- `ui_payout_consent` now covers eligibility, wallet-family selection, busy
+  cancellation, recoverable signature errors, context retirement and focus
+  restoration in 18 scenarios. EVM wallet registration and a submitted Solana
+  binding have distinct notices; neither marks an award paid. Two held-signature
+  and same-dialog retry browser definitions are unexecuted. This refinement
+  changes no interface or runtime code and delegates transaction evidence to
+  the existing payment models.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

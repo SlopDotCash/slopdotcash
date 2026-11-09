@@ -121,6 +121,7 @@ async function setup(
     | "account"
     | "domain"
     | "reject"
+    | "reject-once"
     | "hold-connect"
     | "hold-signature" = "none",
 ) {
@@ -168,7 +169,10 @@ async function setup(
             if (method === "eth_chainId") return "0x2105";
             if (method === "eth_signTypedData_v4") {
               state.signatures++;
-              if (fault === "reject")
+              if (
+                fault === "reject" ||
+                (fault === "reject-once" && state.signatures === 1)
+              )
                 throw new Error("Wallet request rejected by user.");
               if (fault === "hold-signature") await hold();
               return signature;
@@ -477,6 +481,73 @@ type ConsentFixtureWindow = Window & {
     release(): void;
   };
 };
+
+test("Escape cannot dismiss active payout signing, then the saved notice receives focus", async ({
+  page,
+}) => {
+  const authorized = await setup(page, "hold-signature");
+  await page
+    .getByRole("button", { name: "Authorize payout wallet", exact: true })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Authorize payout wallet", exact: true,
+  });
+  await review
+    .getByRole("button", { name: "Sign with Browser wallet", exact: true })
+    .click();
+  await page.waitForFunction(
+    () => (window as unknown as ConsentFixtureWindow).payoutConsentFixture.held,
+  );
+  await expect(
+    review.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(review).toBeVisible();
+  expect(authorized()).toBe(0);
+  await page.evaluate(
+    () => (window as unknown as ConsentFixtureWindow).payoutConsentFixture.release(),
+  );
+  const notice = page.getByRole("status").filter({
+    hasText: "Wallet consent saved",
+  });
+  await expect(notice).toBeVisible();
+  await expect(notice).toBeFocused();
+  await expect(review).not.toBeVisible();
+  await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
+  expect(authorized()).toBe(1);
+});
+
+test("a rejected payout signature keeps the same review retryable", async ({
+  page,
+}) => {
+  const authorized = await setup(page, "reject-once");
+  await page
+    .getByRole("button", { name: "Authorize payout wallet", exact: true })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Authorize payout wallet", exact: true,
+  });
+  await review
+    .getByRole("button", { name: "Sign with Browser wallet", exact: true })
+    .click();
+  await expect(review.getByRole("alert")).toContainText("rejected");
+  await expect(
+    review.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeEnabled();
+  expect(authorized()).toBe(0);
+  await review
+    .getByRole("button", { name: "Sign with Browser wallet", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Wallet consent saved" }),
+  ).toBeFocused();
+  await expect(review).not.toBeVisible();
+  expect(authorized()).toBe(1);
+  expect(await page.evaluate(
+    () => (window as unknown as ConsentFixtureWindow).payoutConsentFixture.signatures,
+  )).toBe(2);
+  await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
+});
 
 test("leaving payout consent during wallet connection stops late requests", async ({
   page,

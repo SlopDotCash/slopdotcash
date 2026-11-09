@@ -25,10 +25,19 @@ def validate_skill(skill_path):
     if skill_md.stat().st_size > MAX_SKILL_FILE_BYTES:
         return False, "SKILL.md exceeds the 1 MiB validation limit"
 
+    # The file may change after stat. Bound the actual bytes consumed as well
+    # as the earlier size hint; an oversized replacement must not be parsed.
+    with skill_md.open("rb") as source:
+        content_bytes = source.read(MAX_SKILL_FILE_BYTES + 1)
+    if len(content_bytes) > MAX_SKILL_FILE_BYTES:
+        return False, "SKILL.md exceeds the 1 MiB validation limit"
+
     try:
-        content = skill_md.read_text(encoding="utf-8")
+        content = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
         return False, "SKILL.md must be valid UTF-8"
+    # Match read_text's universal-newline behavior for ordinary CRLF/CR files.
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
     if not content.startswith("---"):
         return False, "No YAML frontmatter found"
 

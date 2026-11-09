@@ -4071,6 +4071,7 @@
       "sha256": "bb35b1fed7cfac71ed15e03465ee794a37cff36c56a2bc7cbe3d5b7b5cbfe4ad",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
+        "formal/models/contributor/skill_validation_runtime.qnt",
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [214, 297],
@@ -4079,7 +4080,7 @@
     {
       "path": "scripts/prepare-source-correction.ts",
       "sha256": "e822f892b72d9af39773a5dc3331ce9348c1b80f8235d9828d8cd6273b6c0cf8",
-      "models": ["formal/models/points/source_correction_preview.qnt"],
+      "models": ["formal/models/points/source_correction_cli.qnt"],
       "candidateLines": [1, 62],
       "review": "mapped-abstraction"
     },
@@ -4437,15 +4438,18 @@
     },
     {
       "path": "scripts/skill-validation/quick_validate.py",
-      "sha256": "25f6b980656537ea49a4e9e57acebe30d84b1136ad96f3e62c5a713786558c9c",
-      "models": ["formal/models/contributor/skill_validation_runtime.qnt"],
+      "sha256": "2f742160c60864aba03aa31df9650c5dbd46bc8d05886cdec1b0aea196352d7a",
+      "models": ["formal/models/contributor/skill_validation_content.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/source-correction.ts",
       "sha256": "8f2b004814c7f304ba72daa34ced1fed6670e12b8da0628966352e918bef3117",
-      "models": ["formal/models/points/source_correction_preview.qnt"],
+      "models": [
+        "formal/models/points/source_correction_cli.qnt",
+        "formal/models/points/source_correction_preview.qnt"
+      ],
       "candidateLines": [24, 354],
       "review": "mapped-abstraction"
     },
@@ -5646,7 +5650,10 @@
     {
       "path": "src/lib/contribution-quality.ts",
       "sha256": "a903e19846d05fb02c8229a62c8908cea3b0b75cbe46e17efb2b552c3c293c7b",
-      "models": ["formal/models/rewards/monthly_allocation.qnt"],
+      "models": [
+        "formal/models/points/source_correction_preview.qnt",
+        "formal/models/rewards/monthly_allocation.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5712,6 +5719,7 @@
       "path": "src/lib/escrow-policy.mjs",
       "sha256": "e230228240d5826aa3dff2c8db22b04fb44fd889b74b33268d5fb18bc29b5d4d",
       "models": [
+        "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/payout_readiness.qnt",
         "formal/models/payments/payout_rpc_probe.qnt",
         "formal/models/rewards/allocation_funding.qnt",
@@ -5782,7 +5790,10 @@
     {
       "path": "src/lib/funding-review-data.ts",
       "sha256": "a446ecefa45104dcb6bf1d6e6ce3ca7ad3d4af7efcd41100de15235f0b939355",
-      "models": ["formal/models/rewards/monthly_allocation.qnt"],
+      "models": [
+        "formal/models/points/source_correction_preview.qnt",
+        "formal/models/rewards/monthly_allocation.qnt"
+      ],
       "candidateLines": [58, 238, 292],
       "review": "mapped-abstraction"
     },
@@ -5905,6 +5916,7 @@
       "sha256": "ad19c2ec7afaefc4451f05265e8a634bd4a884135d78343c12faa3b8806b021c",
       "models": [
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/source_correction_preview.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
         "formal/models/ui/ui_score_selection.qnt",
@@ -7703,7 +7715,6 @@
       "path": "workers/payments/scanner.ts",
       "sha256": "881dc96f75bc40a278e70c1590a329d525b721f7d0a195b89863922cdd5a4790",
       "models": [
-        "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/evm_scan_checkpoint.qnt",
         "formal/models/payments/payment_dispatch.qnt",
         "formal/models/payments/solana_scan_checkpoint.qnt"
@@ -11854,16 +11865,71 @@
       ]
     },
     {
-      "path": "formal/models/contributor/skill_validation_runtime.qnt",
-      "sha256": "bbdf29e705bfe7cd7be9fb93a5cc64918a7c76bddf3a2fe5140adc761fa3f4eb",
-      "sources": [
-        "scripts/skill-python.mjs",
-        "scripts/skill-validation/quick_validate.py"
-      ],
+      "path": "formal/models/contributor/skill_validation_content.qnt",
+      "sha256": "4fc3ccaac44aeefc9ea9da16084cb3c7dad8ce4eae2dd3142aab8c779c5470ef",
+      "sources": ["scripts/skill-validation/quick_validate.py"],
       "scenarios": [
+        "angleBracketsRefuseBeforeLengthTest",
+        "argumentCountRefusesBeforeFilesystemTest",
+        "closeErrorDoesNotReachParserTest",
+        "correctedRetryStartsWithoutOldErrorTest",
+        "crlfFrontmatterRetainsCompatibilityTest",
+        "descriptionLengthRefusesTest",
+        "descriptionTypeRefusesTest",
+        "emptyDescriptionRefusesTest",
+        "exactDescriptionLengthIsAcceptedTest",
+        "exactNameLengthIsAcceptedTest",
+        "exactRawByteLimitIsAcceptedTest",
+        "growthAfterStatRefusesBeforeDecodeTest",
+        "invalidHyphenPlacementRefusesTest",
+        "invalidNameCharactersRefuseTest",
+        "invalidUtf8RefusesAfterCloseTest",
+        "loneCrFrontmatterRetainsCompatibilityTest",
+        "malformedDelimiterRefusesTest",
+        "malformedYamlRefusesTest",
+        "missingDescriptionRefusesTest",
+        "missingFrontmatterRefusesTest",
+        "missingNameRefusesTest",
+        "missingSkillFileRefusesTest",
+        "mixedUnexpectedKeysRaiseWithoutSuccessReceiptTest",
+        "nameLengthRefusesTest",
+        "nonStringNameRefusesTest",
+        "oversizedHintRefusesBeforeOpenTest",
+        "printedReceiptCanFailAfterValidVerdictTest",
+        "processDeathClosesDescriptorWithoutVerdictTest",
+        "readIoStillClosesOwnedFileTest",
+        "statIoRaisesWithoutPrintedVerdictTest",
+        "symlinkDirectoryRefusesTest",
+        "symlinkSkillFileRefusesTest",
+        "trimmedEmptyNameRefusesTest",
+        "unexpectedKeysRefuseBeforeRequiredNamesTest",
+        "validSkillPrintsSuccessTest",
+        "yamlSequenceRefusesTest"
+      ]
+    },
+    {
+      "path": "formal/models/contributor/skill_validation_runtime.qnt",
+      "sha256": "f253bc692404ea668f27589fa8166e513ef034b4c9d1e8e09734633de13f4469",
+      "sources": ["scripts/prepare-site.mjs", "scripts/skill-python.mjs"],
+      "scenarios": [
+        "absentUvRefusesAfterAllCandidatesTest",
+        "absoluteOverrideKeepsConfiguredPriorityTest",
+        "configuredPinnedInterpreterWinsTest",
         "fallbackAfterUnavailableRuntimeTest",
+        "interruptedProbeDoesNotProveChildCleanupTest",
+        "interruptedValidationRetainsUnknownChildTest",
         "invalidYamlRefusedTest",
-        "symlinkRefusedTest"
+        "laterFailureDoesNotRollBackBootstrapCopiesTest",
+        "laterObservedChildExitClosesRetainedResourceTest",
+        "pinnedObservationDoesNotFreezeExecutableTest",
+        "preludeIoFailureCanLeaveEarlierWritesTest",
+        "python3OverrideIsDeduplicatedTest",
+        "symlinkRefusedTest",
+        "uvDependencyFailureStopsPublicationTest",
+        "uvVersionDoesNotProveInstalledDependencyTest",
+        "validContentAllowsBootstrapPublicationTest",
+        "validatorSpawnFailureIsNotSelectionFallbackTest",
+        "wrongPyYamlVersionFallsThroughTest"
       ]
     },
     {
@@ -12281,16 +12347,25 @@
     },
     {
       "path": "formal/models/payments/chain_range_scan.qnt",
-      "sha256": "c9fe9444ae542277c97620041803d135b36972a376c6d3061bceb78679725cc9",
+      "sha256": "0bc3e7f50af0ac441878c6d94d709eedfb050a0b0352186afc4dbf2a4d8aeb4b",
       "sources": [
         "scripts/check-referral-roots.ts",
-        "workers/payments/scanner.ts",
+        "src/lib/escrow-policy.mjs",
         "workers/referral-accrual/chain-logs.ts"
       ],
       "scenarios": [
         "completePagesTest",
+        "duplicateReplyValuesRemainDuplicatesTest",
+        "emptyRangeReturnsWithoutRpcTest",
+        "emptyRangeStillRequiresConfigurationTest",
+        "emptySuccessfulRepliesStillCompleteQueryCoverageTest",
+        "finalPageIsClampedToLastBlockTest",
+        "finalReadFailureKeepsOnlyInternalPrefixTest",
+        "firstReadFailureReturnsNoPrefixTest",
         "incompleteRefusedTest",
-        "retryDoesNotSkipTest"
+        "retryDoesNotSkipTest",
+        "returnedValuesKeepPageAndWithinPageOrderTest",
+        "singleBlockStillNeedsOneReadTest"
       ]
     },
     {
@@ -13505,17 +13580,77 @@
       "scenarios": ["permanentFailureTest", "recoverLimitTest"]
     },
     {
-      "path": "formal/models/points/source_correction_preview.qnt",
-      "sha256": "32401a9fe353f25a836d160c70b749179e580f0b3f491ce1a131c8c3ee2da99f",
+      "path": "formal/models/points/source_correction_cli.qnt",
+      "sha256": "a16e2f346fcc94f0d2ab0007816b574d740c3bdea6e509cee38c8e6a2d6e5e89",
       "sources": [
         "scripts/prepare-source-correction.ts",
         "scripts/source-correction.ts"
       ],
       "scenarios": [
-        "duplicateSourceRefusedTest",
+        "accessFailureIsNotAbsenceTest",
+        "concurrentOutputCreationWinsWithoutOverwriteTest",
         "existingOutputNotOverwrittenTest",
+        "failureWithoutCreatedFileMayRetryTest",
+        "helperRefusalDoesNotCreateOutputTest",
+        "inputReadFailureDoesNotCreateOutputTest",
+        "invalidPreparationRefusedBeforePublicationReadTest",
+        "lostSuccessReplyPreservesCreateOnlyFileTest",
+        "partialWriteBlocksAutomaticOverwriteTest",
+        "publicationAfterPrecheckDoesNotAuthorizeAnythingTest",
+        "publishedCycleRefusedTest",
+        "successfulWriteReportsPreviewOnlyTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/source_correction_preview.qnt",
+      "sha256": "de46552d131312070f4ffb0ebac8e97f2434fb6914d10d058df1faab62436bed",
+      "sources": [
+        "scripts/source-correction.ts",
+        "src/lib/contribution-quality.ts",
+        "src/lib/funding-review-data.ts",
+        "src/lib/leaderboard.ts"
+      ],
+      "scenarios": [
+        "archiveContinuityDigestRefusedTest",
+        "authorizedProposalCannotEnterPreviewTest",
+        "beforePeriodRefusedTest",
+        "changedActorLoginRefusedTest",
+        "changedArchiveFieldsRefusedTest",
+        "differentCycleRefusedTest",
+        "duplicateSelectedIdsRefusedTest",
+        "duplicateSourceRefusedTest",
+        "duplicateUrlRefusedTest",
+        "evidenceBonusCannotBeRecoveredTest",
+        "exclusivePeriodEndRefusedTest",
+        "historicalRawLedgerRemainsSupportedTest",
+        "invalidBurdenRefusedBeforeRebindingTest",
+        "lateBindingReadFailureReturnsNoPartialPreviewTest",
+        "malformedRequestRefusedTest",
+        "missingArchiveEventRefusedTest",
+        "missingReasonRefusedTest",
+        "nonBaseCreditRefusedTest",
+        "nonMonthlyPreparationRefusedTest",
+        "nonReviewSourceRefusedTest",
+        "originalSnapshotAuditMismatchRefusedTest",
+        "otherRepositoryRefusedTest",
+        "paymentBasisCountIsUsedTest",
+        "predecessorArchiveHistoryDigestMismatchRefusedTest",
         "previewOnlyTest",
-        "publishedCycleRefusedTest"
+        "proposalCannotReviewOnlyRecoveredEventTest",
+        "qualityIdentityHashRefusesTest",
+        "qualityMetadataMustMatchOriginalLedgerTest",
+        "rawCountCannotReplacePaymentBasisCountTest",
+        "rawOnlyCreditedEventStillRefusedTest",
+        "repeatedHistoryEventRefusedTest",
+        "sourceBoundProposalRecalculatesWithoutRatifyingNewCreditTest",
+        "staleQualityPayloadBindingRefusedTest",
+        "twoIndependentProposalsKeepRetainedAmountsSeparateTest",
+        "twoRecoveredActorsPreservePoolTest",
+        "unknownActorRefusedTest",
+        "unreviewedDecisionUrlRefusedTest",
+        "withinBatchSourceCollisionRefusesEntirePreviewTest",
+        "wrongProposalSnapshotRefusedTest",
+        "wrongProposalSourceOrBudgetRefusedTest"
       ]
     },
     {
@@ -17494,9 +17629,28 @@
     },
     {
       "path": "formal/models/ui/ui_payout_consent.qnt",
-      "sha256": "e8b60bb1f1b267de75f4a722e69e5bbcb81064ac244e78d6a7ba0b4e14a43948",
+      "sha256": "31360a50dd7788e9fb3ab124209e50d5450a75b1d1cee3e4e051ada292d7432e",
       "sources": ["src/PayoutConsent.tsx", "src/lib/payout-consent.ts"],
-      "scenarios": ["changedAccountTest", "consentTest"]
+      "scenarios": [
+        "busyCancelRefusedTest",
+        "busyEscapeDoesNotAbortConsentTest",
+        "cancelRestoresTriggerFocusTest",
+        "changedContextClearsOldResultTest",
+        "departedOperationCannotPublishNoticeTest",
+        "evmSavedNoticeIsNotPaymentTest",
+        "genericErrorKeepsReviewRetryableTest",
+        "idleEscapeClearsRetryErrorTest",
+        "lateSignerMakesReviewButtonAvailableTest",
+        "messageOnlySolanaWalletCannotOpenBindingTest",
+        "missingVaultRendersNothingTest",
+        "noSignerLinksToAccountWalletsTest",
+        "openModalFocusesReviewHeadingTest",
+        "paidAwardDoesNotOfferConsentTest",
+        "providerRemovalKeepsIdleCancelAvailableTest",
+        "solanaSubmittedNoticeIsNotPaymentTest",
+        "unconfirmedClaimRendersNothingTest",
+        "unknownNetworkRendersNothingTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_payout_consent_lifetime.qnt",
