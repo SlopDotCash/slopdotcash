@@ -989,6 +989,24 @@ function parsePageInfo(value: unknown, path: string): PageInfo {
   };
 }
 
+function parseConnection<T>(
+  value: unknown,
+  path: string,
+  parseNode: (node: JsonRecord, nodePath: string) => T,
+): ConnectionPage<T> {
+  const connection = asRecord(value, path);
+  return {
+    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
+    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
+    nodes: asArray(connection.nodes, `${path}.nodes`).map(
+      (nodeValue, index) => {
+        const nodePath = `${path}.nodes[${index}]`;
+        return parseNode(asRecord(nodeValue, nodePath), nodePath);
+      },
+    ),
+  };
+}
+
 function actorKind(value: string): GitHubActorKind {
   if (
     value === "Bot" ||
@@ -1063,133 +1081,77 @@ function parseComments(
   path: string,
   artifactId: string,
 ): ConnectionPage<GitHubTextSource> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          artifactId,
-          kind: "comment",
-          body: asString(node.body, `${nodePath}.body`),
-          url: asString(node.url, `${nodePath}.url`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-          authorAssociation: asString(
-            node.authorAssociation,
-            `${nodePath}.authorAssociation`,
-          ),
-        };
-      },
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    artifactId,
+    kind: "comment",
+    body: asString(node.body, `${nodePath}.body`),
+    url: asString(node.url, `${nodePath}.url`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+    authorAssociation: asString(
+      node.authorAssociation,
+      `${nodePath}.authorAssociation`,
     ),
-  };
+  }));
 }
 
 function parseReviews(
   value: unknown,
   path: string,
 ): ConnectionPage<PendingPullRequestReview> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          body: asString(node.body, `${nodePath}.body`),
-          state: asString(node.state, `${nodePath}.state`),
-          submittedAt: asNullableString(
-            node.submittedAt,
-            `${nodePath}.submittedAt`,
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    body: asString(node.body, `${nodePath}.body`),
+    state: asString(node.state, `${nodePath}.state`),
+    submittedAt: asNullableString(node.submittedAt, `${nodePath}.submittedAt`),
+    url: asString(node.url, `${nodePath}.url`),
+    commitId:
+      node.commit === null
+        ? null
+        : asFullCommitSha(
+            child(node, "commit", nodePath).oid,
+            `${nodePath}.commit.oid`,
           ),
-          url: asString(node.url, `${nodePath}.url`),
-          commitId:
-            node.commit === null
-              ? null
-              : asFullCommitSha(
-                  child(node, "commit", nodePath).oid,
-                  `${nodePath}.commit.oid`,
-                ),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function parseFiles(
   value: unknown,
   path: string,
 ): ConnectionPage<PullRequestFile> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          path: asString(node.path, `${nodePath}.path`),
-          additions: asNumber(node.additions, `${nodePath}.additions`),
-          deletions: asNumber(node.deletions, `${nodePath}.deletions`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    path: asString(node.path, `${nodePath}.path`),
+    additions: asNumber(node.additions, `${nodePath}.additions`),
+    deletions: asNumber(node.deletions, `${nodePath}.deletions`),
+  }));
 }
 
 function parseClosingIssueIds(
   value: unknown,
   path: string,
 ): ConnectionPage<{ id: string }> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return { id: asString(node.id, `${nodePath}.id`) };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+  }));
 }
 
 function parseClosingPullRequests(
   value: unknown,
   path: string,
 ): ConnectionPage<IssueRecord["closedByPullRequests"][number]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          number: asNumber(node.number, `${nodePath}.number`),
-          url: asString(node.url, `${nodePath}.url`),
-          mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
-          body: asString(node.body, `${nodePath}.body`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    number: asNumber(node.number, `${nodePath}.number`),
+    url: asString(node.url, `${nodePath}.url`),
+    mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
+    body: asString(node.body, `${nodePath}.body`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function pageState<T>(page: ConnectionPage<T>): NestedPageState {
@@ -1298,26 +1260,19 @@ function parseIssueReferences(
   value: unknown,
   path: string,
 ): NonNullable<ParsedIssue["references"]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map((value, index) => {
-      const nodePath = `${path}.nodes[${index}]`;
-      const node = asRecord(value, nodePath);
-      const source = child(node, "source", nodePath);
-      const kind = asString(source.__typename, `${nodePath}.source.__typename`);
-      if (kind !== "Issue" && kind !== "PullRequest")
-        throw new Error(`${nodePath} has an unsupported reference source`);
-      return {
-        id: asString(node.id, `${nodePath}.id`),
-        pullRequestId:
-          kind === "PullRequest"
-            ? asString(source.id, `${nodePath}.source.id`)
-            : null,
-      };
-    }),
-  };
+  return parseConnection(value, path, (node, nodePath) => {
+    const source = child(node, "source", nodePath);
+    const kind = asString(source.__typename, `${nodePath}.source.__typename`);
+    if (kind !== "Issue" && kind !== "PullRequest")
+      throw new Error(`${nodePath} has an unsupported reference source`);
+    return {
+      id: asString(node.id, `${nodePath}.id`),
+      pullRequestId:
+        kind === "PullRequest"
+          ? asString(source.id, `${nodePath}.source.id`)
+          : null,
+    };
+  });
 }
 
 function parseIssue(value: unknown, path: string): ParsedIssue {
