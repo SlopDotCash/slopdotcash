@@ -969,15 +969,46 @@ Changed content remains distinct from a valid declared part and cannot satisfy
 a complete per-run evidence deletion receipt. Unreadable storage, ambiguous
 outcomes and missing declared slots remain explicit. A complete generation retirement is distinct from a
 complete per-run backup/deletion receipt. The new D1/R2/API workflow is wired
-into the integration runner, but it and the authored route regressions have
-not run. No new model has been parsed, simulated or verified in this lane.
+into the integration runner. Independently produced workflow and model results
+apply only to their recorded revisions, not later changes in this lane.
 
-This branch includes the changes from merged PR
-[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development
-commit `ac9da9e7`. Its independently collected results cover their named source
-heads, not this later source-only combination. The user instruction to skip
-checks remains in force for this lane; application-wide state assurance is
-incomplete.
+The current source base is development `6159e313`, including merged PRs
+[#2443](https://github.com/SlopDotCash/slopdotcash/pull/2443) and
+[#2444](https://github.com/SlopDotCash/slopdotcash/pull/2444). Existing receipts
+retain their source, tooling and finite-model boundaries. The user instruction
+to skip checks remains in force for this lane; application-wide state assurance
+is incomplete.
+
+The post-integration review adds the following source changes and models under
+PRD STATE-01 through STATE-05. These new changes have not been parsed, simulated,
+tested or verified here:
+
+- `trace_object_storage` separates HEAD, create-only PUT, GET, body ownership,
+  bounded reading, hash verification and retry. Its 21 scenarios cover two
+  calls and zero/two-byte representatives. A rejected GET metadata snapshot now
+  cancels its owned body; cancellation failure preserves the integrity refusal.
+  Four real-handler/SQLite regression definitions check that private bytes stay
+  retained, attachment remains absent and the capability can retry.
+- `email_enrollment_delivery` separates durable enrollment from its database
+  reply and private mail handoff. Same-key replay does not resend the token;
+  fresh-key recovery follows the cooldown. `email_unsubscribe_capability`
+  models two destinations and issued digests, key rotation, replacement between
+  lookup and update, repeated unsubscribe and committed-but-lost responses.
+  These refinements change no email behavior.
+- `fee_value_journal_reply` separates local capacity reservation from the
+  signed journal INSERT, its reply, broadcast and the next run. A potentially
+  committed INSERT now retains its local value charge before the next token
+  can proceed. A definite refusal may conservatively consume capacity for that
+  run; the next run recomputes it from durable rows. The model has three row
+  identities and three runs, including historical over-cap witnesses outside
+  the current transition relation. Two Solana workflow regression definitions
+  exercise the real migrated store with a lost reply and a definite refusal.
+- `ui_profile_payment_history` models the independent archive, direct-transfer and
+  vault sources, partial history and nullable totals, expansion and review
+  deadlines. A profile now schedules the next applicable review deadline with
+  the existing clock hook. The clock regression definition checks the exact
+  midday label change without a refetch or changed money total. Its video and
+  before/after captures remain unexecuted, as do the required UI checks.
 
 ## Acceptance requirements and limits
 

@@ -815,6 +815,97 @@ describe("conversion policy", () => {
     expect(total).toBeLessThanOrEqual(30_000_000);
   });
 
+  for (const committed of [true, false]) {
+    test(`a Solana journal ${committed ? "lost reply" : "write refusal"} keeps local capacity reserved until the next run`, async () => {
+      const firstToken = solanaBase58(new Uint8Array(32).fill(31));
+      const secondToken = solanaBase58(new Uint8Array(32).fill(32));
+      const h = harness({
+        env: {
+          FEE_CONVERTER_NETWORKS: "solana",
+          FEE_WALLET_SOLANA: solanaBase58(new Uint8Array(32).fill(33)),
+          FEE_CONVERTER_ALLOWLIST: JSON.stringify({
+            solana: [firstToken, secondToken],
+          }),
+          FEE_CONVERTER_RUN_CAP_MICRO: "30000000",
+          FEE_CONVERTER_DAILY_CAP_MICRO: "30000000",
+          FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+            solana: {
+              perTransaction: "5000000",
+              perDay: "20000000",
+              additionalFeeReserve: "0",
+            },
+          }),
+        },
+      });
+      try {
+        h.chain.balances.set(firstToken, 20_000_000n);
+        h.chain.balances.set(secondToken, 20_000_000n);
+        h.chain.quoteFor = (_token, amount) =>
+          linearQuote(amount, { route: "jupiter" });
+        // This runs the real conversion/store workflow at a fixed chain
+        // boundary. Solana has no EVM nonce floor to stop the next token.
+        const prepare = h.chain.prepare.bind(h.chain);
+        h.chain.prepare = async (token, quote) => ({
+          ...(await prepare(token, quote)),
+          evmNonce: null,
+        });
+        const store = h.deps.store;
+        const insert = store.insert.bind(store);
+        let rejected = false;
+        store.insert = async (row, lease) => {
+          if (
+            !rejected &&
+            row.token === firstToken &&
+            row.state === "submitted"
+          ) {
+            rejected = true;
+            if (committed) await insert(row, lease);
+            throw new Error(
+              committed ? "journal reply lost" : "journal write refused",
+            );
+          }
+          await insert(row, lease);
+        };
+
+        await runNetwork(h.network, h.deps);
+        expect(rejected).toBe(true);
+        const rows = h.rows();
+        const second = rows.find((row) => row.token === secondToken);
+        expect(second?.state).toBe("submitted");
+        expect(Number(second?.quote_value_micro)).toBeGreaterThan(0);
+        expect(Number(second?.quote_value_micro)).toBeLessThanOrEqual(10_000_000);
+        expect(h.chain.sent).toHaveLength(1);
+
+        if (committed) {
+          const first = rows.find((row) => row.token === firstToken);
+          expect(first?.quote_value_micro).toBe(20_000_000);
+          expect(h.chain.sent).not.toContain(first?.raw_tx);
+          expect(
+            rows.reduce((sum, row) => sum + Number(row.quote_value_micro), 0),
+          ).toBeLessThanOrEqual(30_000_000);
+          // A later run recovers the durable first send; it cannot pretend
+          // the missing acknowledgement proved the bytes absent.
+          h.chain.statusFor = (row) =>
+            row.token === firstToken
+              ? { kind: "rebroadcast" }
+              : { kind: "pending" };
+          await runNetwork(h.network, h.deps);
+          expect(h.chain.sent).toContain(first?.raw_tx);
+          expect(h.rows()).toHaveLength(2);
+        } else {
+          expect(rows).toHaveLength(1);
+          await runNetwork(h.network, h.deps);
+          expect(
+            h.rows().find((row) => row.token === firstToken)?.quote_value_micro,
+          ).toBe(20_000_000);
+          expect(h.rows()).toHaveLength(2);
+        }
+      } finally {
+        h.sqlite.close();
+      }
+    });
+  }
+
   test("live sends in the last 24 hours count against the daily cap", async () => {
     const clock = { now: new Date("2026-10-18T12:00:00Z") };
     const h = harness({

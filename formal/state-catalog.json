@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "769b69fd5eb7b1244a43e916efa9cf44ba95984461b9d53f1c8e4a30afb54dfb",
+  "inventorySha256": "797d8811ba97098cf51b37f5e0b7b4fe86e99bfd55d812334119aaeaa3ca767c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -971,6 +971,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/api_mail_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/notification_delivery.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
@@ -1477,7 +1478,8 @@
       "values": ["dry_run", "live"],
       "models": [
         "formal/models/fees/fee_conversion.qnt",
-        "formal/models/fees/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_schema_upgrade.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1499,7 +1501,8 @@
       ],
       "models": [
         "formal/models/fees/fee_conversion.qnt",
-        "formal/models/fees/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_schema_upgrade.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -1785,6 +1788,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/email_verification_completion.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
@@ -3177,6 +3181,7 @@
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
@@ -3195,6 +3200,7 @@
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
@@ -3213,6 +3219,7 @@
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
@@ -3228,6 +3235,7 @@
       "models": [
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/native_budget.qnt",
         "formal/models/fees/solana_expiry.qnt"
       ],

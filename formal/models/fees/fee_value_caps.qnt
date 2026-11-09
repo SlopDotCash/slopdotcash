@@ -7,12 +7,13 @@
 // conversion rows in submitted, unknown or finalized state created in the
 // last 24 hours (store.liveValueSince). Each conversion is fitted to
 // min(runCap - runValue, dayCap - dayValue) (remainingBudget); a quote above
-// it is skipped. A live send that is journaled adds its quote value to both
-// in-memory totals; a dry_run quote adds to them in memory only and is never
-// counted by later runs. The network lease admits one run; every journal
-// insert is fenced by that lease, and a lost lease ends the loop, so a row
-// journaled just before the lease check fails is never followed by another
-// send in the same run. Rows leave the window as time passes and leave the
+// it is skipped. A prepared live conversion adds its quote value to both
+// in-memory totals before awaiting its INSERT; a dry_run quote reserves the
+// same local capacity and is never counted by later runs. A rejected write
+// reply retains that local charge even if the write did not commit. The
+// asynchronous commit/reply cuts are modeled in fee_value_journal_reply.
+// The network lease fences live signed journal inserts. Rows leave the window
+// as time passes and leave the
 // count when proven failed; neither can raise the total, so the run's
 // in-memory day value only over-approximates the stored window.
 //
@@ -52,11 +53,12 @@ module fee_value_caps {
   // A quote above the remaining budget is skipped and journals no send.
   action skipOverCap(id: int, v: int): bool = all { s.active, s.rows.get(id).state == "none",
     v > remaining(s), s' = s.with("rows", s.rows.set(id, { value: v, state: "skipped", inWindow: true, owner: s.runId })) }
-  // The journal insert succeeded, then the lease check failed: the loop ends
-  // before counting it in memory.
+  // The journal insert succeeded, then the lease check failed. Local capacity
+  // was already reserved and the loop ends before another send.
   action journaledThenLeaseLost(id: int, v: int): bool = all { s.active, s.runMode == "live",
     s.rows.get(id).state == "none", v > 0, v <= remaining(s),
     s' = s.with("rows", s.rows.set(id, { value: v, state: "submitted", inWindow: true, owner: s.runId }))
+      .with("runValue", s.runValue + v).with("dayValue", s.dayValue + v)
       .with("active", false).with("runMode", "none") }
   action settle(id: int, finalState: str): bool = all {
     Set("submitted", "unknown").contains(s.rows.get(id).state),

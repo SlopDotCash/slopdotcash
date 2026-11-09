@@ -1,4 +1,5 @@
 /** Public-record fixtures exercise profile identity, not OAuth or settlement. */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { deriveAllocationFundingBasis } from "../../src/lib/allocation-funding";
@@ -775,6 +776,106 @@ async function serveProfileSite(page: Page) {
   );
   return site;
 }
+
+test.describe("profile review deadlines", () => {
+  test.use({ video: "on" });
+
+  test("an untouched profile advances its review label at the exact midday deadline", async ({
+    page,
+  }, info) => {
+    const site = await serveProfileSite(page);
+    const { cycles, current, snapshot } = await profileRecords(page);
+    const deadline = Date.parse("2026-08-15T12:00:00.000Z");
+    const start = new Date(deadline - 5 * 60_000);
+    const cycle = cycles.cycles[0];
+    cycle.state = "review";
+    cycle.reviewEndsAt = new Date(deadline).toISOString();
+    cycle.approvedAt = null;
+    cycle.settledAt = null;
+    cycle.reward.approvedMinor = "0";
+    cycle.reward.paidMinor = "0";
+    cycle.reward.feeMinor = "0";
+    cycle.files.allocation = null;
+    cycle.files.executionPlan = null;
+    cycle.files.settlement = null;
+    cycle.contributors[0].state = "proposed";
+    cycle.contributors[0].wallet = null;
+    cycle.contributors[0].approvedMinor = "0";
+    cycle.contributors[0].paidMinor = "0";
+    snapshot.generatedAt = start.toISOString();
+    snapshot.sourceUpdatedAt = start.toISOString();
+    assertCycleIndex(cycles);
+    assertLeaderboardSnapshot(snapshot);
+    await page.clock.install({ time: start });
+    await page.route(`${site}/api/v1/points/**`, (route) =>
+      route.fulfill({ json: null }),
+    );
+    await page.route(`${site}/api/v1/project-session`, (route) =>
+      route.fulfill({ json: { session: null } }),
+    );
+    await page.route("**/api/v1/payments/actors/*/direct-transfers", (route) =>
+      route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
+    );
+    // Keep this clock regression independent of the production Points journal.
+    const emptyShard = "[]";
+    const digest = createHash("sha256").update(emptyShard).digest("hex");
+    await page.route("**/data/points.json", (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          ruleVersion: "slop-points-v1",
+          generatedAt: start.toISOString(),
+          coverage: [],
+          revisionCount: 0,
+          shards: Array.from({ length: 16 }, (_, index) => ({
+            path: `/data/points/${index.toString(16)}.json`,
+            sha256: digest,
+            count: 0,
+          })),
+        },
+      }),
+    );
+    await page.route("**/data/points/*.json", (route) =>
+      route.fulfill({ contentType: "application/json", body: emptyShard }),
+    );
+    let reads = 0;
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/") || path.startsWith("/data/")) reads += 1;
+    });
+    await page.goto(`${site}/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    const history = page.getByRole("region", {
+      name: "Awards and payments",
+      exact: true,
+    });
+    const row = history
+      .getByRole("listitem")
+      .filter({ hasText: "Archived cycle" });
+    await expect(row).toContainText("Archived cycle · Under review ·");
+    await expect(
+      history.locator(".profile-payments-summary strong"),
+    ).toHaveText("$0");
+    await page.clock.pauseAt(new Date(deadline - 1));
+    await expect(row).not.toContainText("awaiting approval");
+    const settledReads = reads;
+    await page.screenshot({
+      path: info.outputPath("profile-review-before-deadline.png"),
+      fullPage: true,
+    });
+    await page.clock.fastForward(1);
+    await expect(row).toContainText("Under review, awaiting approval");
+    await expect(
+      history.locator(".profile-payments-summary strong"),
+    ).toHaveText("$0");
+    expect(reads).toBe(settledReads);
+    await page.screenshot({
+      path: info.outputPath("profile-review-at-deadline.png"),
+      fullPage: true,
+    });
+  });
+});
 
 test("profile payment totals stay unavailable until direct transfers recover", async ({
   diagnostics,

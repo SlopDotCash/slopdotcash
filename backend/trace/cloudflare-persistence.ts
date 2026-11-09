@@ -951,11 +951,16 @@ export class CloudflareTracePersistence implements TracePersistence {
 
   async readTraceBytes(object: TraceObject): Promise<Uint8Array | null> {
     const value = await this.bucket.get(object.key);
+    if (value === null) return null;
     if (
-      value === null ||
       value.size !== object.sizeBytes ||
       value.customMetadata?.sha256 !== object.sha256
     ) {
+      try {
+        await value.body.cancel();
+      } catch {
+        // error-policy:J3 Preserve the integrity refusal if cleanup also fails.
+      }
       return null;
     }
     const response = new Response(value.body);

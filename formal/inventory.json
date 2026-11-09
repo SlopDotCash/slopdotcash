@@ -222,6 +222,7 @@
       "sha256": "8b6f844d5fe2683a96d30277e91d6da22a30b3e175952a410bb953c121651d9d",
       "models": [
         "formal/models/api/api_email_consent.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/email_verification_completion.qnt"
       ],
       "candidateLines": [120],
@@ -233,6 +234,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/email_verification_completion.qnt"
       ],
       "candidateLines": [
@@ -1097,7 +1099,7 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "81847901bc853cacf2e35094bdc96affbccda31433d71fbc27e526b01a044b85",
+      "sha256": "e8d65ebe12a07480a13ea16d2ace27a5411d4f8f41bb63d2372a86502e031734",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/api/api_trace.qnt",
@@ -1105,6 +1107,7 @@
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/operator_intake_renewal.qnt",
         "formal/models/api/trace_event_finalization.qnt",
+        "formal/models/api/trace_object_storage.qnt",
         "formal/models/api/trace_run_creation.qnt",
         "formal/models/api/wallet_claim_publication.qnt",
         "formal/models/api/wallet_possession_completion.qnt",
@@ -1117,8 +1120,8 @@
         426, 429, 459, 460, 463, 464, 480, 483, 505, 532, 539, 542, 546, 565,
         593, 627, 628, 629, 663, 690, 701, 707, 709, 719, 727, 741, 742, 747,
         752, 772, 776, 778, 817, 822, 838, 846, 847, 853, 854, 860, 885, 891,
-        893, 987, 1015, 1043, 1058, 1059, 1061, 1079, 1093, 1098, 1101, 1162,
-        1163, 1170, 1173, 1175
+        893, 992, 1020, 1048, 1063, 1064, 1066, 1084, 1098, 1103, 1106, 1167,
+        1168, 1175, 1178, 1180
       ],
       "review": "mapped-abstraction"
     },
@@ -2296,6 +2299,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/api_mail_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/notification_delivery.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
@@ -2863,7 +2867,8 @@
       "sha256": "30282b3a4aeade1f09bb986465fcd8740764c5caee1dc9cede957a3e37eee51c",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
-        "formal/models/fees/fee_schema_upgrade.qnt"
+        "formal/models/fees/fee_schema_upgrade.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt"
       ],
       "candidateLines": [
         2, 44, 57, 58, 65, 67, 71, 72, 78, 79, 81, 83, 85, 92, 93, 94, 99, 100,
@@ -3097,6 +3102,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/email_verification_completion.qnt",
         "formal/models/api/notification_schema_upgrade.qnt"
       ],
@@ -3156,6 +3162,7 @@
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt",
         "formal/models/api/email_verification_completion.qnt"
       ],
       "candidateLines": [5, 6, 8],
@@ -5084,6 +5091,7 @@
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_record_deadlines.qnt"
       ],
@@ -5132,17 +5140,18 @@
     },
     {
       "path": "src/Profiles.tsx",
-      "sha256": "1d6e2c473618ca40ca9d3c53f744c4b1e373b499784793f5aaee28a69b0755f9",
+      "sha256": "76e67b953cc2c26dff4f6050afa6c18ec065c4824a0727eb96cc53f951e8d654",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
         1, 61, 62, 69, 75, 76, 78, 83, 110, 112, 113, 123, 143, 144, 149, 151,
-        155, 156, 161, 163, 166, 167, 267, 279, 281, 284, 300, 304, 340, 347,
-        392, 418, 419, 426, 427, 428, 431, 434, 435, 437, 438, 441, 444, 445,
-        454
+        155, 156, 161, 163, 166, 167, 267, 283, 293, 295, 298, 314, 318, 354,
+        361, 406, 432, 433, 440, 441, 442, 445, 448, 449, 451, 452, 455, 458,
+        459, 468
       ],
       "review": "mapped-abstraction"
     },
@@ -5490,6 +5499,7 @@
       "path": "src/lib/browser-json.ts",
       "sha256": "90a4b15cb147de6233eea8f7675dcab703d066032cbc997cf105e7a940d1527e",
       "models": [
+        "formal/models/api/trace_object_storage.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_transport.qnt",
         "formal/models/ui/ui_vetting_reader.qnt"
@@ -6444,6 +6454,7 @@
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [],
@@ -6480,6 +6491,7 @@
       "sha256": "7a8c29f1d339e971e21e5e7d2182a669a32e8ddd3ac04f7ef935d1d8802d6533",
       "models": [
         "formal/models/ui/ui_admin_resource_identity.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resource_deadline.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
@@ -6510,6 +6522,7 @@
         "formal/models/ui/ui_contributor_allocation.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_owner_awards.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_time_boundary.qnt"
       ],
@@ -6522,6 +6535,7 @@
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt",
+        "formal/models/ui/ui_profile_payment_history.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [94, 101, 102, 103, 104],
@@ -6780,13 +6794,14 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "sha256": "ea110a82e22ffcd9ae3a1aca4707a19d79081d9197ef820cd78275779972dc46",
+      "sha256": "4174eabbcb3644a025383d536f3afbbd5b8be5b5c28ec711ea4cce00fefb5521",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
@@ -6797,7 +6812,7 @@
         459, 467, 468, 469, 474, 475, 557, 561, 562, 567, 568, 600, 601, 615,
         619, 632, 639, 642, 645, 646, 669, 704, 740, 755, 758, 775, 897, 905,
         921, 922, 976, 988, 989, 990, 995, 1000, 1002, 1003, 1013, 1041, 1057,
-        1059, 1061, 1062, 1075, 1077, 1107, 1115, 1116, 1120, 1138, 1139
+        1059, 1061, 1062, 1075, 1077, 1107, 1115, 1117, 1120, 1124, 1141, 1142
       ],
       "review": "mapped-abstraction"
     },
@@ -6892,6 +6907,7 @@
       "models": [
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/native_budget.qnt",
         "formal/models/fees/solana_expiry.qnt"
       ],
@@ -6967,6 +6983,7 @@
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
       ],
       "candidateLines": [
@@ -6985,6 +7002,7 @@
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_value_caps.qnt",
+        "formal/models/fees/fee_value_journal_reply.qnt",
         "formal/models/fees/native_budget.qnt"
       ],
       "candidateLines": [
@@ -7196,7 +7214,8 @@
       "sha256": "2995f3889da8c6886d1704ac03a5a072b40737fe1a9fb1afd0996733879a60e8",
       "models": [
         "formal/models/api/api_email_consent.qnt",
-        "formal/models/api/email_enrollment_delivery.qnt"
+        "formal/models/api/email_enrollment_delivery.qnt",
+        "formal/models/api/email_unsubscribe_capability.qnt"
       ],
       "candidateLines": [36, 38, 90, 93, 95, 98, 105, 121, 125, 127, 147],
       "review": "mapped-abstraction"
@@ -9625,7 +9644,7 @@
     },
     {
       "path": "formal/models/api/email_enrollment_delivery.qnt",
-      "sha256": "99e0d9535f868be09e9e5cd5406c5c39db4dbce93979cbe575fdc9daacefbebd",
+      "sha256": "99420a1491e961f1f24bbb330f7782c447226af568c5862cc5953eb96e082ccc",
       "sources": [
         "backend/notifications/email.ts",
         "migrations/0111_verified_notification_email.sql",
@@ -9636,15 +9655,54 @@
         "admittedBeforeExpiryCanCommitAfterTest",
         "expiredMailReadCannotStartTest",
         "expiredReadCannotStartTest",
+        "freshKeyRecoversAfterLostBatchReplyTest",
         "lateCompletionCannotChangeVerifiedDestinationTest",
+        "lostCommittedBatchReplyCannotReconstructRawTokenTest",
+        "lostServiceReplyBeforeClaimPreventsLateNewSendTest",
         "lostServiceResponseDoesNotOverwriteClaimTest",
         "malformedDoesNotCreateTest",
+        "precommitStorageFailureCreatesNothingTest",
         "preferenceRevisionFencesVerificationTest",
+        "queuedMailClaimUsesCapturedExpiryTest",
         "recentAddressHistoryLimitsNewRequestTest",
+        "replacementBetweenPrivateReadAndClaimAcknowledgesNoSendTest",
         "replacementCancelsOldLinkTest",
         "replayDuringPauseDoesNotResendTest",
+        "sameKeyConcurrentChangedPayloadConflictsTest",
+        "sameKeyConcurrentReplayDoesNotDuplicateHandoffTest",
+        "senderPauseAfterCapabilityStillRetainsEnrollmentTest",
         "unknownIsNotVerifiedTest",
         "wrongActorDoesNotConsumeTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/email_unsubscribe_capability.qnt",
+      "sha256": "0cdafc7cfd9096edc6de49eb771e1f4fa9de6898553132efd329820f0a436c88",
+      "sources": [
+        "backend/notifications/email-destinations.ts",
+        "backend/notifications/email.ts",
+        "migrations/0033_optional_notification_email.sql",
+        "migrations/0111_verified_notification_email.sql",
+        "migrations/0116_email_preference_revision.sql",
+        "workers/notify/enrollment.ts"
+      ],
+      "scenarios": [
+        "capabilityWorksWithoutSessionOrSenderTest",
+        "currentKeyMacWithoutIssuedRecordRefusesTest",
+        "freshConsentDoesNotReenqueueHistoryTest",
+        "issuanceFinishingAfterReplacementConfersNoAuthorityTest",
+        "issuedCapabilityDisablesBothChannelsTest",
+        "lostIssueReplyRetainsCapabilityTest",
+        "lostUnsubscribeReplyDoesNotRestoreConsentTest",
+        "malformedCapabilityNeverLooksUpTest",
+        "missingChangeMetadataDoesNotUndoWriteTest",
+        "oldCapabilityCannotDisableReplacementTest",
+        "repeatedUnsubscribeAdvancesRevisionTest",
+        "repeatedUnsubscribeFencesEarlierOptInTest",
+        "replacementBetweenLookupAndWriteRefusesTest",
+        "rotationDoesNotRevokeIssuedCapabilityTest",
+        "storageFailureBeforeWriteLeavesConsentTest",
+        "unissuedCapabilityCannotDisableTest"
       ]
     },
     {
@@ -10495,6 +10553,37 @@
         "repeatedFinalizationKeepsFirstStampTest",
         "responseDeliveryFailureDoesNotUndoFinalizationTest",
         "separateEventKeysBothPersistTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/trace_object_storage.qnt",
+      "sha256": "2ff67f5c9787a13f8c072f5e0455b2a10a2f39962f7a9ce12aaa1afb072ad223",
+      "sources": [
+        "backend/trace/cloudflare-persistence.ts",
+        "src/lib/browser-json.ts"
+      ],
+      "scenarios": [
+        "changedHeadMetadataRefusesBeforeGetTest",
+        "createdBytesRequireFreshObservationsTest",
+        "emptyObjectStillNeedsHashTest",
+        "exactByteCountBeforeExtraFragmentDoesNotPassTest",
+        "existingBadHeadIsNotOverwrittenTest",
+        "existingBytesNeedNoWriteTest",
+        "failedGetOwnsNoBodyTest",
+        "failedHeadOwnsNoBodyTest",
+        "failedOverflowCancellationPreservesRefusalTest",
+        "failedReadCancellationPreservesReadErrorTest",
+        "hashFailureOwnsNoReaderTest",
+        "laterRetryMustVerifyAgainTest",
+        "lostWriteReplyCanReconcileExactBytesTest",
+        "mismatchedGetCancelsWithoutReadingTest",
+        "missingGetOwnsNoBodyTest",
+        "overflowCancelsAndReleasesTest",
+        "rangeReadFailureStillDisposesTheReaderTest",
+        "rejectedCancellationPreservesIntegrityRefusalTest",
+        "shortBodyReleasesBeforeRefusalTest",
+        "writeReplyDoesNotProveStorageTest",
+        "wrongDigestReleasesBeforeRefusalTest"
       ]
     },
     {
@@ -11489,7 +11578,7 @@
     },
     {
       "path": "formal/models/fees/fee_conversion.qnt",
-      "sha256": "75b4803b1cc78d7e0b9cc13e4cc5eb18a99fe752de6035fcc6f0cdec68a79076",
+      "sha256": "57f61fe2a87be451e9842778f758f3dc5b464e3fa7663edf6c40babb4d09f3e0",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "migrations/0022_fee_conversions.sql",
@@ -11591,7 +11680,7 @@
     },
     {
       "path": "formal/models/fees/fee_value_caps.qnt",
-      "sha256": "92731e7bb1bb386a41a8e23c008d9d9fa633925183f95af0d439273402b41d61",
+      "sha256": "7ac96a6755df0e9c482b6d1e375d08e848b36af1d05c6f4833e6ddbe8a2b758b",
       "sources": [
         "workers/fee-converter/core.ts",
         "workers/fee-converter/store.ts",
@@ -11605,6 +11694,30 @@
         "leaseLossCountedNextRunTest",
         "leaseLossEndsRunTest",
         "runCapStopsTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/fee_value_journal_reply.qnt",
+      "sha256": "df646ca462501d8fd12bdadaaaf9631b2472f48ec27f043d63f256c3685e0857",
+      "sources": [
+        "migrations/0088_fee_approval_journal.sql",
+        "workers/fee-converter/core.ts",
+        "workers/fee-converter/native-gas.ts",
+        "workers/fee-converter/solana.ts",
+        "workers/fee-converter/store.ts"
+      ],
+      "scenarios": [
+        "committedLostReplyKeepsCapacityTest",
+        "committedLostReplyRecoversExactRowTest",
+        "definiteRefusalKeepsTemporaryChargeTest",
+        "interruptionAfterCommitCountsNextRunTest",
+        "lateCommitAfterRejectedReplyKeepsCapacityTest",
+        "nextRunRecoversUnusedCapacityTest",
+        "normalReplyChargesBeforeBroadcastTest",
+        "oldLostReplyCouldExceedDayCapTest",
+        "oldLostReplyCouldExceedRunCapTest",
+        "successorLeaseRefusesOldPendingInsertTest",
+        "unknownBroadcastKeepsValueCountedTest"
       ]
     },
     {
@@ -16492,6 +16605,47 @@
         "pendingSessionStillBlocksOwnMemberTest",
         "remountedLookupOwnsItsWalletTest",
         "unavailableLedgerCannotNameActorTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_profile_payment_history.qnt",
+      "sha256": "93905255658635a916f7300df45a65501c209c6dffb845c1717a446476c19205",
+      "sources": [
+        "src/Presentation.tsx",
+        "src/Profiles.tsx",
+        "src/lib/use-direct-transfers.ts",
+        "src/lib/use-public-resource.ts",
+        "src/lib/use-time-boundary.ts",
+        "src/lib/use-vault-payments.ts"
+      ],
+      "scenarios": [
+        "alreadyElapsedReviewPaintsOnArrivalTest",
+        "archiveRowsStayVisibleWhilePaymentsLoadTest",
+        "clockAloneDoesNotClaimRepaintTest",
+        "collapsedHistoryShowsFiveRowsTest",
+        "completeEmptyHistoriesAreKnownZeroTest",
+        "completedSourcesCountOnlyArchivedPaidMoneyTest",
+        "departedReadCannotPublishIntoReplacementTest",
+        "directFailureKeepsArchiveTest",
+        "earliestIncludedReviewWinsTest",
+        "exactFirstDeadlineRepaintsReviewTest",
+        "expandedHistoryShowsEveryCompletedSourceTest",
+        "invalidPageIsNotEmptyHistoryTest",
+        "laterOnlyReviewUsesItsOwnDeadlineTest",
+        "missingArchiveDoesNotMeanZeroMoneyTest",
+        "nextDeadlineIsRearmedTest",
+        "noDeadlineReviewDoesNotArmTimerTest",
+        "nonUsdVaultRowsAreDisplayedWithoutUsdCreditTest",
+        "oldMissingTimerRetainsOpenReviewTest",
+        "paidRecordNeedsNoReviewTimerTest",
+        "removedReviewCancelsItsTimerTest",
+        "replacementReadCanCompleteTest",
+        "retryOneSourcePreservesOtherRowsTest",
+        "reviewDeadlineDoesNotPayOrApproveTest",
+        "successfulRetryCompletesTotalTest",
+        "timeoutRejectsLateCompletionTest",
+        "timerInstalledAfterDeadlineStillRepaintsTest",
+        "vaultFailureKeepsDirectRowsTest"
       ]
     },
     {

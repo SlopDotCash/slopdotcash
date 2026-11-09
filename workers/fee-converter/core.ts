@@ -771,8 +771,8 @@ export async function runNetwork(
             runId,
             runValue,
             dayValue,
-            // Counted as soon as the value is journaled, so a later broadcast
-            // or update failure cannot leave the remaining tokens a stale cap.
+            // Reserved before awaiting persistence, so a lost write reply or
+            // later send/update failure cannot leave a stale remaining cap.
             commit: (micro) => {
               runValue += micro;
               dayValue += micro;
@@ -1086,9 +1086,9 @@ async function convert(
 
   if (deps.mode === "dry_run") {
     // Count dry-run quotes against the run cap so the record shows what a
-    // live run would have sent.
-    await record(row);
+    // live run would have sent, even if the record's reply is lost.
     budget.commit(quote.amountOut);
+    await record(row);
     return "quoted";
   }
 
@@ -1113,6 +1113,10 @@ async function convert(
   const approval = prepared.kind === "approval";
   // One row per signed intent; approval bytes are never overwritten by a swap.
   // The pending-token index prevents a second intent until this one resolves.
+  // Reserve local capacity before awaiting the write: a rejected reply does
+  // not prove that the INSERT failed. Even a definite failure keeps this
+  // charge for this run; the next run recomputes from the durable journal.
+  if (!approval) budget.commit(quote.amountOut);
   await deps.store.insert(
     {
       ...row,
@@ -1130,7 +1134,6 @@ async function convert(
     },
     { runId: budget.runId, now: deps.now() },
   );
-  if (!approval) budget.commit(quote.amountOut);
   await assertLease();
   try {
     await client.broadcast(prepared.rawTx);

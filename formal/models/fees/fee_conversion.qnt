@@ -26,8 +26,9 @@
 // unknown, finalized, failed. Current code writes a live `quoted` row only in
 // legacy data (reconcile closes it as failed); dry_run writes `quoted`
 // records, which openRows ignores. The pending-token index allows one submitted/unknown row per token,
-// so no new intent is signed while one is open. Every journal write is fenced
-// by the network lease. Approval rows follow the same states and are omitted.
+// so no new intent is signed while one is open. Signed live inserts are fenced
+// by the network lease; reconciliation updates instead retain the database's
+// terminal-state and identity triggers. Approval rows are omitted here.
 //
 // A run first reconciles every open live row; a row it cannot settle joins
 // the run's `blocked` set (core.ts). The candidate loop then visits each

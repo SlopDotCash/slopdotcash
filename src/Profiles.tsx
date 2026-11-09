@@ -22,7 +22,7 @@ import {
   type PublicResourceState,
   usePublicResource,
 } from "./lib/use-public-resource";
-import { useUtcDay } from "./lib/use-time-boundary";
+import { useTimeBoundary, useUtcDay } from "./lib/use-time-boundary";
 import { useVaultPayments } from "./lib/use-vault-payments";
 import { PaymentRecord, VaultPaymentRecord } from "./PaymentRecords";
 import {
@@ -275,6 +275,20 @@ function ProfilePaymentHistory({
     cycle.contributors
       .filter((contributor) => contributor.actor.id === actorId)
       .map((contributor) => ({ contributor, cycle })),
+  );
+  const now = Date.now();
+  useTimeBoundary(
+    history.reduce<number | null>((next, { cycle }) => {
+      const deadline =
+        cycle.state === "review" &&
+        cycle.approvedAt === null &&
+        cycle.reviewEndsAt !== null
+          ? Date.parse(cycle.reviewEndsAt)
+          : null;
+      return deadline !== null && deadline > now
+        ? Math.min(next ?? deadline, deadline)
+        : next;
+    }, null),
   );
   const direct = directState.status === "ready" ? directState.transfers : [];
   // All-time money received: archived cycles, disclosed direct transfers and

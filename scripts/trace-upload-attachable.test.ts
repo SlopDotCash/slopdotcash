@@ -285,6 +285,73 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const TRACE_A = encode("trace A\n");
 const TRACE_B = encode("trace B, a different file\n");
 
+for (const mismatch of ["size", "digest"] as const) {
+  for (const cleanupFails of [false, true]) {
+    test(`a trace GET ${mismatch} mismatch cancels its body${cleanupFails ? " even when cleanup rejects" : ""} and keeps attachment retryable`, async () => {
+      const t = api();
+      const originalGet = t.bucket.get;
+      let cancelled = 0;
+      let pulled = 0;
+      try {
+        const created = await t.createRun();
+        const runId = created.json.serverRunId as string;
+        const intent = await t.intent(runId, TRACE_A);
+        const uploadUrl = intent.json.uploadUrl as string;
+        t.bucket.get = async (key) => {
+          const value = await originalGet(key);
+          if (value === null) return null;
+          // HEAD has already returned the expected metadata. This later GET
+          // owns a different response body, which must be disposed on refusal.
+          await value.body.cancel();
+          return {
+            ...value,
+            size: mismatch === "size" ? value.size + 1 : value.size,
+            customMetadata: {
+              ...value.customMetadata,
+              ...(mismatch === "digest" ? { sha256: "0".repeat(64) } : {}),
+            },
+            body: new ReadableStream<Uint8Array>(
+              {
+                pull() {
+                  pulled++;
+                },
+                cancel() {
+                  cancelled++;
+                  if (cleanupFails) throw new Error("R2 cleanup unavailable");
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          };
+        };
+        const refused = await t.upload(uploadUrl, TRACE_A);
+        expect(refused.status).toBe(500);
+        expect(cancelled).toBe(1);
+        expect(pulled).toBe(0);
+        expect(await t.retained(TRACE_A)).toBe(true);
+        expect((await t.deps.persistence.getRun(runId))?.traceSha256).toBeNull();
+        expect(
+          await t.deps.persistence.getTraceObject(await sha256Hex(TRACE_A)),
+        ).toBeNull();
+        expect(
+          t.sqlite
+            .query("SELECT consumed_at FROM trace_upload_intents WHERE run_id = ?")
+            .get(runId),
+        ).toEqual({ consumed_at: null });
+
+        t.bucket.get = originalGet;
+        expect((await t.upload(uploadUrl, TRACE_A)).status).toBe(201);
+        expect((await t.deps.persistence.getRun(runId))?.state).toBe(
+          "trace_uploaded",
+        );
+      } finally {
+        t.bucket.get = originalGet;
+        t.sqlite.close();
+      }
+    });
+  }
+}
+
 async function runWithTraceA(t: ReturnType<typeof api>) {
   const created = await t.createRun();
   expect(created.status).toBe(201);
