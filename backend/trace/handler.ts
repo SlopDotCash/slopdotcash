@@ -433,16 +433,12 @@ async function createContributorWalletClaim(
   );
 }
 
-/**
- * Issues a single-use challenge for the authenticated actor's own claim. The
- * lifetime and every bound field come from server state, never from the
- * request, so a caller cannot widen its replay window or bind another claim.
- */
-async function createWalletPossessionChallenge(
+/** The writer's own Solana wallet claim; any other claim is not found. */
+async function ownedSolanaClaim(
   actor: AuthenticatedActor,
   claimId: string,
   deps: TraceApiDependencies,
-): Promise<Response> {
+): Promise<WalletClaim> {
   assertWriter(actor);
   if (!validIdentifier(claimId))
     fail(400, "invalid_request", "Invalid claim id");
@@ -457,6 +453,20 @@ async function createWalletPossessionChallenge(
       "Wallet possession proofs currently support Solana only",
     );
   }
+  return claim;
+}
+
+/**
+ * Issues a single-use challenge for the authenticated actor's own claim. The
+ * lifetime and every bound field come from server state, never from the
+ * request, so a caller cannot widen its replay window or bind another claim.
+ */
+async function createWalletPossessionChallenge(
+  actor: AuthenticatedActor,
+  claimId: string,
+  deps: TraceApiDependencies,
+): Promise<Response> {
+  const claim = await ownedSolanaClaim(actor, claimId, deps);
   if (!isSignableSolanaAddress(claim.walletAddress)) {
     fail(
       409,
@@ -516,20 +526,7 @@ async function createWalletPossessionAttestation(
   claimId: string,
   deps: TraceApiDependencies,
 ): Promise<Response> {
-  assertWriter(actor);
-  if (!validIdentifier(claimId))
-    fail(400, "invalid_request", "Invalid claim id");
-  const claim = await deps.persistence.getWalletClaim(claimId);
-  if (claim === null || claim.githubId !== actor.githubId) {
-    fail(404, "not_found", "Wallet claim not found");
-  }
-  if (claim.chain !== "solana") {
-    fail(
-      409,
-      "unsupported_chain",
-      "Wallet possession proofs currently support Solana only",
-    );
-  }
+  const claim = await ownedSolanaClaim(actor, claimId, deps);
   const existing =
     await deps.persistence.getWalletPossessionAttestation(claimId);
   if (existing !== null) {
