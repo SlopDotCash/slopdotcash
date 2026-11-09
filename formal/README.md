@@ -205,6 +205,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Trace creation, progress events and finalization | `trace_run_creation`, `trace_event_finalization` | `backend/trace/cloudflare-persistence.ts`, `backend/trace/handler.ts`, `scripts/trace-upload-attachable.test.ts`, `scripts/project-self-service.test.ts` |
 | Wallet-claim publication and possession evidence | `wallet_claim_publication`, `wallet_possession_completion` | `backend/trace/handler.ts`, `backend/trace/cloudflare-persistence.ts`, `src/lib/wallet-possession.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `scripts/wallet-possession.test.ts` |
 | Payment-wallet registration and activation | `payment_wallet_registration`, `payment_wallet_activation`, `api_payment_wallet_protocol` | `backend/payments/wallet-registration.ts`, `backend/payments/handler.ts`, `scripts/wallet-legacy-claim-confirm.test.ts`, `backend/payments/wallet-replacement.test.ts` |
+| EVM binding consent and broadcast authority | `evm_binding_consent_api`, `binding_consent_renewal`, `stored_binding_broadcast_authority` | `backend/payments/handler.ts`, `backend/payments/possession.ts`, `workers/payment-executor/core.ts`, `backend/payments/evm.integration.ts`, `workers/payment-executor/binding-nonce-limit.integration.ts` |
 | Contributor process and receipt ownership | `contributor_discovery_lock`, `contributor_lock_publication`, `contributor_command_completion`, `skill_run_local`, `contributor_terms_preflight`, `skill_installation` | Canonical contributor-template scripts; `scripts/contributor-discovery-startup.test.ts`, `scripts/contributor-lock-publication.test.ts`, installer integration definitions |
 | Snapshot, evidence and backup publication | `cycle_snapshot_publication`, `evidence_capture`, `evidence_transport`, `evidence_process`, `vetting_backup_chain`, `vetting_audit_retention` | `scripts/sync-cycle-index.ts`, `scripts/record-evidence.mjs`, `scripts/evidence-bundle.mjs`, existing publication/transport/process regression definitions |
 | Browser-local completion | `ui_image_decode`, `ui_clipboard_requests`, `ui_resource_deadline`, `ui_document_head`, `ui_link_dispatch`, `ui_email_preference_requests` | `src/ProjectImageField.tsx`, `src/lib/use-copy-feedback.ts`, `src/lib/use-public-resource.ts`, existing browser definitions |
@@ -400,6 +401,34 @@ unchanged. An unsigned successor leaves a prior authorized wallet effective;
 an authorized successor changes future readback without erasing history. The
 model has two claims, two requests and two obligations; it does not send or
 mark a payment paid. All new scenarios remain unexecuted.
+
+The EVM binding API model separates stored consent from an executed binding.
+It covers two requests, two successive effective claims, two deployments and
+versions 0/1, with exact representatives for the 600-second submission margin,
+90-day lifetime and one-hour slack. A challenge may discover the version;
+authorization requires an explicit version. Same-key retries preserve the
+first signature, while renewal appends a new expiry. Missing or invalid
+readback cannot report authorization. Each request retains its captured time
+and claim even if a later read would find them expired or replaced.
+
+Typed signatures bind the chain, vault and payload. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+does not itself provide replay protection; the application and contract also
+check the expected version. The verifier and contract explicitly enforce
+canonical low-S signatures. [EIP-2](https://eips.ethereum.org/EIPS/eip-2)
+does not impose that restriction on the `ecrecover` precompile.
+
+Stored-binding broadcasts now recheck authority after the retained nonce-budget
+read. Previously, an authorized successor could replace the effective wallet
+during that await and the old binding would still be offered to the node. The
+new regression interleaves that read with a signed successor in the existing
+migrated SQLite and Anvil workflow. It requires refusal while preserving the
+signed bytes, budget and pending entry. The callback validates the actual
+candidate bytes on every shared send path. A fee-wait fallback can suppress
+transport uncertainty, but cannot suppress a failed authority check. Hosted
+binding runs do not enable keeper fee replacement. This change closes the
+identified ordering gap; the registry read and network send are not an atomic
+transaction, and it does not guarantee unchanged authority at chain inclusion.
+These models and the new regression have not been executed in this lane.
 
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.

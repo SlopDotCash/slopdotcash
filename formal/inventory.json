@@ -300,6 +300,7 @@
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/effective_wallet_history.qnt",
+        "formal/models/payments/evm_binding_consent_api.qnt",
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/payment_wallet_activation.qnt",
         "formal/models/payments/payment_wallet_registration.qnt",
@@ -370,6 +371,7 @@
       "sha256": "08d9d2fc2272dfb9146032559babe2e35679d444afae276b7ee3e11e01ea7908",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
+        "formal/models/payments/evm_binding_consent_api.qnt",
         "formal/models/payments/payment_binding.qnt"
       ],
       "candidateLines": [],
@@ -1171,7 +1173,10 @@
     {
       "path": "contracts/evm/adapter.ts",
       "sha256": "c7b853367460c16e4c0b50cfd9742f86c98f26d07b6184e7c602b09924510c03",
-      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "models": [
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/evm_binding_consent_api.qnt"
+      ],
       "candidateLines": [
         14, 71, 85, 201, 237, 266, 294, 309, 341, 507, 561, 649, 656, 657, 659,
         660, 984, 987, 996, 1002, 1006, 1010, 1039, 1082, 1090, 1099, 1107,
@@ -1913,7 +1918,11 @@
     {
       "path": "migrations/0016_binding_authorizations.sql",
       "sha256": "61668fe8d8ac0cf64a0d61391c8f09dac8dbc510f39c1095ce1138cbb5242cf0",
-      "models": ["formal/models/payments/binding_consent_renewal.qnt"],
+      "models": [
+        "formal/models/payments/binding_consent_renewal.qnt",
+        "formal/models/payments/evm_binding_consent_api.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt"
+      ],
       "candidateLines": [15, 17],
       "review": "mapped-abstraction"
     },
@@ -3511,6 +3520,7 @@
       "sha256": "b304a02790f6cb2b892eb965d63f749e4ca56bcb2840adf175179c4f19bd881f",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
@@ -6757,7 +6767,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "sha256": "bc3de9cb72a85db80e504d06b3acc85a738e5f8b9f65f08507b58098835c1769",
+      "sha256": "8df5ff1691b210c055b80bb5f975daf3564c1fe4f3ac3416aca3debfaffd7d4d",
       "models": [
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
@@ -6765,17 +6775,18 @@
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/signed_send.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
         213, 223, 253, 406, 407, 409, 410, 452, 454, 460, 461, 462, 463, 470,
         472, 473, 478, 480, 481, 482, 483, 484, 488, 508, 513, 516, 836, 947,
-        954, 956, 970, 1320, 1321, 1470, 1502, 1511, 1514, 1524, 1549, 1628,
-        1629, 1630, 1631, 1637, 1645, 1753, 1758, 1759, 1760, 1766, 1770, 1771,
-        1772, 1775, 1776, 1779, 1820, 1828, 1830, 1838, 1962, 1963, 1964, 1985,
-        2005, 2011, 2015, 2032, 2037, 2059, 2060, 2067, 2086, 2087, 2091, 2107,
-        2108, 2253, 2254, 2284, 2285, 2291, 2295, 2402, 2441, 2452, 2459, 2460,
-        2469, 2512, 2519, 2546, 2576, 2577, 2622, 2632, 2730, 2732, 2733, 2737
+        954, 956, 976, 1343, 1344, 1493, 1525, 1534, 1537, 1547, 1572, 1651,
+        1652, 1653, 1654, 1660, 1668, 1776, 1781, 1782, 1783, 1789, 1793, 1794,
+        1795, 1798, 1799, 1802, 1843, 1851, 1853, 1861, 1985, 1986, 1987, 2008,
+        2028, 2034, 2038, 2055, 2060, 2082, 2083, 2090, 2109, 2110, 2114, 2130,
+        2131, 2276, 2277, 2307, 2308, 2314, 2318, 2425, 2464, 2475, 2482, 2483,
+        2492, 2535, 2542, 2569, 2599, 2600, 2645, 2655, 2753, 2755, 2756, 2760
       ],
       "review": "mapped-abstraction"
     },
@@ -6789,7 +6800,10 @@
     {
       "path": "workers/payment-executor/index.ts",
       "sha256": "c06068dedf97c2755a661743b4df0fb2ff3e70a8df20cb3f4fd48bb19db0f40f",
-      "models": ["formal/models/payments/binding_cancellation.qnt"],
+      "models": [
+        "formal/models/payments/binding_cancellation.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt"
+      ],
       "candidateLines": [
         107, 113, 128, 139, 147, 155, 156, 165, 174, 175, 178, 195, 200, 209,
         228, 236, 265, 284, 301, 316, 327, 331, 359, 390, 394, 471, 476, 477,
@@ -10526,6 +10540,48 @@
       ]
     },
     {
+      "path": "formal/models/payments/evm_binding_consent_api.qnt",
+      "sha256": "84ec721b199dd75f79c136e63c951df45b65dd95261f36a4f174a9788e98f82e",
+      "sources": [
+        "backend/payments/handler.ts",
+        "backend/payments/possession.ts",
+        "contracts/evm/adapter.ts",
+        "migrations/0016_binding_authorizations.sql"
+      ],
+      "scenarios": [
+        "authorizeRequiresExplicitExpectedVersionTest",
+        "beyondLifetimeAndSlackRefusesTest",
+        "capturedExpiryAdmissionCanFinishAfterExpiryTest",
+        "challengeMayDiscoverExpectedVersionTest",
+        "committedWriteCanLoseReplyTest",
+        "delayedChallengeUsesOriginalCaptureTest",
+        "duplicateDeploymentMatchesRefuseTest",
+        "exactLifetimeAndSlackUpperBoundaryAcceptedTest",
+        "exactSubmissionMarginRefusesTest",
+        "failedDeploymentReadReturns503Test",
+        "failedReadbackDoesNotUndoInsertTest",
+        "fulfilledWriteWithoutRetainedRowRefusesTest",
+        "highSSignatureRefusesWithoutInsertionTest",
+        "ineligibleOrForeignWalletRefusesTest",
+        "insertFailureDoesNotClaimSuccessTest",
+        "invalidBodyRefusesBeforeDeploymentReadTest",
+        "invalidRetainedSignatureIsNotOverwrittenOrAcceptedTest",
+        "laterEffectiveClaimDoesNotEraseCapturedConsentTest",
+        "lostHttpSuccessLeavesConsentRetainedTest",
+        "missingDeploymentSourceReturns503Test",
+        "newExpiryAppendsRenewalTest",
+        "oneSecondBeyondSubmissionMarginAcceptedTest",
+        "registryChainMismatchRefusesTest",
+        "sameKeyReplayRetainsFirstSignatureTest",
+        "suppliedVersionSkipsDiscoveryTest",
+        "thrownVersionLookupReturns500Test",
+        "unavailableVersionReturns503Test",
+        "unknownNetwork31337ExceptionRemainsAvailableTest",
+        "wrongBindingSignatureRefusesTest",
+        "zeroOneRecoveryByteNormalizesBeforeStorageTest"
+      ]
+    },
+    {
       "path": "formal/models/payments/evm_scan_checkpoint.qnt",
       "sha256": "f17322b471f58ce94beb019972f5bda5171c7523e116a791f4db1f9ea6e63b1c",
       "sources": ["workers/payments/scanner.ts"],
@@ -10809,6 +10865,48 @@
         "inventoryMismatchPreventsAllDeploysTest",
         "partialDeployDoesNotExposeBindingsTest",
         "pinnedSourcesThenBindingsTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/stored_binding_broadcast_authority.qnt",
+      "sha256": "c9b32a46f8ccb50512c3ac1d91b7438245d2089192ff95958cce0cae004763c6",
+      "sources": [
+        "migrations/0016_binding_authorizations.sql",
+        "scripts/payment-keeper/keeper.ts",
+        "workers/payment-executor/core.ts",
+        "workers/payment-executor/index.ts"
+      ],
+      "scenarios": [
+        "authorityErrorInWaitingSendIsNotFeeWaitTest",
+        "bindingPolicyRefusalKeepsSignedBytesTest",
+        "changedClaimDuringBudgetAwaitRefusesTest",
+        "changedVersionRefusesTest",
+        "delayedConsentReplyUsesCapturedClockTest",
+        "earlierVersionObservationDoesNotLockChainTest",
+        "elapsedTimeAfterFinalReadDoesNotRevalidateConsentTest",
+        "exactSubmissionMarginRefusesTest",
+        "failedCheckCanRetrySameSignedCandidateTest",
+        "failedHashReadDoesNotProveNonSubmissionTest",
+        "finalReadDoesNotPromiseAtomicRegistrySendTest",
+        "finalRegistryRecheckRefusesLateSuccessorTest",
+        "invalidRetainedBudgetRefusesBeforeAuthorityTest",
+        "latestThirdVariantUsesActualSignedIdentityTest",
+        "lostSuccessReplyRetainsObservedSubmissionTest",
+        "malformedCandidateRefusesBeforeRegistryTest",
+        "missingOrMismatchedExactConsentRefusesTest",
+        "obsoleteSuccessfulReceiptReconcilesWithoutResendTest",
+        "oldOrderCanSendObsoleteClaimNegativeControlTest",
+        "originalCandidatePassesOrderedAuthorityTest",
+        "paidAwardRefusesTest",
+        "registryRestrictionRefusesTest",
+        "replacementCandidateUsesActualSignedIdentityTest",
+        "replacementReceiptIsFoundBeforeOriginalResendTest",
+        "revertedReceiptRefusesWithoutResendTest",
+        "signerRotationRefusesTest",
+        "uncertainReplyWithKnownHashSucceedsTest",
+        "uncertainReplyWithMissingHashFailsTest",
+        "waitingRebroadcastRetainsWaitingResultTest",
+        "waitingTransportFailureStillReportsFeeWaitTest"
       ]
     },
     {
