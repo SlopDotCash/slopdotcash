@@ -2738,7 +2738,10 @@
     {
       "path": "migrations/0108_identity_failed_callback.sql",
       "sha256": "8844dec47c02d0ec5051f57945814383236f52ee0f5ffa39fffcc379b7a94cd9",
-      "models": ["formal/models/api/api_identity.qnt"],
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_callback_completion.qnt"
+      ],
       "candidateLines": [2, 11, 12, 23, 27, 32, 34, 37, 38],
       "review": "mapped-abstraction"
     },
@@ -6447,7 +6450,10 @@
     {
       "path": "workers/identity/contracts.ts",
       "sha256": "0fc7f0a08caeb5958fed0f677655bbb2c5d9cc9b5a9f1ec8a3043d088965d2ef",
-      "models": ["formal/models/api/api_identity.qnt"],
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_callback_completion.qnt"
+      ],
       "candidateLines": [21, 34],
       "review": "mapped-abstraction"
     },
@@ -6463,6 +6469,8 @@
       "sha256": "963a2787493d5170a5d18995e9cbbdc2ef151cac61c2ef389c2dc8a3d41512fe",
       "models": [
         "formal/models/api/api_identity.qnt",
+        "formal/models/api/github_identity_exchange.qnt",
+        "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/pr_review_signin.qnt"
       ],
       "candidateLines": [
@@ -6477,6 +6485,7 @@
       "sha256": "8a0e3ac108b97bfec933e77dc2cda6fd7fcb162da7411c7e42f4f1edc77300fe",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
+        "formal/models/api/github_identity_exchange.qnt",
         "formal/models/api/identity_intake_renewal.qnt",
         "formal/models/api/identity_rate_gate.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt"
@@ -6492,6 +6501,7 @@
       "sha256": "7535abbcc24daaf8eff90863b4e1f0021bfe34c7a05a0db71adace672c9dcd82",
       "models": [
         "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_callback_completion.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
@@ -8617,6 +8627,77 @@
         "replayDuringPauseDoesNotResendTest",
         "unknownIsNotVerifiedTest",
         "wrongActorDoesNotConsumeTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/github_identity_exchange.qnt",
+      "sha256": "1e0896728e432f72e0ad57ca6a279c4d39134df9d31b1605b49616e239168c35",
+      "sources": ["workers/identity/handler.ts", "workers/identity/index.ts"],
+      "scenarios": [
+        "absentOrNonStringTokenReturnsNullTest",
+        "capitalBearerCanReturnPointsEligibleIdentityTest",
+        "completedInvocationCannotRetryTest",
+        "configurationFailureSendsNoRequestTest",
+        "invalidLoginReturnsNullTest",
+        "invalidNumericIdReturnsNullTest",
+        "invalidOptionalNodeStillReturnsBasicIdentityTest",
+        "localClearDoesNotClaimTokenErasureTest",
+        "lowerBearerCanReturnBasicIdentityTest",
+        "nonObjectTokenBodyReturnsNullTest",
+        "nonObjectUserBodyReturnsNullTest",
+        "nonOkTokenResponseReturnsNullTest",
+        "nonOkUserResponseClearsLocalTokenBeforeFinallyTest",
+        "nonUserTypeOmitsEvenAValidNodeIdTest",
+        "returnedIdentityExposesOnlyProjectedFieldsTest",
+        "tokenBodyFailureThrowsInsteadOfReturningNullTest",
+        "tokenFetchFailureThrowsAndFinalizesTest",
+        "tooLongTokenReturnsNullTest",
+        "tooShortTokenReturnsNullTest",
+        "unsupportedTokenTypeReturnsNullTest",
+        "userBodyFailureOccursAfterLocalClearTest",
+        "userFetchFailureKeepsLocalTokenUntilFinallyTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/identity_callback_completion.qnt",
+      "sha256": "ce64d2c0e5fea1535521edaabe9b9b3f956ba31e45699f3b69d7897f32c56de6",
+      "sources": [
+        "migrations/0108_identity_failed_callback.sql",
+        "workers/identity/contracts.ts",
+        "workers/identity/handler.ts",
+        "workers/identity/persistence.ts"
+      ],
+      "scenarios": [
+        "absentStoredCipherReturnsGoneAfterClaimTest",
+        "absentStoredIvReturnsGoneAfterClaimTest",
+        "authorizationDenialFailsClaimedFlowTest",
+        "capturedClaimCanStartAfterWallClockExpiryTest",
+        "capturedCompletionMayCommitAfterWallClockExpiryTest",
+        "claimReplyLossConsumesStoredVerifierTest",
+        "claimedResolverMayRemainPendingTest",
+        "cleanupAfterCompletionDoesNotRewriteReplyTest",
+        "cleanupBeforeCompletionRefusesWriteTest",
+        "cleanupBetweenClaimReadAndWriteTest",
+        "committedClaimWithoutChangeCountReturnsGoneTest",
+        "committedCompletionSurvivesLostReplyTest",
+        "committedCompletionWithoutChangeCountReturnsConflictTest",
+        "completeWriteFailureDoesNotInventCompletionTest",
+        "concurrentClaimSelectsHaveOneWinnerTest",
+        "decryptErrorEndsClaimedFlowTest",
+        "expiredClaimHasNoEffectTest",
+        "expiryDuringExchangeRefusesCompletionTest",
+        "failureNoopAfterCleanupStillReturnsRefusalTest",
+        "failureReplyLossRetainsFailedCommitTest",
+        "failureWriteRejectionLeavesProcessingTest",
+        "hashFailureDoesNotClaimTest",
+        "invalidBindingCannotClaimTest",
+        "nullResolverEndsClaimedFlowTest",
+        "pointsAcceptsNodeIdentityTest",
+        "pointsRejectsBasicIdentityTest",
+        "privateAudienceAcceptsBasicIdentityTest",
+        "responseConstructionFailureKeepsCommitTest",
+        "secondCallbackCannotRecoverConsumedClaimTest",
+        "thrownResolverClearsLocalSlotTest"
       ]
     },
     {

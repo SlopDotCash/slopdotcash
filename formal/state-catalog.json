@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a030966942dfe5f392d8cbbf50f0bbef4bad79e0d5f2d2fa6fe01c7f4edfeea1",
+  "inventorySha256": "17c0fbc942d8c7d64ebdcef06dcfdd287f371784ce84b9acd433eb7eb75d9bba",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1733,13 +1733,11 @@
         "callback_processing",
         "pending"
       ],
-      "models": ["formal/models/api/api_identity.qnt"],
-      "lexicallyUnmentionedValues": [
-        "assertion_issued",
-        "callback_complete",
-        "callback_failed",
-        "callback_processing"
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_callback_completion.qnt"
       ],
+      "lexicallyUnmentionedValues": ["assertion_issued"],
       "review": "candidate-only"
     },
     {
@@ -3171,13 +3169,11 @@
         "callback_processing",
         "pending"
       ],
-      "models": ["formal/models/api/api_identity.qnt"],
-      "lexicallyUnmentionedValues": [
-        "assertion_issued",
-        "callback_complete",
-        "callback_failed",
-        "callback_processing"
+      "models": [
+        "formal/models/api/api_identity.qnt",
+        "formal/models/api/identity_callback_completion.qnt"
       ],
+      "lexicallyUnmentionedValues": ["assertion_issued"],
       "review": "candidate-only"
     },
     {
@@ -3194,6 +3190,7 @@
       ],
       "models": [
         "formal/models/api/api_identity_admission.qnt",
+        "formal/models/api/github_identity_exchange.qnt",
         "formal/models/api/identity_intake_renewal.qnt",
         "formal/models/api/identity_rate_gate.qnt",
         "formal/models/api/identity_scheduled_maintenance.qnt"
