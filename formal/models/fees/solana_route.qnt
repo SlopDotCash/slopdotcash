@@ -10,6 +10,7 @@
 // @source workers/fee-converter/solana-route-receipt.ts
 // @source workers/fee-converter/verified-route-credit.ts
 // @source contracts/solana/transactions.ts
+// @source workers/fee-converter/solana-transaction.ts
 // Route account/read/lookup proofs precede signing; receipt independently proves output.
 module solana_route {
   type S={lookups:bool,accounts:bool,programs:bool,signers:bool,destination:bool,bounds:bool,signed:bool,received:bool}

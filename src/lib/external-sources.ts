@@ -245,7 +245,7 @@ export function externalWorkKey(
  * opaque and carries no target, so it cannot be bound here; reviewers must
  * open it and confirm it shows the source before merging.
  */
-export function assertExternalArchiveUrl(
+function assertExternalArchiveUrl(
   value: unknown,
   sourceUrl: string,
   field: string,

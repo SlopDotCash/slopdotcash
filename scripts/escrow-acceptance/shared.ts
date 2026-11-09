@@ -42,9 +42,9 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
 import paymentsWorker, {
-  type PaymentDeployment,
   type PaymentsWorkerEnvironment,
 } from "../../workers/payments/index";
 import { sqliteJournalStore } from "../payment-keeper/store";
@@ -61,8 +61,8 @@ export const ACCEPTANCE_NETWORKS = [
 ] as const;
 export type AcceptanceNetwork = (typeof ACCEPTANCE_NETWORKS)[number];
 /** Base, Ethereum and Robinhood Chain mainnet chain ids. The runner never signs on them. */
-export const MAINNET_EVM_CHAIN_IDS = new Set(["1", "8453", "4663"]);
-export const SOLANA_GENESIS = {
+const MAINNET_EVM_CHAIN_IDS = new Set(["1", "8453", "4663"]);
+const SOLANA_GENESIS = {
   mainnet: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
   devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
   testnet: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
@@ -71,7 +71,7 @@ export const SOLANA_GENESIS = {
  * ProjectEscrow.payoutFee and withdrawalFee, and the program's commit and
  * withdraw: both 2%, rounded up, ceil(gross / 50) (#907).
  */
-export const PAYOUT_FEE_DIVISOR = 50n;
+const PAYOUT_FEE_DIVISOR = 50n;
 const twoPercentFee = (gross: bigint) =>
   (gross + PAYOUT_FEE_DIVISOR - 1n) / PAYOUT_FEE_DIVISOR;
 export type ActorRole = "registered" | "walletless";
@@ -955,7 +955,7 @@ async function publicGet(projection: Projection, path: string) {
  * with no indexed data must be unavailable (HTTP 503, or no snapshot), never a
  * row of zero totals.
  */
-export async function reconcilePublicApi(
+async function reconcilePublicApi(
   projection: Projection,
   projectId: string,
   chain: VaultTotals,
@@ -1097,7 +1097,7 @@ export async function untilReady<T>(
 }
 
 /** A JSON-RPC request as the fault proxy sees it. */
-export interface RpcCall {
+interface RpcCall {
   method: string;
   params: unknown[];
 }

@@ -1,6 +1,7 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
@@ -34,7 +35,6 @@ import {
   acceptsPayoutFee,
   ordinaryFee,
 } from "../../src/lib/payments/contracts";
-import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
   type PublicSolanaExecutorEnvironment,

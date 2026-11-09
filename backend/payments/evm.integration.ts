@@ -29,12 +29,14 @@ import {
 import { sqliteJournalStore } from "../../scripts/payment-keeper/store";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
+  type JournalStore,
+  preflightEvmDeployment,
+} from "../../workers/payment-executor/binding-shared";
+import {
   assertEvmMonthlySources,
   createEvmAttester,
   createEvmExecutor,
-  type JournalStore,
   lookupAttempt,
-  preflightEvmDeployment,
   retireUnsignedAttempt,
 } from "../../workers/payment-executor/core";
 import { readDeploymentVaultTotals } from "../../workers/payments/index";

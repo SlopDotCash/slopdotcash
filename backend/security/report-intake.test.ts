@@ -19,11 +19,8 @@ import type {
   SecurityAppealInput,
   SecurityScreeningProposal,
 } from "./analysis";
-import {
-  handleSecurityApi,
-  type SecurityApiDependencies,
-  type SecurityD1Database,
-} from "./handler";
+import type { SecurityApiDependencies, SecurityD1Database } from "./case-store";
+import { handleSecurityApi } from "./handler";
 import { readStoredReportByCase } from "./report-intake";
 
 const ORIGIN = "https://slop.test";

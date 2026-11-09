@@ -35,7 +35,7 @@ export const TERMINAL_FAILURES: readonly string[] = [
 ];
 
 /** The fields of a submission that decide whether its draft is still needed. */
-export type DraftOwner = {
+type DraftOwner = {
   id: string;
   origin: "slop" | "direct";
   state: string;

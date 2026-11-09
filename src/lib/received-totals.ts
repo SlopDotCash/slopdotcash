@@ -3,26 +3,41 @@ import { ESCROW_NETWORKS } from "./escrow-policy.mjs";
 import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sumAmounts } from "./verified-allocation";
 
-/** One contributor's all-time receipts in micro-dollars (USDC base units). */
+/** One contributor's all-time finalized receipts, in exact base units. */
 export interface ReceivedContributor {
   githubUserId: string;
   login: string | null;
+  /** Disclosed direct USDC transfers plus finalized USD-stablecoin vault payments. */
   usdMicro: string;
   directMicro: string;
   vaultUsdMicro: string;
   directTransfers: number;
   vaultPayments: number;
+  /** The same dollar receipts by project, largest first. */
   projects: { projectId: string; usdMicro: string }[];
+  /** Finalized vault payments in other assets, never converted to dollars. */
+  otherAssets: {
+    network: string;
+    assetAddress: string;
+    assetDecimals: number;
+    netBase: string;
+  }[];
 }
-export interface ReceivedTotals {
-  generatedAt: string;
+/** The D1 aggregate behind the endpoint; the handler adds `generatedAt`. */
+export interface ReceivedTotalsRecord {
+  schemaVersion: "1";
   contributors: ReceivedContributor[];
   totals: {
     usdMicro: string;
+    directMicro: string;
+    vaultUsdMicro: string;
     directTransfers: number;
     vaultPayments: number;
     contributors: number;
   };
+}
+export interface ReceivedTotals extends ReceivedTotalsRecord {
+  generatedAt: string;
 }
 const money = (v: unknown) => typeof v === "string" && CANONICAL_UINT.test(v);
 const count = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
@@ -31,10 +46,13 @@ export function isReceivedTotals(value: unknown): value is ReceivedTotals {
   const v = value as ReceivedTotals | null;
   return (
     !!v &&
+    v.schemaVersion === "1" &&
     typeof v.generatedAt === "string" &&
     Number.isFinite(Date.parse(v.generatedAt)) &&
     !!v.totals &&
     money(v.totals.usdMicro) &&
+    money(v.totals.directMicro) &&
+    money(v.totals.vaultUsdMicro) &&
     count(v.totals.directTransfers) &&
     count(v.totals.vaultPayments) &&
     count(v.totals.contributors) &&
@@ -55,6 +73,15 @@ export function isReceivedTotals(value: unknown): value is ReceivedTotals {
         Array.isArray(c.projects) &&
         c.projects.every(
           (p) => !!p && typeof p.projectId === "string" && money(p.usdMicro),
+        ) &&
+        Array.isArray(c.otherAssets) &&
+        c.otherAssets.every(
+          (a) =>
+            !!a &&
+            typeof a.network === "string" &&
+            typeof a.assetAddress === "string" &&
+            Number.isSafeInteger(a.assetDecimals) &&
+            money(a.netBase),
         ),
     ) &&
     sumAmounts(v.contributors.map((c) => BigInt(c.usdMicro))) ===

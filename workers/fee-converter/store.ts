@@ -21,39 +21,24 @@ import type {
   FeeVault,
   SendReplacement,
 } from "./core";
+import { LOCK_MS } from "./core";
+import type { D1Value, FeeD1Database } from "./d1";
 import { assertJupiterRoute } from "./jupiter-route";
-import {
-  JUPITER_PROGRAM,
-  parseTransaction as parseSolanaTransaction,
-} from "./solana";
 import {
   retainedRouteExpectation,
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
 import {
+  JUPITER_PROGRAM,
+  parseTransaction as parseSolanaTransaction,
+} from "./solana-transaction";
+import {
   type NativeFeeEarning,
   type NativeLiabilityEntry,
   nativeFeeEarnings,
   nativeFeeRemainder,
 } from "./verified-native-liability";
-
-type D1Value = string | number | null;
-interface D1Statement {
-  bind(...values: D1Value[]): D1Statement;
-  first<T>(): Promise<T | null>;
-  all<T>(): Promise<{ results: T[] }>;
-  run(): Promise<{ meta?: { changes?: number } }>;
-}
-export interface FeeD1Database {
-  prepare(query: string): D1Statement;
-}
-
-/**
- * One lease covers a whole run. core.ts sizes its own renewal interval from
- * this so a run never signs after the lease it holds has expired.
- */
-export const LOCK_MS = 14 * 60 * 1000;
 
 const COLUMNS: [keyof ConversionRow, string][] = [
   ["id", "id"],

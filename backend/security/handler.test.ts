@@ -14,11 +14,8 @@ import type {
   SecurityAnalyzer,
   SecurityAppealInput,
 } from "./analysis";
-import {
-  handleSecurityApi,
-  pvrState,
-  type SecurityD1Database,
-} from "./handler";
+import { pvrState, type SecurityD1Database } from "./case-store";
+import { handleSecurityApi } from "./handler";
 
 const migrations = readdirSync("migrations")
   .filter((f) => f.endsWith(".sql"))

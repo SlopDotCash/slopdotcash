@@ -88,7 +88,7 @@ function isMonthlyCommitmentInput(
   );
 }
 
-export interface PaymentsDependencies {
+interface PaymentsDependencies {
   tier?: DeploymentTier;
   /** The owner's private monthly allocations; absent where they are not served. */
   monthly?: MonthlyOwnerService;

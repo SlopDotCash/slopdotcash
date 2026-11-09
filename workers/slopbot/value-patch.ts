@@ -1,6 +1,6 @@
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type { EvidenceClient, FileChange } from "./value-evidence-types";
 
 function addedLines(file: FileChange): string[] | null {
   if (

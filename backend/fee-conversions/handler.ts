@@ -10,7 +10,7 @@ import {
 } from "../../workers/fee-converter/config";
 import { apiErrorResponse, fail, json, requireActor } from "../http";
 
-export interface FeeConversionsDependencies {
+interface FeeConversionsDependencies {
   db: {
     prepare(query: string): {
       bind(...values: (string | number)[]): {

@@ -35,6 +35,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   composeAcquisitionRefusal,
   composeScanResult,
@@ -53,7 +54,6 @@ import {
   acquireQueuedAssessment,
   type QueueConnection,
   QueuedAcquisitionRefusal,
-  type QueuedAssessment,
   readPendingAssessments,
 } from "./queue";
 import { type ReviewCache, reviewInventory } from "./review-plan";
@@ -86,7 +86,7 @@ export { TEMPLATE_PREFIX } from "../../backend/vetting/scan-result";
  * profile and the specialist the pinned Surplus `gpt-6.1-sol` profile, so
  * `SURPLUS_API_KEY` reaches only the approved Surplus endpoints.
  */
-export function assertPinnedProfiles(
+function assertPinnedProfiles(
   primary: ScannerProfile,
   specialist: ScannerProfile,
 ) {
@@ -130,7 +130,7 @@ export type ScanServiceConfig = {
   };
 };
 
-export type AssessmentOutcome =
+type AssessmentOutcome =
   | {
       assessmentId: string;
       state: "published";
@@ -168,7 +168,7 @@ export type AssessmentOutcome =
       state: "journaled";
     };
 
-export type ScanPassReport = {
+type ScanPassReport = {
   refreshed: boolean;
   assessments: AssessmentOutcome[];
 };

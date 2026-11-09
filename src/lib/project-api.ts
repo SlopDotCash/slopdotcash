@@ -156,7 +156,7 @@ export async function currentProjectSession(): Promise<ProjectSession | null> {
   };
 }
 
-export type ProjectSummary = {
+type ProjectSummary = {
   id: string;
   slug: string;
   name: string;

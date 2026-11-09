@@ -30,7 +30,7 @@ const GITHUB_GIT_ORIGIN = "https://github.com";
  * of a multi-gigabyte public repository completes well inside it; a stalled
  * transfer fails as an outage and is retried, never refused.
  */
-export const ACQUISITION_TIMEOUT_MS = 45 * 60 * 1000;
+const ACQUISITION_TIMEOUT_MS = 45 * 60 * 1000;
 const LFS_POINTER = "version https://git-lfs.github.com/spec/v1";
 const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
@@ -38,7 +38,7 @@ const hash = (bytes: Uint8Array, algorithm = "sha256") =>
 /** The pinned input is outside the acquisition policy, so a retry of the
  * same pin cannot pass. Outages and changed bytes are not refusals. Size is
  * never a refusal reason for repository source. */
-export type AcquisitionRefusalReason =
+type AcquisitionRefusalReason =
   | "An exact repository and commit SHA are required"
   | "Invalid source tree path or digest"
   | "Unsupported source tree entry"

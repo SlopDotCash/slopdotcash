@@ -15,7 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import {
   EvmMonthlyAlreadyAdmitted,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { monthlyBasesSql } from "../../scripts/prepare-monthly-rewards";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -29,7 +29,7 @@ import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import {
@@ -47,10 +47,8 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "./monthly";
-import {
-  type MonthlyAttestationPlan,
-  prepareMonthlyAttestation,
-} from "./monthly-attestation";
+import { prepareMonthlyAttestation } from "./monthly-attestation";
+import type { MonthlyAttestationPlan } from "./monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);

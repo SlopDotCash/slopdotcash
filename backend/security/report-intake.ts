@@ -11,11 +11,12 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  runAppealTriage,
+  runCaseAnalysis,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
 } from "./analysis";
-import { parseReportInput, type ReportInput } from "./github-advisories";
 import {
   type CaseRow,
   caseInsertStatement,
@@ -27,47 +28,30 @@ import {
   type Role,
   reportingContext,
   type SecurityApiDependencies,
-  scheduleAnalysis,
   stringField,
   termsAtReceipt,
-} from "./handler";
+} from "./case-store";
+import { parseReportInput, type ReportInput } from "./github-advisories";
 import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
 import {
   COLUMNS,
+  type IntakeState,
   loadSubmission,
+  type StoredIntake,
   type SubmissionRow,
   settle,
+  storedIntake,
   submissionView,
-} from "./submissions";
+} from "./submission-store";
 import {
-  type IntakeScreeningState,
   intakeReviewState,
   qualifiedIntake,
   recoverableIntakeScreening,
 } from "./verified-intake";
 
-export type IntakeState = IntakeScreeningState;
-export type StoredIntake = {
-  submission_id: string;
-  case_id: string;
-  received_at: string;
-  report_version: number;
-  screening_state: IntakeState;
-  screening_started_at: string | null;
-  screening_finished_at: string | null;
-  screening_reason: string | null;
-  routed_at: string | null;
-  screening_provider: string | null;
-  screening_model: string | null;
-  reviewed_at: string | null;
-  reviewed_by: string | null;
-  review_decision: "forward" | "request-information" | null;
-  review_reason: string | null;
-  revision: number;
-};
 const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -178,16 +162,7 @@ async function admitPublicWork(
     );
 }
 
-export async function storedIntake(
-  deps: Pick<SecurityApiDependencies, "db">,
-  id: string,
-): Promise<StoredIntake | null> {
-  return deps.db
-    .prepare("SELECT * FROM security_submission_intake WHERE submission_id = ?")
-    .bind(id)
-    .first<StoredIntake>();
-}
-export function intakeQualified(row: StoredIntake): boolean {
+function intakeQualified(row: StoredIntake): boolean {
   return qualifiedIntake({
     review: intakeReviewState(row.review_decision),
     screening: row.screening_state,
@@ -552,7 +527,7 @@ async function routedNotice(
 }
 
 /** Called only after persisted receipt; failures leave a visible, retryable state. */
-export async function screenStoredReport(
+async function screenStoredReport(
   deps: SecurityApiDependencies,
   id: string,
   timeoutMs = ANALYSIS_TIMEOUT_MS,
@@ -1337,4 +1312,49 @@ export async function approvedReportForForward(
       "The saved report needs screening or an explicit private maintainer routing review.",
     );
   return reportVersion(deps, stored);
+}
+
+/**
+ * Starts the private analysis of a newly verified case. It runs after the
+ * response where the platform allows it, within the background time limit,
+ * and inline otherwise. `report` is the advisory content that receipt
+ * verification already read from GitHub; it stays in memory. Without it, the
+ * analysis reads the advisory again.
+ */
+export async function scheduleAnalysis(
+  deps: SecurityApiDependencies,
+  caseId: string,
+  report: SecurityAnalysisReport | null,
+  timeoutMs?: number,
+): Promise<void> {
+  const run = (timeoutMs: number) =>
+    runCaseAnalysis(analysisDependencies(deps), caseId, report, timeoutMs);
+  if (deps.waitUntil)
+    deps.waitUntil(run(timeoutMs ?? BACKGROUND_ANALYSIS_TIMEOUT_MS));
+  else await run(timeoutMs ?? ANALYSIS_TIMEOUT_MS);
+}
+
+/**
+ * Starts Slopbot's triage of a newly opened appeal, after the response where
+ * the platform allows it and inline otherwise, like the report analysis.
+ */
+export async function scheduleAppealTriage(
+  deps: SecurityApiDependencies,
+  caseId: string,
+): Promise<void> {
+  const run = (timeoutMs: number) =>
+    runAppealTriage(analysisDependencies(deps), caseId, timeoutMs);
+  if (deps.waitUntil) deps.waitUntil(run(BACKGROUND_ANALYSIS_TIMEOUT_MS));
+  else await run(ANALYSIS_TIMEOUT_MS);
+}
+
+export function analysisDependencies(deps: SecurityApiDependencies) {
+  return {
+    db: deps.db,
+    now: deps.now,
+    advisories: deps.advisories ?? null,
+    analyzer: deps.analyzer ?? null,
+    storedReport: (caseId: string, reportVersion?: number) =>
+      readStoredReportByCase(deps, caseId, reportVersion),
+  };
 }

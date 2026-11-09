@@ -13,10 +13,7 @@ import {
 } from "../../src/lib/project-contracts";
 import { appJwt } from "./github";
 
-export { REPOSITORY_READ_URL };
-
-export const REPOSITORY_ACCESS_URL =
-  "https://slopbot.internal/v1/repository-access";
+const REPOSITORY_ACCESS_URL = "https://slopbot.internal/v1/repository-access";
 
 const REPOSITORY = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/u;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
@@ -182,7 +179,7 @@ export function routeRepositoryAccess(
 }
 
 /** Serves the internal route; public hosts never match its origin. */
-export async function handleRepositoryAccess(
+async function handleRepositoryAccess(
   request: Request,
   env: AccessEnv,
   fetcher: typeof fetch = fetch,

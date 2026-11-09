@@ -6,6 +6,7 @@
 // @source backend/security/report-analysis.ts
 // @source backend/security/project-access.ts
 // @source backend/security/award-asset.ts
+// @source backend/security/case-store.ts
 // @evidence backend/security/handler.test.ts
 // Private case decision lifecycle (PRD section 8, SEC-04, SEC-10, SEC-12,
 // SEC-18): technical decision, discretionary award, related-party review,

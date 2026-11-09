@@ -7,7 +7,7 @@ import {
 } from "../../src/lib/value-assessment";
 import type { ModelEnv } from "./models";
 import { binarySourceLimitations } from "./value-binary";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   runValueInference,
   type ValueInferenceBudget,

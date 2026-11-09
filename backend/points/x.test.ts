@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { handlePointsApi, type PointsDependencies } from "./handler";
+import type { PointsDependencies } from "./dependencies";
+import { handlePointsApi } from "./handler";
 
 test("X connection and reconnect reserve identity without granting points", async () => {
   const { db, sqlite } = sqliteD1(

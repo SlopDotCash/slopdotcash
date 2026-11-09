@@ -33,9 +33,9 @@ import { encodeBase64 } from "../../src/lib/byte-encoding";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
-import { parseTransaction } from "./solana";
 import { resolveSolanaAccounts } from "./solana-accounts";
 import { WRAPPED_SOL } from "./solana-native-route";
+import { parseTransaction } from "./solana-transaction";
 
 const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
 if (selected !== "jup" && selected !== "sol")

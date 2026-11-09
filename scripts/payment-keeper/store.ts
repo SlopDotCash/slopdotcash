@@ -1,14 +1,12 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, readFileSync } from "node:fs";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import {
   initializeKeeperSchema,
   type KeeperDatabase,
   type KeeperValue,
   keeperStorage,
 } from "./storage";
-
-export type { KeeperStore } from "./storage";
 
 /** One process owns this signer journal. SQLite releases the lock after a crash. */
 export function openKeeperStore(file: string) {

@@ -7,10 +7,10 @@ import {
   type NotificationsDependencies,
 } from "../../backend/notifications/handler";
 import {
-  handleSecurityApi,
   inboxStatements,
   type SecurityD1Database,
-} from "../../backend/security/handler";
+} from "../../backend/security/case-store";
+import { handleSecurityApi } from "../../backend/security/handler";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {

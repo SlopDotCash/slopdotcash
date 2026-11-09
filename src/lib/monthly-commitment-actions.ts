@@ -55,7 +55,7 @@ export interface MonthlyReview {
  * The project's recorded monthly amount in the vault asset's base units.
  * The vault must use that asset and its recorded decimals.
  */
-export function vaultMonthlyCap(
+function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
   deployment: Pick<EscrowDeployment, "network" | "asset">,
   vaultDecimals: number,
@@ -85,7 +85,7 @@ export function vaultMonthlyCap(
   return BigInt(project.reward.monthlyCapMinor);
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
-export function monthlyTarget(
+function monthlyTarget(
   automatic: boolean,
   projectCap: bigint,
   current: MonthlySetting,
@@ -218,7 +218,7 @@ function solanaDeployment(deployment: EscrowDeployment) {
   };
 }
 /** Rebuilds the reviewed message locally and requires the prepared wire bytes to match it. */
-export function verifySolanaMonthlyPlan(
+function verifySolanaMonthlyPlan(
   deployment: EscrowDeployment,
   plan: SolanaMonthlyPlan,
   wallet: string,

@@ -63,7 +63,7 @@ const ROOT_VOIDED = parseAbiItem(
   "event RootVoided(uint256 indexed epoch, bytes32 root)",
 );
 
-export interface EvmPosterOptions {
+interface EvmPosterOptions {
   config: PosterConfig;
   /** Absent in dry_run: the client can read but cannot sign. */
   privateKey?: string;

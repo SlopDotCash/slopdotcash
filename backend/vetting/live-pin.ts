@@ -14,7 +14,7 @@ import {
 import { type GithubFetch, readBranchHead } from "../projects/github-lookup";
 import type { VettingPin } from "./persistence";
 
-export type VettingGithub = {
+type VettingGithub = {
   fetch: GithubFetch;
   token?: string;
   apiOrigin: string;

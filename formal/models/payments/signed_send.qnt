@@ -2,6 +2,8 @@
 // @source workers/payment-executor/core.ts
 // @source workers/fee-converter/core.ts
 // @source workers/fee-converter/evm.ts
+// @source workers/payment-executor/binding-shared.ts
+// @source workers/verified-fee-replacement.ts
 // @source workers/fee-converter/verified-arithmetic.ts
 // Same-nonce EVM fee replacement: payment-executor nextReplacementFees and
 // fee-converter evm.ts replace(). Every attempt keeps the original nonce,

@@ -164,7 +164,7 @@ export async function inspectSolanaMonthlyWrongSum(
   };
 }
 
-export type SolanaWrongSumEvidence = Extract<
+type SolanaWrongSumEvidence = Extract<
   Awaited<ReturnType<typeof inspectSolanaMonthlyWrongSum>>,
   { status: "provably-unsettleable" }
 >;

@@ -39,7 +39,7 @@ import {
 } from "./verified-review-batches";
 
 /** Default input budget of one batch call, in estimated tokens. */
-export const DEFAULT_BATCH_TOKENS = 150_000;
+const DEFAULT_BATCH_TOKENS = 150_000;
 /** Conservative estimate for source text; real tokenizers yield fewer tokens. */
 export const BYTES_PER_TOKEN = 3;
 /** Fixed per-item JSON framing, counted like the single-call envelope. */
@@ -56,7 +56,7 @@ type Inventory = {
   visibilityGaps: string[];
 };
 
-export type PlannedCall = {
+type PlannedCall = {
   evidence: string;
   inputSha256: string;
   items: number;
@@ -67,13 +67,13 @@ export type PlannedCall = {
  * batch. They share that item's reviewed bytes (the same SHA-256), so they are
  * covered by its review without another model call.
  */
-export type SameBytesOutsideBatches = {
+type SameBytesOutsideBatches = {
   sourcePath: string;
   sourceSha256: string;
   batch: string;
   paths: string[];
 }[];
-export type ReviewPlan =
+type ReviewPlan =
   | { mode: "single"; call: PlannedCall }
   | {
       mode: "batched";
@@ -93,7 +93,7 @@ const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
   itemBytes(item) + aliasBytes(item.id, aliases);
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
-export const callTimeoutMs = (estimatedTokens: number) =>
+const callTimeoutMs = (estimatedTokens: number) =>
   boundedReviewTimeout(estimatedTokens);
 
 function planned(evidence: string, items: number): PlannedCall {

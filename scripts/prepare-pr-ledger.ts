@@ -11,14 +11,16 @@ import {
   assignLeaderboardRanks,
   compareRankedEntries,
   createLeaderboardSnapshot,
-  LEADERBOARD_SCHEMA_VERSION,
   type LeaderboardEntry,
   type LeaderboardSnapshot,
   leaderboardMethodology,
-  SCORE_RULE_VERSION,
   SCORE_V2_EFFECTIVE_AT,
   type ScoreEvent,
 } from "../src/lib/leaderboard";
+import {
+  LEADERBOARD_SCHEMA_VERSION,
+  SCORE_RULE_VERSION,
+} from "../src/lib/leaderboard-constants";
 import { isUnavailableModelIdentifier } from "../src/lib/model-identity";
 import { findProject } from "../src/lib/projects.mjs";
 import {

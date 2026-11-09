@@ -33,7 +33,7 @@ export const JSON_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-export type JsonOptions = {
+type JsonOptions = {
   /** Defaults to `private, no-store`. */
   cacheControl?: string;
   /** Contract and policy headers that extend or replace the defaults. */
@@ -111,7 +111,7 @@ export function chunked<T>(values: readonly T[], size = 90): T[][] {
   return out;
 }
 
-export type ApiErrorOptions = {
+type ApiErrorOptions = {
   /** Fixed log label; never request content, identifiers or secrets. */
   label: string;
   /** The API's own response builder, so its headers stay unchanged. */

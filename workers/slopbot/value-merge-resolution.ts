@@ -1,28 +1,10 @@
 /** Local Git reconstruction, bound to the collected immutable merge parents.
  * This is scope evidence, never a finding that a resolution deserves credit.
  */
-import type { ValueEvidence } from "./value-evidence";
-
-export interface ValueMergeResolution {
-  commitSha: string;
-  parents: [string, string];
-  gitVersion: string;
-  automaticTree: string;
-  resolvedTree: string;
-  hadConflicts: boolean;
-  patch: string;
-  patchSha256: string;
-  paths: string[];
-  /** Byte-identical directory moves performed by Git, not resolution work. */
-  automaticRelocations?: {
-    sourceParent: string;
-    sourcePath: string;
-    path: string;
-    blobSha: string;
-    headSha: string;
-    sourceCommitShas: string[];
-  }[];
-}
+import type {
+  ValueEvidence,
+  ValueMergeResolution,
+} from "./value-evidence-types";
 
 export function mergeResolutionMatches(
   resolution: ValueMergeResolution,

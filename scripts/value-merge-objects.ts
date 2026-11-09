@@ -7,7 +7,7 @@ const MAX_OUTPUT = 8 * 1024 * 1024;
 const MAX_EXPANDED = 256 * 1024 * 1024;
 const ordered = (values: Iterable<string>) => [...new Set(values)].sort();
 
-export interface MergeObjectClosure {
+interface MergeObjectClosure {
   commits: string[];
   trees: string[];
   blobs: string[];

@@ -1,6 +1,6 @@
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
-import type { EvidenceClient } from "./value-evidence";
+import type { EvidenceClient } from "./value-evidence-types";
 
 /** Bounded immutable Git blob verification shared by acceptance proofs. */
 export function valueFileReader(client: EvidenceClient, repository: string) {

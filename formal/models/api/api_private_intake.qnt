@@ -6,6 +6,8 @@
 // @source backend/security/intake-grant.ts
 // @source backend/security/github-advisories.ts
 // @source backend/security/reporting-readiness.ts
+// @source backend/security/case-store.ts
+// @source backend/security/submission-store.ts
 // @evidence backend/security/report-intake.test.ts
 // @evidence backend/security/submissions.test.ts
 // Private intake: durable screening, maintainer routing review and the

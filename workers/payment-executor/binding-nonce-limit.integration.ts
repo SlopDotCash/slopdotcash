@@ -29,13 +29,15 @@ import {
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { reconcileBindingWinner } from "./binding-recovery";
 import {
-  type BindingCandidate,
-  bindStoredDestination,
   type ExecutorEnvironment,
   type JournalStore,
+  STORED_BINDING,
+} from "./binding-shared";
+import {
+  type BindingCandidate,
+  bindStoredDestination,
   pendingStoredBindings,
   runStoredBindings,
-  STORED_BINDING,
 } from "./core";
 import { privateScopeJournal, testBindingNonceLimit } from "./index";
 

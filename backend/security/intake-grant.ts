@@ -186,7 +186,7 @@ export async function beginAuthorization(
   };
 }
 
-export type GrantFailure =
+type GrantFailure =
   | "grant_flow_missing"
   | "grant_state_mismatch"
   | "grant_exchange_failed"

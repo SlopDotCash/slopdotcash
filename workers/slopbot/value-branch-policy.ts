@@ -1,14 +1,7 @@
 import { decodeBase64 } from "../../src/lib/byte-encoding";
-import type { EvidenceClient } from "./value-evidence";
+import type { EvidenceClient, ValueBranchPolicy } from "./value-evidence-types";
 
-/** Historical authority comes from accepted base policy, never a PR's head. */
-export interface ValueBranchPolicy {
-  baseSha: string;
-  path: "CONTRIBUTING.md";
-  text: string;
-}
-
-export function declaredIntegrationBranch(text: string): string | null {
+function declaredIntegrationBranch(text: string): string | null {
   // Recognize an explicit policy sentence, not examples in fenced code blocks.
   const branches = new Set<string>();
   let fence: { marker: string; length: number } | null = null;

@@ -603,7 +603,7 @@ const GITHUB_OWNER = /^[A-Za-z0-9_.-]{1,39}$/u;
 const GITHUB_REPO = /^[A-Za-z0-9_.-]{1,100}$/u;
 const GITHUB_LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u;
 
-export type ScamReviewTarget = {
+type ScamReviewTarget = {
   owner: string;
   repo: string;
   itemKind: "pull_request" | "issue";

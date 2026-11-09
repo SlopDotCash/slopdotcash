@@ -143,7 +143,7 @@ export interface PublicVaultPaymentPage {
   next: number | null;
   total: number;
 }
-export { isBaseUnits, MAX_BASE_UNITS } from "../escrow-policy.mjs";
+export { isBaseUnits } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";
 /** The 2% payout fee is deducted from the gross award, in base units of the award asset.
  * It rounds up, ceil(gross / 50), on both chains, as does the unused-funds withdrawal fee. */

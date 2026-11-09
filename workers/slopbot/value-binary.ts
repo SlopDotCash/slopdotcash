@@ -6,24 +6,8 @@ import type {
   EvidenceClient,
   FileChange,
   ValueEvidence,
-} from "./value-evidence";
+} from "./value-evidence-types";
 import { readValueTreeProof } from "./value-tree";
-
-/** Private source bytes, not a textual patch or proof of what a recording shows. */
-export interface AddedBinaryProof {
-  schemaVersion: 1;
-  path: string;
-  baseSha: string;
-  headSha: string;
-  baseTreeSha: string;
-  headTreeSha: string;
-  mode: "100644";
-  blobSha: string;
-  size: number;
-  sha256: string;
-  contentBase64: string;
-  contentReview: "unviewed";
-}
 
 const oid = /^[a-f0-9]{40}$/u;
 const digest = /^[a-f0-9]{64}$/u;
@@ -133,9 +117,7 @@ export function addedBinaryRecovery(
 
 /** Validate retained bodies before a private assessment can use them. Import
  * also regenerates the tree/byte proof through the authenticated collector. */
-export async function validAddedBinaryProof(
-  file: FileChange,
-): Promise<boolean> {
+async function validAddedBinaryProof(file: FileChange): Promise<boolean> {
   const proof = file.addedBinary;
   if (
     !proof ||
@@ -180,7 +162,7 @@ export async function validAddedBinaryProof(
   }
 }
 
-export function sameAddedBinary(left: FileChange, right: FileChange): boolean {
+function sameAddedBinary(left: FileChange, right: FileChange): boolean {
   const a = left.addedBinary;
   const b = right.addedBinary;
   return (

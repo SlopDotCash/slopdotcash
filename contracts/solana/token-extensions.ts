@@ -58,7 +58,7 @@ const list = (value: unknown): unknown[] => {
   return value;
 };
 
-export interface TokenAccountReading {
+interface TokenAccountReading {
   /** The owning token program: classic SPL Token or Token-2022. */
   program: string;
   raw: Uint8Array;

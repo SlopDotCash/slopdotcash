@@ -113,6 +113,7 @@
     "src/lib/wallets.ts",
     "src/lib/wallet-proof.ts",
     "src/lib/leaderboard-types.ts",
+    "src/lib/leaderboard-constants.ts",
     "src/lib/reviewer-leaders.ts",
     "src/lib/profiles.ts",
     "src/lib/model-outcomes.ts",

@@ -46,7 +46,7 @@ export const ENFORCEMENT_ACTIONS: readonly EnforcementAction[] = [
   "deny_reinstatement",
 ];
 
-export class EnforcementRefusal extends Error {
+class EnforcementRefusal extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
@@ -370,7 +370,7 @@ export async function retiredByRestriction(
   return false;
 }
 
-export type EnforcementPlan = {
+type EnforcementPlan = {
   stateAfter: RestrictionState;
   appealAfter: AppealState;
   /** The manifest the matching revision appends, or null when none is due. */

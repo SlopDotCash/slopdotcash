@@ -388,7 +388,7 @@ export function insertDirectIntent(
       ...current.requireValues,
     );
 }
-export async function issuedSolanaPlans(
+async function issuedSolanaPlans(
   db: Database,
   caseId: string,
   generation: number,
@@ -413,7 +413,7 @@ export async function issuedSolanaPlans(
   ];
 }
 /** An append-only compare-and-swap journal lets bounded history scans resume safely. */
-export function directRecoveryStore(
+function directRecoveryStore(
   db: Database,
   caseId: string,
   generation: number,

@@ -61,7 +61,7 @@ export interface ClaimCacheRow {
   observed_at: string | null;
   error_at: string | null;
 }
-export interface ClaimCacheEnv extends ReferralAccrualEnv {
+interface ClaimCacheEnv extends ReferralAccrualEnv {
   REFERRAL_DB: ReferralD1Database;
   REFERRAL_DEPLOYMENT_BLOCK?: string;
   REFERRAL_DISTRIBUTOR_CODE_HASH?: string;

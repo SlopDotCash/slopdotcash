@@ -1,6 +1,7 @@
 // @source workers/payment-executor/core.ts
 // @source workers/payment-executor/binding-recovery.ts
 // @source workers/payment-executor/index.ts
+// @source workers/payment-executor/binding-shared.ts
 // Only obsolete binding self-cancellation; original may win until canonical finality.
 module binding_cancellation {
   type S={obsolete:bool,plainAccount:bool,gasAllowed:bool,journaled:bool,broadcast:bool,winner:str,held:bool}

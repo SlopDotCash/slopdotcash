@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-export const modelRoot = "formal/models";
+const modelRoot = "formal/models";
 
 /** Production files a model abstracts, from its `// @source path` lines. */
 export const modelSources = (text) =>

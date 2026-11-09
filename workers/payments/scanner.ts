@@ -3,7 +3,7 @@ import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { EVM_ESCROW_EVENT_TOPICS, evmRpc } from "../../contracts/evm/adapter";
 import { escrowInvocations, solanaRpc } from "../../contracts/solana/adapter";
 import { decodeBase64 } from "../../src/lib/byte-encoding";
-import type { DeploymentView } from "./index";
+import type { DeploymentView } from "./deployment-types";
 
 type ScanDeployment = DeploymentView<
   "projectId" | "vault",

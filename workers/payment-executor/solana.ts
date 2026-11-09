@@ -39,10 +39,10 @@ import {
 import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
+import type { JournalStore } from "./binding-shared";
 import {
   authorizeRegistry,
   authorizeWalletRotation,
-  type JournalStore,
   requireWalletAuthorization,
 } from "./core";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
@@ -283,7 +283,7 @@ interface Attempt {
   /** Set while the destination wallet's signature is still missing from raw. */
   cosigner?: string;
 }
-export interface PreparedBinding {
+interface PreparedBinding {
   transactionId: string;
   /** Base64 transaction carrying the identity signature and an empty slot for the destination wallet. */
   transaction?: string;

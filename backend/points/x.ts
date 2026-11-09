@@ -7,12 +7,8 @@ import {
   randomToken,
 } from "../../workers/identity/crypto";
 import { cookieValue, json as jsonResponse, readJsonObject } from "../http";
-import type { PointsDependencies } from "./handler";
+import type { PointsDependencies, XConfiguration } from "./dependencies";
 
-export interface XConfiguration {
-  clientId: string;
-  clientSecret: string;
-}
 const flowCookie = "__Host-slop_x_flow";
 function json(status: number, body: unknown) {
   return jsonResponse(status, body, {
