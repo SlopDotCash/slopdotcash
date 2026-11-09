@@ -229,7 +229,8 @@ function projectApi(
 const vettingApi = (request: Request) =>
   handleVettingApi(request, vettingDeps()) as Promise<Response>;
 
-const flagApi = (request: Request) =>
+type FlagDependencies = Parameters<typeof handleProjectFlagsApi>[1];
+const flagApi = (request: Request, overrides: Partial<FlagDependencies> = {}) =>
   handleProjectFlagsApi(request, {
     flags,
     projects,
@@ -270,6 +271,7 @@ const flagApi = (request: Request) =>
       ),
     now: () => clock,
     randomId,
+    ...overrides,
   }) as Promise<Response>;
 
 function sessionRequest(
@@ -373,7 +375,7 @@ async function activate() {
 const publicProject = () =>
   projectApi(new Request(`${ORIGIN}/api/v1/projects/open-registry`));
 
-function flag(actor: string, category = "credential-theft") {
+function flag(actor: string, category = "credential-theft", overrides: Partial<FlagDependencies> = {}) {
   return flagApi(
     sessionRequest("POST", "project-flags/open-registry", actor, {
       category,
@@ -382,8 +384,94 @@ function flag(actor: string, category = "credential-theft") {
       evidenceUrl:
         "https://github.com/example/open-registry/blob/main/scripts/postinstall.js",
     }),
+    overrides,
   );
 }
+
+test("the flag account-age threshold includes exactly thirty days", async () => {
+  await activeProject();
+  const before = STANDING.newcomer.createdAt;
+  try {
+    STANDING.newcomer.createdAt = new Date(clock.getTime() - 2_592_000_000 + 1).toISOString();
+    const young = await flag("newcomer");
+    expect(young.status).toBe(403);
+    expect((await young.json()).error).toBe("flagger_account_too_new");
+    expect(await flags.activeFlags(clock)).toEqual([]);
+    STANDING.newcomer.createdAt = new Date(clock.getTime() - 2_592_000_000).toISOString();
+    expect((await flag("newcomer")).status).toBe(201);
+    expect((await flags.activeFlags(clock)).map((entry) => entry.reporter.githubId)).toEqual([NEWCOMER.githubId]);
+  } finally { STANDING.newcomer.createdAt = before; }
+});
+
+test("standing lookup failure is reported before a returned maintainer verdict", async () => {
+  await activeProject();
+  const calls: string[] = [];
+  const response = await flag("alice", "credential-theft", {
+    repositoryAuthority: async () => { calls.push("authority"); return { state: "verified", message: "maintainer" }; },
+    flaggerStanding: async () => { calls.push("standing"); throw new Error("standing unavailable"); },
+  });
+  expect(calls).toEqual(["authority", "standing"]);
+  expect(response.status).toBe(503);
+  expect((await response.json()).error).toBe("flagger_standing_unavailable");
+  expect(await flags.activeFlags(clock)).toEqual([]);
+});
+
+test("invalid flag input is refused before eligibility reads", async () => {
+  await activeProject();
+  let reads = 0;
+  const response = await flagApi(sessionRequest("POST", "project-flags/open-registry", "alice", {
+    category: "credential-theft", evidence: "Evidence is otherwise long enough to be accepted", extra: true,
+  }), {
+    repositoryAuthority: async () => { reads += 1; throw new Error("must not read"); },
+    flaggerStanding: async () => { reads += 1; throw new Error("must not read"); },
+  });
+  expect(response.status).toBe(400);
+  expect(reads).toBe(0);
+  expect(await flags.activeFlags(clock)).toEqual([]);
+});
+
+test("scan queue failure after the second flag preserves pause and idempotent notices", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  const response = await flag("bob", "credential-theft", {
+    queueFreshScan: async () => { throw new Error("queue reply unavailable"); },
+  });
+  expect(response.status).toBe(500);
+  expect((await flags.activeFlags(clock)).map((entry) => entry.reporter.githubId).sort())
+    .toEqual([ALICE.githubId, BOB.githubId].sort());
+  const records = await projects.listEnforcements();
+  expect(records).toHaveLength(1);
+  expect(records[0].stateAfter).toBe("quarantined");
+  const notices = sqlite.query("SELECT * FROM notifications ORDER BY event_key,recipient_github_id").all();
+  const repeated = await flag("bob");
+  expect(repeated.status).toBe(409);
+  expect((await repeated.json()).error).toBe("flag_active");
+  expect(await projects.listEnforcements()).toEqual(records);
+  expect(sqlite.query("SELECT * FROM notifications ORDER BY event_key,recipient_github_id").all()).toEqual(notices);
+});
+
+test("failed flag readback cannot undo the committed flag", async () => {
+  await activeProject();
+  const read = flags.get;
+  try {
+    flags.get = async () => { throw new Error("flag readback unavailable"); };
+    expect((await flag("alice")).status).toBe(500);
+  } finally { flags.get = read; }
+  expect((await flags.activeFlags(clock)).map((entry) => entry.reporter.githubId)).toEqual([ALICE.githubId]);
+  const retry = await flag("alice");
+  expect(retry.status).toBe(409);
+  expect((await retry.json()).error).toBe("flag_active");
+  expect(await projects.listEnforcements()).toEqual([]);
+});
+
+test("withdrawal rejects a nonempty body without changing the stored flag", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  const before = await flags.activeFlags(clock);
+  const response = await flagApi(sessionRequest("POST", "project-flags/open-registry/withdraw", "alice", { reason: "withdraw" }));
+  expect(response.status).toBe(400);
+  expect(await flags.activeFlags(clock)).toEqual(before);
+});
 
 /** Lists, scans clean, and activates the project, as self-service setup does. */
 async function activeProject() {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "494e77e00ae0d42134f0847d0b2e15c11b9b39209bfafd729ebb635554e41e18",
+  "inventorySha256": "8b6313cde8ecf966a086d723c01eea1280202cbea64eb0dc81570e7791bcfc83",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -468,9 +468,11 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
-        "formal/models/vetting/vetting_result_atomic.qnt"
+        "formal/models/vetting/vetting_refresh_queue.qnt",
+        "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_scan_request.qnt"
       ],
-      "lexicallyUnmentionedValues": ["conflict", "recorded"],
+      "lexicallyUnmentionedValues": ["recorded"],
       "review": "candidate-only"
     },
     {
@@ -3173,7 +3175,7 @@
         "repositoryId",
         "repositoryNodeId"
       ],
-      "models": [],
+      "models": ["formal/models/ui/ui_vetting_projection.qnt"],
       "lexicallyUnmentionedValues": [
         "grantedAt",
         "grantedBy",

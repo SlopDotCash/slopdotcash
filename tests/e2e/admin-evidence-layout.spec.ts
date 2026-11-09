@@ -6,6 +6,18 @@ import { enlargeText } from "../text-size";
 import { expect, expectAccessible, test } from "./fixtures";
 import { adminProjectRecord } from "./project-maintainer-fixture";
 
+// Overview projection only. Mutations and actor/lifetime guards have separate
+// browser definitions; these retained fixtures do not qualify a real scan.
+function projectionAssessment(projectId: string, revision: number, state: string, id: string) {
+  return {
+    id, projectId, revision, state, commitSha: "a".repeat(40),
+    templateSha256: "b".repeat(64), policyVersion: "scan-policy-v2",
+    requestedAt: "2026-10-29T10:00:00.000Z", completedAt: state === "pending" ? null : "2026-10-29T11:00:00.000Z",
+    modelRuns: [], artifacts: 0, heldArtifacts: 0, requestedBy: { githubLogin: "operator" },
+    requestReason: "Read the retained assessment projection", result: null,
+  };
+}
+
 async function session(page: Page, signedIn = () => true) {
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -17,6 +29,73 @@ async function session(page: Page, signedIn = () => true) {
     }),
   );
 }
+
+test("selected project history alone controls queue suppression and flag display", async ({ page }) => {
+  const project = PROJECTS.find((entry) => entry.id === "asi");
+  if (!project) throw new Error("The frozen ASI project is required");
+  await session(page);
+  await page.route("**/api/v1/admin/projects", (route) => route.fulfill({ json: { projects: [adminProjectRecord(project, { revision: 2 })] } }));
+  const oldPending = projectionAssessment(project.id, 1, "pending", "old-pending");
+  const currentPending = projectionAssessment(project.id, 2, "pending", "current-pending");
+  const incomplete = projectionAssessment(project.id, 2, "incomplete", "current-incomplete");
+  let history = [projectionAssessment("other-project", 2, "pending", "foreign-pending"), oldPending];
+  await page.route(/\/api\/v1\/admin\/vetting(?:\?.*)?$/u, (route) => route.fulfill({ json: {
+    service: { state: "available", queueRegistrationAvailable: true },
+    projects: [{ id: project.id, name: project.name, status: project.status, revision: 2,
+      clearance: { state: "quarantined", assessment: incomplete } }],
+    assessments: history,
+    flags: [
+      { id: "own-flag", projectId: project.id, reporter: { githubLogin: "selected-reporter" }, category: "prompt-injection", evidence: "Selected project's retained evidence.", evidenceUrl: null, createdAt: "2026-10-28T00:00:00.000Z" },
+      { id: "other-flag", projectId: "other-project", reporter: { githubLogin: "other-reporter" }, category: "prompt-injection", evidence: "Another project's private evidence.", evidenceUrl: null, createdAt: "2026-10-28T00:00:00.000Z" },
+    ],
+  } }));
+  await page.goto(`/admin?project=${project.id}&section=security`, { waitUntil: "networkidle" });
+  const card = page.getByRole("article", { name: `Security vetting for ${project.id}`, exact: true });
+  const queue = card.getByRole("button", { name: "Queue scan of revision 2", exact: true });
+  await expect(queue).toBeVisible();
+  await expect(card.getByRole("heading", { name: /Active contributor flags.*1/u })).toBeVisible();
+  await expect(card).toContainText("selected-reporter");
+  await expect(card).not.toContainText("other-reporter");
+  await expect(card).not.toContainText("foreign-pending");
+  history = [currentPending, oldPending];
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(queue).toHaveCount(0);
+  // API ordering, rather than any matching historical pending row, controls
+  // the queue. The old request remains visible in history after completion.
+  history = [incomplete, currentPending, oldPending];
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(queue).toBeVisible();
+});
+
+test("clearance projection distinguishes a fixed exemption, admission and a malicious ban", async ({ page }) => {
+  const project = PROJECTS.find((entry) => entry.id === "asi");
+  if (!project) throw new Error("The frozen ASI project is required");
+  await session(page);
+  await page.route("**/api/v1/admin/projects", (route) => route.fulfill({ json: { projects: [adminProjectRecord(project, { revision: 2 })] } }));
+  const clean = projectionAssessment(project.id, 1, "clean", "admitted-earlier-revision");
+  const malicious = projectionAssessment(project.id, 2, "malicious", "malicious-current-revision");
+  let clearance: Record<string, unknown> = { state: "cleared", assessment: null, grandfathered: true };
+  let history: ReturnType<typeof projectionAssessment>[] = [];
+  await page.route(/\/api\/v1\/admin\/vetting(?:\?.*)?$/u, (route) => route.fulfill({ json: {
+    service: { state: "available", queueRegistrationAvailable: true },
+    projects: [{ id: project.id, name: project.name, status: project.status, revision: 2, clearance }],
+    assessments: history,
+  } }));
+  await page.goto(`/admin?project=${project.id}&section=security`, { waitUntil: "networkidle" });
+  const card = page.getByRole("article", { name: `Security vetting for ${project.id}`, exact: true });
+  const badge = card.locator(".admin-badge");
+  await expect(badge).toHaveText("Existing-project exemption");
+  clearance = { state: "cleared", assessment: clean, basis: "admission" };
+  history = [clean];
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(badge).toHaveText("Admitted");
+  await expect(card).toContainText("Admission scan of revision 1");
+  clearance = { state: "banned", assessment: malicious };
+  history = [malicious, clean];
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(badge).toHaveText("Banned");
+  await expect(card).toContainText("A new scan cannot lift the ban.");
+});
 
 test("selected admin project can queue after a superseded pending scan and preserves reasoned queuing", async ({
   page,

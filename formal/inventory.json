@@ -602,7 +602,8 @@
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/payments/public_vault_snapshots.qnt",
-        "formal/models/payments/received_totals.qnt"
+        "formal/models/payments/received_totals.qnt",
+        "formal/models/vetting/vetting_refresh_queue.qnt"
       ],
       "candidateLines": [3, 13, 65, 70, 75, 82, 102],
       "review": "mapped-abstraction"
@@ -1304,7 +1305,9 @@
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
+        "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_scan_request.qnt",
         "formal/models/vetting/vetting_scan_reuse.qnt",
         "formal/models/vetting/vetting_service_auth.qnt"
       ],
@@ -1333,7 +1336,9 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
-        "formal/models/vetting/vetting_result_atomic.qnt"
+        "formal/models/vetting/vetting_refresh_queue.qnt",
+        "formal/models/vetting/vetting_result_atomic.qnt",
+        "formal/models/vetting/vetting_scan_request.qnt"
       ],
       "candidateLines": [
         67, 90, 99, 116, 160, 166, 226, 301, 345, 382, 422, 448, 499, 511, 523,
@@ -3047,7 +3052,10 @@
     {
       "path": "migrations/0099_vetting_queue_current_pin.sql",
       "sha256": "516b68744a0e7a2eccc10223d144255a18dce3eca31d01f07b0f2ed027b933be",
-      "models": ["formal/models/vetting/vetting_admission_lineage.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_admission_lineage.qnt",
+        "formal/models/vetting/vetting_scan_request.qnt"
+      ],
       "candidateLines": [1, 9, 10, 11, 15],
       "review": "mapped-abstraction"
     },
@@ -3101,7 +3109,10 @@
     {
       "path": "migrations/0103_vetting_template_replacements.sql",
       "sha256": "f09a5d87912bd2b63714f9d91c1c7a8573caa35aaac29e49c6aee26b63cbb18c",
-      "models": ["formal/models/vetting/vetting_admission_lineage.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_admission_lineage.qnt",
+        "formal/models/vetting/vetting_scan_request.qnt"
+      ],
       "candidateLines": [1, 5, 6],
       "review": "mapped-abstraction"
     },
@@ -4751,7 +4762,8 @@
       "sha256": "5375241b66c9564f116877b1df1b25fee2824a6d4f6440f85318311cdcfe59c7",
       "models": [
         "formal/models/ui/ui_admin_review.qnt",
-        "formal/models/ui/ui_admin_vetting_requests.qnt"
+        "formal/models/ui/ui_admin_vetting_requests.qnt",
+        "formal/models/ui/ui_vetting_projection.qnt"
       ],
       "candidateLines": [
         26, 29, 55, 62, 72, 73, 78, 96, 108, 112, 114, 123, 156, 157, 203, 204,
@@ -6914,9 +6926,9 @@
     {
       "path": "src/lib/vetting-contracts.ts",
       "sha256": "18da5806d1c0ff55829cc0519861c2bb3419ba3f7d64752173451225f280f545",
-      "models": [],
+      "models": ["formal/models/ui/ui_vetting_projection.qnt"],
       "candidateLines": [37, 43, 92, 93, 94, 95, 96, 98, 104, 106, 118],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O."
     },
     {
@@ -19642,6 +19654,36 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_vetting_projection.qnt",
+      "sha256": "2fa574f96b30330a97d6ada646f12114bafbae399b02dd126bf113edc24f471c",
+      "sources": ["src/AdminVetting.tsx", "src/lib/vetting-contracts.ts"],
+      "scenarios": [
+        "acceptedSnapshotDoesNotReadLaterSourceTest",
+        "banIsNotReplacedByQueueAvailabilityTest",
+        "failedRefreshDoesNotInventEmptySuccessTest",
+        "firstNonrevokedExemptionIsSelectedTest",
+        "fixedExemptionIsNotPassedScanTest",
+        "laterLoadAcceptsCurrentSnapshotTest",
+        "missingProjectShowsNoCardTest",
+        "newestMatchingPendingBlocksQueueTest",
+        "noHistoryStillAllowsQueueTest",
+        "noQueueRegistrationHidesControlTest",
+        "normalAdmissionIsDistinctFromCurrentScanTest",
+        "normalClearedAssessmentKeepsClearedLabelTest",
+        "oldRevisionDoesNotOccupyQueueTest",
+        "olderPendingBehindCompletedDoesNotBlockTest",
+        "onlySelectedProjectFlagsDisplayTest",
+        "otherProjectHistoryIsExcludedTest",
+        "otherProjectOrRevokedExemptionIsNotSelectedTest",
+        "ownerExemptionIsDistinctTest",
+        "pendingRefreshHidesPriorCardTest",
+        "queuedClearanceAloneDoesNotSuppressControlTest",
+        "serviceWarningDoesNotReplaceRegistrationCapabilityTest",
+        "sourceOrderControlsExemptionSelectionTest",
+        "twoFlagsDoNotLocallyChangeClearanceTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_vetting_reader.qnt",
       "sha256": "25cdd212774b28c53db92f5fa28820e03dd44d5ad63a04341f3876e507510d63",
       "sources": [
@@ -20152,17 +20194,34 @@
     },
     {
       "path": "formal/models/vetting/vetting_flag_admission.qnt",
-      "sha256": "a9362a67f7eee2aaf90b7b11306731c2f2bda838d6d5d58e4fd48378038bdfd0",
+      "sha256": "8b4ff4e5bb1b5036268a0df12235cd4177e331754738ba449113a09d8e04dcf0",
       "sources": [
         "backend/vetting/flagger-standing.ts",
         "backend/vetting/flags.ts"
       ],
       "scenarios": [
+        "acceptedWorkRequiredTest",
+        "authorityOutageDoesNotReadStandingTest",
         "banBetweenCheckAndWriteTest",
         "changedOwnerCannotRefreshStandingTest",
         "changedProjectCannotUseOldStandingTest",
+        "duplicateFlagIsReclassifiedAfterWriteTest",
+        "exactThirtyDaysQualifiesTest",
+        "expiredDuplicateCanReturnRetryInsteadTest",
+        "expiredFlagDoesNotLiftPauseTest",
+        "invalidInputDoesNotReadProjectTest",
+        "maintainerStillReadsStandingBeforeRefusalTest",
+        "noQueueIsStillSuccessfulPauseTest",
+        "prewriteFailureCannotCreateFlagTest",
+        "readbackFailureRetainsCommittedFlagTest",
+        "readbackMayObserveAlreadyClosedFlagTest",
         "recheckedNonOwnerCanFileNewRevisionTest",
-        "twoMembersPauseThenExpireTest"
+        "responseObservesRestrictionAfterReinstatementTest",
+        "retryAuthorityIsNotPermissionTest",
+        "secondFlagPostcommitFailureRetainsPauseTest",
+        "standingOutagePrecedesMaintainerRefusalTest",
+        "twoMembersPauseThenExpireTest",
+        "underThirtyDaysRefusedTest"
       ]
     },
     {
@@ -20399,6 +20458,40 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_refresh_queue.qnt",
+      "sha256": "c2a7601b4939784976e3cd46e8c80fd04d37f89ef8788ab3511f6b6534672e13",
+      "sources": [
+        "backend/projects/edge-cache.ts",
+        "backend/vetting/handler.ts",
+        "backend/vetting/persistence.ts"
+      ],
+      "scenarios": [
+        "assessmentReadFailureAbortsWholeRefreshTest",
+        "caughtQueueFailureContinuesTest",
+        "changedPendingTemplateQueuesReplacementTest",
+        "confirmedQueueCapStopsBeforeNextProjectTest",
+        "conflictsDoNotConsumeQueueCapTest",
+        "coverageReadFailureReturnsNoPartialResponseTest",
+        "currentPendingTemplateDoesNotRequeueTest",
+        "exactSignedBodyRequiredTest",
+        "exemptWithoutPendingNeedsNoScanTest",
+        "exemptionOnlyReplacesExistingPendingTest",
+        "failedListsPreventWorkTest",
+        "flagPinFailureIsPerProjectSkipTest",
+        "freshPendingFlagScanDoesNotQueueAnotherTest",
+        "generationFailureKeepsReinstatementEffectTest",
+        "lostQueueReplyRetainsEffectWithoutConsumingCapTest",
+        "newestCleanIsTriedFirstTest",
+        "noFreshFlagScanQueuesOneTest",
+        "olderCleanTriedAfterNewerCasRefusalTest",
+        "restrictedAndRetiredProjectsSkippedTest",
+        "templatePinOutageIsRecoverableSkipTest",
+        "uncaughtClearanceFailureRetainsEarlierQueuedProjectTest",
+        "unsuccessfulFreshCleanDoesNotCreateExtraScanTest",
+        "vanishedPendingIsQueueChangedTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_result_atomic.qnt",
       "sha256": "a83e06b8190b8e4c56e3bc119d62df15d5d9f6156961e3bf23f3e41cca13421d",
       "sources": [
@@ -20460,6 +20553,42 @@
       "scenarios": [
         "newInputCannotReuseCompletedBatchTest",
         "unknownRetryStaysUnknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_scan_request.qnt",
+      "sha256": "0d46d402898ee32caf139630a7f365dbf4a191712bdf8305ea0dcc9dedffabf2",
+      "sources": [
+        "backend/vetting/handler.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0099_vetting_queue_current_pin.sql",
+        "migrations/0103_vetting_template_replacements.sql"
+      ],
+      "scenarios": [
+        "adminDuplicateIsConflictTest",
+        "adminServiceUnavailableThrowsTest",
+        "automaticLostWriteReplyIsUnavailableWithRowTest",
+        "automaticNonPinFailureReturnsUnavailableTest",
+        "automaticServiceUnavailableReturnsTest",
+        "collidingRandomIdConflictsTest",
+        "completedPriorDoesNotBlockNewScanTest",
+        "differentLatestPinDoesNotBlockTest",
+        "failedWriteCreatesNoRowTest",
+        "flagsAreCapturedAtInsertTest",
+        "lostWriteReplyKeepsRowTest",
+        "missingReadbackKeepsCommittedRowTest",
+        "newFlagAllowsSamePinRequestTest",
+        "obsoleteTemplateRetryConflictsTest",
+        "ownerDuplicateIsAlreadyQueuedTest",
+        "ownerNonPinFailureThrowsTest",
+        "ownerPinUnavailableReturnsTest",
+        "ownerQueueTest",
+        "ownerServiceUnavailableDoesNotReadPinTest",
+        "pinCanAdvanceAfterCaptureTest",
+        "projectCanAdvanceAfterCaptureTest",
+        "readbackMayObserveCompletedAssessmentTest",
+        "templateRetryKeepsOriginalSourceTest",
+        "thrownOwnerReadinessDoesNotBecomeUnavailableTest"
       ]
     },
     {

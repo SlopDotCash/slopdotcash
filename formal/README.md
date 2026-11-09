@@ -1385,6 +1385,32 @@ tested or verified here:
   unexecuted. Account age, membership and maintainer eligibility are checked by
   the caller; the reader neither files a flag nor establishes provider honesty.
 
+- `vetting_scan_request` adds 24 scenarios for live-pin capture, latest pending
+  row conflicts, template-retry provenance, insertion-time flag capture and
+  owner/automatic/admin outcome mapping. A lost write or readback reply can
+  leave a queued row; an owner's thrown readiness lookup differs from a false
+  readiness result. Eleven actual-wrapper/persistence regression cases are
+  unexecuted. Service signatures, caller authority and schema checks remain
+  separate contracts; queuing never proves scan clearance or activation.
+- `vetting_flag_admission` now has 22 scenarios for ordered authority/standing
+  reads, the inclusive 30-day boundary, write-time ban/revision checks, duplicate
+  reclassification and postcommit response failures. Flags, a threshold pause
+  and its notices commit together. Expiry and withdrawal do not lift a pause.
+  Six handler/database regression cases are unexecuted; later reinstatement
+  remains the separate fresh-scan contract.
+- `vetting_refresh_queue` adds 23 scenarios for the signed refresh loop,
+  flag-only pause eligibility, clean-scan reinstatement order, template retries
+  and partial failures. Seven actual-handler/persistence cases are unexecuted.
+  The source's 25-result bound counts confirmed queued returns, not every
+  possible durable insert after a lost reply; the model and regression preserve
+  that limit rather than claiming a hard creation cap. A later fatal read can
+  occur after earlier projects have changed.
+- `ui_vetting_projection` adds 23 scenarios for selected-project history and
+  flags, current-revision queue suppression, service availability and distinct
+  admission/exemption labels. Two browser regression definitions are unexecuted.
+  A captured overview may be stale, and queue controls do not confer authority
+  or prove a scan result. This batch changes no runtime or interface code.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one
