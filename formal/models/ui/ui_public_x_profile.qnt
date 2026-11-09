@@ -5,6 +5,20 @@
 // @evidence tests/e2e/points-social.spec.ts
 // PublicXLink, XAccountLink, the profile key, and GET /points/x/profile only.
 // Source-only model: every named scenario is unexecuted. No OAuth controls.
+//
+// Finite step reductions. Each action has a *With(..., reduce) form; direct
+// actions and named scenarios pass false and keep the exact state. step
+// passes true, which applies settle to every successor:
+// - observePublicQuery reads a row only as "public" or not, so step stores and
+//   offers one non-public row value.
+// - A done read is never read by a guard or update again (startRead's abort
+//   of the current request leaves a done read inert); its invariant fields
+//   were fixed when it was observed or queued, so step stores one done record.
+// - Only the active instance is rendered or read by guards. An inactive
+//   instance keeps account, which late deliveries may still write and the
+//   invariant reads; its other fields are stored in one fixed form, and
+//   replaceProfile overwrites instance 2 entirely.
+// - Read IDs are opaque, so step starts the lowest unused one.
 module ui_public_x_profile {
   type Instance = { mounted: bool, actor: int, effectPending: bool,
     account: int, failed: bool, emptyObserved: bool, request: int }
@@ -15,6 +29,16 @@ module ui_public_x_profile {
     disclosed: Set[int], opened: int }
   val ids = Set(1, 2)
   var s: State
+  // Finite-step canonical form; see the header. Direct actions pass false.
+  pure def settle(reduce: bool, st: State): State = if (not(reduce)) st
+    else st.with("rows", st.rows.keys().mapBy(a =>
+        if (st.rows.get(a) == "public") "public" else "link-private"))
+      .with("reads", st.reads.keys().mapBy(k => if (st.reads.get(k).phase == "done")
+        { phase: "done", instance: 1, actor: 1, aborted: false, result: 0, publicObserved: false }
+        else st.reads.get(k)))
+      .with("instances", st.instances.keys().mapBy(k => if (k == st.active) st.instances.get(k)
+        else st.instances.get(k).with("actor", 1).with("effectPending", false)
+          .with("failed", false).with("emptyObserved", false).with("request", 0)))
 
   action init = s' = {
     active: 1, product: true, viewer: 1, caseChanged: false,
@@ -38,129 +62,153 @@ module ui_public_x_profile {
 
   // These are external changes to the rows read by the public SELECT, not a
   // model of authorization to edit membership or OAuth connection state.
-  action publication(actor: int, state: str): bool = all {
+  action publicationWith(actor: int, state: str, reduce: bool): bool = all {
     ids.contains(actor),
     Set("public", "link-private", "member-private", "link-missing", "member-missing").contains(state),
-    s' = s.with("rows", s.rows.set(actor, state))
+    s' = settle(reduce, s.with("rows", s.rows.set(actor, state)))
   }
-  action viewerChanges(actor: int): bool = all {
-    Set(0, 1, 2).contains(actor), s' = s.with("viewer", actor)
+  action publication(actor: int, state: str): bool = publicationWith(actor, state, false)
+  action viewerChangesWith(actor: int, reduce: bool): bool = all {
+    Set(0, 1, 2).contains(actor), s' = settle(reduce, s.with("viewer", actor))
   }
-  action previewOrigin = all {
+  action viewerChanges(actor: int): bool = viewerChangesWith(actor, false)
+  action previewOriginWith(reduce: bool): bool = all {
     ids.forall(id => s.reads.get(id).phase == "unused"),
-    current.effectPending, s' = s.with("product", false)
+    current.effectPending, s' = settle(reduce, s.with("product", false))
   }
-  action suppressQuery = all {
+  action previewOrigin = previewOriginWith(false)
+  action suppressQueryWith(reduce: bool): bool = all {
     current.mounted, current.effectPending, not(s.product),
-    s' = s.with("instances", s.instances.set(s.active,
+    s' = settle(reduce, s.with("instances", s.instances.set(s.active,
       current.with("effectPending", false).with("account", 0)
-        .with("failed", false).with("emptyObserved", false)))
+        .with("failed", false).with("emptyObserved", false))))
   }
 
+  action suppressQuery = suppressQueryWith(false)
   // A changed actor prop schedules cleanup/reset in the passive effect. The
   // prior account can still render before that effect, as in the source.
-  action changeActorProp = all {
+  action changeActorPropWith(reduce: bool): bool = all {
     current.mounted, current.actor == 1, not(current.effectPending),
-    s' = s.with("instances", s.instances.set(s.active,
-      current.with("actor", 2).with("effectPending", true)))
+    s' = settle(reduce, s.with("instances", s.instances.set(s.active,
+      current.with("actor", 2).with("effectPending", true))))
   }
-  action startRead(id: int): bool = all {
+  action changeActorProp = changeActorPropWith(false)
+  action startReadWith(id: int, reduce: bool): bool = all {
     ids.contains(id), current.mounted, current.effectPending, s.product,
     s.reads.get(id).phase == "unused",
-    s' = s.with("reads", ids.mapBy(k =>
+    s' = settle(reduce, s.with("reads", ids.mapBy(k =>
       if (k == id) { phase: "pending", instance: s.active,
         actor: current.actor, aborted: false, result: 0, publicObserved: false }
       else if (k == current.request) s.reads.get(k).with("aborted", true)
       else s.reads.get(k)))
       .with("instances", s.instances.set(s.active,
         current.with("effectPending", false).with("account", 0)
-          .with("failed", false).with("emptyObserved", false).with("request", id)))
+          .with("failed", false).with("emptyObserved", false).with("request", id))))
   }
+  action startRead(id: int): bool = startReadWith(id, false)
   // A different normalized profile key, or leaving and revisiting the route,
   // creates another component instance. Old local state is not the new state.
-  action replaceProfile(actor: int): bool = all {
+  action replaceProfileWith(actor: int, reduce: bool): bool = all {
     s.active == 1, ids.contains(actor),
-    s' = s.with("active", 2).with("caseChanged", false)
+    s' = settle(reduce, s.with("active", 2).with("caseChanged", false)
       .with("instances", s.instances.set(1, current.with("mounted", false))
         .set(2, { mounted: true, actor: actor, effectPending: true,
           account: 0, failed: false, emptyObserved: false, request: 0 }))
       .with("reads", ids.mapBy(k => if (s.reads.get(k).instance == 1
         and s.reads.get(k).phase != "unused") s.reads.get(k).with("aborted", true)
-        else s.reads.get(k)))
+        else s.reads.get(k))))
   }
-  action normalizedKeyUnchanged = all {
-    current.mounted, not(s.caseChanged), s' = s.with("caseChanged", true)
+  action replaceProfile(actor: int): bool = replaceProfileWith(actor, false)
+  action normalizedKeyUnchangedWith(reduce: bool): bool = all {
+    current.mounted, not(s.caseChanged), s' = settle(reduce, s.with("caseChanged", true))
   }
-  action depart = all {
+  action normalizedKeyUnchanged = normalizedKeyUnchangedWith(false)
+  action departWith(reduce: bool): bool = all {
     current.mounted,
-    s' = s.with("instances", s.instances.set(s.active, current.with("mounted", false)))
+    s' = settle(reduce, s.with("instances", s.instances.set(s.active, current.with("mounted", false)))
       .with("reads", ids.mapBy(k => if (s.reads.get(k).instance == s.active
         and s.reads.get(k).phase != "unused") s.reads.get(k).with("aborted", true)
-        else s.reads.get(k)))
+        else s.reads.get(k))))
   }
 
+  action depart = departWith(false)
   // SQL includes both l.public=1 and the joined member's m.public=1. A
   // missing row is null, not an error. The observed result can outlive the rows.
-  action observePublicQuery(id: int): bool = {
+  action observePublicQueryWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     val visible = s.rows.get(r.actor) == "public"
     all { ids.contains(id), r.phase == "pending", not(r.aborted),
-      s' = s.with("reads", s.reads.set(id, r.with("phase", "observed")
+      s' = settle(reduce, s.with("reads", s.reads.set(id, r.with("phase", "observed")
         .with("result", if (visible) r.actor else 0).with("publicObserved", visible)))
-        .with("disclosed", if (visible) s.disclosed.union(Set(r.actor)) else s.disclosed) }
+        .with("disclosed", if (visible) s.disclosed.union(Set(r.actor)) else s.disclosed)) }
   }
+  action observePublicQuery(id: int): bool = observePublicQueryWith(id, false)
   // The successful fetch/JSON promise has settled before the effect's .then
   // runs. Aborting after this point does not add a guard to that callback.
-  action queueSuccess(id: int): bool = {
+  action queueSuccessWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     all { ids.contains(id), r.phase == "observed", not(r.aborted),
-      s' = s.with("reads", s.reads.set(id, r.with("phase", "success-queued"))) }
+      s' = settle(reduce, s.with("reads", s.reads.set(id, r.with("phase", "success-queued")))) }
   }
+  action queueSuccess(id: int): bool = queueSuccessWith(id, false)
   // Invalid id/username/date represents xAccount throwing, without modeling
   // individual bytes. It is a client validation outcome, not public data.
-  action queueMalformed(id: int): bool = {
+  action queueMalformedWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     all { ids.contains(id), r.phase == "pending", not(r.aborted),
-      s' = s.with("reads", s.reads.set(id,
-        r.with("phase", "success-queued").with("result", -1))) }
+      s' = settle(reduce, s.with("reads", s.reads.set(id,
+        r.with("phase", "success-queued").with("result", -1)))) }
   }
-  action queueFailure(id: int): bool = {
+  action queueMalformed(id: int): bool = queueMalformedWith(id, false)
+  action queueFailureWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     all { ids.contains(id), Set("pending", "observed").contains(r.phase),
-      s' = s.with("reads", s.reads.set(id, r.with("phase", "error-queued"))) }
+      s' = settle(reduce, s.with("reads", s.reads.set(id, r.with("phase", "error-queued")))) }
   }
-  action deliverSuccess(id: int): bool = {
+  action queueFailure(id: int): bool = queueFailureWith(id, false)
+  action deliverSuccessWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     val owner = s.instances.get(r.instance)
     all { ids.contains(id), r.phase == "success-queued",
-      s' = if (r.result == -1)
+      s' = settle(reduce, if (r.result == -1)
         s.with("reads", s.reads.set(id, r.with("phase", "error-queued")))
       else s.with("reads", s.reads.set(id, r.with("phase", "done")))
         .with("instances", s.instances.set(r.instance,
-          owner.with("account", r.result).with("emptyObserved", r.result == 0))) }
+          owner.with("account", r.result).with("emptyObserved", r.result == 0)))) }
   }
-  action deliverFailure(id: int): bool = {
+  action deliverSuccess(id: int): bool = deliverSuccessWith(id, false)
+  action deliverFailureWith(id: int, reduce: bool): bool = {
     val r = s.reads.get(id)
     val owner = s.instances.get(r.instance)
     all { ids.contains(id), r.phase == "error-queued",
-      s' = s.with("reads", s.reads.set(id, r.with("phase", "done")))
+      s' = settle(reduce, s.with("reads", s.reads.set(id, r.with("phase", "done")))
         .with("instances", if (r.aborted) s.instances
-          else s.instances.set(r.instance, owner.with("failed", true))) }
+          else s.instances.set(r.instance, owner.with("failed", true)))) }
   }
+  action deliverFailure(id: int): bool = deliverFailureWith(id, false)
   // XAccountLink opens a numeric-ID URL in a separate tab, with noreferrer.
   // It does not mutate the connection, grant Points, or start an OAuth flow.
-  action openPublicLink = all {
-    view == "ready", s' = s.with("opened", current.account)
+  action openPublicLinkWith(reduce: bool): bool = all {
+    view == "ready", s' = settle(reduce, s.with("opened", current.account))
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet row = Set("public", "link-private", "member-private", "link-missing", "member-missing").oneOf()
-    any { publication(id, row), viewerChanges(actor), previewOrigin,
-      suppressQuery, changeActorProp, startRead(id), replaceProfile(id),
-      normalizedKeyUnchanged, depart, observePublicQuery(id), queueSuccess(id),
-      queueMalformed(id), queueFailure(id), deliverSuccess(id),
-      deliverFailure(id), openPublicLink, s' = s }
+
+  action openPublicLink = openPublicLinkWith(false)
+  action step = any {
+    // observePublicQuery reads a row only as public or not public.
+    { nondet id = ids.oneOf() nondet row = Set("public", "link-private").oneOf() publicationWith(id, row, true) },
+    { nondet actor = Set(0, 1, 2).oneOf() viewerChangesWith(actor, true) },
+    previewOriginWith(true), suppressQueryWith(true), changeActorPropWith(true),
+    // Read IDs are opaque, so step starts the lowest unused one.
+    { nondet id = ids.oneOf() all { id == 1 or s.reads.get(1).phase != "unused", startReadWith(id, true) } },
+    { nondet id = ids.oneOf() replaceProfileWith(id, true) },
+    normalizedKeyUnchangedWith(true), departWith(true),
+    { nondet id = ids.oneOf() observePublicQueryWith(id, true) },
+    { nondet id = ids.oneOf() queueSuccessWith(id, true) },
+    { nondet id = ids.oneOf() queueMalformedWith(id, true) },
+    { nondet id = ids.oneOf() queueFailureWith(id, true) },
+    { nondet id = ids.oneOf() deliverSuccessWith(id, true) },
+    { nondet id = ids.oneOf() deliverFailureWith(id, true) },
+    openPublicLinkWith(true), s' = s
   }
   val invariant = all {
     ids.contains(s.active), Set(0, 1, 2).contains(s.viewer),
