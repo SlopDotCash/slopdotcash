@@ -371,8 +371,9 @@ function stripOuterParentheses(text) {
 }
 
 /**
- * Top-level parts split on `separator` (`&&` or `||`), each with its
+ * Top-level parts split on `separator` (`==>`, `&&` or `||`), each with its
  * top-level comparison operators and whether it holds a top-level `?:`.
+ * The `==>` inside `<==>` is not a separator.
  */
 function topLevelParts(text, separator = "&&") {
   const conjuncts = [];
@@ -393,7 +394,10 @@ function topLevelParts(text, separator = "&&") {
     if (c === "(" || c === "[" || c === "{") depth++;
     if (c === ")" || c === "]" || c === "}") depth--;
     if (depth === 0) {
-      if (text.startsWith(separator, i)) {
+      if (
+        text.startsWith(separator, i) &&
+        !(separator === "==>" && text[i - 1] === "<")
+      ) {
         conjuncts.push({
           text: text.slice(start, i),
           operators: current,
@@ -424,22 +428,30 @@ function topLevelParts(text, separator = "&&") {
 function tautology(expression) {
   const text = stripOuterParentheses(expression.replace(/\s+/g, ""));
   if (text === "true") return true;
-  const parts = topLevelParts(text);
-  if (parts.length > 1) return parts.some((part) => tautology(part.text));
-  const [{ operators, ternary }] = parts;
+  // Split loosest first: `==>`, then `||`, then `&&`.
+  const implication = topLevelParts(text, "==>");
   // A conditional expression is not split, so its branches are not misread.
-  if (ternary) return false;
+  if (implication.some((part) => part.ternary)) return false;
+  // `A ==> B` holds for every input when B does or B is A (`==>` is
+  // right-associative).
+  if (implication.length > 1) {
+    const consequent = implication
+      .slice(1)
+      .map((part) => part.text)
+      .join("==>");
+    return (
+      stripOuterParentheses(implication[0].text) ===
+        stripOuterParentheses(consequent) || tautology(consequent)
+    );
+  }
   // A disjunction holds for every input when any disjunct does.
   const disjuncts = topLevelParts(text, "||");
   if (disjuncts.length > 1)
     return disjuncts.some((part) => tautology(part.text));
-  // `A ==> B` holds for every input when B does (`==>` is right-associative).
-  const implication = operators.find((entry) => entry.operator === "==>");
-  if (
-    implication &&
-    tautology(text.slice(implication.at + implication.operator.length))
-  )
-    return true;
+  // A tautological conjunct proves nothing about the code.
+  const parts = topLevelParts(text);
+  if (parts.length > 1) return parts.some((part) => tautology(part.text));
+  const [{ operators }] = parts;
   if (operators.length !== 1) return false;
   const [{ operator, at }] = operators;
   if (!reflexiveOperators.has(operator)) return false;
