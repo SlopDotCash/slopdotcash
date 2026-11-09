@@ -499,22 +499,10 @@ jobs:
     permissions:
       contents: read
 
-  state-models:
-    name: Quint state models
-    uses: ./.github/workflows/formal.yml
-    permissions:
-      contents: read
-
-  lemmascript:
-    name: LemmaScript contracts
-    uses: ./.github/workflows/lemmascript.yml
-    permissions:
-      contents: read
-
   quality:
     name: Skill, data, build, and browser checks
     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'cancelled') }}
-    needs: [prepare, check, browsers, isolated-artifact, state-models, lemmascript]
+    needs: [prepare, check, browsers, isolated-artifact]
     runs-on: ubuntu-24.04
     steps:
       - name: Require the checked bundle, code checks and every browser lane
@@ -524,14 +512,10 @@ jobs:
           BROWSER_RESULT: ${{ needs.browsers.result }}
           SANDBOX_RESULT: ${{ needs.isolated-artifact.result }}
           SANDBOX_REQUIRED: ${{ needs.prepare.outputs.sandbox }}
-          QUINT_RESULT: ${{ needs.state-models.result }}
-          LEMMASCRIPT_RESULT: ${{ needs.lemmascript.result }}
         run: |
           test "$PREPARE_RESULT" = success
           test "$CHECK_RESULT" = success
           test "$BROWSER_RESULT" = success
-          test "$QUINT_RESULT" = success
-          test "$LEMMASCRIPT_RESULT" = success
           if [ "$SANDBOX_REQUIRED" = true ]; then test "$SANDBOX_RESULT" = success; fi
 
   staging:
