@@ -70,7 +70,7 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-844 production sources, 363 finite models and 2,433 named scenarios, with zero
+844 production sources, 366 finite models and 2,500 named scenarios, with zero
 unmapped sources. The separate lexical catalog lists 237 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
@@ -91,6 +91,18 @@ timeouts; the audit records that correction. This batch provides no native
 process-tree, browser or host-level validation. The current census is 10,031
 function bodies in 688 runtime files, with 168 selected contracts. See
 `evidence-process-audit.md` for the exact source and model boundaries.
+
+The inbox coverage batch adds three models and refines the original API model,
+adding 67 named scenarios. Publication, review-link access, independent page and
+unread-count observations, keyset continuation, atomic read marking and UI
+identity observations now have separate bounded models. An empty page is not
+treated as a globally empty inbox, and a failed response does not undo a
+committed read mark. The UI model records draft-cleanup intent rather than
+claiming unavailable storage was erased. No runtime defect was established in
+this pass, so application code and executable tests are unchanged. All new and
+revised scenarios remain unexecuted. See `inbox-backend-state-audit.md` and
+`inbox-read-state-audit.md`; the function census remains 10,031 bodies in 688
+files, with 168 selected contracts.
 
 The wallet source-only batch adds four models and 64 unexecuted scenarios.
 Earnings now stops departed wallet continuations, binds each wallet action to

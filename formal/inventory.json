@@ -234,7 +234,9 @@
       "sha256": "f614dba6f183b3561cd30a6316766262136c8f4901b8dd2df9508efe64cfcc7c",
       "models": [
         "formal/models/api_inbox.qnt",
-        "formal/models/api_mail_delivery.qnt"
+        "formal/models/api_mail_delivery.qnt",
+        "formal/models/inbox_mark_read.qnt",
+        "formal/models/inbox_queries.qnt"
       ],
       "candidateLines": [61, 68, 69, 135, 168, 202, 206, 267, 300, 319, 320],
       "review": "mapped-abstraction"
@@ -2455,6 +2457,7 @@
       "sha256": "1096500931de6691e82d213089e5dce5b8844a753b0eb4bf2186b4155bd502e7",
       "models": [
         "formal/models/api_inbox.qnt",
+        "formal/models/inbox_mark_read.qnt",
         "formal/models/notification_schema_upgrade.qnt"
       ],
       "candidateLines": [9, 52, 65, 66, 67, 78, 79, 88, 91, 99, 104],
@@ -4346,6 +4349,7 @@
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_inbox_mutation_focus.qnt",
+        "formal/models/ui_inbox_reads.qnt",
         "formal/models/ui_incomplete_assessments.qnt",
         "formal/models/ui_points_disputes.qnt"
       ],
@@ -5364,7 +5368,12 @@
     {
       "path": "src/lib/notifications.ts",
       "sha256": "24d5a7adb62abcb1bec1d805a1f18755c6b5eab85d79c5c1432c0601fd700876",
-      "models": ["formal/models/ui_incomplete_assessments.qnt"],
+      "models": [
+        "formal/models/inbox_mark_read.qnt",
+        "formal/models/inbox_queries.qnt",
+        "formal/models/ui_inbox_reads.qnt",
+        "formal/models/ui_incomplete_assessments.qnt"
+      ],
       "candidateLines": [73, 191, 274, 275],
       "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
@@ -5512,6 +5521,7 @@
         "formal/models/ui_email_preference_requests.qnt",
         "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_focus_session.qnt",
+        "formal/models/ui_inbox_reads.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
         "formal/models/ui_project_authority.qnt",
@@ -8080,7 +8090,7 @@
     },
     {
       "path": "formal/models/api_inbox.qnt",
-      "sha256": "befd42a7bdbf01cdd9699c6081738892011801d773896c5cb33418d861af1e83",
+      "sha256": "d853aaf3df6417989b072ae4b7111bfba4486b79383c767c16b3c6141e15e802",
       "sources": [
         "backend/notifications/events.ts",
         "backend/notifications/handler.ts",
@@ -8090,7 +8100,21 @@
         "migrations/0065_slopbot_appeal_notifications.sql",
         "migrations/0079_slopbot_scam_review_notifications.sql"
       ],
-      "scenarios": ["independentReadTest", "replayTest"]
+      "scenarios": [
+        "differentSourceKeepsPriorReadStateTest",
+        "failedBatchPublishesNeitherSourceNorNoticeTest",
+        "failedReviewReadDoesNotBecomeRedirectTest",
+        "independentReadTest",
+        "invalidTargetPreventsReviewRedirectTest",
+        "oneRecipientCannotReadTheOtherCopyTest",
+        "ownReviewNoticeAndSourcePermitOpenTest",
+        "replayTest",
+        "revokedRoleRefusesNewOpenTest",
+        "roleIsCapturedForTheCurrentOpenTest",
+        "sameSourceCanNotifyTwoRecipientsOnceTest",
+        "sourceRefusalPreventsReviewRedirectTest",
+        "sourceWithNoEligibleRecipientHasNoNoticeTest"
+      ]
     },
     {
       "path": "formal/models/api_incomplete_assessments.qnt",
@@ -10357,6 +10381,62 @@
       ]
     },
     {
+      "path": "formal/models/inbox_mark_read.qnt",
+      "sha256": "be8a57d7dce1c34771ecbbe0a944dee57554336920c1bf4e50e5316ddd38346b",
+      "sources": [
+        "backend/notifications/handler.ts",
+        "migrations/0079_slopbot_scam_review_notifications.sql",
+        "src/lib/notifications.ts"
+      ],
+      "scenarios": [
+        "admissionFailureCreatesNoWriteTest",
+        "appellantReceiptRemainsMarkableWithoutRoleTest",
+        "concurrentReadMarksHaveOneWinnerTest",
+        "currentMarkUsesCapturedRoleTest",
+        "emptyInputRefusesBeforeStatementTest",
+        "failedReplyDoesNotUndoCommittedReadTest",
+        "foreignRecipientKeysChangeNothingTest",
+        "malformedOrDuplicateInputRefusesBeforeStatementTest",
+        "mixedKnownAndMissingKeysCountOnlyChangesTest",
+        "overLimitInputRefusesBeforeStatementTest",
+        "ownUnreadRowMarksOnceTest",
+        "replayDoesNotReplaceFirstReadTimestampTest",
+        "retryAfterLostReplyReportsZeroNewChangesTest",
+        "revokedModeratorCannotMarkHiddenReviewTest",
+        "sharedEventKeyStaysRecipientScopedTest",
+        "statementFailureRollsBackTheWholeMarkTest",
+        "twoKeyStatementCommitsTogetherTest"
+      ]
+    },
+    {
+      "path": "formal/models/inbox_queries.qnt",
+      "sha256": "3994c09fc1cb5c0a26d614572c310b148501113b693e6f0a93270bbb1ecf96bb",
+      "sources": [
+        "backend/notifications/handler.ts",
+        "src/lib/notifications.ts"
+      ],
+      "scenarios": [
+        "countBeforeMarkCanOutliveReadRowStateTest",
+        "countFailureCannotPublishSuccessfulPageTest",
+        "currentRequestRetainsCapturedRoleTest",
+        "cursorDoesNotRequireAnExistingRowTest",
+        "eachActorReceivesOnlyOwnRowsTest",
+        "emptyOlderPageDoesNotMeanEmptyInboxTest",
+        "emptyPageAndNonzeroCountCanCoexistTest",
+        "laterOlderInsertCanEnterContinuationTest",
+        "newerInsertDoesNotShiftContinuationTest",
+        "nextRequestSeesRevokedRoleTest",
+        "pageBeforeMarkCanContainUnreadRowsWithZeroCountTest",
+        "pageFailureCannotPublishSuccessfulCountTest",
+        "queryRetryAfterFailureUsesFreshObservationsTest",
+        "rejectedInputDoesNotIssueQueriesTest",
+        "resolutionProjectionUsesPageObservationTest",
+        "resolvedKindDoesNotEscapeStoredRoleRestrictionTest",
+        "revokedRoleAndAppellantExceptionFilterBothQueriesTest",
+        "textDescendingAndKeyAscendingPageTest"
+      ]
+    },
+    {
       "path": "formal/models/ingestion_retry.qnt",
       "sha256": "c849045fea46d6056d26f81e2e89d5113af6dba605287eacfda8c23ad507e00e",
       "sources": ["scripts/generate-leaderboard.ts", "scripts/github-token.ts"],
@@ -12504,6 +12584,38 @@
         "focusResumesAfterMutationTest",
         "signedOutBeforePostPreventsSendTest",
         "unavailableIdentityHidesPrivateViewAndReleasesActionTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_inbox_reads.qnt",
+      "sha256": "bbdf07e5098582f044a72c975f7a9dc37c9e3b50c7f7a3ef7751f168c59806a6",
+      "sources": [
+        "src/Inbox.tsx",
+        "src/lib/notifications.ts",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "changedInitialIdentityCannotReassignEnvelopeTest",
+        "changedRecipientReloadsFirstPageTest",
+        "changedRecipientResetsOlderCursorBeforePublishingTest",
+        "changedSessionRefusesOldEnvelopeTest",
+        "cookieChangeIsNotContinuousSessionKnowledgeTest",
+        "departureSuppressesReadTest",
+        "emptyEnvelopeIsReadyNotUnavailableTest",
+        "failedFinalSessionNeedsAnotherObservationTest",
+        "failedReadCanRetryWithoutReusingOldEnvelopeTest",
+        "failedReadWithKnownSessionIsExplicitErrorTest",
+        "failedReadWithUnknownSessionHidesPrivateChildrenTest",
+        "initialSignedOutSkipsInboxFetchTest",
+        "invalidEnvelopeDoesNotBecomeEmptyInboxTest",
+        "matchingReadPublishesTest",
+        "noNextCursorDisablesOlderControlTest",
+        "sameRecipientKeepsOlderCursorTest",
+        "signedOutFinalSessionRequestsDraftCleanupTest",
+        "signedOutSupersedesReadTest",
+        "supersededResponseCannotPublishTest",
+        "unauthorizedReadClearsCurrentInboxTest",
+        "unavailableFirstSessionNeedsMatchingFinalSessionTest"
       ]
     },
     {
