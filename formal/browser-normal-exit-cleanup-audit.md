@@ -154,12 +154,41 @@ all three cases at the supervisor-exit check. Evidence is retained under ignored
 `evidence/browser-io-cleanup/`; the test subprocesses clean up their own retained
 processes and permission changes.
 
-The model adds ownership-I/O failure with observed versus unknown descendants,
+At `cc5f42d15`, the model adds ownership-I/O failure with observed versus unknown descendants,
 and a final removal failure that retains the temporary-directory state while
 still reaching a failed result. All 21 scenarios and the 500 seeded simulations
 pass. The pinned finite check completed in 4,397 ms with 4,625 generated states,
 472 distinct states, zero queued states and depth 11; inputs remained unchanged.
 An initial typecheck rejected the added typed action's missing return annotation;
 the corrected check passes and the failed receipt remains retained. Earlier
-model counts certify only the preceding checkpoint. The complete inventory now
+model counts certify only the preceding checkpoint. That inventory has
 has 1,581 scenarios, with the same source, model and LemmaScript target counts.
+
+## Model cleanup outcome correction
+
+The timeout model previously cleared `temporary` unconditionally. The runtime
+always attempts removal in `finish`, including when cleanup times out with a
+launcher, descendant or detached server still alive. Removal can fail in that
+case too. `cleanupDeadline(removed)` now preserves all observed process and pipe
+states and clears `temporary` only when removal succeeds. Either outcome reports
+failure. The success invariant is unchanged.
+
+The cleanup-path review also aligns two existing combinations: ownership polling
+and final checkpoints continue during the SIGINT grace period, and a launcher
+may exit then without having closed its detached server. A failed spawn before
+any process identity exists can remove or retain the already-created private
+directory; neither outcome invents a running child.
+
+| Runtime completion path | Model result |
+| --- | --- |
+| Observed process groups drained | `cleanup` removes the directory, or `temporaryRemovalFailure` retains it and fails. |
+| Cleanup deadline with any process or pipe state | `cleanupDeadline(removed)` retains those states and independently records directory removal success or failure. |
+| Failed browser spawn before a PID exists | `browserSpawnFailure(removed)` has no launcher, descendant or detached server and independently records directory removal. |
+| Ownership failure during normal execution or interrupt grace | Retained descendants may be stopped; unknown ownership remains unacquired. Completion then uses the same drained or deadline outcomes. |
+
+All 29 named scenarios and 500 seeded simulations of up to 60 steps pass. The
+pinned finite run completes in 4,851 ms with 6,261 generated states, 658 distinct
+states, zero queued states and depth 11. Inputs remain unchanged. The inventory
+now contains 1,589 scenarios, 318 models and 843 sources. No runtime or process-test
+bytes changed; the 23-test evidence above remains source-equal. This correction
+does not turn the finite abstraction into a runtime-refinement proof.
