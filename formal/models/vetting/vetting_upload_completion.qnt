@@ -25,7 +25,8 @@
 // the condition; a reread, not PUT success alone, determines acceptance.
 // ETags are representation tokens, not monotonic generations: identical
 // bytes may repeat an ETag. Missing ETags and generic read failures never
-// authorize a corruption repair. Generation/retirement ABA is still open.
+// authorize a corruption repair. This legacy CAS abstraction does not establish
+// generation isolation; current legacy cleanup holds these keys.
 // ETag classes are 0=absent, 1=valid body, 2/3=changed bodies. Corrupt metadata
 // can retain body ETag1, including after another metadata repair succeeds.
 // Unknown R2 read failures never establish corruption. Initial/repair put can
@@ -37,11 +38,11 @@
 // The fresh post-I/O expiry check is an observation boundary, not an atomic
 // clock reservation through later audit/batch/reply. Historical completion is
 // not a proof that shared bytes still exist or remain intact after the read.
-// External retire models a previously authorized cleanup deleting bytes and
-// recording the last reference's retirement. The existing source has no
-// in-flight writer fence: an earlier put can finish afterward. The diagnostic
+// historicalRetire models the replaced pre-0119 cleanup deleting bytes and
+// recording the last reference's retirement. It is outside the primary step;
+// current legacy cleanup holds these keys. The historical diagnostic
 // resurrectedAfterRetirement is intentionally not a safety invariant or a
-// claim that physical cleanup was repaired in this change.
+// claim that these legacy keys can now be physically retired.
 // Existing generic upload/object lifecycle models remain. Source-authored;
 // none of these scenarios or runtime regressions were executed.
 // Storage flavor and single/chunked shape stay fixed across retries. The
@@ -93,7 +94,7 @@ module vetting_upload_completion {
     s' = s.with("disk", s.disk.set(s.target, "missing")).with("etags", s.etags.set(s.target, 0)) }
   action preload(part: int, kind: str): bool = all { s.phase == "idle", parts.contains(part), Set("valid", "corrupt").contains(kind),
     s' = s.with("disk", s.disk.set(part, kind)).with("etags", s.etags.set(part, if (kind == "valid") 1 else 2)) }
-  action retire = all { s.expired.contains(1), s.expired.contains(2), not(s.retired),
+  action historicalRetire = all { s.expired.contains(1), s.expired.contains(2), not(s.retired),
     s' = s.with("retired", true).with("disk", parts.mapBy(_ => "missing")).with("etags", parts.mapBy(_ => 0)) }
   action put(reply: str): bool = {
     val repair = s.phase == "repair-put"
@@ -181,7 +182,7 @@ module vetting_upload_completion {
     nondet yes = Set(false, true).oneOf()
     nondet result = Set("ok", "lost-before", "lost-after").oneOf()
     any { begin(mode, storage, run, part), expire(run), preflight(yes), preload(part, kind),
-      corrupt(part), metadataCorrupt(part), concurrentRepair, concurrentCorrupt, removePart, retire, put(result),
+      corrupt(part), metadataCorrupt(part), concurrentRepair, concurrentCorrupt, removePart, put(result),
       storeRead(yes), storeReadWithTag(true, false), singleRead(yes), verifyPart(yes),
       wrongWhole, whole, postcheck, audit(result), batch(result), reply, s' = s }
   }
@@ -221,5 +222,5 @@ module vetting_upload_completion {
   run secondRunNeedsOwnCompletionTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).then(finalize(2)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).expect(s.completed == runs and s.finalizeAudits == 2 and invariant)
   run completionDoesNotProveCurrentBytesTest = init.then(validParts).then(finalize(1)).then(verifyWhole).then(postcheck).then(batch("ok")).then(reply).then(corrupt(0)).expect(s.completed == Set(1) and s.disk.get(0) == "corrupt" and invariant)
   run expiryAfterLastCheckIsNotAtomicClockReservationTest = init.then(chunk).then(put("ok")).then(storeRead(true)).then(postcheck).then(expire(1)).then(audit("ok")).then(reply).expect(s.result == "accepted" and s.expired.contains(1) and invariant)
-  run delayedWriterCanResurrectRetiredStorageTest = init.then(chunk).then(expire(1)).then(expire(2)).then(retire).then(put("ok")).then(storeRead(true)).then(postcheck).expect(resurrectedAfterRetirement and s.result == "error" and s.uploadAudits == 0 and invariant)
+  run delayedWriterCanResurrectRetiredStorageTest = init.then(chunk).then(expire(1)).then(expire(2)).then(historicalRetire).then(put("ok")).then(storeRead(true)).then(postcheck).expect(resurrectedAfterRetirement and s.result == "error" and s.uploadAudits == 0 and invariant)
 }

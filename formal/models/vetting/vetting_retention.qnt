@@ -6,10 +6,10 @@
 // @source backend/vetting/evidence-retention.ts
 // @source backend/vetting/evidence-chunks.ts
 // @evidence workers/vetting-backup/qualification-retention.ts
-// Current source, not the proposed generation/tombstone protocol. Three run
+// Historical pre-0119 collector plus the current legacy-hold branch. Three run
 // references share a content digest; each selected layout has two part keys.
 // Ref1 may declare historical-only key3 while last ref2 declares keys1/2.
-// Two admitted create-only PUTs may finish after expiry/DELETE/HEAD/receipt.
+// Historical actions allow admitted PUTs after expiry/DELETE/HEAD/receipt.
 // They represent verified incoming bytes, not an accepted upload receipt.
 // Three selections bound retry/later-cycle work by one cleanup consumer.
 // The temporary D1 claim fences new references, not existing R2 writers.
@@ -22,8 +22,9 @@
 // completed assessment's classification are outside this finite bound.
 // Deletion receipts retain historical observations, not current absence.
 // Historical keys outside the last layout and post-observation writes remain
-// explicit diagnostics, not repaired safety properties. Backup chain validity
-// is supplied by vetting_backup_chain. No executions/checks were run.
+// explicit historical diagnostics, outside the current step. Current cleanup
+// holds every legacy key; vetting_generation_retirement covers new generations.
+// Backup chain validity is supplied by vetting_backup_chain. No checks ran.
 module vetting_retention {
   val refs = Set(1, 2, 3)
   val keys = Set(1, 2, 3)
@@ -112,13 +113,21 @@ module vetting_retention {
   action reply = all { s.phase == "reply", s' = s.with("phase", "idle") }
   action loseReply = all { s.phase == "reply", s' = s.with("phase", "failed").with("result", "reply-lost") }
   action retry = all { s.phase == "failed", s' = s.with("phase", "idle") }
-  action step = {
+  action historicalStep = {
     nondet ref = refs.oneOf()
     nondet part = keys.oneOf()
     nondet yes = Set(false, true).oneOf()
     any { close(ref), age(ref), permanentAdmission(ref), alternateHistoricalLayout, copy, verifyBackup,
       loseSource(part), loseBackup(part), corruptBackup(part), addReference(ref), startUpload(ref, part), finishUpload(part),
       select(ref), claimOrShare, sharedCommit(yes), inspectPart(yes), deletePart(part, yes), loseDeleteReply, observeDelete(yes), commit(yes), reply, loseReply, retry, s' = s }
+  }
+  action holdLegacy = all { s.phase == "claim", s.claim == 0,
+    s' = s.with("phase", "reply").with("result", "retention-held") }
+  action step = {
+    nondet ref = refs.oneOf()
+    nondet part = keys.oneOf()
+    any { close(ref), age(ref), permanentAdmission(ref), alternateHistoricalLayout, copy, verifyBackup,
+      startUpload(ref, part), finishUpload(part), select(ref), holdLegacy, reply, s' = s }
   }
   val invariant = all { s.safeDeletion, s.deleted.subseteq(s.oldEnough), s.physicalReceipts.subseteq(s.deleted), s.missingAudits.subseteq(s.oldEnough),
     s.verifiedBackup.subseteq(s.backup), s.admitted <= 2, s.selections <= 3,
@@ -174,4 +183,9 @@ module vetting_retention {
   run newSnapshotCannotInheritPriorByteVerificationTest = init.then(bothExpired).then(backed).then(retireFirst).then(lastReady)
     .then(deleteBoth).then(commit(true)).then(reply).then(copy)
     .expect(s.backup.size() == 0 and s.verifiedBackup.size() == 0 and invariant)
+  run currentLegacyCleanupHoldsBytesTest = init.then(bothExpired).then(backed).then(select(1)).then(holdLegacy).then(reply)
+    .expect(s.present == Set(1, 2) and s.deleted.size() == 0 and s.result == "retention-held" and invariant)
+  run currentLegacyHoldDoesNotPretendToFenceOldWriterTest = init.then(startUpload(1, 1)).then(bothExpired)
+    .then(select(1)).then(holdLegacy).then(reply).then(finishUpload(1))
+    .expect(s.present == Set(1, 2) and s.physicalReceipts.size() == 0 and invariant)
 }

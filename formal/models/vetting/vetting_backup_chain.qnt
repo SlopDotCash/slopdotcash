@@ -93,9 +93,10 @@ module vetting_backup_chain {
   action sendCleanup(commits: bool): bool = all { s.stage == "cleanup-send",
     s' = s.with("pending", if (commits) s.pending.union(Set(2)) else s.pending)
       .with("stage", if (not(commits)) "failed" else if (s.job == -1) "none" else "ack") }
-  // Physical retention remains in vetting_retention / vetting_object_lifecycle.
-  // Cycle completion is not a claim that all source bytes are absent: missing
-  // evidence is separately audited and an admitted writer can finish later.
+  // Generation retirement is refined in vetting_generation_retirement;
+  // vetting_retention retains the historical DELETE counterexample. Current
+  // legacy keys are held. Cycle completion does not mean every ref was backed:
+  // missing/changed evidence is audited separately from complete retirement.
   action finishCleanup = all { s.stage == "cleanup-work",
     s' = if (s.completePresent and s.completeReceipt)
       s.with("phase", "complete").with("stage", "ack") else s.with("stage", "failed") }
