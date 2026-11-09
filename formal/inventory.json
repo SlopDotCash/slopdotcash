@@ -874,7 +874,7 @@
     },
     {
       "path": "backend/trace/cloudflare-persistence.ts",
-      "sha256": "d40607d1d94f188ba74b9fe7b916c426bf2255f81c83043c761b5a2b2ce1318e",
+      "sha256": "82297983156330c2620653419973ead1885c9c5ba0186d593896440e0df21877",
       "models": [
         "formal/models/api_payment_wallet_protocol.qnt",
         "formal/models/api_trace.qnt",
@@ -882,34 +882,35 @@
         "formal/models/operator_intake_renewal.qnt"
       ],
       "candidateLines": [
-        61, 156, 294, 305, 310, 333, 371, 384, 387, 409, 410, 415, 418, 448,
-        449, 452, 453, 469, 472, 494, 521, 528, 531, 535, 554, 582, 616, 617,
-        618, 652, 679, 690, 696, 698, 708, 716, 730, 731, 736, 741, 761, 765,
-        767, 789, 798, 803, 818, 826, 827, 833, 834, 840, 860, 866, 868, 962,
-        990, 1018, 1033, 1034, 1036, 1054, 1068, 1073, 1076, 1137, 1138, 1145,
-        1148, 1150
+        61, 156, 294, 305, 310, 333, 371, 384, 387, 417, 418, 423, 426, 456,
+        457, 460, 461, 477, 480, 502, 529, 536, 539, 543, 562, 590, 624, 625,
+        626, 660, 687, 698, 704, 706, 716, 724, 738, 739, 744, 749, 769, 773,
+        775, 797, 806, 811, 826, 834, 835, 841, 842, 848, 868, 874, 876, 970,
+        998, 1026, 1041, 1042, 1044, 1062, 1076, 1081, 1084, 1145, 1146, 1153,
+        1156, 1158
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/contracts.ts",
-      "sha256": "b14e2d0bb714baccceda657eeb0dd61dce7e5c344f338547a23d1e8283c0d6fd",
+      "sha256": "87ed51a8d4bdd6492317f04ba06ae95a262dda1a59a73cb365c2e7ac2a5ea81c",
       "models": ["formal/models/api_trace.qnt"],
       "candidateLines": [16, 17, 26, 40, 84, 140, 171, 172, 173],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/trace/handler.ts",
-      "sha256": "08d1215a3e66112359d1c7e6d9e35145c59659d8708d2db258f5f1678e72433c",
+      "sha256": "5df4c936603d3809c942d3a40fc412434ed778159bf0c9b07074a4975a331098",
       "models": [
         "formal/models/api_trace.qnt",
-        "formal/models/api_wallet_claims.qnt"
+        "formal/models/api_wallet_claims.qnt",
+        "formal/models/pr_review_run_identity.qnt"
       ],
       "candidateLines": [
-        87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
-        628, 636, 773, 776, 847, 851, 854, 894, 895, 941, 945, 981, 1039, 1040,
-        1063, 1067, 1073, 1094, 1099, 1101, 1105, 1106, 1107, 1108, 1121, 1157,
-        1161, 1228, 1236, 1244, 1410, 1541
+        89, 90, 105, 113, 127, 128, 130, 131, 132, 275, 285, 425, 433, 440, 512,
+        630, 638, 775, 778, 882, 886, 889, 929, 930, 976, 980, 1016, 1074, 1075,
+        1098, 1102, 1108, 1129, 1134, 1136, 1140, 1141, 1142, 1143, 1156, 1192,
+        1196, 1263, 1271, 1279, 1445, 1576
       ],
       "review": "mapped-abstraction"
     },
@@ -10171,6 +10172,17 @@
         "successAfterUnknownAttemptKeepsUnknownTotalTest",
         "successWithAllReceiptsHasCompleteTotalTest",
         "unknownTest"
+      ]
+    },
+    {
+      "path": "formal/models/pr_review_run_identity.qnt",
+      "sha256": "5b6687f21eb47c9f4dc4838f719dd966eb54c3608d85ff273c584f0bf19c6767",
+      "sources": ["backend/trace/handler.ts"],
+      "scenarios": [
+        "aliasAcceptedTest",
+        "canonicalAcceptedTest",
+        "foreignRepositoryRefusedTest",
+        "unknownProjectRefusedTest"
       ]
     },
     {
