@@ -133,9 +133,9 @@
     },
     {
       "path": ".github/workflows/windows-installer.yml",
-      "sha256": "f8e0beecff57228f34b399abfd4eb00ef20ea5a6138ded169578dbd2c68c1c6c",
+      "sha256": "5391f66f0f31ab85513f0d8062ad4873f95dfed45921c133623bfea4ce90e8ce",
       "models": ["formal/models/release/ci_coverage.qnt"],
-      "candidateLines": [66],
+      "candidateLines": [71],
       "review": "mapped-abstraction"
     },
     {
@@ -3019,7 +3019,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "59e4b3ea54305013287696d8df17fc38025d278b961801f4b51dac2f7fa2c794",
+      "sha256": "1a337132968fed55c4182a1f745659cb62d7d3d208bdf7e083de48caf5466175",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3338,7 +3338,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "21ce1c4639f41c026053e94d6da5943f0799d595bc66cf4f9e89b1e04f94c29d",
+      "sha256": "eec61cc402a5e312df1d1e9710c176efc0cb9b8d189df12fec7ea97dc3f7b738",
       "models": [
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
@@ -3348,12 +3348,12 @@
       "candidateLines": [
         23, 178, 189, 198, 265, 276, 278, 281, 380, 468, 489, 525, 556, 620,
         652, 684, 880, 1108, 1207, 1215, 1273, 1333, 1336, 1529, 1538, 1543,
-        1552, 1635, 1636, 1781, 1782, 1839, 1865, 1883, 1885, 1889, 1921, 1924,
-        1925, 1928, 1930, 1941, 2159, 2162, 2470, 2489, 2587, 2600, 2611, 2612,
-        2789, 2791, 2983, 2999, 3011, 3018, 3044, 3054, 3058, 3062, 3066, 3121,
-        3140, 3167, 3184, 3218, 3219, 3221, 3237, 3254, 3255, 3256, 3265, 3270,
-        3450, 3808, 3830, 3839, 3889, 3924, 3930, 3937, 4006, 4091, 4243, 4458,
-        4468, 4470, 4483, 4512, 4514, 4515, 4519, 4523, 4578, 4632, 4683, 4686
+        1553, 1636, 1637, 1793, 1794, 1851, 1877, 1895, 1897, 1901, 1933, 1936,
+        1937, 1940, 1942, 1953, 2168, 2171, 2479, 2498, 2596, 2609, 2620, 2621,
+        2798, 2800, 2992, 3008, 3020, 3027, 3053, 3063, 3067, 3071, 3075, 3130,
+        3149, 3176, 3193, 3227, 3228, 3230, 3246, 3263, 3264, 3265, 3274, 3279,
+        3459, 3817, 3839, 3848, 3898, 3933, 3939, 3946, 4015, 4100, 4252, 4467,
+        4477, 4479, 4492, 4521, 4523, 4524, 4528, 4532, 4587, 4641, 4692, 4695
       ],
       "review": "mapped-abstraction"
     },
@@ -10343,7 +10343,7 @@
     },
     {
       "path": "formal/models/release/ci_coverage.qnt",
-      "sha256": "053baacb14cf23b21f6680d99e3671060d2b084d71ef35bcf769dc7f9c692b4f",
+      "sha256": "43f4fe76e43ebd146a72db638ffc73fc9a65bc23a3c8891097bee5a0a0b96f50",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -10351,7 +10351,11 @@
         ".github/workflows/windows-installer.yml",
         "scripts/ci-scope.mjs"
       ],
-      "scenarios": ["fixtureSelectsChainCoverageTest", "releaseCoverageTest"]
+      "scenarios": [
+        "developmentCoverageTest",
+        "fixtureSelectsChainCoverageTest",
+        "releaseCoverageTest"
+      ]
     },
     {
       "path": "formal/models/release/deployment_probe.qnt",

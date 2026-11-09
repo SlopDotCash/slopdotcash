@@ -168,9 +168,44 @@ test("a window still exhausted after its reset, or a reset beyond one window, fa
   const late = new GitHubGraphqlClient("fixture-token", distant.fetcher);
   await late.execute(QUERY, { ids: ["PR_1"] });
   await expect(late.execute(QUERY, { ids: ["PR_2"] })).rejects.toThrow(
-    "is more than 60 minutes away",
+    "would exceed 60 minutes of total reset waiting",
   );
   expect(distant.requests).toHaveLength(1);
+});
+
+test("a full window drained by another consumer during the run waits instead of failing", async () => {
+  const resetAt = Date.now() + 200;
+  const { fetcher, requests } = rateLimitedTransport([
+    { remaining: 4999, resetAt: new Date(resetAt).toISOString() },
+    { remaining: 50, resetAt: new Date(resetAt).toISOString() },
+    {
+      remaining: 4999,
+      resetAt: new Date(resetAt + 3_600_000).toISOString(),
+    },
+  ]);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher);
+  await client.execute(QUERY, { ids: ["PR_1"] });
+  await client.execute(QUERY, { ids: ["PR_2"] });
+  await client.execute(QUERY, { ids: ["PR_3"] });
+  expect(requests).toHaveLength(3);
+  expect(requests[2]).toBeGreaterThanOrEqual(resetAt + 1_000);
+  expect(client.getRateLimit().remaining).toBe(4999);
+});
+
+test("repeated drains cannot chain reset waits past 60 minutes in total", async () => {
+  const firstReset = Date.now() + 200;
+  const secondReset = firstReset + 3_599_000;
+  const { fetcher, requests } = rateLimitedTransport([
+    { remaining: 99, resetAt: new Date(firstReset).toISOString() },
+    { remaining: 99, resetAt: new Date(secondReset).toISOString() },
+  ]);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher);
+  await client.execute(QUERY, { ids: ["PR_1"] });
+  await client.execute(QUERY, { ids: ["PR_2"] });
+  await expect(client.execute(QUERY, { ids: ["PR_3"] })).rejects.toThrow(
+    "would exceed 60 minutes of total reset waiting",
+  );
+  expect(requests).toHaveLength(2);
 });
 
 test("this run's own window overspend still fails immediately", async () => {

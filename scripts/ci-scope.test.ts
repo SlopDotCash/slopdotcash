@@ -74,6 +74,7 @@ for (const ref of ["refs/heads/main", "refs/heads/development"]) {
 for (const path of [
   "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",
+  "src/lib/project-schema.mjs",
   "src/lib/install-command.ts",
   "scripts/skill-python.mjs",
   "README.md",
