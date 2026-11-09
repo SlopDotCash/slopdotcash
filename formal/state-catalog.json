@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7313721007f32baf3cd256160bf86b10b2848d1337a4abdf151db1be201de21d",
+  "inventorySha256": "a14abd3c77661000b0dc03a9a8756c61ad16635703538cf8a96884170b6bb33f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",

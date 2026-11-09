@@ -492,11 +492,12 @@ whole recorder. Direct-child cleanup is not process-tree containment. Backup
 objects, readback verification, completion records and queue acknowledgment
 remain separate states.
 
-This candidate still must incorporate the final reviewed changes from PR
-[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) before its own PR
-review. Its independently collected results cover their named source heads,
-not this later source-only combination. The user instruction to skip checks
-remains in force for this lane; application-wide state assurance is incomplete.
+This branch includes the changes from merged PR
+[#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development
+commit `ac9da9e7`. Its independently collected results cover their named source
+heads, not this later source-only combination. The user instruction to skip
+checks remains in force for this lane; application-wide state assurance is
+incomplete.
 
 ## Acceptance requirements and limits
 
