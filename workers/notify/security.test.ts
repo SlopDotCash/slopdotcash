@@ -6,8 +6,11 @@ import {
   handleNotificationsApi,
   type NotificationsDependencies,
 } from "../../backend/notifications/handler";
+import {
+  inboxStatements,
+  type SecurityD1Database,
+} from "../../backend/security/case-store";
 import { handleSecurityApi } from "../../backend/security/handler";
-import { inboxStatements, type SecurityD1Database } from "../../backend/security/case-store";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {

@@ -24,7 +24,7 @@ import {
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import type { JournalStore } from "../payment-executor/core";
+import type { JournalStore } from "../payment-executor/binding-shared";
 import { PaymentSignerJournal } from "../payment-executor/index";
 import { recoverUncertainAttempts, runPaymentDispatch } from "./index";
 import { reconcileFailedAttempts } from "./reconcile";

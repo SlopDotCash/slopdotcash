@@ -33,7 +33,7 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import { sha256Hex } from "../../src/lib/sha256";
-import type { JournalStore } from "./core";
+import type { JournalStore } from "./binding-shared";
 
 export interface MonthlyReleaseDependencies {
   db: D1TransactionalDatabase;

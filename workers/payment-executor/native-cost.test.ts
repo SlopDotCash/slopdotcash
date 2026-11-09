@@ -7,7 +7,7 @@ import {
   isMaxNativeCostWei,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
-import { assertEvmNativeCost, preflightEvmDeployment } from "./core";
+import { assertEvmNativeCost, preflightEvmDeployment } from "./binding-shared";
 
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 const deployment = () => ({

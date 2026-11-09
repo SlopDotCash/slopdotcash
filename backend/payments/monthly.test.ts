@@ -29,7 +29,7 @@ import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-f
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
-import type { JournalStore } from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import {

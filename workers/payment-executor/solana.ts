@@ -38,10 +38,10 @@ import {
 } from "../../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
+import type { JournalStore } from "./binding-shared";
 import {
   authorizeRegistry,
   authorizeWalletRotation,
-  type JournalStore,
   requireWalletAuthorization,
 } from "./core";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";

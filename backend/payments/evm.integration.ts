@@ -28,12 +28,14 @@ import {
 } from "../../contracts/evm/adapter";
 import { sha256Hex } from "../../workers/identity/crypto";
 import {
+  type JournalStore,
+  preflightEvmDeployment,
+} from "../../workers/payment-executor/binding-shared";
+import {
   assertEvmMonthlySources,
   createEvmAttester,
   createEvmExecutor,
-  type JournalStore,
   lookupAttempt,
-  preflightEvmDeployment,
   retireUnsignedAttempt,
 } from "../../workers/payment-executor/core";
 import { readDeploymentVaultTotals } from "../../workers/payments/index";

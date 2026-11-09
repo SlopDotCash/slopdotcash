@@ -31,9 +31,8 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import type { Attempt, JournalStore } from "./binding-shared";
 import {
-  type Attempt,
-  type JournalStore,
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,

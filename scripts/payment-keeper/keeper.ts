@@ -25,10 +25,12 @@ import {
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
-  type PublicEvmExecutorEnvironment,
   preflightEvmDeployment,
-  preparePermissionlessEvmPayment,
   type Signer,
+} from "../../workers/payment-executor/binding-shared";
+import {
+  type PublicEvmExecutorEnvironment,
+  preparePermissionlessEvmPayment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "../../workers/payment-executor/core";

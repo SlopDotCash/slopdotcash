@@ -1,6 +1,6 @@
 import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
-import type { Signer } from "../../workers/payment-executor/core";
+import type { Signer } from "../../workers/payment-executor/binding-shared";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
 import {
   positiveBudgetFits,

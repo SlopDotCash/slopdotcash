@@ -16,7 +16,7 @@ import {
   preflightEvmDeployment,
   STORED_BINDING,
   storedBindingAbi,
-} from "./core";
+} from "./binding-shared";
 
 interface BindingRecoveryInput {
   network: string;

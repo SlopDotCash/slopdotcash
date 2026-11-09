@@ -58,7 +58,7 @@ import {
   PRD_MONTHLY_SCHEDULE,
   parseMonthlySchedule,
 } from "../../src/lib/payments/monthly-allocation";
-import { preflightEvmDeployment } from "../../workers/payment-executor/core";
+import { preflightEvmDeployment } from "../../workers/payment-executor/binding-shared";
 import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import {
   type KeeperConfiguration,

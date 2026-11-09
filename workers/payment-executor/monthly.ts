@@ -14,7 +14,7 @@ import {
 } from "../../contracts/evm/monthly-reserve";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
-import type { JournalStore } from "./core";
+import type { JournalStore } from "./binding-shared";
 
 export interface MonthlyAuthorization {
   plan: MonthlyAttestationPlan;

@@ -23,11 +23,11 @@ import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
-import {
-  type ExecutorEnvironment,
-  type JournalStore,
-  submitEvmMonthly,
-} from "../../workers/payment-executor/core";
+import type {
+  ExecutorEnvironment,
+  JournalStore,
+} from "../../workers/payment-executor/binding-shared";
+import { submitEvmMonthly } from "../../workers/payment-executor/core";
 import {
   type MonthlyAuthorization,
   signMonthlyAllocation,

@@ -43,11 +43,11 @@ import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
+import type { JournalStore } from "./binding-shared";
 import { paymentStack } from "./configure.mjs";
 import {
   bindingCandidates,
   bindStoredDestination,
-  type JournalStore,
   pendingStoredBindings,
   runStoredBindings,
 } from "./core";

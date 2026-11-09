@@ -32,19 +32,21 @@ import {
   reconcileBindingWinner,
 } from "./binding-recovery";
 import {
+  type JournalStore,
+  preflightEvmDeployment,
+  type Signer,
+} from "./binding-shared";
+import {
   assertEvmMonthlySources,
   type BindingRunReport,
   bindingCandidates,
   createEvmAttester,
   createEvmExecutor,
-  type JournalStore,
   lookupAttempt,
   observedEvmTransaction,
   pendingStoredBindings,
-  preflightEvmDeployment,
   retireUnsignedAttempt,
   runStoredBindings,
-  type Signer,
   submitEvmMonthly,
 } from "./core";
 import type { MonthlyAuthorization } from "./monthly";
