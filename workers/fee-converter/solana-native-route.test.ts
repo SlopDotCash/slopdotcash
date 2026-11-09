@@ -295,13 +295,19 @@ test("a finalized native swap reconciles after someone sends lamports to the fee
     programId: TOKEN,
     uiTokenAmount: { amount: amount.toString() },
   });
-  /** The WSOL account held 5 plus one unsynced lamport; the route leaves `after`. */
-  const receipt = (after: bigint): RouteReceipt => {
+  /**
+   * The WSOL account held 5 plus `unsynced` lamports; the route leaves `after`.
+   * The System transfer adds AMOUNT lamports to it, and the route's Token
+   * transfer of a native account moves lamports with its amount, so the account
+   * ends at its rent plus `after`. The pool vault that receives AMOUNT is not
+   * part of this fixture.
+   */
+  const receipt = (after: bigint, unsynced = 1): RouteReceipt => {
     const preBalances = f.proof.keys.map(() => 10000000);
     const postBalances = preBalances.slice();
     preBalances[0] = 1000000000;
     postBalances[0] = 1000000000 - 5000 - Number(AMOUNT);
-    preBalances[sourceIndex] = RENT + 6;
+    preBalances[sourceIndex] = RENT + 5 + unsynced;
     postBalances[sourceIndex] = RENT + Number(after);
     preBalances[destinationIndex] = RENT;
     postBalances[destinationIndex] = RENT;
@@ -329,6 +335,9 @@ test("a finalized native swap reconciles after someone sends lamports to the fee
     };
   };
   expect(finalizedRouteCredit(row, proof, receipt(6n))).toBe(2000000n);
+  // Without a donation, a later conversion through the existing account still
+  // reconciles.
+  expect(finalizedRouteCredit(row, proof, receipt(5n, 0))).toBe(2000000n);
   // Spending the donated lamport as well is not the exact native input.
   expect(() => finalizedRouteCredit(row, proof, receipt(5n))).toThrow(
     "Finalized swap did not debit its exact input and credit its minimum output",
