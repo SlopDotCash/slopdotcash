@@ -7467,7 +7467,10 @@
     {
       "path": "workers/vetting/bounded-scan.ts",
       "sha256": "1b60f7c31c47c2c7e05504a2cc905caa2817224e8f44448bd4be3fff4f506feb",
-      "models": ["formal/models/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting_disposition.qnt",
+        "formal/models/vetting_package_runner.qnt"
+      ],
       "candidateLines": [
         241, 249, 250, 1719, 1720, 1901, 1961, 1982, 2049, 2065
       ],
@@ -12120,6 +12123,16 @@
         "liveSiblingSurvivesCleanupTest",
         "missingBackupKeepsCleanupFenceTest",
         "sharedBytesNeedOwnCompletionTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting_package_runner.qnt",
+      "sha256": "711a4b8ba825db23be418e818339df415be3a022662e16cfd7ce5440164fa354",
+      "sources": ["workers/vetting/bounded-scan.ts"],
+      "scenarios": [
+        "npxYesInPrepareTest",
+        "otherCommandInInstallTest",
+        "runnerOutsideInstallTest"
       ]
     },
     {
