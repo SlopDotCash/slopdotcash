@@ -8393,13 +8393,13 @@
     },
     {
       "path": "workers/vetting-backup/qualification-access.ts",
-      "sha256": "c0f20ab8f52f98b3465f511065b2a7fd9ac8bef0c007869addd884f7dae3b422",
+      "sha256": "c0876c7da39cafd701efd9038fcac3932233a8c890642c001fcbba2da623cdb8",
       "models": ["formal/models/vetting/qualification_fixture.qnt"],
       "candidateLines": [
         43, 48, 157, 164, 177, 191, 197, 203, 213, 250, 254, 258, 259, 268, 277,
         282, 291, 295, 301, 306, 323, 359, 366, 374, 378, 382, 386, 390, 395,
         408, 417, 423, 429, 437, 439, 440, 448, 457, 466, 497, 502, 506, 516,
-        521, 549, 570, 576, 589, 592, 624
+        521, 548, 569, 575, 588, 591, 623
       ],
       "review": "mapped-abstraction"
     },

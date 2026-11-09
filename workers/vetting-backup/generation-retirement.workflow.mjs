@@ -68,11 +68,14 @@ try {
     ))
       await db.prepare(sql).run();
   }
+  let nextFixtureId = 0;
   const evidence = new VettingEvidence({
     db,
     bucket: source,
     now: () => new Date(),
-    randomId: () => crypto.randomUUID(),
+    // Keep original targets before the later injected-failure targets in key order.
+    randomId: () =>
+      `00000000-0000-4000-8000-${String(++nextFixtureId).padStart(12, "0")}`,
     signed: async (request) => ({
       body: new Uint8Array(await request.arrayBuffer()),
       keySha256: "a".repeat(64),

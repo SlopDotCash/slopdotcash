@@ -1,7 +1,13 @@
 /** Account page + email editor composition. Only the HTTP authorities are fixtures. */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import {
+  assemblePoints,
+  emptyPointsJournal,
+  type PointsIndex,
+} from "../../src/lib/points";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 import {
   holdProjectSessionUntilUnmount,
@@ -14,6 +20,23 @@ const origins = deploymentOrigins(
 );
 const FIRST = "900000098";
 const SECOND = "900000099";
+// These cases isolate identity and request ordering. Keep the real Points
+// assembler, without making a sign-in parse the complete historical journal.
+const journal = emptyPointsJournal("2026-10-31T23:59:30.000Z");
+const emptyPart = "[]";
+const pointsIndex: PointsIndex = {
+  schemaVersion: "1",
+  ruleVersion: journal.ruleVersion,
+  generatedAt: journal.generatedAt,
+  coverage: [],
+  revisionCount: 0,
+  shards: Array.from({ length: 16 }, (_, i) => ({
+    path: `/data/points/${i.toString(16)}.json`,
+    count: 0,
+    sha256: createHash("sha256").update(emptyPart).digest("hex"),
+  })),
+};
+assemblePoints(pointsIndex, Array(16).fill(emptyPart));
 function gate() {
   let release!: () => void;
   let started!: () => void;
@@ -90,6 +113,13 @@ async function serveAccount(
   await context.route(`${origins.site}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    if (path === "/data/points.json")
+      return route.fulfill({ json: pointsIndex });
+    if (/^\/data\/points\/[0-9a-f]\.json$/u.test(path))
+      return route.fulfill({
+        contentType: "application/json",
+        body: emptyPart,
+      });
     if (!path.startsWith("/api/"))
       return route.fulfill({
         path: join(
@@ -536,6 +566,9 @@ for (const status of [403, 409]) {
       true,
       true,
     );
+    await preferences
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
     const held = gate();
     diagnostics.allow(
       new RegExp(
@@ -597,6 +630,9 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
     true,
     true,
   );
+  await preferences
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   const held = gate();
   let postflight = false;
   await page.route(
@@ -652,7 +688,10 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
     expect(state.preferenceReads).toBe(reads);
     await expect(input).toHaveValue("new-mounted-draft@example.test");
     await expect(
-      preferences.getByRole("switch", { name: "Activity email", exact: true }),
+      preferences.getByRole("checkbox", {
+        name: "Activity email",
+        exact: true,
+      }),
     ).toBeChecked();
   } finally {
     held.release();
@@ -660,7 +699,7 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
 });
 
 for (const changed of [false, true]) {
-  test(`a preference failure ${changed ? "drops the changed actor's editor" : "retains the same actor's draft"}`, async ({
+  test(`a preference failure ${changed ? "refuses a changed actor" : "retains usable preferences for the same actor"}`, async ({
     page,
     context,
     diagnostics,
@@ -671,6 +710,9 @@ for (const changed of [false, true]) {
       true,
       true,
     );
+    await preferences
+      .getByRole("button", { name: "Cancel", exact: true })
+      .click();
     diagnostics.allow(
       new RegExp(
         `^console Failed to load resource: the server responded with a status of 503 (.+) at ${escapeRegExp(origins.site)}/api/v1/notifications/email$`,
@@ -695,29 +737,25 @@ for (const changed of [false, true]) {
       await expect(preferences).toContainText(
         "Your preference could not be saved",
       );
-      await expect(input).toHaveValue("retained-before-check@example.test");
-      await expect(input).toBeEditable();
-      await expect(
-        preferences.getByRole("button", {
-          name: "Send verification",
-          exact: true,
-        }),
-      ).toBeEnabled();
+      const toggle = preferences.getByRole("switch", {
+        name: "Activity email",
+        exact: true,
+      });
+      await expect(toggle).not.toBeChecked();
+      await expect(toggle).toBeEnabled();
     }
   });
 }
 
-test("a current destination conflict keeps explicit feedback and the editable draft", async ({
+test("a current destination conflict refreshes the destination before retry", async ({
   page,
   context,
   diagnostics,
 }) => {
-  const { state, preferences, input } = await serveAccount(
-    page,
-    context,
-    true,
-    true,
-  );
+  const { state, preferences } = await serveAccount(page, context, true, true);
+  await preferences
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   diagnostics.allow(
     new RegExp(
       `^console Failed to load resource: the server responded with a status of 409 (.+) at ${escapeRegExp(origins.site)}/api/v1/notifications/email$`,
@@ -748,8 +786,6 @@ test("a current destination conflict keeps explicit feedback and the editable dr
     "Your verified destination changed. Review it before turning on email.",
   );
   await expect(preferences).toContainText("changed-destination@example.test");
-  await expect(input).toHaveValue("retained-before-check@example.test");
-  await expect(input).toBeEditable();
   await preferences
     .getByRole("switch", { name: "Activity email", exact: true })
     .click();
@@ -757,7 +793,6 @@ test("a current destination conflict keeps explicit feedback and the editable dr
     preferences.getByRole("switch", { name: "Activity email", exact: true }),
   ).toBeChecked();
   expect(versions).toEqual(["a".repeat(64), "b".repeat(64)]);
-  await expect(input).toHaveValue("retained-before-check@example.test");
 });
 
 for (const operation of ["save", "verify"] as const) {

@@ -412,6 +412,9 @@ test("a newer case revision refreshes recovery before signing and retries with i
 }) => {
   const flow = await setup(page);
   await flow.connect();
+  await expect(
+    page.getByRole("button", { name: "Check expired payment", exact: true }),
+  ).toBeEnabled();
   flow.record.revision += 1;
   await flow.check();
   await expect(

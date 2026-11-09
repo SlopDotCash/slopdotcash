@@ -7,7 +7,7 @@ import { PROJECTS } from "../../src/lib/projects.mjs";
 import { archivedPaidCycleIndex } from "../fixtures";
 import { stagingPaymentProject } from "../staging-payment-fixture.mjs";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 import {
   holdProjectSessionUntilUnmount,
   leaveEditorWithHeldSession,
@@ -879,8 +879,16 @@ test("a same-actor allocation outage retains the unsaved draft", async ({
 
 test("a departed allocation save keeps server acceptance without changing the new route", async ({
   page,
+  diagnostics,
 }) => {
   const fixture = await ownedNovember(page);
+  // The destination's background snapshot can be replaced during navigation.
+  diagnostics.allow(
+    new RegExp(
+      `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(new URL(page.url()).origin)}/data/leaderboard\\.json(?:\\?[^ ]*)?$`,
+      "u",
+    ),
+  );
   let accepted = 0;
   let release = () => {},
     started = () => {},
