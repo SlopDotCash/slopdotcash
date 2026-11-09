@@ -260,7 +260,7 @@ export default function OwnerReserveRelease({
                         if (!save({ ...intent, hash: transactionId }, intent)) {
                           if (mounted.current)
                             setNotice(
-                              `Submitted: ${transactionId}. The saved request was cleared or replaced. Keep this identifier with your wallet activity.`,
+                              `Submitted ${transactionId}. Keep this ${family === "solana" ? "signature" : "hash"}; the saved request changed.`,
                             );
                           return;
                         }
@@ -269,7 +269,7 @@ export default function OwnerReserveRelease({
                           setPending({ ...intent, hash: transactionId });
                           setHash(transactionId);
                           setNotice(
-                            `Submitted: ${transactionId}. Browser storage could not save it. Keep this identifier with your wallet activity.`,
+                            `Submitted ${transactionId}. Keep this ${family === "solana" ? "signature" : "hash"}; browser storage could not save it.`,
                           );
                         }
                         return;

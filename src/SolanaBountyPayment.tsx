@@ -169,7 +169,7 @@ export function SolanaBountyPayment({
             ) {
               if (mounted.current)
                 setError(
-                  `Submitted ${signature}. The saved request was cleared or replaced. Keep this signature with your wallet activity.`,
+                  `Submitted ${signature}. Keep this signature; the saved request changed.`,
                 );
             }
           } catch {

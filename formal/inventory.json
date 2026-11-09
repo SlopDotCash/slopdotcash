@@ -4203,7 +4203,7 @@
     },
     {
       "path": "src/Admin.tsx",
-      "sha256": "426fe344e7e25ea28fa1226a056856fee14ad97d9682ed1565e393609c6541a5",
+      "sha256": "2bc76a4d3e7b66143d686fddfb05e0b1a7ef44b901866ffa125a2ca2e83ed8c0",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_review.qnt",
@@ -4245,7 +4245,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "f9544b0a06beec37cd62351fc290fddbce268582eae161dd802f94d7fd5b1b19",
+      "sha256": "1d28048858c817d8890120e273ea4456543f186cbd3d06726f8390bf7a15a0f4",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
@@ -4260,15 +4260,15 @@
         445, 446, 449, 472, 539, 570, 607, 647, 651, 653, 694, 751, 804, 935,
         936, 938, 1028, 1043, 1057, 1067, 1097, 1100, 1162, 1165, 1167, 1171,
         1172, 1180, 1199, 1203, 1211, 1212, 1219, 1223, 1258, 1302, 1305, 1322,
-        1323, 1366, 1368, 1388, 1390, 1445, 1446, 1449, 1450, 1453, 1454, 1469,
-        1473, 1478, 1480, 1484, 1485, 1536, 1568, 1570, 1595, 1596, 1613, 1614,
-        1622, 1623, 1634, 1637, 1648
+        1323, 1366, 1368, 1388, 1390, 1445, 1446, 1449, 1450, 1453, 1454, 1471,
+        1472, 1478, 1483, 1485, 1489, 1490, 1541, 1573, 1575, 1600, 1601, 1618,
+        1619, 1627, 1628, 1639, 1642, 1653
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/AutomaticMonthlyPayment.tsx",
-      "sha256": "6849f6196ec57497fbd277623b0e2d866319ca9ff25e113409de9541b03510c6",
+      "sha256": "c5c1b89d81aab94e982f22d5ec18feab138295b7094af4618402f55409b419ae",
       "models": [
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -4328,7 +4328,7 @@
     },
     {
       "path": "src/DirectBountyPayment.tsx",
-      "sha256": "439b05ef9d1c65aaa9b53e7d5a63315cbf9f61f162e4b84e89433bff03383a17",
+      "sha256": "22022aeb84ca6c0f71141943bd471fc027caf9326ea4c9d142028238e2200316",
       "models": [
         "formal/models/payments/direct_bounty_journal.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
@@ -4492,7 +4492,7 @@
     },
     {
       "path": "src/OwnerCommitment.tsx",
-      "sha256": "2fc80568429242d88bfca9dba950307b8f94113538a404f515b5976ce28c9721",
+      "sha256": "c84fe9f9d2aa1ae8d1eeeae3bd4992d29bc44cdb7d1119ea4638b8633685c7c7",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_tab_scope.qnt",
@@ -4519,7 +4519,7 @@
     },
     {
       "path": "src/OwnerReserveRelease.tsx",
-      "sha256": "0247dc886a687d9f2f0314a6528bcf2ab4e3a0a83a2e140ac28ac0dd6603ebac",
+      "sha256": "81bb42b08a5c61b8c4b49008e6a426a0c3a309769affa32d814928de3f1e8e53",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt"
@@ -4532,7 +4532,7 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "4ce387ec31a4ffe8933efd2ee1adbba318f948ac7b227ae5c95308baf19e38e6",
+      "sha256": "a9978d6ab54eeac54a0e2d49e811a29d917bc1042a82961c0c79028500bcc12d",
       "models": [
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
         "formal/models/ui/ui_transaction.qnt"
@@ -4774,11 +4774,10 @@
     },
     {
       "path": "src/ProjectWork.tsx",
-      "sha256": "9108c3b36f1dfc4146d19af94144cdc6be49df1accb265ae8d3143ee986f542f",
+      "sha256": "8188fb0aff8979d3aed236141d20101e9aff81730bb2e88c1a7495ec7c2cc433",
       "models": ["formal/models/ui/ui_project_work.qnt"],
       "candidateLines": [
-        9, 10, 13, 14, 16, 21, 23, 24, 29, 37, 39, 42, 43, 48, 49, 50, 53, 54,
-        59, 60, 62, 63
+        9, 10, 14, 15, 19, 24, 26, 27, 32, 41, 42, 43, 46, 47, 52
       ],
       "review": "mapped-abstraction"
     },
@@ -4876,7 +4875,7 @@
     },
     {
       "path": "src/SolanaBountyPayment.tsx",
-      "sha256": "3ba1517de8704199e8a98229b59616a0043acd40899daf8b0ea2d4a028c1c5ca",
+      "sha256": "8bc3adfa6e68d4113e4ed0b3fd4aa99e2e9adb5320f618a657e6993473142d55",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
@@ -4897,7 +4896,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "799ee3efee56b18183fec8344a1f1edd7813d2cef55880e5f32bf5870e2254ed",
+      "sha256": "78801f634ec77ffb8d9dbb3e9afa6acee8c95adb90ffa1805a06948b376eacdd",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",

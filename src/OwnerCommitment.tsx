@@ -206,13 +206,13 @@ export default function OwnerCommitment({
         try {
           if (!remember(submitted, intent) && mounted.current)
             setNotice(
-              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+              `Submitted ${hash}. Keep this hash; the saved request changed.`,
             );
         } catch {
           if (mounted.current) {
             setPending(submitted);
             setNotice(
-              `Submitted: ${hash}. Save this hash; browser storage could not save it.`,
+              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
             );
           }
         }

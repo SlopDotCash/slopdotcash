@@ -190,13 +190,13 @@ export function AutomaticMonthlyPayment({
         try {
           if (!remember(submitted, intent) && mounted.current)
             setNotice(
-              `Submitted: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+              `Submitted ${hash}. Keep this hash; the saved request changed.`,
             );
         } catch {
           if (mounted.current) {
             setPending(submitted);
             setNotice(
-              `Submitted: ${hash}. Keep this hash; browser storage could not save it.`,
+              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
             );
           }
         }
@@ -255,7 +255,7 @@ export function AutomaticMonthlyPayment({
           } catch {
             setPending(candidate);
             setNotice(
-              `This transaction could not be saved on this device. Keep its ${solana ? "signature" : "hash"}: ${hash}. Check it again before another action.`,
+              `Not saved on this device. Keep this ${solana ? "signature" : "hash"}: ${hash}.`,
             );
             return;
           }

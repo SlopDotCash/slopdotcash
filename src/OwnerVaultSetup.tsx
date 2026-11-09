@@ -344,7 +344,7 @@ export function OwnerVaultSetup({
           // open. Keep the newer record and show the hash for recovery.
           if (mounted.current)
             setNotice(
-              `Creation sent: ${hash}. The saved request was cleared or replaced. Keep this hash with your wallet activity.`,
+              `Creation sent: ${hash}. Keep this hash; the saved request changed.`,
             );
           return;
         }

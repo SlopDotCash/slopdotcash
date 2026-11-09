@@ -406,6 +406,7 @@
 }
 .project-work-list .muted {
   font-size: 0.8rem;
+  white-space: nowrap;
 }
 .project-work-list {
   margin: 0;
@@ -431,9 +432,6 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.project-work-list .muted {
-  white-space: nowrap;
 }
 .profile-page .profile-hero {
   margin-bottom: 1.75rem;

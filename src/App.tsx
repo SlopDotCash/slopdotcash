@@ -1466,7 +1466,12 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
-        <ProjectWork project={project} state={state} retry={retry} />
+        <ProjectWork
+          project={project}
+          state={state}
+          retry={retry}
+          notice={!view?.leaders.length}
+        />
         <ProjectFundsAndAwards
           key={`funding:${project.id}`}
           project={project}
