@@ -45,6 +45,10 @@ export async function sessionGithubActor(
     ? { githubId: member.github_id, githubLogin: member.login }
     : null;
 }
+// Only a successful sign-in writes this shared cookie. Revocation/closure and
+// expired-token reads rely on D1, not an expiry header that could arrive after
+// another tab has signed in and erase that newer session. The revoked token
+// may remain in the browser until its original expiry, but cannot authenticate.
 function sessionCookie(token: string, seconds: number) {
   return `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${seconds}; Secure; HttpOnly; SameSite=Strict`;
 }
@@ -276,8 +280,8 @@ export async function handlePointsApi(
         .first<Member>();
       if (!member)
         return route === "/me" && request.method === "GET"
-          ? json(200, null, sessionCookie("", 0))
-          : json(401, { error: "session_expired" }, sessionCookie("", 0));
+          ? json(200, null)
+          : json(401, { error: "session_expired" });
       if (route === "/me" && request.method === "GET")
         return json(200, publicMember(member));
       if (route === "/sessions" && request.method === "GET") {
@@ -300,11 +304,7 @@ export async function handlePointsApi(
           )
           .bind(member.actor_id, body.id)
           .run();
-        return json(
-          200,
-          { revoked: true },
-          body.id === hash.slice(0, 24) ? sessionCookie("", 0) : undefined,
-        );
+        return json(200, { revoked: true });
       }
       if (route === "/account/close" && request.method === "POST") {
         const body = await readJsonObject(request, 256, "account closure");
@@ -370,14 +370,14 @@ export async function handlePointsApi(
                 .first<{ closed_at: string | null }>()
             )?.closed_at ?? null;
         if (!closedAt) throw new Error("Account closure failed");
-        return json(200, { closed: true, closedAt }, sessionCookie("", 0));
+        return json(200, { closed: true, closedAt });
       }
       if (route === "/signout" && request.method === "POST") {
         await deps.db
           .prepare("DELETE FROM points_sessions WHERE token_hash=?")
           .bind(hash)
           .run();
-        return json(200, { signedOut: true }, sessionCookie("", 0));
+        return json(200, { signedOut: true });
       }
       if (route === "/visibility" && request.method === "POST") {
         const body = await readJsonObject(request, 256, "visibility");

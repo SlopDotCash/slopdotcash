@@ -1,11 +1,14 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath, type FileHandle } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   JOURNAL_PATH,
   JOURNAL_SCHEMA,
+  PUBLICATION_OUTCOMES,
   type PublicationIntent,
   type PublicationReceipt,
+  VETTING_DISPOSITIONS,
 } from "../../src/lib/vetting-contracts";
 import { serviceOrigin, signedServiceHeaders, type VettingServiceSigner } from "./service";
 
@@ -17,11 +20,85 @@ export interface PublicationJournal {
   complete(receipt: PublicationReceipt): Promise<void>;
 }
 
+function fileJournalId(id: string): string {
+  // One portable path component, including the historical readiness ids.
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/u.test(id) || id.endsWith("."))
+    throw new Error("The publication journal assessment id is invalid");
+  return id;
+}
+
+function captureFileIntent(intent: PublicationIntent): PublicationIntent {
+  const captured = { ...intent };
+  fileJournalId(captured.assessmentId);
+  if (typeof captured.resultSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(captured.resultSha256) ||
+    typeof captured.origin !== "string" || captured.origin.length === 0 || captured.origin.length > 200 ||
+    !(VETTING_DISPOSITIONS as readonly string[]).includes(captured.disposition))
+    throw new Error("The publication journal intent is invalid");
+  return captured;
+}
+
+async function withFile<T>(handle: FileHandle, use: (file: FileHandle) => Promise<T>): Promise<T> {
+  let failed = false;
+  try {
+    return await use(handle);
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try {
+      await handle.close();
+    } catch (error) {
+      if (!failed) throw error;
+    }
+  }
+}
+
+async function journalDirectory(path: string): Promise<void> {
+  const entry = await lstat(path);
+  if (!entry.isDirectory() || entry.isSymbolicLink())
+    throw new Error("The publication journal path is not a private directory");
+}
+
+async function syncJournalDirectory(path: string): Promise<void> {
+  // Directory fsync is required, not a best-effort optimization. Unsupported
+  // filesystems/platforms refuse publication instead of claiming durability.
+  await withFile(await open(path, constants.O_RDONLY | constants.O_NOFOLLOW), async (directory) => {
+    if (!(await directory.stat()).isDirectory())
+      throw new Error("The publication journal path is not a private directory");
+    await directory.sync();
+  });
+}
+
+async function syncJournalAncestors(path: string): Promise<void> {
+  // Another journal instance may have just created an apparently existing
+  // ancestor. Each successful caller flushes the entire path it relies on.
+  // Resolve system aliases such as macOS /var before opening each ancestor.
+  for (let current = await realpath(path); ; current = dirname(current)) {
+    await syncJournalDirectory(current);
+    if (current === dirname(current)) break;
+  }
+}
+
+async function writeJournalFile(path: string, body: string): Promise<void> {
+  await withFile(await open(path, "wx", 0o600), async (file) => {
+    await file.writeFile(body);
+    await file.sync();
+  });
+}
+
+/**
+ * The operator owns this private namespace, outside guest/shared mounts.
+ * External replacement/rename of a directory while a call runs is unsupported.
+ * Any existing assessment entry, including an orphan or symlink, blocks retry.
+ */
 export function filePublicationJournal(root: string): PublicationJournal {
+  const rootPath = resolve(root);
   return {
     async has(id) {
+      const directory = join(rootPath, fileJournalId(id));
       try {
-        await stat(join(root, id));
+        await journalDirectory(rootPath);
+        await lstat(directory);
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -29,20 +106,52 @@ export function filePublicationJournal(root: string): PublicationJournal {
       }
     },
     async reserve(intent) {
-      await mkdir(root, { recursive: true, mode: 0o700 });
-      const directory = join(root, intent.assessmentId);
+      const captured = captureFileIntent(intent);
+      const body = JSON.stringify(captured);
+      const directory = join(rootPath, captured.assessmentId);
+      await mkdir(rootPath, { recursive: true, mode: 0o700 });
+      await journalDirectory(rootPath);
+      await syncJournalAncestors(rootPath);
       await mkdir(directory, { mode: 0o700 });
-      await writeFile(join(directory, "intent.json"), JSON.stringify(intent), {
-        mode: 0o600,
-        flag: "wx",
-      });
+      await syncJournalDirectory(rootPath);
+      await writeJournalFile(join(directory, "intent.json"), body);
+      await syncJournalDirectory(directory);
     },
     async complete(receipt) {
-      await writeFile(
-        join(root, receipt.assessmentId, "receipt.json"),
-        JSON.stringify(receipt),
-        { mode: 0o600, flag: "wx" },
+      const captured = { ...receipt };
+      captureFileIntent(captured);
+      if (!(PUBLICATION_OUTCOMES as readonly string[]).includes(captured.outcome) ||
+        (captured.httpStatus !== null && (!Number.isSafeInteger(captured.httpStatus) ||
+          captured.httpStatus < 100 || captured.httpStatus > 599)))
+        throw new Error("The publication journal receipt is invalid");
+      const body = JSON.stringify(captured);
+      const directory = join(rootPath, captured.assessmentId);
+      await journalDirectory(rootPath);
+      await journalDirectory(directory);
+      const intentPath = join(directory, "intent.json");
+      const intentEntry = await lstat(intentPath);
+      if (!intentEntry.isFile() || intentEntry.isSymbolicLink())
+        throw new Error("The publication journal intent is not a file");
+      const retained = await withFile(
+        await open(intentPath, constants.O_RDWR | constants.O_NOFOLLOW),
+        async (file) => {
+          if (!(await file.stat()).isFile()) throw new Error("The publication journal intent is not a file");
+          const value: unknown = JSON.parse(await file.readFile("utf8"));
+          // A concurrent reserver may still be flushing this complete file.
+          // Completion also persists the retained intent it is binding to.
+          await file.sync();
+          return value;
+        },
       );
+      if (typeof retained !== "object" || retained === null ||
+        !("assessmentId" in retained) || retained.assessmentId !== captured.assessmentId ||
+        !("resultSha256" in retained) || retained.resultSha256 !== captured.resultSha256 ||
+        !("origin" in retained) || retained.origin !== captured.origin ||
+        !("disposition" in retained) || retained.disposition !== captured.disposition)
+        throw new Error("The publication journal receipt has no matching intent");
+      await syncJournalAncestors(rootPath);
+      await writeJournalFile(join(directory, "receipt.json"), body);
+      await syncJournalDirectory(directory);
     },
   };
 }

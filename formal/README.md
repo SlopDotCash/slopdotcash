@@ -1486,6 +1486,39 @@ tested or verified here:
   browser acceptance remain outstanding. This client guard does not order
   Set-Cookie headers or identify an unobserved same-actor login in another tab.
 
+
+- `ui_points_cookie_order` adds 27 scenarios for captured request tokens,
+  D1 revocation, shared cookie storage, header/body delivery and natural expiry.
+  `account_session_publication` now has 22 scenarios and preserves the new
+  cookie when an earlier closure reply arrives. Only successful points joins
+  write the points cookie; sign-out, revocation, closure and expired-session
+  responses no longer erase it. Twelve actual-handler/database cases are
+  unexecuted, and two existing revocation/closure assertions were updated while
+  retaining old-token rejection checks. [RFC 6265 section 4.1](https://httpwg.org/specs/rfc6265.html#rfc.section.4.1)
+  documents concurrent cookie replacement; the model keeps header delivery
+  separate from server state and browser body processing. A revoked retained
+  token gives no D1 authority. Concurrent successful joins, native browser
+  acceptance and the identity service's separate OAuth-state cookie remain open.
+- `vetting_file_journal` adds 30 scenarios for immutable input capture,
+  exclusive reservation, orphan markers, partial files, matched receipts and
+  synchronization failures. The file client now snapshots metadata, refuses
+  unsafe path components, retains existing markers including dangling symlinks,
+  checks the stored intent, and flushes files plus the directory hierarchy before
+  returning success. Physical ancestor resolution permits system path aliases;
+  symlinked journal/assessment leaves remain refused. Forty native-filesystem
+  regression cases are unexecuted. [Node's file synchronization contract](https://nodejs.org/api/fs.html#filehandlesync)
+  depends on the operating system and storage device; the finite crash model
+  assumes truthful successful synchronization in a private namespace without
+  concurrent external rename or replacement. It does not prove hardware durability.
+- `vetting_controller_pass` adds 21 scenarios for trusted preflight, signed
+  readiness, exact runner revision, sequential queue processing, journal
+  uncertainty and temporary-directory cleanup. The extracted bridge reader
+  bounds its small metadata reply and disposes refused response bodies while
+  preserving the original error. Nine regression definitions are unexecuted.
+  This is a health-record bound, not a repository, scan or evidence limit.
+  Real process execution, cleanup failures and deployed runner acceptance remain
+  unverified; removing scratch files never removes the service-backed journal.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

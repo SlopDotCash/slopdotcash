@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7592fa65cc4efd7c361d8d1ee2a75985a541e9d4b657b98efbf6a28e8aad8f33",
+  "inventorySha256": "d5c0afb532b694a9f53cea100e56355a69ad9e1e0ca8f14338b6e2d3886cfa46",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2279,6 +2279,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -2301,6 +2302,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -2323,6 +2325,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -3930,9 +3933,10 @@
       "values": ["accepted", "rejected", "unknown"],
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_controller_pass.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "lexicallyUnmentionedValues": ["accepted", "rejected", "unknown"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

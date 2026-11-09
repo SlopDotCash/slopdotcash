@@ -74,7 +74,7 @@ test("account sessions revoke only the authenticated actor and invalidate the re
     const ended = await call("sessions/revoke", tokens[0], {
       id: hashes[0].slice(0, 24),
     });
-    expect(ended.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(ended.headers.get("set-cookie")).toBeNull();
     expect((await call("sessions", tokens[0])).status).toBe(401);
   } finally {
     sqlite.close();

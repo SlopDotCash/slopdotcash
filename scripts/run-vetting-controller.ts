@@ -3,10 +3,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readControllerBridgeHealth } from "../workers/vetting/controller";
 import { servicePublicationJournal } from "../workers/vetting/publication-journal";
 import { runScanPass, serviceConfigFrom } from "../workers/vetting/run";
 import type { ScannerProfile } from "../workers/vetting/scanners";
-import { signedServiceHeaders } from "../workers/vetting/service";
 
 /** Fixed step names only: the failure report never carries an error message. */
 let stage = "checkout";
@@ -90,23 +90,7 @@ async function main() {
     await journal.has("controller-readiness");
     config.journal = journal;
     stage = "bridge";
-    const path = "/api/v1/vetting/sandbox";
-    const response = await fetch(`${origin}${path}`, {
-      redirect: "error",
-      signal: AbortSignal.timeout(30_000),
-      headers: await signedServiceHeaders({
-        signer: config.connection,
-        method: "GET",
-        pathAndQuery: path,
-        body: new Uint8Array(),
-      }),
-    });
-    if (!response.ok) throw new Error("Deployed scanner bridge is unavailable");
-    const health = (await response.json()) as {
-      ok?: boolean;
-      revision?: string;
-      imageSha256?: string;
-    };
+    const health = await readControllerBridgeHealth(config.connection);
     stage = "runner-revision";
     if (health.revision !== env.GITHUB_SHA) {
       // Commit IDs are public. Name both so the operator knows to wait for

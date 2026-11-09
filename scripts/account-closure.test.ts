@@ -132,7 +132,7 @@ test("closing an account ends every session, removes optional connections and ke
     });
     expect(closed.status).toBe(200);
     expect(closed.body).toEqual({ closed: true, closedAt: NOW });
-    expect(closed.cookie).toContain("Max-Age=0");
+    expect(closed.cookie).toBeNull();
     expect(snapshot()).toEqual(before);
     // A repeated attempt has no session left to act with.
     expect(

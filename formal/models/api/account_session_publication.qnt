@@ -18,8 +18,8 @@
 // while its immutable membership identity, claim and unrelated history remain.
 // Request admission, member lookup, atomic writes, result metadata, view read
 // and cookie delivery are separate. A delivered cookie can already be invalid;
-// a late successful closure response can clear a newer browser cookie without
-// deleting a session created by a subsequent explicit reopen.
+// closure replies retain the browser cookie, so a late reply cannot clear a
+// cookie created by a subsequent explicit reopen. Revoked tokens remain inert.
 // Closure is actor-bound at admission, not generation-bound: a second already
 // admitted closure can close a membership that reopened before its batch.
 // Legacy visibility admission can outlive its session: the closed-private SQL
@@ -35,10 +35,10 @@ module account_session_publication {
   val tokenIds = Set(0, 1, 2)
   type Join = {phase:str,node:int,login:int,reopen:bool,chosen:int,
     committed:bool,admitted:bool,snapshotVisible:bool,response:int,cookieDelivered:bool}
-  type Close = {phase:str,admitted:bool,changed:bool,response:int,cookieDelivered:bool}
+  type Close = {phase:str,admitted:bool,changed:bool,response:int,replyDelivered:bool,cookieMutation:bool}
   val noJoin = {phase:"unused",node:1,login:1,reopen:false,chosen:0,
     committed:false,admitted:false,snapshotVisible:false,response:0,cookieDelivered:false}
-  val noClose = {phase:"unused",admitted:false,changed:false,response:0,cookieDelivered:false}
+  val noClose = {phase:"unused",admitted:false,changed:false,response:0,replyDelivered:false,cookieMutation:false}
   var s:{configured:bool,present:bool,closed:bool,visible:bool,actor:int,firstActor:int,login:int,
     xLinked:bool,xPublic:bool,xReserved:bool,email:bool,pendingVerification:bool,
     history:int,sessions:Set[int],browserCookie:int,closedStamp:int,
@@ -113,18 +113,17 @@ module account_session_publication {
   action closeBatchReply(id:int,received:bool,countVisible:bool):bool={
     val request=s.closes.get(id)
     all{request.phase=="batch-reply",s'=s.with("closes",s.closes.set(id,request
-      .with("phase",if(not(received))"done" else if(request.changed and countVisible)"cookie" else "read")
+      .with("phase",if(not(received))"done" else if(request.changed and countVisible)"response" else "read")
       .with("response",if(received)0 else 503)))}
   }
   action closeRead(id:int):bool={
     val request=s.closes.get(id)
     all{request.phase=="read",s'=s.with("closes",s.closes.set(id,request
-      .with("phase",if(s.closed)"cookie" else "done").with("response",if(s.closed)0 else 503)))}
+      .with("phase",if(s.closed)"response" else "done").with("response",if(s.closed)0 else 503)))}
   }
   action closeResponse(id:int,delivered:bool):bool={
     val request=s.closes.get(id)
-    all{request.phase=="cookie",s'=s.with("closes",s.closes.set(id,request.with("phase","done").with("response",200).with("cookieDelivered",delivered)))
-      .with("browserCookie",if(delivered)-1 else s.browserCookie)}
+    all{request.phase=="response",s'=s.with("closes",s.closes.set(id,request.with("phase","done").with("response",200).with("replyDelivered",delivered)))}
   }
   action closeFailure(id:int):bool={
     val request=s.closes.get(id)
@@ -159,7 +158,8 @@ module account_session_publication {
     s.xPublic implies s.xLinked and s.visible and s.xReserved,
     s.visible implies s.present and not(s.closed),
     ids.forall(id=>s.joins.get(id).response==200 implies s.joins.get(id).committed),
-    ids.forall(id=>s.closes.get(id).phase!="unused" implies s.closes.get(id).admitted)}
+    ids.forall(id=>s.closes.get(id).phase!="unused" implies s.closes.get(id).admitted),
+    ids.forall(id=>not(s.closes.get(id).cookieMutation))}
   run historicalPrivateReadDoesNotPublishTest=init.then(seed("private")).then(observePublic)
     .expect(not(s.publicObserved) and not(s.visible) and not(s.xPublic) and invariant)
   run signInPublishesExistingMembershipAndLinkTest=init.then(seed("private")).then(joined(1,2,false))
@@ -186,9 +186,9 @@ module account_session_publication {
   run closeAfterJoinViewDoesNotRewriteSnapshotTest=init.then(seed("private")).then(preparedJoin(1,2,false)).then(joinBatch(1)).then(joinBatchReply(1,true,true))
     .then(joinView(1)).then(closed(1,0)).then(joinResponse(1,true))
     .expect(s.closed and s.joins.get(1).snapshotVisible and s.browserCookie==1 and s.sessions==Set() and invariant)
-  run lateClosureCookieCanClearReopenedBrowserCookieTest=init.then(seed("public")).then(preparedClose(1,0)).then(closeBatch(1))
+  run lateClosureReplyPreservesReopenedBrowserCookieTest=init.then(seed("public")).then(preparedClose(1,0)).then(closeBatch(1))
     .then(closeBatchReply(1,true,true)).then(joined(1,2,true)).then(closeResponse(1,true))
-    .expect(not(s.closed) and s.browserCookie == -1 and s.sessions==Set(1) and invariant)
+    .expect(not(s.closed) and s.browserCookie == 1 and s.sessions==Set(1) and invariant)
   run concurrentFirstNodeSpellingsFailClosedTest=init.then(seed("absent")).then(preparedJoin(1,1,false)).then(preparedJoin(2,2,false))
     .then(joinBatch(1)).then(joinBatch(2)).expect(s.actor==1 and s.sessions==Set(1) and s.joins.get(2).response==503 and invariant)
   run concurrentSameActorJoinsKeepBothSessionsTest=init.then(seed("absent")).then(preparedJoin(1,1,false)).then(preparedJoin(2,1,false))
@@ -210,4 +210,16 @@ module account_session_publication {
     .then(closeBatch(1)).then(closeBatchReply(1,true,true)).then(closeResponse(1,true)).then(joined(1,2,true))
     .then(closeBatch(2)).then(closeBatchReply(2,true,true)).then(closeResponse(2,true))
     .expect(s.closed and s.sessions==Set() and not(s.xLinked) and invariant)
+
+  // Excluded pre-fix behavior: a response's fixed-name expiry affected the
+  // current jar even when that cookie came from a newer explicit reopen.
+  action oldCloseResponse(id:int):bool={
+    val request=s.closes.get(id)
+    all{request.phase=="response",s'=s.with("browserCookie",-1)
+      .with("closes",s.closes.set(id,request.with("phase","done").with("response",200)
+        .with("replyDelivered",true).with("cookieMutation",true)))}
+  }
+  run oldLateClosureExpiryErasedReopenedCookieTest=init.then(seed("public")).then(preparedClose(1,0)).then(closeBatch(1))
+    .then(closeBatchReply(1,true,true)).then(joined(1,2,true)).then(oldCloseResponse(1))
+    .expect(not(s.closed) and s.sessions==Set(1) and s.browserCookie == -1 and not(invariant))
 }

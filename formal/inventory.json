@@ -528,7 +528,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
+      "sha256": "4638d3a7300bc6d33cc1bf8f0e7bab3a4cf8b4dc0217d8c9c97e8c9ec08bfa02",
       "models": [
         "formal/models/api/account_session_publication.qnt",
         "formal/models/api/api_accounts.qnt",
@@ -536,10 +536,11 @@
         "formal/models/api/points_dispute_receipts.qnt",
         "formal/models/points/pr_review_identities.qnt",
         "formal/models/slopbot/bot_closure_membership.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        21, 22, 115, 215, 220, 225, 229, 299, 327, 331, 334, 337, 340, 345, 350,
+        21, 22, 119, 219, 224, 229, 233, 303, 327, 331, 334, 337, 340, 345, 350,
         354, 377, 393
       ],
       "review": "mapped-abstraction"
@@ -4433,9 +4434,12 @@
     },
     {
       "path": "scripts/run-vetting-controller.ts",
-      "sha256": "3547befb770d5a369d8858c2397e8d1d8a21d3655b6c75a41e0f62f5198019ee",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [3, 53, 134, 135],
+      "sha256": "1530fe8eb6cc6bc71472892352b190fadc26920e7ab705d762316a41963eb88d",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/vetting/vetting_controller_pass.qnt"
+      ],
+      "candidateLines": [3, 53, 118, 119],
       "review": "mapped-abstraction"
     },
     {
@@ -5190,6 +5194,7 @@
         "formal/models/ui/ui_explicit_signout.qnt",
         "formal/models/ui/ui_identity_poll_protocol.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
@@ -6228,6 +6233,7 @@
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_payout_consent_lifetime.qnt",
         "formal/models/ui/ui_pending_applications.qnt",
+        "formal/models/ui/ui_points_cookie_order.qnt",
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
@@ -8911,6 +8917,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/vetting/controller.ts",
+      "sha256": "b327bea4a9fb5737220fc2065fe9c872a73254daa7ab7fce7b9eb9be34366515",
+      "models": ["formal/models/vetting/vetting_controller_pass.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/vetting/filesystem-capture.ts",
       "sha256": "69b29c082cfa200b3dca73bc7c58860ab18bb59ab091b83a906444316626aa50",
       "models": ["formal/models/vetting/vetting_execution_provenance.qnt"],
@@ -8940,12 +8953,13 @@
     },
     {
       "path": "workers/vetting/publication-journal.ts",
-      "sha256": "7718b93743769ccbbac36685681a44df4e9ea3dbc41af517ea5f0c33046d9963",
+      "sha256": "84af5916c6bf89ca5fbe4a3b7ae572c3b32da6927ecbdd4038e747c0a32bbff6",
       "models": [
+        "formal/models/vetting/vetting_file_journal.qnt",
         "formal/models/vetting/vetting_journal_client.qnt",
         "formal/models/vetting/vetting_publication.qnt"
       ],
-      "candidateLines": [1, 35, 41, 56, 99],
+      "candidateLines": [84, 91, 92, 165, 208],
       "review": "mapped-abstraction"
     },
     {
@@ -8989,6 +9003,7 @@
       "sha256": "92b7a4e292731d5a69ce7e8ea0029d67c8ba37ad1fc17b5428f404b8090b8491",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_controller_pass.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
@@ -9059,7 +9074,7 @@
   "models": [
     {
       "path": "formal/models/api/account_session_publication.qnt",
-      "sha256": "e536893a0333aac9fdb58fc87fadaf1e4e98a912855cdfee6626ffd974be9567",
+      "sha256": "84564bb57c08b33a5aeb13226b31fc22a634862d6db16472c27c0181b0114293",
       "sources": [
         "backend/points/handler.ts",
         "migrations/0008_points.sql",
@@ -9082,11 +9097,12 @@
         "failedClosureBatchLeavesAccountStateTest",
         "failedJoinBatchLeavesPrivateStateTest",
         "historicalPrivateReadDoesNotPublishTest",
-        "lateClosureCookieCanClearReopenedBrowserCookieTest",
+        "lateClosureReplyPreservesReopenedBrowserCookieTest",
         "laterSessionExpiryDoesNotEraseMembershipTest",
         "lostClosureBatchReplyKeepsAccountClosedTest",
         "lostJoinBatchReplyKeepsUndisclosedSessionTest",
         "memberReadFailureDoesNotUndoPublicationTest",
+        "oldLateClosureExpiryErasedReopenedCookieTest",
         "ordinarySignInCannotReopenTest",
         "repeatedAdmittedClosuresReportSameClosureTest",
         "signInPublishesExistingMembershipAndLinkTest"
@@ -18484,6 +18500,44 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_points_cookie_order.qnt",
+      "sha256": "9dcd0c4735757484d4a41d0fb12cc32302aa79b05dec8e69c48829cffd09bb8f",
+      "sources": [
+        "backend/points/handler.ts",
+        "src/Points.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "cannotRevokeAnotherActorTokenTest",
+        "capturedOldTokenDoesNotRevokeNewTokenTest",
+        "closureBeforeOrdinaryJoinStillRefusesTest",
+        "closureRetainsInertCookieTest",
+        "delayedBodyCannotChangeAlreadyInstalledCookieTest",
+        "delayedExpiredReadHeadersPreserveNewJoinTest",
+        "delayedInvalidWriteHeadersPreserveNewJoinTest",
+        "delayedSignoutHeadersPreserveNewJoinTest",
+        "expiredWriteRefusesWithoutCookieMutationTest",
+        "expiryKeepsInertCookieTest",
+        "failedRequestDoesNotRotateCookieTest",
+        "joinReplacesRevokedTokenTest",
+        "lostRevocationReplyDoesNotRestoreAuthorityTest",
+        "missingCookieReadRemainsAnonymousTest",
+        "naturalExpiryRemovesRetainedTokenTest",
+        "oldClosureHeadersErasedExplicitReopenTest",
+        "oldClosureReplyPreservesAnotherActorJoinTest",
+        "oldClosureReplyPreservesExplicitReopenTest",
+        "oldExpiredReadHeadersErasedNewJoinTest",
+        "oldSelfRevocationReplyPreservesReplacementTest",
+        "oldSignoutHeadersErasedNewJoinTest",
+        "otherTabSignoutPreservesNewJoinTest",
+        "revokedCookieNeverRevivesOnRepeatedReadTest",
+        "sameActorNewTokenSurvivesOldSignoutTest",
+        "selfRevocationRetainsInertCookieTest",
+        "signoutRevokesCapturedTokenWithoutCookieMutationTest",
+        "validCookieAuthenticatesTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_points_disputes.qnt",
       "sha256": "6398e3cf6298146340b47ae0ba3d414ca8456cc54532c51d002f6a45eb7b5b55",
       "sources": [
@@ -20110,6 +20164,38 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_controller_pass.qnt",
+      "sha256": "940a7ec8ac3b56cbe861c14e76d4b4b6ddc325a95dc618f21af45c645e928766",
+      "sources": [
+        "scripts/run-vetting-controller.ts",
+        "workers/vetting/controller.ts",
+        "workers/vetting/run.ts"
+      ],
+      "scenarios": [
+        "acceptedQueueReportsSuccessOnlyAfterBothItemsTest",
+        "acquisitionRefusalPublishesWithoutOwningDirectoryTest",
+        "cleanupFailureCannotEraseJournalOrReportSuccessTest",
+        "competingReservationStopsThisPublicationTest",
+        "emptyRefreshedQueueSucceedsTest",
+        "failedCompletionAbortsBeforeSecondAssessmentTest",
+        "failedRefreshDoesNotBecomeSuccessFromEmptyQueueTest",
+        "failedSigningOrTransportHasNoResponseBodyTest",
+        "invalidRatesStopBeforeScratchOrServiceTest",
+        "journalProbeFailureCleansScratchTest",
+        "journaledItemsNeverAcquireOrPostTest",
+        "lostCommittedResultRemainsJournaledAfterScratchRemovalTest",
+        "lostReservationResponsePreservesNoSecondPostTest",
+        "malformedHealthCannotReachScanTest",
+        "mismatchedRunnerCannotReachScanTest",
+        "parentCleanupCoversFailedAssessmentCleanupTest",
+        "refusedBridgeAttemptsBodyCancellationTest",
+        "rejectedItemMakesOtherwiseAcceptedPassFailTest",
+        "retryableScanDoesNotReserveTest",
+        "unreadableJournalStopsBeforeAcquisitionTest",
+        "wrongCheckoutStopsBeforeScratchOrServiceTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_disposition.qnt",
       "sha256": "85d28b7c77ef8181d71dab466c72c500ae8e71f31af0a719cf42ef677c75c5a3",
       "sources": [
@@ -20316,6 +20402,43 @@
         "firstFailureUsesBatchOrderTest",
         "inFlightPassIsRetainedAfterPeerFailsTest",
         "synthesisFailureRetainsAllPassesTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_file_journal.qnt",
+      "sha256": "cf17333c8fe55967bed02859d4e16c7baebcac75507d3a2ba8f4bcf186638d18",
+      "sources": ["workers/vetting/publication-journal.ts"],
+      "scenarios": [
+        "closeFailureCannotConfirmReservationTest",
+        "closeFailurePreservesEarlierWriteFailureTest",
+        "competingDirectoryCreationHasOneWinnerTest",
+        "completeSyncsInFlightFullIntentTest",
+        "completedReceiptSurvivesCrashTest",
+        "completionAncestorSyncFailureCannotWriteReceiptTest",
+        "concurrentRootObserverAlsoFlushesAncestorsTest",
+        "crashAfterMarkerFlushKeepsRetryBlockedTest",
+        "crashBeforeFileDirectoryFlushKeepsMarkerTest",
+        "danglingSymlinkBlocksRetryTest",
+        "duplicateReceiptPreservesFirstTest",
+        "entrySyncFailureCannotConfirmReservationTest",
+        "fileOpenFailureRetainsMarkerTest",
+        "independentAssessmentsRemainIndependentTest",
+        "invalidIdPreventsAllIoTest",
+        "invalidRootRefusesTest",
+        "markerSyncFailureRetainsOrphanTest",
+        "mismatchedCompletionStillSyncsReadableIntentTest",
+        "mismatchedReceiptCannotWriteTest",
+        "missingIntentCannotReceiveReceiptTest",
+        "newRootRequiresAncestorFlushTest",
+        "orphanDirectoryBlocksRetryTest",
+        "orphanFileBlocksRetryTest",
+        "partialIntentCannotReceiveReceiptTest",
+        "partialWriteFailureRetainsMarkerTest",
+        "rootSyncFailureDoesNotReserveTest",
+        "snapshotSurvivesCallerMutationTest",
+        "successfulReservationSurvivesCrashTest",
+        "symlinkCannotReceiveReceiptTest",
+        "syncFailureClosesHandleAndRetainsMarkerTest"
       ]
     },
     {
