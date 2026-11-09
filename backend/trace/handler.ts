@@ -52,7 +52,7 @@ import {
   isExactModelIdentifier,
   isExactProviderIdentifier,
   normalizedContentType,
-  readJsonObject,
+  readStrictJsonObject,
   readTraceBody,
   validEventKind,
   validGitSha,
@@ -338,7 +338,7 @@ async function createContributorWalletClaim(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertWriter(actor);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const chain = body.chain === undefined ? "solana" : body.chain;
   if (!isWalletChain(chain)) {
     fail(400, "invalid_request", "Invalid wallet chain");
@@ -535,7 +535,7 @@ async function createWalletPossessionAttestation(
   if (existing !== null) {
     return json(200, publicWalletPossession(claim.walletAddress, existing));
   }
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const submitted = body.challenge;
   if (
     typeof submitted !== "object" ||
@@ -669,7 +669,7 @@ async function createFallbackWalletClaim(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertOperator(actor);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const githubId = body.githubActorId;
   const githubLogin = body.githubLogin;
   const walletAddress = body.address;
@@ -823,7 +823,7 @@ async function createRun(
 ): Promise<Response> {
   assertWriter(actor);
   await assertParticipationAllowed(actor, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const now = deps.now().toISOString();
   const result = await deps.persistence.createRun({
     id: deps.randomId(),
@@ -894,7 +894,7 @@ async function createTraceIntent(
   if (run.state === "finalized") {
     fail(409, "run_finalized", "A finalized run cannot be changed");
   }
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const sha256 = requiredString(body, "sha256", validSha256);
   if (run.traceSha256 !== null && run.traceSha256 !== sha256) {
     fail(409, "trace_conflict", "The run already has a different trace");
@@ -1119,7 +1119,7 @@ async function appendEvent(
   await assertParticipationAllowed(actor, deps);
   const run = await ensureOwner(deps.persistence, actor, runId);
   if (run.state === "finalized") fail(409, "run_finalized", "Run is finalized");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const kind = body.kind;
   if (!validEventKind(kind)) fail(400, "invalid_request", "Invalid event kind");
   const occurredAt = requiredString(body, "occurredAt", validIsoTimestamp);
@@ -1171,7 +1171,7 @@ async function reconcileWalletBinding(
   deps: TraceApiDependencies,
 ): Promise<Response> {
   assertOperator(actor);
-  const { scope, reason, ...input } = await readJsonObject(request);
+  const { scope, reason, ...input } = await readStrictJsonObject(request);
   if (
     (scope !== "ordinary" && scope !== "security-bounty") ||
     !isBindingRecoveryInput(input) ||

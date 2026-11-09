@@ -47,7 +47,7 @@ import {
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
-import { readJsonObject } from "../trace/validation";
+import { readStrictJsonObject } from "../trace/validation";
 import type {
   FlaggerStanding,
   FlaggerStandingReader,
@@ -545,7 +545,7 @@ async function file(
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
   await deps.flags.assertCanFile(actor.githubId);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body);
   if (
     keys.some((key) => !["category", "evidence", "evidenceUrl"].includes(key))
@@ -626,7 +626,7 @@ async function withdraw(
   projectId: string,
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   if (Object.keys(body).length !== 0)
     fail(400, "invalid_request", "Send an empty JSON object");
   const project = await readProject(deps, projectId);

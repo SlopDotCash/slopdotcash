@@ -49,7 +49,7 @@ import {
 } from "../projects/enforcement";
 import type { RepositoryAccessReader } from "../projects/setup";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import { readJsonObject } from "../trace/validation";
+import { readStrictJsonObject } from "../trace/validation";
 import type { AdvisoryReader, GithubPrivateReport } from "./advisories";
 import {
   ANALYSIS_TIMEOUT_MS,
@@ -2050,7 +2050,7 @@ async function createCase(
   deps: SecurityApiDependencies,
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const mode = choice(body, "mode", ["claim", "record"] as const);
   if (mode === "claim")
     exactKeys(body, ["mode", "projectId", "advisory", "idempotencyKey"]);
@@ -2233,7 +2233,7 @@ async function importReports(
   deps: SecurityApiDependencies,
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["mode", "projectId"]);
   if (body.mode !== "import") fail(400, "invalid_request", "Invalid mode");
   const projectId = stringField(body, "projectId", PROJECT_ID);
@@ -3840,7 +3840,7 @@ async function actOnCase(
   caseId: string,
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const row = await loadCase(deps, caseId);
   if (row === null) notFound();
   const program = await currentReportingProject(deps, row.project_id);
@@ -4114,7 +4114,7 @@ async function acknowledgeNotice(
     deps.repositoryAccess,
   );
   if (!access.allowed) notFound();
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["eventKey"]);
   if (typeof body.eventKey !== "string")
     fail(400, "invalid_request", "An inbox event key is required");
@@ -4181,7 +4181,7 @@ export async function handleSecurityApi(
       if (request.method === "GET" && parts.length === 1)
         return await listCases(request, deps);
       if (request.method === "POST" && parts.length === 1) {
-        const body = await readJsonObject(request.clone());
+        const body = await readStrictJsonObject(request.clone());
         return body.mode === "import"
           ? await importReports(request, deps)
           : await createCase(request, deps);

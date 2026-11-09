@@ -15,12 +15,17 @@
  * public submission.
  */
 
-import { readBoundedJson } from "../../src/lib/browser-json";
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor as Actor } from "../../src/lib/project-contracts";
 import type { D1QueryStatement as D1Statement } from "../d1";
 import { GHSA } from "../github";
-import { exactKeys, fail, PROJECT_ID, requireActor } from "../http";
+import {
+  exactKeys,
+  fail,
+  PROJECT_ID,
+  requireActor,
+  requireJsonObject,
+} from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import {
   hasParticipationBan,
@@ -390,16 +395,52 @@ function expectedRevision(body: Record<string, unknown>): number {
   return body.expectedRevision;
 }
 
-async function readBody(request: Request): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = await readBoundedJson(request, MAX_SEND_BYTES, "Report request");
-  } catch {
-    fail(400, "invalid_request", "Request body must be a JSON object");
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    fail(400, "invalid_request", "Request body must be a JSON object");
-  return value as Record<string, unknown>;
+function readBody(request: Request): Promise<Record<string, unknown>> {
+  return requireJsonObject(request, MAX_SEND_BYTES, "Report request");
+}
+
+/** The caller's own submission, at exactly the revision the request names. */
+async function ownSubmissionAtRevision(
+  request: Request,
+  deps: SecurityApiDependencies,
+  id: string,
+): Promise<{ actor: Actor; loaded: SubmissionRow }> {
+  const actor = await requireActor(request, deps);
+  const loaded = await ownSubmission(deps, id, actor);
+  const body = await readBody(request);
+  exactKeys(body, ["expectedRevision"]);
+  const expected = expectedRevision(body);
+  if (expected !== loaded.revision)
+    fail(409, "stale_revision", "The submission changed since you loaded it");
+  return { actor, loaded };
+}
+
+/**
+ * A lost race for one advisory: answer with a concurrent winner's outcome for
+ * this submission, otherwise fail it as already recorded without revealing
+ * the other case.
+ */
+async function failAlreadyRecorded(
+  deps: SecurityApiDependencies,
+  row: SubmissionRow,
+): Promise<{ status: number; row: SubmissionRow }> {
+  const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
+  if (current.state === "receipt-verified")
+    return { status: 200, row: current };
+  if (current.revision !== row.revision || current.state !== row.state)
+    fail(409, "stale_revision", "The submission changed since you loaded it");
+  await transition(deps, current, {
+    state: "failed",
+    set: { failure_code: "already-recorded" },
+    kind: "verify-failed",
+    detail: { code: "already-recorded" },
+    actorGithubId: null,
+  });
+  fail(
+    409,
+    "advisory_already_recorded",
+    "This advisory already has a verified case",
+  );
 }
 
 async function programTerms(
@@ -777,23 +818,7 @@ async function writeVerifiedCase(
       actorGithubId: row.reporter_github_id,
     });
     if (linked !== null) return { status: 200, row: linked };
-    const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
-    if (current.state === "receipt-verified")
-      return { status: 200, row: current };
-    if (current.revision !== row.revision || current.state !== row.state)
-      fail(409, "stale_revision", "The submission changed since you loaded it");
-    await transition(deps, current, {
-      state: "failed",
-      set: { failure_code: "already-recorded" },
-      kind: "verify-failed",
-      detail: { code: "already-recorded" },
-      actorGithubId: null,
-    });
-    fail(
-      409,
-      "advisory_already_recorded",
-      "This advisory already has a verified case",
-    );
+    return failAlreadyRecorded(deps, row);
   }
   const receivedAt = facts.createdAt;
   // Analysis runs in memory on the content GitHub returned; only enums leave.
@@ -922,26 +947,9 @@ async function writeVerifiedCase(
   } catch (error) {
     if (!/UNIQUE/iu.test(error instanceof Error ? error.message : ""))
       throw error;
-    const current = (await loadSubmission(deps, row.id)) as SubmissionRow;
     // A concurrent request for this same submission won: its event took the
     // next revision. Answer with its outcome, never with already-recorded.
-    if (current.state === "receipt-verified")
-      return { status: 200, row: current };
-    if (current.revision !== row.revision || current.state !== row.state)
-      fail(409, "stale_revision", "The submission changed since you loaded it");
-    // Another case already holds this advisory. It is not revealed here.
-    await transition(deps, current, {
-      state: "failed",
-      set: { failure_code: "already-recorded" },
-      kind: "verify-failed",
-      detail: { code: "already-recorded" },
-      actorGithubId: null,
-    });
-    fail(
-      409,
-      "advisory_already_recorded",
-      "This advisory already has a verified case",
-    );
+    return failAlreadyRecorded(deps, row);
   }
   const updated = (await loadSubmission(deps, row.id)) as SubmissionRow;
   // Another request may have verified the same receipt first.
@@ -1225,13 +1233,7 @@ async function reconcileSubmission(
   intake: IntakeConfig,
   id: string,
 ): Promise<Response> {
-  const actor = await requireActor(request, deps);
-  const loaded = await ownSubmission(deps, id, actor);
-  const body = await readBody(request);
-  exactKeys(body, ["expectedRevision"]);
-  const expected = expectedRevision(body);
-  if (expected !== loaded.revision)
-    fail(409, "stale_revision", "The submission changed since you loaded it");
+  const { actor, loaded } = await ownSubmissionAtRevision(request, deps, id);
   let row = await settle(deps, loaded);
   if (row.state === "submitting")
     fail(409, "submission_in_progress", "This submission is being sent");
@@ -1313,13 +1315,7 @@ async function verifyDirect(
   intake: IntakeConfig,
   id: string,
 ): Promise<Response> {
-  const actor = await requireActor(request, deps);
-  const loaded = await ownSubmission(deps, id, actor);
-  const body = await readBody(request);
-  exactKeys(body, ["expectedRevision"]);
-  const expected = expectedRevision(body);
-  if (expected !== loaded.revision)
-    fail(409, "stale_revision", "The submission changed since you loaded it");
+  const { actor, loaded } = await ownSubmissionAtRevision(request, deps, id);
   const row = await settle(deps, loaded);
   if (row.origin !== "direct" || row.state !== "draft")
     fail(409, "action_not_allowed", "This submission cannot be verified now");

@@ -51,7 +51,11 @@ import {
   type ScanRequester,
   setupAuthority,
 } from "../projects/setup";
-import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
+import {
+  isRecord,
+  readLimitedBody,
+  readStrictJsonObject,
+} from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
 import type { ProjectFlagStore } from "./flags";
 import {
@@ -338,7 +342,7 @@ async function grantExemption(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, [
     "projectId",
     "revision",
@@ -487,7 +491,7 @@ async function revokeExemption(
   id: string,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["reason", "decisionReference", "confirmation"]);
   const reason = exemptionReason(body);
   if (!/^vex_[A-Za-z0-9_-]{4,76}$/u.test(id))
@@ -513,7 +517,7 @@ async function requestAssessment(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body).sort().join(",");
   if (keys !== "projectId,reason,revision")
     fail(400, "invalid_request", "Send projectId, revision and reason");

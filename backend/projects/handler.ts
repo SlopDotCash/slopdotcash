@@ -57,7 +57,7 @@ import {
 } from "../http";
 import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
-import { readJsonObject } from "../trace/validation";
+import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
   PROJECT_API_CONTRACT_VERSION,
@@ -1217,7 +1217,7 @@ async function createProject(
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["manifest"], ["referrer", "monthlyAmount", "bountyAmount"]);
   const { manifest, text } = canonicalManifest(
     await verifiedBountyAmount(
@@ -1384,7 +1384,7 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     ["step", "expectedRevision", "network", "claimId", "automatic"],
@@ -1566,7 +1566,7 @@ async function publishOwnerRevision(
 ): Promise<Response> {
   const actor = stored?.actor ?? actorOf(await requireSession(request, deps));
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = stored?.body ?? (await readJsonObject(request));
+  const body = stored?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
     ["manifest", "expectedRevision"],
@@ -1812,7 +1812,7 @@ async function checkSetup(
 ): Promise<Response> {
   const session = await requireSession(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, [], ["requestScan"]);
   if (body.requestScan !== undefined && typeof body.requestScan !== "boolean")
     fail(400, "invalid_request", "Invalid requestScan");
@@ -1840,7 +1840,7 @@ async function publishPendingApplication(
   const session = await requireSession(request, deps);
   if (!APPLICATION_ID.test(applicationId))
     fail(404, "not_found", "Application not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, []);
   const application = await deps.persistence.getApplication(applicationId);
   if (
@@ -1961,7 +1961,7 @@ async function replaceProjectManifest(
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["manifest", "expectedRevision", "reason"], ["bountyAmount"]);
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -2260,7 +2260,7 @@ async function enforceProject(
 ): Promise<Response> {
   const session = await requireModerator(request, deps);
   if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     [
@@ -2383,7 +2383,7 @@ async function requestReinstatement(
   deps: ProjectApiDependencies,
 ): Promise<Response> {
   const session = await requireSession(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(
     body,
     ["projectId", "reason", "evidenceReference"],
