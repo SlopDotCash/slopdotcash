@@ -1508,7 +1508,16 @@ function DirectVerifyForm({
   const privateRequest = usePrivateRequest();
   const [projectId, setProjectId] = useState(programProjects[0]?.id ?? "");
   const [advisory, setAdvisory] = useState("");
-  const [key] = useState(requestKey);
+  // The enclosing SecurityInboxContent is keyed by the authenticated actor.
+  // Keep retries of each immutable create payload together within that lifetime.
+  const requestKeys = useRef(new Map<string, string>());
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const { busy, error, run } = useAction();
   if (programProjects.length === 0)
     return (
@@ -1516,20 +1525,28 @@ function DirectVerifyForm({
     );
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const isCurrent = () => mounted.current;
+    if (!isCurrent()) return;
+    const intent = { projectId, advisory: advisory.trim() };
+    const fingerprint = JSON.stringify(intent);
+    const key = requestKeys.current.get(fingerprint) ?? requestKey();
+    requestKeys.current.set(fingerprint, key);
     void run(async () => {
       try {
         const body = await privateRequest<{
           submission: Submission;
           authorizeUrl: string;
-        }>("POST", "security-submissions", {
-          projectId,
-          advisory: advisory.trim(),
-          idempotencyKey: key,
-          origin: "direct",
-        });
+        }>(
+          "POST",
+          "security-submissions",
+          { ...intent, idempotencyKey: key, origin: "direct" },
+          { isCurrent },
+        );
+        if (!isCurrent()) return;
         window.location.assign(body.authorizeUrl);
         return "navigating";
       } catch (caught) {
+        if (!isCurrent()) return;
         if (
           caught instanceof ProjectApiError &&
           caught.code === "intake_unavailable"

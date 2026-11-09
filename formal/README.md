@@ -1575,6 +1575,41 @@ tested or verified here:
   are unexecuted. Private Slop intake remains independent of the optional GitHub
   handoff's freshness; browser behavior and before/after video remain open.
 
+- `private_intake_watch` adds 25 scenarios for main-branch dispatch, transport
+  refusal, response validation and the read-only health decision. The watch now
+  requires the public source identifier, canonical UTC timestamps and the
+  reader's five-minute future tolerance. Its existing three-hour stale alert
+  remains distinct from the runtime's 24-hour intake gate. Ten regression
+  definitions execute the actual workflow decoder when run; they are currently
+  unexecuted and do not exercise curl or the hosted workflow. The
+  [ECMAScript date parsing contract](https://tc39.es/ecma262/2026/multipage/numbers-and-dates.html#sec-date.parse)
+  permits formats beyond this API's timestamp grammar; the canonical roundtrip
+  enforces the narrower response contract. A healthy observation never proves
+  renewal, deployment or contribution availability.
+
+- `token_metadata_rpc` adds 26 scenarios for native metadata, sequential EVM
+  reads and Solana mint reads. Refused HTTP bodies are disposed while preserving
+  retry classification, and contract existence now requires nonempty,
+  even-length hexadecimal bytecode before decimals are read, matching the
+  [JSON-RPC byte-data format](https://eips.ethereum.org/EIPS/eip-1474#data).
+  Forty-nine reader
+  regression cases in 21 declarations are unexecuted. Required read errors keep
+  their existing retry/refusal distinctions; unreadable optional symbols still
+  preserve the submitted display symbol. EVM reads use `latest` separately and
+  do not prove one atomic chain snapshot. Solana mint validation remains bounded
+  by the shared reader's approved layout and authority rules; local responses
+  do not prove provider or mainnet authenticity.
+
+- `ui_direct_report_intents` adds 24 scenarios for direct GitHub report
+  verification. Each immutable project/advisory pair keeps its retry key;
+  editing either field allocates a separate key, and returning to an earlier
+  pair reuses that pair's key. A departed form cannot initiate or complete a
+  stale authorization navigation. Five new browser regression definitions are
+  unexecuted. Keys are retained only for the mounted form's lifetime, under the
+  actor-keyed parent; UUID uniqueness, native validation, actual navigation and
+  before/after video remain acceptance boundaries. The model permits the normal
+  unmount after successful navigation while detecting stale-lifetime navigation.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

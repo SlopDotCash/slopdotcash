@@ -54,8 +54,14 @@ async function rpc(
   });
   // An HTTP failure, such as a rate limit, says nothing about the token, so
   // it is not a TokenMetadataError: the owner gets a retry, not a refusal.
-  if (!response.ok)
+  if (!response.ok) {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Preserve the HTTP failure and its retry classification.
+    }
     throw new Error(`The network RPC returned HTTP ${response.status}`);
+  }
   let body: { result?: unknown; error?: unknown };
   try {
     body = (await readBoundedJson(response, MAX_RPC_BYTES, "network RPC")) as {
@@ -141,7 +147,7 @@ async function evmMetadata(
   )
     throw new TokenMetadataError("The network RPC reports a different chain");
   const code = await rpc(fetcher, url, "eth_getCode", [address, "latest"]);
-  if (typeof code !== "string" || code === "0x")
+  if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/u.test(code))
     throw new TokenMetadataError("No contract exists at that token address");
   const decimals = await rpc(fetcher, url, "eth_call", [
     { to: address, data: "0x313ce567" },

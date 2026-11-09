@@ -70,9 +70,12 @@
     },
     {
       "path": ".github/workflows/private-intake-watch.yml",
-      "sha256": "c65c0d78abf78f9699dfb5f9bbd4bc2330fe0c8472abd2e234d719d43778b343",
-      "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [19, 20, 21, 22],
+      "sha256": "6749c1c641f246e9dc92133c9053b8361ff1570ff365e7dbfb5425d1d7542061",
+      "models": [
+        "formal/models/release/private_intake_watch.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [19, 20, 21, 22, 29],
       "review": "mapped-abstraction"
     },
     {
@@ -717,9 +720,12 @@
     },
     {
       "path": "backend/projects/token-metadata.ts",
-      "sha256": "afa728641692ab2a4c1b4e774c2fc901acfc5addf2749a45f5225a1f389de88e",
-      "models": ["formal/models/rewards/reward_metadata.qnt"],
-      "candidateLines": [56, 58, 180],
+      "sha256": "e99cb828f0caa3b0b561cd02b82d1219d52d173542030f65e291e4f513cc0f91",
+      "models": [
+        "formal/models/rewards/reward_metadata.qnt",
+        "formal/models/rewards/token_metadata_rpc.qnt"
+      ],
+      "candidateLines": [56, 61, 63, 186],
       "review": "mapped-abstraction"
     },
     {
@@ -1074,7 +1080,8 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
         "formal/models/api/submission_authorization_wrappers.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt"
       ],
       "candidateLines": [
         13, 118, 178, 180, 181, 182, 185, 208, 213, 215, 305, 319, 320, 334,
@@ -1976,7 +1983,10 @@
     {
       "path": "contracts/solana/token-extensions.ts",
       "sha256": "b456ced40e9d0a985a8fe029059a8ad325dea1abb2533d8d3695e29706c703e0",
-      "models": ["formal/models/contracts/token_admission.qnt"],
+      "models": [
+        "formal/models/contracts/token_admission.qnt",
+        "formal/models/rewards/token_metadata_rpc.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -2651,7 +2661,8 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
         "formal/models/api/submission_authorization_wrappers.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt"
       ],
       "candidateLines": [
         4, 21, 41, 44, 45, 46, 55, 59, 63, 64, 70, 71, 82, 88, 99, 100, 105,
@@ -5464,9 +5475,10 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "44810323b4f29182f902cd980f9305758e3bd4a17d0f05231c88dd7d2389ceaa",
+      "sha256": "e6e3e2c56b02e9b33553d54b2e28013da97fd81e2d4cb90c43ea8e9f8e3f0230",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -5491,20 +5503,20 @@
         642, 652, 655, 693, 694, 698, 705, 710, 727, 752, 753, 760, 813, 983,
         998, 1036, 1041, 1063, 1138, 1139, 1140, 1141, 1163, 1174, 1181, 1187,
         1188, 1196, 1198, 1203, 1230, 1234, 1270, 1308, 1314, 1370, 1371, 1378,
-        1381, 1403, 1423, 1424, 1425, 1429, 1509, 1510, 1511, 1515, 1591, 1644,
-        1651, 1671, 1672, 1673, 1680, 1751, 1756, 1765, 1775, 1785, 1789, 1793,
-        1795, 1840, 1841, 1845, 1848, 1901, 1909, 1937, 1938, 1943, 1944, 1949,
-        1950, 1955, 2007, 2014, 2024, 2025, 2073, 2084, 2085, 2086, 2088, 2092,
-        2098, 2151, 2157, 2162, 2164, 2168, 2207, 2211, 2217, 2243, 2244, 2245,
-        2246, 2247, 2248, 2249, 2393, 2564, 2568, 2596, 2793, 2868, 2869, 2998,
-        3057, 3058, 3065, 3081, 3103, 3120, 3121, 3122, 3125, 3149, 3150, 3159,
-        3190, 3207, 3208, 3209, 3212, 3238, 3239, 3248, 3301, 3364, 3395, 3413,
-        3425, 3426, 3428, 3432, 3438, 3441, 3443, 3447, 3515, 3535, 3573, 3577,
-        3579, 3582, 3656, 3658, 3690, 3712, 3736, 3872, 4004, 4143, 4146, 4155,
-        4160, 4165, 4166, 4168, 4173, 4196, 4225, 4228, 4235, 4276, 4281, 4293,
-        4294, 4300, 4325, 4327, 4329, 4333, 4334, 4338, 4341, 4342, 4344, 4362,
-        4380, 4385, 4388, 4393, 4396, 4398, 4402, 4407, 4432, 4438, 4481, 4484,
-        4489, 4491, 4529, 4531, 4572, 4591
+        1381, 1403, 1423, 1424, 1425, 1429, 1509, 1510, 1524, 1608, 1661, 1668,
+        1688, 1689, 1690, 1697, 1768, 1773, 1782, 1792, 1802, 1806, 1810, 1812,
+        1857, 1858, 1862, 1865, 1918, 1926, 1954, 1955, 1960, 1961, 1966, 1967,
+        1972, 2024, 2031, 2041, 2042, 2090, 2101, 2102, 2103, 2105, 2109, 2115,
+        2168, 2174, 2179, 2181, 2185, 2224, 2228, 2234, 2260, 2261, 2262, 2263,
+        2264, 2265, 2266, 2410, 2581, 2585, 2613, 2810, 2885, 2886, 3015, 3074,
+        3075, 3082, 3098, 3120, 3137, 3138, 3139, 3142, 3166, 3167, 3176, 3207,
+        3224, 3225, 3226, 3229, 3255, 3256, 3265, 3318, 3381, 3412, 3430, 3442,
+        3443, 3445, 3449, 3455, 3458, 3460, 3464, 3532, 3552, 3590, 3594, 3596,
+        3599, 3673, 3675, 3707, 3729, 3753, 3889, 4021, 4160, 4163, 4172, 4177,
+        4182, 4183, 4185, 4190, 4213, 4242, 4245, 4252, 4293, 4298, 4310, 4311,
+        4317, 4342, 4344, 4346, 4350, 4351, 4355, 4358, 4359, 4361, 4379, 4397,
+        4402, 4405, 4410, 4413, 4415, 4419, 4424, 4449, 4455, 4498, 4501, 4506,
+        4508, 4546, 4548, 4589, 4608
       ],
       "review": "mapped-abstraction"
     },
@@ -6481,6 +6493,7 @@
       "models": [
         "formal/models/rewards/funding_address_validation.qnt",
         "formal/models/rewards/proposal_reward_fields.qnt",
+        "formal/models/rewards/token_metadata_rpc.qnt",
         "formal/models/ui/ui_project_setup.qnt"
       ],
       "candidateLines": [],
@@ -6654,6 +6667,7 @@
       "models": [
         "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_email_actions.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_inbox_mutation_focus.qnt",
@@ -14681,6 +14695,38 @@
       ]
     },
     {
+      "path": "formal/models/release/private_intake_watch.qnt",
+      "sha256": "4200e8cf4bb69d44bcaa499edf2f2b23121e4d000ad44d17d30f7cf0ebaab147",
+      "sources": [".github/workflows/private-intake-watch.yml"],
+      "scenarios": [
+        "developmentNotAdmittedTest",
+        "disabledObservationTest",
+        "exactFutureToleranceIsHealthyTest",
+        "exactThreeHoursIsHealthyTest",
+        "featureManualNotAdmittedTest",
+        "fileReadFailureTest",
+        "impossibleDateRefusedTest",
+        "invalidLocalClockTest",
+        "malformedJsonTest",
+        "manualWholeSecondObservationTest",
+        "missingTimestampRefusedTest",
+        "networkFailureNeverReachesDecoderTest",
+        "non200NeverReachesDecoderTest",
+        "nonRecordPayloadTest",
+        "noncanonicalTimestampRefusedTest",
+        "oldFutureObservationFalsePassTest",
+        "oneMillisecondTooFarFutureTest",
+        "oneMillisecondTooOldTest",
+        "oversizeNeverReachesDecoderTest",
+        "pullRequestNotAdmittedTest",
+        "redirectsNeverReachDecoderTest",
+        "scheduleFreshObservationTest",
+        "timeoutNeverReachesDecoderTest",
+        "timestampValidationDoesNotReadClockTest",
+        "wrongSourceRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/release/readme_proof_binding.qnt",
       "sha256": "571f361cdb30a88d008943840a130cca677a32af5c2325b6fb7cd9c44f14f1da",
       "sources": [
@@ -15503,7 +15549,7 @@
     },
     {
       "path": "formal/models/rewards/reward_metadata.qnt",
-      "sha256": "7614f9ef7da248042b5a2da43f82ae6f9d487eacd90d38d24430f18a4be86e94",
+      "sha256": "e12d6f14d27767b31c16342ed2539109ac009b8acb481119e773b5d7caece84e",
       "sources": ["backend/projects/token-metadata.ts"],
       "scenarios": [
         "malformedAssetRefusedTest",
@@ -15511,6 +15557,43 @@
         "optionalSymbolPreservedTest",
         "rateLimitRetriesTest",
         "wrongNetworkCannotPublishTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/token_metadata_rpc.qnt",
+      "sha256": "3779eb00d9c3cfdafa00695bbf9e9d4d07607d1c7817416a4328cce36f90fa57",
+      "sources": [
+        "backend/projects/token-metadata.ts",
+        "contracts/solana/token-extensions.ts",
+        "src/lib/reward-asset.mjs"
+      ],
+      "scenarios": [
+        "evmReadsAllRequiredStagesTest",
+        "failedCancelPreservesRetryTest",
+        "interruptedReadKeepsRetryTest",
+        "invalidBytecodePreventsDecimalsReadTest",
+        "invalidDecimalsPreventsSymbolReadTest",
+        "malformedChainQuantityRemainsRetryTest",
+        "malformedJsonKeepsRetryTest",
+        "maximumUint8DecimalsIsPreservedTest",
+        "missingResultRefusesTest",
+        "nativeSkipsRpcTest",
+        "nativeSolanaKeepsNineDecimalsTest",
+        "nullEnvelopeKeepsRetryTest",
+        "oldMalformedBytecodeCouldReturnMetadataTest",
+        "oversizedRequiredReplyRefusesTest",
+        "primitiveEnvelopeRefusesTest",
+        "requiredHttpFailureCancelsAndRetriesTest",
+        "solanaGenesisPrecedesFinalizedMintTest",
+        "symbolHttpFailureCancelsBeforeReturningTest",
+        "symbolOversizeRemainsOptionalTest",
+        "symbolTransportFailureIsOptionalTest",
+        "temporaryRpcErrorKeepsRetryTest",
+        "transportFailureHasNoBodyToDisposeTest",
+        "unreadableSymbolPreservesDecimalsTest",
+        "unsupportedMintRefusesTest",
+        "wrongChainPreventsAddressReadTest",
+        "zeroDecimalsIsPreservedTest"
       ]
     },
     {
@@ -17575,6 +17658,42 @@
       "sha256": "5f58223fb1a66e6c7d6dcce0b4eb299e0f367524a4debbd5f5394a31975b10b8",
       "sources": ["src/CyclePages.tsx", "src/lib/cycle-index.ts"],
       "scenarios": ["contradictoryPayloadTest", "paidTest", "pendingTest"]
+    },
+    {
+      "path": "formal/models/ui/ui_direct_report_intents.qnt",
+      "sha256": "3f10fddfdaeeb36e55bc0425802a45429587a77f9efccac6787135d8754686e3",
+      "sources": [
+        "backend/security/submissions.ts",
+        "migrations/0059_private_security_submissions.sql",
+        "src/SecurityBounty.tsx",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "acceptedDepartedResultKeepsServerDraftOnlyTest",
+        "authorizationSuccessNavigatesCapturedIntentTest",
+        "busyButtonPreventsSecondNativeSubmitTest",
+        "changedAdvisoryAllocatesDifferentKeyTest",
+        "changedIntentCanCommitAfterEarlierUncertainDraftTest",
+        "changedProjectAllocatesDifferentKeyTest",
+        "cleanupBetweenHelperAndNavigationStillRefusesTest",
+        "departedPreflightCannotDispatchTest",
+        "firstValidIntentAllocatesOneKeyTest",
+        "identityPostflightFailureCannotNavigateTest",
+        "inputEditsDoNotRewritePendingRequestTest",
+        "nativeInvalidInputMakesNoIntentTest",
+        "navigationFailureKeepsRetryKeyTest",
+        "newActorStartsWithFreshKeyMapTest",
+        "oldKeyConflictsAfterAdvisoryEditTest",
+        "oldResultRedirectedSameActorNewFormTest",
+        "preflightFailureKeepsIntentKeyTest",
+        "remountDoesNotPretendDurableClientKeysTest",
+        "returningToEarlierIntentKeepsOriginalKeyTest",
+        "sameActorRemountCannotReceiveOldNavigationTest",
+        "sameIntentRetryKeepsKeyTest",
+        "successfulNavigationCanUnmountTest",
+        "unavailableIntakeOffersFallbackWithoutRedirectTest",
+        "unchangedRetryReusesCommittedDraftTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_document_head.qnt",

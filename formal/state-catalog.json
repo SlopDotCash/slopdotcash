@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "9acc8b5c2790b8caf46c07ef653f5d2c594124e9e6e89f6d92f08ad6e0cc17c4",
+  "inventorySha256": "136c06bc589810419070538fc7db51d1360b65d29e0791529dbf487988f6c486",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1122,7 +1122,8 @@
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt",
         "formal/models/api/submission_authorization_wrappers.qnt",
-        "formal/models/api/submission_receipt_verification.qnt"
+        "formal/models/api/submission_receipt_verification.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -2494,6 +2495,7 @@
       "values": ["disabled", "forbidden", "ready", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2521,6 +2523,7 @@
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2548,6 +2551,7 @@
       "values": ["complete", "failed", "running", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2575,6 +2579,7 @@
       "values": ["return", "uphold"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2602,6 +2607,7 @@
       "values": ["claimed", "link-rejected", "verified"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2643,6 +2649,7 @@
       ],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2684,6 +2691,7 @@
       "values": ["ok", "unavailable"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",
@@ -2705,12 +2713,13 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1653,
+      "line": 1670,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_direct_report_intents.qnt",
         "formal/models/ui/ui_inbox.qnt",
         "formal/models/ui/ui_intake_handoff.qnt",
         "formal/models/ui/ui_private_case_revisions.qnt",

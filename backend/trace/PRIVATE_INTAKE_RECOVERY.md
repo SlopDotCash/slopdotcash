@@ -24,9 +24,12 @@ applying migrations, using the release credentials.
 
 The hourly `Private intake health watch` workflow only reads
 `https://api.slop.cash/api/v1/private-request-intake`. It fails when the
-endpoint is not 200, when `enabled` is not true, or when `verifiedAt` is older
-than three hours, which means the Worker cron has missed at least two
-renewals. It holds no secrets and mutates nothing.
+endpoint is not 200, when the response does not identify enabled
+`github-public-status`, or when `verifiedAt` is not a valid UTC timestamp,
+is more than five minutes in the future, or is older than three hours. The
+three-hour alert means the Worker cron has missed at least two renewals; the
+five-minute future tolerance matches the runtime reader. It holds no secrets
+and mutates nothing.
 
 To recover, check the Worker cron first: the release verifies the live schedule
 against `workers/identity/wrangler.toml`, and Cloudflare Workers Logs show `slop

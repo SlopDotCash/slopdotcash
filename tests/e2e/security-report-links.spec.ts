@@ -3,8 +3,8 @@
  * built app runs with synthetic sessions and case responses; no private
  * report or GitHub request leaves the test.
  */
-import type { Page, Request } from "@playwright/test";
-import { PROJECTS } from "../../src/lib/projects.mjs";
+import type { Locator, Page, Request } from "@playwright/test";
+import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
 
 const ACTOR = "42";
@@ -59,6 +59,9 @@ function caseView(
 
 type Fixture = {
   automatic: boolean;
+  actor?: string;
+  login?: string;
+  projects?: ProjectDefinition[];
   cases: ReturnType<typeof caseView>[];
   submissions: Record<string, unknown>[];
   posts: { path: string; body: Record<string, unknown> }[];
@@ -66,38 +69,43 @@ type Fixture = {
   answer?: (
     path: string,
     body: Record<string, unknown>,
-  ) => { status?: number; json: unknown } | undefined;
+  ) =>
+    | { status?: number; json: unknown }
+    | Promise<{ status?: number; json: unknown } | undefined>
+    | undefined;
 };
 
 /** Serves the private security APIs for one signed-in maintainer. */
 async function serveSecurity(page: Page, fixture: Fixture) {
-  await page.route("**/api/v1/**", (route) => {
+  await page.route("**/api/v1/**", async (route) => {
     const request: Request = route.request();
     const path = new URL(request.url()).pathname.slice("/api/v1/".length);
+    const actor = fixture.actor ?? ACTOR;
+    const login = fixture.login ?? LOGIN;
     if (request.method() === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>;
       fixture.posts.push({ path, body });
-      const answer = fixture.answer?.(path, body);
+      const answer = await fixture.answer?.(path, body);
       if (answer) return route.fulfill(answer);
       throw new Error(`Unexpected security fixture write: ${path}`);
     }
     if (path === "project-session")
       return route.fulfill({
-        json: { session: { githubId: ACTOR, githubLogin: LOGIN } },
+        json: { session: { githubId: actor, githubLogin: login } },
       });
     if (path === "projects")
       return route.fulfill({
-        json: { schemaVersion: "1", projects: [project] },
+        json: { schemaVersion: "1", projects: fixture.projects ?? [project] },
       });
     if (path === "notifications")
       return route.fulfill({
-        json: { recipientGithubId: ACTOR, notifications: [], unread: 0 },
+        json: { recipientGithubId: actor, notifications: [], unread: 0 },
       });
     if (path === "security-cases") {
       fixture.caseReads += 1;
       return route.fulfill({
         json: {
-          viewer: { githubId: ACTOR, githubLogin: LOGIN },
+          viewer: { githubId: actor, githubLogin: login },
           programs: [
             {
               projectId: project?.id,
@@ -121,7 +129,7 @@ async function serveSecurity(page: Page, fixture: Fixture) {
     if (path === "security-submissions")
       return route.fulfill({
         json: {
-          recipientGithubId: ACTOR,
+          recipientGithubId: actor,
           automatic: fixture.automatic,
           submissions: fixture.submissions,
         },
@@ -257,6 +265,153 @@ test("a reporter links a GitHub report and a maintainer records a verified one",
   });
   expect(fixture.posts[1].body.idempotencyKey).not.toBe(firstKey);
   await expectAccessible(page);
+});
+
+const directAdvisoryA = "GHSA-2c3f-4g5h-6j7m";
+const directAdvisoryB = "GHSA-3c4f-5g6h-7j8m";
+const directRetryMessage = "Authorization temporarily unavailable; retry this report.";
+
+function failedDirectFixture(): Fixture {
+  const committed = new Map<string, string>();
+  return {
+    automatic: true,
+    cases: [],
+    submissions: [],
+    posts: [],
+    caseReads: 0,
+    answer: (path, body) => {
+      if (path !== "security-submissions") return undefined;
+      const key = String(body.idempotencyKey);
+      const intent = JSON.stringify([body.projectId, body.origin, body.advisory]);
+      const earlier = committed.get(key);
+      if (earlier !== undefined && earlier !== intent)
+        return { status: 409, json: { error: "idempotency_conflict", message: "That request key was already used" } };
+      committed.set(key, intent);
+      // createSubmission may persist the row before authorization fails.
+      return { status: 503, json: { error: "authorization_unavailable", message: directRetryMessage } };
+    },
+  };
+}
+
+async function directForm(page: Page) {
+  await page.goto("/security#security-link", { waitUntil: "networkidle" });
+  const options = await openLinkOptions(page);
+  return options.locator("form").filter({
+    has: page.getByRole("button", { name: "Authorize GitHub and verify", exact: true }),
+  });
+}
+
+async function tryDirectReport(form: Locator, advisory: string) {
+  await form.getByRole("textbox", { name: "GitHub advisory ID", exact: true }).fill(advisory);
+  await form.getByRole("button", { name: "Authorize GitHub and verify", exact: true }).click();
+  await expect(form.getByRole("alert")).toContainText(directRetryMessage);
+}
+
+// Source-authored definitions, unexecuted in this audit.
+test("a failed direct-report authorization retains the same intent key", async ({ page, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(503, "POST", "/api/v1/security-submissions");
+  const fixture = failedDirectFixture();
+  await serveSecurity(page, fixture);
+  const form = await directForm(page);
+  await tryDirectReport(form, directAdvisoryA);
+  await tryDirectReport(form, directAdvisoryA);
+  expect(fixture.posts).toHaveLength(2);
+  expect(fixture.posts[1].body).toEqual(fixture.posts[0].body);
+});
+
+test("editing a direct advisory and returning to it preserves separate retry identities", async ({ page, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(503, "POST", "/api/v1/security-submissions");
+  const fixture = failedDirectFixture();
+  await serveSecurity(page, fixture);
+  const form = await directForm(page);
+  await tryDirectReport(form, directAdvisoryA);
+  await tryDirectReport(form, directAdvisoryB);
+  await tryDirectReport(form, directAdvisoryA);
+  expect(fixture.posts).toHaveLength(3);
+  const [first, second, returned] = fixture.posts.map((post) => post.body);
+  expect(first.origin).toBe("direct");
+  expect(first.advisory).toBe(directAdvisoryA);
+  expect(second.advisory).toBe(directAdvisoryB);
+  expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  expect(returned).toEqual(first);
+});
+
+test("the selected direct-report project participates in the retry identity", async ({ page, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(503, "POST", "/api/v1/security-submissions");
+  const another = PROJECTS.find((entry) => entry.id !== project?.id && entry.listingTier !== "retired");
+  if (!another) throw new Error("Missing second direct-report project fixture");
+  const fixture = failedDirectFixture();
+  fixture.projects = [project!, another];
+  await serveSecurity(page, fixture);
+  const form = await directForm(page);
+  await form.getByRole("combobox", { name: "Project", exact: true }).selectOption(project!.id);
+  await tryDirectReport(form, directAdvisoryA);
+  await form.getByRole("combobox", { name: "Project", exact: true }).selectOption(another.id);
+  await tryDirectReport(form, directAdvisoryA);
+  await form.getByRole("combobox", { name: "Project", exact: true }).selectOption(project!.id);
+  await tryDirectReport(form, directAdvisoryA);
+  const [first, second, returned] = fixture.posts.map((post) => post.body);
+  expect(second.projectId).toBe(another.id);
+  expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+  expect(returned).toEqual(first);
+});
+
+test("a different reporter starts a new direct-report key map", async ({ page, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  diagnostics.allowResponse(503, "POST", "/api/v1/security-submissions");
+  const fixture = failedDirectFixture();
+  await serveSecurity(page, fixture);
+  const form = await directForm(page);
+  await tryDirectReport(form, directAdvisoryA);
+  const first = fixture.posts[0].body;
+  fixture.actor = "43";
+  fixture.login = "second-reporter";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(form.getByRole("textbox", { name: "GitHub advisory ID", exact: true })).toHaveValue("");
+  await tryDirectReport(form, directAdvisoryA);
+  expect(fixture.posts).toHaveLength(2);
+  expect(fixture.posts[1].body.idempotencyKey).not.toBe(first.idempotencyKey);
+});
+
+test("an old direct authorization cannot navigate a remounted same-reporter form", async ({ page, diagnostics }) => {
+  diagnostics.allowPreviewApiMisses();
+  let release!: () => void;
+  let observe!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { observe = resolve; });
+  const fixture = failedDirectFixture();
+  fixture.answer = async (path, body) => {
+    if (path !== "security-submissions") return undefined;
+    observe();
+    await held;
+    return { json: {
+      submission: { id: "ss_delayed_direct_reply", projectId: body.projectId, origin: "direct", state: "draft", revision: 1 },
+      authorizeUrl: "/unexpected-direct-authorization",
+    } };
+  };
+  await serveSecurity(page, fixture);
+  try {
+    const form = await directForm(page);
+    await form.getByRole("textbox", { name: "GitHub advisory ID", exact: true }).fill(directAdvisoryA);
+    await form.getByRole("button", { name: "Authorize GitHub and verify", exact: true }).click();
+    await requested;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(form.getByRole("textbox", { name: "GitHub advisory ID", exact: true })).toHaveValue("");
+    await form.getByRole("textbox", { name: "GitHub advisory ID", exact: true }).fill(directAdvisoryB);
+    const response = page.waitForResponse((reply) => reply.request().method() === "POST"
+      && new URL(reply.url()).pathname === "/api/v1/security-submissions");
+    release();
+    await (await response).finished();
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page).toHaveURL(/\/security#security-link$/u);
+    await expect(form.getByRole("textbox", { name: "GitHub advisory ID", exact: true })).toHaveValue(directAdvisoryB);
+    await expect(form.getByRole("button", { name: "Authorize GitHub and verify", exact: true })).toBeEnabled();
+  } finally {
+    release();
+  }
 });
 
 test("a maintainer brings in GitHub private reports after GitHub was unavailable", async ({

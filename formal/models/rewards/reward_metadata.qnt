@@ -1,4 +1,6 @@
 // @source backend/projects/token-metadata.ts
+// @evidence backend/projects/token-metadata.test.ts
+// Detailed transport/ABI/mint reader stages are in token_metadata_rpc.
 // An unavailable RPC yields retry, not asset rejection. Decimals are required;
 // symbol is optional display data. Native metadata needs no RPC lookup.
 module reward_metadata {

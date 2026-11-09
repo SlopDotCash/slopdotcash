@@ -25,11 +25,23 @@ jobs:
           node - "$body" <<'NODE'
           const { readFileSync } = require("node:fs");
           const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (value?.enabled !== true || typeof value?.verifiedAt !== "string") {
+          if (typeof value !== "object" || value === null || Array.isArray(value) ||
+              value.enabled !== true || value.source !== "github-public-status" ||
+              typeof value.verifiedAt !== "string" ||
+              !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value.verifiedAt)) {
             throw new TypeError("Optional trace intake is not enabled; GitHub contribution remains open.");
           }
-          const age = Date.now() - Date.parse(value.verifiedAt);
-          if (!Number.isFinite(age) || age > 3 * 60 * 60 * 1000) {
+          const verifiedAt = Date.parse(value.verifiedAt);
+          const canonical = value.verifiedAt.includes(".")
+            ? value.verifiedAt : `${value.verifiedAt.slice(0, -1)}.000Z`;
+          if (!Number.isFinite(verifiedAt) || new Date(verifiedAt).toISOString() !== canonical) {
+            throw new TypeError("Optional trace intake has an invalid verification time.");
+          }
+          const age = Date.now() - verifiedAt;
+          if (!Number.isFinite(age) || age < -5 * 60 * 1000) {
+            throw new TypeError("Optional trace intake has an invalid or future verification time.");
+          }
+          if (age > 3 * 60 * 60 * 1000) {
             throw new TypeError("Optional trace intake observation is older than three hours; the hourly Worker renewal is not landing.");
           }
           NODE
