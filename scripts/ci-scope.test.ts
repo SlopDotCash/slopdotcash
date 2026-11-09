@@ -58,14 +58,13 @@ test("a main push selects the complete release browser, installer and sandbox ga
   }
 });
 
+// One path per installer-selector alternative that the skill sources use,
+// and one unrelated path that must not select the installer job.
 for (const path of [
   "skills/slop/SKILL.md",
   "src/lib/project-skill.mjs",
-  "src/lib/project-skill-publication.mjs",
   "src/lib/install-command.ts",
-  "scripts/skill-source-matches-commit.mjs",
   "scripts/skill-python.mjs",
-  "scripts/skill-validation/quick_validate.py",
   "README.md",
 ]) {
   test(`installer coverage follows ${path}`, () => {

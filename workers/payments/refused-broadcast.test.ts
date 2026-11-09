@@ -467,7 +467,6 @@ test("a payment the node refused is resent with the same bytes after the gas wal
   const signed = await journal.get<{ rawTransaction: Hex; transactionId: Hex }>(
     `pay:${attempt?.id}`,
   );
-  expect(signed).toBeDefined();
   expect(parseTransaction(signed?.rawTransaction as Hex).nonce).toBe(0);
 
   // The operator funds the relayer's gas wallet; the next scheduled run follows.

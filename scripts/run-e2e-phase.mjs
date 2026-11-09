@@ -191,7 +191,7 @@ export function runE2ePhase({
     let launcherAcknowledged = false;
     const knownProcesses = new Map();
     const handledRequests = new Set();
-    let detachedGroups = new Map();
+    const detachedGroups = new Map();
     const cleanupError = (message) => {
       ownershipFailed = true;
       stderr.write(`[${label}] process cleanup failed: ${message}\n`);
