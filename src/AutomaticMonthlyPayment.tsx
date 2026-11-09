@@ -143,6 +143,7 @@ export function AutomaticMonthlyPayment({
             deployment,
             wallet,
             automatic,
+            () => mounted.current,
           )
         : await reviewEvmMonthlySetting(project, deployment, wallet, automatic);
       if (mounted.current) setReview(result);

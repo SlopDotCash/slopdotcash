@@ -149,6 +149,7 @@ export default function OwnerCommitment({
     run(async () => {
       if (!wallet) return;
       const plan = await requestOwnerCommitment(projectId, cycleId, expected);
+      if (!mounted.current) return;
       const state = solana
         ? await reviewSolanaCommitment(plan, wallet)
         : await reviewEvmCommitment(plan, wallet);
@@ -168,6 +169,7 @@ export default function OwnerCommitment({
         cycleId,
         expected,
       );
+      if (!mounted.current) return;
       if (JSON.stringify(current) !== JSON.stringify(review.plan)) {
         setReview(null);
         throw new Error("The prepared award changed. Review it again.");

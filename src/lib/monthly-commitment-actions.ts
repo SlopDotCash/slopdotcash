@@ -292,13 +292,15 @@ const isSetting = (value: unknown): value is MonthlySetting =>
 
 /**
  * Reads the finalized setting first, chooses the target from it, then asks
- * the service to plan exactly that target when it differs.
+ * the service to plan exactly that target when it differs. A mounted caller
+ * can retire preparation before that second private request is dispatched.
  */
 export async function reviewSolanaMonthlySetting(
   project: Pick<ProjectDefinition, "id" | "reward" | "rewardAsset">,
   deployment: EscrowDeployment,
   wallet: VaultConnection,
   automatic: boolean,
+  isCurrent: () => boolean = () => true,
 ): Promise<MonthlyReview> {
   if (!wallet.solanaSend)
     throw new Error("Choose a wallet with Solana transaction support.");
@@ -308,6 +310,8 @@ export async function reviewSolanaMonthlySetting(
     );
   const read = (await solanaRequest(project.id, deployment, { step: "read" }))
     .setting as { current: unknown; decimals: unknown } | undefined;
+  if (!isCurrent())
+    throw new Error("The wallet view was closed. Review before sending.");
   if (!read || !isSetting(read.current) || !isAssetDecimals(read.decimals))
     throw new Error("The monthly payment setting response is invalid.");
   const decimals = read.decimals;

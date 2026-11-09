@@ -403,6 +403,7 @@
       "sha256": "b4cd262bfbf138ae690f93db08926f89881adc7eff1cf682102d8f353b3f8aa9",
       "models": [
         "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt",
         "formal/models/rewards/monthly_release_gateway.qnt",
         "formal/models/rewards/monthly_release_prepare.qnt"
       ],
@@ -908,6 +909,7 @@
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_reporting_readiness.qnt",
         "formal/models/api/notification_escalation.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
@@ -1019,7 +1021,8 @@
       "sha256": "49172c800f25929a680772482e558095fd7104e212d901aed26672f88facc436",
       "models": [
         "formal/models/api/api_private_intake.qnt",
-        "formal/models/api/api_reporting_readiness.qnt"
+        "formal/models/api/api_reporting_readiness.qnt",
+        "formal/models/slopbot/reporting_refresh_job.qnt"
       ],
       "candidateLines": [97, 143, 146],
       "review": "mapped-abstraction"
@@ -1439,6 +1442,7 @@
       "models": [
         "formal/models/contracts/evm_monthly_reserve.qnt",
         "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt",
         "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1742,6 +1746,7 @@
       "models": [
         "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/rewards/monthly_release.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt",
         "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -1952,6 +1957,7 @@
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/rewards/monthly_release_check.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt",
         "formal/models/rewards/monthly_release_prepare.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
@@ -4702,17 +4708,18 @@
     },
     {
       "path": "src/AutomaticMonthlyPayment.tsx",
-      "sha256": "f0b0d31435fc74cb0c58dbe12db103c3af4bcd6a0cc15dcb60423d8f11b983e0",
+      "sha256": "b95d1aa3ebf09b3dc95f425ee140c6be275382469baacb3f4ba11637419631cf",
       "models": [
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
         1, 28, 32, 37, 47, 49, 79, 98, 104, 109, 110, 111, 112, 113, 130, 132,
-        152, 153, 183, 190, 193, 194, 202, 207, 208, 209, 210, 222, 223, 224,
-        238, 239, 240, 254, 260, 280, 297, 313, 319, 322, 325, 332, 335, 342,
-        343, 408, 427
+        153, 154, 184, 191, 194, 195, 203, 208, 209, 210, 211, 223, 224, 225,
+        239, 240, 241, 255, 261, 281, 298, 314, 320, 323, 326, 333, 336, 343,
+        344, 409, 428
       ],
       "review": "mapped-abstraction"
     },
@@ -4962,16 +4969,17 @@
     },
     {
       "path": "src/OwnerCommitment.tsx",
-      "sha256": "e83ea2ec527b16d83645b356031cdf4116a160f096ea07500eb2758bcf4f5d40",
+      "sha256": "685f94bed96bd581160cac4a7ce831f86748005b2a4dd637d6db5d58725a6566",
       "models": [
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_tab_scope.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 20, 30, 38, 47, 50, 66, 76, 96, 101, 104, 132, 133, 138, 139, 152,
-        158, 159, 164, 178, 203, 207, 208, 210, 212, 214, 217, 219, 220, 226,
-        228, 231, 232, 233, 240, 255, 263, 265, 267, 270, 277, 304, 309, 366
+        1, 20, 30, 38, 47, 50, 66, 76, 96, 101, 104, 132, 133, 138, 139, 153,
+        159, 160, 165, 180, 205, 209, 210, 212, 214, 216, 219, 221, 222, 228,
+        230, 233, 234, 235, 242, 257, 265, 267, 269, 272, 279, 306, 311, 368
       ],
       "review": "mapped-abstraction"
     },
@@ -5887,13 +5895,14 @@
     },
     {
       "path": "src/lib/monthly-commitment-actions.ts",
-      "sha256": "63461a8c606952d4f7d5fedeeb9104e4fda09b996213ec103e51ae20656cbdaf",
+      "sha256": "1b1441018dcd0dbbd8e8d62e062f4208edb6af776bf9b06f2a64d43006a874ea",
       "models": [
         "formal/models/contracts/solana_owner_action.qnt",
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt"
       ],
       "candidateLines": [
-        45, 76, 81, 192, 207, 278, 281, 294, 391, 392, 393, 395, 396
+        45, 76, 81, 192, 207, 278, 281, 294, 395, 396, 397, 399, 400
       ],
       "review": "mapped-abstraction"
     },
@@ -5931,7 +5940,10 @@
     {
       "path": "src/lib/owner-commitment-actions.ts",
       "sha256": "011cef42a5fb3a48242408d0194a91982c19d699b19b2b675b2542a5ed2241ee",
-      "models": ["formal/models/rewards/allocation_funding.qnt"],
+      "models": [
+        "formal/models/rewards/allocation_funding.qnt",
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt"
+      ],
       "candidateLines": [56, 128, 181, 205, 207],
       "review": "mapped-abstraction"
     },
@@ -6199,7 +6211,10 @@
     {
       "path": "src/lib/project-schema.mjs",
       "sha256": "bf68e6b1d422f38c5e27b0492cc8327fc8b79abf8d7b668200199606653c65a1",
-      "models": ["formal/models/ui/ui_project_policy.qnt"],
+      "models": [
+        "formal/models/slopbot/reporting_refresh_job.qnt",
+        "formal/models/ui/ui_project_policy.qnt"
+      ],
       "candidateLines": [
         126, 331, 342, 347, 351, 352, 411, 417, 423, 426, 430, 434, 535, 538,
         545, 548, 566, 592, 693, 694, 696, 701, 711, 1246, 1247, 1250, 1258,
@@ -6413,7 +6428,10 @@
     {
       "path": "src/lib/solana-commitment-actions.ts",
       "sha256": "0b5b88b8c1aa4cf26f3e8e45cb9a6f70534e7da06ff34b17e4723ed25b216a3d",
-      "models": ["formal/models/contracts/solana_owner_action.qnt"],
+      "models": [
+        "formal/models/contracts/solana_owner_action.qnt",
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt"
+      ],
       "candidateLines": [91, 146, 147, 148, 150, 151],
       "review": "mapped-abstraction"
     },
@@ -6520,6 +6538,7 @@
       "path": "src/lib/use-pending-wallet-attempt.ts",
       "sha256": "832daafb221557ef9b3785d5e733eeb8860227e69f6445e4d6b7d49d68288b72",
       "models": [
+        "formal/models/ui/ui_monthly_preparation_lifetime.qnt",
         "formal/models/ui/ui_monthly_reserve_release.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -7377,7 +7396,8 @@
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/payment_binding.qnt",
-        "formal/models/payments/signed_send.qnt"
+        "formal/models/payments/signed_send.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt"
       ],
       "candidateLines": [320, 321],
       "review": "mapped-abstraction"
@@ -7433,7 +7453,8 @@
       "models": [
         "formal/models/payments/payment_worker_run.qnt",
         "formal/models/payments/solana_binding_api.qnt",
-        "formal/models/payments/solana_binding_completion.qnt"
+        "formal/models/payments/solana_binding_completion.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt"
       ],
       "candidateLines": [17, 33, 58],
       "review": "mapped-abstraction"
@@ -7444,7 +7465,8 @@
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
-        "formal/models/payments/stored_binding_broadcast_authority.qnt"
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt"
       ],
       "candidateLines": [
         111, 117, 132, 143, 151, 159, 160, 169, 178, 179, 182, 199, 204, 213,
@@ -7466,6 +7488,7 @@
       "models": [
         "formal/models/rewards/monthly_release.qnt",
         "formal/models/rewards/monthly_release_check.qnt",
+        "formal/models/rewards/monthly_release_concurrent.qnt",
         "formal/models/rewards/monthly_release_prepare.qnt"
       ],
       "candidateLines": [
@@ -7917,14 +7940,14 @@
     {
       "path": "workers/slopbot/reporting-readiness-service.ts",
       "sha256": "e4a5239d48e44654932d6bba428e7c28886d5b32148c9fdf71e229376cae6c33",
-      "models": ["formal/models/api/api_reporting_readiness.qnt"],
+      "models": ["formal/models/slopbot/reporting_refresh_job.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/reporting-readiness.ts",
       "sha256": "71002d6b65290b12c343d34c63595d48f3daa3eeb8563702cc768846a673f406",
-      "models": ["formal/models/api/api_reporting_readiness.qnt"],
+      "models": ["formal/models/slopbot/reporting_refresh_job.qnt"],
       "candidateLines": [42, 47],
       "review": "mapped-abstraction"
     },
@@ -9573,14 +9596,34 @@
     },
     {
       "path": "formal/models/api/api_reporting_readiness.qnt",
-      "sha256": "e3c64ea15bbc90be082f8aae960cab94fbdf809e47601a9646664fedd63470fa",
+      "sha256": "ff4318283385b8b81e6ce44ce3bcba0f86dbd33505bc5246ec03c6f0c8aa039f",
       "sources": [
+        "backend/security/handler.ts",
         "backend/security/reporting-readiness.ts",
-        "migrations/0086_repository_reporting_status.sql",
-        "workers/slopbot/reporting-readiness-service.ts",
-        "workers/slopbot/reporting-readiness.ts"
+        "migrations/0086_repository_reporting_status.sql"
       ],
-      "scenarios": ["disabledIsNotUnavailableTest", "identityChangeTest"]
+      "scenarios": [
+        "clockAfterReadDoesNotRewriteAnswerTest",
+        "committedLostReplyLeavesFreshCacheTest",
+        "disabledIsNotUnavailableTest",
+        "equalTimestampFailurePreventsIdentityReadbackTest",
+        "equalTimestampFirstValueWinsTest",
+        "expiredObservationRetainsValueTest",
+        "failedRefreshRetainsSuccessfulObservationTest",
+        "failedWriteLeavesNoObservationTest",
+        "finalFractionIsFreshWithZeroMaxAgeTest",
+        "freshEnabledObservationTest",
+        "identityChangeTest",
+        "malformedIdentityCannotPublishTest",
+        "missingAppRetainsDisabledObservationTest",
+        "newerAttemptWinsCacheButOlderCallReturnsOwnValueTest",
+        "pinnedIdentityMismatchCannotPublishTest",
+        "providerThrowBecomesUnavailableTest",
+        "readClockBeforeLaterWriteRefusesFutureObservationTest",
+        "readbackFailureDoesNotUndoCommitTest",
+        "revisionDuringReadDoesNotRetargetCapturedReadTest",
+        "secondaryIdentityFirstWinnerRetainedTest"
+      ]
     },
     {
       "path": "formal/models/api/api_request_composition.qnt",
@@ -13864,6 +13907,41 @@
       ]
     },
     {
+      "path": "formal/models/rewards/monthly_release_concurrent.qnt",
+      "sha256": "c39994ef1b0182cc455bd0ddc5afbea05c771386ba484d24a6b0ba7b8b236752",
+      "sources": [
+        "backend/payments/monthly-reserve-release.ts",
+        "contracts/evm/monthly-reserve.ts",
+        "contracts/solana/monthly-reserve.ts",
+        "contracts/solana/wallet-transactions.ts",
+        "workers/payment-executor/binding-shared.ts",
+        "workers/payment-executor/entrypoint.ts",
+        "workers/payment-executor/index.ts",
+        "workers/payment-executor/monthly-release.ts"
+      ],
+      "scenarios": [
+        "allocationChangeBeforeLocalSigningRefusesTest",
+        "changedMessageUsesSeparateSignatureAndPlanTest",
+        "currentManifestRetryKeepsPriorExactPlanTest",
+        "distinctBuilderEvidencePlansCoexistTest",
+        "distinctSelectedCaptureBytesRetainBothPlansTest",
+        "equalCompletedPlanBytesCoalesceTest",
+        "failedFinalFenceCannotEraseAnotherReadyPlanTest",
+        "interruptedComputedSignatureMayBeRecomputedTest",
+        "interruptedIntentDoesNotBlockLaterSigningTest",
+        "lastRegistryReadDoesNotLockPlanPublicationTest",
+        "lateOlderObservationRefreshesOnlySharedMetadataTest",
+        "laterHeldInspectionPreservesEarlierSignatureTest",
+        "laterMessageRefusesOldBuilderWithoutErasingSignaturesTest",
+        "laterRequestReusesSignatureWhileFirstBuilderWaitsTest",
+        "lostPlanReplyRetainsExactPlanForEqualRetryTest",
+        "lostSignedRecordReplyStillAllowsReuseTest",
+        "projectChangeBeforeLocalSigningRefusesTest",
+        "responsesMayArriveInReverseOrderTest",
+        "solanaLifetimeChangesRetainBothOwnerPlansTest"
+      ]
+    },
+    {
       "path": "formal/models/rewards/monthly_release_gateway.qnt",
       "sha256": "95caf6e5c570b77cdde065dad2ecee4c02a96afd1eb6ea9ddec77123bf8740d0",
       "sources": [
@@ -14873,6 +14951,42 @@
         "incompleteEvidenceRejectedTest",
         "proposalIsNotPaymentAuthorityTest",
         "wrongSourceRejectedTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/reporting_refresh_job.qnt",
+      "sha256": "8fd99594c678022b26db8c84c07290b3efe36973d6c4bfebb2101bf710fae293",
+      "sources": [
+        "backend/security/reporting-readiness.ts",
+        "src/lib/project-schema.mjs",
+        "workers/slopbot/reporting-readiness-service.ts",
+        "workers/slopbot/reporting-readiness.ts"
+      ],
+      "scenarios": [
+        "activeAndPausedAreRefreshedBeforeRetiredSkipTest",
+        "activeMissingAppCountsFailureTest",
+        "definiteWriteFailureAbortsUnvisitedSuffixTest",
+        "emptyRegistryReturnsZeroCountsTest",
+        "interruptedPrefixCanBeRefreshedAgainTest",
+        "invalidLiveRevisionAbortsBeforeProviderTest",
+        "invalidVerifiedIdentityNormalizesBeforeWriteTest",
+        "laterInvocationUsesNewRevisionAndStatusTest",
+        "lostServiceReplyDoesNotRollBackRefreshTest",
+        "lostWriteReplyKeepsCommitWithoutCountTest",
+        "malformedLaterRowKeepsEarlierCommitAndAbortsSuffixTest",
+        "malformedRetiredRowIsNotSilentlySkippedTest",
+        "noOpUpsertCanStillReturnCheckedResultTest",
+        "pausedMissingAppIsRecordedWithoutFailureTest",
+        "pausedUnavailableStillCountsFailureTest",
+        "primaryAliasUsesSelectedGitHubUrlIdentityTest",
+        "primaryTargetCarriesImmutableIdentityPinsTest",
+        "providerThrowBecomesObservationAndContinuesTest",
+        "registryChangeDoesNotRewriteCapturedRowTest",
+        "registryReadRejectionReturnsNoCountsTest",
+        "retiredRowSkipsInvalidRevisionBeforeTargetDerivationTest",
+        "secondaryBountySelectionDoesNotBorrowPrimaryPinsTest",
+        "verifiedReadbackFailureKeepsWriteButAbortsCountTest",
+        "verifiedReadbackMismatchCountsFailureTest"
       ]
     },
     {
@@ -16406,6 +16520,48 @@
         "reviewSourceTest",
         "splitTest",
         "unavailableModelTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_monthly_preparation_lifetime.qnt",
+      "sha256": "08426ccf91f16495fd685e8e7f1b2895a19f8c27fcc3fa09a8e6bf2bed277493",
+      "sources": [
+        "src/AutomaticMonthlyPayment.tsx",
+        "src/OwnerCommitment.tsx",
+        "src/lib/monthly-commitment-actions.ts",
+        "src/lib/owner-commitment-actions.ts",
+        "src/lib/solana-commitment-actions.ts",
+        "src/lib/use-pending-wallet-attempt.ts"
+      ],
+      "scenarios": [
+        "alreadyDispatchedReviewCanBeAcceptedAfterDepartureTest",
+        "alreadyOpenedWalletCanReturnAfterDepartureTest",
+        "authorizeDepartureAfterReturnTest",
+        "authorizeDepartureBeforeObservationTest",
+        "changedAwardClearsReviewWithoutSecondPostTest",
+        "changedMonthlySettingTest",
+        "departedInstanceCannotStartFirstRequestTest",
+        "departureAfterSecondReturnDoesNotPublishTest",
+        "departureBetweenSecondObservationAndReturnTest",
+        "finalPromptRetainsIndependentLifetimeFenceTest",
+        "firstRequestFailureDoesNotDispatchTest",
+        "inspectDepartureAfterReturnTest",
+        "inspectDepartureBeforeObservationTest",
+        "inspectDepartureBetweenObservationAndReturnTest",
+        "invalidInitialResponseRefusedTest",
+        "invalidSecondResponseDoesNotPublishTest",
+        "liveAwardAuthorizationTest",
+        "liveAwardInspectionTest",
+        "monthlyDepartureAfterReturnTest",
+        "monthlyDepartureBetweenObservationAndReturnTest",
+        "oldAuthorizeMissingGateNegativeControlTest",
+        "oldInspectMissingGateNegativeControlTest",
+        "oldMonthlyMissingGateNegativeControlTest",
+        "replacementCannotReviveOldAwardPreparationTest",
+        "replacementCannotReviveOldMonthlyPreparationTest",
+        "unchangedHelperReturnThenDepartureDoesNotPublishTest",
+        "unchangedMonthlyDepartureDoesNotPublishTest",
+        "unchangedMonthlySettingHasNoSecondPostTest"
       ]
     },
     {

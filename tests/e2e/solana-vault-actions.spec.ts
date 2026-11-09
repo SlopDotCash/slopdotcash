@@ -15,7 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import type { Page, TestInfo } from "@playwright/test";
+import type { Page, Route, TestInfo } from "@playwright/test";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import {
   readVaultTotals,
@@ -916,6 +916,242 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
       () => document.documentElement.scrollWidth - innerWidth,
     ),
   ).toBeLessThanOrEqual(1);
+});
+
+/** The production wallet adapter is present; these tests never ask it to send. */
+async function openSolanaPreparationPage(page: Page, path: string) {
+  let walletRequests = 0;
+  await page.exposeFunction("localSolanaAccount", () => ({
+    address: owner.publicKey.toBase58(),
+    publicKey: [...owner.publicKey.toBytes()],
+  }));
+  await page.exposeFunction("localSolanaSend", () => {
+    walletRequests++;
+    throw new Error("Departed preparation must not reach the wallet");
+  });
+  await page.addInitScript(installLocalSolanaWallet);
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await serveProjectMaintainer(page, () => project);
+  await serveProjectCycleIndex(page, [project.id]);
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [],
+        staleAfterMs: 60000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  await page.goto(path, { waitUntil: "networkidle" });
+  return () => walletRequests;
+}
+
+async function leaveSolanaPreparation(page: Page) {
+  await page.evaluate(() => {
+    history.pushState({}, "", "/how-it-works");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+}
+
+async function drainPreparationReply(page: Page) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
+for (const action of ["inspect", "authorize"] as const)
+  test(`departed Solana award ${action} cannot start the next private review`, async ({
+    page,
+  }) => {
+    const walletRequests = await openSolanaPreparationPage(
+      page,
+      "/projects/eliza/manage",
+    );
+    const { commitment } = await routeMonthlyAwardReview(page, deployment);
+    // The earlier settlement test reserves its own source. These reviews
+    // use distinct unconsumed sources and never submit a transaction.
+    commitment.award.sourceDigest = (action === "inspect" ? "e" : "f").repeat(
+      64,
+    );
+    const planUrl =
+      "**/api/v1/payments/projects/eliza/monthly/2026-09/commitment";
+    let holdPlan = action === "inspect";
+    let capturePlan: (route: Route) => void = () => {};
+    const heldPlan = new Promise<Route>((resolve) => {
+      capturePlan = resolve;
+    });
+    await page.route(planUrl, (route) => {
+      expect(route.request().postDataJSON()).toEqual({
+        network: deployment.network,
+        githubUserId: commitment.award.githubUserId,
+        manifestSha256: commitment.manifestSha256,
+        snapshotSha256: commitment.snapshotSha256,
+      });
+      if (holdPlan) capturePlan(route);
+      else return route.fulfill({ json: commitment });
+    });
+    let reviews = 0;
+    await page.route(
+      "**/api/v1/payments/projects/eliza/monthly/2026-09/solana-commitment",
+      async (route) => {
+        reviews++;
+        // Only the initial, still-owned authorization review needs a valid
+        // wire plan. Any forbidden post-departure request remains observable.
+        if (action === "inspect" || reviews > 1)
+          return route.fulfill({ json: {} });
+        const response = await handlePaymentsApi(
+          new Request(
+            "https://slop.cash/api/v1/payments/projects/eliza/monthly/2026-09/solana-commitment",
+            {
+              method: "POST",
+              headers: {
+                origin: "https://slop.cash",
+                "content-type": "application/json",
+                cookie: `__Host-slop_points=${"s".repeat(48)}`,
+              },
+              body: route.request().postData(),
+            },
+          ),
+          {
+            db: {
+              prepare: () => ({
+                bind: () => ({
+                  first: async () => ({ github_id: "1", login: "local-owner" }),
+                }),
+              }),
+            } as never,
+            monthly: { commitment: async () => commitment } as never,
+            solanaFundingConfig: async () => config,
+          },
+        );
+        await route.fulfill({
+          status: response.status,
+          contentType: "application/json",
+          body: await response.text(),
+        });
+      },
+    );
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await page.getByRole("button", { name: "Review monthly awards" }).click();
+    await selectAwardMonth(page, "2026-09");
+    await page
+      .getByRole("button", { name: "Reserve award for local-contributor" })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Authorize award commitment",
+      exact: true,
+    });
+    await panel
+      .getByRole("button", { name: "Connect Local Solana wallet", exact: true })
+      .click();
+    if (action === "authorize") {
+      await panel
+        .getByRole("button", { name: "Verify award and funding" })
+        .click();
+      await expect(
+        panel.getByRole("region", { name: "Commitment review" }),
+      ).toBeVisible();
+      holdPlan = true;
+    }
+    await panel
+      .getByRole("button", {
+        name:
+          action === "inspect"
+            ? "Verify award and funding"
+            : "Authorize this award in wallet",
+        exact: true,
+      })
+      .click();
+    const pendingRoute = await heldPlan;
+    await leaveSolanaPreparation(page);
+    await expect(panel).toHaveCount(0);
+    const reply = page.waitForResponse(
+      (response) => response.url() === pendingRoute.request().url(),
+    );
+    await pendingRoute.fulfill({ json: commitment });
+    await (await reply).finished();
+    await drainPreparationReply(page);
+    expect(reviews).toBe(action === "inspect" ? 0 : 1);
+    expect(walletRequests()).toBe(0);
+    expect(
+      await page.evaluate(() =>
+        sessionStorage.getItem(
+          "slop:award-commitment:v2:eliza:2026-09:solana-devnet:1234",
+        ),
+      ),
+    ).toBeNull();
+  });
+
+test("departed Solana monthly-setting read cannot start a private review", async ({
+  page,
+}) => {
+  const walletRequests = await openSolanaPreparationPage(
+    page,
+    "/projects/eliza/manage",
+  );
+  let captureRead: (route: Route) => void = () => {};
+  const heldRead = new Promise<Route>((resolve) => {
+    captureRead = resolve;
+  });
+  let reviews = 0;
+  await page.route(
+    "**/api/v1/payments/projects/eliza/solana-monthly-commitment",
+    (route) => {
+      if (route.request().postDataJSON().step === "read") captureRead(route);
+      else {
+        reviews++;
+        return route.fulfill({ json: {} });
+      }
+    },
+  );
+  const panel = page.getByRole("region", {
+    name: "Vault monthly authorization · Solana Devnet (test)",
+    exact: true,
+  });
+  await panel
+    .getByRole("button", { name: "Connect Local Solana wallet", exact: true })
+    .click();
+  await panel
+    .getByRole("button", {
+      name: "Review monthly payment setting",
+      exact: true,
+    })
+    .click();
+  const pendingRoute = await heldRead;
+  await leaveSolanaPreparation(page);
+  await expect(panel).toHaveCount(0);
+  const reply = page.waitForResponse(
+    (response) => response.url() === pendingRoute.request().url(),
+  );
+  await pendingRoute.fulfill({
+    json: { setting: { current: { cap: "0", enabled: false }, decimals: 6 } },
+  });
+  await (await reply).finished();
+  await drainPreparationReply(page);
+  expect(reviews).toBe(0);
+  expect(walletRequests()).toBe(0);
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("slop:vault-monthly:v1:"),
+      ),
+    ),
+  ).toEqual([]);
 });
 
 async function ownerSetupWorkflow(

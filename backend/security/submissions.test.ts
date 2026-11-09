@@ -25,7 +25,9 @@ import { handleSecurityApi, securityNotificationAccess } from "./handler";
 import { githubIntakeOAuth, type IntakeConfig } from "./intake-grant";
 import { deterministicAnalyzer } from "./report-analysis";
 import {
+  cachedReportingReadiness,
   type ReportingObservation,
+  type ReportingTarget,
   refreshReportingObservation,
   reportingTarget,
 } from "./reporting-readiness";
@@ -553,6 +555,7 @@ function setup(
     unavailableRepositories,
     sqlite,
     db: securityDb,
+    reportingDb: db,
     clock,
     repositoryAccess,
     setPermission: (value: "admin" | "read") => {
@@ -594,6 +597,108 @@ function setup(
 }
 
 describe("private intake: cached reporting observations", () => {
+  const targetFor = (t: ReturnType<typeof setup>): ReportingTarget => {
+    const row = t.sqlite
+      .query("SELECT manifest, revision FROM projects WHERE id = ?")
+      .get(PROJECT) as { manifest: string; revision: number };
+    return reportingTarget(JSON.parse(row.manifest), row.revision);
+  };
+  const verified = (enabled: boolean): ReportingObservation => ({
+    kind: "verified",
+    enabled,
+    repositoryId: "700000001",
+    repositoryNodeId: "R_700000001",
+  });
+
+  test("a late older refresh returns its observation without replacing the newer cached value", async () => {
+    const t = setup();
+    const target = targetFor(t);
+    let release!: (value: ReportingObservation) => void;
+    const old = refreshReportingObservation(
+      t.reportingDb,
+      target,
+      () => new Promise((resolve) => { release = resolve; }),
+      new Date(START),
+    );
+    const later = new Date(Date.parse(START) + 1);
+    expect(await refreshReportingObservation(t.reportingDb, target, async () => verified(false), later))
+      .toEqual(verified(false));
+    release(verified(true));
+    expect(await old).toEqual(verified(true));
+    expect(await cachedReportingReadiness(t.reportingDb, target, later)).toMatchObject({
+      state: "disabled", stale: false, checkedAt: later.toISOString(),
+    });
+  });
+
+  test("an equal-time success cannot replace a failure row or claim a stored identity", async () => {
+    const t = setup();
+    const target = targetFor(t);
+    const at = new Date(START);
+    await refreshReportingObservation(t.reportingDb, target, async () => ({ kind: "unavailable" }), at);
+    expect(await refreshReportingObservation(t.reportingDb, target, async () => verified(true), at))
+      .toEqual({ kind: "identity-mismatch" });
+    expect(await cachedReportingReadiness(t.reportingDb, target, at)).toMatchObject({
+      state: "unavailable", stale: true, checkedAt: null, failure: "unavailable",
+    });
+  });
+
+  test("a committed observation survives a lost database write reply", async () => {
+    const t = setup();
+    const target = targetFor(t);
+    const prepare = t.reportingDb.prepare.bind(t.reportingDb);
+    let lost = false;
+    const intercepted = spyOn(t.reportingDb, "prepare").mockImplementation((sql) => {
+      const wrap = (statement: ReturnType<typeof prepare>): ReturnType<typeof prepare> =>
+        new Proxy(statement, {
+          get(statement, property, receiver) {
+            if (property === "bind") return (...values: unknown[]) => wrap(statement.bind(...values));
+            if (property === "run" && sql.includes("INSERT INTO repository_reporting_status"))
+              return async () => {
+                const result = await statement.run();
+                if (!lost) { lost = true; throw new Error("reporting write reply lost"); }
+                return result;
+              };
+            return Reflect.get(statement, property, receiver);
+          },
+        });
+      return wrap(prepare(sql));
+    });
+    try {
+      await expect(refreshReportingObservation(t.reportingDb, target, async () => verified(true), new Date(START)))
+        .rejects.toThrow("reporting write reply lost");
+    } finally {
+      intercepted.mockRestore();
+    }
+    expect(lost).toBe(true);
+    expect(await cachedReportingReadiness(t.reportingDb, target, new Date(START))).toMatchObject({
+      state: "ready", stale: false, checkedAt: START,
+    });
+  });
+
+  test("a cache read with a captured clock refuses an observation from its future", async () => {
+    const t = setup();
+    const target = targetFor(t);
+    const captured = new Date(START);
+    const later = new Date(captured.getTime() + 1);
+    await refreshReportingObservation(t.reportingDb, target, async () => verified(true), later);
+    expect(await cachedReportingReadiness(t.reportingDb, target, captured)).toMatchObject({
+      state: "unavailable", stale: true, checkedAt: null, maxAgeSeconds: 0,
+    });
+    expect(await cachedReportingReadiness(t.reportingDb, target, later)).toMatchObject({
+      state: "ready", stale: false, checkedAt: later.toISOString(),
+    });
+  });
+
+  test("the final fractional second is fresh even when cache max-age rounds down to zero", async () => {
+    const t = setup();
+    const target = targetFor(t);
+    await refreshReportingObservation(t.reportingDb, target, async () => verified(true), new Date(START));
+    expect(await cachedReportingReadiness(t.reportingDb, target, new Date(Date.parse(START) + 3_599_500)))
+      .toMatchObject({ state: "ready", stale: false, maxAgeSeconds: 0 });
+    expect(await cachedReportingReadiness(t.reportingDb, target, new Date(Date.parse(START) + 3_600_000)))
+      .toMatchObject({ state: "ready", stale: true, maxAgeSeconds: 0 });
+  });
+
   test.each([false, true])(
     "failed or stale public observations do not authorize or permanently block submission (no program: %s)",
     async (noProgram) => {

@@ -1054,6 +1054,30 @@ tested or verified here:
   that outcome as paid; payment models retain their separate evidence gates.
   No new runtime change or executed
   browser/chain evidence is claimed for these release models.
+- `monthly_release_concurrent` adds two overlapping hosted requests to the
+  reserve-release model family. Its 19 scenarios distinguish the local
+  journal/signing segment from later RPC and database awaits, reused signatures
+  from last-written metadata, and identical plans from distinct retained plan
+  bytes. An interrupted, unrecorded signature may be recomputed. Hosted
+  concurrency conformance remains unexecuted; injected remote signers are
+  outside the model's stated storage and local-crypto assumptions.
+- `ui_monthly_preparation_lifetime` covers award inspection, award authorization
+  and monthly-setting inspection across departure or component replacement.
+  The three callers now stop a new private review after the initial response
+  if their view has departed. Its 28 scenarios retain already-dispatched
+  effects and distinguish helper return from caller publication. Three browser
+  regression definitions hold the initial response until after departure;
+  execution, before/after video and the required UI checks remain outstanding.
+  The runtime change adds guards without changing layout, labels or controls.
+- `api_reporting_readiness` now models concurrent refresh timestamps, immutable
+  repository identity, committed writes with lost replies, separate readback
+  and cached answers. Its 20 scenarios retain ready/disabled values after
+  failed or expired observations while marking them stale, and cover the final
+  fractional-second band where a fresh answer has a zero cache max-age.
+  `reporting_refresh_job` adds 24 scenarios for ordered registry traversal,
+  paused/retired handling, returned failures, aborted suffixes and retry.
+  Five migrated-SQLite regression definitions cover the cache boundaries. The
+  reporting runtime is unchanged, and these additions remain unexecuted.
 
 ## Acceptance requirements and limits
 
