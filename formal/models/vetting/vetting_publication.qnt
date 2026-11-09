@@ -2,7 +2,10 @@
 // @source workers/vetting/publication.ts
 // @source workers/vetting/publication-journal.ts
 // workers/vetting/publication.ts and publication-journal.ts.
-// One assessment/digest; journal reserve wins once before HTTP is attempted.
+// Composed caller workflow for one assessment/digest; journal reserve wins once
+// before HTTP is attempted. Evidence retention is an upstream assumption here,
+// not a check made by publishResult. Direct helper and service boundaries live
+// in vetting_publication_attempt, vetting_journal_client and vetting_publication_intake.
 // Lost responses stay unknown; a retry never sends a second result.
 module vetting_publication {
   var s: { prepared: bool, approved: bool, evidence: bool, reserved: bool,

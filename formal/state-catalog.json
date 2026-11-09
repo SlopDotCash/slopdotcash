@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "203238c7ee3768d9ab88c891b5138fa9f7bb6d4a5307f559cf530448a4100009",
+  "inventorySha256": "7592fa65cc4efd7c361d8d1ee2a75985a541e9d4b657b98efbf6a28e8aad8f33",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -468,6 +468,7 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_publication_intake.qnt",
         "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_request.qnt",
@@ -1330,7 +1331,10 @@
       "name": "outcome",
       "kind": "sql-check",
       "values": ["accepted", "rejected", "unknown"],
-      "models": ["formal/models/vetting/vetting_publication.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_publication.qnt",
+        "formal/models/vetting/vetting_publication_intake.qnt"
+      ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
@@ -2264,11 +2268,12 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 213,
+      "line": 214,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
       "models": [
+        "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -2285,11 +2290,12 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 537,
+      "line": 597,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
       "models": [
+        "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -2306,11 +2312,12 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1487,
+      "line": 1547,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
       "models": [
+        "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -3185,7 +3192,10 @@
         "repositoryId",
         "repositoryNodeId"
       ],
-      "models": ["formal/models/ui/ui_vetting_projection.qnt"],
+      "models": [
+        "formal/models/ui/ui_vetting_projection.qnt",
+        "formal/models/vetting/vetting_journal_client.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "grantedAt",
         "grantedBy",
@@ -3900,13 +3910,14 @@
     },
     {
       "path": "workers/vetting/publication.ts",
-      "line": 65,
+      "line": 79,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "rejected", "unknown"],
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_publication.qnt"
+        "formal/models/vetting/vetting_publication.qnt",
+        "formal/models/vetting/vetting_publication_attempt.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

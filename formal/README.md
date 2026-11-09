@@ -1445,6 +1445,47 @@ tested or verified here:
   model; journal/snapshot validation, timer delivery and URL encoding retain
   separate contracts. No interface code changes in this batch.
 
+
+- `vetting_publication_attempt` adds 18 scenarios for approval binding, durable
+  reservation, exact receipt fields, status classification and failed/lost
+  replies. The publisher now captures its approved body, destination, digest,
+  signer, clock and journal callbacks before any await. Callback arguments are
+  separate copies of its retained intent and receipt. Twelve unexecuted test
+  definitions include actual publisher/journal-client composition: an
+  unconfirmed reservation cannot authorize a result POST. The earlier
+  `vetting_publication` model now explicitly identifies evidence retention as
+  an upstream assumption, not a direct publisher check.
+- `vetting_journal_client` adds 28 scenarios for exact origins, captured
+  configuration, bounded body ownership and operation-specific replies. A
+  successful schema-only response no longer confirms reservation or recording;
+  those operations require their corresponding true acknowledgement. Refused
+  response bodies are disposed while preserving the service error, and metadata
+  replies are bounded to 4096 bytes. Forty regression cases are unexecuted.
+  File-backed journal behavior is unchanged and retains separate audit work.
+- `vetting_publication_intake` adds 29 scenarios for signed journal schema
+  checks, readiness probes, immutable intent/receipt writes, concurrent calls
+  and replies lost after commit. Forty migrated-SQL/signed-handler cases are
+  unexecuted. A mismatched receipt returns missing-intent even after another
+  receipt exists; an exact repeated completion conflicts. Recorded outcome and
+  HTTP status are operator metadata, not independent proof of intake success.
+  [SQLite UPSERT](https://www.sqlite.org/lang_upsert.html) defines the conflict
+  no-op used by reservation; [RETURNING](https://www.sqlite.org/lang_returning.html)
+  describes returned rows and distinguishes them from transaction commit.
+  Actual D1 commit and durability remain separate implementation assumptions.
+
+
+- `ui_account_menu` adds 48 scenarios for menu/listener lifetime, focus,
+  session/points projections, avatar fallback and sign-out ownership. A delayed
+  sign-out body previously could clear a subsequently accepted member and that
+  member's drafts. The provider now tracks ownership synchronously; sign-out
+  checks it before dispatch, on failure and before local success effects.
+  Ordinary same-member rechecks and passive signed-out observations preserve
+  current sign-out cleanup; newer membership and explicit account actions retire
+  old completions. Fifteen browser cases are unexecuted, including delayed-body
+  success/failure and normal-cleanup counterexamples. Before/after video and
+  browser acceptance remain outstanding. This client guard does not order
+  Set-Cookie headers or identify an unobserved same-actor login in another tab.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

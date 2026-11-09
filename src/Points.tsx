@@ -117,6 +117,7 @@ type PointsContext = {
   refresh: () => void;
   requestPoints: () => void;
   setMe: (m: Membership | null) => void;
+  captureMembershipOwnership: (actorId: string | null) => () => boolean;
 };
 const Context = createContext<PointsContext | null>(null);
 /** The points state of the enclosing PointsProvider; there is no default. */
@@ -223,14 +224,53 @@ export function PointsProvider({
   } | null>(null);
   const verifiedJournal = useRef<PointsJournal | null>(null);
   const sessionRequest = useRef<AbortController | null>(null);
-  const updateMembership = useCallback((value: Membership | null) => {
-    // A successful account action supersedes any earlier session read.
-    sessionRequest.current?.abort();
-    sessionRequest.current = null;
-    setMe(value);
-    if (value === null) setSignoutRevision((revision) => revision + 1);
-    setSession("ready");
+  const membershipOwner = useRef({
+    active: true,
+    actorId: null as string | null,
+    revision: 0,
+  });
+  useLayoutEffect(() => {
+    membershipOwner.current.active = true;
+    return () => {
+      membershipOwner.current.active = false;
+      membershipOwner.current.revision += 1;
+    };
   }, []);
+  const acceptMembership = useCallback(
+    (value: Membership | null, explicit = false) => {
+      const actorId = value?.actor.id ?? null;
+      if (
+        explicit ||
+        (actorId !== null && actorId !== membershipOwner.current.actorId)
+      )
+        membershipOwner.current.revision += 1;
+      // A signed-out read may acknowledge this pending signout. It must not
+      // cancel its cleanup; accepting any later member establishes a new owner.
+      membershipOwner.current.actorId = actorId;
+      setMe(value);
+    },
+    [],
+  );
+  const captureMembershipOwnership = useCallback((actorId: string | null) => {
+    const matches = membershipOwner.current.actorId === actorId;
+    const revision = membershipOwner.current.revision;
+    return () =>
+      matches &&
+      membershipOwner.current.active &&
+      membershipOwner.current.revision === revision;
+  }, []);
+  const updateMembership = useCallback(
+    (value: Membership | null) => {
+      // A successful account action supersedes any earlier session read and
+      // pending action, including an explicit sign-in to the same actor.
+      sessionRequest.current?.abort();
+      sessionRequest.current = null;
+      acceptMembership(value, true);
+      if (value === null) setSignoutRevision((revision) => revision + 1);
+      setSession("ready");
+    },
+    [acceptMembership],
+  );
   const shouldLoad = enabled || requested;
   // biome-ignore lint/correctness/useExhaustiveDependencies: profile session checks also recheck the public journal's age.
   useEffect(() => {
@@ -293,14 +333,14 @@ export function PointsProvider({
         .then(async (r) => {
           if (controller.signal.aborted) return;
           if (r.status === 401) {
-            setMe(null);
+            acceptMembership(null);
             setSession("ready");
             return;
           }
           if (!r.ok) throw new Error("session unavailable");
           const m = await readBoundedJson(r, 16384, "points session");
           if (controller.signal.aborted) return;
-          setMe(m ? member(m) : null);
+          acceptMembership(m ? member(m) : null);
           setSession("ready");
         })
         .catch(() => {
@@ -311,7 +351,7 @@ export function PointsProvider({
       controller.abort();
       if (sessionRequest.current === controller) sessionRequest.current = null;
     };
-  }, [sessionAttempt]);
+  }, [sessionAttempt, acceptMembership]);
   useEffect(() => {
     const recheckProfileSession = () => {
       if (
@@ -335,6 +375,7 @@ export function PointsProvider({
         signoutRevision,
         refreshSession: () => setSessionAttempt((value) => value + 1),
         setMe: updateMembership,
+        captureMembershipOwnership,
         refresh: () => setAttempt((a) => a + 1),
         requestPoints: () => setRequested(true),
       }}
@@ -347,7 +388,15 @@ const currentPath = () =>
   `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
 export function PointsNav() {
-  const { state, me, session, setMe, requestPoints, refresh } = usePoints();
+  const {
+    state,
+    me,
+    session,
+    setMe,
+    captureMembershipOwnership,
+    requestPoints,
+    refresh,
+  } = usePoints();
   const [open, setOpen] = useState(false);
   const [failedImage, setFailedImage] = useState("");
   const { busy, error, run } = useAction();
@@ -399,13 +448,24 @@ export function PointsNav() {
   }, []);
   const navigate = () => setOpen(false);
   function signout() {
+    const ownsMembership = captureMembershipOwnership(me?.actor.id ?? null);
+    if (!ownsMembership()) return;
     void run(
       async () => {
-        await requestJson("/api/v1/points/signout", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: "{}",
-        });
+        if (!ownsMembership()) return;
+        try {
+          await requestJson("/api/v1/points/signout", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          });
+        } catch (error) {
+          if (!ownsMembership()) return;
+          throw error;
+        }
+        // Response headers may arrive before the JSON body. A newer account
+        // accepted in that interval owns its membership and local drafts.
+        if (!ownsMembership()) return;
         clearAllDrafts();
         setMe(null);
         notifyProjectSessionChanged();

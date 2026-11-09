@@ -34,41 +34,55 @@ export async function publishResult(input: {
   at?: Date;
   fetch?: typeof fetch;
 }) {
-  serviceOrigin(input.origin);
+  // The caller retains this configuration while signing, reservation and
+  // response reads await. Bind every stage to one approved publication.
+  const {
+    body,
+    approvedSha256,
+    signer,
+    journal: configuredJournal,
+    journalDirectory,
+    at,
+  } = input;
+  const origin = serviceOrigin(input.origin);
+  const fetcher = input.fetch ?? fetch;
+  const { privateKey, publicKey } = signer;
+  const signedAt = at ? new Date(at.getTime()) : undefined;
   // Publishes either a bounded scan result or a historical v1 result.
-  const result = parseRecordedVettingResult(JSON.parse(input.body));
+  const result = parseRecordedVettingResult(JSON.parse(body));
   if (
-    Buffer.byteLength(input.body) > MAX_VETTING_RESULT_BYTES ||
-    sha256(input.body) !== input.approvedSha256 ||
-    JSON.stringify(result) !== input.body ||
+    Buffer.byteLength(body) > MAX_VETTING_RESULT_BYTES ||
+    sha256(body) !== approvedSha256 ||
+    JSON.stringify(result) !== body ||
     recordedResultProblems(result).length > 0
   )
     throw new Error("Publication bytes do not match the approved result");
+  const journal = configuredJournal ?? filePublicationJournal(journalDirectory);
+  const reserve = journal.reserve.bind(journal);
+  const complete = journal.complete.bind(journal);
   const path = "/api/v1/vetting/results";
   const headers = await signedServiceHeaders({
-    signer: input.signer,
+    signer: { privateKey, publicKey },
     method: "POST",
     pathAndQuery: path,
-    body: new TextEncoder().encode(input.body),
-    at: input.at,
+    body: new TextEncoder().encode(body),
+    at: signedAt,
   });
-  const journal =
-    input.journal ?? filePublicationJournal(input.journalDirectory);
   const intent = {
     assessmentId: result.assessmentId,
-    resultSha256: input.approvedSha256,
-    origin: input.origin,
+    resultSha256: approvedSha256,
+    origin,
     disposition: result.disposition,
   };
   // Atomic durable reservation across processes. Never remove it on failure.
-  await journal.reserve(intent);
+  await reserve({ ...intent });
   let outcome: "accepted" | "rejected" | "unknown" = "unknown";
   let httpStatus: number | null = null;
   try {
-    const response = await (input.fetch ?? fetch)(`${input.origin}${path}`, {
+    const response = await fetcher(`${origin}${path}`, {
       method: "POST",
       headers: { ...headers, "content-type": "application/json" },
-      body: input.body,
+      body,
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
     });
@@ -93,7 +107,7 @@ export async function publishResult(input: {
         receipt.assessment?.commitSha === result.assessed.commitSha &&
         receipt.assessment?.templateSha256 === result.assessed.templateSha256 &&
         receipt.assessment?.policyVersion === result.policyVersion &&
-        receipt.assessment?.resultSha256 === input.approvedSha256
+        receipt.assessment?.resultSha256 === approvedSha256
       )
         outcome = "accepted";
     }
@@ -101,6 +115,6 @@ export async function publishResult(input: {
     // Do not leak transport errors, credentials or private result content.
   }
   const receipt = { ...intent, outcome, httpStatus };
-  await journal.complete(receipt);
+  await complete({ ...receipt });
   return receipt;
 }

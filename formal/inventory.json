@@ -1305,6 +1305,7 @@
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_evidence_registration.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
+        "formal/models/vetting/vetting_publication_intake.qnt",
         "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_request.qnt",
@@ -1338,6 +1339,7 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_publication_intake.qnt",
         "formal/models/vetting/vetting_refresh_queue.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_request.qnt",
@@ -2807,7 +2809,10 @@
     {
       "path": "migrations/0074_vetting_publication_journal.sql",
       "sha256": "00dcaf0350b9ad6a2cfd137d4ec761bb8ba64adeb86aa45fb09b0cb31ea9e3ba",
-      "models": ["formal/models/vetting/vetting_publication.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_publication.qnt",
+        "formal/models/vetting/vetting_publication_intake.qnt"
+      ],
       "candidateLines": [15, 16, 17, 18],
       "review": "mapped-abstraction"
     },
@@ -5177,8 +5182,9 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "056742fc4136b711b03708193e67c1647f3dc7e972adc01f2e7f30b484276aa8",
+      "sha256": "414654c77f75d89e31643eeda2bbb0dee30498eddb3966da689304cf861df09f",
       "models": [
+        "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -5191,20 +5197,21 @@
         "formal/models/ui/ui_standings_view.qnt"
       ],
       "candidateLines": [
-        14, 19, 87, 102, 103, 104, 106, 112, 122, 131, 134, 142, 143, 145, 146,
-        162, 164, 211, 212, 213, 216, 217, 218, 219, 236, 242, 249, 257, 267,
-        274, 281, 295, 315, 332, 350, 351, 352, 357, 381, 382, 387, 390, 391,
-        392, 393, 394, 396, 397, 414, 420, 477, 478, 483, 485, 515, 516, 517,
-        519, 521, 524, 533, 535, 537, 539, 541, 544, 545, 549, 551, 553, 563,
-        564, 569, 571, 583, 584, 614, 618, 619, 629, 630, 641, 643, 650, 654,
-        659, 660, 684, 690, 742, 743, 744, 745, 748, 760, 834, 847, 852, 861,
-        931, 969, 975, 985, 994, 999, 1001, 1004, 1010, 1011, 1022, 1031, 1039,
-        1041, 1042, 1050, 1053, 1054, 1055, 1056, 1058, 1059, 1062, 1063, 1074,
-        1083, 1107, 1111, 1120, 1142, 1143, 1144, 1153, 1237, 1247, 1252, 1270,
-        1272, 1274, 1277, 1278, 1279, 1281, 1349, 1353, 1455, 1456, 1457, 1487,
-        1488, 1527, 1529, 1530, 1531, 1533, 1540, 1542, 1546, 1548, 1550, 1559,
-        1560, 1566, 1572, 1577, 1586, 1587, 1588, 1589, 1591, 1592, 1595, 1596,
-        1598, 1599, 1603, 1611, 1612, 1613, 1614, 1617, 1621, 1632, 1633, 1638
+        14, 19, 87, 102, 103, 104, 106, 112, 123, 132, 135, 143, 144, 146, 147,
+        163, 165, 212, 213, 214, 217, 218, 219, 220, 247, 265, 276, 282, 289,
+        297, 307, 314, 321, 335, 355, 372, 392, 400, 401, 406, 430, 431, 436,
+        439, 440, 441, 442, 443, 445, 446, 474, 480, 537, 538, 543, 545, 575,
+        576, 577, 579, 581, 584, 593, 595, 597, 599, 601, 604, 605, 609, 611,
+        613, 623, 624, 629, 631, 643, 644, 674, 678, 679, 689, 690, 701, 703,
+        710, 714, 719, 720, 744, 750, 802, 803, 804, 805, 808, 820, 894, 907,
+        912, 921, 991, 1029, 1035, 1045, 1054, 1059, 1061, 1064, 1070, 1071,
+        1082, 1091, 1099, 1101, 1102, 1110, 1113, 1114, 1115, 1116, 1118, 1119,
+        1122, 1123, 1134, 1143, 1167, 1171, 1180, 1202, 1203, 1204, 1213, 1297,
+        1307, 1312, 1330, 1332, 1334, 1337, 1338, 1339, 1341, 1409, 1413, 1515,
+        1516, 1517, 1547, 1548, 1587, 1589, 1590, 1591, 1593, 1600, 1602, 1606,
+        1608, 1610, 1619, 1620, 1626, 1632, 1637, 1646, 1647, 1648, 1649, 1651,
+        1652, 1655, 1656, 1658, 1659, 1663, 1671, 1672, 1673, 1674, 1677, 1681,
+        1692, 1693, 1698
       ],
       "review": "mapped-abstraction"
     },
@@ -5638,7 +5645,10 @@
     {
       "path": "src/lib/browser-deployment.ts",
       "sha256": "f051d35d1b4eb48b13df20451546470896659bc78ac75f22a4969902832d68e4",
-      "models": ["formal/models/ui/ui_boot.qnt"],
+      "models": [
+        "formal/models/ui/ui_account_menu.qnt",
+        "formal/models/ui/ui_boot.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -5651,7 +5661,8 @@
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_profile_census_cache.qnt",
         "formal/models/ui/ui_transport.qnt",
-        "formal/models/ui/ui_vetting_reader.qnt"
+        "formal/models/ui/ui_vetting_reader.qnt",
+        "formal/models/vetting/vetting_journal_client.qnt"
       ],
       "candidateLines": [1, 99],
       "review": "mapped-abstraction"
@@ -6627,6 +6638,7 @@
       "path": "src/lib/use-action.ts",
       "sha256": "2ab920b0a8d22dcea44e6a544556775a44559d81989788fcf2a407f01e1dae64",
       "models": [
+        "formal/models/ui/ui_account_menu.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_email_actions.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -6936,7 +6948,10 @@
     {
       "path": "src/lib/vetting-contracts.ts",
       "sha256": "18da5806d1c0ff55829cc0519861c2bb3419ba3f7d64752173451225f280f545",
-      "models": ["formal/models/ui/ui_vetting_projection.qnt"],
+      "models": [
+        "formal/models/ui/ui_vetting_projection.qnt",
+        "formal/models/vetting/vetting_journal_client.qnt"
+      ],
       "candidateLines": [37, 43, 92, 93, 94, 95, 96, 98, 104, 106, 118],
       "review": "mapped-abstraction",
       "statelessReason": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O."
@@ -8925,19 +8940,23 @@
     },
     {
       "path": "workers/vetting/publication-journal.ts",
-      "sha256": "ae0d34d87f825e008db51195ffc8673ae82a90b9108ac6c0eeaefcdc276f6500",
-      "models": ["formal/models/vetting/vetting_publication.qnt"],
-      "candidateLines": [1, 36, 42, 57, 90],
+      "sha256": "7718b93743769ccbbac36685681a44df4e9ea3dbc41af517ea5f0c33046d9963",
+      "models": [
+        "formal/models/vetting/vetting_journal_client.qnt",
+        "formal/models/vetting/vetting_publication.qnt"
+      ],
+      "candidateLines": [1, 35, 41, 56, 99],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/publication.ts",
-      "sha256": "9890b8d31bf15ecedbb9d279299cb259d21a5b4f056d95244418b67e3bbf29cb",
+      "sha256": "55442eaad873319a6949deadc872894fd68bf50f8d964881f4051ea8cab25334",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_publication.qnt"
+        "formal/models/vetting/vetting_publication.qnt",
+        "formal/models/vetting/vetting_publication_attempt.qnt"
       ],
-      "candidateLines": [24, 75, 76, 79, 92],
+      "candidateLines": [24, 89, 90, 93, 106],
       "review": "mapped-abstraction"
     },
     {
@@ -8999,6 +9018,7 @@
       "path": "workers/vetting/service.ts",
       "sha256": "6292b8db2deb24925a552fd8ffc8cab2eae6c48ff5cd9e318ac0a067b94699d2",
       "models": [
+        "formal/models/vetting/vetting_journal_client.qnt",
         "formal/models/vetting/vetting_service_request.qnt",
         "formal/models/vetting/vetting_service_signer.qnt"
       ],
@@ -16982,6 +17002,65 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_account_menu.qnt",
+      "sha256": "9713cce75a1ccb68935e75bfa4f6d1b359a0389a0b10040d7f6fff527d1a9023",
+      "sources": [
+        "src/Points.tsx",
+        "src/lib/browser-deployment.ts",
+        "src/lib/use-action.ts"
+      ],
+      "scenarios": [
+        "absentEarnedRecordStillKeepsHistoricalAwardsTest",
+        "actorChangeUsesCurrentProfileAndTotalTest",
+        "adminLinkNeedsCurrentChildRoleResultTest",
+        "changedAvatarDoesNotReuseFailedUrlTest",
+        "cleanedUpEscapeDoesNotMoveFocusTest",
+        "closedMenuListenerCleanupIsSeparateTest",
+        "departedProviderCannotClearLaterDraftsTest",
+        "departureRemovesWindowListenersTest",
+        "escapeClosesAndRestoresTriggerTest",
+        "eventBeforeEffectHasNoNewListenerTest",
+        "failedCurrentAvatarUsesInitialsTest",
+        "failedHiddenSignoutReappearsWithErrorTest",
+        "failedRecheckRetainsPublishedMembershipTest",
+        "failureDoesNotInvalidateAccountTest",
+        "hashchangeTracksReturnWithoutClosingMenuTest",
+        "interiorFocusDoesNotDismissTest",
+        "lateOldAvatarErrorDoesNotHideCurrentImageTest",
+        "loginRouteSuppressesAnonymousControlTest",
+        "lostMembershipDoesNotSynchronouslyResetLocalOpenTest",
+        "nativeAccountLinkClosesBeforeNavigationTest",
+        "newActorHidesEarlierSignoutFailureTest",
+        "newMemberSurvivesEarlierSignoutBodyTest",
+        "newerMemberThenNullStillRetiresEarlierSignoutTest",
+        "nullRootOutsideEventClosesRetainedOpenTest",
+        "oldDelayedSignoutClearedNewMemberTest",
+        "onlyLatestFailedUrlIsRetainedTest",
+        "openedMenuRequestsPointsTest",
+        "otherKeysDoNotDismissTest",
+        "outsideFocusClosesWithoutFocusTheftTest",
+        "outsidePointerClosesTest",
+        "passiveNullStillCompletesCurrentSignoutTest",
+        "pendingSignoutMayCloseMenuTest",
+        "pointsErrorRetryKeepsPanelOpenTest",
+        "pointsFailureDoesNotMislabelHistoricalBonusAsTotalTest",
+        "popstateClosesMenuAndTracksReturnTest",
+        "readyTotalIncludesHistoricalMembershipAwardsTest",
+        "reopenedAdminChildStartsCheckingTest",
+        "retrySignoutClearsEarlierErrorTest",
+        "roleErrorDoesNotShowAdminLinkTest",
+        "sameActorExplicitLoginRetiresEarlierSignoutTest",
+        "sameActorOrdinaryRecheckKeepsCurrentSignoutTest",
+        "sessionFailureOffersLoginTest",
+        "signedInSessionRecheckKeepsAccountControlTest",
+        "signoutButtonSerializesVisibleUserActionsTest",
+        "signoutWaitsBeforeClearingMembershipTest",
+        "successfulSignoutClosesAndPublishesInvalidationTest",
+        "uncommittedNewActorPreventsOldHandlerDispatchTest",
+        "unknownSessionShowsCheckingTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_admin_editor_lifetime.qnt",
       "sha256": "6e60274fa26933b579dacb0bc711cf13b1d275798d17733e15a206eb2db30438",
       "sources": ["src/Admin.tsx", "src/lib/project-api.ts"],
@@ -20430,6 +20509,46 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_journal_client.qnt",
+      "sha256": "619de09d6269b84514ce27cca5a9d719875bdff549e0de00c2d6eb3c23ce983b",
+      "sources": [
+        "src/lib/browser-json.ts",
+        "src/lib/vetting-contracts.ts",
+        "workers/vetting/publication-journal.ts",
+        "workers/vetting/service.ts"
+      ],
+      "scenarios": [
+        "cancellationFailurePreservesHttpRefusalTest",
+        "completeFalseAcknowledgementRefusedTest",
+        "completeWrongOperationRefusedTest",
+        "confirmedReceiptDoesNotChangeOutcomePolicyTest",
+        "declaredOverflowCancelsBeforeReaderTest",
+        "encodedMetadataSurvivesSigningYieldTest",
+        "exactHttpsOriginRequiredTest",
+        "factoryConfigurationSurvivesCallerMutationTest",
+        "falsePresencePreservedTest",
+        "httpErrorCancelsWithoutReadingTest",
+        "invalidLengthCancelsBeforeReaderTest",
+        "invalidUtf8CannotConfirmTest",
+        "laterPresenceReadRecoversReservedStateTest",
+        "lostReplyDoesNotUndoReservationTest",
+        "malformedJsonCannotConfirmTest",
+        "malformedReplyDoesNotUndoReservationTest",
+        "missingBodyCannotConfirmTest",
+        "nonbooleanPresenceRefusedTest",
+        "oldSchemaOnlyReplyCouldAuthorizePublicationTest",
+        "oversizedBodyCancelsAndUnlocksTest",
+        "reserveFalseAcknowledgementRefusedTest",
+        "reserveMissingAcknowledgementRefusedTest",
+        "reserveRequiresTrueAcknowledgementTest",
+        "reserveWrongOperationRefusedTest",
+        "signingFailureNeverFetchesTest",
+        "streamFailureCancelsAndUnlocksTest",
+        "truePresencePreservedTest",
+        "wrongSchemaRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_malicious_reinstatement.qnt",
       "sha256": "e9df5ae8f670b3a140e3c3a6c207f3cd6a2a8f90f56dc85ccb722d9db7b9f149",
       "sources": [
@@ -20508,7 +20627,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_publication.qnt",
-      "sha256": "25ae79efce25f9352f61b43f2280b2e76f34455a485c93fca8b235384d0f829a",
+      "sha256": "41a385ac6e4cc724c3afebd14bef7e3ecda1df8e8ffddec60769219934ca2a55",
       "sources": [
         "migrations/0074_vetting_publication_journal.sql",
         "workers/vetting/publication-journal.ts",
@@ -20518,6 +20637,71 @@
         "crashAfterReservationTest",
         "lostAcceptedResponseTest",
         "rejectedIsNotRetriedTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_publication_attempt.qnt",
+      "sha256": "07ecc14842d547deddec97dc6ec6cf6f61f7700a2c4e5420e92423f97ba57dd2",
+      "sources": ["workers/vetting/publication.ts"],
+      "scenarios": [
+        "callbackMutationDoesNotRewriteIntentTest",
+        "callerMutationDuringReservationKeepsApprovalTest",
+        "callerMutationDuringSigningKeepsApprovalTest",
+        "changedApprovalWhileReadingCannotChangeReceiptBindingTest",
+        "completionCallbackCannotRewriteReturnedEnvelopeTest",
+        "conflictCannotProveRejectionTest",
+        "exactReceiptRecordsAcceptanceTest",
+        "failedCompletionDoesNotReturnKnownOutcomeTest",
+        "invalidApprovalStopsBeforeSigningTest",
+        "knownReservationFailureNeverPostsTest",
+        "lostCommittedResponseStaysUnknownTest",
+        "lostCompletionResponseStillBlocksRetryTest",
+        "malformedOrOversizedBodyStaysUnknownTest",
+        "missingReceiptFieldStaysUnknownTest",
+        "prewriteRejectionStaysRejectedIfCancellationFailsTest",
+        "priorReservationStopsAnotherAttemptTest",
+        "signingFailureDoesNotReserveTest",
+        "uncertainReservationNeverPostsTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_publication_intake.qnt",
+      "sha256": "1a5e7b1a98007fca43864c7fb18c75d6fadd413797f87eb85c94270fefb01fd9",
+      "sources": [
+        "backend/vetting/handler.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0074_vetting_publication_journal.sql"
+      ],
+      "scenarios": [
+        "acceptedNullStatusIsOnlyReportedMetadataTest",
+        "competingDifferentIntentCannotReplaceTest",
+        "duplicateReceiptNeverOverwritesTest",
+        "exactReceiptCommitsTest",
+        "extraHasFieldRefusedTest",
+        "failedWriteDoesNotReserveTest",
+        "highStatusBoundaryAcceptedTest",
+        "independentAssessmentCanReserveTest",
+        "invalidBodyRefusedTest",
+        "invalidIdRefusedBeforeStoreTest",
+        "knownAssessmentChecksBadOutcomeTest",
+        "lostInsertReplyRetainsReservationTest",
+        "lostReceiptReplyRetainsReceiptTest",
+        "lostResponseRetainsReservationTest",
+        "lowStatusBoundaryAcceptedTest",
+        "metadataRefusedBeforeExistenceTest",
+        "mismatchedIntentReceiptRefusedTest",
+        "mismatchedReceiptAfterPriorReceiptStillMissingTest",
+        "missingAssessmentPrecedesBadOutcomeTest",
+        "missingAssessmentRefusedTest",
+        "missingKeysPrecedeParsingTest",
+        "noIntentReceiptRefusedTest",
+        "outOfRangeStatusRefusedTest",
+        "readAfterReservationReturnsTrueTest",
+        "readBeforeReservationKeepsCapturedFalseTest",
+        "readinessProbeDoesNotNeedAssessmentTest",
+        "reserveCommitsOnceTest",
+        "unsignedNeverReadsTablesTest",
+        "unsupportedOperationRefusedTest"
       ]
     },
     {

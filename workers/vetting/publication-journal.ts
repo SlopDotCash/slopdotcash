@@ -1,14 +1,13 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   JOURNAL_PATH,
   JOURNAL_SCHEMA,
-  PUBLICATION_OUTCOMES,
   type PublicationIntent,
-  type PublicationOutcome,
   type PublicationReceipt,
 } from "../../src/lib/vetting-contracts";
-import { signedServiceHeaders, type VettingServiceSigner } from "./service";
+import { serviceOrigin, signedServiceHeaders, type VettingServiceSigner } from "./service";
 
 export { JOURNAL_SCHEMA, type PublicationIntent, type PublicationReceipt };
 /** Reservation must be durable before the first publication request. */
@@ -50,7 +49,7 @@ export function filePublicationJournal(root: string): PublicationJournal {
 
 /**
  * The journal route contract is shared with the service handler in
- * `src/lib/vetting-contracts.ts`; this module only owns the file-backed client.
+ * `src/lib/vetting-contracts.ts`; this module owns its file and signed clients.
  */
 
 /**
@@ -65,9 +64,14 @@ export function servicePublicationJournal(config: {
   fetch?: typeof fetch;
   now?: () => Date;
 }): PublicationJournal {
-  const origin = new URL(config.origin).origin;
+  const origin = serviceOrigin(config.origin);
   const fetcher = config.fetch ?? fetch;
-  async function call(payload: Record<string, unknown>): Promise<unknown> {
+  // The journal lifetime keeps one endpoint, transport, clock and key pair.
+  // Mutating caller-owned configuration cannot splice another key into it.
+  const { privateKey, publicKey } = config.signer;
+  const signer = { privateKey, publicKey };
+  const now = config.now;
+  async function call(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const body = new TextEncoder().encode(JSON.stringify(payload));
     const response = await fetcher(`${origin}${JOURNAL_PATH}`, {
       method: "POST",
@@ -76,31 +80,37 @@ export function servicePublicationJournal(config: {
       headers: {
         "content-type": "application/json",
         ...(await signedServiceHeaders({
-          signer: config.signer,
+          signer,
           method: "POST",
           pathAndQuery: JOURNAL_PATH,
           body,
-          ...(config.now ? { at: config.now() } : {}),
+          ...(now ? { at: now() } : {}),
         })),
       },
       body,
     });
-    if (!response.ok)
+    if (!response.ok) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Preserve the service refusal if disposing its body also fails.
+      }
       throw new Error(
         `Publication journal refused ${String(payload.operation)} (HTTP ${response.status})`,
       );
-    const reply = (await response.json()) as { schemaVersion?: unknown };
-    if (reply.schemaVersion !== JOURNAL_SCHEMA)
+    }
+    const reply = await readBoundedJson(response, 4096, "Publication journal reply");
+    if (
+      typeof reply !== "object" || reply === null || Array.isArray(reply) ||
+      !("schemaVersion" in reply) || reply.schemaVersion !== JOURNAL_SCHEMA
+    )
       throw new Error("Publication journal reply has an unexpected contract");
-    return reply;
+    return reply as Record<string, unknown>;
   }
   return {
     async has(id) {
       const value = await call({ operation: "has", assessmentId: id });
-      const present =
-        typeof value === "object" && value !== null
-          ? (value as { present?: unknown }).present
-          : undefined;
+      const present = value.present;
       // A well-formed reply with no boolean `present` is refused instead of read
       // as "not journaled": the caller would republish the assessment.
       if (typeof present !== "boolean")
@@ -108,16 +118,18 @@ export function servicePublicationJournal(config: {
       return present;
     },
     async reserve(intent) {
-      await call({
+      const value = await call({
         operation: "reserve",
         assessmentId: intent.assessmentId,
         resultSha256: intent.resultSha256,
         origin: intent.origin,
         disposition: intent.disposition,
       });
+      if (value.reserved !== true)
+        throw new Error("Publication journal reply has no confirmed reservation");
     },
     async complete(receipt) {
-      await call({
+      const value = await call({
         operation: "complete",
         assessmentId: receipt.assessmentId,
         resultSha256: receipt.resultSha256,
@@ -126,6 +138,8 @@ export function servicePublicationJournal(config: {
         outcome: receipt.outcome,
         httpStatus: receipt.httpStatus,
       });
+      if (value.recorded !== true)
+        throw new Error("Publication journal reply has no confirmed receipt");
     },
   };
 }
