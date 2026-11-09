@@ -1120,7 +1120,7 @@ export function AccountPage() {
   );
 }
 
-/** Categories from protocol/points-v1.md: activity and points. */
+/** Categories from PRD section 7: activity and points. */
 const HISTORICAL_POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   ["Merged PR before scoring began", "10 each"],
   ["Verified payout", "25 per project and month"],

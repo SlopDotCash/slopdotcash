@@ -3799,9 +3799,9 @@ interface CandidateEvidenceVerdict {
 
 /**
  * A score-bearing artifact stayed unavailable after its transport retries.
- * Missing data is unavailable, never a fabricated zero (protocol/points-v1.md),
+ * Missing data is unavailable, never a fabricated zero (PRD section 7),
  * and incomplete evidence must fail snapshot collection
- * (protocol/scoring-v2.md), so no scored snapshot is returned or written.
+ * (PRD section 7), so no scored snapshot is returned or written.
  */
 export class EvidenceUnavailableError extends Error {
   readonly unavailable: readonly UnavailableEvidenceArtifact[];
