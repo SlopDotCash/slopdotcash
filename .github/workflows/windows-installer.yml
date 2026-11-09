@@ -5,7 +5,13 @@ on:
     branches: [develop, development, main]
     paths:
       - ".github/workflows/windows-installer.yml"
-      - "skills/project-contributor-template/**"
+      # Mirrors the installer selection in scripts/ci-scope.mjs: the rendered
+      # skills, their renderer and schema, and the pinned dependencies.
+      - "skills/**"
+      - "src/lib/project-skill*.mjs"
+      - "src/lib/project-schema.mjs"
+      - "package.json"
+      - "bun.lock"
       - "scripts/run-e2e-phase.mjs"
       - "scripts/e2e-runner.test.ts"
       - "tests/fixture-overlay.mjs"

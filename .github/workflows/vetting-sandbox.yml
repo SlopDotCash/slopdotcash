@@ -53,7 +53,7 @@ jobs:
             --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8897 \
             > "$RUNNER_TEMP/merge-sdk.log" 2>&1 &
           merge_pid=$!
-          for attempt in $(seq 1 120); do
+          for _ in $(seq 1 120); do
             if curl --fail --silent http://127.0.0.1:8897/health > /dev/null; then break; fi
             if ! kill -0 "$merge_pid" 2>/dev/null; then echo 'Merge qualification Worker stopped'; exit 1; fi
             sleep 1
@@ -66,7 +66,7 @@ jobs:
           ./node_modules/.bin/wrangler dev --config workers/vetting-sandbox/wrangler.toml --ip 127.0.0.1 --port 8896 \
             --var "RUNNER_IMAGE_SHA256:$RUNNER_IMAGE_SHA256" --var "SLOP_RELEASE_SHA:$GITHUB_SHA" > "$RUNNER_TEMP/sandbox.log" 2>&1 &
           runner_pid=$!
-          for attempt in $(seq 1 120); do
+          for _ in $(seq 1 120); do
             if curl --fail --silent "$SLOP_SANDBOX_TEST_URL/health" > /dev/null; then break; fi
             if ! kill -0 "$runner_pid" 2>/dev/null; then cat "$RUNNER_TEMP/sandbox.log"; exit 1; fi
             sleep 1
