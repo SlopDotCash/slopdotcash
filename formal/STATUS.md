@@ -200,6 +200,17 @@ unexecuted. The metadata census now contains 843 sources, 359 models, 2,304
 scenarios and 9,980 function bodies in 687 files. The 168 selected contracts
 and zero unmapped source paths remain accounting, not full refinement proof.
 
+The lock-publication follow-up adds one model and 20 scenarios, with 11 new
+native regression definitions. Candidate cleanup preserves the primary error;
+failed stale cleanup revokes an unpublished new owner while the guard is held.
+Release records its commit before cleanup, and retry operates only on the
+saved private release path. Rollback and guard failures retain explicit
+committed/manual-recovery states. See `contributor-lock-publication-audit.md`.
+All new scenarios and regression definitions remain unexecuted. The metadata
+census now has 843 sources, 360 models and 2,324 scenarios; the function census
+contains 9,982 bodies in 687 files and 168 selected contracts. These counts do
+not establish implementation refinement or completion of this review.
+
 The reviewer independently confirmed that run `42533925495` attempt 2 passed
 against `cbb2b696` / the byte-identical `69229342` merge: 308 finite graphs,
 924 normal model stages and 168 selected function proofs in 33 modules. These

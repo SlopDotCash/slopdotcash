@@ -14,6 +14,11 @@ models the helper's unpublished-child crash and acquisition handoff, plus
 request/report cleanup results. These newer model and source changes are also
 unexecuted; the older simulation results below do not cover them.
 
+The [lock publication review](contributor-lock-publication-audit.md) then adds
+guarded rollback before an acquisition handle is returned, explicit committed
+failure states, and release cleanup retries that preserve successor ownership.
+Its 20 new scenarios and 11 native definitions are also unexecuted.
+
 | Source | Model / review |
 | --- | --- |
 | `skills/project-contributor-template/scripts/live-report.mjs` | `contributor_review_epoch`: deterministic cutoff and finite frontier, exact-head terminal disposition, deferred arrivals, one lower-tier permit. `contributor_discovery_lock`: process birth identity, owner token, atomic transition guard, live-child retention, stale-owner reclamation. `contributor_discovery_snapshot`: two full-read attempts, independent inventory/activity, failure without empty-success publication. |

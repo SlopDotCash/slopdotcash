@@ -1850,7 +1850,11 @@ function prepareLiveReportLockCandidate(lockPath, ownerToken, processIdentity) {
     );
     return candidatePath;
   } catch (error) {
-    rmSync(candidatePath, { force: true, recursive: true });
+    cleanupPreservingFailure(
+      () => rmSync(candidatePath, { force: true, recursive: true }),
+      true,
+      "Slop lock candidate cleanup",
+    );
     throw error;
   }
 }
@@ -1986,64 +1990,136 @@ export function acquireLiveReportLock(identity, options = {}) {
   if (processIdentity === null) {
     throw new Error("could not establish the live report process identity");
   }
-  withLiveReportLockTransition(lockPath, () => {
-    const candidatePath = prepareLiveReportLockCandidate(
-      lockPath,
-      ownerToken,
-      processIdentity,
-    );
-    try {
-      if (!existsSync(lockPath)) {
+  let acquired = false;
+  try {
+    withLiveReportLockTransition(lockPath, () => {
+      const candidatePath = prepareLiveReportLockCandidate(
+        lockPath,
+        ownerToken,
+        processIdentity,
+      );
+      let candidateAtPath = true;
+      let failed = true;
+      try {
+        if (!existsSync(lockPath)) {
+          renameSync(candidatePath, lockPath);
+          candidateAtPath = false;
+          acquired = true;
+          failed = false;
+          return;
+        }
+        assertLiveReportLockDirectory(lockPath);
+        const currentOwner = readLiveReportLockOwner(lockPath);
+        if (currentOwner === null) {
+          throw new Error("live report lock owner is missing");
+        }
+        if (
+          processLeaseIsActive(currentOwner) ||
+          liveReportHasActiveCommand(lockPath, currentOwner.ownerToken)
+        ) {
+          throw new LiveReportLockContentionError();
+        }
+        const stalePath = `${lockPath}.stale-${process.pid}-${randomBytes(16).toString("hex")}`;
+        renameSync(lockPath, stalePath);
         renameSync(candidatePath, lockPath);
-        return;
+        candidateAtPath = false;
+        acquired = true;
+        try {
+          rmSync(stalePath, { force: true, recursive: true });
+        } catch (error) {
+          // No handle or child can exist for this new owner while the guard
+          // is held. Revoke only our unpublished owner; a partially removed
+          // stale directory is never restored as the authoritative lock.
+          try {
+            renameSync(lockPath, candidatePath);
+            candidateAtPath = true;
+            acquired = false;
+          } catch (rollbackError) {
+            const cleanupDetail =
+              error instanceof Error ? error.message : String(error);
+            const rollbackDetail =
+              rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError);
+            throw new AggregateError(
+              [error, rollbackError],
+              `stale lock cleanup failed: ${cleanupDetail}; the new lock ownership could not be revoked: ${rollbackDetail}`,
+            );
+          }
+          throw error;
+        }
+        failed = false;
+      } finally {
+        // A successfully moved candidate no longer exists at this path.
+        // Only failed preparation/publication or successful revocation owns it.
+        if (candidateAtPath) {
+          cleanupPreservingFailure(
+            () => rmSync(candidatePath, { force: true, recursive: true }),
+            failed,
+            "Slop lock candidate cleanup",
+          );
+        }
       }
-      assertLiveReportLockDirectory(lockPath);
-      const currentOwner = readLiveReportLockOwner(lockPath);
-      if (currentOwner === null) {
-        throw new Error("live report lock owner is missing");
-      }
-      if (
-        processLeaseIsActive(currentOwner) ||
-        liveReportHasActiveCommand(lockPath, currentOwner.ownerToken)
-      ) {
-        throw new LiveReportLockContentionError();
-      }
-      const stalePath = `${lockPath}.stale-${process.pid}-${randomBytes(16).toString("hex")}`;
-      renameSync(lockPath, stalePath);
-      renameSync(candidatePath, lockPath);
-      rmSync(stalePath, { force: true, recursive: true });
-    } finally {
-      rmSync(candidatePath, { force: true, recursive: true });
+    });
+  } catch (error) {
+    if (acquired) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `live report lock ownership was acquired at ${lockPath}, but acquisition cleanup did not finish: ${detail}. Stop all affected discovery processes before manual recovery; do not retry as if no lock was acquired`,
+        { cause: error },
+      );
     }
-  });
+    throw error;
+  }
   let released = false;
+  let releaseCompleted = false;
+  let releasedPath = null;
   return {
     spawn(command, args, options) {
       if (released) throw new Error("live report lock was already released");
       return spawnLockedGh(lockPath, ownerToken, command, args, options);
     },
     release() {
-      if (released) return;
-      withLiveReportLockTransition(lockPath, () => {
-        const owner = readLiveReportLockOwner(lockPath);
-        if (
-          owner === null ||
-          owner.pid !== process.pid ||
-          owner.processIdentity !== processIdentity ||
-          owner.ownerToken !== ownerToken
-        ) {
-          throw new Error("live report lock ownership changed before release");
+      if (releaseCompleted) return;
+      try {
+        withLiveReportLockTransition(lockPath, () => {
+          if (!released) {
+            const owner = readLiveReportLockOwner(lockPath);
+            if (
+              owner === null ||
+              owner.pid !== process.pid ||
+              owner.processIdentity !== processIdentity ||
+              owner.ownerToken !== ownerToken
+            ) {
+              throw new Error("live report lock ownership changed before release");
+            }
+            // An interrupted helper can return before its GitHub child exits.
+            // Retain ownership until a recorded child exits, or require manual
+            // recovery if its identity was never published.
+            if (liveReportHasActiveCommand(lockPath, ownerToken)) return;
+            const destination = `${lockPath}.released-${process.pid}-${ownerToken}`;
+            renameSync(lockPath, destination);
+            released = true;
+            releasedPath = destination;
+          }
+          // A retry cleans only this handle's saved tombstone. A successor may
+          // already own lockPath; do not read or mutate its owner or commands.
+          if (releasedPath !== null) {
+            rmSync(releasedPath, { force: true, recursive: true });
+            releasedPath = null;
+          }
+        });
+        releaseCompleted = released;
+      } catch (error) {
+        if (released) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `live report lock ownership was released, but cleanup did not finish: ${detail}`,
+            { cause: error },
+          );
         }
-        // An interrupted helper can return before its GitHub child exits. Keep
-        // the owner and command leases so a replacement scan still sees it;
-        // Recorded child identities permit stale-owner recovery after exit.
-        // Unknown child identities require explicit stopped-process recovery.
-        if (liveReportHasActiveCommand(lockPath, ownerToken)) return;
-        const releasedPath = `${lockPath}.released-${process.pid}-${ownerToken}`;
-        renameSync(lockPath, releasedPath);
-        rmSync(releasedPath, { force: true, recursive: true });
-        released = true;
-      });
+        throw error;
+      }
     },
   };
 }

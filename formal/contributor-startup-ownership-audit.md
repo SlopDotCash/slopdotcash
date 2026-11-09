@@ -61,9 +61,10 @@ information kept separately. Successful work still fails if required cleanup
 fails. Synchronous and asynchronous transition cleanup share the same primary
 error rule; the asynchronous version actually awaits its operation.
 
-These changes do not make post-rename acquisition/release cleanup atomic. Those
-commit-before-diagnostic states still need separate review. They do not justify
-reclaiming a live or unknown child.
+These changes do not make post-rename acquisition/release cleanup atomic. The
+subsequent [publication review](contributor-lock-publication-audit.md) makes
+those commit, rollback, diagnostic and retry states explicit. They do not
+justify reclaiming a live or unknown child.
 
 ## Models and authored evidence
 

@@ -427,3 +427,19 @@ model distinguish these states, including complete report output followed by
 a failed release. See `contributor-startup-ownership-audit.md`. All added
 scenarios and native regression definitions are unexecuted. Post-rename
 acquisition and release diagnostics remain separate review work.
+
+## Discovery lock publication and cleanup retry
+
+Acquisition could publish a live owner and then throw during cleanup before
+returning its handle. Required stale-directory cleanup now either completes or
+rolls the still-unpublished owner back under the guard. The old, potentially
+partly removed directory is never restored. Rollback and guard-cleanup failures
+explicitly report committed ownership and required recovery. Candidate cleanup
+preserves the original preparation, contention or publication failure.
+
+Release could rename away canonical ownership but leave its handle marked
+active after cleanup failed. It now closes the handle at that rename and keeps
+the private release path separately. Retry touches only that saved path under
+the guard, even after a successor acquires the canonical lock. Completion still
+requires successful guard cleanup. The new model and 11 native regression
+definitions in `contributor-lock-publication-audit.md` are unexecuted.

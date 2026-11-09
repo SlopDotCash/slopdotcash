@@ -3,6 +3,8 @@
 // Two owners, one command and at most two lock generations. The child may
 // outlive both processes. A persisted startup guard or unknown legacy lease
 // never expires into evidence of child termination. Source-only, unexecuted.
+// Publication/rollback and post-rename cleanup are refined separately in
+// contributor_lock_publication; commitAcquire here is an accepted acquisition.
 module contributor_discovery_lock {
   type S = { owner: int, parentLive: bool, generation: int, guard: str,
     candidate: int, observedClear: bool, requestOwner: int, requestPresent: bool,

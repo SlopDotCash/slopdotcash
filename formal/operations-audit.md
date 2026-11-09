@@ -15,6 +15,11 @@ adds guarded command startup, explicit unknown-child recovery and the
 `contributor_command_completion` model. Its changed scenarios and native
 regression definitions remain unexecuted.
 
+`contributor_lock_publication` refines the local acquisition/release rename,
+rollback and cleanup states in the [publication audit](contributor-lock-publication-audit.md).
+It separates canonical ownership, returned handles and retained debris; its
+new model and native regression definitions remain unexecuted.
+
 | Model | Source obligations reviewed | Bounds and implementation evidence |
 | --- | --- | --- |
 | `bot_review_lease` | `startReview`, `ownsReviewClaim`, `finishReview`; new/skipped/failed/completed states; expired tokens; immutable provider-cost recording | Three token generations, five clock instants. `workers/slopbot/formal-state.test.ts` replays actual Quint output through production D1 methods and migrated SQLite |

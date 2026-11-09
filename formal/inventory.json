@@ -4037,11 +4037,12 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/live-report.mjs",
-      "sha256": "83d851328e5122bf235b35b9a1266a6002635ef77f2138dcb6d22bc246beb8f7",
+      "sha256": "90123ec179d66c98c7ff2af76b00511be6e7b5ce2a3911299e31272e9d77d870",
       "models": [
         "formal/models/contributor_command_completion.qnt",
         "formal/models/contributor_discovery_lock.qnt",
         "formal/models/contributor_discovery_snapshot.qnt",
+        "formal/models/contributor_lock_publication.qnt",
         "formal/models/contributor_review_epoch.qnt"
       ],
       "candidateLines": [
@@ -4049,10 +4050,10 @@
         952, 1014, 1043, 1093, 1185, 1215, 1221, 1326, 1374, 1415, 1470, 1532,
         1571, 1590, 1615, 1616, 1617, 1627, 1681, 1684, 1689, 1694, 1699, 1712,
         1717, 1718, 1719, 1721, 1722, 1723, 1751, 1752, 1754, 1756, 1760, 1780,
-        1860, 1864, 1866, 1874, 1883, 1963, 2135, 2140, 2165, 2171, 2204, 2219,
-        2245, 2261, 2275, 2312, 2375, 2697, 2886, 2896, 2903, 2920, 2936, 2946,
-        2989, 2993, 3002, 3129, 3132, 3140, 3164, 3211, 3212, 3424, 3428, 3432,
-        3556, 3631, 3632, 3643, 3800
+        1864, 1868, 1870, 1878, 1887, 1967, 2068, 2105, 2211, 2216, 2241, 2247,
+        2280, 2295, 2321, 2337, 2351, 2388, 2451, 2773, 2962, 2972, 2979, 2996,
+        3012, 3022, 3065, 3069, 3078, 3205, 3208, 3216, 3240, 3287, 3288, 3500,
+        3504, 3508, 3632, 3707, 3708, 3719, 3876
       ],
       "review": "mapped-abstraction"
     },
@@ -9367,7 +9368,7 @@
     },
     {
       "path": "formal/models/contributor_discovery_lock.qnt",
-      "sha256": "8ccc6a554fdce4467181de88164ffe62ef0726315b89c28cba673fd8aed6c754",
+      "sha256": "27753f3838bd9d2d598db530d0eddf4ec798da52a247b5d5f041b79ffeaeed5c",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
@@ -9406,6 +9407,35 @@
         "failedReadNoEmptySuccessTest",
         "retryFullSnapshotTest",
         "secondChangeFailsClosedTest"
+      ]
+    },
+    {
+      "path": "formal/models/contributor_lock_publication.qnt",
+      "sha256": "f21dd51d49167d1fb495cebc3727a77868f6ef5612685dd0cc8fa8360a198d76",
+      "sources": [
+        "skills/project-contributor-template/scripts/live-report.mjs"
+      ],
+      "scenarios": [
+        "cleanReleaseCompletesHandleTest",
+        "contentionCleanupPreservesContentionTest",
+        "failedPublicationDoesNotRestoreQuarantineTest",
+        "failedQuarantineKeepsDeadOwnerTest",
+        "failedReleaseRenameKeepsOwnerTest",
+        "failedRollbackReportsCommittedOwnerTest",
+        "failedStaleCleanupRollsBackUnpublishedOwnerTest",
+        "freshAcquisitionPublishesAfterGuardTest",
+        "guardFailureAfterPublicationRequiresRecoveryTest",
+        "guardFailureKeepsPreparationErrorTest",
+        "manualGuardRecoveryIsExternalTest",
+        "manualRecoveryRetainsDebrisWithoutReusingIdentityTest",
+        "preparationCleanupPreservesFirstErrorTest",
+        "releaseCleanupFailureStillClosesHandleTest",
+        "releaseGuardFailureBlocksSuccessorAndRetryTest",
+        "releaseRetryCannotTouchSuccessorTest",
+        "repeatedReleaseCleanupFailureKeepsSuccessorTest",
+        "rollbackCandidateCleanupKeepsOriginalErrorTest",
+        "rollbackPermitsSameCallerRetryTest",
+        "staleCleanupSuccessPublishesHandleTest"
       ]
     },
     {
