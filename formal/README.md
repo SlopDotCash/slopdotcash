@@ -1335,6 +1335,33 @@ tested or verified here:
   uniqueness or other guarantees belonging to the aggregate producer. These
   changes add no interface controls or production activation.
 
+- `ui_project_setup` now models creation navigation, pending-branch validation,
+  restored input, payload comparison, referral retention and server-result
+  handoff in 28 scenarios. The shared reward-network map has a null prototype:
+  restored names such as `constructor` no longer masquerade as network entries
+  and crash the form. Invalid restored assignment dates now produce a field
+  error and safe preview value while retaining the draft for correction.
+  Four helper cases and three additional browser cases are unexecuted. The
+  required before/after video and UI acceptance remain outstanding.
+- `ui_project_draft` now distinguishes partial fields, raw object identities,
+  unknown/null base revisions, captured publication responses and memory versus
+  disk persistence in 24 scenarios. Retyping the submitted value still creates
+  a newer draft object that survives the response. Two browser definitions are
+  unexecuted; slot/queue mechanics and actor/departure ownership retain their
+  separate models.
+- `ui_project_policy` now separates schema predicates from transition history,
+  receipt cutovers and immutable fields in 24 scenarios. The 12-scenario
+  `project_revision_classification` and 13-scenario `repository_collection`
+  models preserve actual classification order, nullish equality, active-only
+  selection and shallow returned-row freezing. Twenty-two regression cases are
+  unexecuted. Classification does not grant owner authority or approve changes.
+- `api_project_revision_receipt` now has 20 scenarios for precommit conditions,
+  atomic revision/current-pointer/notice updates and postcommit completion.
+  Lost batch replies and failed response preparation can follow a committed
+  revision; cache-delete rejection alone does not undo publication. Six actual
+  persistence/handler regression definitions are unexecuted. Auth, policy,
+  clearance predicates and D1 transaction semantics retain their stated bounds.
+
 ## Acceptance requirements and limits
 
 - Run the full code, model, database, contract and browser gates against one

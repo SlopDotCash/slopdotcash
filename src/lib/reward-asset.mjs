@@ -53,9 +53,13 @@ function rewardNetwork(chain) {
   });
 }
 
+// Restored drafts can contain arbitrary names; inherited keys are not networks.
 export const REWARD_ASSET_NETWORKS = Object.freeze(
-  Object.fromEntries(
-    Object.keys(NETWORK_NAMES).map((chain) => [chain, rewardNetwork(chain)]),
+  Object.assign(
+    Object.create(null),
+    Object.fromEntries(
+      Object.keys(NETWORK_NAMES).map((chain) => [chain, rewardNetwork(chain)]),
+    ),
   ),
 );
 

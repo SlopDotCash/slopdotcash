@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "3971abf2cabfd11754b27ed15c4b7ded72ad921f43812dc316eabe4de46cdf33",
+  "inventorySha256": "3b1aa362210a8d9e2fdebac08739e9abd998fcc1ec7baa4f2c6e93d19ad236ea",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -637,6 +637,7 @@
       "values": ["approved", "pending", "rejected"],
       "models": [
         "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["rejected"],
@@ -650,6 +651,7 @@
       "values": ["active", "paused"],
       "models": [
         "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt"
       ],
       "lexicallyUnmentionedValues": ["paused"],
@@ -2246,7 +2248,6 @@
       "values": ["idle", "submitting"],
       "models": [
         "formal/models/ui/ui_pending_applications.qnt",
-        "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["submitting"],
@@ -2391,12 +2392,11 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 850,
+      "line": 857,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
       "models": [
-        "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -2414,12 +2414,11 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1319,
+      "line": 1324,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
       "models": [
-        "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",
@@ -2432,17 +2431,16 @@
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
-      "lexicallyUnmentionedValues": ["submitting"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2105,
+      "line": 2114,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
       "models": [
-        "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
         "formal/models/ui/ui_draft_slots.qnt",

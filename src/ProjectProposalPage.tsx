@@ -243,6 +243,11 @@ function lengthError(
     : `Enter ${minimum} to ${maximum} characters.`;
 }
 
+function assignmentTimestamp(value: string): string | null {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
 /** One validation source for the setup fields, navigation and submission. */
 function proposalErrors(p: Proposal): FieldErrors {
   const errors: FieldErrors = {};
@@ -324,6 +329,8 @@ function proposalErrors(p: Proposal): FieldErrors {
     if (version) errors.assignmentVersion = version;
     if (p.assignmentSignedAt.length === 0)
       errors.assignmentSignedAt = "Enter the signing date and time.";
+    else if (assignmentTimestamp(p.assignmentSignedAt) === null)
+      errors.assignmentSignedAt = "Enter a valid signing date and time.";
   }
   if (
     ["monthly", "bounty"].includes(p.fundingMode) &&
@@ -1246,9 +1253,7 @@ function ProjectProposalForm({
                 instrumentUrl: p.assignmentUrl,
                 fileSha256: p.assignmentDigest,
                 version: p.assignmentVersion,
-                signedAt: p.assignmentSignedAt
-                  ? new Date(p.assignmentSignedAt).toISOString()
-                  : "",
+                signedAt: assignmentTimestamp(p.assignmentSignedAt) ?? "",
               }
             : null,
         externalPrize: null,
@@ -1774,7 +1779,11 @@ function ProjectProposalForm({
                       name="assignmentSignedAt"
                       onChange={set("assignmentSignedAt")}
                       type="datetime-local"
-                      value={p.assignmentSignedAt}
+                      value={
+                        assignmentTimestamp(p.assignmentSignedAt) === null
+                          ? ""
+                          : p.assignmentSignedAt
+                      }
                     />
                   </>
                 ) : null}

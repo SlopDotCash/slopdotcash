@@ -1205,7 +1205,8 @@ test("native rewards keep ETH and SOL units through review and creation", async 
   });
 });
 
-test("a saved native reward with an unknown network stays editable until corrected", async ({
+for (const unsupportedNetwork of ["retired-network", "constructor", "__proto__"]) {
+test(`a saved native reward with an unknown network stays editable until corrected (${unsupportedNetwork})`, async ({
   page,
 }) => {
   await routeGitHub(page, {
@@ -1221,7 +1222,7 @@ test("a saved native reward with an unknown network stays editable until correct
     .getByRole("radio", { name: "ETH", exact: true })
     .check();
   await page.getByLabel("Monthly amount (ETH)").fill("1");
-  await patchProposalDraft(page, { settlementChain: "retired-network" });
+  await patchProposalDraft(page, { settlementChain: unsupportedNetwork });
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", { name: "Add a project", exact: true }),
@@ -1234,7 +1235,7 @@ test("a saved native reward with an unknown network stays editable until correct
   const networks = page.getByRole("group", { name: "Network", exact: true });
   await expect(networks.locator("input:checked")).toHaveCount(0);
   expect((await readProposalDraft(page)).settlementChain).toBe(
-    "retired-network",
+    unsupportedNetwork,
   );
   await page.screenshot({
     path: test.info().outputPath("saved-native-network-error.png"),
@@ -1260,6 +1261,7 @@ test("a saved native reward with an unknown network stays editable until correct
     fullPage: true,
   });
 });
+}
 
 test("a signed-in maintainer picks an owned repository and gets suggested text", async ({
   diagnostics,
@@ -1752,4 +1754,43 @@ test("a saved application change publishes after a retry and reports its setup",
     { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
   ]);
   await expectAccessible(page);
+});
+
+test("a restored invalid assignment date remains editable before project creation", async ({ page }) => {
+  await prepareCreationReview(page);
+  await patchProposalDraft(page, {
+    copyrightModel: "sponsor-owned",
+    legalHolder: "Example Research",
+    assignmentAssignee: "Example Research",
+    assignmentUrl: "https://example.com/assignment",
+    assignmentDigest: "a".repeat(64),
+    assignmentVersion: "v1",
+    assignmentSignedAt: "not-a-date",
+  });
+  let writes = 0;
+  let signedAt: string | undefined;
+  await routeCreation(page, (body) => {
+    writes += 1;
+    signedAt = ((body.manifest.terms as { assignment: { signedAt: string } }).assignment).signedAt;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein", revision: 1, referrer: null }, setup: CREATED_SETUP },
+    };
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: "Add a project", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Next: Rewards", exact: true }).click();
+  await expect(page.locator("#field-assignmentSignedAt-error")).toHaveText("Enter a valid signing date and time.");
+  await expect(page.getByLabel("Signed at", { exact: true })).toBeVisible();
+  expect(writes).toBe(0);
+  const date = "2026-10-29T12:34";
+  const expected = await page.evaluate((value) => new Date(value).toISOString(), date);
+  await page.getByLabel("Signed at", { exact: true }).fill(date);
+  await page.getByRole("button", { name: "Next: Rewards", exact: true }).click();
+  await page.getByRole("button", { name: "Next: Review", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Listing preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Project created", exact: true })).toBeVisible();
+  expect(writes).toBe(1);
+  expect(signedAt).toBe(expected);
 });

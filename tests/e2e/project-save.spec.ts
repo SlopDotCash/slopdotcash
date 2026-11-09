@@ -10,6 +10,98 @@ import {
   releaseHeldEditorSession,
 } from "./project-draft-fixture";
 
+test("a restored partial update needs revision confirmation and keeps unedited fields", async ({ page }) => {
+  const registered = PROJECTS.find((project) => project.id === "eliza");
+  if (!registered) throw new Error("Missing project fixture");
+  const headline = "A restored owner draft with an unknown saved revision";
+  await page.addInitScript(({ headline }) => {
+    localStorage.setItem("slop:project-update:v2:eliza", JSON.stringify({
+      headline, goal: 55, unrelated: "This field is not an editable draft field",
+    }));
+  }, { headline });
+  const api = await projectImageApiFixture({
+    ...registered, contribution: { ...CONTRIBUTION },
+    skill: { ...registered.skill, sourcePath: PROJECT_SKILL_TEMPLATES.contributor, publishAtRoot: false },
+    reviewSkill: { ...registered.reviewSkill, sourcePath: PROJECT_SKILL_TEMPLATES.reviewer },
+  });
+  let writes = 0;
+  await page.route(/\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u, async (route) => {
+    const request = route.request();
+    if (request.method() === "PUT") writes += 1;
+    const response = await api.fetch(new Request(request.url(), {
+      method: request.method(), headers: request.headers(),
+      ...(request.method() === "GET" ? {} : { body: request.postData() }),
+    }));
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() });
+  });
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    await expect(page.getByLabel("Short description", { exact: true })).toHaveValue(headline);
+    await expect(page.getByLabel("Goal", { exact: true })).toHaveValue(registered.description);
+    await expect(page.getByRole("alert").filter({ hasText: "an unknown revision" })).toBeVisible();
+    const publish = page.getByRole("button", { name: "Publish changes", exact: true });
+    await expect(publish).toBeDisabled();
+    expect(writes).toBe(0);
+    await page.getByRole("button", { name: "Use this draft", exact: true }).click();
+    await expect(publish).toBeEnabled();
+    await publish.click();
+    await expect(page.getByRole("status").filter({ hasText: "Published revision 2." })).toBeVisible();
+    const saved = await api.stored();
+    expect(saved.project.headline).toBe(headline);
+    expect(saved.project.description).toBe(registered.description);
+    expect(writes).toBe(1);
+    expect(await readProjectDraft(page, "slop:project-update:v2:eliza")).toBeNull();
+  } finally { await api.dispose(); }
+});
+
+test("retyping a submitted value while publishing keeps the newer draft object", async ({ page }) => {
+  const registered = PROJECTS.find((project) => project.id === "eliza");
+  if (!registered) throw new Error("Missing project fixture");
+  const api = await projectImageApiFixture({
+    ...registered, contribution: { ...CONTRIBUTION },
+    skill: { ...registered.skill, sourcePath: PROJECT_SKILL_TEMPLATES.contributor, publishAtRoot: false },
+    reviewSkill: { ...registered.reviewSkill, sourcePath: PROJECT_SKILL_TEMPLATES.reviewer },
+  });
+  let writes = 0;
+  let release = () => {}, started = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const entered = new Promise<void>((resolve) => { started = resolve; });
+  await page.route(/\/api\/v1\/(?:projects\/eliza(?:\?.*)?|project-setup\/eliza(?:\/check)?|project-session)$/u, async (route) => {
+    const request = route.request();
+    const response = await api.fetch(new Request(request.url(), {
+      method: request.method(), headers: request.headers(),
+      ...(request.method() === "GET" ? {} : { body: request.postData() }),
+    }));
+    if (request.method() === "PUT") {
+      writes += 1;
+      expect(response.status).toBe(200);
+      started();
+      await held;
+    }
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() });
+  });
+  const headline = "An accepted headline retyped before publication returns";
+  try {
+    await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+    const field = page.getByLabel("Short description", { exact: true });
+    await field.fill(headline);
+    await page.getByRole("button", { name: "Publish changes", exact: true }).click();
+    await entered;
+    await field.fill("A temporary edit made after the server accepted the revision");
+    await field.fill(headline);
+    release();
+    await expect(page.getByRole("status").filter({ hasText: "Published revision 2." })).toBeVisible();
+    await expect(field).toHaveValue(headline);
+    expect(await readProjectDraft(page, "slop:project-update:v2:eliza"))
+      .toMatchObject({ headline, baseRevision: 2 });
+    await expect(page.getByRole("button", { name: "Use this draft", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Publish changes", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Change at least one field before you publish." })).toBeVisible();
+    expect(writes).toBe(1);
+    expect((await api.stored()).project.headline).toBe(headline);
+  } finally { release(); await api.dispose(); }
+});
+
 test("committed project editor unmount retires publication before dispatch", async ({
   page,
 }) => {

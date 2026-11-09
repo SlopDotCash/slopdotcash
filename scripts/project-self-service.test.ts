@@ -312,6 +312,69 @@ test("an owner publication returns its committed revision when another writer ad
   }
 });
 
+test("a postcommit cache-generation read failure keeps the published revision", async () => {
+  const t = registry();
+  const id = "publication-postcommit";
+  await t.create(id, `example/${id}`);
+  const initial = await t.persistence.getProject(id);
+  if (!initial) throw new Error("Missing project");
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  const generation = t.persistence.enforcementGeneration.bind(t.persistence);
+  let committed = false;
+  t.persistence.appendProjectRevision = async (input, expectedGeneration) => {
+    const result = await append(input, expectedGeneration);
+    if (result === "updated") committed = true;
+    return result;
+  };
+  t.persistence.enforcementGeneration = async () => {
+    if (committed) throw new Error("cache generation read unavailable");
+    return generation();
+  };
+  const manifest = { ...initial.manifest, headline: "This owner revision committed before its response failed." };
+  try {
+    const failed = await t.call("PUT", `projects/${id}`, OWNER, { manifest, expectedRevision: 1 });
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe("internal_error");
+    expect((await t.persistence.getProject(id))?.revision).toBe(2);
+    expect((await t.persistence.getProject(id))?.manifest.headline).toBe(manifest.headline);
+    t.persistence.appendProjectRevision = append;
+    t.persistence.enforcementGeneration = generation;
+    const retry = await t.call("PUT", `projects/${id}`, OWNER, { manifest, expectedRevision: 1 });
+    expect(retry.status).toBe(409);
+    expect(retry.body.error).toBe("stale_revision");
+    expect((await t.persistence.listRevisions()).filter((row) => row.projectId === id).map((row) => row.revision))
+      .toEqual([1, 2]);
+  } finally {
+    t.persistence.appendProjectRevision = append;
+    t.persistence.enforcementGeneration = generation;
+    t.sqlite.close();
+  }
+});
+
+test("rejected public cache deletions do not turn a committed owner update into failure", async () => {
+  const t = registry();
+  const id = "publication-cache-delete";
+  await t.create(id, `example/${id}`);
+  const initial = await t.persistence.getProject(id);
+  if (!initial) throw new Error("Missing project");
+  let deletions = 0;
+  t.deps.cache = {
+    async match() { return undefined; },
+    async put() {},
+    async delete() { deletions += 1; throw new Error("cache deletion unavailable"); },
+  };
+  try {
+    const result = await t.call("PUT", `projects/${id}`, OWNER, {
+      manifest: { ...initial.manifest, headline: "The published revision does not depend on cache deletion." },
+      expectedRevision: 1,
+    });
+    expect(result.status).toBe(200);
+    expect((result.body.project as { revision: number }).revision).toBe(2);
+    expect((await t.persistence.getProject(id))?.revision).toBe(2);
+    expect(deletions).toBe(2);
+  } finally { t.sqlite.close(); }
+});
+
 test.each(["create", "stored application"] as const)(
   "a concurrent maintainer ban refuses %s before first publication",
   async (flow) => {

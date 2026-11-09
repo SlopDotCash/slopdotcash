@@ -220,3 +220,102 @@ test("a repository path acquired by another project before commit refuses the wh
     ).project_id,
   }).toEqual({ result: "conflict", revision: 1, aliasOwner: other.id });
 });
+
+function revisionInput(manifest: ProjectDefinition, expectedRevision = 1) {
+  const manifestText = JSON.stringify(manifest);
+  return {
+    projectId: manifest.id, expectedRevision, manifest, manifestText,
+    manifestSha256: sha(manifestText), reason: "Reviewed source-only regression",
+    actor: ACTOR, at: R,
+  };
+}
+
+test("an enforcement generation mismatch leaves revision and pointer unchanged", async () => {
+  const { db, sqlite } = sqliteD1(migrations);
+  const persistence = new CloudflareProjectPersistence(db);
+  const manifest = { ...asiFixture(), status: "paused" } as ProjectDefinition;
+  try {
+    await createPaused(persistence, manifest);
+    const before = await persistence.getProject(manifest.id);
+    const result = await persistence.appendProjectRevision(
+      revisionInput({ ...manifest, headline: "A changed but uncommitted headline." }),
+      (await persistence.enforcementGeneration()) + 1,
+    );
+    expect(result).toBe("conflict");
+    expect(await persistence.getProject(manifest.id)).toEqual(before);
+    expect((await persistence.listRevisions()).map((row) => row.revision)).toEqual([1]);
+  } finally { sqlite.close(); }
+});
+
+test("a new assessment fences an append checked against earlier admission state", async () => {
+  const { db, sqlite } = sqliteD1(migrations);
+  const persistence = new CloudflareProjectPersistence(db);
+  const manifest = { ...asiFixture(), status: "paused" } as ProjectDefinition;
+  try {
+    await createPaused(persistence, manifest);
+    const expectedClearanceGeneration = await persistence.clearanceGeneration(manifest.id);
+    const current = await persistence.getProject(manifest.id);
+    if (!current) throw new Error("Missing project");
+    sqlite.query(`INSERT INTO vetting_assessments
+      (id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,
+       requested_by_github_id,requested_by_github_login,requested_at,request_reason,state)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,'pending')`)
+      .run("vet_revisionrace0001", manifest.id, 1, current.manifestSha256, "a".repeat(64),
+        "b".repeat(40), "c".repeat(64), ACTOR.githubId, ACTOR.githubLogin, R, "Refresh admission evidence");
+    expect(await persistence.clearanceGeneration(manifest.id)).not.toBe(expectedClearanceGeneration);
+    const result = await persistence.appendProjectRevision({
+      ...revisionInput({ ...manifest, headline: "Candidate checked before the new assessment." }),
+      expectedClearanceGeneration,
+    }, await persistence.enforcementGeneration());
+    expect(result).toBe("conflict");
+    expect((await persistence.getProject(manifest.id))?.revision).toBe(1);
+    expect((await persistence.listRevisions()).map((row) => row.revision)).toEqual([1]);
+  } finally { sqlite.close(); }
+});
+
+test("a committed revision survives a lost batch reply and same-base retry cannot append again", async () => {
+  const { db, sqlite } = sqliteD1(migrations);
+  const persistence = new CloudflareProjectPersistence(db);
+  const manifest = { ...asiFixture(), status: "paused" } as ProjectDefinition;
+  let loseReply = true;
+  const losing: typeof db = {
+    prepare: (sql) => db.prepare(sql),
+    batch: async (statements) => {
+      const result = await db.batch(statements);
+      if (loseReply) { loseReply = false; throw new Error("revision batch reply lost"); }
+      return result;
+    },
+  };
+  try {
+    await createPaused(persistence, manifest);
+    const input = revisionInput({ ...manifest, headline: "The committed revision remains recorded." });
+    const writer = new CloudflareProjectPersistence(losing);
+    await expect(writer.appendProjectRevision(input, 0)).rejects.toThrow("revision batch reply lost");
+    expect((await persistence.getProject(manifest.id))?.revision).toBe(2);
+    const retained = sqlite.query("SELECT * FROM notifications ORDER BY event_key,recipient_github_id").all();
+    expect(await writer.appendProjectRevision(input, 0)).toBe("conflict");
+    expect((await persistence.listRevisions()).map((row) => row.revision)).toEqual([1, 2]);
+    expect(sqlite.query("SELECT * FROM notifications ORDER BY event_key,recipient_github_id").all()).toEqual(retained);
+  } finally { sqlite.close(); }
+});
+
+test("a late notification write failure rolls back its revision and current pointer", async () => {
+  const { db, sqlite } = sqliteD1(migrations);
+  const persistence = new CloudflareProjectPersistence(db);
+  const manifest = { ...asiFixture(), status: "paused" } as ProjectDefinition;
+  try {
+    await createPaused(persistence, manifest);
+    const before = await persistence.getProject(manifest.id);
+    const aliases = repositoryKeys(sqlite);
+    sqlite.exec(`CREATE TRIGGER reject_test_revision_notice BEFORE INSERT ON notifications
+      WHEN NEW.event_key LIKE 'project-revision:%'
+      BEGIN SELECT RAISE(ABORT,'fixture revision notice unavailable'); END`);
+    await expect(persistence.appendProjectRevision(
+      revisionInput({ ...manifest, headline: "A candidate whose last statement refuses." }), 0,
+    )).rejects.toThrow("fixture revision notice unavailable");
+    expect(await persistence.getProject(manifest.id)).toEqual(before);
+    expect((await persistence.listRevisions()).map((row) => row.revision)).toEqual([1]);
+    expect(repositoryKeys(sqlite)).toEqual(aliases);
+    expect(sqlite.query("SELECT event_key FROM notifications WHERE event_key LIKE 'project-revision:%'").all()).toEqual([]);
+  } finally { sqlite.close(); }
+});
