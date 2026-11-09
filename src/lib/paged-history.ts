@@ -1,5 +1,5 @@
 /** One page of a public paged history read: rows plus the server's cursor. */
-export interface HistoryPage<T> {
+interface HistoryPage<T> {
   rows: T[];
   through: unknown;
   total: unknown;

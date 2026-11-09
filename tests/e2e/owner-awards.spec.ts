@@ -186,6 +186,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
     period: "2026-09",
     manifestSha256: "a".repeat(64),
     automatic,
+    canManage: true,
     cutoffAt,
     deployment: null,
     asset: {
@@ -529,6 +530,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
           period: "2026-09",
           manifestSha256: "a".repeat(64),
           automatic: false,
+          canManage: true,
           cutoffAt: null,
           deployment,
           asset: null,
@@ -673,6 +675,7 @@ test("owner reserve repair keeps healthy and unknown states held and restores a 
 async function serveDecemberReview(
   page: Page,
   cycleIndex: CycleIndex,
+  canManage = true,
 ): Promise<void> {
   const project = projectWithVault();
   await page.clock.setFixedTime(new Date("2026-12-02T12:00:00.000Z"));
@@ -702,8 +705,16 @@ async function serveDecemberReview(
     period,
     manifestSha256: "a".repeat(64),
     automatic: true,
+    canManage,
     cutoffAt: "2026-12-04T00:00:00.000Z",
-    deployment: null,
+    // A served deployment would show the reserve repair to an owner.
+    deployment: canManage
+      ? null
+      : {
+          network: "base-sepolia",
+          vault: `0x${"1".repeat(40)}`,
+          owner: `0x${"2".repeat(40)}`,
+        },
     asset: {
       network: "base-sepolia",
       assetAddress: `0x${"1".repeat(40)}`,
@@ -772,6 +783,31 @@ test("a monthly proposal with no public cycle is reachable", async ({
   await expect(
     page.getByRole("button", { name: "Next award month" }),
   ).toBeDisabled();
+});
+
+test("a maintainer without owner authority sees monthly awards without owner controls", async ({
+  page,
+}) => {
+  // Write and maintain collaborators may read awards, but the API refuses
+  // every owner action, so the page must not offer those controls.
+  await serveDecemberReview(
+    page,
+    { schemaVersion: "1", generatedAt: "2026-12-02T00:00:00.000Z", cycles: [] },
+    false,
+  );
+  await openMonthlyAwards(page);
+  const awards = page.getByRole("region", { name: "Monthly awards" });
+  await expect(awards).toContainText("first-contributor");
+  await expect(awards.getByText("View only")).toBeVisible();
+  await expect(awards).toContainText("Finalizes");
+  await expect(awards).not.toContainText("You can finalize earlier.");
+  await expect(awards).not.toContainText(
+    /finalize (this|each) month manually/i,
+  );
+  await expect(awards.getByRole("textbox")).toHaveCount(0);
+  for (const name of [/automatic finalization/, /^Save /, /^Finalize awards/])
+    await expect(awards.getByRole("button", { name })).toHaveCount(0);
+  await expect(page.getByText("Repair a stuck monthly reserve")).toHaveCount(0);
 });
 
 test("a stale public cycle does not lock the review month or discard its draft", async ({

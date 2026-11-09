@@ -5,7 +5,7 @@ import type { SecurityApiDependencies } from "./case-store";
 import type { FailureCode } from "./github-advisories";
 import type { IntakeScreeningState } from "./verified-intake";
 
-export type SubmissionState =
+type SubmissionState =
   | "draft"
   | "submitting"
   | "uncertain"

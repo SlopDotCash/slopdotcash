@@ -143,7 +143,7 @@ const coordinate = (now: Date, configured = schedule) =>
 const owner = (
   verifyAuthority: Parameters<
     typeof monthlyOwnerService
-  >[0]["verifyAuthority"] = async () => {},
+  >[0]["verifyAuthority"] = async () => true,
 ) =>
   monthlyOwnerService({
     db,
@@ -367,11 +367,12 @@ for (const [boundary, initiallyOff] of [
     const prepare = db.prepare.bind(db);
     let armed = true;
     const optOut = async () => {
-      if (!armed) return;
+      if (!armed) return true;
       armed = false;
       expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
         automatic: false,
       });
+      return true;
     };
     if (boundary === "write")
       db.prepare = (sql) => {
@@ -457,6 +458,7 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
             "owner_required",
             "The current project steward must authorize the change.",
           );
+        return true;
       },
     });
     let reachedInsert = () => {};
@@ -599,10 +601,11 @@ test("write collaborators on an organization project may read monthly awards but
     },
   };
   let permission = "write";
+  let userId = OWNER;
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) =>
     String(input).endsWith("/permission")
-      ? Response.json({ permission, user: { id: Number(OWNER) } })
+      ? Response.json({ permission, user: { id: Number(userId) } })
       : Response.json(facts)) as typeof fetch;
   try {
     const service = owner((_current, who, level) =>
@@ -616,9 +619,16 @@ test("write collaborators on an organization project may read monthly awards but
       expect(error).toBeInstanceOf(MonthlyPaymentError);
       expect((error as MonthlyPaymentError).code).toBe("owner_required");
     };
-    expect((await service.view(project.id, "2026-11", actor)).automatic).toBe(
-      true,
+    const read = await service.view(project.id, "2026-11", actor);
+    expect(read.automatic).toBe(true);
+    // The awards UI hides owner controls the API would refuse.
+    expect(read.canManage).toBe(false);
+    permission = "maintain";
+    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+      false,
     );
+    await refused(service.setAutomatic(project.id, actor, false));
+    permission = "write";
     await refused(service.setAutomatic(project.id, actor, false));
     await refused(
       service.changeAllocation(project.id, "2026-11", actor, {
@@ -639,9 +649,22 @@ test("write collaborators on an organization project may read monthly awards but
     ).toEqual({ n: 0 });
     // A repository admin is the owner of an organization project.
     permission = "admin";
+    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+      true,
+    );
     expect(await service.setAutomatic(project.id, actor, false)).toEqual({
       automatic: false,
     });
+    // The steward with write access is also the owner.
+    permission = "write";
+    userId = steward.actorId;
+    const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
+    expect(
+      (await service.view(project.id, "2026-11", stewardActor)).canManage,
+    ).toBe(true);
+    // Without any maintainer permission the read itself is refused.
+    permission = "read";
+    await refused(service.view(project.id, "2026-11", stewardActor));
   } finally {
     globalThis.fetch = nativeFetch;
   }
@@ -1657,7 +1680,7 @@ describe("monthly coordinator", () => {
       db,
       ...projects(),
       networks: () => [solanaDeployment.network],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () => schedule,
       now: () => clock,
     });
@@ -3361,6 +3384,7 @@ test("reserve release requires current authority and refuses a revision changed 
           "not_owner",
           "Current GitHub authority is required.",
         );
+      return true;
     },
     releaseReserve: async (input) => {
       expect(input).toEqual({
@@ -3555,7 +3579,7 @@ test("an allocation queued across its automatic cutoff cannot change the propose
       getProject: local.getProject,
       restricted: local.restricted,
       networks: () => ["base-sepolia"],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () =>
         parseMonthlySchedule(
           JSON.stringify({

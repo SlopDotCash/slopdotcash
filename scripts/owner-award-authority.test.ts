@@ -120,6 +120,8 @@ test("organization maintainers reach private monthly awards after an approved re
       projectId: project.id,
       period: "2026-11",
       automatic: true,
+      // A maintainer who is not the steward or an admin cannot change awards.
+      canManage: false,
       proposal: null,
       run: null,
     });
