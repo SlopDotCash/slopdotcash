@@ -8976,7 +8976,7 @@
     },
     {
       "path": "formal/models/contracts/solana_monthly_allocation.qnt",
-      "sha256": "8fd954a8d9126c8c53311e731604f1bc9556f1db114a00296e41ea8d939c7164",
+      "sha256": "db746dfa9844abf7e55d67aff249a6f0d7331ddb742da51f7aa2c2fe6ff89307",
       "sources": [
         "contracts/solana/monthly-commitment.ts",
         "contracts/solana/monthly-reserve.ts",
@@ -8987,6 +8987,7 @@
         "commitThenPayTest",
         "eachSourceSettlesOnceTest",
         "legacyExpiredMonthKeepsOutstandingTest",
+        "migratedGrossOneRefusedTest",
         "migratedPrincipalStaysReservedTest",
         "otherActorAfterFreezeStaysReservedTest",
         "otherActorBeforeFreezeReleasesTest",

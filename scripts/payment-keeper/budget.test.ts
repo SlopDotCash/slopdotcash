@@ -1,9 +1,11 @@
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Hex } from "viem";
 import type { SignerInput } from "../../workers/payment-executor/binding-shared";
 import { budgetEvmSigner } from "./budget";
-import type { KeeperStore } from "./storage";
+import { openKeeperStore } from "./store";
 
 const address = `0x${"a".repeat(40)}`;
 const today = new Date("2026-11-09T12:00:00.000Z");
@@ -23,10 +25,9 @@ function input(nonce: number, maximum: bigint): SignerInput {
 }
 
 test("the keeper's daily liability charges each unresolved nonce once and only today's settlements", async () => {
-  const db = new Database(":memory:");
-  db.exec(
-    "CREATE TABLE gas(id TEXT PRIMARY KEY,day TEXT NOT NULL,maximum TEXT NOT NULL,transaction_id TEXT NOT NULL,actual TEXT,settled_day TEXT,expiry_evidence TEXT) STRICT",
-  );
+  const directory = mkdtempSync(join(tmpdir(), "keeper-budget-"));
+  const store = openKeeperStore(join(directory, "keeper.sqlite"));
+  const { db } = store;
   const row = db.query(
     "INSERT INTO gas(id,day,maximum,transaction_id,actual,settled_day,expiry_evidence) VALUES(?,?,?,?,?,?,?)",
   );
@@ -40,7 +41,6 @@ test("the keeper's daily liability charges each unresolved nonce once and only t
   // Finalized actuals count only on their settlement day: 2 today, 3 before.
   row.run(group(3), "2026-11-09", "6", "0x05", "2", "2026-11-09", null);
   row.run(group(4), "2026-11-08", "6", "0x06", "3", "2026-11-08", null);
-  const store = { db } as unknown as KeeperStore;
   let signatures = 0;
   const signer = budgetEvmSigner(
     store,
@@ -68,5 +68,6 @@ test("the keeper's daily liability charges each unresolved nonce once and only t
   expect(
     db.query("SELECT count(*) n FROM gas WHERE id=?").get(group(5)),
   ).toEqual({ n: 1 });
-  db.close();
+  store.close();
+  rmSync(directory, { recursive: true, force: true });
 });

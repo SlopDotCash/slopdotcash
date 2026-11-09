@@ -68,11 +68,14 @@ module solana_monthly_allocation {
   action deposit(a: int): bool = all { s.deposited + a <= MaxDeposit,
     s' = s.with("free", s.free + a).with("deposited", s.deposited + a) }
   // Owner `commit`: only while no admitted monthly gross is outstanding.
-  action handConsume(src: int, actor: int, g: int, migrated: bool): bool = all {
-    s.outstanding == 0, not(s.obligations.get(src).present), g <= s.free,
-    s' = s.with("free", s.free - g).with("reserved", s.reserved + g)
-      .with("obligations", s.obligations.set(src, { present: true, actor: actor, gross: g,
-        principal: g - feeFor(g) - (if (migrated) 1 else 0), committedAt: s.now, paid: false })) }
+  // Principal is a u64 in the program: a migrated obligation needs gross
+  // large enough to carry its one-unit-smaller principal.
+  action handConsume(src: int, actor: int, g: int, migrated: bool): bool = {
+    val principal = g - feeFor(g) - (if (migrated) 1 else 0)
+    all { s.outstanding == 0, not(s.obligations.get(src).present), g <= s.free, principal >= 0,
+      s' = s.with("free", s.free - g).with("reserved", s.reserved + g)
+        .with("obligations", s.obligations.set(src, { present: true, actor: actor, gross: g,
+          principal: principal, committedAt: s.now, paid: false })) } }
   action commitMonthly(leaves: Set[Leaf], frozenAt: int): bool = {
     val total = sum(leaves)
     all { not(s.month.recorded), frozenAt >= 0, frozenAt <= s.now, total > 0, total <= Cap,
@@ -135,7 +138,8 @@ module solana_monthly_allocation {
     legacyExpire, tick, s' = s }
 
   val invariant = all {
-    s.free >= 0, s.reserved >= 0, s.outstanding >= 0,
+    s.free >= 0, s.reserved >= 0, s.outstanding >= 0, s.paid >= 0,
+    Sources.forall(x => s.obligations.get(x).principal >= 0),
     s.month.committed <= s.month.total, s.month.released <= s.month.committed,
     s.free + s.reserved + s.paid + s.fees == s.deposited,
     s.reserved == openObligations + unsettled,
@@ -171,6 +175,7 @@ module solana_monthly_allocation {
     .expect(s.free == 3 and invariant)
   run smallerAwardAfterFreezeStaysReservedTest = fundedRun.then(handConsume(1, 1, 1, false))
     .then(commitMonthly(Set(L12), 0)).then(releaseAward(L12).fail())
+  run migratedGrossOneRefusedTest = fundedRun.then(handConsume(1, 1, 1, true).fail())
   run migratedPrincipalStaysReservedTest = fundedRun.then(handConsume(1, 1, 2, true))
     .then(commitMonthly(Set(L12), 0)).then(releaseAward(L12).fail())
   run sameAwardReleasesTest = fundedRun.then(handConsume(1, 1, 2, false))
