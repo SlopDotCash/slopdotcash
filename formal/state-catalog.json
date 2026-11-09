@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review all audit gaps as well.",
-  "inventorySha256": "d154b6d2ea7bb06e2c967d26fbae758bd2114e5766aa0c029c38917e0be5499d",
+  "inventorySha256": "dce2d25dc80ba1acb2e18380161cbffdda510e682688196ad9f32ab71eb86804",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2096,14 +2096,15 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 19,
+      "line": 23,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
       "models": [
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "expired",
@@ -2116,30 +2117,32 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 32,
+      "line": 36,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
       "models": [
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt"
       ],
       "lexicallyUnmentionedValues": ["unavailable", "unverified"],
       "review": "candidate-only"
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 35,
+      "line": 39,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
       "models": [
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt"
       ],
-      "lexicallyUnmentionedValues": ["loading", "signed-out"],
+      "lexicallyUnmentionedValues": ["loading"],
       "review": "candidate-only"
     },
     {
@@ -2168,13 +2171,14 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 209,
+      "line": 212,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
@@ -2184,13 +2188,14 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 532,
+      "line": 536,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
@@ -2200,13 +2205,14 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1482,
+      "line": 1486,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
@@ -3457,7 +3463,10 @@
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],
-      "models": ["formal/models/bot_producer_provenance.qnt"],
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_producer_provenance.qnt"
+      ],
       "lexicallyUnmentionedValues": ["ok"],
       "review": "candidate-only"
     },
@@ -3548,6 +3557,20 @@
         "formal/models/bot_moderation.qnt"
       ],
       "lexicallyUnmentionedValues": ["draft", "escalation", "resolution"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/value-budget.ts",
+      "line": 19,
+      "name": "ReservationResult",
+      "kind": "string-union",
+      "values": ["attempts", "budget", "reserved"],
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_budget.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

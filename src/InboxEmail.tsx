@@ -10,7 +10,11 @@ import {
 import { localBackendOrigin, loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
-import { currentProjectSession, ProjectApiError } from "./lib/project-api";
+import {
+  currentProjectSession,
+  ProjectApiError,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 
 type PendingVerification = {
@@ -694,6 +698,18 @@ export function InboxEmailAction() {
   const [done, setDone] = useState(false);
   const { busy, error, setError, run } = useAction();
   const generation = useRef(0);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        if (action?.kind !== "verify") return;
+        // Preserve the link for a later sign-in, but retire its old actor and work.
+        generation.current += 1;
+        setActor(null);
+        setDone(false);
+        setError(null);
+      }),
+    [action, setError],
+  );
   useEffect(() => {
     const capture = () => {
       if (!/^#(?:verify-email|unsubscribe-email)=/u.test(window.location.hash))
@@ -717,9 +733,10 @@ export function InboxEmailAction() {
     setError(null);
     setActor(undefined);
     let active = true;
+    const current = generation.current;
     currentProjectSession().then(
       (session) => {
-        if (!active) return;
+        if (!active || generation.current !== current) return;
         if (
           session &&
           action.actor !== null &&
@@ -741,7 +758,7 @@ export function InboxEmailAction() {
         }
       },
       () => {
-        if (active)
+        if (active && generation.current === current)
           setError("Your account could not be checked. Reload to retry.");
       },
     );

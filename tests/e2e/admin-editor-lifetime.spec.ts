@@ -12,11 +12,17 @@ function gate() {
 }
 
 /** The existing admin fixture, with a held save response and session refresh. */
-async function editorFixture(page: Page, moderation = false) {
+async function editorFixture(
+  page: Page,
+  moderation = false,
+  enforcementState: "clear" | "quarantined" = "clear",
+) {
   const project = PROJECTS.find((entry) => entry.id === "asi");
   if (!project) throw new Error("Missing fixture project");
   await serveProjectMaintainer(page, () => project);
   let sessionGate: ReturnType<typeof gate> | null = null;
+  let nextSessionGate: { held: ReturnType<typeof gate>; started: boolean } | null =
+    null;
   let sessionReads = 0;
   let session: { githubId: string; githubLogin: string; admin: boolean } | null = {
     githubId: "4242",
@@ -25,6 +31,12 @@ async function editorFixture(page: Page, moderation = false) {
   };
   await page.route("**/api/v1/project-session", async (route) => {
     sessionReads++;
+    const next = nextSessionGate;
+    if (next) {
+      nextSessionGate = null;
+      next.started = true;
+      await next.held.promise;
+    }
     if (sessionGate) await sessionGate.promise;
     await route.fulfill({
       json: {
@@ -33,6 +45,8 @@ async function editorFixture(page: Page, moderation = false) {
     });
   });
   let revision = 1;
+  let sequence = 1;
+  let projectReads = 0;
   let manifest = project;
   const record = () => ({
     id: project.id,
@@ -44,12 +58,12 @@ async function editorFixture(page: Page, moderation = false) {
     updatedAt: "2026-10-22T00:00:00.000Z",
     sourceApplicationId: null,
     enforcement: {
-      state: "clear",
+      state: enforcementState,
       appeal: "none",
       projectAppeal: "none",
       since: null,
       restrictedBy: [],
-      nextSequence: 1,
+      nextSequence: sequence,
       revisionPending: false,
       moderation: moderation ? "moderator" : "unconfigured",
       decisionRequired: false,
@@ -57,9 +71,10 @@ async function editorFixture(page: Page, moderation = false) {
       records: [],
     },
   });
-  await page.route("**/api/v1/admin/projects", (route) =>
-    route.fulfill({ json: { projects: [record()] } }),
-  );
+  await page.route("**/api/v1/admin/projects", (route) => {
+    projectReads++;
+    return route.fulfill({ json: { projects: [record()] } });
+  });
   await page.route("**/api/v1/admin/vetting?**", (route) =>
     route.fulfill({
       json: {
@@ -122,6 +137,10 @@ async function editorFixture(page: Page, moderation = false) {
     draftKey,
     savePath,
     saves,
+    projectReads: () => projectReads,
+    acceptEnforcement() {
+      sequence += 1;
+    },
     releaseSave: saveGate.release,
     refuseSave(status: 401 | 403) {
       saveFailure = status;
@@ -139,6 +158,17 @@ async function editorFixture(page: Page, moderation = false) {
         release() {
           sessionGate = null;
           held.release();
+        },
+      };
+    },
+    holdNextSession() {
+      const next = { held: gate(), started: false };
+      nextSessionGate = next;
+      return {
+        started: () => next.started,
+        release() {
+          if (nextSessionGate === next) nextSessionGate = null;
+          next.held.release();
         },
       };
     },
@@ -297,25 +327,32 @@ function enforcementPreview(
   input: { action: string; expectedRevision: number; expectedSequence: number },
   record: ReturnType<Awaited<ReturnType<typeof editorFixture>>["record"]>,
 ) {
+  const requestReinstatement = input.action === "request_reinstatement";
   return {
     projectId: record.id,
     projectName: record.manifest.name,
     action: input.action,
     sequence: input.expectedSequence,
-    stateBefore: "clear",
-    stateAfter: input.action === "ban" ? "banned" : "quarantined",
+    stateBefore: record.enforcement.state,
+    stateAfter: requestReinstatement
+      ? record.enforcement.state
+      : input.action === "ban"
+        ? "banned"
+        : "quarantined",
     appealBefore: "none",
-    appealAfter: "none",
-    result: "revision_appended",
+    appealAfter: requestReinstatement ? "requested" : "none",
+    result: requestReinstatement ? "no_revision_needed" : "revision_appended",
     pendingReason: null,
     maintainerBans: [],
     revision: {
       before: input.expectedRevision,
-      after: input.expectedRevision + 1,
+      after: requestReinstatement ? null : input.expectedRevision + 1,
       statusBefore: record.status,
-      statusAfter: "paused",
+      statusAfter: requestReinstatement ? record.status : "paused",
       listingTierBefore: record.manifest.listingTier,
-      listingTierAfter: "retired",
+      listingTierAfter: requestReinstatement
+        ? record.manifest.listingTier
+        : "retired",
     },
   };
 }
@@ -453,6 +490,213 @@ test("a changed project revision invalidates its displayed enforcement preview",
     ).toBeEnabled();
     expect(applied).toEqual([]);
   } finally {
+    fixture.releaseSave();
+  }
+});
+
+test("changed enforcement input during actor preflight sends no preview", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page, true);
+  const previews: unknown[] = [];
+  let releaseSession: (() => void) | undefined;
+  const base = `/api/v1/admin/projects/${fixture.project.id}`;
+  await page.route(`**${base}/enforcement-preview`, (route) => {
+    const body = route.request().postDataJSON();
+    previews.push(body);
+    return route.fulfill({
+      json: { preview: enforcementPreview(body, fixture.record()) },
+    });
+  });
+  try {
+    await page
+      .getByRole("navigation", { name: "Project administration" })
+      .getByRole("link", { name: "Overview", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Enforcement",
+      exact: true,
+    });
+    await panel.getByLabel("Reason", { exact: true }).fill("The first reason");
+    await panel.getByLabel("Evidence link or case ID").fill("case-preflight-1");
+    const held = fixture.holdNextSession();
+    releaseSession = held.release;
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    await expect.poll(held.started).toBe(true);
+    await panel.getByLabel("Reason", { exact: true }).fill("The revised reason");
+    await panel.getByLabel("Evidence link or case ID").fill("case-preflight-2");
+    held.release();
+    await expect(panel.getByRole("alert")).toContainText("The request changed.");
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeEnabled();
+    await expect(panel.getByRole("button", { name: /^Confirm:/u })).toHaveCount(0);
+    expect(previews).toEqual([]);
+  } finally {
+    releaseSession?.();
+    fixture.releaseSave();
+  }
+});
+
+test("changed project props during confirmation preflight send no enforcement", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page, true);
+  const applied: unknown[] = [];
+  let releaseSession: (() => void) | undefined;
+  const base = `/api/v1/admin/projects/${fixture.project.id}`;
+  await page.route(`**${base}/enforcement-preview`, (route) =>
+    route.fulfill({
+      json: {
+        preview: enforcementPreview(
+          route.request().postDataJSON(),
+          fixture.record(),
+        ),
+      },
+    }),
+  );
+  await page.route(`**${base}/enforcement`, (route) => {
+    applied.push(route.request().postDataJSON());
+    return route.fulfill({ json: {} });
+  });
+  try {
+    await page
+      .getByRole("navigation", { name: "Project administration" })
+      .getByRole("link", { name: "Overview", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Enforcement",
+      exact: true,
+    });
+    await panel.getByLabel("Reason", { exact: true }).fill("Review this change");
+    await panel.getByLabel("Evidence link or case ID").fill("case-confirm-held");
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    const confirm = panel.getByRole("button", {
+      name: "Confirm: Quarantine",
+      exact: true,
+    });
+    await expect(confirm).toBeVisible();
+    const held = fixture.holdNextSession();
+    releaseSession = held.release;
+    await confirm.click();
+    await expect.poll(held.started).toBe(true);
+    fixture.releaseSave();
+    await page.getByRole("button", { name: "Delist", exact: true }).click();
+    await page.getByRole("button", { name: "Delist project", exact: true }).click();
+    await expect.poll(() => fixture.record().revision).toBe(2);
+    await expect(confirm).toHaveCount(0);
+    // While apply is still waiting, only a changed fingerprint can replace
+    // the displayed preview with this disabled preview-request control.
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeVisible();
+    held.release();
+    await expect(panel.getByRole("alert")).toContainText("The request changed.");
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeEnabled();
+    expect(applied).toEqual([]);
+  } finally {
+    releaseSession?.();
+    fixture.releaseSave();
+  }
+});
+
+test("accepted enforcement with changed props retains the write without a stale parent callback", async ({
+  page,
+}) => {
+  // A reinstatement request appends an enforcement record without appending
+  // a project revision. A later delist can therefore validly advance revision
+  // 1 while this already-accepted enforcement response is still held.
+  const fixture = await editorFixture(page, true, "quarantined");
+  const heldApply = gate();
+  const accepted: {
+    action: string;
+    expectedRevision: number;
+    expectedSequence: number;
+  }[] = [];
+  const base = `/api/v1/admin/projects/${fixture.project.id}`;
+  await page.route(`**${base}/enforcement-preview`, (route) =>
+    route.fulfill({
+      json: {
+        preview: enforcementPreview(
+          route.request().postDataJSON(),
+          fixture.record(),
+        ),
+      },
+    }),
+  );
+  await page.route(`**${base}/enforcement`, async (route) => {
+    const body = route.request().postDataJSON();
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    accepted.push(body);
+    fixture.acceptEnforcement();
+    await heldApply.promise;
+    await route.fulfill({ json: {} });
+  });
+  try {
+    await page
+      .getByRole("navigation", { name: "Project administration" })
+      .getByRole("link", { name: "Overview", exact: true })
+      .click();
+    const panel = page.getByRole("region", {
+      name: "Enforcement",
+      exact: true,
+    });
+    await panel
+      .getByLabel("Action", { exact: true })
+      .selectOption("request_reinstatement");
+    await panel.getByLabel("Reason", { exact: true }).fill("Request a new review");
+    await panel.getByLabel("Evidence link or case ID").fill("case-accepted-held");
+    await panel
+      .getByRole("button", { name: "Preview action", exact: true })
+      .click();
+    const confirm = panel.getByRole("button", {
+      name: "Confirm: Request reinstatement",
+      exact: true,
+    });
+    await confirm.click();
+    await expect.poll(() => accepted.length).toBe(1);
+    expect(accepted[0]).toMatchObject({
+      action: "request_reinstatement",
+      expectedRevision: 1,
+      expectedSequence: 1,
+    });
+    fixture.releaseSave();
+    await page.getByRole("button", { name: "Delist", exact: true }).click();
+    await page.getByRole("button", { name: "Delist project", exact: true }).click();
+    await expect.poll(() => fixture.record().revision).toBe(2);
+    await expect(confirm).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeVisible();
+    const reads = fixture.projectReads();
+    const response = page.waitForResponse(
+      (value) =>
+        new URL(value.url()).pathname === `${base}/enforcement` &&
+        value.request().method() === "POST",
+    );
+    heldApply.release();
+    await (await response).finished();
+    await page.waitForLoadState("networkidle");
+    expect(accepted).toHaveLength(1);
+    expect(fixture.record().enforcement.nextSequence).toBe(2);
+    expect(fixture.projectReads()).toBe(reads);
+    await expect(
+      page.getByText(
+        `Request reinstatement recorded for ${fixture.project.name}.`,
+        { exact: true },
+      ),
+    ).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", { name: "Preview action", exact: true }),
+    ).toBeEnabled();
+  } finally {
+    heldApply.release();
     fixture.releaseSave();
   }
 });

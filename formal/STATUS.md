@@ -61,8 +61,8 @@ reported as a passing run of this combined local branch.
 The PRD section 12, CONTRIBUTING and identical AGENTS/CLAUDE instructions
 require reviewed Quint models and implementation conformance evidence for
 explicit and implicit state transitions. The current global inventory contains
-840 production sources, 349 finite models and 2,036 named scenarios, with zero
-unmapped sources. The separate lexical catalog lists 237 declared lifecycle
+840 production sources, 351 finite models and 2,079 named scenarios, with zero
+unmapped sources. The separate lexical catalog lists 238 declared lifecycle
 candidates. Neither count establishes complete semantic refinement.
 
 The wallet source-only batch adds four models and 64 unexecuted scenarios.
@@ -116,6 +116,17 @@ definitions are unexecuted. See `admin-mutation-intent-audit.md`,
 `admin-vetting-requests-audit.md`, `incomplete-assessment-access-audit.md` and
 `value-finish-clock-audit.md`. The function census now has 9,924 bodies in 685
 files and the same 168 selected contracts.
+
+The explicit-signout and inference-reservation batch adds two models and 43
+scenarios across new and refined models. Successful local signout invalidates
+private views and supersedes earlier responses. The enforcement intent model
+now separates preflight, dispatch, acceptance, delivery and callbacks. Inference
+admission and reservation share the same counted-attempt predicate, and the
+reservation and its refusal receipt use one database transaction. All new
+models and regression definitions remain unexecuted. See
+`explicit-signout-audit.md`, `inference-attempt-accounting-audit.md` and the
+enforcement follow-up in `admin-mutation-intent-audit.md`. The current function
+census contains 9,939 bodies in 685 files with 168 selected contracts.
 
 ## Integrated corrections
 

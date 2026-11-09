@@ -111,3 +111,48 @@ Backend role/sequence rules, account lookup, actual append-only persistence,
 browser scheduling, session-provider correctness and cross-document storage
 semantics remain external refinement boundaries. No checks were run and no
 absence-of-state-errors claim is made.
+
+## Follow-up: enforcement waits and retained acceptance
+
+A source-only comparison at `ff160e903` found that the intent model collapsed
+click, awaited actor preflight, and HTTP dispatch. It also evaluated backend
+revision/sequence acceptance at response time. Those abstractions omitted two
+implemented guards: changed fingerprints refuse dispatch after the actor wait,
+and a successful response cannot notify the parent after its fingerprint has
+changed. They also could not distinguish a request refused before acceptance
+from an accepted write whose response arrives after a later server change.
+
+The intent model now separates preview preflight, dispatch, response and
+postflight; and confirmation preflight, dispatch, server acceptance, response
+and postflight. Its `accepted` fact and accepted payload snapshot survive later
+props/server changes and failed response delivery. A parent callback requires
+the submitted fingerprint to equal the fingerprint observed at postflight.
+An ordinary failure can return to the draft without manufacturing a callback.
+The shared identity model still owns actor, authorization and component
+lifetime; this refinement owns the fingerprint guards around those waits.
+
+The original ten intent scenario names remain, with explicit steps through the
+new phases. Thirteen additional scenarios cover changed preview and confirmation
+preflight, guarded dispatch refusals, changed preview/apply postflight,
+accepted writes followed by changed props or server state, accepted writes
+with failed delivery, temporary preview/apply failures, and duplicate starts.
+The intent model therefore has **23** named scenarios; together with the
+unchanged 12 identity scenarios, this follow-up has **35**, an increase of 13
+over the earlier 22. All remain unexecuted.
+
+Three browser definitions are appended to `admin-editor-lifetime.spec.ts`:
+one holds the actor preflight while preview input changes; one holds the
+confirmation preflight while a delist updates the retained project's props;
+and one holds an already-accepted reinstatement response while a later delist
+updates those props. The last case uses a reinstatement request that appends
+an enforcement record without advancing the project revision, so the later
+delist need not violate the revision compare-and-swap contract. It asserts
+the accepted record remains, while the old response supplies neither a parent
+success note nor an additional project-list reload.
+
+The fixture adds a one-request session gate, leaving its original all-request
+focus gate unchanged. The browser file now contains **nine** definitions:
+the two original editor cases, the earlier four additions, and these three.
+These are controlled response definitions, not executed backend or browser
+evidence. No runtime source was changed and no parser, test, formatter, check,
+application or browser was run for this refinement.

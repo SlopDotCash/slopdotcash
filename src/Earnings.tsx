@@ -8,7 +8,7 @@ import {
   Wallet as WalletIcon,
   X,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChainIcon } from "./ChainIcon";
 import { ContributorAllocationRow } from "./ContributorAllocation";
 import { readBoundedJson } from "./lib/browser-json";
@@ -30,7 +30,11 @@ import {
   transactionUrl,
   UNRESERVED_AWARD_STATES,
 } from "./lib/payments/contracts";
-import { apiRequest, currentProjectSession } from "./lib/project-api";
+import {
+  apiRequest,
+  currentProjectSession,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import {
   isDirectTransfer,
@@ -246,8 +250,9 @@ export function EarningsPage({
   const refresh = () => setRevision((n) => n + 1);
   const mounted = useRef(true);
   const walletAttempt = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
   const accountActor = useRef<string | null>(null);
-  const clearAccount = (signedOut: boolean) => {
+  const clearAccount = useCallback((signedOut: boolean) => {
     walletAttempt.current += 1;
     accountActor.current = null;
     setData(null);
@@ -256,7 +261,19 @@ export function EarningsPage({
     setMessage("");
     setBusy(null);
     setSignedOut(signedOut);
-  };
+  }, []);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        loadController.current?.abort();
+        loadController.current = null;
+        clearAccount(true);
+        setLoading(false);
+        setError("");
+        setLoadError("");
+      }),
+    [clearAccount],
+  );
   const heading = useId();
   useEffect(() => {
     mounted.current = true;
@@ -268,6 +285,7 @@ export function EarningsPage({
   // biome-ignore lint/correctness/useExhaustiveDependencies: a user refresh must reload the account.
   useEffect(() => {
     const controller = new AbortController();
+    loadController.current = controller;
     setLoading(true);
     setLoadError("");
     // Signed out is an ordinary state. Read the session first so a signed-out
@@ -289,6 +307,7 @@ export function EarningsPage({
           `actors/${value.githubUserId}`,
           signal,
         );
+      if (controller.signal.aborted) return undefined;
       const current = await currentProjectSession();
       if (controller.signal.aborted) return undefined;
       if (current === null) throw new SignedOutError();
@@ -323,8 +342,11 @@ export function EarningsPage({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    return () => controller.abort();
-  }, [revision, walletsOnly]);
+    return () => {
+      controller.abort();
+      if (loadController.current === controller) loadController.current = null;
+    };
+  }, [revision, walletsOnly, clearAccount]);
 
   useEffect(() => {
     if (pendingChange) changeHeading.current?.focus();

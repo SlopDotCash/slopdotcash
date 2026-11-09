@@ -10,7 +10,11 @@ import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
 import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
-import { apiRequest, currentProjectSession } from "./lib/project-api";
+import {
+  apiRequest,
+  currentProjectSession,
+  subscribeProjectSessionChange,
+} from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useTimeBoundary, useUtcDay } from "./lib/use-time-boundary";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
@@ -191,6 +195,19 @@ export default function OwnerAwards({
     setDrafts({});
     setNotice("");
   }, []);
+  useEffect(
+    () =>
+      subscribeProjectSessionChange(() => {
+        generation.current += 1;
+        clearPrivate();
+        setSignedOut(true);
+        setLoading(false);
+        setActionBusy(false);
+        setActionError(null);
+        setLoadError(null);
+      }),
+    [clearPrivate],
+  );
   const call = useCallback(
     async (
       path: string,
@@ -453,14 +470,15 @@ export default function OwnerAwards({
         <CalendarDays size={22} aria-hidden="true" /> Monthly awards
       </h2>
       {recovery.error && <p role="alert">{recovery.error}</p>}
-      {recovery.pending.map((entry) => (
-        <OwnerCommitment
-          key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
-          projectId={project.id}
-          cycleId={entry.cycleId}
-          expected={entry.expected}
-        />
-      ))}
+      {!signedOut &&
+        recovery.pending.map((entry) => (
+          <OwnerCommitment
+            key={`recovery:${entry.cycleId}:${entry.expected.network}:${entry.expected.githubUserId}`}
+            projectId={project.id}
+            cycleId={entry.cycleId}
+            expected={entry.expected}
+          />
+        ))}
       {!opened ? (
         <>
           <p>Review allocations and reserve finalized awards.</p>

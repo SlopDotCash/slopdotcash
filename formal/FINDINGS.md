@@ -287,3 +287,24 @@ now requires the lease to exceed both the captured and execution clocks and
 preserves every owner/sibling record when refused. Five new models and refined
 worker scenarios add 67 unexecuted cases; the added browser, handler and SQLite
 definitions are also unexecuted. Source review is not runtime acceptance.
+
+## Explicit signout and inference reservation
+
+Successful signout updated the header but left independent private consumers
+and session hooks with their prior state. A local session revision and direct
+consumer invalidation now hide those views, cancel owned reads and suppress
+earlier callbacks. Already accepted writes, pending payment records and email
+verification tokens keep their recovery semantics.
+
+The inference model counted admissions that had no reservation and did not
+represent free provider spending denials. Its refined accounting matches those
+source distinctions. Source review also found that concurrent admitted attempts
+could both reserve the final available attempt slot. Reservation now repeats
+the shared count predicate inside its INSERT, and returns its refusal reason
+from the same transaction. This fixes excess reservations; it is not evidence
+that an extra paid provider call occurred.
+
+The enforcement model now distinguishes a changed fingerprint before dispatch
+from a changed fingerprint after server acceptance. Two new models and refined
+existing models add 43 unexecuted scenarios. New browser and SQLite definitions
+are also unexecuted; these changes await exact-source validation.

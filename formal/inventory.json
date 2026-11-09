@@ -2680,7 +2680,10 @@
     {
       "path": "migrations/0104_slopbot_value_inference_attempts.sql",
       "sha256": "d88077451ad51fac6578744f889a40365d5c573ae241787090530639b38f5a45",
-      "models": ["formal/models/bot_inference_retention.qnt"],
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_inference_retention.qnt"
+      ],
       "candidateLines": [4, 16, 18],
       "review": "mapped-abstraction"
     },
@@ -4232,16 +4235,17 @@
     },
     {
       "path": "src/Earnings.tsx",
-      "sha256": "1e5977ea7b569761c69aba284b0c8eb49ac620bf6ead73a4c2fec9bce2b46ec6",
+      "sha256": "a2977b91ef8dff363bde73f58cf76e11fcf0ce88615dea17b3b0241f89a76c1a",
       "models": [
         "formal/models/ui_earnings_actor_binding.qnt",
         "formal/models/ui_earnings_wallet_lifetime.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_wallet_choice.qnt"
       ],
       "candidateLines": [
-        11, 118, 122, 126, 130, 164, 172, 188, 214, 227, 229, 230, 231, 232,
-        233, 234, 235, 236, 245, 261, 269, 273, 329, 337, 373, 400, 451, 636,
-        660, 664, 688, 690, 696, 714, 722, 741, 755, 886, 898, 959
+        11, 122, 126, 130, 134, 168, 176, 192, 218, 231, 233, 234, 235, 236,
+        237, 238, 239, 240, 249, 265, 278, 286, 291, 351, 359, 395, 422, 473,
+        658, 682, 686, 710, 712, 718, 736, 744, 763, 777, 908, 920, 981
       ],
       "review": "mapped-abstraction"
     },
@@ -4291,38 +4295,40 @@
     },
     {
       "path": "src/Inbox.tsx",
-      "sha256": "63c4ab3903e95906765ec676121d850f74a3a38f331572f307154ea0f0d8db96",
+      "sha256": "2efbf7ff1a4234bfed1036ea348279afcb970335620fa6426049c83a71230f92",
       "models": [
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_inbox.qnt",
         "formal/models/ui_inbox_mutation_focus.qnt",
         "formal/models/ui_incomplete_assessments.qnt",
         "formal/models/ui_points_disputes.qnt"
       ],
       "candidateLines": [
-        15, 17, 47, 48, 49, 50, 52, 58, 62, 76, 82, 87, 89, 109, 111, 134, 136,
-        142, 143, 144, 147, 149, 156, 171, 172, 182, 184, 186, 187, 198, 209,
-        212, 218, 219, 227, 228, 252, 257, 260, 266, 272, 273, 282, 283, 295,
-        303, 325, 326, 328, 330, 334, 336, 342, 347, 348, 349, 354, 362, 371,
-        382, 385, 397, 398, 415, 418, 426, 432, 537
+        15, 17, 50, 51, 52, 53, 55, 61, 66, 80, 88, 93, 95, 115, 117, 140, 142,
+        148, 149, 150, 158, 161, 169, 184, 185, 195, 197, 199, 200, 213, 224,
+        227, 233, 234, 245, 253, 259, 260, 284, 289, 292, 299, 305, 306, 315,
+        316, 328, 339, 361, 362, 364, 366, 370, 372, 378, 383, 384, 385, 390,
+        398, 407, 418, 421, 433, 434, 451, 454, 462, 468, 573
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/InboxEmail.tsx",
-      "sha256": "66ba04d6eecc6027f6e8283b8d330ad3ab685dc8759532f3301b0c3d353b2968",
+      "sha256": "cd71f401bad60c9ebc4f7c2ea01f368184862ca40139ebc61f6b2f2966279c4a",
       "models": [
         "formal/models/ui_email.qnt",
         "formal/models/ui_email_actions.qnt",
-        "formal/models/ui_email_parent.qnt"
+        "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt"
       ],
       "candidateLines": [
-        6, 8, 19, 25, 34, 35, 36, 37, 47, 48, 49, 50, 51, 53, 56, 85, 86, 90,
-        91, 92, 121, 123, 132, 137, 149, 156, 170, 172, 175, 177, 191, 196, 200,
-        206, 215, 233, 234, 238, 244, 249, 250, 254, 256, 287, 289, 292, 295,
-        297, 304, 315, 320, 330, 332, 333, 336, 337, 346, 347, 370, 372, 382,
-        397, 399, 401, 408, 414, 421, 429, 431, 432, 447, 464, 466, 467, 508,
-        510, 511, 513, 515, 518, 600, 614, 651, 692, 693, 694, 697, 715, 745,
-        788, 809, 818, 835, 849, 852
+        6, 8, 23, 29, 38, 39, 40, 41, 51, 52, 53, 54, 55, 57, 60, 89, 90, 94,
+        95, 96, 125, 127, 136, 141, 153, 160, 174, 176, 179, 181, 195, 200, 204,
+        210, 219, 237, 238, 242, 248, 253, 254, 258, 260, 291, 293, 296, 299,
+        301, 308, 319, 324, 334, 336, 337, 340, 341, 350, 351, 374, 376, 386,
+        401, 403, 405, 412, 418, 425, 433, 435, 436, 451, 468, 470, 471, 512,
+        514, 515, 517, 519, 522, 604, 618, 655, 696, 697, 698, 701, 713, 731,
+        762, 805, 826, 835, 852, 866, 869
       ],
       "review": "mapped-abstraction"
     },
@@ -4365,18 +4371,19 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "86aa1da2e695f1b7cd1dfdff7843293a334e8a67f0a30d0c5fcf1bf8b4eab914",
+      "sha256": "d26c52b192a54beef1083c30bfc3ea5db8b50a6030b3fdfefe2f6c8b3cbe8d5f",
       "models": [
         "formal/models/ui_calendar_views.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_owner_awards.qnt",
         "formal/models/ui_owner_private_requests.qnt",
         "formal/models/ui_time_boundary.qnt",
         "formal/models/ui_transaction.qnt"
       ],
       "candidateLines": [
-        3, 68, 101, 103, 106, 113, 114, 122, 123, 127, 134, 137, 138, 139, 140,
-        141, 144, 145, 241, 243, 251, 269, 362, 387, 434, 456, 466, 522, 545,
-        592, 709, 710, 737, 738, 742, 747, 753, 770
+        3, 72, 105, 107, 110, 117, 118, 126, 127, 131, 138, 141, 142, 143, 144,
+        145, 148, 149, 198, 258, 260, 268, 286, 379, 404, 451, 474, 484, 540,
+        563, 610, 727, 728, 755, 756, 760, 765, 771, 788
       ],
       "review": "mapped-abstraction"
     },
@@ -4491,30 +4498,31 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "1eade5fdacc7e637fb1a5c0f53afadacc667ddc83b61019500b1020ea54ee976",
+      "sha256": "bf7408fc035e2d10fff16e635d2653fd304434b8f5d1b5507fa9283b0011c541",
       "models": [
         "formal/models/ui_calendar_views.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_link_dispatch.qnt",
         "formal/models/ui_public_x_profile.qnt",
         "formal/models/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 18, 83, 98, 99, 100, 102, 108, 118, 127, 130, 138, 139, 141, 142,
-        158, 160, 207, 208, 209, 212, 213, 214, 215, 232, 238, 245, 253, 263,
-        270, 277, 291, 311, 328, 346, 347, 348, 353, 377, 378, 383, 386, 387,
-        388, 389, 390, 392, 393, 409, 415, 472, 473, 478, 480, 510, 511, 512,
-        514, 516, 519, 528, 530, 532, 534, 536, 539, 540, 544, 546, 548, 558,
-        559, 564, 566, 578, 579, 609, 613, 614, 624, 625, 636, 638, 645, 649,
-        654, 655, 679, 685, 737, 738, 739, 740, 742, 743, 755, 829, 842, 847,
-        856, 926, 964, 970, 980, 989, 994, 996, 999, 1005, 1006, 1017, 1026,
-        1034, 1036, 1037, 1045, 1048, 1049, 1050, 1051, 1053, 1054, 1057, 1058,
-        1069, 1078, 1102, 1106, 1115, 1137, 1138, 1139, 1148, 1232, 1242, 1247,
-        1265, 1267, 1269, 1272, 1273, 1274, 1276, 1344, 1348, 1450, 1451, 1452,
-        1482, 1483, 1522, 1524, 1525, 1526, 1528, 1535, 1537, 1541, 1543, 1545,
-        1554, 1555, 1561, 1567, 1572, 1581, 1582, 1583, 1584, 1586, 1587, 1590,
-        1591, 1593, 1594, 1598, 1606, 1607, 1608, 1609, 1612, 1616, 1627, 1628,
-        1633
+        14, 18, 86, 101, 102, 103, 105, 111, 121, 130, 133, 141, 142, 144, 145,
+        161, 163, 210, 211, 212, 215, 216, 217, 218, 235, 241, 248, 256, 266,
+        273, 280, 294, 314, 331, 349, 350, 351, 356, 380, 381, 386, 389, 390,
+        391, 392, 393, 395, 396, 413, 419, 476, 477, 482, 484, 514, 515, 516,
+        518, 520, 523, 532, 534, 536, 538, 540, 543, 544, 548, 550, 552, 562,
+        563, 568, 570, 582, 583, 613, 617, 618, 628, 629, 640, 642, 649, 653,
+        658, 659, 683, 689, 741, 742, 743, 744, 746, 747, 759, 833, 846, 851,
+        860, 930, 968, 974, 984, 993, 998, 1000, 1003, 1009, 1010, 1021, 1030,
+        1038, 1040, 1041, 1049, 1052, 1053, 1054, 1055, 1057, 1058, 1061, 1062,
+        1073, 1082, 1106, 1110, 1119, 1141, 1142, 1143, 1152, 1236, 1246, 1251,
+        1269, 1271, 1273, 1276, 1277, 1278, 1280, 1348, 1352, 1454, 1455, 1456,
+        1486, 1487, 1526, 1528, 1529, 1530, 1532, 1539, 1541, 1545, 1547, 1549,
+        1558, 1559, 1565, 1571, 1576, 1585, 1586, 1587, 1588, 1590, 1591, 1594,
+        1595, 1597, 1598, 1602, 1610, 1611, 1612, 1613, 1616, 1620, 1631, 1632,
+        1637
       ],
       "review": "mapped-abstraction"
     },
@@ -5426,12 +5434,13 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "0f540723e540ac3f8cb0f4b8d1ae2d5e482eda671ce0f5ad3d67482f2b97e7ac",
+      "sha256": "e8c41a34081da514e96aaf7e69b51d7ddec9f17fe791e71fdadd2a51d6c89964",
       "models": [
         "formal/models/ui_admin_editor_lifetime.qnt",
         "formal/models/ui_admin_mutation_identity.qnt",
         "formal/models/ui_admin_resource_identity.qnt",
         "formal/models/ui_email_parent.qnt",
+        "formal/models/ui_explicit_signout.qnt",
         "formal/models/ui_focus_session.qnt",
         "formal/models/ui_owner_bounty_funds.qnt",
         "formal/models/ui_pending_applications.qnt",
@@ -5444,9 +5453,9 @@
         "formal/models/ui_vetting_reader.qnt"
       ],
       "candidateLines": [
-        6, 25, 111, 121, 125, 149, 163, 168, 237, 273, 274, 275, 276, 283, 285,
-        286, 287, 293, 299, 301, 302, 309, 310, 338, 340, 341, 346, 348, 349,
-        355, 357, 359, 380, 393, 402, 408, 420, 426
+        6, 25, 111, 121, 125, 149, 163, 168, 237, 273, 274, 275, 276, 290, 299,
+        302, 306, 308, 315, 327, 329, 330, 343, 344, 374, 378, 379, 384, 386,
+        387, 393, 395, 397, 418, 431, 440, 446, 458, 464
       ],
       "review": "mapped-abstraction"
     },
@@ -6939,7 +6948,10 @@
     {
       "path": "workers/slopbot/models.ts",
       "sha256": "1595aa393d13b76d286029c5a44a1abd482ae8e27187dd85ef113f50b3cee156",
-      "models": ["formal/models/bot_producer_provenance.qnt"],
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_producer_provenance.qnt"
+      ],
       "candidateLines": [79, 83, 88, 173, 195, 196, 318, 320],
       "review": "mapped-abstraction"
     },
@@ -7112,9 +7124,13 @@
     },
     {
       "path": "workers/slopbot/value-budget.ts",
-      "sha256": "eb3ba2cfd4f605baf79ec632e9dd849c709e1cfccf36b0830fda63d7c8daaeb8",
-      "models": ["formal/models/bot_value_budget.qnt"],
-      "candidateLines": [11, 46, 83],
+      "sha256": "27d87454a148416c2463a55ac1fa11fd39808fbb8149c34aede09d2b0d19f809",
+      "models": [
+        "formal/models/bot_inference_reservations.qnt",
+        "formal/models/bot_inference_retention.qnt",
+        "formal/models/bot_value_budget.qnt"
+      ],
+      "candidateLines": [26, 107, 184],
       "review": "mapped-abstraction"
     },
     {
@@ -7218,13 +7234,14 @@
     },
     {
       "path": "workers/slopbot/value-inference.ts",
-      "sha256": "ac6a6bbe223a64e97f95007385c3d539f630e694ec7f776a14b3507fff3f69d3",
+      "sha256": "283f1385d86a38e0e48a9fb98de9d998183e18cc42acb3f37dcc2b2d43df50de",
       "models": [
+        "formal/models/bot_inference_reservations.qnt",
         "formal/models/bot_inference_retention.qnt",
         "formal/models/bot_value_budget.qnt",
         "formal/models/bot_value_pipeline.qnt"
       ],
-      "candidateLines": [69, 78, 100, 238, 240],
+      "candidateLines": [73, 82, 104, 236, 238],
       "review": "mapped-abstraction"
     },
     {
@@ -8648,14 +8665,45 @@
       "scenarios": ["apiEraWorkRejectedTest", "privateHistoricalImportTest"]
     },
     {
+      "path": "formal/models/bot_inference_reservations.qnt",
+      "sha256": "adff94475a3d9654f8800a800b49a3a145e825b31e49ea3ed53123e0c5b80d78",
+      "sources": [
+        "migrations/0104_slopbot_value_inference_attempts.sql",
+        "workers/slopbot/models.ts",
+        "workers/slopbot/value-budget.ts",
+        "workers/slopbot/value-inference.ts"
+      ],
+      "scenarios": [
+        "budgetRefusalRetainsOnlyAdmissionTest",
+        "firstReservationWinsLastSlotTest",
+        "immutableAttemptCannotBeReadmittedTest",
+        "missingAtomicStorageCannotAuthorizeCallTest",
+        "nonFreeReceiptDoesNotReopenSlotTest",
+        "refusalSurvivesFreeReceiptBeforeReplyTest",
+        "reverseReservationOrderWinsLastSlotTest",
+        "staleOwnerCannotTakeFourthSlotTest",
+        "staleOwnerReservationRemainsHeldTest",
+        "unknownReservationsDoNotExpireTest"
+      ]
+    },
+    {
       "path": "formal/models/bot_inference_retention.qnt",
-      "sha256": "a7ff04665e06bff0a2fb3737224cbb042f97d6305615228dd7b54cb851457eda",
+      "sha256": "a3a66cecf7e335af4688f9b01a37e261141dd79fedf9995f11d4f9e743596a5b",
       "sources": [
         "migrations/0054_slopbot_value_inference_results.sql",
         "migrations/0104_slopbot_value_inference_attempts.sql",
+        "workers/slopbot/value-budget.ts",
         "workers/slopbot/value-inference.ts"
       ],
-      "scenarios": ["retainedResultReusedTest", "usageFailureCannotPublishTest"]
+      "scenarios": [
+        "freeDenialsLeaveThreeCountedAttemptsTest",
+        "mixedBudgetDenialStillCountsTest",
+        "retainedResultReusedTest",
+        "unknownNoCallReservationsRemainCountedTest",
+        "unrecordedFreeResponseRemainsCountedTest",
+        "unreservedAdmissionDoesNotSpendAttemptTest",
+        "usageFailureCannotPublishTest"
+      ]
     },
     {
       "path": "formal/models/bot_installation_lifecycle.qnt",
@@ -11504,19 +11552,32 @@
     },
     {
       "path": "formal/models/ui_admin_enforcement_intent.qnt",
-      "sha256": "abccee36c25b244daf4fc34e8cba023b9c473ac2c043d6b57380fd694835cc80",
+      "sha256": "997fd6f6900fb4626bb1686c8824b3253c61f52e9e3f921cf457c5a31bc896d6",
       "sources": [
         "backend/projects/handler.ts",
         "src/AdminProjectEnforcement.tsx"
       ],
       "scenarios": [
+        "acceptedApplyWithChangedPostflightSuppressesCallbackTest",
+        "acceptedApplyWithChangedPropsSuppressesCallbackTest",
+        "acceptedWriteSurvivesFailedDeliveryTest",
+        "acceptedWriteSurvivesLaterServerAdvanceTest",
+        "applyTransportFailureRetainsLocalErrorTest",
+        "busyConfirmCannotStartAgainTest",
+        "busyPreviewCannotStartAgainTest",
         "cancelAndNewPreviewUsesNewInputTest",
         "changedAccountIdentityRefusesApplyTest",
+        "changedConfirmPreflightCannotDispatchTest",
+        "changedConfirmPreflightSendsNothingTest",
         "changedPendingInputRequiresNewPreviewTest",
+        "changedPreviewPostflightRejectsReplyTest",
+        "changedPreviewPreflightCannotDispatchTest",
+        "changedPreviewPreflightSendsNothingTest",
         "changedPropsHideOldConfirmationTest",
         "changedSequenceHidesOldConfirmationTest",
         "changedServerSequenceRefusesCapturedRequestTest",
         "mismatchingPreviewCannotBeConfirmedTest",
+        "previewFailureAllowsRetryTest",
         "restoredExactInputMayUseReplyTest",
         "unchangedPreviewConfirmsExactRequestTest",
         "unchangedPropsStillUseOldServerVersionTest"
@@ -11858,6 +11919,35 @@
         "adjacentAliasesTest",
         "aliasOverlapRefusedTest",
         "differentActorsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui_explicit_signout.qnt",
+      "sha256": "a9554b7081fb5014440cbba11d831fce47d176b662eac467a0ec8cb88ccf737a",
+      "sources": [
+        "src/Earnings.tsx",
+        "src/Inbox.tsx",
+        "src/InboxEmail.tsx",
+        "src/OwnerAwards.tsx",
+        "src/Points.tsx",
+        "src/lib/project-api.ts"
+      ],
+      "scenarios": [
+        "acceptedWriteSurvivesSignoutTest",
+        "alreadyOpenWalletReplyIsIgnoredTest",
+        "disabledPendingReadCannotReappearTest",
+        "disabledSnapshotCannotReappearTest",
+        "failedSignoutDoesNotInvalidateTest",
+        "lateFailureCannotRestorePrivateViewTest",
+        "pendingVerificationKeepsTokenTest",
+        "postSignoutReadCanReportSignedOutTest",
+        "postSignoutReadErrorStaysDistinctTest",
+        "preSignoutReadCannotRestoreTest",
+        "readyPrivateViewDropsImmediatelyTest",
+        "signedOutWalletCannotStartTest",
+        "successfulSignoutHidesReadyHookTest",
+        "unmountedReadCannotPublishTest",
+        "unsubscribeDoesNotRequireSessionTest"
       ]
     },
     {

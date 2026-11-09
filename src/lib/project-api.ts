@@ -275,27 +275,55 @@ export type ProjectSessionState =
   | { status: "error"; message: string }
   | { status: "signed-in"; session: ProjectSession };
 
-/** Revalidate on mount, caller revision, tab return and restored history. */
+let sessionChangeRevision = 0;
+const sessionChangeListeners = new Set<() => void>();
+
+/** Publish only a completed, explicit session change in this browser tab. */
+export function notifyProjectSessionChanged(): void {
+  sessionChangeRevision += 1;
+  for (const listener of sessionChangeListeners) listener();
+}
+
+export function subscribeProjectSessionChange(listener: () => void): () => void {
+  sessionChangeListeners.add(listener);
+  return () => {
+    sessionChangeListeners.delete(listener);
+  };
+}
+
+/** Revalidate on mount, caller revision, explicit signout and tab return. */
 export function useProjectSession(
   revision: number | string = 0,
   enabled = true,
 ): ProjectSessionState {
   const [snapshot, setSnapshot] = useState<{
     revision: number | string;
+    sessionRevision: number;
     state: ProjectSessionState;
-  }>({ revision, state: { status: "checking" } });
+  }>({
+    revision,
+    sessionRevision: sessionChangeRevision,
+    state: { status: "checking" },
+  });
   useEffect(() => {
     if (!enabled) return;
     let active = true;
     let generation = 0;
     const refresh = () => {
       const current = ++generation;
-      setSnapshot({ revision, state: { status: "checking" } });
+      const sessionRevision = sessionChangeRevision;
+      setSnapshot({ revision, sessionRevision, state: { status: "checking" } });
       currentProjectSession().then(
         (session) => {
-          if (!active || current !== generation) return;
+          if (
+            !active ||
+            current !== generation ||
+            sessionRevision !== sessionChangeRevision
+          )
+            return;
           setSnapshot({
             revision,
+            sessionRevision,
             state:
               session === null
                 ? { status: "signed-out" }
@@ -303,9 +331,15 @@ export function useProjectSession(
           });
         },
         (error: unknown) => {
-          if (!active || current !== generation) return;
+          if (
+            !active ||
+            current !== generation ||
+            sessionRevision !== sessionChangeRevision
+          )
+            return;
           setSnapshot({
             revision,
+            sessionRevision,
             state: {
               status: "error",
               message:
@@ -323,6 +357,7 @@ export function useProjectSession(
     const restored = (event: PageTransitionEvent) => {
       if (event.persisted) refresh();
     };
+    const unsubscribe = subscribeProjectSessionChange(refresh);
     refresh();
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", visible);
@@ -330,13 +365,16 @@ export function useProjectSession(
     return () => {
       active = false;
       generation += 1;
+      unsubscribe();
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("pageshow", restored);
     };
   }, [revision, enabled]);
   // Never show the old actor while a requested identity check is pending.
-  return enabled && snapshot.revision === revision
+  return enabled &&
+    snapshot.revision === revision &&
+    snapshot.sessionRevision === sessionChangeRevision
     ? snapshot.state
     : { status: "checking" };
 }

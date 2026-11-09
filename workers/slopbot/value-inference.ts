@@ -8,7 +8,11 @@ import {
   TRIAGE_ROUTE,
 } from "./models";
 import { type D1Database, recordCalls } from "./persistence";
-import { reconcileValueBudget, reserveValueBudget } from "./value-budget";
+import {
+  countedValueAttemptsSql,
+  reconcileValueBudget,
+  reserveValueInferenceBudget,
+} from "./value-budget";
 import { valueProducerIdentity } from "./value-producer";
 
 type RetainedValueInference<T> = {
@@ -98,14 +102,7 @@ async function admitValueAttempt(
   const row = await db
     .prepare(
       `INSERT INTO slopbot_value_inference_attempts (attempt_id,inference_key,started_at)
-       SELECT ?1,?2,?3 WHERE (
-         SELECT COUNT(*) FROM slopbot_value_inference_attempts a
-         JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
-         WHERE a.inference_key=?2
-           AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c
-                  WHERE c.review_key=a.attempt_id AND c.failure=?5)
-             OR EXISTS (SELECT 1 FROM slopbot_costs c
-                  WHERE c.review_key=a.attempt_id AND c.failure IS NOT ?5))) < ?4
+       SELECT ?1,?2,?3 WHERE ${countedValueAttemptsSql("?2", "?5")} < ?4
        AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id=?1)
        RETURNING attempt_id`,
     )
@@ -182,20 +179,21 @@ export async function runValueInference<T>(
       blocked: true,
       blockReason: "attempts" as const,
     };
-  if (
-    !(await reserveValueBudget(
-      budget.db,
-      budget.attemptId,
-      budget.maximumMicroUsd,
-      budget.approvedMonthlyMicroUsd,
-    ))
-  )
+  const reservation = await reserveValueInferenceBudget(
+    budget.db,
+    budget.attemptId,
+    key,
+    VALUE_INFERENCE_ATTEMPT_LIMIT,
+    budget.maximumMicroUsd,
+    budget.approvedMonthlyMicroUsd,
+  );
+  if (reservation !== "reserved")
     return {
       verdict: null,
       calls: [],
       servedBy: null,
       blocked: true,
-      blockReason: "budget" as const,
+      blockReason: reservation,
     };
   const result = await runStructuredRoute(
     env,
