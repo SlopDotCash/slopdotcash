@@ -8,6 +8,8 @@
 // and at most two attempts by successor B. A's lease may expire before receipt,
 // retention or completion. The scheduler's due action abstracts the existing
 // retry delay; the model does not select that delay or forgive a reservation.
+// A here represents a provider attempt; the separate completed zero-call
+// exclusion is refined in bot_inference_reservations.
 module bot_value_attempt_recovery {
   var s: { aLive: bool, aReceipt: str, aValid: bool, aRetained: bool, aComplete: bool,
     bPhase: str, bAttempt: int, bDecision: str, bReserved: bool, bCalls: int,

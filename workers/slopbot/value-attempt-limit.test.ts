@@ -9,7 +9,9 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { PROVIDER_BUDGET_EXHAUSTED, TRIAGE_ROUTE } from "./models";
 import { recordCalls } from "./persistence";
 import {
+  admitValueAttempt,
   countedValueAttemptsSql,
+  reconcileValueBudget,
   reserveValueInferenceBudget,
 } from "./value-budget";
 import {
@@ -31,6 +33,7 @@ const MIGRATIONS = [
   "0085_slopbot_provider_failure_notices.sql",
   "0104_slopbot_value_inference_attempts.sql",
   "0118_slopbot_value_attempt_completion.sql",
+  "0118_slopbot_zero_call_reconciliation.sql",
 ];
 
 const output = (sourceDigest: string) => ({
@@ -147,6 +150,89 @@ test("provider retries of one source are bounded and recorded immutably", () =>
 test("completed attempts with unknown cost amounts still have a terminal cap", () =>
   providerRetries(false),
 );
+
+for (const refusal of ["refused", "failed"] as const) {
+  test(`repeated ${refusal} authority checks before the first call preserve paid attempt capacity`, async () => {
+    const { db, sqlite } = sqliteD1(MIGRATIONS);
+    let requests = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        requests++;
+        const input = (await request.json()) as { model: string };
+        return Response.json({
+          id: `recovered-${requests}`,
+          type: "message",
+          role: "assistant",
+          model: input.model,
+          content: [{ type: "text", text: JSON.stringify({ accepted: true }) }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 10 },
+        }, { headers: { "x-si-buyer-cost-micro": "1000" } });
+      },
+    });
+    const env = { SURPLUS_API_KEY: "local-only", SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}` };
+    const sourceDigest = "c".repeat(64);
+    let inferenceKey = "";
+    try {
+      for (let index = 0; index <= VALUE_INFERENCE_ATTEMPT_LIMIT; index++) {
+        const attemptId = `value:${crypto.randomUUID()}`;
+        let checks = 0;
+        let completionOnlyCount: number | undefined;
+        const observedDb = {
+          ...db,
+          prepare(sql: string) {
+            if (sql.includes("INSERT INTO slopbot_value_budget_reconciliations")) {
+              const saved = sqlite.query("SELECT inference_key FROM slopbot_value_inference_attempts WHERE attempt_id=?").get(attemptId) as { inference_key: string };
+              inferenceKey = saved.inference_key;
+              completionOnlyCount = (sqlite.query(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`).get(inferenceKey, PROVIDER_BUDGET_EXHAUSTED) as { n: number }).n;
+            }
+            return db.prepare(sql);
+          },
+        };
+        const result = runValueInference(env, prompt, output(sourceDigest), async () => {
+          checks++;
+          if (checks === 1) return true;
+          if (refusal === "failed") throw new Error("authority observation unavailable");
+          return false;
+        }, { db: observedDb, installationId: 1, attemptId, maximumMicroUsd: null, approvedMonthlyMicroUsd: null });
+        if (refusal === "failed") await expect(result).rejects.toThrow("authority observation unavailable");
+        else expect(await result).toMatchObject({ blocked: true, blockReason: "authority", calls: [] });
+        expect(checks).toBe(2);
+        // A completion record alone does not erase an unknown reservation.
+        expect(completionOnlyCount).toBe(1);
+        expect(requests).toBe(0);
+        expect(sqlite.query(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`).get(inferenceKey, PROVIDER_BUDGET_EXHAUSTED)).toEqual({ n: 0 });
+      }
+      expect(sqlite.query("SELECT COUNT(*) AS n FROM slopbot_value_attempt_completions").get()).toEqual({ n: VALUE_INFERENCE_ATTEMPT_LIMIT + 1 });
+      expect(sqlite.query("SELECT COUNT(*) AS n FROM slopbot_value_budget_reconciliations WHERE call_count=0 AND recorded_micro_usd=0").get()).toEqual({ n: VALUE_INFERENCE_ATTEMPT_LIMIT + 1 });
+      const recovered = await runValueInference(env, prompt, output(sourceDigest), async () => true,
+        { db, installationId: 1, attemptId: `value:${crypto.randomUUID()}`, maximumMicroUsd: null, approvedMonthlyMicroUsd: null });
+      expect(recovered.verdict).toEqual({ accepted: true });
+      expect(requests).toBeGreaterThan(0);
+      expect(sqlite.query(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`).get(inferenceKey, PROVIDER_BUDGET_EXHAUSTED)).toEqual({ n: 1 });
+    } finally {
+      server.stop(true);
+      sqlite.close();
+    }
+  });
+}
+
+test("zero-call reconciliation without attempt completion keeps the reservation counted", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  const key = "b".repeat(64);
+  const attemptId = `value:${crypto.randomUUID()}`;
+  try {
+    expect(await admitValueAttempt(db, key, attemptId, VALUE_INFERENCE_ATTEMPT_LIMIT)).toBe("admitted");
+    expect(await reserveValueInferenceBudget(db, attemptId, key, VALUE_INFERENCE_ATTEMPT_LIMIT, null, null)).toBe("reserved");
+    expect(await reconcileValueBudget(db, attemptId, 0)).toBe(true);
+    expect(sqlite.query(`SELECT ${countedValueAttemptsSql("?1", "?2")} AS n`).get(key, PROVIDER_BUDGET_EXHAUSTED)).toEqual({ n: 1 });
+  } finally {
+    sqlite.close();
+  }
+});
 
 test("concurrent admitted inferences cannot reserve the same final attempt slot", async () => {
   const { db, sqlite } = sqliteD1(MIGRATIONS);

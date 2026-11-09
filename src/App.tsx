@@ -1183,6 +1183,9 @@ function ProjectPaymentHistory({
     right.localeCompare(left),
   );
   const historyLimited = directMonths.length > 3 || cycles.length > 3;
+  // Loading is not an empty history: wait for direct payments before saying
+  // that nothing has closed.
+  const directLoading = directState.status === "loading" && !externalPrize;
   if (
     cycles.length === 0 &&
     directMonths.length === 0 &&
@@ -1206,6 +1209,7 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
+      {directLoading ? <p role="status">Loading direct payments…</p> : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
         ([month, { amount, count, paidOn }]) => (
           <p className="money-summary" key={month}>
@@ -1223,7 +1227,9 @@ function ProjectPaymentHistory({
         ),
       )}
       {cycles.length === 0 ? (
-        <EmptyState text="No cycles have closed yet." />
+        directLoading ? null : (
+          <EmptyState text="No cycles have closed yet." />
+        )
       ) : (
         <div className="plain-table-wrap">
           <table className="plain-table">
@@ -1449,7 +1455,12 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
-        <ProjectWork project={project} state={state} retry={retry} />
+        <ProjectWork
+          project={project}
+          state={state}
+          retry={retry}
+          notice={!view?.leaders.length}
+        />
         <ProjectFundsAndAwards
           key={`funding:${project.id}`}
           project={project}

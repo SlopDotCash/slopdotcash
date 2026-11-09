@@ -239,7 +239,7 @@ export async function reviewExists(
   return row !== null;
 }
 
-export type ReviewRow = {
+type ReviewRow = {
   reviewKey: string;
   installationId: number;
   repositoryId: number;
@@ -267,7 +267,7 @@ export class ReviewLeaseLostError extends Error {
 }
 export type ReviewClaim = { reviewKey: string; token: string };
 
-export async function ownsReviewClaim(
+async function ownsReviewClaim(
   db: D1Database,
   claim: ReviewClaim,
 ): Promise<boolean> {

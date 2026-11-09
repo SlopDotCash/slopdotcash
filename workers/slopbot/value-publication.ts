@@ -12,12 +12,8 @@ import { requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
-import {
-  collectValueEvidence,
-  type EvidenceClient,
-  findRepository,
-  type ValueEvidence,
-} from "./value-evidence";
+import { collectValueEvidence, findRepository } from "./value-evidence";
+import type { EvidenceClient, ValueEvidence } from "./value-evidence-types";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
 import {
   reuseMergeResolution,

@@ -4,7 +4,7 @@ The `direct-bounty-journal-safety-v4` view is specific to the invariant in
 `models/payments/direct_bounty_journal.qnt`. It changes TLC state fingerprints,
 not the source model, full-state named scenarios or sampled execution. The
 model SHA-256 is
-`549580117b331f06f8bb0950211c650c84a7fbffbcb51045812f0c26d3e38fa3`.
+`3020aebd3ca62801dace69ab002c49c19fa9bdb71723b435b72d0e204d824dd0`.
 Earlier full-state and shorter view runs ended incomplete; they remain failed
 receipts and cannot be relabeled by a later result. Model authoring comments
 record their original checkpoint, not current execution status.
@@ -65,12 +65,27 @@ It does not authorize future source changes or other properties.
 
 The two clauses must stay separate. A failed reserve resets O to true while
 carrying F; a single combined O-and-F bit cannot determine that successor.
-No integer symmetry is used. Actor, nonce, request and transaction identities, and store candidates, are unchanged. Only the view coalesces the positive hash markers and unused memory candidates;
+The view itself uses no integer symmetry: actor, nonce, request and
+transaction identities, and store candidates, are unchanged in the view. Only
+the view coalesces the positive hash markers and unused memory candidates;
 the full model retains their exact values.
-No state, sequence, retry, time or action domain is reduced.
+
+Separately, the model's finite `step` (not the view) reserves the
+deterministic fresh request ID `used.size() + 1` instead of any unused ID
+in 1..3. Request IDs are compared only with each other and with 0, the `used`
+domain rule is closed under permutations of 1..3 fixing 0, and `used` only
+grows, so every reservation of another unused ID reaches a permutation image
+of a canonical state with equal invariant truth. O compares `observed` with
+`expected` by equality and F compares whole entries, so both clauses are
+permutation-invariant. The view's congruence argument above is unchanged: the
+canonical choice depends only on `used`, which R retains. Direct
+`reserve(q,n,id,stored)` and the named scenarios still accept any ID; two
+scenarios exercise the canonical choice, including same-nonce ABA reuse and
+exhaustion after three IDs. No nonce, actor, sequence, retry or time domain is
+reduced.
 
 The full model still includes `warning`, `checked`, `emptyInput` and every raw
-witness. All fifteen normal scenarios still check full outputs. The full normal
+witness. All seventeen normal scenarios still check full outputs. The full normal
 scenario that protects a newer hash two from a local hash one
 remains unchanged. This quotient does not assert that distinct application
 transaction hashes are interchangeable. It is not exhaustive UI-output
@@ -97,10 +112,10 @@ full-state official runner. The checker clears inherited view requests and
 requires the exact view evidence it requested.
 
 The original generated TLA remains SHA-256
-`d7ac95341cfc3820f3e72a9a3983f3c30ed8930a24e3f9a2299c152cc3f587ad`.
+`1590bd9335502629e541960c97301336c752fc1b9ffa93d402bf116cefa65fed`.
 Only a named projection definition is inserted before its terminator. The
 version-4 result is bound to
-`6d35b8e15674e4bdda50a6673e86124b84a00e7645f7fcd94403e890e6c60de0`.
+`b2e133f3c0a01c493a3050c5cf2a72142defa676c2fce198fc7f00d71799b553`.
 These are exact bytes; newline/platform/compiler differences require review,
 not normalization or fallback acceptance.
 

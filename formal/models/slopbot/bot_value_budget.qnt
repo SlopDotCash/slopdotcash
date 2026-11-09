@@ -4,13 +4,21 @@
 // @source workers/slopbot/value-budget.ts
 // @source workers/slopbot/value-inference.ts
 // @source workers/slopbot/value-consumption.ts
+// @source workers/slopbot/models.ts
+// @source migrations/0118_slopbot_zero_call_reconciliation.sql
 // Two attempts, cap six units. Unknown or excess provider charges remain
 // unreconciled; this model does not pretend a reservation binds the provider.
+// The route rechecks authority before its first request. A refusal or failed
+// check there returns with no call; that attempt reconciles with zero calls and
+// zero cost (migration 0118). Before that change such an attempt ended with
+// its hold intact and no call; `holdsAccounted` rejects that state.
 module bot_value_budget {
   var s: { used: int, held: int, unknown: bool, priorUnknown: bool, attempts: Set[int],
-    current: int, mode: str, reserved: int, calls: int, knownCalls: int, cost: int }
+    current: int, mode: str, reserved: int, calls: int, knownCalls: int, cost: int,
+    uncertainHeld: int }
   action init = s' = { used: 0, held: 0, unknown: false, priorUnknown: false, attempts: Set(),
-    current: 0, mode: "none", reserved: 0, calls: 0, knownCalls: 0, cost: 0 }
+    current: 0, mode: "none", reserved: 0, calls: 0, knownCalls: 0, cost: 0,
+    uncertainHeld: 0 }
   action reserve(id, alerts, amount) = all {
     id.in(Set(1, 2)), not(id.in(s.attempts)), s.current == 0,
     amount.in(Set(1, 2, 3)),
@@ -35,10 +43,17 @@ module bot_value_budget {
       .with("unknown", s.priorUnknown).with("mode", "none").with("reserved", 0)
       .with("calls", 0).with("knownCalls", 0).with("cost", 0),
   }
+  // runStructuredRoute returned before its first request: nothing can bill.
+  action refuseBeforeCall = all {
+    s.current != 0, s.calls == 0,
+    s' = s.with("current", 0).with("held", s.held - s.reserved)
+      .with("unknown", s.priorUnknown).with("mode", "none").with("reserved", 0),
+  }
   action abandonUncertain = all {
     s.current != 0, s.calls == 1,
     s.knownCalls == 0 or (s.mode == "capped" and s.cost > s.reserved),
     s' = s.with("current", 0).with("mode", "none")
+      .with("uncertainHeld", s.uncertainHeld + s.reserved)
       .with("reserved", 0).with("calls", 0).with("knownCalls", 0).with("cost", 0),
   }
   action step = {
@@ -47,13 +62,18 @@ module bot_value_budget {
     nondet amount = Set(1, 2, 3).oneOf()
     nondet cost = Set(0, 1, 3, 7).oneOf()
     nondet known = Set(false, true).oneOf()
-    any { reserve(id, alerts, amount), provider(known, cost), reconcile, abandonUncertain }
+    any { reserve(id, alerts, amount), provider(known, cost), reconcile, refuseBeforeCall,
+      abandonUncertain }
   }
+  // Every hold belongs to the live attempt or to one that made a call whose
+  // charge is unknown or excessive; no zero-call attempt keeps capacity.
+  val holdsAccounted = s.held == s.reserved + s.uncertainHeld
   val invariant = all {
     s.used >= 0, s.held >= 0,
     s.current != 0 implies s.current.in(s.attempts),
     s.attempts.size() <= 2,
     s.knownCalls <= s.calls,
+    holdsAccounted,
   }
   run providerOverchargeRemainsHeldTest = init.then(reserve(1, false, 2))
     .then(provider(true, 7)).then(abandonUncertain)
@@ -66,4 +86,10 @@ module bot_value_budget {
   run exactReconciliationReleasesCapacityTest = init.then(reserve(1, false, 3))
     .then(provider(true, 1)).then(reconcile).then(reserve(2, false, 3))
     .expect(s.used == 1 and s.held == 3)
+  run authorityRefusalBeforeCallReleasesHoldTest = init.then(reserve(1, false, 3))
+    .then(refuseBeforeCall).expect(s.held == 0 and s.used == 0 and s.current == 0)
+    .then(reserve(2, false, 3)).expect(s.held == 3)
+  run alertsRefusalBeforeCallRestoresCappedModeTest = init.then(reserve(1, true, 1))
+    .then(refuseBeforeCall).expect(not(s.unknown)).then(reserve(2, false, 3))
+    .expect(s.mode == "capped" and s.held == 3)
 }

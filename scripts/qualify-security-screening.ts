@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { surplusSecurityAnalyzer } from "../backend/security/analysis";
 import { priceUsage } from "../workers/slopbot/contracts";
+import { protectedMainRelease } from "./protected-main-release";
 import { qualificationResponse } from "./qualification-response";
 
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
@@ -333,15 +334,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const dryRun = process.argv.slice(2).join() === "--dry-run";
-  const authorized =
-    process.argv.length === 2 &&
-    process.env.GITHUB_ACTIONS === "true" &&
-    process.env.GITHUB_REF === "refs/heads/main" &&
-    ["push", "workflow_dispatch"].includes(
-      process.env.GITHUB_EVENT_NAME ?? "",
-    ) &&
-    !!process.env.SURPLUS_API_KEY;
+  const { dryRun, authorized } = protectedMainRelease();
   if (!dryRun && !authorized) {
     process.stderr.write(
       "Private-screening qualification requires the protected main release.\n",

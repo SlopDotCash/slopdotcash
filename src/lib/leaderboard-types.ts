@@ -12,7 +12,7 @@ import type {
   LEADERBOARD_SCHEMA_VERSION,
   REVIEW_EXCLUSION_REASONS,
   SCORE_RULE_VERSION,
-} from "./leaderboard";
+} from "./leaderboard-constants";
 import type { RepositoryId, TargetRepository } from "./repositories.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 /**

@@ -1,5 +1,6 @@
 // @source src/VaultActions.tsx
 // @source src/OwnerBountyVault.tsx
+// @source src/lib/use-pending-wallet-attempt.ts
 // @source src/lib/evm-vault-actions.ts
 // @source src/lib/solana-vault-actions.ts
 // @evidence tests/e2e/vault-actions.spec.ts

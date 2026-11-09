@@ -10,7 +10,6 @@ import {
   solanaNativeFee,
   spendableNative,
 } from "./verified-arithmetic";
-import { parseSolanaWire } from "./verified-solana-wire";
 /**
  * Solana fee-wallet client. Routes come from the Jupiter Swap API. Each
  * Jupiter transaction is parsed before signing: the fee wallet is the only
@@ -82,8 +81,12 @@ import {
   finalizedRouteCredit,
   type RouteReceipt,
 } from "./solana-route-receipt";
+import {
+  JUPITER_PROGRAM,
+  type ParsedTransaction,
+  parseTransaction,
+} from "./solana-transaction";
 
-export const JUPITER_PROGRAM = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
 const ASSOCIATED_TOKEN = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 /**
@@ -99,7 +102,7 @@ const ALLOWED_PROGRAMS = new Set([
 
 type Fetch = typeof fetch;
 
-export interface SolanaClientOptions {
+interface SolanaClientOptions {
   config: NetworkConfig;
   limits: Limits;
   jupiterApiUrl: string;
@@ -135,7 +138,7 @@ const CLAIM_POLL_MS = 2_000;
  * escrow config. A missing or malformed field refuses the claim; the cluster
  * genesis comes from the escrow network registry, never from the record.
  */
-export function solanaEscrowConfig(
+function solanaEscrowConfig(
   entry: FeeVault,
   rpcUrl: string,
 ): SolanaEscrowConfig {
@@ -172,72 +175,6 @@ export function solanaEscrowConfig(
       record.upgradeAuthority === null ? null : text("upgradeAuthority"),
     bindingDelaySeconds: text("bindingDelaySeconds"),
     rotationDelaySeconds: text("rotationDelaySeconds"),
-  };
-}
-
-export interface ParsedTransaction {
-  signatureCount: number;
-  messageOffset: number;
-  requiredSignatures: number;
-  readonlySigned: number;
-  readonlyUnsigned: number;
-  staticKeys: string[];
-  blockhashOffset: number;
-  programs: string[];
-  legacy: boolean;
-  lookups: { address: string; writable: number[]; readonly: number[] }[];
-  instructions: { program: string; accounts: number[]; data: Uint8Array }[];
-}
-
-/** Parse the entire signed wire message, including every v0 address lookup. */
-export function parseTransaction(raw: Uint8Array): ParsedTransaction {
-  const result = parseSolanaWire(raw);
-  if (result.kind === "failure") {
-    const errors = [
-      "",
-      "truncated transaction",
-      "invalid compact length",
-      "invalid transaction size",
-      "unsupported message version",
-      "invalid transaction signer header",
-      "program id outside the static keys",
-      "invalid transaction account indexes or trailing bytes",
-    ];
-    throw new Error(errors[result.error]);
-  }
-  const parsed = result.value;
-  const staticKeys = Array.from({ length: parsed.keyCount }, (_, index) =>
-    solanaBase58(
-      raw.slice(
-        parsed.staticStart + index * 32,
-        parsed.staticStart + (index + 1) * 32,
-      ),
-    ),
-  );
-  const instructions = parsed.instructions.map((instruction) => ({
-    program: staticKeys[instruction.program],
-    accounts: [
-      ...raw.slice(instruction.accounts.start, instruction.accounts.end),
-    ],
-    data: raw.slice(instruction.data.start, instruction.data.end),
-  }));
-  const lookups = parsed.lookups.map((lookup) => ({
-    address: solanaBase58(raw.slice(lookup.address.start, lookup.address.end)),
-    writable: [...raw.slice(lookup.writable.start, lookup.writable.end)],
-    readonly: [...raw.slice(lookup.readonly.start, lookup.readonly.end)],
-  }));
-  return {
-    signatureCount: parsed.signatureCount,
-    messageOffset: parsed.messageOffset,
-    requiredSignatures: parsed.requiredSignatures,
-    readonlySigned: parsed.readonlySigned,
-    readonlyUnsigned: parsed.readonlyUnsigned,
-    staticKeys,
-    blockhashOffset: parsed.blockhashOffset,
-    programs: instructions.map((instruction) => instruction.program),
-    legacy: parsed.legacy,
-    lookups,
-    instructions,
   };
 }
 
@@ -289,7 +226,7 @@ function nativeInteger(value: unknown): bigint {
   return BigInt(value);
 }
 
-export function solanaNativeCost(
+function solanaNativeCost(
   meta: {
     fee: number;
     preBalances: number[];
@@ -1466,11 +1403,11 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       ]);
       // Expiry prevents future inclusion, but one provider's missing history
       // does not prove that the bytes never landed. Journaled sends wait for
-      // the independent retained-history proof checked above.
+      // the independent retained-history proof checked above. A legacy send
+      // recorded before native-gas reservations is no exception: it stays
+      // pending rather than failing on one provider's missing status.
       if (row.expiresAt !== null && height > row.expiresAt)
-        return row.kind === "claim" || row.nativeGasId
-          ? { kind: "pending" }
-          : { kind: "failed", reason: "blockhash expired before inclusion" };
+        return { kind: "pending" };
       if (
         row.kind === "claim" &&
         !(await verifiedVault(JSON.parse(row.quote as string) as FeeVault))

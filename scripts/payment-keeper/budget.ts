@@ -1,6 +1,7 @@
 import { type Hex, keccak256, serializeTransaction } from "viem";
 import { PROJECT_SIZE, solanaBase58 } from "../../contracts/solana/adapter";
-import type { Signer } from "../../workers/payment-executor/core";
+import { executionGasCost, nativeFeeTotal } from "../../src/lib/verified-money";
+import type { Signer } from "../../workers/payment-executor/binding-shared";
 import type { SolanaSigner } from "../../workers/payment-executor/solana";
 import {
   positiveBudgetFits,
@@ -303,17 +304,22 @@ export async function reconcileGas(
       if (requireL1Fee && receipt.l1Fee === undefined)
         throw new Error("Finalized L2 data fee unavailable");
       settledAt = Number(BigInt(block.timestamp));
-      actual =
-        BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice) +
-        BigInt(receipt.l1Fee ?? "0x0") +
-        (requireL1Fee
+      actual = nativeFeeTotal(
+        executionGasCost(
+          BigInt(receipt.gasUsed),
+          BigInt(receipt.effectiveGasPrice),
+        ),
+        0n,
+        BigInt(receipt.l1Fee ?? "0x0"),
+        requireL1Fee
           ? await baseOracleFee(
               rpcUrl,
               "0x275aedd2",
               BigInt(receipt.gasUsed),
               receipt.blockNumber,
             )
-          : 0n);
+          : 0n,
+      );
     } else {
       const tx = (await rpc(rpcUrl, "getTransaction", [
         row.transaction_id,

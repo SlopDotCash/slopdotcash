@@ -23,6 +23,10 @@ datatype FrozenAmountAward = FrozenAmountAward(fee: int, net: int, githubUserId:
 
 datatype FrozenAmounts = FrozenAmounts(awards: seq<FrozenAmountAward>, total: int)
 
+datatype CombinedAward = CombinedAward(gross: int, fee: int, net: int)
+
+datatype CombinedAwards = CombinedAwards(ok: bool, awards: seq<CombinedAward>)
+
 function weightedShare(total: int, weight: int, totalWeight: int): WeightedShare
   requires (total >= 0)
   requires (weight >= 0)
@@ -156,14 +160,42 @@ lemma normalizedNativeDelta_ensures(before: int, after: int, fee: int, payer: bo
 {
 }
 
+function payoutFeeAccepted(gross: int, fee: int, bounty: bool): bool
+  requires (gross > 0)
+{
+  if bounty then
+    ((JSRem(gross, 4) == 0) && (fee == bountyFeeAmount(gross)))
+  else
+    ordinaryFeeMatches(gross, fee)
+}
+
+lemma payoutFeeAccepted_ensures(gross: int, fee: int, bounty: bool)
+  requires (gross > 0)
+  ensures (payoutFeeAccepted(gross, fee, bounty) <==> (if bounty then ((JSRem(gross, 4) == 0) && ((fee * 4) == gross)) else ((fee == ordinaryFeeAmount(gross)) || (fee == JSTruncDiv(gross, 50)))))
+  ensures (payoutFeeAccepted(gross, fee, bounty) ==> ((0 <= fee) && (fee <= gross)))
+{
+}
+
+function payoutAmountsAccepted(gross: int, fee: int, net: int, bounty: bool): bool
+{
+  ((((gross > 0) && (gross <= 340282366920938463463374607431768211455)) && payoutFeeAccepted(gross, fee, bounty)) && (gross == (fee + net)))
+}
+
+lemma payoutAmountsAccepted_ensures(gross: int, fee: int, net: int, bounty: bool)
+  ensures (payoutAmountsAccepted(gross, fee, net, bounty) <==> ((((gross > 0) && (gross <= 340282366920938463463374607431768211455)) && payoutFeeAccepted(gross, fee, bounty)) && (gross == (fee + net))))
+  ensures (payoutAmountsAccepted(gross, fee, net, bounty) ==> ((((0 <= fee) && (fee <= gross)) && (0 <= net)) && (net <= gross)))
+{
+}
+
 method freezeMonthlyAmounts(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool) returns (res: FrozenAmounts)
+  requires forall i: int :: ((0 <= i) ==> (i < |rows|) ==> (rows[i].gross >= 0))
   ensures (res.awards == FrozenRows(rows, legacyFloorFee))
   ensures (res.total == RowTotal(rows))
   ensures (res.total == AwardTotal(res.awards))
   ensures (res.total == (AwardNetTotal(res.awards) + AwardFeeTotal(res.awards)))
   ensures (|res.awards| == NonzeroRows(rows))
   ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (((res.awards[i].gross != 0) && (res.awards[i].fee == FrozenFee(res.awards[i].gross, legacyFloorFee))) && (res.awards[i].gross == (res.awards[i].fee + res.awards[i].net))))
-  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> (res.awards[i].gross > 0) ==> (((0 <= res.awards[i].fee) && (res.awards[i].fee <= res.awards[i].gross)) && (res.awards[i].net >= 0)))
+  ensures forall i: int :: ((0 <= i) ==> (i < |res.awards|) ==> ((((res.awards[i].gross > 0) && (0 <= res.awards[i].fee)) && (res.awards[i].fee <= res.awards[i].gross)) && (res.awards[i].net >= 0)))
 {
   var awards: seq<FrozenAmountAward> := [];
   var total := 0;
@@ -177,7 +209,7 @@ method freezeMonthlyAmounts(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool) r
     invariant (total == (AwardNetTotal(awards) + AwardFeeTotal(awards)))
     invariant (|awards| == NonzeroRows(rows[0..i]))
     invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (((awards[k].gross != 0) && (awards[k].fee == FrozenFee(awards[k].gross, legacyFloorFee))) && (awards[k].gross == (awards[k].fee + awards[k].net))))
-    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> (awards[k].gross > 0) ==> (((0 <= awards[k].fee) && (awards[k].fee <= awards[k].gross)) && (awards[k].net >= 0)))
+    invariant forall k: int :: ((0 <= k) ==> (k < |awards|) ==> ((((awards[k].gross > 0) && (0 <= awards[k].fee)) && (awards[k].fee <= awards[k].gross)) && (awards[k].net >= 0)))
   {
     var row := rows[i];
     assert FrozenRows(rows[..i+1], legacyFloorFee) ==
@@ -208,6 +240,55 @@ method freezeMonthlyAmounts(rows: seq<MonthlyAmountRow>, legacyFloorFee: bool) r
   }
   assert rows[..i] == rows by {}
   return FrozenAmounts(awards, total);
+}
+
+method combineAwards(pool: seq<int>, review: seq<int>, cap: int, reviewCap: int) returns (res: CombinedAwards)
+  requires (|pool| == |review|)
+  ensures (res.ok <==> (((forall k: int :: ((0 <= k) ==> (k < |pool|) ==> ((pool[k] >= 0) && (review[k] >= 0)))) && (AmountSum(pool) <= cap)) && (AmountSum(review) <= reviewCap)))
+  ensures (!(res.ok) ==> (|res.awards| == 0))
+  ensures (res.ok ==> ((|res.awards| == |pool|) && (AwardGrossSum(res.awards) == (AmountSum(pool) + AmountSum(review)))))
+  ensures (res.ok ==> (AwardGrossSum(res.awards) <= (cap + reviewCap)))
+  ensures (res.ok ==> forall k: int :: ((0 <= k) ==> (k < |res.awards|) ==> (((((res.awards[k].gross == (pool[k] + review[k])) && (res.awards[k].fee == ordinaryFeeAmount(res.awards[k].gross))) && ((res.awards[k].fee + res.awards[k].net) == res.awards[k].gross)) && (res.awards[k].net >= 0)) && (res.awards[k].fee >= 0))))
+{
+  var awards: seq<CombinedAward> := [];
+  var poolTotal := 0;
+  var reviewTotal := 0;
+  var i := 0;
+  while (i < |pool|)
+    invariant (0 <= i)
+    invariant (i <= |pool|)
+    invariant (|awards| == i)
+    invariant forall k: int :: ((0 <= k) ==> (k < i) ==> ((pool[k] >= 0) && (review[k] >= 0)))
+    invariant (poolTotal == AmountSum(pool[0..i]))
+    invariant (reviewTotal == AmountSum(review[0..i]))
+    invariant (AwardGrossSum(awards) == (poolTotal + reviewTotal))
+    invariant forall k: int :: ((0 <= k) ==> (k < i) ==> (((((awards[k].gross == (pool[k] + review[k])) && (awards[k].fee == ordinaryFeeAmount(awards[k].gross))) && ((awards[k].fee + awards[k].net) == awards[k].gross)) && (awards[k].net >= 0)) && (awards[k].fee >= 0)))
+  {
+    if ((pool[i] < 0) || (review[i] < 0)) {
+      return CombinedAwards(false, []);
+    }
+    var gross := (pool[i] + review[i]);
+    var i_t1 := ordinaryFeeAmount(gross);
+    var fee := i_t1;
+    assert AwardGrossSum(awards + [CombinedAward(gross, fee, (gross - fee))]) == AwardGrossSum(awards) + gross by {
+      assert (awards + [CombinedAward(gross, fee, (gross - fee))])[..|awards|] == awards;
+    }
+    assert AmountSum(pool[0..i+1]) == AmountSum(pool[0..i]) + pool[i] by {
+      assert pool[0..i+1][..i] == pool[0..i];
+    }
+    assert AmountSum(review[0..i+1]) == AmountSum(review[0..i]) + review[i] by {
+      assert review[0..i+1][..i] == review[0..i];
+    }
+    awards := (awards + [CombinedAward(gross, fee, (gross - fee))]);
+    poolTotal := (poolTotal + pool[i]);
+    reviewTotal := (reviewTotal + review[i]);
+    i := (i + 1);
+  }
+  assert pool[0..i] == pool && review[0..i] == review by {}
+  if ((poolTotal > cap) || (reviewTotal > reviewCap)) {
+    return CombinedAwards(false, []);
+  }
+  return CombinedAwards(true, awards);
 }
 
 lemma MultiplyMonotone(lower: int, upper: int, factor: int)
@@ -279,4 +360,16 @@ function NonzeroRows(rows: seq<MonthlyAmountRow>): int
   decreases |rows|
 {
   if |rows| == 0 then 0 else NonzeroRows(rows[..|rows|-1]) + (if rows[|rows|-1].gross == 0 then 0 else 1)
+}
+
+function AmountSum(values: seq<int>): int
+  decreases |values|
+{
+  if |values| == 0 then 0 else AmountSum(values[..|values|-1]) + values[|values|-1]
+}
+
+function AwardGrossSum(awards: seq<CombinedAward>): int
+  decreases |awards|
+{
+  if |awards| == 0 then 0 else AwardGrossSum(awards[..|awards|-1]) + awards[|awards|-1].gross
 }

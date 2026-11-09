@@ -17,26 +17,27 @@ import {
   toFunctionSelector,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmAwardId,
   evmMonthlyDigest,
+} from "../../contracts/evm/adapter";
+import {
+  type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
   evmMonthlySumTree,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
+import type { Attempt, JournalStore } from "./binding-shared";
 import {
-  type Attempt,
-  type JournalStore,
   type PublicEvmExecutorEnvironment,
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "./core";
-import type { MonthlyAuthorization } from "./monthly";
 
 const keeper = privateKeyToAccount(`0x${"7".repeat(64)}`);
 const identity = privateKeyToAccount(`0x${"6".repeat(64)}`);

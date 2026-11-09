@@ -1,8 +1,9 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { NotificationsDependencies } from "./handler";
 
 export type MailService = { fetch(request: Request): Promise<Response> };
-export type EnrolledDestination = {
+type EnrolledDestination = {
   email: string;
   destinationVersion: string;
   verifiedAt: string;
@@ -10,9 +11,7 @@ export type EnrolledDestination = {
 export const EMAIL_TOKEN = /^[a-f0-9]{64}$/u;
 
 export function randomEmailToken(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (n) =>
-    n.toString(16).padStart(2, "0"),
-  ).join("");
+  return bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
 }
 
 export async function enrolledDestination(
@@ -106,7 +105,7 @@ export async function emailUnsubscribeToken(
   version: string,
 ): Promise<string> {
   const mac = new Uint8Array(await unsubscribeMac(key, version));
-  return `${version}.${Array.from(mac, (n) => n.toString(16).padStart(2, "0")).join("")}`;
+  return `${version}.${bytesToHex(mac)}`;
 }
 
 export async function issueEmailUnsubscribeToken(

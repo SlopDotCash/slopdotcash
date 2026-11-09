@@ -13,13 +13,13 @@ import {
   SolanaWalletActionError,
 } from "./wallet-transactions";
 
-export interface SolanaMonthlyCommitmentIntent {
+interface SolanaMonthlyCommitmentIntent {
   wallet: string;
   /** Token base units as decimal text; 0 only when turning the commitment off. */
   cap: string;
   enabled: boolean;
 }
-export interface SolanaMonthlyCommitmentState {
+interface SolanaMonthlyCommitmentState {
   cap: string;
   enabled: boolean;
 }

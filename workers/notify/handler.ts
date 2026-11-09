@@ -1,4 +1,5 @@
 import { readBoundedJson } from "../../src/lib/browser-json";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   type DeploymentTier,
   deploymentOrigins,
@@ -20,7 +21,7 @@ import {
   validSpendNotice,
 } from "./contracts";
 
-export type NotifyWorkerDependencies = {
+type NotifyWorkerDependencies = {
   tier?: DeploymentTier;
   /** Raw `ADMIN_EMAILS` secret: comma-separated admin addresses. */
   adminEmails: string | undefined;
@@ -45,7 +46,7 @@ const NOTICE_KEYS = [
  * is a plain address, entries are unique, and the count is within bounds, so
  * a misconfigured secret sends nothing.
  */
-export function parseAdminEmails(value: string | undefined): string[] | null {
+function parseAdminEmails(value: string | undefined): string[] | null {
   if (typeof value !== "string") return null;
   const recipients = value.split(",").map((entry) => entry.trim());
   if (
@@ -167,9 +168,7 @@ function parseNotice(
 }
 
 function base64Utf8(encoder: TextEncoder, value: string): string {
-  let binary = "";
-  for (const byte of encoder.encode(value)) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  return encodeBase64(encoder.encode(value));
 }
 
 function isAscii(value: string): boolean {
@@ -181,7 +180,7 @@ function isAscii(value: string): boolean {
  * printable ASCII. Words stay within 75 characters and never split a code
  * point; folded continuation lines start with a space.
  */
-export function encodeHeaderValue(value: string): string {
+function encodeHeaderValue(value: string): string {
   const clean = stripControls(value);
   if (isAscii(clean)) return clean;
   const encoder = new TextEncoder();
@@ -293,7 +292,7 @@ function noticeText(
   ].join("\n");
 }
 
-export function buildNoticeMime(
+function buildNoticeMime(
   notice: ProjectApplicationNotice | SlopbotSpendNotice | SlopbotFailureNotice,
   from: string,
   to: string,

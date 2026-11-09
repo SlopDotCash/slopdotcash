@@ -741,6 +741,31 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     path: info.outputPath("owner-commitment-review.png"),
     fullPage: true,
   });
+  // A prepared award cannot start its wallet request after the shared
+  // pending-attempt owner has left, even with a resolved final identity read.
+  const departedCommitmentKey =
+    "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
+  const sendsBeforeCommitmentDeparture = sends.length;
+  await holdVaultWalletPreflight(page, '[aria-label="Authorize award commitment"]');
+  await page.evaluate(() => {
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  await ownerActions.getByRole("button", { name: "Authorize this award in wallet" }).click();
+  try {
+    await leaveWithVaultPreflight(page);
+    expect(sends).toHaveLength(sendsBeforeCommitmentDeparture);
+    expect(await page.evaluate((key) => sessionStorage.getItem(key), departedCommitmentKey)).toBeNull();
+  } finally {
+    await releaseVaultPreflight(page);
+  }
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
+  await page.getByRole("button", { name: "Reserve award for local-contributor" }).click();
+  await ownerActions.getByRole("button", { name: "Connect MetaMask", exact: true }).click();
+  await ownerActions.getByRole("button", { name: "Verify award and funding" }).click();
   rejected = true;
   await ownerActions
     .getByRole("button", { name: "Authorize this award in wallet" })
@@ -805,6 +830,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   expect(
     await page.evaluate((key) => sessionStorage.getItem(key), commitmentKey),
   ).toBe(retainedRetry);
+  const readsBeforeUnavailableReview = reviewReads;
   reviewAvailable = false;
   const unavailableReview = diagnostics.allowResponse(
     503,
@@ -826,7 +852,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       name: "Authorize this award in wallet",
     }),
   ).toHaveCount(0);
-  expect(reviewReads).toBe(2);
+  expect(reviewReads).toBe(readsBeforeUnavailableReview + 1);
   expect(diagnostics.count(unavailableReview)).toBe(1);
   await ownerActions.getByLabel("Commitment transaction hash").fill(sends[1]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
@@ -1044,6 +1070,9 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
+  // Monthly send reuses the reviewed transaction, so arm the gas marker
+  // before review; the next identity call belongs to the send button.
+  await holdVaultWalletPreflight(page, '[aria-label="Vault monthly authorization · Base Sepolia (test)"]');
   await monthly
     .getByRole("button", { name: "Review monthly payment setting" })
     .click();
@@ -1064,6 +1093,26 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   const turnOn = monthly.getByRole("button", {
     name: "Turn on automatic monthly payment in wallet",
   });
+  // The final chain reply may already exist when navigation commits. It must
+  // not create a monthly-setting record or enter eth_sendTransaction afterward.
+  const departedMonthlyKey = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
+  await page.evaluate(() => {
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  await turnOn.click();
+  try {
+    await leaveWithVaultPreflight(page);
+    expect(sends).toHaveLength(0);
+    expect(await page.evaluate((key) => sessionStorage.getItem(key), departedMonthlyKey)).toBeNull();
+    expect(await onChain()).toEqual({ cap: 0n, enabled: false });
+  } finally {
+    await releaseVaultPreflight(page);
+  }
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await monthly.getByRole("button", { name: "Connect MetaMask", exact: true }).click();
+  await monthly.getByRole("button", { name: "Review monthly payment setting" }).click();
   rejected = true;
   await turnOn.click();
   await expect(monthly.getByRole("alert")).toContainText("You declined");

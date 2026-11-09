@@ -6,17 +6,15 @@ import {
   repository as binaryRepository,
   collect as collectBinaryFixture,
 } from "../../tests/value-binary-fixture";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   collectNoChangePromotion,
   NO_CHANGE_PROMOTION_CONTEXT,
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { validateEvidenceAssessment } from "./value-review";
-import {
-  prepareWorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 // Synthetic Git evidence exercises grouping only; no model output is supplied.
 const base = "0".repeat(40);

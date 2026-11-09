@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paymentDeployments } from "../../scripts/prepare-payment-deployments.ts";
+import { assertActiveVersionTagged } from "../../scripts/worker-release.mjs";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import {
@@ -168,26 +169,17 @@ export async function releaseStagingPayments({
         "--json",
       ]),
     );
-    const active = deployment?.versions;
-    if (
-      !Array.isArray(active) ||
-      active.length !== 1 ||
-      active[0].percentage !== 100 ||
-      !Array.isArray(versions) ||
-      !versions.some(
-        (version) =>
-          version.id === active[0].version_id &&
-          version.annotations?.["workers/tag"] === sha,
-      )
-    )
-      throw new Error(
-        `${entry.network} test attester does not match the released source`,
-      );
+    const version = assertActiveVersionTagged({
+      deployment,
+      versions,
+      sha,
+      message: `${entry.network} test attester does not match the released source`,
+    });
     published.push({
       network: entry.network,
       name: entry.config.name,
       configSha256: entry.configSha256,
-      version: active[0].version_id,
+      version,
       binding: entry.binding,
     });
   }

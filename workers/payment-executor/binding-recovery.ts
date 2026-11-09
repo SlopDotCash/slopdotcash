@@ -16,9 +16,9 @@ import {
   preflightEvmDeployment,
   STORED_BINDING,
   storedBindingAbi,
-} from "./core";
+} from "./binding-shared";
 
-export interface BindingRecoveryInput {
+interface BindingRecoveryInput {
   network: string;
   vault: string;
   originalTransactionId: string;

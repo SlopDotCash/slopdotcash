@@ -457,9 +457,11 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   await page.screenshot({ path: info.outputPath("renamed-profile.png") });
 });
 
-test("a different actor reusing an old login does not inherit its history", async ({
-  page,
-}) => {
+// Identity-resolver cases: the assertions are request and record selection,
+// not layout, so they run once at the desktop width.
+test("a different actor reusing an old login does not inherit its history", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { current } = await profileRecords(page, { reusedHandle: true });
   await page.goto(`/contributors/${current.login}`, {
     waitUntil: "networkidle",
@@ -476,44 +478,46 @@ test("a different actor reusing an old login does not inherit its history", asyn
   ).toBeVisible();
 });
 
-test("an inactive new owner does not inherit archived records or wallet lookups", async ({
-  page,
-}, info) => {
-  const { current, archived, walletRequests } = await profileRecords(page);
-  // The new owner has no leaderboard, points, census or membership record.
-  await page.goto(`/contributors/${archived.login}`, {
-    waitUntil: "networkidle",
-  });
-  await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
-  ).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: current.login })).toHaveCount(
-    0,
-  );
-  await expect(page.getByText(/Past wallet/)).toHaveCount(0);
-  await expect(
-    page.getByTitle("Closed cycles and ledger events outside those cycles"),
-  ).toHaveCount(0);
-  expect(walletRequests).toEqual([]);
-  await page.reload({ waitUntil: "networkidle" });
-  expect(walletRequests).toEqual([]);
-  await page.screenshot({ path: info.outputPath("inactive-owner.png") });
-  // The same immutable actor's new URL must retain its own history.
-  await page.goto(`/contributors/${current.login}`, {
-    waitUntil: "networkidle",
-  });
-  await expect(
-    page.getByRole("heading", { name: current.login, exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByTitle("Closed cycles and ledger events outside those cycles"),
-  ).toHaveCount(0);
-  expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/1/current"]);
-});
+test(
+  "an inactive new owner does not inherit archived records or wallet lookups",
+  { tag: "@desktop-only" },
+  async ({ page }, info) => {
+    const { current, archived, walletRequests } = await profileRecords(page);
+    // The new owner has no leaderboard, points, census or membership record.
+    await page.goto(`/contributors/${archived.login}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: current.login }),
+    ).toHaveCount(0);
+    await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+    await expect(
+      page.getByTitle("Closed cycles and ledger events outside those cycles"),
+    ).toHaveCount(0);
+    expect(walletRequests).toEqual([]);
+    await page.reload({ waitUntil: "networkidle" });
+    expect(walletRequests).toEqual([]);
+    await page.screenshot({ path: info.outputPath("inactive-owner.png") });
+    // The same immutable actor's new URL must retain its own history.
+    await page.goto(`/contributors/${current.login}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByRole("heading", { name: current.login, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByTitle("Closed cycles and ledger events outside those cycles"),
+    ).toHaveCount(0);
+    expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/1/current"]);
+  },
+);
 
-test("a directory-verified historical contributor keeps archived links", async ({
-  page,
-}) => {
+test("a directory-verified historical contributor keeps archived links", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { archived } = await profileRecords(page, { directoryOnly: true });
   await page.goto(`/contributors/${archived.login}`);
   await expect(
@@ -524,9 +528,9 @@ test("a directory-verified historical contributor keeps archived links", async (
   ).toHaveCount(0);
 });
 
-test("historical names alone do not identify a current contributor or wallet", async ({
-  page,
-}) => {
+test("historical names alone do not identify a current contributor or wallet", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { archived, walletRequests } = await profileRecords(page, {
     unverified: true,
   });
@@ -543,9 +547,9 @@ test("historical names alone do not identify a current contributor or wallet", a
   ).toBeVisible();
 });
 
-test("a new owner listed without activity uses only its own identity and wallet", async ({
-  page,
-}) => {
+test("a new owner listed without activity uses only its own identity and wallet", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { profiles, archived, walletRequests } = await profileRecords(page);
   profiles.people.push({
     id: "MDQ6VXNlcjI=",
@@ -567,9 +571,9 @@ test("a new owner listed without activity uses only its own identity and wallet"
   expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/2/current"]);
 });
 
-test("conflicting current names withhold history and wallet lookups", async ({
-  page,
-}) => {
+test("conflicting current names withhold history and wallet lookups", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { profiles, archived, walletRequests } = await profileRecords(page);
   // The activity snapshot knows the rename but the directory still has the old alias.
   profiles.people[0].login = archived.login;
@@ -587,9 +591,9 @@ test("conflicting current names withhold history and wallet lookups", async ({
   expect(walletRequests).toEqual([]);
 });
 
-test("a stale activity login cannot override a directory rename", async ({
-  page,
-}) => {
+test("a stale activity login cannot override a directory rename", {
+  tag: "@desktop-only",
+}, async ({ page }) => {
   const { profiles, current, walletRequests } = await profileRecords(page);
   // The activity snapshot still has actor 1's old login, but the directory
   // shows that actor 1 renamed and actor 2 now owns that login.
@@ -617,10 +621,9 @@ test("a stale activity login cannot override a directory rename", async ({
   expect(walletRequests).toEqual([]);
 });
 
-test("an unavailable identity directory hides historical records until retry succeeds", async ({
-  diagnostics,
-  page,
-}) => {
+test("an unavailable identity directory hides historical records until retry succeeds", {
+  tag: "@desktop-only",
+}, async ({ diagnostics, page }) => {
   diagnostics.allow(
     /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/data\/profiles\.json$/u,
   );

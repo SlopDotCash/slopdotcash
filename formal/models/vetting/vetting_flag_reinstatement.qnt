@@ -9,15 +9,18 @@
 // Three reporters, four immutable flag IDs, two content/pin versions and one
 // pending scan. Duplicate requests are projected as a refusal with no change.
 // Closing a captured flag and reinstating the project are separate outcomes.
+// Reused clean results can resolve captured flags but cannot reinstate. A
+// presentation revision preserves content clearance; a security-content or
+// live-pin change prevents immediate reinstatement. Confirmed bans absorb.
 // This refinement and its named scenarios are source-authored, unexecuted.
 module vetting_flag_reinstatement {
   pure val ids=Set(1,2,3,4)
   var s:{flags:Set[int],owners:int->int,history:int->str,created:int,captured:Set[int],
     restriction:str,restrictionEpoch:int,scanEpoch:int,revision:int,scannedRevision:int,content:int,scannedContent:int,
-    pin:int,scannedPin:int,pinReadable:bool,result:str,pending:bool,exempt:bool}
+    pin:int,scannedPin:int,pinReadable:bool,result:str,pending:bool,exempt:bool,everBanned:bool}
   action init=s'={flags:Set(),owners:ids.mapBy(_=>0),history:ids.mapBy(_=>"unused"),created:0,captured:Set(),
     restriction:"clear",restrictionEpoch:0,scanEpoch:0,revision:1,scannedRevision:0,content:1,scannedContent:0,
-    pin:1,scannedPin:0,pinReadable:true,result:"none",pending:false,exempt:false}
+    pin:1,scannedPin:0,pinReadable:true,result:"none",pending:false,exempt:false,everBanned:false}
   action flag(reporter:int):bool={
     val duplicate=s.flags.exists(id=>s.owners.get(id)==reporter)
     val id=s.created+1
@@ -58,19 +61,28 @@ module vetting_flag_reinstatement {
         .with("flags",s.flags.exclude(closing))
         .with("history",ids.mapBy(id=>if(closing.contains(id))"resolved" else s.history.get(id)))}
   }
+  action completeReusedClean={
+    val closing=s.flags.intersect(s.captured)
+    all{s.pending,
+      s'=s.with("pending",false).with("result","reused-clean")
+        .with("flags",s.flags.exclude(closing))
+        .with("history",ids.mapBy(id=>if(closing.contains(id))"resolved" else s.history.get(id)))}
+  }
   // A recorded clean scan can later reinstate once its live pin is readable.
   action retryReinstatement=all{not(s.pending),s.result=="clean",fresh,s.restriction=="quarantined",s.revision==s.scannedRevision,
     s'=s.with("restriction","clear")}
   action incomplete=all{s.pending,s'=s.with("pending",false).with("result","incomplete")}
   action confirmedMalice=all{s.pending,
-    s'=s.with("pending",false).with("result","malicious").with("restriction","banned")
+    s'=s.with("pending",false).with("result","malicious").with("restriction","banned").with("everBanned",true)
       .with("restrictionEpoch",if(s.restriction=="banned")s.restrictionEpoch else s.restrictionEpoch+1)}
   action step={nondet reporter=Set(1,2,3).oneOf() nondet id=ids.oneOf()
     any{flag(reporter),withdraw(reporter),expire(id),requestScan,revise,presentationRevision,advancePin,
-      pinUnavailable,pinAvailable,admissionExemption,completeClean,retryReinstatement,incomplete,confirmedMalice,s'=s}}
+      pinUnavailable,pinAvailable,admissionExemption,completeClean,completeReusedClean,retryReinstatement,incomplete,confirmedMalice,s'=s}}
   val invariant=all{s.created>=0,s.created<=4,s.revision>=1,s.revision<=3,s.restrictionEpoch<=3,
     s.flags==ids.filter(id=>s.history.get(id)=="active"),
     s.flags.size()>=2 implies s.restriction!="clear",
+    s.everBanned implies s.restriction=="banned",
+    s.flags.map(id=>s.owners.get(id)).size()==s.flags.size(),
     s.flags.forall(id=>s.owners.get(id)>=1 and s.owners.get(id)<=3),
     s.scannedContent<=s.content,s.scannedPin<=s.pin,s.scannedRevision<=s.revision}
   run duplicateReporterTest=init.then(flag(1)).then(flag(1))
@@ -104,4 +116,15 @@ module vetting_flag_reinstatement {
   run changedRevisionDefersRecordedRetryTest=init.then(flag(1)).then(flag(2)).then(requestScan).then(pinUnavailable)
     .then(completeClean).then(presentationRevision).then(pinAvailable)
     .expect(s.restriction=="quarantined" and s.flags==Set()).then(retryReinstatement.fail())
+  run refiledIdDuringScanKeepsPauseTest=init.then(flag(1)).then(flag(2)).then(requestScan)
+    .then(withdraw(2)).then(flag(2)).then(completeClean)
+    .expect(s.restriction=="quarantined" and s.flags==Set(3) and s.history.get(1)=="resolved")
+  run scanBeforePauseDoesNotReinstateTest=init.then(flag(1)).then(requestScan).then(flag(2)).then(completeClean)
+    .expect(s.restriction=="quarantined" and s.flags==Set(2))
+  run staleRevisionDoesNotReinstateTest=init.then(flag(1)).then(flag(2)).then(requestScan).then(revise).then(completeClean)
+    .expect(s.restriction=="quarantined")
+  run reusedCleanResolvesButKeepsPauseTest=init.then(flag(1)).then(flag(2)).then(requestScan).then(completeReusedClean)
+    .expect(s.restriction=="quarantined" and s.flags==Set()).then(retryReinstatement.fail())
+  run expiryAllowsRefileTest=init.then(flag(1)).then(expire(1)).then(flag(1))
+    .expect(s.flags==Set(2) and s.restriction=="clear")
 }

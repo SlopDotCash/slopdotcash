@@ -17,7 +17,7 @@ import {
 } from "./direct-evm-balances";
 
 export type DirectTransfer = { recipient: string; amountBase: string };
-export interface EvmDirectInput {
+interface EvmDirectInput {
   rpcUrl: string;
   chainId: string;
   payer: string;

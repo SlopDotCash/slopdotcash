@@ -34,3 +34,9 @@ backend/security/verified-direct-recovery.ts
 workers/fee-converter/verified-route-credit.ts
 src/lib/verified-global-joins.ts
 workers/fee-converter/verified-jupiter-wire.ts
+src/lib/verified-security-split.ts
+workers/verified-fee-replacement.ts
+src/lib/verified-calendar.ts
+src/lib/verified-ids.ts
+src/lib/verified-scoring.ts
+src/lib/verified-base-units.ts

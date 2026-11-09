@@ -1,5 +1,6 @@
 // @source contracts/solana/owner-creation.ts
 // @source src/lib/vault-setup.ts
+// @source src/lib/solana-wire.ts
 // @source backend/projects/vault-setup.ts
 // @source contracts/solana/owner-instructions.ts
 // @source contracts/solana/programs.ts

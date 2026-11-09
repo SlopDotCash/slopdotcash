@@ -1,6 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "../../src/lib/byte-encoding";
+import type { EscrowChain as Network } from "../../src/lib/escrow-policy.mjs";
 import { positiveBudgetFits } from "../verified-budget";
-import type { Network } from "./config";
+import type { FeeD1Database } from "./d1";
 import type { SolanaAccountProof } from "./solana-accounts";
 import {
   type ExpiryCoverage,
@@ -8,7 +10,6 @@ import {
   type ExpiryProof,
   matchingCompletedCoverage,
 } from "./solana-expiry";
-import type { FeeD1Database } from "./store";
 import {
   type NativeLiabilityEntry,
   nativeDailyLiability,
@@ -19,7 +20,7 @@ export interface NativeGasLimits {
   perDay: string;
   additionalFeeReserve: string;
 }
-export function nativeInteger(value: string): bigint {
+function nativeInteger(value: string): bigint {
   if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,77})$/u.test(value))
     throw new Error("Native fee must be an exact non-negative integer");
   return BigInt(value);
@@ -33,7 +34,7 @@ export function validateNativeLimits(limits: NativeGasLimits) {
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );
 }
-export interface NativeAttempt {
+interface NativeAttempt {
   id: string;
   network: Network;
   fee_wallet: string;
@@ -56,7 +57,7 @@ export interface RecordedNativeSend {
   feeWallet: string;
   nonce: number | null;
 }
-export interface NativeReceiptCost {
+interface NativeReceiptCost {
   txId: string;
   actualWei: string;
   blockHash: string;
@@ -411,9 +412,7 @@ export class NativeGasJournal {
     )
       throw new Error("Solana completed provider histories disagree");
     const json = JSON.stringify(proof);
-    const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
+    const digest = bytesToHex(sha256(new TextEncoder().encode(json)));
     await this.db
       .prepare(
         "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",

@@ -15,7 +15,7 @@ import {
   readValueDecision,
   readValueDecisionFromHistory,
 } from "./value-consumption";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import { appendValueRecord } from "./value-journal";
 import { readWorkUnitHistory } from "./value-work-unit-consumption";
 import { workUnitHistory } from "./value-work-unit-journal";

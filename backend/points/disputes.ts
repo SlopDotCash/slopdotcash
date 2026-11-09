@@ -7,8 +7,18 @@ import {
   appealByKey,
 } from "../../workers/slopbot/appeals";
 import type { D1TransactionalDatabase } from "../d1";
+import { githubUserIdFromNodeIdSql } from "../github-node-sql";
 import { fail, json, readJsonObject } from "../http";
 import { notifyPointsDispute } from "../notifications/events";
+
+/**
+ * The award recipient's numeric GitHub ID. Membership and awards may spell
+ * the same person's node ID differently (legacy or current), so the join
+ * uses the immutable numeric ID.
+ */
+const AWARD_ACTOR_GITHUB_ID = githubUserIdFromNodeIdSql(
+  "json_extract(r.payload,'$.award.actor.id')",
+);
 
 type Database = D1TransactionalDatabase;
 export const POINTS_DISPUTE_URL = "https://slopbot.internal/v1/points-disputes";
@@ -79,7 +89,7 @@ export async function handlePointsDisputes(
       fail(400, "invalid_cursor", "Invalid Points page.");
     const rows = await deps.db
       .prepare(`SELECT json_group_array(json_object('cursor',cursor,'id',id,'payload',payload,'disputeId',disputeId)) AS rows FROM (SELECT r.rowid AS cursor,r.id,r.payload,d.appeal_key AS disputeId
-      FROM points_revisions r JOIN points_members m ON m.actor_id=json_extract(r.payload,'$.award.actor.id')
+      FROM points_revisions r JOIN points_members m ON m.github_id=${AWARD_ACTOR_GITHUB_ID}
       LEFT JOIN points_disputes d ON d.revision_id=r.id AND d.appellant_github_id=m.github_id
       WHERE m.github_id=? AND (?=0 OR r.rowid<?)
         AND NOT EXISTS(SELECT 1 FROM points_revisions newer WHERE newer.source_key=r.source_key AND newer.rowid>r.rowid)

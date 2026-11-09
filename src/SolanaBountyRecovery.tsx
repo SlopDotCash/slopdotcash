@@ -2,6 +2,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { useLayoutEffect, useRef, useState } from "react";
 import { decodeBase58Bytes, encodeBase58Bytes } from "./lib/base58";
 import { errorMessage } from "./lib/errors";
+import { decodeBase64 } from "./lib/byte-encoding";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { currentProjectSession } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -124,9 +125,7 @@ export function SolanaBountyRecovery({
       const signatures: { messageId: string; signature: string }[] = [];
       for (const message of messages) {
         if (!(await checkAuthority()) || !isCurrent()) return;
-        const bytes = Uint8Array.from(atob(message.message), (character) =>
-          character.charCodeAt(0),
-        );
+        const bytes = decodeBase64(message.message);
         const cached = saved[message.messageId];
         let signature =
           cached?.message === message.message &&

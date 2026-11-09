@@ -16,7 +16,7 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
-import { sha256Hex } from "../backend/trace/validation";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { seedParticipationBan } from "../tests/participation-ban.fixture";
 import { sqliteD1 } from "../tests/sqlite-d1";
 

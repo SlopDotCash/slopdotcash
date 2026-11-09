@@ -8,7 +8,6 @@ import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
 import {
   clearPendingAttempt,
-  createPendingAttempt,
   type PendingAttempt,
   updatePendingRecord,
   validPendingAttemptId,
@@ -25,6 +24,7 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
@@ -219,7 +219,7 @@ export function OwnerVaultSetup({
   ) => {
     const stored = previous
       ? updatePendingRecord(key, previous, value)
-      : createPendingAttempt(key, value);
+      : vaultSetupAttempt(key, value).begin();
     if (!stored) return false;
     storedPending.current = value;
     if (current()) setPending(value);
@@ -336,16 +336,19 @@ export function OwnerVaultSetup({
         attemptId: crypto.randomUUID(),
         review: fresh.review,
       };
+      const attempt = vaultSetupAttempt(key, ready);
       let requested = false;
       const beforeSend = () => {
         if (!current())
           throw new Error(
             "The vault setup view was closed. Review before sending.",
           );
-        if (!remember(ready, current))
+        if (!attempt.begin())
           throw new Error(
             "The saved vault request changed. Reload before continuing.",
           );
+        storedPending.current = ready;
+        setPending(ready);
         requested = true;
       };
       try {
@@ -376,12 +379,18 @@ export function OwnerVaultSetup({
           );
         const submitted = { ...ready, hash };
         try {
-          if (!remember(submitted, current, ready) && current())
-            setNotice(
-              `Creation sent: ${hash}. The saved request changed. Keep this hash with your wallet activity.`,
-            );
-          else if (current())
-            setNotice("Creation sent. Check registration once it is finalized.");
+          if (!attempt.submitted(hash)) {
+            if (current())
+              setNotice(
+                `Creation sent: ${hash}. The saved request changed. Keep this hash with your wallet activity.`,
+              );
+          } else {
+            storedPending.current = submitted;
+            if (current()) {
+              setPending(submitted);
+              setNotice("Creation sent. Check registration once it is finalized.");
+            }
+          }
         } catch {
           if (current())
             setNotice(
@@ -393,8 +402,10 @@ export function OwnerVaultSetup({
           setReview(null);
         }
       } catch (e) {
-        if (requested && (e as { code?: number })?.code === 4001)
-          clear(ready, current);
+        if (requested && (e as { code?: number })?.code === 4001 && attempt.declined()) {
+          storedPending.current = null;
+          if (current()) setPending(null);
+        }
         throw e;
       }
     });

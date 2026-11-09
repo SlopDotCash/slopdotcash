@@ -22,7 +22,6 @@ import { assessWorkUnits } from "./value-work-unit-review";
 
 const start = new Date().toISOString();
 type PipelineState = {
-  last: string;
   now: number;
   calls: number;
   retained: boolean;
@@ -105,7 +104,10 @@ for (const expiry of [
                 ? "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest"
                 : "overlappingConsumerWaitsThenReadsCurrentTest",
         );
-    const tick = trace.find((state) => state.last === "tick");
+    // Only the model's tick advances its clock: the first later state is it.
+    const tick = trace.find(
+      (state, index) => index > 0 && state.now > (trace[index - 1]?.now ?? 0),
+    );
     if (!localRevocation && !attemptRecovery && !tick)
       throw new Error("Generated pipeline trace omitted expiry");
     const later = new Date(

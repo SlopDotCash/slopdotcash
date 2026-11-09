@@ -2,6 +2,7 @@
 
 import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
+import { compareActors } from "./github-actor";
 import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
 import {
@@ -266,12 +267,7 @@ function allocateFundingReview(
     total,
     rows,
     (row) => BigInt(row.weight),
-    (a, b) =>
-      a.actor.login
-        .toLocaleLowerCase("en")
-        .localeCompare(b.actor.login.toLocaleLowerCase("en"), "en") ||
-      a.actor.login.localeCompare(b.actor.login, "en") ||
-      a.actor.id.localeCompare(b.actor.id, "en"),
+    (a, b) => compareActors(a.actor, b.actor),
   );
   return new Map(
     allocated.map(({ row, amount }) => [row.actor.id, amount.toString()]),

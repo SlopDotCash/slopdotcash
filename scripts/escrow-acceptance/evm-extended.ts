@@ -26,6 +26,7 @@ import {
 } from "viem";
 import { type PrivateKeyAccount, privateKeyToAccount } from "viem/accounts";
 import { handlePaymentsApi } from "../../backend/payments/handler";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   buildBindCalldata,
   buildCancelBindingCalldata,
@@ -58,8 +59,7 @@ import {
   PRD_MONTHLY_SCHEDULE,
   parseMonthlySchedule,
 } from "../../src/lib/payments/monthly-allocation";
-import { preflightEvmDeployment } from "../../workers/payment-executor/core";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
+import { preflightEvmDeployment } from "../../workers/payment-executor/binding-shared";
 import {
   type KeeperConfiguration,
   type KeeperResult,

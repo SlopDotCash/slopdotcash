@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { enrolledDestination } from "../backend/notifications/email-destinations";
 import type { RepositoryAccessReader } from "../backend/projects/setup";
-import type { SecurityD1Database } from "../backend/security/handler";
+import type { SecurityD1Database } from "../backend/security/case-store";
 import { dispatchActivityMail } from "../workers/notify/activity";
 import { handleEnrollmentMailRequest } from "../workers/notify/enrollment";
 import { dispatchSecurityMail } from "../workers/notify/security";
@@ -18,7 +18,7 @@ export type LocalCapturedEmail = {
   to: string;
   mime: string;
 };
-export type LocalNotifyOptions = {
+type LocalNotifyOptions = {
   db: SecurityD1Database;
   now: () => Date;
   inboxUrl: string;

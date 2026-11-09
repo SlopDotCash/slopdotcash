@@ -79,14 +79,26 @@ export class MonthlyPaymentError extends Error {
 }
 
 /**
+ * Who may act on a project's monthly awards. Maintainers (write, maintain or
+ * admin) may read them and prepare a commitment. Owner actions, the monthly
+ * opt-out, allocation changes, early finalization and reserve release, need
+ * the project steward or a repository admin: write access is not enough
+ * (PRD section 6, monthly payment; section 11, wrong-total reserve release).
+ */
+export type MonthlyAuthority = "maintainer" | "owner";
+
+/**
  * Current GitHub authority: the repository still has the immutable identity
  * and owner in the D1 policy, and the signed-in person has write, maintain or
- * admin permission on it now. A stored steward ID alone is not authority.
+ * admin permission on it now. An `owner` action also needs the signed-in
+ * person to be the project steward or a repository admin. A stored steward ID
+ * alone is not authority.
  */
 export async function verifyProjectAuthority(
   project: ProjectDefinition,
   actor: GithubActor,
   token?: string,
+  level: MonthlyAuthority = "maintainer",
 ): Promise<void> {
   if (
     project.steward.github.type === "User" &&
@@ -136,6 +148,16 @@ export async function verifyProjectAuthority(
       403,
       "owner_required",
       "Current GitHub maintainer authority could not be verified.",
+    );
+  if (
+    level === "owner" &&
+    actor.githubId !== String(project.steward.github.actorId) &&
+    permission.permission !== "admin"
+  )
+    throw new MonthlyPaymentError(
+      403,
+      "owner_required",
+      "Only the project steward or a repository admin can change monthly awards.",
     );
 }
 
@@ -272,8 +294,6 @@ async function loadRun(
       }
     : null;
 }
-
-export type { MonthlyAwardState };
 
 /** Chain evidence sets reserved/paid only when it is this exact award; any other
  * obligation under the source is a conflict. The recorded ban decision sets excluded. */
@@ -827,7 +847,11 @@ export function monthlyOwnerService(deps: {
   getProject(id: string): Promise<ProjectRecord | null>;
   restricted(project: ProjectRecord): Promise<boolean>;
   networks(): readonly string[];
-  verifyAuthority(project: ProjectRecord, actor: GithubActor): Promise<void>;
+  verifyAuthority(
+    project: ProjectRecord,
+    actor: GithubActor,
+    level: MonthlyAuthority,
+  ): Promise<void>;
   schedule(): MonthlySchedule | null;
   now(): Date;
   releaseReserve?(
@@ -836,7 +860,11 @@ export function monthlyOwnerService(deps: {
     MonthlyReleaseResult | { status: "pending" | "failed" | "finalized" }
   >;
 }) {
-  async function authorized(projectId: string, actor: GithubActor) {
+  async function authorized(
+    projectId: string,
+    actor: GithubActor,
+    level: MonthlyAuthority,
+  ) {
     const project = await deps.getProject(projectId);
     if (!project?.manifest.escrow)
       throw new MonthlyPaymentError(
@@ -844,7 +872,7 @@ export function monthlyOwnerService(deps: {
         "project_unavailable",
         "This project has no vault awards.",
       );
-    await deps.verifyAuthority(project, actor);
+    await deps.verifyAuthority(project, actor, level);
     return project;
   }
   async function unchanged(project: ProjectRecord) {
@@ -983,7 +1011,7 @@ export function monthlyOwnerService(deps: {
         transactionId?: string;
       },
     ) {
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "owner");
       assertPeriod(period);
       const deployment = servedDeployment(project.manifest, deps.networks());
       if (
@@ -1019,7 +1047,7 @@ export function monthlyOwnerService(deps: {
       return result;
     },
     async view(projectId: string, period: string, actor: GithubActor) {
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "maintainer");
       const result = await view(project, assertPeriod(period));
       await unchanged(project);
       return result;
@@ -1034,7 +1062,7 @@ export function monthlyOwnerService(deps: {
         expectedSequence: number;
       },
     ) {
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "owner");
       await assertMonthlyParticipation(deps.db, actor.githubId);
       assertPeriod(period);
       if (await loadRun(deps.db, project.id, period))
@@ -1176,7 +1204,7 @@ export function monthlyOwnerService(deps: {
         ? (requestSequence ??
           (await monthlyPaymentSettingSequence(deps.db, projectId)))
         : 0;
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "owner");
       await assertMonthlyParticipation(deps.db, actor.githubId);
       let changed: number | undefined;
       try {
@@ -1226,7 +1254,7 @@ export function monthlyOwnerService(deps: {
       actor: GithubActor,
       expectedSequence: number,
     ) {
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "owner");
       if (
         project.manifest.status !== "active" ||
         (await deps.restricted(project))
@@ -1263,7 +1291,7 @@ export function monthlyOwnerService(deps: {
       actor: GithubActor,
       expected: MonthlyCommitmentInput,
     ): Promise<MonthlyCommitmentPlan> {
-      const project = await authorized(projectId, actor);
+      const project = await authorized(projectId, actor, "maintainer");
       if (
         project.manifest.status !== "active" ||
         (await deps.restricted(project))

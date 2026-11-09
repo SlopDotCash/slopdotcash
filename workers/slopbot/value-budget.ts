@@ -5,11 +5,18 @@ import type { D1Database, D1TransactionalDatabase } from "./persistence";
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 const attempt = (value: string) => /^value:[a-f0-9-]{36}$/.test(value);
 
-/** Internal SQL expressions only. Admission and reservation count identically. */
+/** Internal SQL expressions only. Admission and reservation count identically.
+ * A completed zero-call reconciliation proves no provider request was made;
+ * either receipt alone, or any recorded call, keeps the attempt counted. */
 export function countedValueAttemptsSql(key: string, freeFailure: string): string {
   return `(SELECT COUNT(*) FROM slopbot_value_inference_attempts a
     JOIN slopbot_value_budget_reservations r ON r.attempt_id=a.attempt_id
     WHERE a.inference_key=${key}
+      AND NOT EXISTS (
+        SELECT 1 FROM slopbot_value_attempt_completions done
+        JOIN slopbot_value_budget_reconciliations settled ON settled.attempt_id=done.attempt_id
+        WHERE done.attempt_id=a.attempt_id AND settled.call_count=0 AND settled.recorded_micro_usd=0
+          AND NOT EXISTS (SELECT 1 FROM slopbot_costs c WHERE c.review_key=a.attempt_id))
       AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c
              WHERE c.review_key=a.attempt_id AND c.failure=${freeFailure})
         OR EXISTS (SELECT 1 FROM slopbot_costs c
@@ -227,6 +234,7 @@ async function reserveBudget(
 }
 
 /** Reconcile only after every expected call has an immutable provider amount.
+ * An attempt that made no call reconciles with zero calls and zero cost.
  * Estimates or missing receipts stay unknown. Capped attempts also need the
  * actual cost to fit their reserved capacity; alerts-only has no such limit.
  * The attempt ID must be the review_key used by recordCalls, which retains
@@ -237,7 +245,12 @@ export async function reconcileValueBudget(
   attemptId: string,
   expectedCalls: number,
 ): Promise<boolean> {
-  if (!attempt(attemptId) || !positive(expectedCalls))
+  // Zero settles an attempt whose authority check refused before any call.
+  if (
+    !attempt(attemptId) ||
+    !Number.isSafeInteger(expectedCalls) ||
+    expectedCalls < 0
+  )
     throw new Error("Invalid value budget reconciliation");
   const row = await db
     .prepare(

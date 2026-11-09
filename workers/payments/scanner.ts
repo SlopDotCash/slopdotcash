@@ -2,7 +2,8 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { EVM_ESCROW_EVENT_TOPICS, evmRpc } from "../../contracts/evm/adapter";
 import { escrowInvocations, solanaRpc } from "../../contracts/solana/adapter";
-import type { DeploymentView } from "./index";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
+import type { DeploymentView } from "./deployment-types";
 
 type ScanDeployment = DeploymentView<
   "projectId" | "vault",
@@ -243,9 +244,7 @@ export async function scanSolanaPayments(
             { commitment: "finalized", encoding: "base64" },
           ])) as { value: { data: [string, string] } | null };
           if (!award?.value) throw new Error("Paid award account missing");
-          const bytes = Uint8Array.from(atob(award.value.data[0]), (c) =>
-            c.charCodeAt(0),
-          );
+          const bytes = decodeBase64(award.value.data[0]);
           obligationId = bytesToHex(bytes.slice(80, 112));
         }
         await index({

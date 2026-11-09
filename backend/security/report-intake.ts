@@ -1,20 +1,22 @@
 /** Durable private reports. Slop's receipt is independent of GitHub delivery. */
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedBytes, readBoundedJson } from "../../src/lib/browser-json";
+import { bytesToHex } from "../../src/lib/byte-encoding";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import type { D1QueryStatement } from "../d1";
+import { type D1QueryStatement, isConstraintFailure } from "../d1";
 import { chunked, exactKeys, fail, PROJECT_ID, requireActor } from "../http";
 import { notifySecurityReportReceived } from "../notifications/events";
 import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  runAppealTriage,
+  runCaseAnalysis,
   type SecurityAnalysisInput,
   type SecurityAnalysisReport,
   type SecurityScreeningProposal,
 } from "./analysis";
-import { parseReportInput, type ReportInput } from "./github-advisories";
 import {
   type CaseRow,
   caseInsertStatement,
@@ -26,47 +28,30 @@ import {
   type Role,
   reportingContext,
   type SecurityApiDependencies,
-  scheduleAnalysis,
   stringField,
   termsAtReceipt,
-} from "./handler";
+} from "./case-store";
+import { parseReportInput, type ReportInput } from "./github-advisories";
 import {
   reportingAuthorityUnavailable,
   repositoryReportingAuthority,
 } from "./project-access";
 import {
   COLUMNS,
+  type IntakeState,
   loadSubmission,
+  type StoredIntake,
   type SubmissionRow,
   settle,
+  storedIntake,
   submissionView,
-} from "./submissions";
+} from "./submission-store";
 import {
-  type IntakeScreeningState,
   intakeReviewState,
   qualifiedIntake,
   recoverableIntakeScreening,
 } from "./verified-intake";
 
-export type IntakeState = IntakeScreeningState;
-export type StoredIntake = {
-  submission_id: string;
-  case_id: string;
-  received_at: string;
-  report_version: number;
-  screening_state: IntakeState;
-  screening_started_at: string | null;
-  screening_finished_at: string | null;
-  screening_reason: string | null;
-  routed_at: string | null;
-  screening_provider: string | null;
-  screening_model: string | null;
-  reviewed_at: string | null;
-  reviewed_by: string | null;
-  review_decision: "forward" | "request-information" | null;
-  review_reason: string | null;
-  revision: number;
-};
 const MAX_REPORT_BYTES = 256 * 1024;
 const LOST_SCREEN_MS = 15 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -177,16 +162,7 @@ async function admitPublicWork(
     );
 }
 
-export async function storedIntake(
-  deps: Pick<SecurityApiDependencies, "db">,
-  id: string,
-): Promise<StoredIntake | null> {
-  return deps.db
-    .prepare("SELECT * FROM security_submission_intake WHERE submission_id = ?")
-    .bind(id)
-    .first<StoredIntake>();
-}
-export function intakeQualified(row: StoredIntake): boolean {
+function intakeQualified(row: StoredIntake): boolean {
   return qualifiedIntake({
     review: intakeReviewState(row.review_decision),
     screening: row.screening_state,
@@ -461,6 +437,12 @@ async function storeReport(
     );
   return { key, digest, bytes: bytes.byteLength };
 }
+/**
+ * The event of an intake revision this batch claimed. It must directly follow
+ * the claiming UPDATE: `changes()=1` chains it to that UPDATE, so a writer
+ * that lost the revision race appends nothing instead of colliding with the
+ * winner's event key.
+ */
 function intakeEvent(
   deps: SecurityApiDependencies,
   row: StoredIntake,
@@ -470,7 +452,7 @@ function intakeEvent(
 ): D1QueryStatement {
   return deps.db
     .prepare(
-      "INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=?)",
+      "INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ?,?,?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=?)",
     )
     .bind(
       row.submission_id,
@@ -545,7 +527,7 @@ async function routedNotice(
 }
 
 /** Called only after persisted receipt; failures leave a visible, retryable state. */
-export async function screenStoredReport(
+async function screenStoredReport(
   deps: SecurityApiDependencies,
   id: string,
   timeoutMs = ANALYSIS_TIMEOUT_MS,
@@ -812,9 +794,7 @@ export async function acceptStoredReport(
   const id = `ss_${deps.randomId().replaceAll("-", "")}`;
   await admitPublicWork(deps, actor.githubId, id);
   const caseId = `sc_${deps.randomId().replaceAll("-", "")}`;
-  const marker = Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) =>
-    x.toString(16).padStart(2, "0"),
-  ).join("");
+  const marker = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   const stored = await storeReport(deps, id, 1, report);
   const frozen = await termsAtReceipt(deps, projectId, at);
   const guard = {
@@ -1162,40 +1142,51 @@ export async function actStoredIntake(
       body.reason.length > 2000
     )
       fail(400, "invalid_request", "Provide a routing decision and reason.");
-    const result = await deps.db.batch([
-      deps.db
-        .prepare(
-          "UPDATE security_submission_intake SET review_decision=?,review_reason=?,reviewed_by=?,reviewed_at=?,revision=revision+1 WHERE submission_id=? AND revision=?",
-        )
-        .bind(
-          body.decision,
-          body.reason.trim(),
-          actor.githubId,
-          at,
-          id,
-          stored.revision,
-        ),
-      intakeEvent(deps, stored, "review", actor.githubId, at),
-      ...(body.decision === "request-information"
-        ? [
-            deps.db
-              .prepare(
-                "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at) SELECT ?,?,'security_case',?,NULL,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND review_decision='request-information' AND reviewed_by=?) ON CONFLICT(event_key,recipient_github_id) DO NOTHING",
-              )
-              .bind(
-                `security-information:${id}:${stored.revision + 1}`,
-                row.reporter_github_id,
-                stored.case_id,
-                `/inbox?submission=${id}`,
-                at,
-                at,
-                id,
-                stored.revision + 1,
-                actor.githubId,
-              ),
-          ]
-        : []),
-    ]);
+    const result = await deps.db
+      .batch([
+        deps.db
+          .prepare(
+            "UPDATE security_submission_intake SET review_decision=?,review_reason=?,reviewed_by=?,reviewed_at=?,revision=revision+1 WHERE submission_id=? AND revision=?",
+          )
+          .bind(
+            body.decision,
+            body.reason.trim(),
+            actor.githubId,
+            at,
+            id,
+            stored.revision,
+          ),
+        intakeEvent(deps, stored, "review", actor.githubId, at),
+        ...(body.decision === "request-information"
+          ? [
+              deps.db
+                .prepare(
+                  "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,detail,action_path,source_at,created_at) SELECT ?,?,'security_case',?,NULL,?,?,? WHERE EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=? AND revision=? AND review_decision='request-information' AND reviewed_by=?) ON CONFLICT(event_key,recipient_github_id) DO NOTHING",
+                )
+                .bind(
+                  `security-information:${id}:${stored.revision + 1}`,
+                  row.reporter_github_id,
+                  stored.case_id,
+                  `/inbox?submission=${id}`,
+                  at,
+                  at,
+                  id,
+                  stored.revision + 1,
+                  actor.githubId,
+                ),
+            ]
+          : []),
+      ])
+      .catch((error: unknown) => {
+        // A concurrent writer claimed this revision first.
+        if (isConstraintFailure(error))
+          fail(
+            409,
+            "stale_revision",
+            "The report changed. Reload it before acting.",
+          );
+        throw error;
+      });
     if (result[0].meta?.changes !== 1)
       fail(
         409,
@@ -1321,4 +1312,49 @@ export async function approvedReportForForward(
       "The saved report needs screening or an explicit private maintainer routing review.",
     );
   return reportVersion(deps, stored);
+}
+
+/**
+ * Starts the private analysis of a newly verified case. It runs after the
+ * response where the platform allows it, within the background time limit,
+ * and inline otherwise. `report` is the advisory content that receipt
+ * verification already read from GitHub; it stays in memory. Without it, the
+ * analysis reads the advisory again.
+ */
+export async function scheduleAnalysis(
+  deps: SecurityApiDependencies,
+  caseId: string,
+  report: SecurityAnalysisReport | null,
+  timeoutMs?: number,
+): Promise<void> {
+  const run = (timeoutMs: number) =>
+    runCaseAnalysis(analysisDependencies(deps), caseId, report, timeoutMs);
+  if (deps.waitUntil)
+    deps.waitUntil(run(timeoutMs ?? BACKGROUND_ANALYSIS_TIMEOUT_MS));
+  else await run(timeoutMs ?? ANALYSIS_TIMEOUT_MS);
+}
+
+/**
+ * Starts Slopbot's triage of a newly opened appeal, after the response where
+ * the platform allows it and inline otherwise, like the report analysis.
+ */
+export async function scheduleAppealTriage(
+  deps: SecurityApiDependencies,
+  caseId: string,
+): Promise<void> {
+  const run = (timeoutMs: number) =>
+    runAppealTriage(analysisDependencies(deps), caseId, timeoutMs);
+  if (deps.waitUntil) deps.waitUntil(run(BACKGROUND_ANALYSIS_TIMEOUT_MS));
+  else await run(ANALYSIS_TIMEOUT_MS);
+}
+
+export function analysisDependencies(deps: SecurityApiDependencies) {
+  return {
+    db: deps.db,
+    now: deps.now,
+    advisories: deps.advisories ?? null,
+    analyzer: deps.analyzer ?? null,
+    storedReport: (caseId: string, reportVersion?: number) =>
+      readStoredReportByCase(deps, caseId, reportVersion),
+  };
 }

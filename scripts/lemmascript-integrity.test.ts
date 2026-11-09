@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  requireMeaningfulSpecifications,
   requireProofIntegrity,
   requireProofObligations,
 } from "./lemmascript-integrity.mjs";
@@ -178,5 +179,35 @@ ghost predicate closed(values: seq<bool>) { forall i: int :: 0 <= i < |values| =
       }
     }`;
     expect(() => requireProofObligations(nested, generated)).toThrow();
+  });
+});
+
+describe("tautological specification lint", () => {
+  it.each([
+    "//@ ensures true",
+    "//@ ensures (true)",
+    "//@ ensures \\result == \\result",
+    "//@ ensures \\result === (\\result)",
+    "//@ ensures x ==> x",
+    "//@ ensures ok <==> ok",
+    "//@ invariant i <= i",
+    "//@ requires (a + b) == (a+b)",
+    "//@ ensures \\result >= 0 && \\result == \\result",
+  ])("rejects %s", (clause) => {
+    expect(() =>
+      requireMeaningfulSpecifications(`${clause}\nexport function f() {}`),
+    ).toThrow(/Tautological/);
+  });
+
+  it.each([
+    "//@ ensures \\result == x",
+    "//@ ensures a ==> b",
+    "//@ ensures x == 1 || x == x",
+    "//@ ensures f(x) == f(y)",
+    '//@ ensures "a==a" == s',
+    "//@ requires actors >= 1 && total >= minimumPerActor",
+    "//@ ensures \\result != \\result",
+  ])("accepts %s", (clause) => {
+    expect(() => requireMeaningfulSpecifications(clause)).not.toThrow();
   });
 });

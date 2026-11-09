@@ -625,7 +625,7 @@ test("Solana wallet deposits, recovers after reload, and owner withdraws with ve
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(actions.getByRole("status")).toContainText(
-    "could not be saved on this device",
+    "Not saved on this device",
   );
   await expect(recovery).toHaveValue("1".repeat(64));
   await expect(recovery).toBeEditable();

@@ -6,7 +6,10 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ValueEvidence } from "../workers/slopbot/value-evidence";
+import type {
+  ValueEvidence,
+  ValueMergeResolution,
+} from "../workers/slopbot/value-evidence-types";
 import {
   LEGACY_MERGE_PROFILE,
   MERGE_GIT_VERSION,
@@ -14,7 +17,6 @@ import {
   type ValueMergeInput,
   type ValueMergeProfile,
 } from "../workers/slopbot/value-merge-profile";
-import type { ValueMergeResolution } from "../workers/slopbot/value-merge-resolution";
 
 /** The fixed intake/Points profile verifies full object identities and ordinary
  * path inventories before using the same canonical merge collector below.

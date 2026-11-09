@@ -32,7 +32,7 @@ module contributor_session_exchange {
   val actors = Set(1, 2)
   val payloads = Set(1, 2)
   val rowKeys = Set(1, 2, 3, 4)
-  var s: { phase: str, attempt: int, now: int, actor: int, payload: int,
+  type State = { phase: str, attempt: int, now: int, actor: int, payload: int,
     flowExpires: int, assertionExpires: int, tokenExpires: int, retryAfter: int,
     flowReady: bool, pollKind: str, authorizationShown: bool,
     spentFlows: Set[int], issuedAssertions: Set[int], spentAssertions: Set[int],
@@ -40,6 +40,7 @@ module contributor_session_exchange {
     tokenMinted: bool, authorized: bool, createAccepted: bool,
     rows: Set[int], rowStates: int -> str, snapshot: int, snapshotState: str,
     returned: int, persistedSecrets: bool, result: str }
+  var s: State
   action init = s' = { phase: "idle", attempt: 0, now: 0, actor: 1, payload: 1,
     flowExpires: 0, assertionExpires: 0, tokenExpires: 0, retryAfter: 1,
     flowReady: false, pollKind: "none", authorizationShown: false,
@@ -48,7 +49,7 @@ module contributor_session_exchange {
     createAccepted: false, rows: Set(), rowStates: rowKeys.mapBy(_ => "absent"),
     snapshot: 0, snapshotState: "none", returned: 0, persistedSecrets: false, result: "none" }
   pure def rowKey(actor: int, payload: int): int = (actor - 1) * 2 + payload
-  def refused(reason: str) = s.with("phase", "done").with("result", reason)
+  def refused(reason: str): State = s.with("phase", "done").with("result", reason)
   action begin(actor: int, payload: int): bool = all {
     Set("idle", "done").contains(s.phase), s.attempt < 2, actors.contains(actor), payloads.contains(payload),
     s' = s.with("phase", "start").with("attempt", s.attempt + 1).with("actor", actor).with("payload", payload)

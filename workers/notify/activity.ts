@@ -8,7 +8,7 @@ import {
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
 import {
   claimDueDeliveries,

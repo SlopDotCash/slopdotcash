@@ -8,7 +8,11 @@ import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, ordinaryFee } from "./lib/payments/contracts";
-import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
+import {
+  PRD_MONTHLY_SCHEDULE,
+  shiftPeriod,
+  utcPeriodOf,
+} from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import {
   apiRequest,
@@ -30,19 +34,6 @@ import {
   StatusBadge,
 } from "./Presentation";
 
-function previousMonth() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
-    .toISOString()
-    .slice(0, 7);
-}
-/** The calendar month `delta` months from a YYYY-MM period. */
-function shiftMonth(period: string, delta: number) {
-  const [year, month] = period.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1 + delta, 1))
-    .toISOString()
-    .slice(0, 7);
-}
 /** Base units as a plain decimal an owner can edit, without grouping separators. */
 function editableUnits(base: string, decimals: number | null) {
   return decimals === null
@@ -96,7 +87,7 @@ export default function OwnerAwards({
   // (or the earliest public cycle, when one is older) to the last closed
   // month. The server still authorizes every month read.
   const monthlyProject = project.reward.kind === "monthly-pool";
-  const lastClosedMonth = previousMonth();
+  const lastClosedMonth = shiftPeriod(utcPeriodOf(new Date()), -1);
   const firstMonth =
     months.length && months[0] < PRD_MONTHLY_SCHEDULE.firstPeriod
       ? months[0]
@@ -502,7 +493,7 @@ export default function OwnerAwards({
                 className="button secondary-button icon-button"
                 aria-label="Previous award month"
                 disabled={busy || period <= firstMonth}
-                onClick={() => selectMonth(shiftMonth(period, -1))}
+                onClick={() => selectMonth(shiftPeriod(period, -1))}
               >
                 <ChevronLeft aria-hidden="true" />
               </button>
@@ -512,7 +503,7 @@ export default function OwnerAwards({
                 className="button secondary-button icon-button"
                 aria-label="Next award month"
                 disabled={busy || period >= lastClosedMonth}
-                onClick={() => selectMonth(shiftMonth(period, 1))}
+                onClick={() => selectMonth(shiftPeriod(period, 1))}
               >
                 <ChevronRight aria-hidden="true" />
               </button>

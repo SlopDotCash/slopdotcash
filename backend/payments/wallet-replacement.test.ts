@@ -11,10 +11,8 @@ import {
 } from "../../src/lib/contributor-allocation";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import {
-  type JournalStore,
-  retireUnsignedAttempt,
-} from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
+import { retireUnsignedAttempt } from "../../workers/payment-executor/core";
 import type { D1TransactionalDatabase } from "../d1";
 import { dispatchPayment } from "./dispatch";
 import { handlePaymentsApi } from "./handler";

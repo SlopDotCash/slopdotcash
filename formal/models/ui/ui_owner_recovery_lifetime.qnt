@@ -3,17 +3,19 @@
 // @source src/VaultActions.tsx
 // @source src/AutomaticMonthlyPayment.tsx
 // @source src/lib/pending-attempt.ts
+// @source src/lib/use-pending-wallet-attempt.ts
 // Two component instances share one same-tab slot. Attempt 1 may be legacy;
 // retry 2 always has a fresh ID. One check per instance, one wallet tail per
 // attempt. Outcomes: 1 pending, 2 finalized failure, 3 finalized success,
 // 4 token approval. Stored snapshots are separate from in-memory hashes.
-// Exact chain evidence, UUID uniqueness and React unmount delivery are
-// external predicates. Authored by source inspection; not executed.
+// Exact chain evidence and UUID uniqueness are external predicates. Shared
+// pending-wallet layout cleanup retires ownership at committed removal.
+// Authored by source inspection; not executed.
 module ui_owner_recovery_lifetime {
-  type S = {kind:str,legacy:bool,alive:Set[int],locals:List[int],localHash:List[bool],storedHash:List[bool],checks:Set[int],
+  type S = {kind:str,legacy:bool,present:Set[int],alive:Set[int],locals:List[int],localHash:List[bool],storedHash:List[bool],checks:Set[int],
     captured:List[int],capturedHash:List[bool],outcomes:List[int],store:int,hashFor:int,retried:bool,
     preflights:Set[int],walletOpen:Set[int],walletOwner:List[int],ignored:Set[int],warnings:Set[int],cleared:Set[int],callbacks:int,moneyMoved:bool}
-  def initial(kind:str,legacy:bool,liveTail:bool):S = {kind:kind,legacy:legacy,alive:Set(1),
+  def initial(kind:str,legacy:bool,liveTail:bool):S = {kind:kind,legacy:legacy,present:Set(1),alive:Set(1),
     locals:List(1,0),localHash:List(false,false),storedHash:List(false,false),checks:Set(),captured:List(0,0),capturedHash:List(false,false),outcomes:List(0,0),
     store:1,hashFor:0,retried:false,preflights:Set(),walletOpen:if(liveTail)Set(1) else Set(),walletOwner:List(1,0),ignored:Set(),warnings:Set(),cleared:Set(),callbacks:0,moneyMoved:false}
   var s:S
@@ -30,10 +32,10 @@ module ui_owner_recovery_lifetime {
   // remounted second instance can still inspect the shared pending record.
   def walletBusy(id:int):bool=s.walletOpen.exists(attempt=>s.walletOwner[attempt-1]==id)
   action mountSecond=all{not(s.alive.contains(2)),s.locals[1]==0,
-    s'=s.with("alive",s.alive.union(Set(2))).with("locals",s.locals.replaceAt(1,s.store))
+    s'=s.with("present",s.present.union(Set(2))).with("alive",s.alive.union(Set(2))).with("locals",s.locals.replaceAt(1,s.store))
       .with("localHash",s.localHash.replaceAt(1,s.store>0 and s.hashFor==s.store))
       .with("storedHash",s.storedHash.replaceAt(1,s.store>0 and s.hashFor==s.store))}
-  action leave(id:int):bool=all{s.alive.contains(id),s'=s.with("alive",s.alive.exclude(Set(id)))}
+  action leave(id:int):bool=all{s.alive.contains(id),s'=s.with("present",s.present.exclude(Set(id))).with("alive",s.alive.exclude(Set(id)))}
   action check(id:int):bool=all{s.alive.contains(id),not(walletBusy(id)),s.locals[id-1]>0,not(s.checks.contains(id)),s.captured[id-1]==0,
     s'=s.with("checks",s.checks.union(Set(id))).with("captured",s.captured.replaceAt(id-1,s.locals[id-1]))
       .with("capturedHash",s.capturedHash.replaceAt(id-1,s.storedHash[id-1]))}
@@ -103,7 +105,7 @@ module ui_owner_recovery_lifetime {
     nondet storageWorks=Set(false,true).oneOf()
     any{mountSecond,leave(id),check(id),reply(id,outcome,storageWorks),prepareRetry(id),rejectDepartedPreflight(id),retry(id,storageWorks),
       walletReturns(id,storageWorks),walletDeclines(id,storageWorks),userClears(id,storageWorks),s'=s}}
-  val invariant=all{s.store>=0,s.store<=2,s.hashFor==0 or s.hashFor==s.store,
+  val invariant=all{s.alive.subseteq(s.present),s.store>=0,s.store<=2,s.hashFor==0 or s.hashFor==s.store,
     s.store==2 implies s.retried,s.retried implies s.cleared.contains(1),
     s.locals.length()==2,s.localHash.length()==2,s.storedHash.length()==2,s.captured.length()==2,s.capturedHash.length()==2,s.outcomes.length()==2,
     s.moneyMoved implies s.kind=="vault-transfer",s.callbacks<=2,
@@ -159,4 +161,17 @@ module ui_owner_recovery_lifetime {
   run departedPreflightSettlesWithoutPromptTest=commitment.then(check(1)).then(reply(1,2,true))
     .then(prepareRetry(1)).then(leave(1)).then(rejectDepartedPreflight(1))
     .expect(s.store==0 and not(s.walletOpen.contains(2)) and not(s.retried))
+  run monthlyCommitRemovalCannotPromptTest=monthlySetting.then(check(1)).then(reply(1,3,true))
+    .then(prepareRetry(1)).then(leave(1)).then(rejectDepartedPreflight(1))
+    .expect(s.store==0 and s.walletOpen==Set() and invariant)
+  run releaseCommitRemovalCannotPromptTest=legacyRelease.then(check(1)).then(reply(1,2,true))
+    .then(prepareRetry(1)).then(leave(1)).then(retry(1,true).fail())
+    .expect(s.store==0 and s.walletOpen==Set() and invariant)
+  // Historical passive cleanup kept the beforeSend guard live after removal.
+  // This negative control is intentionally excluded from step.
+  action historicalPassiveRemoval(id:int):bool=all{s.present.contains(id),
+    s'=s.with("present",s.present.exclude(Set(id)))}
+  run historicalPassiveRemovalCouldOpenMonthlyWalletTest=monthlySetting.then(check(1)).then(reply(1,3,true))
+    .then(prepareRetry(1)).then(historicalPassiveRemoval(1)).then(retry(1,true))
+    .expect(s.walletOpen.contains(2) and not(invariant))
 }

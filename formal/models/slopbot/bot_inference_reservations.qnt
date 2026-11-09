@@ -3,31 +3,36 @@
 // @source workers/slopbot/models.ts
 // @source migrations/0104_slopbot_value_inference_attempts.sql
 // @source migrations/0118_slopbot_value_attempt_completion.sql
+// @source migrations/0118_slopbot_zero_call_reconciliation.sql
 // @evidence workers/slopbot/value-attempt-limit.test.ts
 // One inference key, two existing counted reservations and three new IDs.
 // Admission and the reservation transaction are separate. Each transaction
 // records its own decision before its asynchronous response is delivered.
 // Complete call lists are no receipt / all-free / containing another call.
 // Completion follows call recording and any required valid-result retention;
-// it is independent of cost reconciliation, abstracted out of this module.
+// A returned no-call route frees its attempt slot only after both completion
+// and an authoritative zero-call reconciliation. Neither receipt alone, an
+// expired owner nor a provider call billed at zero proves no call occurred.
+// Other cost reconciliation is abstracted out of this module.
 // Money arithmetic, individual cost-row writes, and provider truth are outside
 // this projection. Ownership abstracts the callback before a provider call;
 // it does not claim a distributed lock between that callback and HTTP send.
 module bot_inference_reservations {
   type Row = { admitted: bool, reserved: bool, called: bool, recorded: str,
-    completed: bool, owner: bool, decision: str, delivered: bool }
+    completed: bool, returnedNoCall: bool, reconciledZero: bool, owner: bool, decision: str, delivered: bool }
   val ids = Set(1, 2, 3, 4, 5)
   val candidates = Set(3, 4, 5)
   val empty = { admitted: false, reserved: false, called: false,
-    recorded: "none", completed: false, owner: true, decision: "none", delivered: false }
+    recorded: "none", completed: false, returnedNoCall: false, reconciledZero: false, owner: true, decision: "none", delivered: false }
   val history = { admitted: true, reserved: true, called: true,
-    recorded: "none", completed: false, owner: false, decision: "reserved", delivered: true }
+    recorded: "none", completed: false, returnedNoCall: false, reconciledZero: false, owner: false, decision: "reserved", delivered: true }
   var s: { rows: int -> Row, budget: bool, atomic: bool }
   action init = s' = { rows: ids.mapBy(id => if (id <= 2) history else empty),
     budget: true, atomic: true }
   val counted = ids.filter(id => {
     val row = s.rows.get(id)
     row.reserved and row.recorded != "free"
+      and not(row.completed and row.reconciledZero and row.recorded == "none")
   }).size()
   val confirmed = ids.filter(id => s.rows.get(id).reserved
     and s.rows.get(id).completed and s.rows.get(id).recorded == "other").size()
@@ -61,7 +66,7 @@ module bot_inference_reservations {
       s.rows.get(id).with("owner", false))) }
   action call(id: int): bool = all { candidates.contains(id),
     s.rows.get(id).delivered, s.rows.get(id).reserved,
-    s.rows.get(id).owner, not(s.rows.get(id).called),
+    s.rows.get(id).owner, not(s.rows.get(id).called), not(s.rows.get(id).returnedNoCall),
     s' = s.with("rows", s.rows.set(id,
       s.rows.get(id).with("called", true))) }
   action record(id: int, free: bool): bool = all { ids.contains(id),
@@ -71,9 +76,17 @@ module bot_inference_reservations {
       .with("recorded", if (free) "free" else "other"))) }
   action complete(id: int): bool = all { ids.contains(id),
     s.rows.get(id).reserved, not(s.rows.get(id).completed),
-    not(s.rows.get(id).called) or s.rows.get(id).recorded != "none",
+    (not(s.rows.get(id).called) and s.rows.get(id).returnedNoCall) or s.rows.get(id).recorded != "none",
     s' = s.with("rows", s.rows.set(id,
       s.rows.get(id).with("completed", true))) }
+  action returnBeforeCall(id: int): bool = all { candidates.contains(id),
+    s.rows.get(id).reserved, s.rows.get(id).delivered, not(s.rows.get(id).called),
+    not(s.rows.get(id).returnedNoCall),
+    s' = s.with("rows", s.rows.set(id, s.rows.get(id).with("returnedNoCall", true))) }
+  action reconcileZero(id: int): bool = all { candidates.contains(id),
+    s.rows.get(id).returnedNoCall, not(s.rows.get(id).called), s.rows.get(id).recorded == "none",
+    not(s.rows.get(id).reconciledZero),
+    s' = s.with("rows", s.rows.set(id, s.rows.get(id).with("reconciledZero", true))) }
   action exhaustBudget = all { s.budget, s' = s.with("budget", false) }
   action restoreBudget = all { not(s.budget), s' = s.with("budget", true) }
   action lackAtomicStorage = all { s.atomic, s' = s.with("atomic", false) }
@@ -81,7 +94,7 @@ module bot_inference_reservations {
     nondet id = ids.oneOf()
     nondet free = Set(false, true).oneOf()
     any { admit(id), rejectAdmission(id), reserve(id), deliver(id), loseOwner(id), call(id),
-      record(id, free), complete(id), exhaustBudget, restoreBudget, lackAtomicStorage,
+      record(id, free), complete(id), returnBeforeCall(id), reconcileZero(id), exhaustBudget, restoreBudget, lackAtomicStorage,
       s' = s }
   }
   val invariant = all { counted <= 3,
@@ -91,6 +104,8 @@ module bot_inference_reservations {
         row.called implies row.reserved,
         row.recorded != "none" implies row.called,
         row.completed implies row.reserved,
+        row.returnedNoCall implies row.reserved and not(row.called),
+        row.reconciledZero implies row.returnedNoCall and row.recorded == "none",
         (row.decision == "reserved") == row.reserved,
         Set("attempts", "attempts-pending", "budget", "storage").contains(row.decision)
           implies not(row.reserved) }
@@ -149,7 +164,21 @@ module bot_inference_reservations {
     .then(rejectAdmission(4)).then(deliver(4))
     .expect(counted == 3 and confirmed == 2 and s.rows.get(4).decision == "attempts-pending")
   run completedNoCallReservationStillHoldsCapacityTest = init.then(admit(3))
-    .then(reserve(3)).then(complete(3)).then(rejectAdmission(4)).then(deliver(4))
+    .then(reserve(3)).then(deliver(3)).then(returnBeforeCall(3)).then(complete(3)).then(rejectAdmission(4)).then(deliver(4))
     .expect(counted == 3 and s.rows.get(3).completed and not(s.rows.get(3).called)
       and s.rows.get(4).decision == "attempts-pending" and invariant)
+  run bothNoCallReceiptsReleaseAttemptSlotTest = init.then(admit(3)).then(reserve(3)).then(deliver(3))
+    .then(returnBeforeCall(3)).then(complete(3)).then(reconcileZero(3)).expect(counted == 2)
+    .then(admit(4)).then(reserve(4)).expect(counted == 3 and invariant)
+  run zeroReconciliationWithoutCompletionStillHoldsTest = init.then(admit(3)).then(reserve(3)).then(deliver(3))
+    .then(returnBeforeCall(3)).then(reconcileZero(3)).then(rejectAdmission(4)).then(deliver(4))
+    .expect(counted == 3 and not(s.rows.get(3).completed) and invariant)
+  run noCallSettlementDoesNotRewriteEarlierRefusalTest = init.then(admit(3)).then(reserve(3)).then(deliver(3))
+    .then(returnBeforeCall(3)).then(complete(3)).then(rejectAdmission(4)).then(reconcileZero(3)).then(deliver(4))
+    .expect(counted == 2 and s.rows.get(4).decision == "attempts-pending")
+    .then(admit(5)).then(reserve(5)).expect(counted == 3 and invariant)
+  run unknownExpiredOwnerDoesNotProveNoCallTest = init.then(admit(3)).then(reserve(3)).then(deliver(3)).then(loseOwner(3))
+    .then(reconcileZero(3).fail()).expect(counted == 3 and invariant)
+  run actualProviderCallCannotUseNoCallReceiptTest = init.then(admit(3)).then(reserve(3)).then(deliver(3)).then(call(3))
+    .then(record(3, false)).then(complete(3)).then(reconcileZero(3).fail()).expect(counted == 3 and invariant)
 }

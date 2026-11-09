@@ -1,5 +1,5 @@
 /** Non-production trees excluded before following or rejecting directory links. */
-export const excludedSourceDirectories = new Set([
+const excludedSourceDirectories = new Set([
   "node_modules",
   "__pycache__",
   "tests",

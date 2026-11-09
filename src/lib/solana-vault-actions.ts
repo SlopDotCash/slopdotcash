@@ -13,6 +13,7 @@ import {
 } from "../../contracts/solana/token";
 import { decodeBase58Bytes } from "./base58";
 import { readBoundedJson } from "./browser-json";
+import { decodeBase64 } from "./byte-encoding";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
 import type { VaultConnection, VaultOperation } from "./evm-vault-actions";
 import {
@@ -23,12 +24,11 @@ import {
 import { parseVaultAmount } from "./payments/vault-amount";
 import { apiRequest, projectApiRequest } from "./project-api";
 import { CANONICAL_UINT } from "./record-validation.mjs";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export type SolanaFundingPlan = Awaited<
   ReturnType<typeof prepareSolanaFunding>
 >;
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 function fundingConfig(deployment: EscrowDeployment) {
   if (!deployment.programId || !deployment.projectPda)
     throw new Error("The Solana vault configuration is incomplete.");
@@ -54,16 +54,11 @@ function planMessage(deployment: EscrowDeployment, plan: SolanaFundingPlan) {
     { ...fundingConfig(deployment), tokenProgram: plan.tokenProgram },
     plan,
   );
-  const wire = decode(plan.transaction);
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => byte !== wire[index + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed vault action.",
-    );
+  assertUnsignedSolanaWire(
+    plan.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed vault action.",
+  );
   return msg;
 }
 async function request(
@@ -194,7 +189,7 @@ export async function sendSolanaWalletTransaction(
   ];
   if (!chain) throw new Error("Unsupported Solana network.");
   const signature = await wallet.solanaSend(
-    decode(transaction),
+    decodeBase64(transaction),
     chain,
     beforeSend,
   );

@@ -35,7 +35,7 @@ export function solanaAddressBytes(value: string): Uint8Array {
  * spelling per account keeps record digests and duplicate checks exact, and
  * the zero address is refused because a transfer to it burns the funds.
  */
-export function isBaseAddress(value: unknown): value is string {
+function isBaseAddress(value: unknown): value is string {
   return isFundingAddress("base", value);
 }
 
