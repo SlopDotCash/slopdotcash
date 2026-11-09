@@ -79,6 +79,20 @@ refinement. The runner refuses stale or unexpected view evidence.
   must not assume that a payment, provider request or human approval succeeds.
 - Record finite bounds and abstractions in the model's comments.
 
+### Tracked storage key
+
+The payment-parent model tracks durable storage contents for one storage key,
+chosen at initialization. Every guard and invariant that reads `savedKeys` or
+`hashKeys` concerns the current storage key or the open prompt key, and no
+transition copies contents between keys. An untracked slot is treated as
+empty, which only adds storage replies, so each tracked run over-approximates
+the full model's behavior for that key. Generation and message values 1 and 2
+are interchangeable (the initial state uses 0 and keys are compared only for
+equality), so keys 111, 112, 213 and 214 represent all twelve storage keys.
+This removes the `3^12` product of slot subsets that kept the full graph from
+completing. Scenarios fix the tracked key they assert on. This is reviewed
+reasoning, not a machine-checked equivalence theorem.
+
 ### Duplicate transition choices
 
 The payment-parent model enumerates reply payloads only for the current,

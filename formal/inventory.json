@@ -11264,7 +11264,7 @@
     },
     {
       "path": "formal/models/ui/ui_bounty_payment_parent.qnt",
-      "sha256": "e316b5c0de8f2ba1ade3ccedf11987ac05f7e70e6065fc234eefec8c0c90a62c",
+      "sha256": "a10ce2ab22f03dcb09b9d9317d559b3c2543724befdf8f9b99aae1a0a0d59670",
       "sources": [
         "src/DirectBountyPayment.tsx",
         "src/SecurityBounty.tsx",
