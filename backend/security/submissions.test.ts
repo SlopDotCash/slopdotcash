@@ -250,6 +250,7 @@ function setup(
     string,
     { bytes: Uint8Array; metadata: Record<string, string> }
   >();
+  let reportReadUnavailable = false;
   const reportStorage: R2Bucket = {
     async put(key, bytes, options) {
       if (!objects.has(key))
@@ -265,6 +266,7 @@ function setup(
         : null;
     },
     async get(key) {
+      if (reportReadUnavailable) throw new Error("Synthetic report storage outage");
       const value = objects.get(key);
       if (!value) return null;
       const body = new Response(new Uint8Array(value.bytes).buffer).body;
@@ -564,6 +566,9 @@ function setup(
     setAccessUnavailable: (value: boolean) => {
       accessUnavailable = value;
     },
+    setReportReadUnavailable: (value: boolean) => {
+      reportReadUnavailable = value;
+    },
     github,
     intake,
     analyzed,
@@ -812,10 +817,16 @@ describe("private intake: creation and identity", () => {
     expect(created.cookies[0]).toMatch(
       /^__Secure-slop_intake_flow=[^;]+; Path=\/api\/v1\/security-submissions; Max-Age=600; Secure; HttpOnly; SameSite=Lax$/u,
     );
-    const callback = await t.authorize(
-      REPORTER,
-      created.body.authorizeUrl as string,
+    const state = new URL(created.body.authorizeUrl as string).searchParams.get(
+      "state",
     );
+    const code = t.github.issueCode({
+      id: Number(REPORTER.githubId),
+      login: REPORTER.githubLogin,
+    });
+    const callbackPath = `security-submissions/authorize/callback?code=${code}&state=${state}`;
+    const flow = t.jar(REPORTER).get("__Secure-slop_intake_flow");
+    const callback = await t.raw(REPORTER, "GET", callbackPath);
     const grant = callback.cookies.find((c) =>
       c.startsWith("__Secure-slop_intake_grant="),
     );
@@ -823,21 +834,123 @@ describe("private intake: creation and identity", () => {
       /; Path=\/api\/v1\/security-submissions; Max-Age=7200; Secure; HttpOnly; SameSite=Strict$/u,
     );
     expect(grant).not.toContain("ghu_");
-    // The flow cookie is cleared once used.
+    // A response must not clear a flow started by another in-flight tab.
     expect(
-      callback.cookies.some((c) =>
-        /^__Secure-slop_intake_flow=; .*Max-Age=0/u.test(c),
-      ),
-    ).toBe(true);
-    // A replayed callback has no flow and sets no grant.
-    const replay = await t.raw(
-      null,
-      "GET",
-      `security-submissions/authorize/callback?code=code_9_1&state=x`,
-    );
-    expect(replay.location).toBe("/security?intake=grant_flow_missing");
+      callback.cookies.some((c) => c.startsWith("__Secure-slop_intake_flow=")),
+    ).toBe(false);
+    expect(t.jar(REPORTER).get("__Secure-slop_intake_flow")).toBe(flow);
+    // The provider consumes the code; retained encrypted flow data cannot
+    // exchange it a second time. The original grant remains undisturbed.
+    const replay = await t.raw(REPORTER, "GET", callbackPath);
+    expect(replay.location).toContain("intake=grant_exchange_failed");
     expect(replay.cookies.some((c) => c.includes("intake_grant"))).toBe(false);
+    t.advance(10 * 60 * 1000);
+    const expired = await t.raw(REPORTER, "GET", callbackPath);
+    expect(expired.location).toBe("/security?intake=grant_flow_missing");
   });
+
+  test("an older callback carrying the newer flow cookie leaves that flow usable", async () => {
+    const t = setup();
+    try {
+      const older = await t.create();
+      const newer = await t.create();
+      const flow = t.jar(REPORTER).get("__Secure-slop_intake_flow");
+      const stale = await t.authorize(
+        REPORTER,
+        older.body.authorizeUrl as string,
+      );
+      expect(stale.location).toContain("intake=grant_state_mismatch");
+      expect(stale.cookies).toEqual([]);
+      expect(t.jar(REPORTER).get("__Secure-slop_intake_flow")).toBe(flow);
+      const completed = await t.authorize(
+        REPORTER,
+        newer.body.authorizeUrl as string,
+      );
+      expect(completed.location).toBe(
+        `/security?submission=${newer.body.submission?.id}`,
+      );
+      expect(
+        completed.cookies.some((cookie) =>
+          cookie.startsWith("__Secure-slop_intake_grant="),
+        ),
+      ).toBe(true);
+      expect(t.jar(REPORTER).get("__Secure-slop_intake_flow")).toBe(flow);
+      expect(t.github.counts.posts).toBe(0);
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
+  for (const outcome of ["success", "failure"] as const)
+    test(`an in-flight older callback ${outcome} cannot clear a newer flow`, async () => {
+      const t = setup();
+      const older = await t.create();
+      let entered!: () => void;
+      let release!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const exchange = t.intake.oauth.exchange.bind(t.intake.oauth);
+      let captured = false;
+      const held = spyOn(t.intake.oauth, "exchange").mockImplementation(
+        async (...args) => {
+          if (!captured) {
+            captured = true;
+            entered();
+            await gate;
+            if (outcome === "failure") return null;
+          }
+          return exchange(...args);
+        },
+      );
+      let pending: ReturnType<typeof t.authorize> | undefined;
+      try {
+        pending = t.authorize(REPORTER, older.body.authorizeUrl as string);
+        await Promise.race([
+          waiting,
+          pending.then(() => {
+            throw new Error("Older callback did not reach its exchange");
+          }),
+        ]);
+        const newer = await t.create();
+        const flow = t.jar(REPORTER).get("__Secure-slop_intake_flow");
+        release();
+        const completedOlder = await pending;
+        expect(completedOlder.location).toBe(
+          outcome === "success"
+            ? `/security?submission=${older.body.submission?.id}`
+            : `/security?submission=${older.body.submission?.id}&intake=grant_exchange_failed`,
+        );
+        expect(
+          completedOlder.cookies.some((cookie) =>
+            cookie.startsWith("__Secure-slop_intake_flow="),
+          ),
+        ).toBe(false);
+        expect(t.jar(REPORTER).get("__Secure-slop_intake_flow")).toBe(flow);
+        const completedNewer = await t.authorize(
+          REPORTER,
+          newer.body.authorizeUrl as string,
+        );
+        expect(completedNewer.location).toBe(
+          `/security?submission=${newer.body.submission?.id}`,
+        );
+        expect(
+          completedNewer.cookies.some((cookie) =>
+            cookie.startsWith("__Secure-slop_intake_grant="),
+          ),
+        ).toBe(true);
+        expect(t.jar(REPORTER).get("__Secure-slop_intake_flow")).toBe(flow);
+        expect(t.github.counts.posts).toBe(0);
+      } finally {
+        release();
+        await Promise.allSettled([pending]);
+        held.mockRestore();
+        t.sqlite.close();
+      }
+    });
 
   test("a missing, tampered, expired or rebound grant never reaches GitHub", async () => {
     const t = setup();
@@ -2307,6 +2420,91 @@ test("registered researcher can start a private report on a quarantined project"
 });
 
 describe("optional GitHub forwarding of a saved report", () => {
+  for (const pendingState of ["uncertain", "submitted"] as const)
+    for (const barrier of ["human-hold", "storage-outage"] as const)
+      test(`expired consent for a ${pendingState} saved report recovers through ${barrier}`, async () => {
+        const t = setup({ durable: true });
+        try {
+          const created = await t.create(REPORTER, { report: REPORT });
+          const submission = created.body.submission as NonNullable<Body["submission"]>;
+          const original = t.cases()[0];
+          const draft = await t.create(REPORTER, {
+            report: {
+              ...REPORT,
+              summary: "Separate unsent report for the forwarding gate",
+              description: "Separate synthetic reproduction, never sent to GitHub.",
+            },
+          });
+          const unsent = draft.body.submission as NonNullable<Body["submission"]>;
+          const authorization = await t.call(
+            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+          );
+          await t.authorize(REPORTER, authorization.body.authorizeUrl as string);
+          if (pendingState === "uncertain") t.github.faults.create = "timeout-after-create";
+          else t.github.faults.get = "error";
+          const sent = await t.call(
+            REPORTER, "POST", `security-submissions/${submission.id}/send`,
+            { expectedRevision: submission.revision },
+          );
+          expect(sent.body.submission?.state).toBe(pendingState);
+          expect(t.github.counts.posts).toBe(1);
+          expect(t.github.advisories).toHaveLength(1);
+          if (barrier === "human-hold") {
+            for (const entry of [sent.body.submission, unsent]) {
+              if (!entry) throw new Error("Missing stored report");
+              const held = await t.call(
+                MAINTAINER, "POST", `security-submissions/${entry.id}/review`,
+                {
+                  expectedRevision: (entry.intake as { revision: number }).revision,
+                  decision: "request-information",
+                  reason: "Do not forward another copy; retain the received report.",
+                },
+              );
+              expect(held.status).toBe(200);
+            }
+          } else t.setReportReadUnavailable(true);
+          t.advance(2 * 60 * 60 * 1000 + 1000);
+          const expired = await t.reconcile(submission.id, Number(t.row(submission.id).revision));
+          expect(expired.body.error).toBe("grant_required");
+          const renewed = await t.call(
+            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+          );
+          expect(renewed.status).toBe(200);
+          expect(renewed.body.submission?.state).toBe(pendingState);
+          expect((await t.authorize(REPORTER, renewed.body.authorizeUrl as string)).status).toBe(303);
+          const resend = await t.call(
+            REPORTER, "POST", `security-submissions/${submission.id}/send`,
+            { expectedRevision: Number(t.row(submission.id).revision) },
+          );
+          expect(resend.body.error).toBe(
+            pendingState === "uncertain" ? "reconcile_required" : "already_submitted",
+          );
+          const refusedDraft = await t.call(
+            REPORTER, "POST", `security-submissions/${unsent.id}/authorize`, {},
+          );
+          if (barrier === "human-hold") {
+            expect(refusedDraft.status).toBe(409);
+            expect(refusedDraft.body.error).toBe("screening_required");
+          } else expect(refusedDraft.status).toBeGreaterThanOrEqual(500);
+          t.github.faults.get = "ok";
+          const recovered = await t.reconcile(submission.id, Number(t.row(submission.id).revision));
+          expect(recovered.body.submission?.state).toBe("receipt-verified");
+          expect(recovered.body.submission?.caseId).toBe(original.id);
+          expect(t.github.counts.posts).toBe(1);
+          expect(t.github.advisories).toHaveLength(1);
+          expect(t.row(unsent.id).state).toBe("draft");
+          expect(t.cases()).toHaveLength(2);
+          // Terminal refusal takes precedence even if the body cannot be read.
+          const closed = await t.call(
+            REPORTER, "POST", `security-submissions/${submission.id}/authorize`, {},
+          );
+          expect(closed.body.error).toBe("submission_closed");
+        } finally {
+          t.setReportReadUnavailable(false);
+          t.sqlite.close();
+        }
+      });
+
   for (const durable of [false, true])
     test(`forwarding transitions preserve the ${durable ? "saved" : "legacy"} receipt response`, async () => {
       const t = setup({ durable });

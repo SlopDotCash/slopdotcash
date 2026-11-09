@@ -672,6 +672,47 @@ claim. Registry attachment, continuous wallet authority and chain truth remain
 separate boundaries. The EVM and Solana API/adapter regression definitions are
 unexecuted.
 
+Private authorization now keeps a callback from deleting a newer flow cookie.
+The encrypted flow retains its original ten-minute expiry; state, PKCE, account
+and grant binding remain required. One-use provider codes are an external OAuth
+assumption. The model separates request capture, exchange, identity, encryption
+and response delivery across two flows. A later successful callback can still
+replace the shared grant cookie, so another report may need authorization again.
+The route regression definitions include stale callbacks, overlapping success
+and failure, consumed codes and expiry. They have not run.
+
+Renewing authorization for an in-progress, uncertain or submitted report no
+longer requires approval or R2 content for a new forward. The route first
+settles its current state and refuses a completed or abandoned submission.
+The send route still checks the current saved report and forwarding approval
+before a new attempt. This preserves reconciliation when a human requests
+more information after a send or when the saved body is unavailable.
+The wrapper model bounds two requests, actors and request keys, one optional
+retained row and two fresh candidate IDs. It separates idempotent replay from
+a concurrent same-key insert, enforces the ban guard at insertion, and retains
+a committed draft after a lost readback, flow or response. Four migrated-route
+regression definitions cover uncertain and submitted reports across human
+holds and storage outages. They remain unexecuted.
+
+Receipt verification models direct reports and Slop submissions separately.
+Missing routing contacts records a submission event without creating an
+ownerless case. Legacy case creation commits its dependent rows together;
+durable intake links the existing case. Concurrent verification can return the
+same receipt, but an unrelated advisory case remains private. Pre-commit failure
+and a lost response after commit have different recovery states. This model
+bounds two requests, five revisions and one competing case. Parsed provider
+facts, authorization, SQL atomicity and live GitHub behavior remain assumptions
+or separate conformance boundaries.
+
+The owner-vault API model separates access observations, immutable policy
+history, chain evidence and revision publication across two requests and three
+project revisions. Existing transaction replay precedes expected-revision and
+chain validation. A stale registration may use a compatible old creation policy;
+a stale review cannot. Publication retains the captured current policy and
+checks its revision and enforcement generation. A committed vault survives a
+lost response. Neither the model nor a prior access read provides a continuous
+GitHub or wallet lock. These models and scenarios remain unexecuted.
+
 Contributor lock publication and evidence publication distinguish committed
 state from cleanup failure. Failed compensation retains recovery inputs.
 These operations do not provide crash-atomic multi-path publication or proof
