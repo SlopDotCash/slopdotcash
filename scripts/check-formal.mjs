@@ -32,6 +32,9 @@ const files = readdirSync(modelDirectory)
 // exception explicit and source-bound; ordinary stages retain their limits.
 const verificationTimeouts = {
   "ui_submitted_payment_recovery.qnt": 600_000,
+  // The journal's unchanged finite domain exceeds the ordinary three-minute
+  // budget. Keep a bounded, model-specific allowance for its reviewed view.
+  "direct_bounty_journal.qnt": 1_800_000,
 };
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
