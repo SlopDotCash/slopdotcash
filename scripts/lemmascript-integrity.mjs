@@ -370,13 +370,16 @@ function stripOuterParentheses(text) {
   return value;
 }
 
-/** Top-level `&&` conjuncts, each with its top-level comparison operators. */
-function topLevelParts(text) {
+/**
+ * Top-level parts split on `separator` (`&&` or `||`), each with its
+ * top-level comparison operators and whether it holds a top-level `?:`.
+ */
+function topLevelParts(text, separator = "&&") {
   const conjuncts = [];
   let depth = 0;
   let start = 0;
   let current = [];
-  let other = false;
+  let ternary = false;
   for (let i = 0; i < text.length; ) {
     const c = text[i];
     if (c === '"' || c === "'") {
@@ -390,19 +393,19 @@ function topLevelParts(text) {
     if (c === "(" || c === "[" || c === "{") depth++;
     if (c === ")" || c === "]" || c === "}") depth--;
     if (depth === 0) {
-      if (text.startsWith("&&", i)) {
+      if (text.startsWith(separator, i)) {
         conjuncts.push({
           text: text.slice(start, i),
           operators: current,
-          other,
+          ternary,
         });
         current = [];
-        other = false;
-        i += 2;
+        ternary = false;
+        i += separator.length;
         start = i;
         continue;
       }
-      if (text.startsWith("||", i) || c === "?") other = true;
+      if (c === "?") ternary = true;
       const operator = specOperators.find((candidate) =>
         text.startsWith(candidate, i),
       );
@@ -414,7 +417,7 @@ function topLevelParts(text) {
     }
     i++;
   }
-  conjuncts.push({ text: text.slice(start), operators: current, other });
+  conjuncts.push({ text: text.slice(start), operators: current, ternary });
   return conjuncts;
 }
 
@@ -423,8 +426,21 @@ function tautology(expression) {
   if (text === "true") return true;
   const parts = topLevelParts(text);
   if (parts.length > 1) return parts.some((part) => tautology(part.text));
-  const [{ operators, other }] = parts;
-  if (other || operators.length !== 1) return false;
+  const [{ operators, ternary }] = parts;
+  // A conditional expression is not split, so its branches are not misread.
+  if (ternary) return false;
+  // A disjunction holds for every input when any disjunct does.
+  const disjuncts = topLevelParts(text, "||");
+  if (disjuncts.length > 1)
+    return disjuncts.some((part) => tautology(part.text));
+  // `A ==> B` holds for every input when B does (`==>` is right-associative).
+  const implication = operators.find((entry) => entry.operator === "==>");
+  if (
+    implication &&
+    tautology(text.slice(implication.at + implication.operator.length))
+  )
+    return true;
+  if (operators.length !== 1) return false;
   const [{ operator, at }] = operators;
   if (!reflexiveOperators.has(operator)) return false;
   const left = stripOuterParentheses(text.slice(0, at));
@@ -434,8 +450,9 @@ function tautology(expression) {
 
 /**
  * Rejects a contract clause that holds for every input, such as
- * `ensures true`, `\\result == \\result`, or `x ==> x`, including one such
- * top-level conjunct. A tautological clause proves nothing about the code.
+ * `ensures true`, `\\result == \\result`, `x ==> x`, `p || true` or
+ * `p ==> true`, including one such top-level conjunct or disjunct. A
+ * tautological clause proves nothing about the code.
  */
 export function requireMeaningfulSpecifications(source) {
   for (const match of source.matchAll(

@@ -193,6 +193,12 @@ describe("tautological specification lint", () => {
     "//@ invariant i <= i",
     "//@ requires (a + b) == (a+b)",
     "//@ ensures \\result >= 0 && \\result == \\result",
+    "//@ ensures x == 1 || x == x",
+    "//@ ensures p || true",
+    "//@ ensures true || p",
+    "//@ ensures p ==> true",
+    "//@ ensures a ==> b ==> b == b",
+    "//@ ensures a ==> (b || true)",
   ])("rejects %s", (clause) => {
     expect(() =>
       requireMeaningfulSpecifications(`${clause}\nexport function f() {}`),
@@ -202,8 +208,10 @@ describe("tautological specification lint", () => {
   it.each([
     "//@ ensures \\result == x",
     "//@ ensures a ==> b",
-    "//@ ensures x == 1 || x == x",
     "//@ ensures f(x) == f(y)",
+    "//@ ensures x == 1 || x == 2",
+    "//@ ensures p ==> q || r",
+    "//@ ensures c ? x == x : y || true",
     '//@ ensures "a==a" == s',
     "//@ requires actors >= 1 && total >= minimumPerActor",
     "//@ ensures \\result != \\result",
