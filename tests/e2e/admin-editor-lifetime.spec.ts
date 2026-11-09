@@ -1,6 +1,11 @@
 import type { Page } from "@playwright/test";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
 import { expect, expectAccessibleReflow, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 function gate() {
@@ -180,6 +185,87 @@ async function savedDescription(page: Page, key: string) {
     const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
     return saved ? JSON.parse(saved.text).headline : null;
   }, key);
+}
+
+test("committed clearance departure starts no private GET after preflight", async ({
+  page,
+}) => {
+  const fixture = await editorFixture(page);
+  let reads = 0;
+  await page.route("**/api/v1/admin/vetting?**", (route) => {
+    reads += 1;
+    return route.fallback();
+  });
+  try {
+    await holdProjectSessionUntilUnmount(page, ".admin-action-bar");
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    await page.getByRole("button", { name: "Refresh clearance", exact: true }).click();
+    await leaveEditorWithHeldSession(page);
+    expect(reads).toBe(0);
+  } finally {
+    await releaseHeldEditorSession(page);
+    fixture.releaseSave();
+  }
+});
+
+for (const kind of ["save", "delist", "enforcement"] as const) {
+  test(`committed admin departure during ${kind} preflight starts no write`, async ({
+    page,
+  }) => {
+    const fixture = await editorFixture(page, kind === "enforcement");
+    const applied: unknown[] = [];
+    try {
+      let button = page.getByRole("button", { name: "Save revision 2", exact: true });
+      if (kind === "save") {
+        await fixture.description.fill("An unsent description survives leaving its admin editor");
+        await fixture.reason.fill("Record this intended revision only while its editor is open.");
+      } else {
+        await page.getByRole("navigation", { name: "Project administration" })
+          .getByRole("link", { name: "Overview", exact: true }).click();
+        if (kind === "delist") {
+          await page.getByRole("button", { name: "Delist", exact: true }).click();
+          button = page.getByRole("button", { name: "Delist project", exact: true });
+        } else {
+          const base = `/api/v1/admin/projects/${fixture.project.id}`;
+          await page.route(`**${base}/enforcement-preview`, (route) => route.fulfill({
+            json: { preview: enforcementPreview(route.request().postDataJSON(), fixture.record()) },
+          }));
+          await page.route(`**${base}/enforcement`, (route) => {
+            applied.push(route.request().postDataJSON());
+            return route.fulfill({ json: {} });
+          });
+          const panel = page.getByRole("region", { name: "Enforcement", exact: true });
+          await panel.getByLabel("Reason", { exact: true }).fill("Review this explicitly selected restriction");
+          await panel.getByLabel("Evidence link or case ID").fill("case-committed-admin-departure");
+          await panel.getByRole("button", { name: "Preview action", exact: true }).click();
+          button = panel.getByRole("button", { name: "Confirm: Quarantine", exact: true });
+          await expect(button).toBeVisible();
+        }
+      }
+      const savedDraft = await savedDescription(page, fixture.draftKey);
+      const reads = fixture.projectReads();
+      await holdProjectSessionUntilUnmount(page, ".admin-page");
+      await page.evaluate(() => {
+        const current = window.location.href;
+        window.history.replaceState(window.history.state, "", "/how-it-works");
+        window.history.pushState({}, "", current);
+      });
+      await button.click();
+      await leaveEditorWithHeldSession(page);
+      expect(fixture.saves).toHaveLength(0);
+      expect(applied).toEqual([]);
+      expect(fixture.projectReads()).toBe(reads);
+      expect(await savedDescription(page, fixture.draftKey)).toBe(savedDraft);
+      expect(fixture.record().revision).toBe(1);
+    } finally {
+      await releaseHeldEditorSession(page);
+      fixture.releaseSave();
+    }
+  });
 }
 
 test("late admin save cannot clear or close a newer focus-remounted draft", async ({

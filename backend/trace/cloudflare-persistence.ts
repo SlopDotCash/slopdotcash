@@ -28,6 +28,8 @@ import type {
 
 type R2Head = {
   size: number;
+  /** Opaque R2 object ETag; absent adapters cannot authorize a repair CAS. */
+  etag?: string;
   customMetadata?: Record<string, string>;
 };
 type R2ObjectBody = R2Head & { body: ReadableStream<Uint8Array> };
@@ -40,7 +42,9 @@ export type R2Bucket = {
     options: {
       httpMetadata: { contentType: string };
       customMetadata: Record<string, string>;
-      onlyIf: { etagDoesNotMatch: "*" };
+      onlyIf:
+        | { etagDoesNotMatch: "*"; etagMatches?: never }
+        | { etagMatches: string; etagDoesNotMatch?: never };
     },
   ): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;

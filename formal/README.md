@@ -116,7 +116,7 @@ the reviewed PR; earlier per-branch results do not certify the combined source.
 | Owner and monthly wallet attempts | `ui/ui_owner_recovery_lifetime.qnt`, `ui/ui_monthly_setting_recovery.qnt` | `tests/e2e/owner-awards.spec.ts`, `tests/e2e/vault-actions.spec.ts` |
 | Direct-payment journal and Solana pending records | `payments/direct_bounty_journal.qnt`, `ui/ui_solana_payment_pending.qnt` | `tests/e2e/bounty-full-flow.spec.ts`, `tests/e2e/bounty-solana-flow.spec.ts` |
 | Payment-child selection and submitted recovery | `ui/ui_bounty_payment_parent.qnt`, `ui/ui_submitted_payment_recovery.qnt` | The same EVM and Solana payment suites |
-| Private case ordering, Inbox mutation and Admin draft ownership | `ui/ui_private_case_revisions.qnt`, `ui/ui_inbox_mutation_focus.qnt`, `ui/ui_admin_editor_lifetime.qnt` | `tests/e2e/private-case-ordering.spec.ts`, `tests/e2e/inbox-response-owner.spec.ts`, `tests/e2e/admin-editor-lifetime.spec.ts` |
+| Private case ordering, Inbox mutation and Admin draft ownership | `ui/ui_private_case_revisions.qnt`, `ui/ui_inbox_mutation_focus.qnt`, `ui/ui_admin_editor_lifetime.qnt`, `ui/ui_admin_mutation_identity.qnt` | `tests/e2e/private-case-ordering.spec.ts`, `tests/e2e/inbox-response-owner.spec.ts`, `tests/e2e/admin-editor-lifetime.spec.ts` |
 | Admin vetting request ownership | `ui/ui_admin_vetting_requests.qnt` | `tests/e2e/admin-vetting-request-ownership.spec.ts` |
 | Evidence registration, inventory and upload completion | `vetting/vetting_evidence_registration.qnt`, `vetting/vetting_evidence_inventory.qnt`, `vetting/vetting_upload_completion.qnt`, `vetting/vetting_object_lifecycle.qnt` | `scripts/vetting-api.test.ts`; the cleanup race below remains unresolved |
 | Payment preparation and recovery at commit | `payments/direct_preparation_completion.qnt`, `payments/direct_recovery_completion.qnt` | `backend/security/direct-payments.integration.ts` with migrated SQLite and local Anvil |
@@ -810,9 +810,17 @@ whole recorder. Direct-child cleanup is not process-tree containment. Backup
 objects, readback verification, completion records and queue acknowledgment
 remain separate states.
 
-Admin vetting forms retire their request ownership during layout cleanup.
+Admin revision, delisting and enforcement forms retire request ownership
+during layout cleanup. The admin mutation model has 20 scenarios over two
+actors, requests and lifetimes, with three draft values. The clearance reader
+uses a layout generation fence while its request and status updates stay in
+the passive effect. Its departed continuation cannot start a private read or
+invalidate the replacement view's session. Four additional browser regression
+definitions cover these preflight-at-removal cases. They have not run.
+
+Admin vetting forms also retire request ownership during layout cleanup.
 A session preflight that returns after committed departure cannot start a scan,
-an exemption write or a parent refresh. The request model has 31 scenarios over
+an exemption write or a parent refresh. The request model has 32 scenarios over
 two reads, actors and parent lifetimes, and one mutation. It separates session
 observation, helper return and caller use, and keeps historical passive-cleanup
 failures outside the corrected transition relation. Two browser regression
@@ -830,13 +838,19 @@ straddle expiry; the result is not an atomic storage snapshot. A route regressio
 definition revokes the real session while the committed list audit reply waits.
 
 Content-addressed upload repair now requires an explicit missing or corrupt
-observation. A storage transport failure does not authorize an overwrite.
+observation. Missing copies retry create-only. Corrupt copies require the
+ETag from that failed verification, and R2 must compare it before writing.
+Unknown read failures and absent ETags authorize no replacement. Conditional
+write results still require fresh byte verification. The local workerd and
+development adapters pass through the real ETag and conditional operation.
 Chunk upload and finalization reread retention after storage verification and
 before recording acceptance. These are observation boundaries, not atomic
 time reservations through later SQL or response delivery. The upload model
-has 23 scenarios over two runs, two parts and two sequential requests. It
-separates durable bytes, per-run completion, audits and lost replies. Three
-route regression definitions cover transport failure, repair and expiry across
+has 27 scenarios over two runs, two parts and two sequential requests, with
+four ETag classes. It separates durable bytes, per-run completion, audits and
+lost replies. Metadata-only repair may preserve an ETag; that value cannot
+prove a unique storage generation. Seven route regression definitions cover
+transport failure, conditional repair, concurrent replacement and expiry across
 I/O. The models and regression definitions have not run.
 
 Physical evidence cleanup still has an unresolved race. The D1 cleanup claim
@@ -852,6 +866,19 @@ a later generation; the [Workers API](https://developers.cloudflare.com/r2/api/w
 does not provide a version-match condition. No generation or writer-fencing
 repair is implemented here. Current cleanup receipts therefore do not prove
 that no delayed writer can restore the bytes.
+
+Cleanup also traverses only the selected final reference's declared layout.
+An earlier reference can have declared another part key before whole-file
+verification. Its bytes, or its delayed upload, remain outside that traversal.
+The retention model's 19 scenarios bound three references, two selected part
+keys, one historical-only key, two admitted uploads and three cleanup
+selections. They distinguish shared logical retirement, verified backups,
+partial deletes, absent-part audits and lost replies. Its receipts describe
+observations rather than permanent absence.
+A complete repair must reserve and fence every physical write target, including
+repair candidates, then retain those targets' history. New references and
+repairs must not reopen retired keys. Legacy unconditional writers need a
+separate migration boundary; neither new source nor a later read cancels them.
 
 This branch includes the changes from merged PR
 [#2432](https://github.com/SlopDotCash/slopdotcash/pull/2432) through development

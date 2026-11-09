@@ -988,18 +988,27 @@ export function ActivationClearance({
     "Checking security clearance…",
   );
   const [attempt, setAttempt] = useState(0);
+  const generation = useRef(0);
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [actorId, projectId, revision, attempt, onAccessLost],
+  );
   useEffect(() => {
     let active = true;
+    const current = generation.current;
+    const owns = () => active && generation.current === current;
     setClearance("Checking security clearance…");
     void ownedVettingRequest<Overview>(
       actorId,
       "GET",
       `admin/vetting?refresh=${attempt}`,
       undefined,
-      () => active,
+      owns,
     ).then(
       (result) => {
-        if (!active || !result) return;
+        if (!owns() || !result) return;
         const body = result.value;
         const project = body.projects.find((entry) => entry.id === projectId);
         setClearance(
@@ -1009,7 +1018,7 @@ export function ActivationClearance({
         );
       },
       (error) => {
-        if (!active) return;
+        if (!owns()) return;
         setClearance(message(error));
         if (isAdminActionAccessLoss(error)) onAccessLost();
       },

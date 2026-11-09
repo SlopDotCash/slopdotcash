@@ -95,6 +95,7 @@ export async function localVettingEvidence(
       throw new Error(`Local R2 read failed: ${response.status}`);
     return {
       size: Number(response.headers.get("x-r2-size")),
+      etag: response.headers.get("x-r2-etag") ?? undefined,
       customMetadata: JSON.parse(response.headers.get("x-r2-metadata")!),
       body: response.body,
       arrayBuffer: () => response.arrayBuffer(),
@@ -134,6 +135,7 @@ export async function localVettingEvidence(
         return value
           ? {
               size: value.size,
+              etag: value.etag,
               customMetadata: value.customMetadata,
               body: value.body!,
             }

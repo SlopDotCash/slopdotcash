@@ -138,11 +138,15 @@ live once in private R2 at `vetting/objects/<sha256>` (parts at
 each run's manifest, object rows, digests and chunk layout. `object_key`
 remains the unique per-row identity; `storage = 'content'` says where the
 bytes are. Rows from before migration 0107 keep their run-scoped keys. Every
-upload is checked against its digest before it is written and reread after,
-so a content-addressed key can only hold the bytes it names. Writes are
-create-only; a valid copy is never overwritten. The single exception repairs
-a content-addressed copy that is missing or fails its digest: newly verified
-bytes for that same digest replace it. Registration answers with `stored`: the
+upload is checked against its digest before it is written and reread after.
+Initial writes and retries after an observed missing copy are create-only.
+An observed valid copy needs no repair. A known corrupt content-addressed copy
+can be repaired only with the ETag from that failed verification; the R2 write
+must compare that ETag. Missing ETags and transport failures refuse repair.
+A concurrent change can make the condition fail, so the API verifies the
+current bytes again before accepting the upload. ETags are not unique storage
+generation identifiers, and this guard does not resolve the cleanup race below.
+Registration answers with `stored`: the
 digests whose complete bytes (every part) reread and hash correctly now. The
 scanner references them instead of uploading again. This is a hint only: a chunked
 object still needs this run's finalization, which rereads every part and the
@@ -248,3 +252,7 @@ receipt records an observed deletion, not permanent absence. The Quint object
 lifecycle and upload models expose this unresolved race. A repair must isolate
 storage generations and resolve writes with an unknown outcome before claiming
 physical retirement; a fresh HEAD or an expiry check alone cannot do this.
+The current final-reference traversal also does not include alternate part keys
+declared by earlier references. A complete retirement fence must include all
+historically reserved targets, including failed repair candidates, without
+claiming a complete backup for bytes that were missing.

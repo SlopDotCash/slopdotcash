@@ -240,7 +240,7 @@ function ProjectEditor({
   const draftKey = `slop:admin-project:${project.id}:${project.revision}`;
   const mounted = useRef(true);
   const inFlight = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -834,7 +834,7 @@ function DelistButton({
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
   const inFlight = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;

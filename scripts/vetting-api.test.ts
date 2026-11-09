@@ -2258,6 +2258,7 @@ test("an unavailable content read does not authorize overwrite, while verified c
   const bytes = new TextEncoder().encode(VETTING_TRACE_BODY);
   const bucket = retained.evidence.deps.bucket!;
   const writes: boolean[] = [];
+  const repairEtags: string[] = [];
   let unavailable = true;
   const uploadAudits = () => sqlite.query(
     "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
@@ -2267,6 +2268,8 @@ test("an unavailable content read does not authorize overwrite, while verified c
     ...bucket,
     put: async (target, value, options) => {
       writes.push(options.onlyIf?.etagDoesNotMatch === "*");
+      if (options.onlyIf.etagMatches !== undefined)
+        repairEtags.push(options.onlyIf.etagMatches);
       return bucket.put(target, value, options);
     },
     get: async (target) => {
@@ -2297,10 +2300,135 @@ test("an unavailable content read does not authorize overwrite, while verified c
       customMetadata: { sha256: VETTING_TRACE_SHA },
       httpMetadata: { contentType: "text/plain" },
     });
+    const corrupt = await bucket.head(key);
+    expect(typeof corrupt?.etag).toBe("string");
     expect((await upload()).status).toBe(200);
     expect(writes).toEqual([true, true, true, false]);
+    expect(repairEtags).toEqual([corrupt!.etag!]);
     const repaired = await bucket.get(key);
     expect(await new Response(repaired!.body).text()).toBe(VETTING_TRACE_BODY);
+  } finally {
+    retained.evidence.deps.bucket = bucket;
+  }
+}, 30000);
+
+for (const winner of ["repaired", "changed-corrupt", "missing-etag"] as const) {
+  test(`conditional evidence repair handles a ${winner} observation without blind overwrite`, async () => {
+    await listPausedProject();
+    const id = await queueScan();
+    const runId = `conditional-repair-${winner}`;
+    await retained.retain(id, runId);
+    const path = `/api/v1/vetting/evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+    const key = `vetting/objects/${VETTING_TRACE_SHA}`;
+    const bytes = new TextEncoder().encode(VETTING_TRACE_BODY);
+    const bucket = retained.evidence.deps.bucket!;
+    await retained.bucket.delete(key);
+    await bucket.put(key, new Uint8Array(bytes.length).fill(7), {
+      onlyIf: { etagDoesNotMatch: "*" },
+      customMetadata: { sha256: VETTING_TRACE_SHA },
+      httpMetadata: { contentType: "text/plain" },
+    });
+    const before = await bucket.head(key);
+    if (!before?.etag) throw new Error("Local R2 did not expose the corrupt ETag");
+    const beforeEtag = before.etag;
+    let repairs = 0;
+    let rejected = false;
+    retained.evidence.deps.bucket = {
+      ...bucket,
+      get: async (target) => {
+        const object = await bucket.get(target);
+        if (object && winner === "missing-etag") {
+          const { etag: _etag, ...withoutEtag } = object;
+          return withoutEtag;
+        }
+        return object;
+      },
+      put: async (target, value, options) => {
+        if (options.onlyIf.etagMatches !== undefined) {
+          repairs++;
+          expect(options.onlyIf.etagMatches).toBe(beforeEtag);
+          // Another writer commits after our corrupt-body read. Exercise the
+          // actual workerd condition, then reread whichever bytes won.
+          await bucket.put(target, winner === "repaired" ? bytes : new Uint8Array(bytes.length).fill(8), {
+            onlyIf: { etagMatches: beforeEtag },
+            customMetadata: { sha256: VETTING_TRACE_SHA, winner },
+            httpMetadata: { contentType: "text/plain" },
+          });
+          const result = await bucket.put(target, value, options);
+          rejected = result === null;
+          return result;
+        }
+        return bucket.put(target, value, options);
+      },
+    };
+    const auditCount = sqlite.query(
+      "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+    ).get(id, runId);
+    try {
+      const response = await retained.evidence.handle(await retained.request("PUT", path, bytes));
+      expect(response?.status).toBe(winner === "repaired" ? 200 : 409);
+      expect(repairs).toBe(winner === "missing-etag" ? 0 : 1);
+      expect(rejected).toBe(winner !== "missing-etag");
+      const after = await bucket.head(key);
+      if (winner === "missing-etag") expect(after?.etag).toBe(beforeEtag);
+      else expect(after?.customMetadata?.winner).toBe(winner);
+      if (winner !== "repaired")
+        expect(sqlite.query(
+          "SELECT count(*) AS n FROM vetting_evidence_audit WHERE assessment_id=? AND run_id=? AND action='upload'",
+        ).get(id, runId)).toEqual(auditCount);
+      if (winner === "repaired") {
+        const object = await bucket.get(key);
+        expect(await new Response(object!.body).text()).toBe(VETTING_TRACE_BODY);
+      }
+    } finally {
+      retained.evidence.deps.bucket = bucket;
+    }
+  }, 30000);
+}
+
+test("missing evidence retry stays create-only when another writer restores the object", async () => {
+  await listPausedProject();
+  const id = await queueScan();
+  const runId = "missing-repair-race";
+  await retained.retain(id, runId);
+  const path = `/api/v1/vetting/evidence/${id}/${runId}/${VETTING_TRACE_SHA}`;
+  const key = `vetting/objects/${VETTING_TRACE_SHA}`;
+  const bytes = new TextEncoder().encode(VETTING_TRACE_BODY);
+  const bucket = retained.evidence.deps.bucket!;
+  let hideOnce = true;
+  let writes = 0;
+  let rejected = false;
+  retained.evidence.deps.bucket = {
+    ...bucket,
+    get: async (target) => {
+      if (target === key && hideOnce) {
+        hideOnce = false;
+        await retained.bucket.delete(key);
+        return null;
+      }
+      return bucket.get(target);
+    },
+    put: async (target, value, options) => {
+      writes++;
+      expect(options.onlyIf).toEqual({ etagDoesNotMatch: "*" });
+      if (writes === 2) {
+        await bucket.put(target, bytes, {
+          onlyIf: { etagDoesNotMatch: "*" },
+          customMetadata: { sha256: VETTING_TRACE_SHA, winner: "concurrent" },
+          httpMetadata: { contentType: "text/plain" },
+        });
+      }
+      const result = await bucket.put(target, value, options);
+      if (writes === 2) rejected = result === null;
+      return result;
+    },
+  };
+  try {
+    const response = await retained.evidence.handle(await retained.request("PUT", path, bytes));
+    expect(response?.status).toBe(200);
+    expect(writes).toBe(2);
+    expect(rejected).toBe(true);
+    expect((await bucket.head(key))?.customMetadata?.winner).toBe("concurrent");
   } finally {
     retained.evidence.deps.bucket = bucket;
   }
