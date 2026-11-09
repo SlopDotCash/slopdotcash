@@ -740,7 +740,9 @@ export default function OwnerAwards({
                     Finalized{" "}
                     {view.run.trigger === "automatic"
                       ? "automatically"
-                      : "by you"}{" "}
+                      : view.canManage
+                        ? "by you"
+                        : "by the owner"}{" "}
                     on{" "}
                     <time dateTime={view.run.frozenAt}>
                       {formatDateTime(view.run.frozenAt)}

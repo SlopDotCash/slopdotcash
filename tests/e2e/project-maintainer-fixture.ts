@@ -52,7 +52,9 @@ export async function serveProjectMaintainer(
 }
 
 /** The enforcement summary of an unrestricted project. */
-export function clearProjectEnforcement() {
+export function clearProjectEnforcement(
+  moderation: "moderator" | "unconfigured" = "unconfigured",
+) {
   return {
     state: "clear",
     appeal: "none",
@@ -61,7 +63,7 @@ export function clearProjectEnforcement() {
     restrictedBy: [],
     nextSequence: 1,
     revisionPending: false,
-    moderation: "unconfigured",
+    moderation,
     decisionRequired: false,
     bannedMaintainers: [],
     records: [],
@@ -78,6 +80,7 @@ export function adminProjectRecord(
     manifestSha256 = "a".repeat(64),
     createdAt = "2026-10-22T00:00:00.000Z",
     updatedAt = createdAt,
+    moderation = "unconfigured",
   }: {
     manifest?: ProjectDefinition;
     status?: string;
@@ -85,6 +88,7 @@ export function adminProjectRecord(
     manifestSha256?: string;
     createdAt?: string;
     updatedAt?: string;
+    moderation?: "moderator" | "unconfigured";
   } = {},
 ) {
   return {
@@ -96,6 +100,6 @@ export function adminProjectRecord(
     createdAt,
     updatedAt,
     sourceApplicationId: null,
-    enforcement: clearProjectEnforcement(),
+    enforcement: clearProjectEnforcement(moderation),
   };
 }

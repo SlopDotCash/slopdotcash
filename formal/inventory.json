@@ -32,12 +32,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "10b0625c6765df47a9d7e5fa92991d86cb225409ac74583d138bdf3e6bb7c537",
+      "sha256": "47797401382a12bcaa0ca918027fd1bfaeb5b7489f4562fc1b7cdc30fe7e5f2c",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [188],
+      "candidateLines": [191],
       "review": "mapped-abstraction"
     },
     {
@@ -3348,7 +3348,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "5f7a01ce9e4ccd470b46683cb39334538690971f9d4ed57043a2293641480f47",
+      "sha256": "8af46ca358fefc5fc52a930fdeafd4d0fce096c79d3b7678c61cbc150886473f",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -4891,7 +4891,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "b58f43f731908c44a69e9fffd7bbada141fe2cef62c6aeb5b42300a1226f2f67",
+      "sha256": "22dd6cb76ed1451d0dae35e0bb7a9cb6e55ad259b805bd13fc9d7deb50cfed0e",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -4903,7 +4903,7 @@
       "candidateLines": [
         6, 9, 70, 103, 105, 108, 115, 116, 124, 125, 136, 139, 140, 141, 142,
         143, 146, 147, 197, 257, 259, 267, 285, 286, 380, 405, 452, 475, 485,
-        541, 564, 599, 618, 739, 740, 767, 768, 772, 777, 783, 800
+        541, 564, 599, 618, 739, 740, 769, 770, 774, 779, 785, 802
       ],
       "review": "mapped-abstraction"
     },
