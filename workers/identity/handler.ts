@@ -1,4 +1,4 @@
-import { type ApiError, cookieValue, fail } from "../../backend/http";
+import { apiErrorResponse, cookieValue, fail } from "../../backend/http";
 import { readLimitedBody } from "../../backend/trace/validation";
 import { brandTokens as brand } from "../../src/brand-tokens";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
@@ -575,28 +575,9 @@ async function handleIdentityRequestCore(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    const code =
-      typeof error.code === "string" &&
-      /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-        ? error.code
-        : "internal_error";
-    if (status >= 500) console.error("slop identity request failed");
-    return json(status, {
-      error: code,
-      message:
-        status >= 500 || typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    return apiErrorResponse(caught, {
+      label: "slop identity request failed",
+      respond: json,
     });
   }
 }
