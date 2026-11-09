@@ -140,9 +140,9 @@
     {
       "path": "backend/d1.ts",
       "sha256": "1fd78e8711c073c46d82a0ad9498d808b48bc38fc9f730206336a632ae1bfdbb",
-      "models": [],
+      "models": ["formal/models/api/trace_run_creation.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "D1 interfaces and pure exception classification; owns no data, counters, cache, timer or transition. The DB writes are covered at their callers."
     },
     {
@@ -463,7 +463,10 @@
     {
       "path": "backend/projects/account-bans.ts",
       "sha256": "8f8382f445dd5d1ef141bac6257a6a2ae0814b447c994b667fa01741b12c50fd",
-      "models": ["formal/models/api/api_project_enforcement.qnt"],
+      "models": [
+        "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/api/trace_run_creation.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -945,7 +948,9 @@
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
         "formal/models/api/api_wallet_claims.qnt",
-        "formal/models/api/operator_intake_renewal.qnt"
+        "formal/models/api/operator_intake_renewal.qnt",
+        "formal/models/api/trace_event_finalization.qnt",
+        "formal/models/api/trace_run_creation.qnt"
       ],
       "candidateLines": [
         61, 156, 279, 280, 283, 301, 312, 317, 340, 378, 391, 394, 416, 417,
@@ -963,7 +968,9 @@
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
-        "formal/models/api/trace_bearer_tokens.qnt"
+        "formal/models/api/trace_bearer_tokens.qnt",
+        "formal/models/api/trace_event_finalization.qnt",
+        "formal/models/api/trace_run_creation.qnt"
       ],
       "candidateLines": [16, 17, 26, 40, 84, 140, 171, 172, 173],
       "review": "mapped-abstraction"
@@ -977,7 +984,9 @@
         "formal/models/api/api_wallet_claims.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_bearer_tokens.qnt",
-        "formal/models/api/trace_route_authorization.qnt"
+        "formal/models/api/trace_event_finalization.qnt",
+        "formal/models/api/trace_route_authorization.qnt",
+        "formal/models/api/trace_run_creation.qnt"
       ],
       "candidateLines": [
         87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 438, 510,
@@ -1763,7 +1772,9 @@
       "sha256": "947da3f407ce20472a8a1be34bb5b6c2c3f2ccff117b32bd1ff6f6fe9c9a5f04",
       "models": [
         "formal/models/api/api_trace.qnt",
-        "formal/models/api/api_trace_intent_admission.qnt"
+        "formal/models/api/api_trace_intent_admission.qnt",
+        "formal/models/api/trace_event_finalization.qnt",
+        "formal/models/api/trace_run_creation.qnt"
       ],
       "candidateLines": [17, 24, 125, 126, 131, 132],
       "review": "mapped-abstraction"
@@ -9197,6 +9208,42 @@
       ]
     },
     {
+      "path": "formal/models/api/trace_event_finalization.qnt",
+      "sha256": "c43133b0c5ab6d24bbb023000d9e01942baf8f42a12aedfd4e97d1d33b3824f6",
+      "sources": [
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/contracts.ts",
+        "backend/trace/handler.ts",
+        "migrations/0001_private_trace_backend.sql"
+      ],
+      "scenarios": [
+        "differentPayloadConflictsTest",
+        "eventReadAfterFinalizationIsRefusedTest",
+        "eventReplyLossKeepsRecordTest",
+        "eventThenFinalizeFreezesHistoryTest",
+        "existingReadCanFinishAfterLateBanTest",
+        "finalizationBetweenEventReadAndWritePreventsInsertTest",
+        "finalizationCommitSurvivesLostReplyTest",
+        "finalizationRequiresAttachedTraceTest",
+        "finalizationResponseCanFollowLaterBanTest",
+        "identicalLaterEventReturnsStoredRecordTest",
+        "invalidEventBodyHasNoWriteTest",
+        "invalidFinalizationKeyPrecedesOwnerReadTest",
+        "lateBanPreventsEventInsertTest",
+        "lateBanRefusesFinalizationTest",
+        "laterWriterCannotReplaceStampWithEarlierCaptureTest",
+        "missingEventChangesCountDoesNotUndoInsertTest",
+        "missingFinalizationChangesCountKeepsCommitTest",
+        "missingReadbackKeepsFinalizationTest",
+        "missingRunIsNotOwnerSuccessTest",
+        "otherOwnerCannotAppendTest",
+        "overlappingIdenticalEventsCanReturnConflictTest",
+        "repeatedFinalizationKeepsFirstStampTest",
+        "responseDeliveryFailureDoesNotUndoFinalizationTest",
+        "separateEventKeysBothPersistTest"
+      ]
+    },
+    {
       "path": "formal/models/api/trace_route_authorization.qnt",
       "sha256": "a8108c2c31016781380c2bf2db961a5c11969dc0e673fd337c198f2186293e45",
       "sources": [
@@ -9240,6 +9287,49 @@
         "stagingApiAndSiteCanUseSessionRecoveryTest",
         "uploadDelegatesCapabilityBeforeBearerTest",
         "validPreflightReturns204WithoutAnyAuthenticationTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/trace_run_creation.qnt",
+      "sha256": "ff5c39c69d1905c5a38671fba7a9cb484a9f78e91d7e0c2809e944972e521c00",
+      "sources": [
+        "backend/d1.ts",
+        "backend/projects/account-bans.ts",
+        "backend/trace/cloudflare-persistence.ts",
+        "backend/trace/contracts.ts",
+        "backend/trace/handler.ts",
+        "migrations/0001_private_trace_backend.sql"
+      ],
+      "scenarios": [
+        "banBetweenInitialCheckAndInsertPreventsNewRowTest",
+        "byIdReadbackCanObserveAdvancedRunStateTest",
+        "changedPayloadOnSameKeyRefusesTest",
+        "committedInsertLostResultRecoversByReplayTest",
+        "concurrentDifferentPayloadReturnsConflictTest",
+        "concurrentMatchingPayloadReturnsCreatedAndExistingTest",
+        "conflictBanReadFailurePreservesOriginalRowTest",
+        "conflictingReplayRechecksLaterBanTest",
+        "failedByIdReadbackDoesNotUndoCommitTest",
+        "finalizedRunStillReplaysCreationTest",
+        "genericInsertFailureCanRetryTest",
+        "initialBanReadFailureDoesNotCreateRunTest",
+        "initialBanRefusesBeforeBodyOrLookupTest",
+        "invalidRequiredFieldsNeverReachLookupTest",
+        "laterBanDoesNotUndoCommittedRunTest",
+        "lostSuccessResponseRecoversSameRunTest",
+        "malformedBodyRefusesBeforePersistenceTest",
+        "matchingReplayReturnsOriginalIdLoginAndTimeTest",
+        "ordinaryCreationReturnsPersistedRunTest",
+        "oversizedBodyRefusesBeforePersistenceTest",
+        "pendingReadIsNotSuccessfulCreationTest",
+        "raceReadFailureKeepsWinningInsertionTest",
+        "randomIdFailurePrecedesFieldValidationTest",
+        "reinstatementBeforeConflictClassificationReturns409Test",
+        "replayCanReturnAfterBanFollowingInitialAdmissionTest",
+        "responseRetainsStateCapturedBeforeLaterFinalizationTest",
+        "retryAfterRefusedInsertCanCreateAfterReinstatementTest",
+        "sameClientPayloadWithDifferentKeysCreatesDistinctRunsTest",
+        "sameKeyAcrossActorsDoesNotConflictTest"
       ]
     },
     {
