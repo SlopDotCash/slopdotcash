@@ -9,6 +9,7 @@ import {
   acquireRepository,
   readAcquisitionBody,
 } from "./acquire";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   serviceOrigin,
   signedVettingFetch,
@@ -32,14 +33,6 @@ const safePath = (value: unknown): string => {
   )
     throw new Error("Invalid input path");
   return value;
-};
-export type QueuedAssessment = {
-  assessmentId: string;
-  projectId: string;
-  revision: number;
-  manifestSha256: string;
-  commitSha: string;
-  templateSha256: string;
 };
 /** A refusal bound to the assignment reread by acquisition itself. */
 export class QueuedAcquisitionRefusal extends AcquisitionRefusal {

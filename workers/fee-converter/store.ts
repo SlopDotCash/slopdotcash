@@ -21,6 +21,7 @@ import type {
   SendReplacement,
 } from "./core";
 import { LOCK_MS } from "./core";
+import type { D1Value, FeeD1Database } from "./d1";
 import { assertJupiterRoute } from "./jupiter-route";
 import {
   retainedRouteExpectation,
@@ -37,17 +38,6 @@ import {
   nativeFeeEarnings,
   nativeFeeRemainder,
 } from "./verified-native-liability";
-
-type D1Value = string | number | null;
-interface D1Statement {
-  bind(...values: D1Value[]): D1Statement;
-  first<T>(): Promise<T | null>;
-  all<T>(): Promise<{ results: T[] }>;
-  run(): Promise<{ meta?: { changes?: number } }>;
-}
-export interface FeeD1Database {
-  prepare(query: string): D1Statement;
-}
 
 const COLUMNS: [keyof ConversionRow, string][] = [
   ["id", "id"],

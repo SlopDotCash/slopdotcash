@@ -11,7 +11,10 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
-import type { MonthlyAttestationPlan } from "../../backend/payments/monthly-attestation";
+import type {
+  MonthlyAttestationPlan,
+  MonthlyAuthorization,
+} from "../../backend/payments/monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
 import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-persistence";
@@ -28,10 +31,7 @@ import type {
   JournalStore,
 } from "../../workers/payment-executor/binding-shared";
 import { submitEvmMonthly } from "../../workers/payment-executor/core";
-import {
-  type MonthlyAuthorization,
-  signMonthlyAllocation,
-} from "../../workers/payment-executor/monthly";
+import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import {
   checkMonthlyReserveRelease,
   prepareMonthlyReserveRelease,

@@ -9,6 +9,7 @@ import type {
   DispatchPayment,
   PaymentExecutor,
 } from "../../backend/payments/dispatch";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   buildPaymentWalletMessage,
   verifyEvmBindingSignature,
@@ -58,7 +59,6 @@ import {
   storedBindingAbi,
   transactionHash,
 } from "./binding-shared";
-import type { MonthlyAuthorization } from "./monthly";
 
 export type PublicEvmExecutorEnvironment = Omit<
   ExecutorEnvironment,

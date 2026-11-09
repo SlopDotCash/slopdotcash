@@ -35,6 +35,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   composeAcquisitionRefusal,
   composeScanResult,
@@ -53,7 +54,6 @@ import {
   acquireQueuedAssessment,
   type QueueConnection,
   QueuedAcquisitionRefusal,
-  type QueuedAssessment,
   readPendingAssessments,
 } from "./queue";
 import { type ReviewCache, reviewInventory } from "./review-plan";

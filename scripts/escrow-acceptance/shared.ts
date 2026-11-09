@@ -39,8 +39,8 @@ import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { sha256Hex } from "../../workers/identity/crypto";
 import type { JournalStore } from "../../workers/payment-executor/binding-shared";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
 import paymentsWorker, {
-  type PaymentDeployment,
   type PaymentsWorkerEnvironment,
 } from "../../workers/payments/index";
 

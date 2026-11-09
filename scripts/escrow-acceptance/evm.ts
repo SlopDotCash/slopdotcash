@@ -34,10 +34,8 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import { isWalletChain } from "../../src/lib/wallets";
 import { PaymentSignerJournal } from "../../workers/payment-executor/index";
-import type {
-  PaymentDeployment,
-  PaymentsWorkerEnvironment,
-} from "../../workers/payments/index";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
+import type { PaymentsWorkerEnvironment } from "../../workers/payments/index";
 import {
   type AcceptanceNetwork,
   AcceptanceRegistry,

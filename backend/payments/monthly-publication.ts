@@ -8,10 +8,12 @@ import {
   monthlyCutoff,
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import type { D1TransactionalDatabase } from "../d1";
 import { automaticMonthlyPayment } from "./monthly";
-import type { MonthlyAttestationRequest } from "./monthly-attestation";
+import type {
+  MonthlyAttestationRequest,
+  MonthlyAuthorization,
+} from "./monthly-attestation-types";
 
 export async function publishMonthlyAuthorizations(deps: {
   db: D1TransactionalDatabase;

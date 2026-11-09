@@ -46,10 +46,8 @@ import {
   MonthlyPaymentError,
   monthlyOwnerService,
 } from "./monthly";
-import {
-  type MonthlyAttestationPlan,
-  prepareMonthlyAttestation,
-} from "./monthly-attestation";
+import { prepareMonthlyAttestation } from "./monthly-attestation";
+import type { MonthlyAttestationPlan } from "./monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);

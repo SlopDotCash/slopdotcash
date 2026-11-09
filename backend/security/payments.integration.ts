@@ -33,10 +33,8 @@ import { createEvmExecutor } from "../../workers/payment-executor/core";
 import attesterWorker, {
   PaymentSignerJournal,
 } from "../../workers/payment-executor/index";
-import {
-  type PaymentDeployment,
-  readDeploymentVaultTotals,
-} from "../../workers/payments";
+import { readDeploymentVaultTotals } from "../../workers/payments";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
 import { readMonthlySchedule } from "../../workers/payments/registry-database.mjs";
 import { type DispatchPayment, dispatchPayment } from "../payments/dispatch";
 import { evmPaymentAdapter } from "../payments/evm-adapter";

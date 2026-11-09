@@ -18,7 +18,7 @@ import {
   isEscrowChain,
   isMaxNativeCostWei,
 } from "../../src/lib/escrow-policy.mjs";
-import type { PaymentDeployment } from "../payments/index";
+import type { PaymentDeployment } from "../payments/deployment-types";
 import { mainnetExecutionEnabled } from "./mainnet-execution.mjs";
 
 export type Hex = `0x${string}`;

@@ -1,3 +1,4 @@
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   readEvmAuthorityRotation,
   verifyPayment,
@@ -34,7 +35,6 @@ import {
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "../../workers/payment-executor/core";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import {
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,

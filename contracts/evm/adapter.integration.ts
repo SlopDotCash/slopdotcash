@@ -5,9 +5,9 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { mnemonicToAccount } from "viem/accounts";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { submitEvmMonthly } from "../../workers/payment-executor/core";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import {
   type BindingInput,
   buildBindCalldata,

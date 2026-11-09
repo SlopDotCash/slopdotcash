@@ -31,7 +31,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
-import type { QueuedAssessment } from "./queue";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,

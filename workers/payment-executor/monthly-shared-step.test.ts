@@ -17,6 +17,7 @@ import {
   toFunctionSelector,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   evmAllocationRoot,
   evmAwardId,
@@ -37,7 +38,6 @@ import {
   submitEvmMonthly,
   submitPermissionlessEvmPayment,
 } from "./core";
-import type { MonthlyAuthorization } from "./monthly";
 
 const keeper = privateKeyToAccount(`0x${"7".repeat(64)}`);
 const identity = privateKeyToAccount(`0x${"6".repeat(64)}`);

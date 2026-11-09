@@ -3,7 +3,10 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type { PaymentExecutor } from "../../backend/payments/dispatch";
-import type { MonthlyAttestationRequest } from "../../backend/payments/monthly-attestation";
+import type {
+  MonthlyAttestationRequest,
+  MonthlyAuthorization,
+} from "../../backend/payments/monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import {
   isMonthlyReleaseCheck,
@@ -49,7 +52,6 @@ import {
   runStoredBindings,
   submitEvmMonthly,
 } from "./core";
-import type { MonthlyAuthorization } from "./monthly";
 import { signMonthlyAllocation } from "./monthly";
 import {
   checkMonthlyReserveRelease,
