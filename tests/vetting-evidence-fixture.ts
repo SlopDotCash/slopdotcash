@@ -93,14 +93,16 @@ export async function localVettingEvidence(
     if (response.status === 404) return null;
     if (!response.ok)
       throw new Error(`Local R2 read failed: ${response.status}`);
+    // Exercise the standard stream contract rather than Bun's optimized
+    // HTTP reader, whose releaseLock can fail under concurrent reads.
+    const body = response.body?.pipeThrough(new TransformStream()) ?? null;
+    const normalized = new Response(body);
     return {
       size: Number(response.headers.get("x-r2-size")),
       etag: response.headers.get("x-r2-etag") ?? undefined,
       customMetadata: JSON.parse(response.headers.get("x-r2-metadata")!),
-      // Exercise the standard stream contract rather than Bun's optimized
-      // HTTP reader, whose releaseLock can fail under concurrent reads.
-      body: response.body?.pipeThrough(new TransformStream()) ?? null,
-      arrayBuffer: () => response.arrayBuffer(),
+      body,
+      arrayBuffer: () => normalized.arrayBuffer(),
     };
   }
   const bucket = {
