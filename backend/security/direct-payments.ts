@@ -545,8 +545,15 @@ export async function refreshDirectIntent(
 }
 const TRANSFER_RECEIPTS =
   "(SELECT json_group_array(json_object('legIndex',leg_index,'evidence',json(evidence))) FROM (SELECT leg_index,evidence FROM security_direct_transfer_receipts WHERE case_id=p.case_id ORDER BY leg_index))";
+/**
+ * The settlement view must apply the same recipient fence as submission:
+ * the claim must belong to the case reporter, on the intent's chain, from
+ * the registry. The view previously checked only the claim id and digest,
+ * so a claim that no longer belongs to the reporter (or never did) still
+ * read as current, and the payer saw no wallet review.
+ */
 const CURRENT_RECIPIENT =
-  "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=json_extract(p.intent,'$.recipient.id') AND w.record_sha256=json_extract(p.intent,'$.recipient.digest'))";
+  "EXISTS(SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id=w.id AND a.github_user_id=w.github_user_id WHERE w.id=json_extract(p.intent,'$.recipient.id') AND w.record_sha256=json_extract(p.intent,'$.recipient.digest') AND w.github_user_id=(SELECT reporter_github_id FROM security_cases WHERE id=p.case_id) AND w.chain=json_extract(p.intent,'$.chain') AND w.source='d1_registry')";
 export async function directSettlementView(db: Database, caseId: string) {
   const row = await db
     .prepare(
