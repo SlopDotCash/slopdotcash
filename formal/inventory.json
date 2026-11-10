@@ -148,12 +148,12 @@
     },
     {
       "path": "backend/fee-conversions/handler.ts",
-      "sha256": "319b8f2a306801ee5c87e8eefdaa0179d8c2075f861d9c865fa5c84e249941d4",
+      "sha256": "814bda27acbb6b9f6c0df6c2b83e2469fec56dfe3688c4c7d6646a9038dcac3b",
       "models": [
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt"
       ],
-      "candidateLines": [46, 71, 116, 126, 148, 158, 164, 166, 169, 192],
+      "candidateLines": [46, 71, 122, 132, 154, 164, 170, 172, 175, 198],
       "review": "mapped-abstraction"
     },
     {

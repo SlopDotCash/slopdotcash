@@ -68,7 +68,7 @@ interface FeeConversionTotal {
   amountOut: string;
 }
 
-/** Sums finalized live conversions per network and token in exact integers. */
+/** Sums finalized live conversions per network, token, and target token in exact integers. */
 function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
   const totals = new Map<
     string,
@@ -82,7 +82,9 @@ function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
     }
   >();
   for (const row of rows) {
-    const key = `${row.network}:${row.token}`;
+    // The target token is part of the bucket: conversions to a rotated
+    // target address must not be summed into the old target's total.
+    const key = `${row.network}:${row.token}:${row.target_token}`;
     const total = totals.get(key) ?? {
       network: row.network,
       token: row.token,
@@ -97,7 +99,11 @@ function totalsPerToken(rows: SettledRow[]): FeeConversionTotal[] {
     totals.set(key, total);
   }
   return [...totals.values()]
-    .sort((a, b) => (a.network + a.token < b.network + b.token ? -1 : 1))
+    .sort((a, b) =>
+      a.network + a.token + a.targetToken < b.network + b.token + b.targetToken
+        ? -1
+        : 1,
+    )
     .map((t) => ({
       network: t.network,
       token: t.token,
