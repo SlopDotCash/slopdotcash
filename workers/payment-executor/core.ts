@@ -51,6 +51,7 @@ import {
   digest,
   type ExecutorEnvironment,
   type Hex,
+  isBindingAttemptKey,
   type JournalStore,
   PENDING_BINDINGS,
   preflightEvmDeployment,
@@ -346,7 +347,7 @@ async function retireRevertedAttempt(
       revert: proof,
     });
     if (
-      key.startsWith(STORED_BINDING) &&
+      isBindingAttemptKey(key) &&
       (env.BINDING_NONCE_LIMIT === 1 ||
         config.bindingConsentNonceLimit === 1 ||
         current.bindingConsentBudgetKey)
@@ -476,11 +477,32 @@ async function reserveBindingConsentBudget(
   const consent = await unusedBindingConsent(store, config, data);
   if (config.bindingConsentNonceLimit !== 1) return undefined;
   if (!store.list) throw new Error("Binding consent history unavailable");
-  const prior = await store.list<Attempt | null>({
+  const stored = await store.list<Attempt | null>({
     prefix: STORED_BINDING,
     limit: 1000,
   });
-  if (!(prior instanceof Map) || prior.size >= 1000)
+  if (!(stored instanceof Map) || stored.size >= 1000)
+    throw new Error("Binding consent history exceeds review bound");
+  // Request-path attempts live under `bind:<idempotencyKey>`; a legacy one
+  // for the same actor must hold a new admission exactly like a legacy
+  // stored one. The `bind:` prefix also matches consent-budget and
+  // test-nonce records, which are not attempts and are skipped here.
+  const requested = await store.list<Attempt | null>({
+    prefix: "bind:",
+    limit: 1000,
+  });
+  if (!(requested instanceof Map))
+    throw new Error("Binding consent history exceeds review bound");
+  const prior = new Map<string, Attempt | null>(stored);
+  for (const [key, attempt] of requested) {
+    if (
+      key.startsWith("bind:consent-nonce:") ||
+      key.startsWith("bind:test-nonce:")
+    )
+      continue;
+    if (!prior.has(key)) prior.set(key, attempt);
+  }
+  if (prior.size >= 1000)
     throw new Error("Binding consent history exceeds review bound");
   const observed = await store.list<{ key: string; attempt: Attempt }>({
     prefix: "binding-observed:",
@@ -543,7 +565,7 @@ async function signAndSubmit(
   beforeBroadcast?: (attempt: Attempt) => Promise<void>,
 ) {
   let attempt = await env.JOURNAL.get<Attempt>(key);
-  if (attempt && key.startsWith(STORED_BINDING))
+  if (attempt && isBindingAttemptKey(key))
     await assertBindingConsentBudget(env.JOURNAL, config, attempt);
   if (
     attempt &&
@@ -559,7 +581,7 @@ async function signAndSubmit(
     if (!data) throw new Error("No journaled transaction to reconcile");
     // Refuse a consumed consent before quotes/simulation, then recheck inside
     // the atomic admission below so concurrent invocations cannot race it.
-    if (key.startsWith(STORED_BINDING))
+    if (isBindingAttemptKey(key))
       await unusedBindingConsent(env.JOURNAL, config, data as Hex);
     const chainNonce = Number(
       BigInt(
@@ -598,14 +620,22 @@ async function signAndSubmit(
           throw new Error("Idempotency collision");
         if (env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING))
           await assertBindingNonceBudget(store, existing);
-        if (key.startsWith(STORED_BINDING))
+        if (isBindingAttemptKey(key))
           await assertBindingConsentBudget(store, config, existing);
         return existing;
       }
-      const consent = key.startsWith(STORED_BINDING)
+      const consent = isBindingAttemptKey(key)
         ? await reserveBindingConsentBudget(store, config, data as Hex)
         : undefined;
-      if (consent && fingerprint !== consent.fingerprint)
+      // Only stored bindings name their operation by the consent
+      // fingerprint. A request-path binding names it by the payout
+      // operation, so its fingerprint differs from the consent fingerprint
+      // by construction; the budget record below still pins the consent.
+      if (
+        consent &&
+        key.startsWith(STORED_BINDING) &&
+        fingerprint !== consent.fingerprint
+      )
         throw new Error("Binding consent operation differs");
       const bindingNonceBudgetKey =
         env.BINDING_NONCE_LIMIT === 1 && key.startsWith(STORED_BINDING)
@@ -652,7 +682,10 @@ async function signAndSubmit(
         await store.put<BindingConsentBudget>(consent.key, {
           schema: "binding-consent-nonce-v1",
           identity: consent.identity,
-          fingerprint,
+          // The budget is keyed by the consent fingerprint, not by the
+          // attempt's operation fingerprint (they coincide only for the
+          // stored path).
+          fingerprint: consent.fingerprint,
           nonce,
           transactionId: next.transactionId,
           // Includes any permitted same-nonce fee/cancellation competitor.
@@ -2369,7 +2402,14 @@ export function createEvmExecutor(env: ExecutorEnvironment): PaymentExecutor {
           input.idempotencyKey,
         ]),
       );
-      if (await env.JOURNAL.get<Attempt>(key))
+      const existing = await env.JOURNAL.get<Attempt>(key);
+      // Like the attester and keeper paths, retire a finalized revert
+      // before re-submitting; otherwise a reverted pay attempt can never
+      // recover in place under the same idempotency key.
+      if (
+        existing &&
+        !(await retireRevertedAttempt(env, deployment, key, existing))
+      )
         return signAndSubmit(env, deployment, key, fingerprint, "", input);
       const award = await obligation(deployment, authorization);
       if (award.paid)
