@@ -9623,7 +9623,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "db304fe8748092d0ebd992674c93ce6144632c47824961d5505d5fd1b8683c67",
+      "sha256": "1c40e9bbd4d177304f5e09db459cd1351cffa86e9c715a5f4888e692c67e3173",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
