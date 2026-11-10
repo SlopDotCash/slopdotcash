@@ -333,7 +333,6 @@ export async function dispatchActivityMail(
       if (registered && deps.unsubscribeKey)
         unsubscribeToken = await issueEmailUnsubscribeToken(
           deps.db,
-          deps.unsubscribeKey,
           registered.destinationVersion,
           deps.now(),
         );

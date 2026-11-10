@@ -490,7 +490,6 @@ export async function dispatchSecurityMail(
       if (registered && deps.unsubscribeKey)
         unsubscribeToken = await issueEmailUnsubscribeToken(
           deps.db,
-          deps.unsubscribeKey,
           registered.destinationVersion,
           deps.now(),
         );

@@ -72,60 +72,28 @@ export async function generalEmailAvailable(
   }
 }
 
-function hexBytes(value: string): Uint8Array<ArrayBuffer> {
-  return Uint8Array.from(value.match(/../gu) ?? [], (pair) =>
-    Number.parseInt(pair, 16),
-  );
-}
-
 export function validUnsubscribeKey(key: string | undefined): key is string {
   return typeof key === "string" && /^[a-f0-9]{64}$/u.test(key);
 }
 
-/** An issued unsubscribe capability lives 30 days from its latest issue.
- * A fresh mail re-issues (renews) the same deterministic token, so the
- * window is bounded after mail stops, never permanent. */
+/** An issued unsubscribe capability lives 30 days from its own issue.
+ * Every mail issues a fresh, independent random token: spending one token
+ * never revives any token issued before it, and a token's life is bounded
+ * after mail stops, never permanent. */
 export const EMAIL_UNSUBSCRIBE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-async function unsubscribeMac(
-  key: string,
-  version: string,
-): Promise<ArrayBuffer> {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    hexBytes(key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-  return crypto.subtle.sign(
-    "HMAC",
-    cryptoKey,
-    new TextEncoder().encode(`slop-email-unsubscribe-v1:${version}`),
-  );
-}
-
-export async function emailUnsubscribeToken(
-  key: string,
-  version: string,
-): Promise<string> {
-  const mac = new Uint8Array(await unsubscribeMac(key, version));
-  return `${version}.${bytesToHex(mac)}`;
-}
 
 export async function issueEmailUnsubscribeToken(
   db: NotificationsDependencies["db"],
-  key: string,
   version: string,
   now: Date,
 ): Promise<string> {
-  const token = await emailUnsubscribeToken(key, version);
-  // Re-issuing the same deterministic token renews it: a fresh mail extends
-  // its expiry and clears a previous spend, so the next unsubscribe from a
-  // current mail works while a stale capability stays dead.
+  const token = `${version}.${randomEmailToken()}`;
+  // A fresh random token is a new row: issuing it never touches (and so
+  // never revives) any token issued before, spent or not. Only the SHA-256
+  // of the token is stored; the token itself is never persisted.
   await db
     .prepare(
-      "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at,expires_at,consumed_at) VALUES(?,?,?,?,NULL) ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at,consumed_at=NULL",
+      "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at,expires_at,consumed_at) VALUES(?,?,?,?,NULL)",
     )
     .bind(
       await verificationTokenHash(token),

@@ -132,8 +132,8 @@ export async function sendEmailVerification(
 /** This capability only disables this exact verified destination's consent.
  * An issued token is single-use and expires: the spend is claimed
  * atomically before the preference write, so a second use of the same
- * token (or any use past its expiry) is rejected. A fresh mail re-issues
- * the capability for its destination version. */
+ * token (or any use past its expiry) is rejected. A fresh mail issues a
+ * new, independent token; spending one never revives another. */
 async function unsubscribeEmail(
   deps: Pick<EnrollmentMailDependencies, "db" | "now">,
   token: string,

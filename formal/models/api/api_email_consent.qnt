@@ -8,9 +8,10 @@
 // Preference revision is captured when Verify is pressed, not when the
 // enrollment email was requested. A fresh Verify after an opt-out is new consent.
 // One token at a time, three preference revisions; token entropy is abstract.
-// An issued unsubscribe capability likewise expires 30 days after its latest
-// issue and is spent on first use; a fresh mail re-issues it. The expiry and
-// single-use transitions are not yet encoded as actions below.
+// An issued unsubscribe capability likewise expires 30 days after its own
+// issue and is spent on first use; every mail issues a new, independent
+// random token, so a spent token stays spent. The expiry and single-use
+// transitions are not yet encoded as actions below.
 module api_email_consent {
   var s: {revision: int, checkedRevision: int, checking: bool, token: str,
     destination: int, activity: bool, security: bool,
