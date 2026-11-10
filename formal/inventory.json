@@ -1208,7 +1208,7 @@
     },
     {
       "path": "backend/vetting/evidence.ts",
-      "sha256": "4ee14430b3089f133eb76d4d2827e1b89b687fcbdba4435e8a43d15fd72a986c",
+      "sha256": "9351af09b1d08be64db1b7df73f0504152e267f49eb5d43567e0358dc3c9ed11",
       "models": [
         "formal/models/vetting/vetting_download_stream.qnt",
         "formal/models/vetting/vetting_evidence_access.qnt",
@@ -1223,10 +1223,10 @@
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
       "candidateLines": [
-        184, 185, 228, 286, 287, 289, 290, 291, 301, 306, 444, 518, 533, 582,
-        607, 641, 749, 750, 767, 1077, 1079, 1241, 1260, 1277, 1297, 1348, 1479,
-        1519, 1524, 1529, 1587, 1593, 1612, 1617, 1628, 1635, 1706, 1721, 1768,
-        2049
+        184, 185, 228, 286, 287, 289, 290, 291, 301, 307, 448, 522, 537, 586,
+        611, 645, 753, 754, 771, 1081, 1083, 1245, 1264, 1281, 1301, 1352, 1483,
+        1523, 1528, 1533, 1591, 1597, 1616, 1621, 1632, 1639, 1710, 1725, 1772,
+        2053
       ],
       "review": "mapped-abstraction"
     },
