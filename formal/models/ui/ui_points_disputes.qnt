@@ -28,6 +28,20 @@
 //   0 for every non-actor value and offers that cookie choice once. url is
 //   compared only with keyTarget and otherwise overwritten, so step stores
 //   keyTarget or one fixed other value.
+// - reload is read only by startRead, which needs a mounted component and an
+//   unused read slot; slots never return to unused, so step stores false when
+//   neither holds. draft is read only through a detail other than 3, and only
+//   startRead or clearPrivate change detail, both resetting draft, so step
+//   stores false while detail is 3.
+// - A departed component never reads its view, cookie or actor again: depart
+//   clears private state, every request is unowned and so retired, only
+//   remount re-enables reads and it overwrites busy, error, selected, cursor,
+//   url, keyTarget, actor and cookie. step stores fixed values for them.
+// - parent is read only by visible, which treats "error" like "ready", so
+//   step stores "ready" for both and offers the parent revalidation once.
+// - Observation choices that settle maps to one successor are offered once
+//   (observationRepresentative), and a payload-3 read is offered without a
+//   draft because the draft is then unread.
 // - Observation outcomes and payloads are kept only where useRead or
 //   useMutation can read them: invalid replies keep only whether the identity
 //   changed, list reads keep payload 1 or 2, and decider only for payload 2.
@@ -107,22 +121,38 @@ module ui_points_disputes {
     phaseIndex(m.phase)*1000+m.target*100+(if(settledAccepted(st,id))10 else 0)
       +o.outcome*2+(if(o.actor!=0)1 else 0)
   }
+  // One representative outcome per class that settle maps to one successor:
+  // an observation of a request that settle retires is blank (outcome 0);
+  // a cookie that differs from the request actor keeps only 0 (identity
+  // changed) versus 3 (session unavailable); a refused-session reply with
+  // the request actor always becomes outcome 3.
+  def observationRepresentative(request:Request,current:bool,outcome:int):bool=
+    if(not(current))outcome==0
+    else if(s.cookie!=request.actor)Set(0,3).contains(outcome)
+    else if(request.phase=="refused-session")outcome==0
+    else true
   def settle(reduce:bool,st:State):State=if(not(reduce))st else {
     // Mutation slots are interchangeable: nothing else names a mutation ID.
     val swap=mutationRank(st,1)>mutationRank(st,2)
     def slot(id:int):int=if(swap)3-id else id
-    st.with("parentNotifications",0)
+    val kept=st.with("parentNotifications",0)
       .with("reads",ids.mapBy(id=>settledRead(st,id)))
       .with("mutations",ids.mapBy(id=>settledMutation(st,slot(id))))
       .with("accepted",ids.filter(id=>settledAccepted(st,slot(id))))
       .with("error",if(st.error=="none")"none" else "request")
+      .with("parent",if(st.parent=="error")"ready" else st.parent)
       .with("cookie",if(st.cookie==st.actor)st.cookie else 0)
       .with("privateOwner",if(st.page>0 or st.detail>0 or st.award>0)st.privateOwner else 0)
       .with("reason",st.reason and st.award>0)
+      .with("draft",st.draft and st.detail!=3)
       .with("url",if(st.url==st.keyTarget)st.url else if(st.keyTarget==0)1 else 0)
       .with("activeRead",if(st.activeRead!=0 and settledRead(st,st.activeRead).phase=="done")0 else st.activeRead)
       .with("readObservations",ids.mapBy(id=>settledReadObservation(st,id)))
       .with("mutationObservations",ids.mapBy(id=>settledMutationObservation(st,slot(id))))
+      .with("reload",st.reload and st.mounted and ids.exists(id=>st.reads.get(id).phase=="unused"))
+    // Departed: every request is retired and remount overwrites the rest.
+    if(st.mounted)kept else kept.with("busy",false).with("error","none").with("selected",0)
+      .with("cursor",0).with("url",0).with("keyTarget",0).with("actor",1).with("cookie",0)
   }
   val visible=s.mounted and s.parent!="loading" and s.parent!="gone"
   val view=if(s.detail>0)"detail" else if(s.award>0)"form"
@@ -303,7 +333,9 @@ module ui_points_disputes {
     .then(returnMutation(id)).then(useMutation(id))
   // Request IDs are opaque, so step starts the lowest unused read/mutation.
   // Reply payload fields are offered only where useRead can read them.
-  action step=any{parentLoadsWith(true),parentSameActorWith(true),parentUnavailableSameActorWith(true),
+  // parentUnavailableSameActorWith(true) settles to the same successor as
+  // parentSameActorWith(true), so step offers that choice once.
+  action step=any{parentLoadsWith(true),parentSameActorWith(true),
     {nondet target=Set(0,1,2).oneOf() remountWith(1,target, true)},
     {nondet target=Set(0,1,2).oneOf() remountWith(2,target, true)},
     departWith(true),
@@ -314,7 +346,10 @@ module ui_points_disputes {
     {nondet id=ids.oneOf() all{Set("pending","refused-session").contains(s.reads.get(id).phase),
       {nondet outcome=Set(0,1,2,3).oneOf() nondet payload=Set(1,2,3).oneOf()
         nondet draft=Set(false,true).oneOf() nondet decider=Set(false,true).oneOf()
-        all{outcome==1 or (payload==1 and not(draft) and not(decider)),
+        all{observationRepresentative(s.reads.get(id),
+              ownsIn(s,s.reads.get(id)) and s.activeRead==id,outcome),
+          outcome==1 or (payload==1 and not(draft) and not(decider)),
+          payload!=3 or not(draft),
           s.reads.get(id).target!=0 or (payload<=2 and not(draft) and not(decider)),
           payload==2 or not(decider),
           observeReadWith(id,outcome,payload,draft,decider, true)}}}},
@@ -330,7 +365,9 @@ module ui_points_disputes {
     {nondet id=ids.oneOf() acceptMutationWith(id, true)},
     {nondet id=ids.oneOf() refusedMutationHeadersWith(id, true)},
     {nondet id=ids.oneOf() refusedMutationBodyWith(id, true)},
-    {nondet id=ids.oneOf() nondet outcome=Set(0,1,2,3).oneOf() observeMutationWith(id,outcome, true)},
+    {nondet id=ids.oneOf() nondet outcome=Set(0,1,2,3).oneOf()
+      all{observationRepresentative(s.mutations.get(id),ownsIn(s,s.mutations.get(id)),outcome),
+        observeMutationWith(id,outcome, true)}},
     {nondet id=ids.oneOf() returnMutationWith(id, true)},
     {nondet id=ids.oneOf() useMutationWith(id, true)},
     s'=s}

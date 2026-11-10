@@ -16159,7 +16159,7 @@
     },
     {
       "path": "formal/models/ui/ui_owner_vault_setup.qnt",
-      "sha256": "c3f4eaf453bc62e0a13b27c15da4d725faa04c75c0dccf056d9ae5f74873d84c",
+      "sha256": "f21f40c0490746b8abfe03349915e99043e080ff44270dac7c0a43106f4e094d",
       "sources": [
         "src/OwnerVaultSetup.tsx",
         "src/lib/pending-attempt.ts",
@@ -16208,7 +16208,7 @@
     },
     {
       "path": "formal/models/ui/ui_payment_page_assembly.qnt",
-      "sha256": "7dbef21fbc5cdd9fb43ba70ee2076c127a2fe91381c62d0fc53e1d20682b9179",
+      "sha256": "ccf9cf31920a31c3168262496cf814da31334dfb576fd3b623dae354e5a7f9d6",
       "sources": [
         "src/lib/payments/contracts.ts",
         "src/lib/use-direct-transfers.ts",
@@ -16249,7 +16249,7 @@
     },
     {
       "path": "formal/models/ui/ui_payout_consent_lifetime.qnt",
-      "sha256": "677719f7f972975a71f0e991878c95ccfb7a84c6adfe622cde2db43bbf11bb76",
+      "sha256": "d3efc927e5926a633a7897b13c1f570090e082b6c8bcbf57f2d87a6d683a2cfc",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",
@@ -16322,7 +16322,7 @@
     },
     {
       "path": "formal/models/ui/ui_points_disputes.qnt",
-      "sha256": "6398e3cf6298146340b47ae0ba3d414ca8456cc54532c51d002f6a45eb7b5b55",
+      "sha256": "fd92bf73c1af04f4099be08122905358847ef76455c0e23717450fae7d37517f",
       "sources": [
         "src/App.tsx",
         "src/Inbox.tsx",
@@ -16388,7 +16388,7 @@
     },
     {
       "path": "formal/models/ui/ui_private_intake.qnt",
-      "sha256": "efc5e724121e6d62882a88641624e6d4d1c20acb240e3a628ac7da9fabc49b7a",
+      "sha256": "c6c31f472faf1397603fb02f405df82588ee77ece479fdaa0caff044eeb3d269",
       "sources": [
         "backend/security/report-intake.ts",
         "src/PrivateReportForm.tsx",
@@ -16495,7 +16495,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_authority.qnt",
-      "sha256": "922672f99fd55c73194ae8680738ddd68dd8b30d8ece3526ea4669d33ac06d9e",
+      "sha256": "037ba25c35036b81bb2290a8587850a07270151aea5f4b9b8b115cf3823ef6ba",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -16575,7 +16575,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_publication_lifetime.qnt",
-      "sha256": "d8c6b0a5d2c76cde6b043da0cf950e089973155232f7496938e022606ef45c2e",
+      "sha256": "67e14ec8a0d58df004e8a2429d516acb99bb4bbb97f67330b46b59a3f844fdc9",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -16638,7 +16638,7 @@
     },
     {
       "path": "formal/models/ui/ui_public_x_profile.qnt",
-      "sha256": "dc26f417e3633e32383781ad443c7146b8b13ca1989a91e89c2109d042a82d41",
+      "sha256": "19d4b448830c2a9e31ddd269c243e54191baafc61611db17b074b1c28b850d77",
       "sources": [
         "backend/points/x.ts",
         "src/App.tsx",
@@ -16705,7 +16705,7 @@
     },
     {
       "path": "formal/models/ui/ui_referral_claim_lifetime.qnt",
-      "sha256": "1b83a07c18f915cfa1ec19742b4040a6827fc781d485dd171b654a01ab29d316",
+      "sha256": "63791bd76faf1cf17cd3443caf3d79e2a05e3474ce455c06f531d5d48a5a2dc2",
       "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
       "scenarios": [
         "activeWalletBlocksResetTest",
@@ -16902,7 +16902,7 @@
     },
     {
       "path": "formal/models/ui/ui_security_settings_lifetime.qnt",
-      "sha256": "152fd8efc8d84441baa5b12d79d22996e4401a07740461abd6183c9b75471b29",
+      "sha256": "c4b07f193fd92e9adf70e2cd14b563dae719e2e294316844e76c8269ded622b5",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",

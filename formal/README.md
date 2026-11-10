@@ -158,6 +158,21 @@ reasoning, not a machine-checked equivalence theorem.
 - `referral_root_history` stores a voided epoch in one fixed form. Nothing
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
+- Request-lifetime UI models (`ui_owner_vault_setup`,
+  `ui_payout_consent_lifetime`, `ui_points_disputes`, `ui_private_intake`,
+  `ui_project_publication_lifetime`, `ui_public_x_profile`,
+  `ui_referral_claim_lifetime`, `ui_security_settings_lifetime`) give each
+  action a `*With(..., reduce)` form. Direct actions and named scenarios pass
+  `false`; `step` passes `true` and applies a `settle` projection to every
+  successor. Ownership of a request is absorbing-false, so a request that is
+  unowned or done can only mark itself done; `settle` stores it as one fixed
+  retired record, keeping only fields an invariant or a later server effect
+  still reads. It also stores write-only fields and values that are read only
+  by equality with a fixed actor in one fixed form, and starts the lowest
+  unused opaque request ID. `ui_project_authority` applies the same
+  retirement through `stepSettle`, and `ui_payment_page_assembly` offers one
+  representative of the invalid page replies that share the rejected
+  successor. Each model header states which fields are unread and why.
 
 ## Inventory and review
 
