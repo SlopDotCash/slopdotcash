@@ -69,6 +69,61 @@ test("curl downloads are still collected", () => {
   expect(inspection.downloads).toEqual(["https://example.com/tool.tar.gz"]);
 });
 
+test("downloads in workflow, source and manifest files are collected too", () => {
+  // Before this fix only install surfaces (or hook commands) fed the
+  // downloads list, so a workflow step, a source fetch, or a manifest
+  // script could name an unretrieved download while `downloads` stayed
+  // complete with no record of it. Each one is now a visibility gap.
+  for (const [path, body, url] of [
+    [
+      ".github/workflows/ci.yml",
+      "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: curl -fsSL https://example.com/workflow-tool.sh | sh\n",
+      "https://example.com/workflow-tool.sh",
+    ],
+    [
+      "src/fetch-util.js",
+      'const { execSync } = require("child_process");\nexecSync("curl -o tool.bin https://example.com/source-tool.bin");\n',
+      "https://example.com/source-tool.bin",
+    ],
+    [
+      "package.json",
+      JSON.stringify({
+        name: "demo",
+        scripts: {
+          download: "curl -o asset.bin https://example.com/manifest-asset.bin",
+        },
+      }),
+      "https://example.com/manifest-asset.bin",
+    ],
+  ] as const) {
+    const inspection = inspected(path, body);
+    expect({ path, downloads: inspection.downloads }).toEqual({
+      path,
+      downloads: [url],
+    });
+    expect({ path, coverage: inspection.coverage.downloads }).toEqual({
+      path,
+      coverage: { state: "partial", items: 1 },
+    });
+    expect({ path, visibilityGaps: inspection.visibilityGaps }).toEqual({
+      path,
+      visibilityGaps: [`Install-time download not retrieved: ${url}`],
+    });
+  }
+});
+
+test("a bare URL with no download command still collects nothing", () => {
+  const inspection = inspected(
+    "src/notes.js",
+    "// See https://example.com/docs for the manual.\n// Mirror: https://example.com/mirror\n",
+  );
+  expect(inspection.downloads).toEqual([]);
+  expect(inspection.coverage.downloads).toEqual({
+    state: "complete",
+    items: 0,
+  });
+});
+
 test("local-file invocations of the same tools collect nothing", () => {
   for (const [path, body] of [
     ["install.bat", "certutil -hashfile local.bin SHA256\n"],

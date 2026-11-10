@@ -1753,9 +1753,13 @@ export function inspectRepository(input: {
           ...checkText(`${file.path}#scripts`, command, ["installScripts"]),
         );
     }
-    if (surfaces.includes("installScripts") || hooks.length > 0)
-      for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))
-        downloads.add((match[1] ?? match[2]).slice(0, 500));
+    // Downloads are collected from every reviewed file, not only install
+    // scripts: a workflow step, a manifest script, or a source fetch names
+    // a download the scan never retrieves, and leaving it out kept the
+    // downloads surface complete with no record of it at all. A bare URL
+    // with no download command still collects nothing; DOWNLOAD decides.
+    for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))
+      downloads.add((match[1] ?? match[2]).slice(0, 500));
     candidates.push({
       path: file.path,
       sha256: digest,

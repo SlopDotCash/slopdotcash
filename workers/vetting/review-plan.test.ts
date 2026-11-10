@@ -103,7 +103,12 @@ test("a large inventory is split into budgeted batches, risky first, with nothin
   expect(inspection.findings.map((finding) => finding.path)).toContain(
     "docs/assets/app-Abc12345.js",
   );
-  expect(inspection.visibilityGaps).toEqual([]);
+  // The generated bundle's fetch() URL is a download the scan does not
+  // retrieve, so it is recorded as a visibility gap instead of leaving
+  // `downloads` complete with no record of it.
+  expect(inspection.visibilityGaps).toEqual([
+    "Install-time download not retrieved: https://webhook.site/x",
+  ]);
   const plan = planReview(inspection);
   if (plan.mode !== "batched") throw new Error("Expected batches");
   const batches = plan.batches.map((batch) => JSON.parse(batch.evidence));
