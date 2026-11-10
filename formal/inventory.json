@@ -332,7 +332,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "b0e3b3b8b350e6a129af4b2f06fdb9597e93a4ec9d242a931dd5852e5ab76faa",
+      "sha256": "c30f0f0219a65e8c450eae55cf4d15519b534db530db25de0ca6973b24b6477d",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -351,7 +351,7 @@
       ],
       "candidateLines": [
         109, 214, 281, 325, 330, 377, 399, 405, 428, 450, 628, 649, 663, 783,
-        839, 877, 886, 901, 1040, 1103, 1120, 1210, 1211, 1265
+        839, 877, 886, 901, 1040, 1103, 1120, 1197, 1208, 1233, 1234, 1288
       ],
       "review": "mapped-abstraction"
     },
@@ -7464,7 +7464,7 @@
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "990de8f1bcf05b6e9b3a03b2f4f99f696a97498168109226c73088281ca351ee",
+      "sha256": "73413cd96648b2464921c52bbf86499c205c9d0c1635eadaf9543e1546dacd3c",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -7472,9 +7472,9 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        159, 195, 249, 325, 326, 328, 329, 331, 334, 337, 339, 347, 356, 365,
-        422, 432, 433, 434, 436, 437, 438, 439, 441, 443, 444, 451, 452, 453,
-        454, 463, 478, 531, 537, 643, 654, 664, 732, 733, 747, 760, 771
+        159, 195, 249, 325, 326, 328, 329, 331, 334, 337, 339, 342, 348, 357,
+        366, 423, 433, 434, 435, 437, 438, 439, 440, 442, 444, 445, 452, 453,
+        454, 455, 464, 479, 532, 538, 644, 655, 665, 733, 734, 748, 761, 772
       ],
       "review": "mapped-abstraction"
     },

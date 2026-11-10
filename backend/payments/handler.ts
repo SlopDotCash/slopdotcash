@@ -1191,6 +1191,29 @@ export async function handlePaymentsApi(
           typeof result.transaction !== "string")
       )
         throw new Error("Invalid identity attester response");
+      // Record the binding transaction where reconciliation looks for it.
+      // The ordinary dispatch path writes payment_attempts the same way,
+      // but the bind path returned the id to the browser only, so a
+      // finalized failed binding was invisible to reconcileFailedAttempts
+      // and its attempt id stuck forever. A prepared binding is half-signed
+      // and not yet broadcast, so only complete moves the row to submitted;
+      // a recorded transaction id is never replaced. The private ledger
+      // rewrites the table name to security_payment_attempts.
+      const bindingDb =
+        privateBinding && deps.securityPayments
+          ? deps.securityPayments.db
+          : deps.db;
+      await bindingDb
+        .prepare(
+          "UPDATE payment_attempts SET transaction_id=?,state=CASE WHEN ?=1 THEN 'submitted' ELSE state END WHERE id=? AND ((transaction_id IS NULL AND state IN ('prepared','unknown','submitted')) OR (transaction_id=? AND state IN ('prepared','unknown','submitted')))",
+        )
+        .bind(
+          result.transactionId,
+          complete ? 1 : 0,
+          payment.idempotencyKey,
+          result.transactionId,
+        )
+        .run();
       return json(200, {
         transactionId: result.transactionId,
         ...(!complete && typeof result.transaction === "string"

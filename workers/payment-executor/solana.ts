@@ -339,10 +339,11 @@ async function send(
       // Re-read finalized obligation/binding only after finalized expiry. No resubmission
       // can race an old valid blockhash. Preserve prior signed attempt in the journal.
       const current = await refresh();
-      if (
-        (role === "relayer" || role === "keeper") &&
-        current.obligation[136] !== 0
-      )
+      // Every role rechecks the paid flag on the refreshed state: the
+      // opening read is stale by the time the blockhash expires, so a
+      // payment that landed in between must refuse a re-sign here, not
+      // after the fresh branch re-reads the same stale snapshot.
+      if (current.obligation[136] !== 0)
         throw new Error(
           "Paid outside known attempt; finalized receipt reconciliation required",
         );
