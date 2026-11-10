@@ -37,7 +37,7 @@ module ui_review_pool {
   val ordered = List(0,1,2,3,4).select(i=>i<selected.size()).foldl(List(),(list,i)=>list.append(selected.filter(who=>rank(who)==i).fold(0,(unused,who)=>who)))
   val sources = ordered.foldl(List(),(list,who)=>list.append(source(who)))
   val sumWeights = selected.fold(0,(sum,who)=>sum+weight(source(who)))
-  val pool = if(selected.size()==0) 0 else if(s.size<1) 1 else if(s.size<sumWeights) s.size else sumWeights
+  val pool = if(selected.size()==0) 0 else if(s.size<sumWeights) s.size else sumWeights
   def floorShare(who:int):int = pool*weight(source(who))/sumWeights
   def remainder(who:int):int = pool*weight(source(who))%sumWeights
   val left = pool-selected.fold(0,(sum,who)=>sum+floorShare(who))
@@ -71,7 +71,7 @@ module ui_review_pool {
     .then(ingestAny).then(ingestAny).then(ingestAny).then(ingestAny).then(allocate)
   action step = any {configure,ingestNext,allocate,advanceWindow,s'=s}
   val invariant = s.phase=="done" implies all {s.credited.length()==5,
-    s.shares.foldl(0,(sum,v)=>sum+v)==s.poolAmount,s.poolAmount>=1,s.poolAmount<=9,
+    s.shares.foldl(0,(sum,v)=>sum+v)==s.poolAmount,s.poolAmount>=0,s.poolAmount<=9,
     s.issued.intersect(s.retained)==Set(),s.issued.union(s.retained)==s.positive}
   run firstTimeIdAndRemainderTieTest = init.then(choose(1,1,true,false,2,true))
     .then(ingest(1)).then(ingest(2)).then(ingest(3)).then(ingest(4)).then(ingest(5)).then(ingest(6)).then(ingest(7)).then(allocate)
