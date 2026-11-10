@@ -139,7 +139,7 @@ const CLAIM_WINDOW_MS = CLAIM_RECENCY_DAYS * 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 5 * 60 * 1000;
 const FULL_COMMIT_RE = /^[a-f0-9]{40}$/i;
 const CLOSING_REFERENCE_RE =
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>[1-9]\d*)\b/gi;
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>[1-9]\d*)\b/gi;
 const DOMAIN_ARTIFACT_HOSTS = new Set([
   "arbiscan.io",
   "basescan.org",
