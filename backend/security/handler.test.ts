@@ -2303,3 +2303,83 @@ describe("reporter payment state against the payout queue", () => {
     env.sqlite.close();
   });
 });
+
+describe("backdated receipts and prior deciders", () => {
+  /** Appends a closed paid-terms revision after the open revision. */
+  const closeProgram = (env: ReturnType<typeof open>) => {
+    const closed = programManifest({ ...OPEN_PROGRAM, status: "closed" });
+    const digest = createHash("sha256").update(closed).digest("hex");
+    env.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 2, ?, ?, 'Close paid terms', ?)",
+      )
+      .run(PROJECT, closed, digest, "2026-10-19T09:30:00.000Z");
+    env.sqlite
+      .query(
+        "UPDATE projects SET revision = 2, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(closed, digest, "2026-10-19T09:30:00.000Z", PROJECT);
+  };
+
+  test("a backdated record cannot revive paid terms after the program closes", async () => {
+    const env = open();
+    try {
+      closeProgram(env);
+      const recorded = await env.call(MAINTAINER, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(409);
+      expect(recorded.body.error).toBe("terms_closed");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a backdated verify-link cannot revive paid terms after the program closes", async () => {
+    const env = open();
+    try {
+      const id = "sc_backdated_verify";
+      env.claim(id, "GHSA-9c9f-9g9h-9j9m", REPORTER);
+      closeProgram(env);
+      const verified = await env.act(MAINTAINER, id, {
+        action: "verify-link",
+        confirmation: true,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+      });
+      expect(verified.status).toBe(409);
+      expect(verified.body.error).toBe("terms_closed");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a backdated record still verifies while the program is open", async () => {
+    const env = open();
+    try {
+      const recorded = await env.call(MAINTAINER, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(201);
+      expect(recorded.body.case).toMatchObject({
+        submissionState: "verified",
+        awardState: "pending",
+      });
+    } finally {
+      env.sqlite.close();
+    }
+  });
+});

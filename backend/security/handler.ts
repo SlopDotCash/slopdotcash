@@ -200,6 +200,31 @@ function choice<T extends string>(
   return value as T;
 }
 
+/**
+ * A maintainer-attested receipt time must not revive paid terms the program
+ * no longer offers: the receipt time is the maintainer's word, not GitHub's,
+ * so backdating past a closure or capacity deadline would freeze terms the
+ * program has already withdrawn. GitHub-verified intake keeps receipt-time
+ * terms (see `submissions.ts`): GitHub attests that time, so a report
+ * received while the program was open stays payable even if the program
+ * closed before intake ran.
+ */
+async function refuseResurrectedTerms(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  frozen: { terms: FrozenTerms | null },
+  at: string,
+): Promise<void> {
+  if (frozen.terms === null) return;
+  const current = await termsAtReceipt(deps, projectId, at);
+  if (current.terms === null)
+    fail(
+      409,
+      "terms_closed",
+      "The program's paid terms are closed; a backdated receipt cannot revive them",
+    );
+}
+
 function timestampField(
   body: Record<string, unknown>,
   key: string,
@@ -1438,6 +1463,7 @@ async function createCase(
       receivedAt,
       ...(await termsAtReceipt(deps, projectId, receivedAt)),
     };
+    await refuseResurrectedTerms(deps, projectId, verified, at);
   }
   const linked = await deps.db
     .prepare(
@@ -1688,6 +1714,7 @@ async function planChange(
         past: true,
       });
       const frozen = await termsAtReceipt(deps, row.project_id, receivedAt);
+      await refuseResurrectedTerms(deps, row.project_id, frozen, at);
       return {
         kind: action,
         role: "security-maintainer",
