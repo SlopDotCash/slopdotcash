@@ -2513,10 +2513,19 @@ function compareOpportunities(
 function hasOpenPullRequestOpportunitySignal(
   pullRequest: PullRequestRecord,
 ): boolean {
-  if (isNearMaterialTestChange(pullRequest.files)) {
+  // An oversized open PR keeps `files: null` (#2447 option 3), and a draft
+  // does too. Either way there is no test-change signal to read; the size
+  // and review checks below still apply.
+  if (
+    pullRequest.files !== null &&
+    isNearMaterialTestChange(pullRequest.files)
+  ) {
     return true;
   }
-  if (materialTestStats(pullRequest.files).additions > 0) {
+  if (
+    pullRequest.files !== null &&
+    materialTestStats(pullRequest.files).additions > 0
+  ) {
     return true;
   }
   if (
@@ -2569,7 +2578,12 @@ function collectOpenPullRequestOpportunities(
     if (pullRequest.author && !isBotActor(pullRequest.author)) {
       // Drafts are still open, but they are not ready for score-facing guidance.
       if (!pullRequest.isDraft) {
-        if (isNearMaterialTestChange(pullRequest.files)) {
+        // An oversized open PR keeps `files: null` (#2447 option 3), so it
+        // loses only the material-test-change hint.
+        if (
+          pullRequest.files !== null &&
+          isNearMaterialTestChange(pullRequest.files)
+        ) {
           opportunities.push({
             id: `${pullRequest.id}:opportunity:near-material-test`,
             actor: pullRequest.author,
