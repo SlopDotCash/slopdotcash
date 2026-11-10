@@ -733,7 +733,7 @@ try {
   });
   sql
     .prepare(
-      "INSERT INTO payment_attempts VALUES('needs-acceptance',?,'claim',?,NULL,'prepared')",
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,transaction_id,state) VALUES('needs-acceptance',?,'claim',?,NULL,'prepared')",
     )
     .run(award, now);
   await assert.rejects(

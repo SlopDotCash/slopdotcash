@@ -1184,13 +1184,73 @@ export async function handlePaymentsApi(
       const result = (await response.json()) as {
         transactionId?: unknown;
         transaction?: unknown;
+        lastValidBlockHeight?: unknown;
+        supersededTransactionId?: unknown;
       };
       if (
         typeof result.transactionId !== "string" ||
         (result.transaction !== undefined &&
-          typeof result.transaction !== "string")
+          typeof result.transaction !== "string") ||
+        (result.lastValidBlockHeight !== undefined &&
+          (typeof result.lastValidBlockHeight !== "number" ||
+            !Number.isSafeInteger(result.lastValidBlockHeight) ||
+            result.lastValidBlockHeight <= 0)) ||
+        (result.supersededTransactionId !== undefined &&
+          typeof result.supersededTransactionId !== "string")
       )
         throw new Error("Invalid identity attester response");
+      // Record the binding transaction in its own columns, never in
+      // transaction_id: that column is the payment receipt dispatch and
+      // reconcile understand, and a bind txid written there held the next
+      // payment dispatch for the same attempt (the dispatch guard only
+      // matches a NULL or equal payment txid) while reconcile presented
+      // the bind transaction as the payment receipt. A prepared binding
+      // is half-signed and not yet broadcast, so only complete moves the
+      // row to submitted. A recorded binding is replaced only when the
+      // attester names it as the expired txid the new one supersedes;
+      // the handler cannot judge expiry itself, and a fresh blockhash
+      // alone does not prove the old txid expired. Any other mismatch
+      // is a handler/attester divergence: re-read and refuse with 409
+      // instead of returning 200 with a txid D1 never recorded. The
+      // private ledger rewrites the table name to
+      // security_payment_attempts.
+      const bindingDb =
+        privateBinding && deps.securityPayments
+          ? deps.securityPayments.db
+          : deps.db;
+      const superseded =
+        typeof result.supersededTransactionId === "string"
+          ? result.supersededTransactionId
+          : null;
+      const written = await bindingDb
+        .prepare(
+          "UPDATE payment_attempts SET binding_transaction_id=?,binding_last_valid_block_height=COALESCE(?,binding_last_valid_block_height),state=CASE WHEN ?=1 THEN 'submitted' ELSE state END WHERE id=? AND state IN ('prepared','unknown','submitted') AND (binding_transaction_id IS NULL OR binding_transaction_id=? OR (binding_transaction_id=? AND ? IS NOT NULL))",
+        )
+        .bind(
+          result.transactionId,
+          typeof result.lastValidBlockHeight === "number"
+            ? result.lastValidBlockHeight
+            : null,
+          complete ? 1 : 0,
+          payment.idempotencyKey,
+          result.transactionId,
+          superseded,
+          superseded,
+        )
+        .run();
+      if (written.meta?.changes !== 1) {
+        // A duplicate prepare may already have recorded this binding;
+        // anything else means the recorded binding is still live (or the
+        // row left the bindable states) and this txid must not be returned.
+        const current = await bindingDb
+          .prepare(
+            "SELECT binding_transaction_id transactionId FROM payment_attempts WHERE id=?",
+          )
+          .bind(payment.idempotencyKey)
+          .first<{ transactionId: string | null }>();
+        if (current?.transactionId !== result.transactionId)
+          return json(409, { error: "binding_transaction_conflict" });
+      }
       return json(200, {
         transactionId: result.transactionId,
         ...(!complete && typeof result.transaction === "string"

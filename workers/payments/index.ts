@@ -161,8 +161,10 @@ export async function recoverUncertainAttempts(
             // transaction. The status service reports no transaction, so that
             // receipt is stale and the row retires like an unsigned attempt;
             // otherwise dispatch reads a live receipt behind a freed outbox.
+            // A retired row keeps no binding either: its binding txid
+            // describes the live attempt only.
             env.PAYMENTS_DB.prepare(
-              "UPDATE payment_attempts SET state='failed',transaction_id=NULL WHERE id=? AND (transaction_id IS NULL AND state IN ('prepared','unknown') OR state='submitted')",
+              "UPDATE payment_attempts SET state='failed',transaction_id=NULL,binding_transaction_id=NULL,binding_last_valid_block_height=NULL WHERE id=? AND (transaction_id IS NULL AND state IN ('prepared','unknown') OR state='submitted')",
             ).bind(attempt.idempotencyKey),
             // A dispatcher may be mid-submit under a live lease: keep it, so
             // its own completion batch still matches the token.
