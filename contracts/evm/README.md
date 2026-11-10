@@ -507,7 +507,8 @@ remain launch gates.
 
 `src/ReferralDistributor.sol` is a separate, non-upgradeable contract for the
 Slop Cash S.P. project-referral program approved in PRD section 11,
-"Referral program". The program token is not deployed yet. It is separate from the
+"Referral program". The program token is deployed on Robinhood Chain; the
+distributor is not. It is separate from the
 escrow: it holds one ERC-20 (the program token), has no factory, no proxy, no
 project id and no vault role, and the escrow never calls it.
 
@@ -546,6 +547,13 @@ three-leaf tree and a fuzz over two epochs. `test/ReferralControlRegression.t.so
 also checks lower-total history and repeated voids. `script/DeployReferralDistributorRobinhoodTestnet.s.sol`
 deploys it on chain id 46630 with `integration/MockReferralToken.sol`; see
 [`docs/referral-distributor-testnet-runbook.md`](../../docs/referral-distributor-testnet-runbook.md)
-(prepare only; nothing has been deployed). The AI-assisted internal review is
+(prepare only; nothing has been deployed). `script/DeployReferralDistributorRobinhood.s.sol`
+is the mainnet (chain id 4663) deployment: it fixes the program token
+`0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE`, the 2,000,000-token growth limit
+and 27 days between live posts, takes only `REFERRAL_OWNER` and
+`REFERRAL_POSTER` from the environment, refuses any other chain or token, and
+reads the deployed values back before it reports. It moves no tokens and
+activates nothing; `test/ReferralMainnetDeploy.t.sol` covers its refusals.
+Nothing has been deployed on mainnet. The AI-assisted internal review is
 [`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
 it is not an audit.
