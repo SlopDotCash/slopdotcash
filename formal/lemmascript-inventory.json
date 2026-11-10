@@ -700,7 +700,7 @@
 {"name":"attachBountyVault","kind":"FunctionDeclaration","line":545,"sha256":"be0dec5d2ae86136f91dd6a6495f5a2c4ef69981b8769891daa02894967c9ac6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"attachOrdinaryVault","kind":"FunctionDeclaration","line":581,"sha256":"83dc2f5b6cb12026b6e804236053f24d1b89c42fde5c87aedc945c21825ecc53","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"backend/projects/verified-enforcement.ts","sha256":"b2d69694a9ffd3ba13fe8baf423b50ac6f709441d857fa4b89679cd60fc4218c","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"backend/projects/verified-enforcement.ts","sha256":"f67dc00dd0ed8da78d0d17c8da76ac3ba29389e656a3b20ec5729a7ebe48e03d","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"foldRestrictionEpisode","kind":"FunctionDeclaration","line":42,"sha256":"fd6e7421c220ef4178eb65023f9ffbef989a67c96e4b2d08ae57df3741ba92de","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"selectProjectAppeals","kind":"FunctionDeclaration","line":94,"sha256":"f4a8936ce9abdeeea5ede7f058ee6f5da3c5510d29e92545f98f30e40d922cda","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"selectActiveBanIndices","kind":"FunctionDeclaration","line":148,"sha256":"30e1537b13f4f82216456f3b3948455fdf7637b94fd784d0c8170c83bcc35815","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
@@ -713,9 +713,9 @@
 {"name":"openAccountIds","kind":"FunctionDeclaration","line":359,"sha256":"7729e0293bbe99e0a877bab8c348888b39904bad1ebffa9a4cd38d31784a4dce","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"projectModeratorConflict","kind":"FunctionDeclaration","line":387,"sha256":"9bd18c473268ac93248f1df78d02b15b949e2affd1c754df817f5e6262b0918b","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"accountModeratorIndependent","kind":"FunctionDeclaration","line":409,"sha256":"3ef578acaa79fa4c6acfaecb2029d7f09ace4593755f0e6d6525cda6e9635533","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
-{"name":"planEnforcementAction","kind":"FunctionDeclaration","line":436,"sha256":"22cccdeb10e8a3f38ee4e3ed5bc2e2b52cec76b523adac9886b932ae687d0adf","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
-{"name":"planFlagScanReinstatement","kind":"FunctionDeclaration","line":715,"sha256":"60f88e7b2f74900c51983c4c54f38ebd2bbd6c3b7e49c0e6319d5c9017e67d24","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
-{"name":"pausedByFlagsOnly","kind":"FunctionDeclaration","line":746,"sha256":"03b43a0c89fb4c6bbbc34465040f553e7f54c2b58bfe8b952f6c3b76f41368a3","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
+{"name":"planEnforcementAction","kind":"FunctionDeclaration","line":436,"sha256":"28c0f1bc028f3fdb7155d21d4ba5ee716cce3b9d1fe0cb2f5de901976ffa000a","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"planFlagScanReinstatement","kind":"FunctionDeclaration","line":732,"sha256":"60f88e7b2f74900c51983c4c54f38ebd2bbd6c3b7e49c0e6319d5c9017e67d24","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
+{"name":"pausedByFlagsOnly","kind":"FunctionDeclaration","line":763,"sha256":"03b43a0c89fb4c6bbbc34465040f553e7f54c2b58bfe8b952f6c3b76f41368a3","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
 {"path":"backend/projects/verified-setup.ts","sha256":"69e3ea4375692554d177c67371a781afd0cf4d75de9af868212d88482ec96e74","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"classifyAccessHeader","kind":"FunctionDeclaration","line":26,"sha256":"abf6549f73f371f191b5605520df63d2331e6a94cef13b8c7101e4e410489030","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},

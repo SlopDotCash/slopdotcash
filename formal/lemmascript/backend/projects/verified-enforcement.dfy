@@ -483,6 +483,9 @@ method planEnforcementAction(input: EnforcementDecisionInput) returns (res: Enfo
   ensures (res.plan? ==> res.bansMaintainer ==> ((input.action == "ban") && MaliciousDecision(input)))
   ensures (res.plan? ==> (res.revision == "community") ==> ((((input.action == "reinstate") && input.listedBefore) && (res.stateAfter == "clear")) && (res.appealAfter == "granted")))
 {
+  if ((((((input.action != "quarantine") && (input.action != "ban")) && (input.action != "request_reinstatement")) && (input.action != "reinstate")) && (input.action != "reinstate_accounts")) && (input.action != "deny_reinstatement")) {
+    return refused(409, "invalid_action", "Unknown enforcement action");
+  }
   var i_t13 := latestRestrictionSource(input.records);
   var latest := i_t13;
   var deciding := ((((input.state == "banned") && (latest >= 0)) && (input.records[latest].action == "ban")) && (input.records[latest].actorRole == "vetting-service"));
@@ -899,7 +902,9 @@ function ActionPlan(input: EnforcementDecisionInput): EnforcementDecision
   var project := PendingProject(input.records, input.state, false);
   var open := OpenAccountIds(input.records, input.bannedAccounts, input.bannedAccounts);
   var conflict := ProjectModeratorConflict(input.records, input.restrictedBy, input.actorId);
-  if input.action == "quarantine" || input.action == "ban" then
+  if input.action != "quarantine" && input.action != "ban" && input.action != "request_reinstatement" && input.action != "reinstate" && input.action != "reinstate_accounts" && input.action != "deny_reinstatement" then
+    refused(409, "invalid_action", "Unknown enforcement action")
+  else if input.action == "quarantine" || input.action == "ban" then
     if input.action == "quarantine" && input.state != "clear" then refused(409, "already_restricted", "The project is already " + input.state)
     else if input.action == "ban" && input.state == "banned" && !deciding then refused(409, "already_restricted", "The project is already banned")
     else

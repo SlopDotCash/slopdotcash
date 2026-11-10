@@ -436,6 +436,23 @@ function accountModeratorIndependent(
 export function planEnforcementAction(
   input: EnforcementDecisionInput,
 ): EnforcementDecision {
+  // Fail closed on an action this planner does not know. Without this
+  // allowlist an unknown action falls through the decision gates below and
+  // clears the project like a reinstatement, even with no project appeal.
+  if (
+    input.action !== "quarantine" &&
+    input.action !== "ban" &&
+    input.action !== "request_reinstatement" &&
+    input.action !== "reinstate" &&
+    input.action !== "reinstate_accounts" &&
+    input.action !== "deny_reinstatement"
+  )
+    return {
+      kind: "refused",
+      status: 409,
+      code: "invalid_action",
+      message: "Unknown enforcement action",
+    };
   const latest = latestRestrictionSource(input.records);
   const deciding =
     input.state === "banned" &&
