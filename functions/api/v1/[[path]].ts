@@ -91,6 +91,7 @@ import {
   isLocalDevelopmentOrigin,
 } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
+import { githubIdSet } from "../../../src/lib/github-ids";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
@@ -147,15 +148,6 @@ function privateIntake(env: PagesEnv): IntakeConfig | undefined {
   };
 }
 
-function githubIdSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => /^[1-9]\d*$/u.test(entry)),
-  );
-}
-
 /** A private RPC endpoint from `PAYMENT_RPC_URLS`; never returned to the browser. */
 function paymentRpcUrl(env: PagesEnv, network: string): string {
   const value = (
@@ -208,9 +200,29 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const randomId = () => crypto.randomUUID();
   const sessionActor = (request: Request) =>
     sessionGithubActor(request, db, new Date().toISOString());
-  const adminGithubIds = githubIdSet(env.ADMIN_GITHUB_IDS);
-  const moderatorGithubIds = githubIdSet(env.PROJECT_MODERATOR_GITHUB_IDS);
-  const walletOperatorGithubIds = githubIdSet(env.OPERATOR_GITHUB_IDS);
+  // GitHub ID allowlists are parsed lazily, once per request, at the point a
+  // route actually enforces them. A typo in one list must fail loudly on the
+  // routes that rely on it, never take down unrelated API routes: this is
+  // the same pattern this file already uses for payment configuration,
+  // resolved only when a payment operation needs it so a broken rail does
+  // not stop account reads, signout, or private intake.
+  const parsedGithubIds = new Map<string, Set<string>>();
+  const readGithubIds = (value: string | undefined, variable: string) => {
+    const cached = parsedGithubIds.get(variable);
+    if (cached) return cached;
+    const parsed = githubIdSet(value, variable);
+    parsedGithubIds.set(variable, parsed);
+    return parsed;
+  };
+  const adminGithubIds = () =>
+    readGithubIds(env.ADMIN_GITHUB_IDS, "ADMIN_GITHUB_IDS");
+  const moderatorGithubIds = () =>
+    readGithubIds(
+      env.PROJECT_MODERATOR_GITHUB_IDS,
+      "PROJECT_MODERATOR_GITHUB_IDS",
+    );
+  const walletOperatorGithubIds = () =>
+    readGithubIds(env.OPERATOR_GITHUB_IDS, "OPERATOR_GITHUB_IDS");
   const cache = edgeCache();
   const waitUntil = context.waitUntil?.bind(context);
   const send = (url: string, init: RequestInit) => fetch(url, init);
@@ -305,8 +317,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         () => livePin(manifest),
         forReinstatement,
       ),
-    adminGithubIds,
-    moderatorGithubIds,
+    get adminGithubIds() {
+      return adminGithubIds();
+    },
+    get moderatorGithubIds() {
+      return moderatorGithubIds();
+    },
     now,
     randomId,
     sessionActor,
@@ -394,7 +410,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       fetch: send,
       loopbackOrigin: env.SLOP_ANALYSIS_API_ORIGIN,
     }),
-    moderatorGithubIds,
+    get moderatorGithubIds() {
+      return moderatorGithubIds();
+    },
     cache,
     waitUntil,
     intake: privateIntake(env),
@@ -404,8 +422,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const evidenceResponse = await evidence.handle(request);
   if (evidenceResponse !== null) return evidenceResponse;
   const flags = new ProjectFlagStore(db);
-  const operatorGithubIds = [
-    ...new Set([...adminGithubIds, ...moderatorGithubIds]),
+  const operatorGithubIds = () => [
+    ...new Set([...adminGithubIds(), ...moderatorGithubIds()]),
   ];
   const flagsResponse = await handleProjectFlagsApi(request, {
     flags,
@@ -427,7 +445,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         manifest.repositories[0].id,
       ),
     sessionActor,
-    moderatorGithubIds: operatorGithubIds,
+    get moderatorGithubIds() {
+      return operatorGithubIds();
+    },
     queueFreshScan: (project) =>
       queueAutomaticScan(
         {
@@ -455,13 +475,15 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     flags,
     projects: projectPersistence,
     resultPublicKeys: env.VETTING_RESULT_PUBLIC_KEYS,
-    operatorGithubIds,
+    get operatorGithubIds() {
+      return operatorGithubIds();
+    },
     livePin,
     session: async (request) => {
       const actor = await sessionActor(request);
       return actor === null
         ? null
-        : { ...actor, admin: adminGithubIds.has(actor.githubId) };
+        : { ...actor, admin: adminGithubIds().has(actor.githubId) };
     },
     now,
     randomId,
@@ -478,7 +500,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (referralsResponse !== null) return referralsResponse;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
-    adminGithubIds,
+    get adminGithubIds() {
+      return adminGithubIds();
+    },
     sessionActor,
   });
   if (feeConversionsResponse !== null) return feeConversionsResponse;
@@ -492,8 +516,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   });
   if (emailPreferencesResponse !== null) return emailPreferencesResponse;
   const notificationsResponse = await handleNotificationsApi(request, {
-    moderatorGithubIds,
-    adminGithubIds,
+    get moderatorGithubIds() {
+      return moderatorGithubIds();
+    },
+    get adminGithubIds() {
+      return adminGithubIds();
+    },
     repositoryAccess,
     db,
     sessionActor,
@@ -613,7 +641,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       rateLimitSecret: env.TRACE_AUTH_SECRET,
       identity: env.SLOP_IDENTITY,
       disputes: {
-        moderators: moderatorGithubIds,
+        // Parsed here, inside the points branch only: the moderator set is
+        // a disputes dependency, so a typo fails this branch loudly and
+        // leaves every other /api/v1 route untouched.
+        moderators: moderatorGithubIds(),
         waitUntil,
         process: async (key) => {
           if (!env.SLOPBOT) throw new Error("Slopbot is unavailable");
@@ -635,7 +666,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     });
   if (pathname === "/api/v1/slopbot/value-import")
     return handleHistoricalValueImport(request, {
-      adminGithubIds,
+      // Parsed here, on this route only: the admin set gates value import,
+      // so a typo fails this route loudly and nothing else.
+      adminGithubIds: adminGithubIds(),
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
     });
@@ -645,7 +678,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     tier,
     persistence: new CloudflareTracePersistence(db, env.PRIVATE_TRACES),
     authSecret: env.TRACE_AUTH_SECRET,
-    operatorGithubIds: walletOperatorGithubIds,
+    get operatorGithubIds() {
+      return walletOperatorGithubIds();
+    },
     bindingRecoveryForNetwork: (network) => {
       if (network === "base-mainnet") return env.BINDING_RECOVERY;
       if (network === "ethereum") return env.BINDING_RECOVERY_ETHEREUM;
