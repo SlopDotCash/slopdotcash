@@ -222,9 +222,10 @@ export function HowItWorksPage() {
               </p>
               <p>
                 Points count toward a payout only on a project with a funded
-                pool, and only for the UTC month they come from. Your share is
-                your points that month ÷ the project&apos;s points that month ×
-                that month&apos;s funded pool.
+                pool, and only for the UTC month they come from. Your projected
+                share is your points that month ÷ the project&apos;s points that
+                month × that month&apos;s funded pool. The owner may adjust
+                amounts before the month locks.
               </p>
               <p>
                 Points from a month without a funded pool stay on your record.
@@ -237,6 +238,35 @@ export function HowItWorksPage() {
                 pool. Check the project&apos;s page before relying on one, and
                 follow your points and any funded awards in{" "}
                 <Link href="/earnings">Payouts</Link>.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>When will a project be funded?</h3>
+            <div>
+              <p>
+                Each project&apos;s owner decides whether and when to fund its
+                pool and switch on monthly payment. Slop does not fund projects.
+                A project can be listed and record points before its pool is
+                funded, so check the project&apos;s page for its pool status
+                before you choose where to work.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>When are payouts sent?</h3>
+            <div>
+              <p>
+                Monthly, for projects with monthly payment switched on. Each
+                month runs on UTC time. After a month closes, the owner has 72
+                hours to review amounts or lock the month early; at 72 hours it
+                locks automatically. Payment follows once the vault holds enough
+                for the whole month; an underfunded month waits for a deposit.
+              </p>
+              <p>
+                A payout counts as paid only after it is confirmed on chain.
+                Your profile then shows it with the project, the month and a
+                transaction link. A 2% fee is deducted from each award.
               </p>
             </div>
           </article>
