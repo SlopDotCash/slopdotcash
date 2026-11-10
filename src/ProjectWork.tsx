@@ -80,7 +80,11 @@ export function ProjectWork({
             <p className="muted">No suggested work right now.</p>
           )}
           {!expanded && items.length > SHOWN ? (
-            <button onClick={() => setExpanded(true)} type="button">
+            <button
+              className="button secondary-button"
+              onClick={() => setExpanded(true)}
+              type="button"
+            >
               Show all {items.length}
             </button>
           ) : null}
