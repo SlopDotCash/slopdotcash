@@ -1,16 +1,42 @@
 /**
- * Why an incomplete bounded admission scan did not clear, in generic
- * sentences for the project owner (issue #1991, PRD section 8). Every
- * sentence comes from `ScanClearanceFacts`: recorded enumerations, counts and
- * the scanner's own coverage notes. No finding summary, model text, prompt or
+ * Why an incomplete bounded admission scan did not clear, as short status
+ * badges for the project owner (issue #1991, PRD section 8). Every badge
+ * comes from `ScanClearanceFacts`: recorded enumerations, counts and the
+ * scanner's own coverage notes. No finding summary, model text, prompt or
  * source content can reach it. Setup status and the admin vetting view show
- * the same list, so they agree by construction.
+ * the same badges, so they agree by construction.
  */
-import type {
-  AssessmentSummary,
-  ScanClearanceFacts,
-  ScanReviewOutcome,
-} from "./vetting-contracts";
+import type { AssessmentSummary, ScanReviewOutcome } from "./vetting-contracts";
+
+export type ScanClearanceTone =
+  | "success"
+  | "warning"
+  | "danger"
+  | "info"
+  | "neutral";
+
+/** Decorative icon key; the label always carries the state in words. */
+export type ScanClearanceIcon =
+  | "pass"
+  | "fail"
+  | "skip"
+  | "partial"
+  | "held"
+  | "note"
+  | "review";
+
+export type ScanClearanceBadge = {
+  tone: ScanClearanceTone;
+  icon: ScanClearanceIcon;
+  label: string;
+};
+
+/** Badges grouped in the order the owner can act on them. */
+export type ScanClearanceView = {
+  checks: ScanClearanceBadge[];
+  coverage: ScanClearanceBadge[];
+  review: ScanClearanceBadge[];
+};
 
 /** `wallet-drainer` reads "wallet drainer"; `installScripts` reads "install scripts". */
 function words(value: string): string {
@@ -22,117 +48,152 @@ function words(value: string): string {
     .replaceAll("-", " ");
 }
 
-function count(value: number, singular: string, plural: string): string {
-  return `${value} ${value === 1 ? singular : plural}`;
-}
-
-const NOT_COMPLETED: Record<
-  Exclude<ScanReviewOutcome["status"], "completed">,
-  string
-> = {
-  unavailable: "was unavailable",
-  failed: "failed",
-  "not-started": "did not run",
-};
-
-function reviewText(review: ScanReviewOutcome): string {
-  if (review.status !== "completed") return NOT_COMPLETED[review.status];
-  const verdict =
-    review.verdict === "no-findings"
-      ? "reported no findings"
-      : review.verdict === "findings"
-        ? "reported findings"
-        : "suspected malicious content";
-  return review.risk === "low" || review.risk === null
-    ? verdict
-    : `${verdict} and rated the result ${review.risk === "high" ? "high risk" : "ambiguous"}`;
-}
-
-function reviewOutcome(review: ScanClearanceFacts["review"]): string {
-  const primary = `The primary review ${reviewText(review.primary)}`;
-  const specialist = review.specialist;
-  if (specialist === null)
-    return review.escalated
-      ? `${primary}, and the specialist review that this result requires did not run.`
-      : `${primary}, and no specialist review was required.`;
-  if (specialist.status !== "completed")
-    return `${primary}, and the specialist review ${NOT_COMPLETED[specialist.status]}.`;
-  const cleared =
-    specialist.verdict === "no-findings" && specialist.risk === "low";
-  return cleared
-    ? `${primary}, and the specialist review ${reviewText(specialist)}.`
-    : `${primary}, and the specialist review did not clear it: it ${reviewText(specialist)}.`;
+function reviewBadge(
+  name: "Primary" | "Specialist",
+  review: ScanReviewOutcome,
+): ScanClearanceBadge {
+  if (review.status !== "completed")
+    return {
+      tone: "neutral",
+      icon: "skip",
+      label: `${name} ${review.status === "not-started" ? "not run" : review.status}`,
+    };
+  if (review.verdict === "malicious-suspected")
+    return {
+      tone: "danger",
+      icon: "fail",
+      label: `${name}: suspected malicious`,
+    };
+  if (review.risk === "high")
+    return { tone: "danger", icon: "fail", label: `${name}: high risk` };
+  if (review.risk === "ambiguous")
+    return { tone: "warning", icon: "review", label: `${name}: ambiguous` };
+  if (review.verdict === "findings")
+    return { tone: "warning", icon: "review", label: `${name}: findings` };
+  return { tone: "success", icon: "pass", label: `${name}: clear` };
 }
 
 const REVIEW_AREA_GAP = /^(primary|specialist):([A-Za-z]+):partial$/u;
 
+function unique(badges: ScanClearanceBadge[]): ScanClearanceBadge[] {
+  const seen = new Set<string>();
+  return badges.filter((badge) => {
+    if (seen.has(badge.label)) return false;
+    seen.add(badge.label);
+    return true;
+  });
+}
+
 /**
- * The owner-facing reasons of an incomplete scan, in the order the owner can
- * act on them: the repository first, then the scanner's coverage, then the
- * review outcome. Empty for any other state or for a historical result.
+ * The owner-facing badges of an incomplete scan. Null for any other state or
+ * for a historical result.
  */
-export function scanClearanceReasons(
+export function scanClearanceView(
   assessment: Pick<
     AssessmentSummary,
     "state" | "scan" | "heldArtifacts" | "findingsLocation"
   >,
-): string[] {
+): ScanClearanceView | null {
   const facts = assessment.scan;
-  if (facts === undefined || assessment.state !== "incomplete") return [];
-  const reasons: string[] = [];
+  if (facts === undefined || assessment.state !== "incomplete") return null;
+  const checks: ScanClearanceBadge[] = [];
+  const coverage: ScanClearanceBadge[] = [];
+  let slopSide = false;
   const repositoryClear =
     facts.flaggedChecks.length === 0 &&
     facts.checksNotRun.length === 0 &&
     facts.incompleteSurfaces.length === 0 &&
     facts.openFindings.length === 0 &&
     assessment.heldArtifacts === 0;
-  // The "Slop's side" sentence must agree with the heading, which follows
+  // The Slop-side badge must agree with the heading, which follows
   // `findingsLocation` at every severity: a finding below high at a
   // repository path still points the owner at the repository.
+  const location = assessment.findingsLocation;
+  const passed: ScanClearanceBadge = {
+    tone: "success",
+    icon: "pass",
+    label: "No check flagged",
+  };
   if (repositoryClear) {
-    const location = assessment.findingsLocation;
-    if (location === undefined || location === "template")
-      reasons.push(
-        "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
-      );
-    else if (location === "repository" || location === "both")
-      reasons.push(
-        `Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in ${location === "both" ? "the repository and Slop's skill template" : "the repository"}.`,
-      );
+    if (location === undefined || location === "template") {
+      checks.push(passed);
+      slopSide = true;
+    } else if (location === "repository" || location === "both")
+      checks.push(passed, {
+        tone: "warning",
+        icon: "note",
+        label:
+          location === "both"
+            ? "Findings: repository + template"
+            : "Findings: repository",
+      });
   }
   for (const threat of facts.flaggedChecks) {
     const open =
       facts.openFindings.find((finding) => finding.category === threat)
         ?.count ?? 0;
-    reasons.push(
-      `The ${words(threat)} check flagged content${open > 0 ? ` (${count(open, "open finding", "open findings")} rated high or critical)` : ""}.`,
-    );
+    checks.push({
+      tone: "danger",
+      icon: "fail",
+      label: `${words(threat)} flagged${open > 0 ? ` · ${open} high` : ""}`,
+    });
   }
-  for (const { category, count: open } of facts.openFindings)
+  for (const { category, count } of facts.openFindings)
     if (!facts.flaggedChecks.includes(category))
-      reasons.push(
-        `${count(open, "open finding is", "open findings are")} rated high or critical under ${words(category)}.`,
-      );
+      checks.push({
+        tone: "danger",
+        icon: "fail",
+        label: `${words(category)} · ${count} high`,
+      });
   for (const threat of facts.checksNotRun)
-    reasons.push(`The ${words(threat)} check did not run.`);
+    checks.push({
+      tone: "neutral",
+      icon: "skip",
+      label: `${words(threat)} not run`,
+    });
   for (const { surface, state } of facts.incompleteSurfaces)
-    reasons.push(
+    coverage.push(
       state === "partial"
-        ? `The ${words(surface)} surface was read partially.`
-        : `The ${words(surface)} surface is not supported by the scan.`,
+        ? {
+            tone: "warning",
+            icon: "partial",
+            label: `${words(surface)} partial`,
+          }
+        : {
+            tone: "neutral",
+            icon: "skip",
+            label: `${words(surface)} unsupported`,
+          },
     );
   if (assessment.heldArtifacts > 0)
-    reasons.push(
-      `${count(assessment.heldArtifacts, "downloaded or binary artifact stays", "downloaded or binary artifacts stay")} quarantined without a clean analysis.`,
-    );
+    coverage.push({
+      tone: "warning",
+      icon: "held",
+      label: `${assessment.heldArtifacts} artifact${assessment.heldArtifacts === 1 ? "" : "s"} held`,
+    });
   for (const gap of facts.visibilityGaps) {
     const area = REVIEW_AREA_GAP.exec(gap);
-    reasons.push(
+    coverage.push(
       area
-        ? `The ${area[1]} review covered the ${words(area[2])} area partially.`
-        : `Coverage note from the scanner: ${gap}`,
+        ? {
+            tone: "warning",
+            icon: "partial",
+            label: `${area[1] === "primary" ? "Primary" : "Specialist"}: ${words(area[2])} partial`,
+          }
+        : { tone: "neutral", icon: "note", label: gap },
     );
   }
-  reasons.push(reviewOutcome(facts.review));
-  return reasons;
+  const review = [reviewBadge("Primary", facts.review.primary)];
+  if (facts.review.specialist !== null)
+    review.push(reviewBadge("Specialist", facts.review.specialist));
+  else if (facts.review.escalated)
+    review.push({ tone: "danger", icon: "skip", label: "Specialist not run" });
+  // Nothing in the repository was flagged: changing it will not clear this.
+  if (slopSide)
+    review.push({ tone: "info", icon: "note", label: "Slop-side block" });
+  return {
+    checks: unique(checks),
+    coverage: unique(coverage),
+    review: unique(review),
+  };
 }

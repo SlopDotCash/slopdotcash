@@ -34,13 +34,14 @@ import {
   requireAdminActionActor,
 } from "./lib/admin-request";
 import { projectApiRequest } from "./lib/project-api";
-import { scanClearanceReasons } from "./lib/scan-clearance";
+import { scanClearanceView } from "./lib/scan-clearance";
 import type {
   AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
   VettingClearance as Clearance,
 } from "./lib/vetting-contracts";
+import { ScanClearanceBadges } from "./ScanClearanceBadges";
 
 type AdminAssessment = AssessmentSummary & {
   projectId: string;
@@ -879,17 +880,13 @@ export function VettingSection({
                         </div>
                       ) : null}
                       {clearance.state === "quarantined" &&
-                      scanClearanceReasons(clearance.assessment).length > 0 ? (
-                        <div>
-                          <dt>Not cleared because (as the owner sees it)</dt>
+                      scanClearanceView(clearance.assessment) ? (
+                        <div className="admin-fact-wide">
+                          <dt>Owner sees</dt>
                           <dd>
-                            <ul className="operations-findings">
-                              {scanClearanceReasons(clearance.assessment).map(
-                                (reason) => (
-                                  <li key={reason}>{reason}</li>
-                                ),
-                              )}
-                            </ul>
+                            <ScanClearanceBadges
+                              view={scanClearanceView(clearance.assessment)}
+                            />
                           </dd>
                         </div>
                       ) : null}

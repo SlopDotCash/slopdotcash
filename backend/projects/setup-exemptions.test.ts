@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProjectRecord } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
-import { scanClearanceReasons } from "../../src/lib/scan-clearance";
+import { scanClearanceView } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import type { VettingAssessment } from "../vetting/persistence";
@@ -438,7 +438,16 @@ describe("paused project with a cleared scan", () => {
   });
 });
 
-describe("incomplete scan reasons for the owner (issue #1991)", () => {
+describe("incomplete scan badges for the owner (issue #1991)", () => {
+  const labels = (setup: ReturnType<typeof projectSetupStatus>) => {
+    const view = setup.checks.scan.clearance;
+    if (!view) throw new Error("Missing clearance view");
+    return {
+      checks: view.checks.map((badge) => `${badge.tone}:${badge.label}`),
+      coverage: view.coverage.map((badge) => `${badge.tone}:${badge.label}`),
+      review: view.review.map((badge) => `${badge.tone}:${badge.label}`),
+    };
+  };
   const hex = (char: string) => char.repeat(64);
   const assessment: VettingAssessment = {
     id: "vet_0123456789abcdef0123456789abcdef",
@@ -553,20 +562,24 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
     expect(setup.checks.scan.message).toBe(
       "Findings in Slop's skill template block clearance.",
     );
-    expect(setup.checks.scan.reasons).toEqual([
-      "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
-      "The specialist review covered the agent instructions area partially.",
-      "The primary review reported findings and rated the result ambiguous, and the specialist review did not clear it: it reported findings and rated the result ambiguous.",
-    ]);
+    expect(labels(setup)).toEqual({
+      checks: ["success:No check flagged"],
+      coverage: ["warning:Specialist: agent instructions partial"],
+      review: [
+        "warning:Primary: ambiguous",
+        "warning:Specialist: ambiguous",
+        "info:Slop-side block",
+      ],
+    });
     // Nothing the models wrote reaches the owner, and nothing reads "passed".
     const shown = JSON.stringify(setup.checks.scan);
     expect(shown).not.toContain("receipt script");
     expect(shown).not.toContain("run-receipt");
-    expect(shown).not.toMatch(/\bpassed\b(?! and every surface)/u);
+    expect(shown).not.toMatch(/\bpassed\b/u);
     expect(setup.checks.scan.state).toBe("quarantined");
-    // The admin view derives the same list from the same summary.
-    expect(scanClearanceReasons(summary)).toEqual(
-      setup.checks.scan.reasons ?? [],
+    // The admin view derives the same badges from the same summary.
+    expect(scanClearanceView(summary)).toEqual(
+      setup.checks.scan.clearance ?? null,
     );
   });
 
@@ -577,13 +590,12 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
       summary: "A postinstall script runs a package",
       evidence,
     });
-    const slopSide = /Slop's side|will not clear it/u;
+    const slopSide = /Slop-side/u;
     const cases = [
       {
         findings: [medium("scripts/postinstall.js:12")],
         message: "Findings in the project repository block clearance.",
-        first:
-          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository.",
+        location: "warning:Findings: repository",
       },
       {
         findings: [
@@ -592,11 +604,10 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
         ],
         message:
           "Findings in both the repository and skill template block clearance.",
-        first:
-          "Every deterministic check passed and every surface was read completely. The open findings are rated below high and point at files in the repository and Slop's skill template.",
+        location: "warning:Findings: repository + template",
       },
     ];
-    for (const { findings, message, first } of cases) {
+    for (const { findings, message, location } of cases) {
       const { summary, setup } = quarantined(
         incompleteScan({
           primaryReview: review("primary-run-2", "findings", "ambiguous"),
@@ -604,17 +615,18 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
         }),
       );
       expect(setup.checks.scan.message).toBe(message);
-      expect(setup.checks.scan.reasons).toEqual([
-        first,
-        "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
-      ]);
+      expect(labels(setup)).toEqual({
+        checks: ["success:No check flagged", location],
+        coverage: [],
+        review: ["warning:Primary: ambiguous", "danger:Specialist not run"],
+      });
       expect(JSON.stringify(setup.checks.scan)).not.toMatch(slopSide);
       expect(JSON.stringify(setup.checks.scan)).not.toContain("postinstall");
-      expect(scanClearanceReasons(summary)).toEqual(
-        setup.checks.scan.reasons ?? [],
+      expect(scanClearanceView(summary)).toEqual(
+        setup.checks.scan.clearance ?? null,
       );
     }
-    // Evidence with no path cannot be attributed, so no location sentence.
+    // Evidence with no path cannot be attributed, so no location badge.
     const { setup } = quarantined(
       incompleteScan({
         primaryReview: review("primary-run-2", "findings", "ambiguous"),
@@ -622,9 +634,11 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
       }),
     );
     expect(setup.checks.scan.message).toBe("Findings block clearance.");
-    expect(setup.checks.scan.reasons).toEqual([
-      "The primary review reported findings and rated the result ambiguous, and the specialist review that this result requires did not run.",
-    ]);
+    expect(labels(setup)).toEqual({
+      checks: [],
+      coverage: [],
+      review: ["warning:Primary: ambiguous", "danger:Specialist not run"],
+    });
   });
 
   test("a flagged check, a high finding and a partial surface each name the repository", () => {
@@ -661,12 +675,14 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
     expect(setup.checks.scan.message).toBe(
       "Findings in the project repository block clearance.",
     );
-    expect(setup.checks.scan.reasons).toEqual([
-      "The credential theft check flagged content (1 open finding rated high or critical).",
-      "The downloads surface was read partially.",
-      "Coverage note from the scanner: A postinstall download was not retrievable: https://example.org/addon.tgz",
-      "The primary review reported findings and rated the result high risk, and the specialist review that this result requires did not run.",
-    ]);
+    expect(labels(setup)).toEqual({
+      checks: ["danger:credential theft flagged · 1 high"],
+      coverage: [
+        "warning:downloads partial",
+        "neutral:A postinstall download was not retrievable: https://example.org/addon.tgz",
+      ],
+      review: ["danger:Primary: high risk", "danger:Specialist not run"],
+    });
     expect(JSON.stringify(setup.checks.scan)).not.toContain("wallet store");
   });
 
@@ -683,31 +699,21 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
         ],
       }),
     );
-    const reasons = setup.checks.scan.reasons ?? [];
-    expect(
-      reasons.filter(
-        (reason) =>
-          reason ===
-          "The specialist review covered the agent instructions area partially.",
-      ),
-    ).toHaveLength(1);
-    expect(
-      reasons.filter(
-        (reason) =>
-          reason ===
-          "Coverage note from the scanner: A download was not retrievable",
-      ),
-    ).toHaveLength(1);
-    expect(new Set(reasons).size).toBe(reasons.length);
-    expect(scanClearanceReasons(summary)).toEqual(reasons);
+    expect(labels(setup).coverage).toEqual([
+      "warning:Specialist: agent instructions partial",
+      "neutral:A download was not retrievable",
+    ]);
+    expect(scanClearanceView(summary)).toEqual(
+      setup.checks.scan.clearance ?? null,
+    );
   });
 
-  test("a scan that did not finish, and a historical result, list no reasons", () => {
+  test("a scan that did not finish, and a historical result, show no badges", () => {
     const unfinished = status({
       state: "quarantined",
       assessment: { ...summarize(assessment), completedAt: null },
     });
-    expect(unfinished.checks.scan.reasons).toBeUndefined();
+    expect(unfinished.checks.scan.clearance).toBeUndefined();
     expect(unfinished.checks.scan.message).toBe(
       "The last scan could not finish, so it did not clear the project.",
     );

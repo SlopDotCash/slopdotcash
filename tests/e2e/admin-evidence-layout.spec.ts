@@ -166,18 +166,17 @@ test("selected admin project can queue after a superseded pending scan and prese
   await expect(card.getByRole("table", { name: "Scan checks" })).toContainText(
     "Incomplete",
   );
-  // The same generic reasons the owner's setup status shows.
+  // The same badges the owner's setup status shows.
   await expect(
     card
-      .locator(".admin-facts > div")
-      .filter({ hasText: "Not cleared because (as the owner sees it)" })
-      .getByRole("listitem"),
+      .getByRole("region", { name: "Why the scan did not clear" })
+      .locator(".route-badge"),
   ).toHaveText([
-    "The unsafe execution check did not run.",
-    "The dependencies surface was read partially.",
-    "1 downloaded or binary artifact stays quarantined without a clean analysis.",
-    "Coverage note from the scanner: Dependency source could not be inspected",
-    "The primary review reported no findings, and no specialist review was required.",
+    "unsafe execution not run",
+    "dependencies partial",
+    "1 artifact held",
+    "Dependency source could not be inspected",
+    "Primary: clear",
   ]);
   const reason = card.getByLabel("Reason for the scan");
   await expect(reason).toBeVisible();

@@ -1805,13 +1805,15 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   await expect(reviewed.getByRole("status")).toContainText(
     "Findings in Slop's skill template block clearance. Check for an updated skill template before requesting a new scan.",
   );
-  const reasons = reviewed.getByRole("list", {
+  const reasons = reviewed.getByRole("region", {
     name: "Why the scan did not clear",
   });
-  await expect(reasons.getByRole("listitem")).toHaveText([
-    "Every deterministic check passed and every surface was read completely, so nothing in the repository was flagged by the checks. The block is a review-coverage decision on Slop's side; changing the repository will not clear it.",
-    "The specialist review covered the agent instructions area partially.",
-    "The primary review reported findings and rated the result ambiguous, and the specialist review did not clear it: it reported findings and rated the result ambiguous.",
+  await expect(reasons.locator(".route-badge")).toHaveText([
+    "No check flagged",
+    "Specialist: agent instructions partial",
+    "Primary: ambiguous",
+    "Specialist: ambiguous",
+    "Slop-side block",
   ]);
   await expect(reviewed).not.toContainText("receipt script");
   await expectAccessible(page);
