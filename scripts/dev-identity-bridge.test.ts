@@ -28,7 +28,7 @@ function fixture() {
     resolveGithubIdentity: async () => ({
       githubActorId: "42",
       githubLogin: "developer",
-      githubNodeId: "U_developer",
+      githubNodeId: "U_kgDOAAAAKg",
     }),
   };
   const serve = (request: Request) => handleIdentityRequest(request, deps);
@@ -117,7 +117,7 @@ test("existing GitHub App returns locally and exchanges identity only once", asy
       }),
     );
     expect(await me.json()).toMatchObject({
-      actor: { id: "U_developer", login: "developer" },
+      actor: { id: "U_kgDOAAAAKg", login: "developer" },
     });
     expect((await bridge(consume())).status).toBe(401);
     expect((await bridge(post(`${local}/v1/oauth/poll`, poll))).status).toBe(

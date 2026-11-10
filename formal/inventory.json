@@ -507,7 +507,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
+      "sha256": "debf07d9ef83f8e441b886f0345058661f60ebfa951a4776b0a15db624ba29d1",
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -516,8 +516,8 @@
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        21, 22, 115, 215, 220, 225, 229, 299, 327, 331, 334, 337, 340, 345, 350,
-        354, 377, 393
+        22, 23, 116, 222, 227, 232, 236, 306, 334, 338, 341, 344, 347, 352, 357,
+        361, 384, 400
       ],
       "review": "mapped-abstraction"
     },

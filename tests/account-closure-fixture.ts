@@ -5,12 +5,14 @@ import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { applicationManifest } from "./project-application-manifest";
 import { sqliteD1 } from "./sqlite-d1";
 export const ME = {
-  actor: "U_closing",
+  // Genuine current-form node ids: `U_` + base64url of `[0, id]`, so the
+  // join node/numeric cross-check resolves each actor to its numeric id.
+  actor: "U_kgDOAAAQBA",
   github: "4100",
   login: "Closing-Member",
 };
 export const OTHER = {
-  actor: "U_staying",
+  actor: "U_kgDOAAAQaA",
   github: "4200",
   login: "staying-member",
 };

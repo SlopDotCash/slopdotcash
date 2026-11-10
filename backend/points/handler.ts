@@ -1,5 +1,6 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { deploymentOrigins } from "../../src/lib/deployment";
+import { githubUserIdFromNodeId } from "../../src/lib/github-actor";
 import { POINTS_RULE } from "../../src/lib/points";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import { randomToken } from "../../workers/identity/crypto";
@@ -184,6 +185,12 @@ export async function handlePointsApi(
       )
         return json(401, { error: "invalid_identity" });
       const { githubId: id, githubLogin: login } = identity;
+      // The node id must decode to the same numeric user as the asserted id:
+      // the node is the actor key for a first join, so a mismatched pair
+      // would otherwise write a new member keyed by one person's node with
+      // another person's numeric id.
+      if (githubUserIdFromNodeId(node) !== id)
+        return json(401, { error: "invalid_identity" });
       // Membership is keyed by the numeric GitHub id. The asserted node id is
       // only the actor key for a first join. A later spelling of the same
       // person's node must reuse the stored actor_id: actor_id and github_id

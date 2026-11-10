@@ -13,7 +13,22 @@ const ASSERTION = `slop_assert_v1_${"n".repeat(48)}`;
 const GITHUB = "91001";
 const LOGIN = "Node-Spelling";
 const LEGACY_NODE = "MDQ6VXNlcjkxMDAx";
-const CURRENT_NODE = "U_91001_current";
+const CURRENT_NODE = "U_kgDOAAFjeQ";
+/** A genuine current-form node id for `id`: `U_` + base64url of `[0, id]`. */
+function current(id: bigint): string {
+  const width = id <= 0xff_ff_ff_fn ? 4 : 8;
+  const bytes = new Uint8Array(3 + width);
+  bytes.set([0x92, 0x00, width === 4 ? 0xce : 0xcf]);
+  let rest = id;
+  for (let i = width - 1; i >= 0; i--) {
+    bytes[3 + i] = Number(rest & 0xffn);
+    rest >>= 8n;
+  }
+  return `U_${btoa(String.fromCharCode(...bytes))
+    .replace(/\+/gu, "-")
+    .replace(/\//gu, "_")
+    .replace(/=+$/u, "")}`;
+}
 
 async function emptyPointsDb() {
   return sqliteD1(
@@ -124,6 +139,29 @@ test("join with the legacy spelling still works after the current spelling signe
         .query("SELECT actor_id FROM points_members WHERE github_id=?")
         .get(GITHUB),
     ).toEqual({ actor_id: CURRENT_NODE });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("join rejects a new membership whose node id names a different numeric user", async () => {
+  const { db, sqlite } = await emptyPointsDb();
+  try {
+    // B9: the asserted node names user 12345 while the numeric id is 91001.
+    // A new member must not be written with a mismatched node/numeric pair.
+    const refused = await handlePointsApi(
+      joinRequest(),
+      depsFor(db, current(12345n)),
+    );
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toEqual({ error: "invalid_identity" });
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    expect(
+      sqlite.query("SELECT COUNT(*) AS n FROM points_members").get(),
+    ).toEqual({ n: 0 });
+    expect(
+      sqlite.query("SELECT COUNT(*) AS n FROM points_sessions").get(),
+    ).toEqual({ n: 0 });
   } finally {
     sqlite.close();
   }

@@ -273,12 +273,46 @@ test("sign-in cannot publish another numeric identity's existing membership or X
   try {
     const before = snapshot(["identity_rate_limits"]);
     identity.github = "999999";
+    // The asserted node still names ME (4100) while the numeric id says
+    // 999999: the node/numeric cross-check refuses the mismatched pair
+    // before the membership write, so nothing is published.
+    const refused = await call(
+      "join",
+      { assertion: ASSERTION, public: true },
+      null,
+    );
+    expect(refused.status).toBe(401);
+    expect(await refused.json()).toEqual({ error: "invalid_identity" });
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    expect(snapshot(["identity_rate_limits"])).toEqual(before);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("a legacy member row with a mismatched node still cannot be published", async () => {
+  const { sqlite, identity, call, snapshot } = await harness();
+  try {
+    // A member row written before the cross-check, keyed by the legacy node
+    // for user 12345 but carrying numeric id 999999. A later sign-in that
+    // asserts the matching pair (legacy node, numeric 12345) passes the
+    // cross-check, so the DB guard is what still refuses to publish it.
+    sqlite
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
+      )
+      .run(btoa("04:User12345"), "999999", "legacy-mismatch", NOW);
+    const before = snapshot(["identity_rate_limits"]);
+    identity.actor = btoa("04:User12345");
+    identity.github = "12345";
+    identity.login = "legacy-mismatch";
     const refused = await call(
       "join",
       { assertion: ASSERTION, public: true },
       null,
     );
     expect(refused.status).toBe(503);
+    expect(await refused.json()).toEqual({ error: "points_unavailable" });
     expect(refused.headers.get("set-cookie")).toBeNull();
     expect(snapshot(["identity_rate_limits"])).toEqual(before);
   } finally {
@@ -300,7 +334,7 @@ test("new memberships are public and sign-in never recreates a disconnected X li
       "points_sessions",
       "identity_rate_limits",
     ]);
-    identity.actor = "U_new_public";
+    identity.actor = "U_kgDOAA9CPw";
     identity.github = "999999";
     identity.login = "new-public";
     const joined = await call(
