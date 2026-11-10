@@ -9,7 +9,7 @@ import type { ActorRef } from "./leaderboard-types";
  * this projection does not count them either.
  */
 
-import type { CycleIndex } from "./cycle-index";
+import type { CycleIndex, CycleIndexState } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
 import { type ProjectView, requiredProjection } from "./project-view";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
@@ -57,6 +57,32 @@ function projectOf(repository: string) {
 }
 
 /**
+ * A cycle counts as archived only once its scores are approved: every state
+ * except `review`. A review-state cycle is still inside its public review
+ * window — its proposal exists but no allocation does, so the creator may
+ * still exclude, reduce or increase rows — and its scores are proposed,
+ * not approved (PRD section 2, "State meanings": the Award dimension is
+ * "Projected, under review, approved, or excluded"). The rolling ledger
+ * stays the month's score until approval. The other states all carry
+ * approved scores: payment-ready, settlement-planned, paid and wound-up
+ * have an approved allocation, closed-no-awards has no contributors, and
+ * an external-provisional share is regenerated deterministically from its
+ * frozen source snapshot, so its scores cannot change either.
+ */
+const ARCHIVED_CYCLE_STATES: ReadonlySet<CycleIndexState> = new Set([
+  "closed-no-awards",
+  "external-provisional",
+  "paid",
+  "payment-ready",
+  "settlement-planned",
+  "wound-up",
+]);
+
+function isArchivedCycleState(state: CycleIndexState): boolean {
+  return ARCHIVED_CYCLE_STATES.has(state);
+}
+
+/**
  * Rolling-window events and debits of months without a closed cycle record.
  * A closed record already carries its month's score, so a later debit never
  * changes it.
@@ -79,7 +105,8 @@ export function openMonthScores(
     return index;
   };
   for (const cycle of cycleIndex.cycles)
-    archived[scopeIndex(cycleKey(cycle.projectId, cycle.cycleId))] = true;
+    if (isArchivedCycleState(cycle.state))
+      archived[scopeIndex(cycleKey(cycle.projectId, cycle.cycleId))] = true;
   const select = <T extends { repository: string; occurredAt: string }>(
     records: readonly T[],
   ): T[] => {
@@ -168,12 +195,13 @@ export function createGlobalLeaders(
     });
   };
   for (const cycle of cycleIndex.cycles) {
+    if (!isArchivedCycleState(cycle.state)) continue;
     const key = cycleKey(cycle.projectId, cycle.cycleId);
     for (const contributor of cycle.contributors) {
       const actor =
         currentActors.get(contributor.actor.id) ??
         actorFromCycle(contributor.actor);
-      const score = contributor.scoreThirds ?? contributor.score * 3;
+      const score = contributor.scoreThirds;
       const paid = BigInt(contributor.paidMinor);
       const counted = score > 0 || contributor.state !== "excluded";
       append(

@@ -5575,13 +5575,13 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "sha256": "0d2e344a5d1f7953d7daf09e7343f2d942c5f1db19b728f530bc054fff291f85",
+      "sha256": "e7ba539f528c108c1733d649ef63ad330ccfb1c670f41dd2ca486af22a30fd9c",
       "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "candidateLines": [
-        63, 97, 391, 422, 423, 573, 603, 604, 606, 607, 616, 617, 619, 670, 746,
-        752, 759, 761, 762, 767, 769, 771, 777, 827, 828, 840, 850, 851, 852,
-        853, 856, 858, 861, 866, 872, 878, 882, 885, 889, 891, 893, 900, 909,
-        915, 918, 921, 923, 934, 940, 952, 998
+        63, 97, 391, 422, 423, 573, 606, 607, 609, 610, 619, 620, 622, 671, 747,
+        753, 760, 762, 763, 768, 770, 772, 778, 828, 829, 841, 851, 852, 853,
+        854, 857, 859, 862, 867, 873, 879, 883, 886, 890, 892, 894, 901, 910,
+        916, 919, 922, 924, 935, 941, 953, 999
       ],
       "review": "mapped-abstraction"
     },
@@ -5719,9 +5719,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "23deb359a46ddc9af987bf4a4b60c1b17b65d8c534aa850b63f6a9748f8e8601",
+      "sha256": "9d55beae09c704f20c4d5474a279d02119d74623fabffef45d6201dfc9af6086",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [178],
+      "candidateLines": [60, 61, 64, 81, 82, 108, 198, 206],
       "review": "mapped-abstraction"
     },
     {

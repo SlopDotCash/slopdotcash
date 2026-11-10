@@ -93,7 +93,7 @@ export interface CycleIndexEntry {
   contributors: Array<{
     actor: ActorRef;
     score: number;
-    scoreThirds?: number;
+    scoreThirds: number;
     state: (typeof CYCLE_CONTRIBUTOR_STATES)[number];
     suggestedMinor: string;
     approvedMinor: string;
@@ -568,7 +568,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
         "approvedMinor",
         "paidMinor",
         "score",
-        ...(Object.hasOwn(contributor, "scoreThirds") ? ["scoreThirds"] : []),
+        "scoreThirds",
         "sharePartsPerMillion",
         "state",
         "suggestedMinor",
@@ -592,11 +592,14 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       throw new TypeError(`${contributorField}.score is invalid`);
     }
     const scoreThirds = contributor.scoreThirds;
+    // scoreThirds is required: score is Math.floor(scoreThirds / 3), so a
+    // missing field cannot be rebuilt from score without losing the
+    // remainder (up to 2 thirds per contributor). Refuse the entry
+    // instead of silently undercounting it on the global leaderboard.
     if (
-      Object.hasOwn(contributor, "scoreThirds") &&
-      (!Number.isSafeInteger(scoreThirds) ||
-        Number(scoreThirds) < 0 ||
-        Math.floor(Number(scoreThirds) / 3) !== contributor.score)
+      !Number.isSafeInteger(scoreThirds) ||
+      Number(scoreThirds) < 0 ||
+      Math.floor(Number(scoreThirds) / 3) !== contributor.score
     ) {
       throw new TypeError(`${contributorField}.scoreThirds is invalid`);
     }
@@ -664,9 +667,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     return {
       actor: { id: actorId, login },
       score: Number(contributor.score),
-      ...(scoreThirds === undefined
-        ? {}
-        : { scoreThirds: Number(scoreThirds) }),
+      scoreThirds: Number(scoreThirds),
       state,
       suggestedMinor,
       approvedMinor,

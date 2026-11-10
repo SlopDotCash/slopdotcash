@@ -535,6 +535,7 @@ export function archivedPaidCycleIndex() {
         {
           actor: { id: "U_archived", login: "archive-only" },
           score: 7,
+          scoreThirds: 21,
           state: "paid",
           suggestedMinor: "1000000",
           approvedMinor: "1000000",
