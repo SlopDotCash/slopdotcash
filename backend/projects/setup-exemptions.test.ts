@@ -7,7 +7,7 @@ import { applicationManifest } from "../../tests/project-application-manifest";
 import type { VettingAssessment } from "../vetting/persistence";
 import { summarize } from "../vetting/persistence";
 import {
-  parseVettingScanResult,
+  parseRecordedVettingResult,
   type ScanReview,
   scanProblems,
   type VettingScanResult,
@@ -434,6 +434,9 @@ describe("paused project with a cleared scan", () => {
     expect(result.nextAction.kind).toBe("complete_skill_fields");
     expect(result.nextAction.message).toContain(
       "contributor guide and skill fields are complete",
+    );
+  });
+});
 
 describe("incomplete scan reasons for the owner (issue #1991)", () => {
   const hex = (char: string) => char.repeat(64);
@@ -475,7 +478,7 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
   const incompleteScan = (
     overrides: Partial<VettingScanResult>,
   ): VettingScanResult =>
-    parseVettingScanResult({
+    parseRecordedVettingResult({
       schemaVersion: "slop-vetting-result-v2",
       assessmentId: assessment.id,
       projectId: assessment.projectId,
@@ -520,7 +523,7 @@ describe("incomplete scan reasons for the owner (issue #1991)", () => {
       findings: [],
       confirmation: null,
       ...overrides,
-    });
+    }) as VettingScanResult;
   const quarantined = (result: VettingScanResult) => {
     // The disposition is consistent with its own evidence.
     expect(scanProblems(result)).toEqual([]);
