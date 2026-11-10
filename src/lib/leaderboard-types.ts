@@ -253,6 +253,13 @@ export interface InvalidAttributionMarker {
   reason: string;
 }
 
+/** A maintainer `slop-score` record skipped as invalid during generation. */
+export interface InvalidScoreRatificationMarker {
+  sourceId: string;
+  sourceUrl: string;
+  reason: string;
+}
+
 export interface ModelAttribution {
   id: string;
   sourceId: string;
@@ -710,6 +717,12 @@ export interface LeaderboardSnapshot {
   opportunities: ScoreOpportunity[];
   attributions: ModelAttribution[];
   invalidAttributionMarkers: InvalidAttributionMarker[];
+  /**
+   * Maintainer `slop-score` records skipped as invalid during generation;
+   * the pull request keeps its provisional credit. Absent when every
+   * record parses, so older snapshots stay valid.
+   */
+  invalidScoreRatifications?: InvalidScoreRatificationMarker[];
   attributionCoverage: AttributionCoverage;
   workQueue: {
     issues: WorkItem[];

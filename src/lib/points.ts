@@ -1099,7 +1099,35 @@ export function pointMembers(
   const members = new Map<string, PointsMember>();
   const memberIndexes = new Map<string, number>();
   const earnedAmounts: { bucket: number; amount: bigint }[] = [];
-  for (const a of groups.values()) {
+  // PRD section 7: evaluated awards score under the newest-three cap per
+  // actor, project and UTC month. The journal keeps every record; only the
+  // counted view is capped, newest-first, so history is preserved while a
+  // fourth award in the same month earns nothing. The snapshot ledger caps
+  // the same way in addScore, so both views agree on the newest three.
+  const evaluatedKept = new Set<string>();
+  {
+    const byBucket = new Map<string, { key: string; award: PointAward }[]>();
+    for (const [key, award] of groups) {
+      if (award.category !== "evaluated-contribution") continue;
+      const bucket = `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+      const list = byBucket.get(bucket) ?? [];
+      list.push({ key, award });
+      byBucket.set(bucket, list);
+    }
+    for (const list of byBucket.values()) {
+      list
+        .sort(
+          (left, right) =>
+            right.award.occurredAt.localeCompare(left.award.occurredAt) ||
+            left.award.sourceId.localeCompare(right.award.sourceId),
+        )
+        .slice(0, 3)
+        .forEach((entry) => evaluatedKept.add(entry.key));
+    }
+  }
+  for (const [groupKey, a] of groups) {
+    if (a.category === "evaluated-contribution" && !evaluatedKept.has(groupKey))
+      continue;
     const m = members.get(a.actor.id) ?? {
       actor: a.actor,
       total: 0,

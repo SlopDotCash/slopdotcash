@@ -21,6 +21,7 @@ import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import type { ScoreEvent } from "../src/lib/leaderboard-types";
 import { penaltyScoreInput } from "../tests/penalty-score-fixture";
 
 const fixture = JSON.parse(
@@ -181,5 +182,70 @@ describe("evaluator award source uniqueness", () => {
         },
       }),
     ).toThrow("expected canonical GitHub URL");
+  });
+});
+
+describe("evaluated-contribution newest-three cap in scoring v2", () => {
+  /** Four evaluated awards, same actor/project/month, 13..16 November. */
+  function capEvents(): ScoreEvent[] {
+    return [0, 1, 2, 3].map((index) => ({
+      id: `award_cap_${index}`,
+      actor: fixture.actor,
+      category: "evaluated-contribution",
+      points: 8,
+      occurredAt: `2026-11-${13 + index}T10:00:00.000Z`,
+      repository: "elizaOS/eliza",
+      source: {
+        id: `PR_cap_${index}`,
+        kind: "pull-request",
+        number: 90001 + index,
+        title: "fix: synthetic evaluated contribution",
+        url: `https://github.com/elizaOS/eliza/pull/${90001 + index}`,
+      },
+      reason:
+        "Synthetic evaluated contribution for the newest-three cap check.",
+      evaluation: {
+        decisionUrl: "https://github.com/SlopDotCash/slopdotcash/pull/316",
+        manifestPath: "evaluations/eliza/award-cap.json",
+        manifestSha256: "a".repeat(64),
+        reviewedAt: "2026-11-17T10:00:00.000Z",
+        reviewer: "lalalune",
+      },
+    }));
+  }
+
+  test("four evaluated awards keep only the newest three", () => {
+    const input = penaltyScoreInput([]);
+    setSystemTime(new Date(input.generatedAt));
+    const snapshot = createLeaderboardSnapshot({
+      ...input,
+      evaluatedContributions: capEvents(),
+    });
+    const kept = snapshot.ledger.filter(
+      (event) => event.category === "evaluated-contribution",
+    );
+    expect(kept.map((event) => event.id).sort()).toEqual([
+      "award_cap_1",
+      "award_cap_2",
+      "award_cap_3",
+    ]);
+    const leader = snapshot.leaders.find(
+      (entry) => entry.actor.id === fixture.actor.id,
+    );
+    expect(leader?.points.evaluatedContributions).toBe(24);
+    expect(leader?.acceptedOutcomes.evaluatedContributions).toBe(3);
+  });
+
+  test("a fourth v2 evaluated event fails snapshot validation", () => {
+    const input = penaltyScoreInput([]);
+    setSystemTime(new Date(input.generatedAt));
+    const snapshot = createLeaderboardSnapshot({
+      ...input,
+      evaluatedContributions: capEvents().slice(0, 3),
+    });
+    snapshot.ledger.push(capEvents()[3]);
+    expect(() => assertLeaderboardSnapshot(snapshot)).toThrow(
+      "exceeds a per-project score cap",
+    );
   });
 });

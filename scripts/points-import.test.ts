@@ -1077,3 +1077,39 @@ test("a penalty batch preserves the journal prefix, caps the month's total debit
     api.close();
   }
 });
+
+test("evaluated contributions count only the newest three per actor and month", () => {
+  const awards: PointAward[] = [0, 1, 2, 3].map((index) => ({
+    key: pointKey(
+      "asi",
+      PENALIZED_AUTHOR.id,
+      "evaluated-contribution",
+      `PR_points_cap_${index}`,
+    ),
+    actor: { id: PENALIZED_AUTHOR.id, login: PENALIZED_AUTHOR.login },
+    projectId: "asi",
+    category: "evaluated-contribution",
+    amount: 80,
+    occurredAt: `2026-11-${10 + index}T10:00:00.000Z`,
+    sourceId: `PR_points_cap_${index}`,
+    sourceUrl: `https://github.com/SlopDotCash/asi/pull/${91000 + index}`,
+    workUnitId: `wu_points_cap_${index}`,
+    provisional: false,
+  }));
+  const journal = appendPointAwards(
+    emptyPointsJournal(GENERATED_AT),
+    awards,
+    "c".repeat(64),
+    "slop-score-v2",
+    GENERATED_AT,
+  );
+  const members = pointMembers(journal);
+  expect(members).toHaveLength(1);
+  expect(members[0]?.total).toBe(240);
+  expect(members[0]?.awards).toHaveLength(3);
+  expect(members[0]?.awards.map((award) => award.sourceId).sort()).toEqual([
+    "PR_points_cap_1",
+    "PR_points_cap_2",
+    "PR_points_cap_3",
+  ]);
+});
