@@ -8617,7 +8617,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "9c91117652031b2a89d2d46acb75f8002cc03e97f84ededeb32fa7b064057d55",
+      "sha256": "d5f9e5c5d6eb6fe75844ee57eb5e99428fd23ec12d4f41b661506625d8f84f07",
       "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "candidateLines": [
         241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050, 2093
