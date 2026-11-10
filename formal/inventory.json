@@ -3641,12 +3641,12 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "9d433b7db7c57f35147efa79b43a8f20aba2db577708410fdc900f9355667208",
+      "sha256": "2e2c7f4897eb9865a76d59bf62e954d02e421409526e686bbdb72ca79b43011f",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
-      "candidateLines": [292, 293, 294, 317, 472, 569, 604],
+      "candidateLines": [295, 296, 297, 320, 475, 572, 607],
       "review": "mapped-abstraction"
     },
     {
