@@ -3692,8 +3692,9 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "accca2ea0a3dc1cdd23a6255a12fff70614f774973849d83abcca1ae17307c1b",
+      "sha256": "b5164179b1114c391258721b4d821bfc08919e3995fdd6ac827b22a4863ced97",
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -3703,11 +3704,12 @@
         23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
         653, 685, 881, 1108, 1170, 1178, 1236, 1289, 1292, 1485, 1494, 1499,
         1506, 1589, 1590, 1737, 1738, 1795, 1821, 1839, 1841, 1845, 1879, 1882,
-        1883, 1886, 1888, 1899, 2114, 2117, 2425, 2444, 2542, 2555, 2566, 2567,
-        2744, 2746, 2938, 2954, 2966, 2973, 2999, 3009, 3013, 3017, 3021, 3076,
-        3095, 3122, 3139, 3173, 3174, 3176, 3192, 3209, 3210, 3211, 3220, 3225,
-        3405, 3763, 3785, 3794, 3844, 3879, 3885, 3892, 3961, 4046, 4198, 4413,
-        4423, 4425, 4438, 4467, 4469, 4470, 4474, 4478, 4533, 4587, 4638, 4641
+        1883, 1886, 1888, 1899, 1922, 2129, 2132, 2440, 2459, 2557, 2570, 2581,
+        2582, 2759, 2761, 2953, 2969, 2981, 2988, 3014, 3024, 3028, 3032, 3036,
+        3091, 3110, 3137, 3154, 3188, 3189, 3191, 3207, 3224, 3225, 3226, 3235,
+        3240, 3420, 3778, 3800, 3809, 3859, 3894, 3900, 3907, 3976, 4061, 4213,
+        4428, 4438, 4440, 4453, 4482, 4484, 4485, 4489, 4493, 4548, 4602, 4653,
+        4656
       ],
       "review": "mapped-abstraction"
     },
@@ -12728,6 +12730,15 @@
         "reportAloneCannotHoldTest",
         "signedHoldClearsApprovalTest",
         "substitutedWalletRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/github_budget_window.qnt",
+      "sha256": "dd873914f8256275f15bcabf22c961d4dbfbea2073d7f221741d0ab4cc07e61f",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "newWindowClearsConsumedCostTest",
+        "sameWindowBlocksAfterRetryTest"
       ]
     },
     {
