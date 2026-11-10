@@ -1076,6 +1076,36 @@ describe("configuration", () => {
     expect(limits().shareBps).toBe(5_000n);
   });
 
+  test("the checked-in configuration keeps the buyback off and its proposed limits complete", async () => {
+    for (const name of ["wrangler.toml", "wrangler.staging.toml"]) {
+      const { vars } = Bun.TOML.parse(
+        await Bun.file(new URL(name, import.meta.url)).text(),
+      ) as { vars: Record<string, string> };
+      expect(vars.BUYBACK_MODE).toBe("off");
+      expect(parseBuybackConfig(vars, "live")).toEqual({
+        mode: "off",
+        limits: null,
+      });
+      // Activation changes only the mode and the start instant.
+      const active = parseBuybackConfig(
+        { ...vars, BUYBACK_MODE: "live", BUYBACK_START_AT: START },
+        "live",
+      ).limits as BuybackLimits;
+      expect(active.shareBps).toBe(5_000n);
+      expect(active.burnBps).toBe(5_000n);
+      expect(active.maxBridgeNativeFee).toEqual({
+        base: 10n ** 15n,
+        ethereum: 10n ** 15n,
+        solana: 50_000_000n,
+      });
+      expect(active.solanaBridgeNative).toEqual({
+        perTransaction: "50000000",
+        perDay: "100000000",
+        additionalFeeReserve: "0",
+      });
+    }
+  });
+
   test("a buyback that is not off refuses to run without Robinhood enabled", async () => {
     const { db } = sqliteD1();
     await expect(

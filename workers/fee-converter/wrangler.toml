@@ -69,6 +69,41 @@ FEE_WALLET_ETHEREUM = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
 FEE_WALLET_SOLANA = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
 KYBERSWAP_CLIENT_ID = "slop-fee-converter"
 
+# SLOP buyback (PRD section 6, "SLOP buyback and burn"; owner decision of
+# 10 November 2026). Off: nothing below is read and every network behaves as
+# before. Activation is a later reviewed change of BUYBACK_MODE and
+# BUYBACK_START_AT (see README.md, "SLOP buyback"); merging these values
+# activates nothing. Each limit below is a proposal that the owner confirms
+# at activation; the code has no fallback for any of them.
+BUYBACK_MODE = "off"
+# UTC instant from which fee income counts; earlier fees never enter the buyback.
+BUYBACK_START_AT = ""
+# Half of all fee income funds the buyback; half of acquired SLOP is burned.
+BUYBACK_SHARE_BPS = "5000"
+BUYBACK_BURN_BPS = "5000"
+# Bridge at least 500 USDC per order; spread, fixed protocol fee and network
+# fee together may cost at most 1.5% of it.
+BUYBACK_MIN_BRIDGE_MICRO = "500000000"
+BUYBACK_MAX_BRIDGE_COST_BPS = "150"
+# Highest native cost of one order: the deBridge fixed fee on Base and
+# Ethereum (0.001 ETH), and on Solana the whole SOL debit of the order
+# (order-account rent, fixed fee and network fee; 0.05 SOL).
+BUYBACK_MAX_BRIDGE_NATIVE_FEE = '{"base":"1000000000000000","ethereum":"1000000000000000","solana":"50000000"}'
+# Solana bridge orders have their own native budget, in lamports, separate
+# from FEE_CONVERTER_NATIVE_BUDGETS: 0.05 SOL per order, 0.1 SOL per UTC day.
+BUYBACK_SOLANA_BRIDGE_NATIVE = '{"perTransaction":"50000000","perDay":"100000000"}'
+# Buy at least 25 USDG of value; burn at least 5 USDG of value.
+BUYBACK_MIN_BUY_MICRO = "25000000"
+BUYBACK_MIN_BURN_MICRO = "5000000"
+# The SLOP pools charge about 1%, which counts as price impact.
+BUYBACK_MAX_SLIPPAGE_BPS = "100"
+BUYBACK_MAX_PRICE_IMPACT_BPS = "300"
+# Per network and leg: 1,000 per run and 5,000 per rolling 24 hours.
+BUYBACK_RUN_CAP_MICRO = "1000000000"
+BUYBACK_DAILY_CAP_MICRO = "5000000000"
+# Report a deposited order that no taker filled within one hour.
+BUYBACK_UNFILLED_ALERT_SECONDS = "3600"
+
 # Secrets, set only with `wrangler secret put` by the key custodian:
 #   FEE_WALLET_KEY_BASE, FEE_WALLET_KEY_ETHEREUM, FEE_WALLET_KEY_ROBINHOOD,
 #   FEE_WALLET_KEY_SOLANA, optional RPC_URL_<NETWORK> and JUPITER_API_KEY.
