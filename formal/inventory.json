@@ -219,12 +219,12 @@
     },
     {
       "path": "backend/notifications/email-destinations.ts",
-      "sha256": "65203e511016e56864affbb47a3fff60e1f9287c215b04b663940c125eb3f128",
+      "sha256": "c353a6dd577866cee0e1ecedb9969653f08c645791d2731fac8cce7c49af751c",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_verification_completion.qnt"
       ],
-      "candidateLines": [128],
+      "candidateLines": [96],
       "review": "mapped-abstraction"
     },
     {
@@ -3218,9 +3218,9 @@
     },
     {
       "path": "migrations/0121_email_unsubscribe_token_expiry.sql",
-      "sha256": "13cdfcfaf255473b2b41e00d26ae0743a5a21f46bc43676473591c35970df0f0",
+      "sha256": "c07e4aba2da220a542a862beccaa49c45a3c4b635fb3a8f03f87be422abf83f5",
       "models": ["formal/models/api/api_email_consent.qnt"],
-      "candidateLines": [7, 14, 16],
+      "candidateLines": [7, 13, 16],
       "review": "mapped-abstraction"
     },
     {
@@ -7191,13 +7191,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "58e062d7cfe9a2019956e4c8f6ef2fce041e4d3ad1edbfc40dc54e7f6bc65512",
+      "sha256": "8bc13f1d347c0522726bc8853b2c14ea7d421448216adba920eb10056399bb14",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [303, 305, 324, 330, 344],
+      "candidateLines": [303, 305, 324, 330, 343],
       "review": "mapped-abstraction"
     },
     {
@@ -7209,7 +7209,7 @@
     },
     {
       "path": "workers/notify/enrollment.ts",
-      "sha256": "0412859817c599f534e4d41d82364f4f83c05ac3e5bbf66267041fe58df4c615",
+      "sha256": "bc58e4d80530ad06d88758e49dbed780a95280243e384e05bd8d2101631f0a5d",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt"
@@ -7239,7 +7239,7 @@
     },
     {
       "path": "workers/notify/security.ts",
-      "sha256": "4c97b0527537a80f1caf780afe8ea2a8385ee278792387bf71ed7b6e577c10fa",
+      "sha256": "73fb408505eaf8d67e47fbfd739b3131ec6531debb2e07fba6fcdc21d7c7ffdf",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
@@ -7249,8 +7249,8 @@
       "candidateLines": [
         50, 145, 146, 149, 151, 155, 159, 160, 203, 212, 214, 217, 219, 233,
         249, 257, 268, 272, 273, 344, 348, 352, 353, 355, 358, 376, 451, 452,
-        458, 474, 475, 476, 481, 483, 484, 502, 503, 515, 516, 531, 532, 533,
-        540, 567, 610, 624, 625, 633, 639, 641
+        458, 474, 475, 476, 481, 483, 484, 501, 502, 514, 515, 530, 531, 532,
+        539, 566, 609, 623, 624, 632, 638, 640
       ],
       "review": "mapped-abstraction"
     },
@@ -8824,7 +8824,7 @@
     },
     {
       "path": "formal/models/api/api_email_consent.qnt",
-      "sha256": "e8fdc7cf9dbf9db94d9517cb9061ffa89fa3c98b7c93da183ae392c618ad613c",
+      "sha256": "7b59c58d96732b83489ed6e55dcee52216e7c936d23a692bd2afef1439274bc0",
       "sources": [
         "backend/notifications/email-destinations.ts",
         "backend/notifications/email.ts",

@@ -406,9 +406,9 @@ test("an issued unsubscribe token works once; a fresh mail issues a new token", 
       version,
       h.worker.now(),
     );
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(200);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      200,
+    );
     expect(
       (
         await h.call("", {
@@ -418,9 +418,9 @@ test("an issued unsubscribe token works once; a fresh mail issues a new token", 
         })
       ).status,
     ).toBe(200);
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect((await h.call()).body).toMatchObject({
       enabled: true,
       securityEnabled: true,
@@ -431,9 +431,9 @@ test("an issued unsubscribe token works once; a fresh mail issues a new token", 
     await dispatchActivityMail(h.worker);
     const renewed = h.unsubscribeFromMail();
     expect(renewed).not.toBe(first);
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect(
       (await h.call("/unsubscribe", { token: renewed }, null)).status,
     ).toBe(200);
@@ -457,9 +457,9 @@ test("a spent unsubscribe token stays spent after a fresh mail issues a new toke
       version,
       h.worker.now(),
     );
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(200);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      200,
+    );
     expect(
       (
         await h.call("", {
@@ -477,9 +477,9 @@ test("a spent unsubscribe token stays spent after a fresh mail issues a new toke
       h.worker.now(),
     );
     expect(renewed).not.toBe(first);
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect((await h.call()).body).toMatchObject({
       enabled: true,
       securityEnabled: true,
@@ -505,9 +505,9 @@ test("a spent unsubscribe token stays spent after a fresh mail issues a new toke
           .run(hash),
       ).toThrow();
     }
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect(
       (await h.call("/unsubscribe", { token: renewed }, null)).status,
     ).toBe(409);
@@ -533,9 +533,9 @@ test("an expired unsubscribe token is rejected; a fresh mail issues a new token"
         .get(),
     ).toEqual({ expires_at: "2026-11-29T12:00:00.000Z" });
     h.advance(31 * 24 * 60 * 60 * 1000);
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect((await h.call()).body).toMatchObject({
       enabled: true,
       securityEnabled: true,
@@ -544,9 +544,9 @@ test("an expired unsubscribe token is rejected; a fresh mail issues a new token"
     await dispatchActivityMail(h.worker);
     const renewed = h.unsubscribeFromMail();
     expect(renewed).not.toBe(first);
-    expect(
-      (await h.call("/unsubscribe", { token: first }, null)).status,
-    ).toBe(409);
+    expect((await h.call("/unsubscribe", { token: first }, null)).status).toBe(
+      409,
+    );
     expect(
       (await h.call("/unsubscribe", { token: renewed }, null)).status,
     ).toBe(200);
