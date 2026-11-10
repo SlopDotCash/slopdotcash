@@ -25,6 +25,7 @@ The minimum viable product (MVP) includes:
 - Private reports, discretionary bounties, remediation, and controlled disclosure.
 - Monthly vault allocations, supported private-award payments, and finalized payment records.
 - Conversion of received fees within the approved fee wallets.
+- The programmatic SLOP buyback and burn funded by half of fee income, described in section 6.
 - The separate contributor token allocation described in section 6.
 
 Support Base, Ethereum, Robinhood Chain, and Solana. Each project selects one network and asset. Section 6 defines supported assets and payment restrictions.
@@ -307,7 +308,7 @@ No application service may sign outside these limits. An owner-authorized agent 
 | Signer | Allowed scope |
 | --- | --- |
 | Identity attester | Attest authenticated GitHub identity for a wallet-signed binding and submit that binding. Sign bounded monthly allocation roots and the limited approvals below. |
-| Fee-wallet key | Claim accrued fees from reviewed vaults into the same fee wallet. Convert only received fees through approved routes within all limits. |
+| Fee-wallet key | Claim accrued fees from reviewed vaults into the same fee wallet. Convert only received fees through approved routes within all limits. For the buyback share only: bridge USDC to the Robinhood Chain fee wallet through the approved bridge, buy SLOP there into the same wallet, and send the burn share of acquired SLOP to the burn address. |
 | Referral root poster | Post cumulative referral roots only after separate reactivation. It remains disabled for launch. |
 
 One identity authority may serve the three EVM networks. The EVM fee wallet also shares one key across those networks. Solana has a separate fee wallet. Store dedicated fee keys as Worker secrets. Fee keys hold no vault role and cannot touch free funds, principal, reserved awards, or payments.
@@ -326,7 +327,7 @@ Immediate upgrades can change logic governing deposited funds. A compromised att
 
 ### Received-fee handling
 
-Convert received fees to USDC on Base, Ethereum, and Solana. Return proceeds to the same fee wallet. Robinhood Chain never converts or bridges fees: retain each asset and show **not converted**. Unavailable conversion elsewhere leaves the token pending or failed and never blocks contributor payment.
+Convert received fees to USDC on Base, Ethereum, and Solana. Return proceeds to the same fee wallet. Outside the buyback share below, Robinhood Chain never converts or bridges fees: retain each asset and show **not converted**. Unavailable conversion elsewhere leaves the token pending or failed and never blocks contributor payment.
 
 Convert on receipt only when the value is at least 5 USDC and ten times the gas cost. Limit slippage to 1%, price impact to 2%, value to 1,000 USDC per run, and 5,000 USDC per day.
 
@@ -348,6 +349,34 @@ For an expired Solana fee send, require two independent full-history RPC provide
 For versioned Jupiter routes, resolve every address lookup and inspect all affected accounts. Verify signer, destination, token, native-debit, and rent limits. Unresolved accounts or unsupported extensions refuse signing.
 
 Owners authorize sweeps to separate EVM and Solana software wallets. A human or authorized agent executes outside the Worker. Sweep keys stay in the owner's local `.env`. They are not cold-storage wallets.
+
+### SLOP buyback and burn
+
+Owner decision, 10 November 2026. Half of all fee income funds a programmatic buyback of SLOP, the Slop Cash token at `0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood Chain. This is 1% of an ordinary award or withdrawal and 12.5% of a private security bounty. The other half keeps the handling above. This section supersedes "never converts or bridges" for the buyback share only.
+
+- **BUY-01 — Share.** Count verified fee income from an activation instant: finalized conversions into USDC, finalized USDC fee claims, and completed direct-award fees. The buyback may take at most the floor of half of that cumulative total, less every amount already committed. A fee in another token counts once, as its conversion output. Earlier income never counts. A retry, restart, or repeated run must not take a share twice.
+- **BUY-02 — Bridge.** On Base, Ethereum, and Solana, bridge the buyback share of USDC to the Robinhood Chain fee wallet as Paxos USDG through one deBridge DLN order at a time. Before signing, verify the exact amount, asset, destination chain, and the fee wallet as receiver, order authority, and refund beneficiary. Refuse any external call, affiliate fee, unknown reserved taker, or unchecked byte. Refuse an order below the minimum value or above the cost limit. On EVM, approve exactly the order amount to the pinned bridge contract first.
+- **BUY-03 — Arrival.** Credit an arrival once, from the order's fulfilled status at a finalized Robinhood Chain block. Release a deposit only after a proven refund. A deposit without either stays in transit. The Worker never cancels an order. Report an order that stays unfilled; cancellation is an owner action.
+- **BUY-04 — Purchase.** On Robinhood Chain, claim accrued fees from reviewed vaults when the buyback is active. Spend each proven arrival in full, and each fee received there at the buyback share, on SLOP through the approved swap route with output to the same fee wallet. Apply the purchase limits for minimum value, slippage, price impact, and value per run and day. The retained half of a Robinhood fee stays unconverted. SLOP received as a fee needs no purchase: its buyback share counts as acquired.
+- **BUY-05 — Burn.** Keep purchased SLOP in the Robinhood Chain fee wallet. Send half of all SLOP acquired, rounded down and less every burn already committed, to `0x000000000000000000000000000000000000dEaD`. The retained half is never burned again. SLOP has no holder burn function, so `totalSupply` does not fall; the burn address balance is the public record. A paused token waits.
+- **BUY-06 — Records.** Journal every approval, order, purchase, and burn before broadcast in the existing fee journal. Record one finalized outcome per send and one proven outcome per deposit. Mark a state final only from finalized evidence. Show the ledger in the private administrator report.
+- **BUY-07 — Activation.** The buyback has its own mode, off by default. A live buyback needs a live converter, Robinhood Chain enabled with its key and native limits, and every limit set explicitly. Source approval does not activate it.
+
+| Limit | Proposed value |
+| --- | --- |
+| Buyback share of fee income | 50% |
+| Burn share of acquired SLOP | 50% |
+| Minimum bridge order | 500 USDC |
+| Maximum bridge cost: spread, fixed protocol fee, and network fee | 1.5% of the order |
+| Fixed protocol fee ceiling, Base and Ethereum | 0.001 ETH per order |
+| Solana order native ceiling: order-account rent, fixed fee, and network fee | 0.05 SOL per order, 0.1 SOL per UTC day |
+| Minimum purchase and minimum burn | 25 USDG and 5 USDG of value |
+| Purchase slippage and price impact | 1% and 3% |
+| Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |
+
+These values are proposals until the owner confirms them at activation. The Solana order ceiling is separate from the fee-conversion native budget.
+
+The buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.
 
 ### Separate contributor token allocation
 
@@ -680,6 +709,8 @@ Launch the non-money product first. Mainnet activation is explicit, one network 
 Native-asset and Token-2022 scope permits implementation and local testing, not a mainnet upgrade, funding, or signer activation. Qualify creation, deposits, refunds, reservations, payouts, claims, and accounting. Token-2022 also requires the fully inspected conversion path. Each upgrade or funding step needs its own reviewed execution plan and owner authorization.
 
 Private-report intake is approved for staging and production after the reviewed release. This standing approval does not prove deployment or successful delivery.
+
+The SLOP buyback stays off until a reviewed activation. That activation needs the owner's confirmation of every limit and the activation instant, a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, a dry-run period, and one small live order whose fill, purchase, and burn are verified on chain. Local fork and validator results do not qualify a live fill.
 
 Fee handling on Base, Ethereum, and Robinhood requires funded fee wallets and verified limits and readiness. The fee-converter release variable must be enabled. Keep Solana outside the production network list until its independent full-history recovery RPC, first registered vault, and all readiness checks pass. A reviewed main release then activates it. The Solana controls release, existing program upgrade, and approved 0.05 SOL gas top-up are recorded as complete. Do not repeat them; consult retained execution evidence before any later operation.
 

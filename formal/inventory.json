@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "8192d07f56f7d9223dea903d54444c7f44fc43c00bb42b4521b8c1904def787e",
+      "sha256": "723b68c4f8e7d2e37a30172621b988136251238261c5d8ce8eb8c3d5f3005087",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -25,8 +25,8 @@
       "candidateLines": [
         27, 59, 154, 186, 191, 192, 240, 291, 365, 474, 540, 541, 555, 566, 631,
         861, 889, 927, 943, 953, 954, 1043, 1143, 1145, 1146, 1310, 1393, 1546,
-        1548, 1578, 1674, 1696, 1767, 1778, 1803, 1872, 1885, 1898, 1907, 1908,
-        1909
+        1548, 1578, 1686, 1708, 1779, 1790, 1815, 1884, 1897, 1910, 1919, 1920,
+        1921
       ],
       "review": "mapped-abstraction"
     },
@@ -148,13 +148,15 @@
     },
     {
       "path": "backend/fee-conversions/handler.ts",
-      "sha256": "319b8f2a306801ee5c87e8eefdaa0179d8c2075f861d9c865fa5c84e249941d4",
+      "sha256": "2859209cc701cab415fa88b8ea151ee74aa8cc871c4299457a8e6bdd4d2e28cf",
       "models": [
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt"
       ],
-      "candidateLines": [46, 71, 116, 126, 148, 158, 164, 166, 169, 192],
+      "candidateLines": [
+        46, 71, 116, 126, 143, 154, 203, 229, 253, 263, 269, 271, 277, 287, 312
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -7156,14 +7158,14 @@
     },
     {
       "path": "workers/fee-converter/wrangler.staging.toml",
-      "sha256": "ebe0218b77250b53c1a6bc8c54ee06918d728ccef48cba5b71fc55c748a541dc",
+      "sha256": "d569d5712374624c390e2bd5e336434a1189dbd7c9e64448672888d0febeb7c8",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "cf549e97806d66ed6a3b0c320a43bacd23b765475a33effa7d75ae53b0f60cec",
+      "sha256": "636abfdc6ac47abc6ca2a3e8c5488d3e09cd0c27d0866c11a15c1a9fe89f4454",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -11697,7 +11699,7 @@
     },
     {
       "path": "formal/models/fees/fee_conversion.qnt",
-      "sha256": "75b4803b1cc78d7e0b9cc13e4cc5eb18a99fe752de6035fcc6f0cdec68a79076",
+      "sha256": "eb0dccd64eb879eb58726881c3fbcaf8c5d898d54e8f786de416be2e6bfe1b8f",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "migrations/0022_fee_conversions.sql",
