@@ -191,6 +191,19 @@ export async function publishMainnetRelease({ directory, sha, provider }) {
 export async function assembleMainnetBindings({ directory, sha, path }) {
   const plan = await readPlan(directory, sha);
   const config = JSON.parse(await readFile(path, "utf8"));
+  // Mirror releaseStagingPayments: only the artifact for this environment
+  // may receive its attesters. The production Pages project is
+  // eliza-computer at https://slop.cash and carries no staging marker; a
+  // staging artifact passed here by mistake must refuse, never silently
+  // gain mainnet bindings.
+  if (
+    config.name !== "eliza-computer" ||
+    config.vars?.PUBLIC_SITE_URL !== "https://slop.cash" ||
+    config.vars?.SLOP_ENVIRONMENT === "staging"
+  )
+    throw new Error(
+      "Only the production Pages artifact may receive mainnet attesters",
+    );
   const reserved = new Set([
     "BINDING_RECOVERY",
     "BINDING_RECOVERY_ETHEREUM",

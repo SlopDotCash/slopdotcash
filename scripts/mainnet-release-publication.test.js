@@ -224,7 +224,8 @@ async function fixture(run) {
   await writeFile(
     path,
     JSON.stringify({
-      vars: {},
+      name: "eliza-computer",
+      vars: { PUBLIC_SITE_URL: "https://slop.cash" },
       services: [
         { binding: "SLOP_IDENTITY", service: "slop-identity" },
         { binding: "MONTHLY_RELEASE_SOLANA", service: "old-disabled-service" },
@@ -326,6 +327,50 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
     );
     expect(config.triggers.crons).toEqual([]);
     expect(JSON.parse(config.vars.PAYMENT_DEPLOYMENTS)).toEqual([]);
+  });
+});
+
+test("mainnet bindings cannot enter a staging Pages artifact", async () => {
+  await fixture(async ({ directory, path }) => {
+    const provider = async (args) => {
+      if (args[0] === "deployments" && args[1] === "list")
+        return {
+          status: 1,
+          stdout: "",
+          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${name}/deployments) failed. [code: 10007]`,
+        };
+      if (args[0] === "deploy") return ok({});
+      if (args[0] === "versions")
+        return ok([{ id: "v1", annotations: { "workers/tag": sha } }]);
+      if (args[1] === "status")
+        return ok({ versions: [{ version_id: "v1", percentage: 100 }] });
+      throw new Error("Unexpected provider operation");
+    };
+    await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [],
+      provider,
+    });
+    await publishMainnetRelease({ directory, sha, provider });
+    const staging = {
+      name: "slop-staging",
+      vars: {
+        SLOP_ENVIRONMENT: "staging",
+        PUBLIC_SITE_URL: "https://staging.slop.cash",
+        PAYMENT_NETWORKS:
+          '["base-sepolia","ethereum-sepolia","robinhood-testnet","solana-devnet"]',
+      },
+      services: [
+        { binding: "SLOP_IDENTITY", service: "slop-identity-staging" },
+      ],
+    };
+    await writeFile(path, JSON.stringify(staging));
+    await expect(
+      assembleMainnetBindings({ directory, sha, path }),
+    ).rejects.toThrow("Only the production Pages artifact");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(staging);
   });
 });
 
