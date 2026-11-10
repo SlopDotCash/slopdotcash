@@ -1870,7 +1870,7 @@ function SubmissionCard({
           <p className="inbox-meta">
             Award: {awardText(caseRecord)}
             {caseRecord.nextStepDueAt
-              ? ` · Due ${formatUtc(caseRecord.nextStepDueAt)}`
+              ? ` · ${nextStepDueText(caseRecord)}`
               : ""}
           </p>
         </div>
@@ -3036,6 +3036,21 @@ function awardText(record: SecurityCase): string {
     : amount;
 }
 
+function nextStepDueText(
+  record: Pick<SecurityCase, "nextStepDueAt" | "receiptState">,
+  now = Date.now(),
+): string | null {
+  if (record.nextStepDueAt === null) return null;
+  const dueAt = Date.parse(record.nextStepDueAt);
+  if (
+    record.receiptState === "received" &&
+    Number.isFinite(dueAt) &&
+    dueAt < now
+  )
+    return `First response overdue since ${formatUtc(record.nextStepDueAt)}`;
+  return `Due ${formatUtc(record.nextStepDueAt)}`;
+}
+
 function paymentLabel(record: SecurityCase): string {
   if (
     record.paymentRail === "direct" &&
@@ -3565,10 +3580,7 @@ function CaseDetail({
         <span>
           <strong>Next step:</strong> {record.nextStep}
           {record.nextStepDueAt ? (
-            <span className="security-due">
-              {" "}
-              Due {formatUtc(record.nextStepDueAt)}.
-            </span>
+            <span className="security-due"> {nextStepDueText(record)}.</span>
           ) : null}
         </span>
       </p>

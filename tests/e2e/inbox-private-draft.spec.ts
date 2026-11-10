@@ -49,7 +49,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     viewerRoles: ["reporter"],
     allowedActions: [],
     nextStep: "The owner is reviewing the private findings.",
-    nextStepDueAt: null,
+    nextStepDueAt: "2026-10-28T12:00:00.000Z",
     submissionState: "verified",
     receivedAt: "2026-10-27T12:00:00.000Z",
     receivedAtSource: "slop-received",
@@ -65,6 +65,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     settlement: null,
     paymentDeadline: null,
     disclosureState: "embargoed",
+    receiptState: "received",
   };
   let actor = "42";
   const authorityUnavailable = true;
@@ -153,6 +154,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   });
   const receipt = page.locator(`[aria-labelledby="submission-${id}"]`);
   await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toContainText("First response overdue since");
   await expect(receipt).toHaveCount(1);
   await expect(page.locator(".security-case-choice")).toHaveCount(0);
   await expect(
