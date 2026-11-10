@@ -8608,10 +8608,10 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "12e1ccf0ba6c81120f8c43a91d40b6173794da1e7f4e08311001166602ad7c52",
+      "sha256": "b0f89f5344d4a4d2f9ce2fb7aa922a2f2d3d9797c1703ae7cb1627831325f81b",
       "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "candidateLines": [
-        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050
+        241, 249, 250, 1707, 1708, 1892, 1952, 1973, 2040, 2056
       ],
       "review": "mapped-abstraction"
     },
@@ -8672,7 +8672,7 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "47802e3b1d3496ced7965a214000d07a950bb12ec8fce77716372e03a636dea2",
+      "sha256": "4980d0fefa3190ddbc4959681f22f9b165c776a4e3aca2d753e2fa7befeed3a3",
       "models": [
         "formal/models/vetting/pr_review_retry.qnt",
         "formal/models/vetting/vetting_acquisition.qnt",

@@ -13,6 +13,7 @@
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ScanSurface } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { boundedReviewTimeout } from "../verified-budget";
 import {
@@ -21,7 +22,6 @@ import {
   MAX_INVENTORY_BYTES,
   MAX_INVENTORY_ITEMS,
   type RepositoryInspection,
-  type ScanSurface,
   surfacesOf,
   textParts,
 } from "./bounded-scan";

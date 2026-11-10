@@ -167,6 +167,11 @@ test("dynamically classified installScripts in inventory.classifications lead in
       ),
       file("deps/fetch.txt", 'message(STATUS "configured")\n'),
       file("docs/bootstrap", "#!/bin/sh\necho bootstrapping\n"),
+      file(
+        "docs/build-steps.txt",
+        '<project name="steps" default="compile"/>\n',
+      ),
+      file("tools/steps.txt", '<project name="tools" default="run"/>\n'),
     ],
   });
   const plan = planReview(inspection);
@@ -174,14 +179,16 @@ test("dynamically classified installScripts in inventory.classifications lead in
   const firstBatchIds = (
     JSON.parse(plan.batches[0].evidence) as { items: { id: string }[] }
   ).items.map((item) => item.id);
-  expect(firstBatchIds.slice(0, 8)).toEqual([
+  expect(firstBatchIds.slice(0, 10)).toEqual([
     DETERMINISTIC_COVERAGE_ID,
     "AGENTS.md",
     "CMakeLists.txt",
     "deps/fetch.txt",
     "docs/assets/app-Abc12345.js#signals",
     "docs/bootstrap",
+    "docs/build-steps.txt",
     "scripts/install.sh",
+    "tools/steps.txt",
     "aaa/first-copy.ts",
   ]);
 });

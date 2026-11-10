@@ -1679,8 +1679,11 @@ export function inspectRepository(input: {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length > 0)
-      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
+    let classification: { path: string; surfaces: ScanSurface[] } | undefined;
+    if (surfaces.length > 0) {
+      classification = { path: file.path, surfaces: [...surfaces].sort() };
+      classifications.push(classification);
+    }
     const digest = sha256(file.bytes);
     if (
       EXECUTABLE_BINARIES.test(file.path) ||
@@ -1714,6 +1717,9 @@ export function inspectRepository(input: {
     if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
+      const sorted = [...surfaces].sort();
+      if (classification) classification.surfaces = sorted;
+      else classifications.push({ path: file.path, surfaces: sorted });
     }
     if (surfaces.length === 0) continue;
     for (const surface of surfaces) counts[surface] += 1;
