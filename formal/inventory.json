@@ -261,7 +261,7 @@
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "f614dba6f183b3561cd30a6316766262136c8f4901b8dd2df9508efe64cfcc7c",
+      "sha256": "bfaede28a5ec282915971f8e4df15d48c6051300cb40f52103ab962e0a71aa4b",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -269,7 +269,7 @@
         "formal/models/api/inbox_queries.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [61, 68, 69, 135, 168, 202, 206, 267, 300, 319, 320],
+      "candidateLines": [61, 68, 69, 140, 173, 207, 211, 274, 307, 327, 328],
       "review": "mapped-abstraction"
     },
     {
