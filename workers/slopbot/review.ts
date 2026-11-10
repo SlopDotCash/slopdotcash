@@ -583,36 +583,53 @@ function reviewedItemText(
   return `Title: ${issue.title}\n\nBody:\n${issue.body ?? ""}${pull === null ? "" : `\n\nDiff:\n${emptyComparison}${comparison.diff}`}`;
 }
 
+/** Earlier distinct items with the same digest that a duplicate check reads. */
+const DUPLICATE_CANDIDATES = 5;
+
 async function duplicateOf(
   env: ReviewEnv,
   job: Job,
   context: Context,
   contentDigest: string,
 ): Promise<{ verdict: Verdict; relatedOpenItem: RelatedOpenItem } | null> {
-  const prior = await env.SLOPBOT_DB.prepare(
-    `SELECT item_number, item_kind, item_node_id FROM slopbot_reviews WHERE repository_id = ? AND author_id = ? AND content_digest = ?
-       AND item_node_id != ? ORDER BY created_at DESC LIMIT 1`,
-  )
-    .bind(
-      job.repositoryId,
-      context.issue.user.id,
-      contentDigest,
-      context.issue.node_id,
+  // The newest earlier copy may be closed (for example, as a duplicate of an
+  // older copy) while an older identical item is still open. Check the newest
+  // few distinct items, not only the newest review.
+  let prior: { item_number: number } | null = null;
+  let relatedOpenItem: RelatedOpenItem | null = null;
+  for (let offset = 0; offset < DUPLICATE_CANDIDATES; offset += 1) {
+    const candidate = await env.SLOPBOT_DB.prepare(
+      `SELECT item_number, item_kind, item_node_id, MAX(created_at) AS reviewed_at FROM slopbot_reviews
+         WHERE repository_id = ? AND author_id = ? AND content_digest = ? AND item_node_id != ?
+         GROUP BY item_node_id, item_number, item_kind
+         ORDER BY reviewed_at DESC, item_node_id LIMIT 1 OFFSET ?`,
     )
-    .first<{
-      item_number: number;
-      item_kind: "issue" | "pull_request";
-      item_node_id: string;
-    }>();
-  if (prior === null) return null;
-  const relatedOpenItem = await matchingOpenItem(
-    job,
-    context,
-    prior.item_number,
-    prior.item_kind,
-  );
-  if (relatedOpenItem === null || relatedOpenItem.nodeId !== prior.item_node_id)
-    return null;
+      .bind(
+        job.repositoryId,
+        context.issue.user.id,
+        contentDigest,
+        context.issue.node_id,
+        offset,
+      )
+      .first<{
+        item_number: number;
+        item_kind: "issue" | "pull_request";
+        item_node_id: string;
+      }>();
+    if (candidate === null) return null;
+    const open = await matchingOpenItem(
+      job,
+      context,
+      candidate.item_number,
+      candidate.item_kind,
+    );
+    if (open !== null && open.nodeId === candidate.item_node_id) {
+      prior = candidate;
+      relatedOpenItem = open;
+      break;
+    }
+  }
+  if (prior === null || relatedOpenItem === null) return null;
   return {
     relatedOpenItem,
     verdict: {

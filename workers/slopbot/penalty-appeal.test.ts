@@ -2093,6 +2093,21 @@ test("a model's duplicate claim cannot close without a verified same-author open
   });
 });
 
+test("a closed newer copy does not hide the author's still-open identical original", async () => {
+  await closedItem(async (run) => {
+    // #4 is the author's open original. The identical #6 is reviewed and
+    // closed as its duplicate, which records the newest review of this digest.
+    run.seedDuplicate();
+    run.seedSecondReview();
+    run.model("duplicate", 0.97);
+    expect(await run.review(6)).toBe("closed (duplicate)");
+    // A third identical copy must still match the open #4, not stop at #6.
+    expect(await run.review()).toBe("closed (duplicate)");
+    expect(run.writes).toContain("PATCH /repos/SlopDotCash/asi/pulls/5");
+    expect(run.modelInputs.at(-1)?.item).toContain('"number":4');
+  });
+});
+
 for (const result of [
   "none",
   "disagree",
