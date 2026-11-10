@@ -2167,6 +2167,14 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
+  // The intake parser caps each visibility gap at 300 printable characters
+  // (parseRecordedVettingResult), but gap strings carry repository paths and
+  // download URLs that can run longer. Truncate them here instead of emitting
+  // a result no intake can record; trimming the end keeps a slice that lands
+  // on a space publishable too.
+  result.visibilityGaps = result.visibilityGaps.map((gap) =>
+    gap.slice(0, 300).trimEnd(),
+  );
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {
