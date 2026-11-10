@@ -5566,13 +5566,13 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "sha256": "0d2e344a5d1f7953d7daf09e7343f2d942c5f1db19b728f530bc054fff291f85",
+      "sha256": "c6c158369e6b7721e9716f446767b5f346c3f471fba621a6326d3efb43ded4a4",
       "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "candidateLines": [
-        63, 97, 391, 422, 423, 573, 603, 604, 606, 607, 616, 617, 619, 670, 746,
-        752, 759, 761, 762, 767, 769, 771, 777, 827, 828, 840, 850, 851, 852,
-        853, 856, 858, 861, 866, 872, 878, 882, 885, 889, 891, 893, 900, 909,
-        915, 918, 921, 923, 934, 940, 952, 998
+        63, 97, 401, 432, 433, 583, 613, 614, 616, 617, 626, 627, 629, 680, 756,
+        762, 769, 771, 772, 777, 779, 781, 787, 837, 838, 850, 860, 861, 862,
+        863, 866, 868, 871, 876, 882, 888, 892, 895, 899, 901, 903, 910, 919,
+        925, 928, 931, 933, 944, 950, 962, 1008
       ],
       "review": "mapped-abstraction"
     },
@@ -5668,9 +5668,9 @@
     },
     {
       "path": "src/lib/funding-review-data.ts",
-      "sha256": "a446ecefa45104dcb6bf1d6e6ce3ca7ad3d4af7efcd41100de15235f0b939355",
+      "sha256": "e36fa01d24f50e7a6f9eafec57f56ce29401fca396736efe07df5c4ff94f69a1",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [58, 238, 292],
+      "candidateLines": [58, 245, 299],
       "review": "mapped-abstraction"
     },
     {
@@ -6275,12 +6275,12 @@
     },
     {
       "path": "src/lib/rewards.ts",
-      "sha256": "f162c89e3f6530cdee2dfcddfbe4c7ae84bfff6ca31647fca3212c7ebd269fa5",
+      "sha256": "2763e07a28a423e33ab5ac7509f34a9707fd7fbe5c940cb9b88814cc724445d8",
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "candidateLines": [
-        103, 130, 174, 591, 603, 604, 605, 615, 699, 700, 701, 785, 806, 835,
-        838, 842, 849, 856, 863, 865, 878, 920, 932, 957, 960, 1075, 1079, 1080,
-        1102, 1154, 1155, 1296, 1350, 1358, 1454
+        103, 130, 174, 601, 613, 614, 615, 625, 709, 710, 711, 795, 816, 845,
+        848, 852, 859, 866, 873, 875, 888, 930, 942, 967, 970, 1085, 1089, 1090,
+        1112, 1164, 1165, 1306, 1360, 1368, 1464
       ],
       "review": "mapped-abstraction"
     },
@@ -6725,7 +6725,7 @@
     },
     {
       "path": "src/lib/wallet-proof.ts",
-      "sha256": "219c366df1ab771d17a0dd66f65780de73919907b6e05a18bcd2deb17af4f676",
+      "sha256": "3dd5e8c201c1ad6c39e8b31b4684cbd4acf41d36c092ed07b250bc8457acc243",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",

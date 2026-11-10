@@ -121,6 +121,7 @@
         "sourceActorId": "U_kgDOEtGEfg",
         "sourceClaimId": "b978518e-7421-4c94-9e65-0ac0d1114d68",
         "sourceRecordSha256": "765e379314f265f02ded5d582c8ed08deb581027124cfbb573b51d8857db227d",
+        "sourceAttestationSha256": "9c8843f3e7afde12a75660fadcb758442184790b5dcca659fb3a948b4e9d6b1e",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/b978518e-7421-4c94-9e65-0ac0d1114d68"
       },
       "evidenceEventIds": [
@@ -172,6 +173,7 @@
         "sourceActorId": "U_kgDODBAqOQ",
         "sourceClaimId": "6a739700-9075-4834-8525-1fc96d3e999d",
         "sourceRecordSha256": "c9ae0d1f71cf0b40966042ffad146b284ce0470b5d5cf1dd6516c93eb983106c",
+        "sourceAttestationSha256": "6fe28f3cc05bd2315df1ace9431f26bd7c52ed534a4b604b310fa86875de8f41",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/6a739700-9075-4834-8525-1fc96d3e999d"
       },
       "evidenceEventIds": [
@@ -221,6 +223,7 @@
         "sourceActorId": "U_kgDOEOd4mA",
         "sourceClaimId": "2ca81235-6faa-46aa-99c0-fe4667233f18",
         "sourceRecordSha256": "0b97b935c5240c45484ac4d72c2c76354c9f84a1cf9e21d9b85e8e8cc9d78ff4",
+        "sourceAttestationSha256": "18310a861bc2e1f9c3c99db823fa4720fe1f767839b5bf97e8ec966925640453",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/2ca81235-6faa-46aa-99c0-fe4667233f18"
       },
       "evidenceEventIds": [
@@ -289,6 +292,7 @@
         "sourceActorId": "U_kgDOCJdw7g",
         "sourceClaimId": "6c9175d4-b4c9-4e14-be52-5e03501fe58c",
         "sourceRecordSha256": "fa397d1dc8d51b84f8307ba83d3e9df028a69450c252969bbf0889ab6925beae",
+        "sourceAttestationSha256": "eb3d1aabd8a213c9851cce0636cd8b40fb550d6939b84d9ade00652825e55c37",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/6c9175d4-b4c9-4e14-be52-5e03501fe58c"
       },
       "evidenceEventIds": [
@@ -334,6 +338,7 @@
         "sourceActorId": "MDQ6VXNlcjEzNTA5NjE3",
         "sourceClaimId": "13642142-24f3-4289-ba10-93cf60f54c99",
         "sourceRecordSha256": "b1704c42db4585373f521a6207d3d1ca1a730d707f43846867f1cd6913242101",
+        "sourceAttestationSha256": "49c7460af7186ec8271e2169b0fa0fde29a65e69f7fdaffff5b207edf8c0d60b",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/13642142-24f3-4289-ba10-93cf60f54c99"
       },
       "evidenceEventIds": [
@@ -379,6 +384,7 @@
         "sourceActorId": "MDQ6VXNlcjMyNDM3ODg0",
         "sourceClaimId": "4e64506b-2781-4ced-b2c6-f955d7886b42",
         "sourceRecordSha256": "9cfc471ab2eb945310c725d04c491ab6394f9fdfbd6c03371ca25aeef5f9b72c",
+        "sourceAttestationSha256": "397584549e388636478ff73c84cc7d0251bc474c71152025bbe14b1047387caa",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/4e64506b-2781-4ced-b2c6-f955d7886b42"
       },
       "evidenceEventIds": [
@@ -498,6 +504,7 @@
         "sourceActorId": "U_kgDOCEc2SA",
         "sourceClaimId": "990bd339-9762-4d92-bba5-67d812518e69",
         "sourceRecordSha256": "e86e5d754a1a8df1308950dc762f368e2bb494da51f18f266bbe2fcab4f87098",
+        "sourceAttestationSha256": "d81ea064fe3f3b3edfbfa52ef4d1050fce150cfb2a65b65f287dec50d9c5b803",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/990bd339-9762-4d92-bba5-67d812518e69"
       },
       "evidenceEventIds": [
@@ -539,6 +546,7 @@
         "sourceActorId": "MDQ6VXNlcjMwMDUxMzU2",
         "sourceClaimId": "f8bcf4c4-9be7-44e7-b07a-ba634fb58175",
         "sourceRecordSha256": "57db08e3deabe7a86b0ebbde1b5496bb5e498f5817cc68a38eccf92fb2970d4d",
+        "sourceAttestationSha256": "07e9dd26fa5c26378252f6eea709b017569a7fb6a64a4b13048f7c336012c1c6",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/f8bcf4c4-9be7-44e7-b07a-ba634fb58175"
       },
       "evidenceEventIds": [
@@ -577,6 +585,7 @@
         "sourceActorId": "U_kgDOCzScNQ",
         "sourceClaimId": "8437a7f7-1537-4391-aa3c-dd7c4961a813",
         "sourceRecordSha256": "f6f8dc2d0038c8a779600bb4a6e02e804455584cf132bdc050c99fed89ffeafb",
+        "sourceAttestationSha256": "daadefc2b7b1a7d1c40c15ef4f6a9f807330c7d070971db79941d2000ba697d7",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/8437a7f7-1537-4391-aa3c-dd7c4961a813"
       },
       "evidenceEventIds": [
@@ -607,6 +616,7 @@
         "sourceActorId": "U_kgDOBZsSVw",
         "sourceClaimId": "392a96b3-3b76-4381-8da7-3971bb5341de",
         "sourceRecordSha256": "5044bbbb40c61222741bd0ea9258db70a4cb1d8aacad03744f29dcd907e634c9",
+        "sourceAttestationSha256": "8338a6790329bf50fdbdbe7166df6bea232d4d3e0058f443dee046a532dff5b0",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/392a96b3-3b76-4381-8da7-3971bb5341de"
       },
       "evidenceEventIds": [
@@ -643,6 +653,7 @@
         "sourceActorId": "U_kgDOEYwrvA",
         "sourceClaimId": "5f1e1e17-7932-4353-9523-7ed385350f83",
         "sourceRecordSha256": "c7a8d39afe6080c11a70213bee5397ff9033558ab12d8ff39354446ed6f7b3bb",
+        "sourceAttestationSha256": "aace6f3fbfb4b1af452fd9c1d78606ac9392d8b951295bd8af32183555f6902b",
         "sourceUrl": "https://api.slop.cash/api/v1/wallet-claims/5f1e1e17-7932-4353-9523-7ed385350f83"
       },
       "evidenceEventIds": [

@@ -342,6 +342,7 @@ function assertWallet(
         "sourceActorId",
         "sourceClaimId",
         "sourceRecordSha256",
+        "sourceAttestationSha256",
         "sourceUrl",
       ],
       path,
@@ -361,6 +362,14 @@ function assertWallet(
     const sourceRecordSha256 = text(
       wallet.sourceRecordSha256,
       `${path}.sourceRecordSha256`,
+      { pattern: /^[0-9a-f]{64}$/u },
+    );
+    // A claim alone records only the authenticated account's statement of
+    // an address; the proof must reference the destination's possession
+    // attestation before it can stand as an allocation wallet proof.
+    const sourceAttestationSha256 = text(
+      wallet.sourceAttestationSha256,
+      `${path}.sourceAttestationSha256`,
       { pattern: /^[0-9a-f]{64}$/u },
     );
     if (
@@ -384,6 +393,7 @@ function assertWallet(
       sourceActorId,
       sourceClaimId,
       sourceRecordSha256,
+      sourceAttestationSha256,
       sourceUrl,
     };
   }

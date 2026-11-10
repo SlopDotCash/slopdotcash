@@ -275,6 +275,7 @@ function contributorWallet(
         "sourceActorId",
         "sourceClaimId",
         "sourceRecordSha256",
+        "sourceAttestationSha256",
         "sourceUrl",
       ],
       field,
@@ -293,6 +294,14 @@ function contributorWallet(
     const sourceRecordSha256 = text(
       wallet.sourceRecordSha256,
       `${field}.sourceRecordSha256`,
+      /^[0-9a-f]{64}$/u,
+    );
+    // A claim alone records only the authenticated account's statement of
+    // an address; the proof must reference the destination's possession
+    // attestation before it can stand as a cycle-index wallet proof.
+    const sourceAttestationSha256 = text(
+      wallet.sourceAttestationSha256,
+      `${field}.sourceAttestationSha256`,
       /^[0-9a-f]{64}$/u,
     );
     if (
@@ -314,6 +323,7 @@ function contributorWallet(
       sourceActorId,
       sourceClaimId,
       sourceRecordSha256,
+      sourceAttestationSha256,
       sourceUrl,
     };
   }
