@@ -4762,7 +4762,7 @@
 {"name":"assertActiveVersionTagged","kind":"FunctionDeclaration","line":6,"sha256":"fc479ad5e587a26155d24c510563f3b512e29bfedb8aa5c4efae420719759324","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@19>","kind":"ArrowFunction","line":19,"sha256":"800ffde60885f4f5fd75966f11b57db8e879d9c2032c86a8dd40d6865cc24f9c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"skills/project-contributor-template/scripts/live-report.mjs","sha256":"e470040af55a7efbd84fc20aaec4e54a61fd54b1f6601667624575a4b92434c3","language":"javascript","disposition":"callables-inventoried","functions":[
+{"path":"skills/project-contributor-template/scripts/live-report.mjs","sha256":"3983640752a74f80d20b5cbd98e7fc14d25638b12e100ecfccd86800fee3263a","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"<Constructor@60>","kind":"Constructor","line":60,"sha256":"247b513a71d29e841dfc1ee110b53acda8eb45c165f25ac081b9d5856bb00e81","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"asRecord","kind":"FunctionDeclaration","line":152,"sha256":"9fbe43b8f4ab577df1b425f5846e723f63b9e092387a86bbc2e58dd7d0f075bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"asArrayField","kind":"FunctionDeclaration","line":159,"sha256":"f8b768aa74729542ed543725c6f14bd1fda352b88209036af0f392830cbb5de0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},

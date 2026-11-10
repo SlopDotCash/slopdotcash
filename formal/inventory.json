@@ -4516,7 +4516,7 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/live-report.mjs",
-      "sha256": "e470040af55a7efbd84fc20aaec4e54a61fd54b1f6601667624575a4b92434c3",
+      "sha256": "3983640752a74f80d20b5cbd98e7fc14d25638b12e100ecfccd86800fee3263a",
       "models": [
         "formal/models/contributor/contributor_command_completion.qnt",
         "formal/models/contributor/contributor_discovery_lock.qnt",
