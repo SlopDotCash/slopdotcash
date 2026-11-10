@@ -12,7 +12,10 @@ import type {
   RepositoryAccess,
 } from "../../src/lib/project-contracts";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
-import { applicationManifest } from "../../tests/project-application-manifest";
+import {
+  applicationManifest,
+  CONTRIBUTION,
+} from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { CloudflareProjectPersistence } from "./cloudflare-persistence";
 import { handleProjectApi, type ProjectApiDependencies } from "./handler";
@@ -215,6 +218,65 @@ describe("checkSetup activation is limited to the steward or a repository admin"
       expect(await t.persistence.getProject("read-collaborator")).toMatchObject(
         { status: "paused", revision: 1 },
       );
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
+  test("a writer cannot resume a project paused by an owner edit that needed a fresh scan", async () => {
+    const t = registry();
+    try {
+      await t.createPaused("resume-after-owner-pause");
+      // A repository admin activates the project once the scan is clean.
+      t.state.clearance = CLEARED;
+      const activated = await t.check("resume-after-owner-pause", REPO_ADMIN);
+      expect(activated).toMatchObject({
+        status: "active",
+        activatedRevision: 2,
+      });
+      // An owner edit to a skill input pauses the project until a fresh
+      // scan clears it.
+      t.state.clearance = { state: "unscanned" };
+      const current = await t.persistence.getProject(
+        "resume-after-owner-pause",
+      );
+      if (!current) throw new Error("Project missing");
+      const edited = await t.call(
+        "PUT",
+        "projects/resume-after-owner-pause",
+        CREATOR,
+        {
+          manifest: {
+            ...current.manifest,
+            contribution: {
+              ...CONTRIBUTION,
+              requiredTests: "Run `bun test` twice.",
+            },
+          },
+          expectedRevision: current.revision,
+        },
+      );
+      expect(edited.status).toBe(200);
+      expect(
+        await t.persistence.getProject("resume-after-owner-pause"),
+      ).toMatchObject({ status: "paused", revision: 3 });
+      // With the fresh scan clean, a writer's check still must not resume it.
+      t.state.clearance = CLEARED;
+      const writerSetup = await t.check("resume-after-owner-pause", WRITER);
+      expect(writerSetup).toMatchObject({
+        state: "action_required",
+        status: "paused",
+        activatedRevision: null,
+      });
+      expect(
+        await t.persistence.getProject("resume-after-owner-pause"),
+      ).toMatchObject({ status: "paused", revision: 3 });
+      // A repository admin resumes it.
+      const adminSetup = await t.check("resume-after-owner-pause", REPO_ADMIN);
+      expect(adminSetup).toMatchObject({
+        status: "active",
+        activatedRevision: 4,
+      });
     } finally {
       t.sqlite.close();
     }
