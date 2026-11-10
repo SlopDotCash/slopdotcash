@@ -984,7 +984,7 @@
 {"name":"<ArrowFunction@737>","kind":"ArrowFunction","line":737,"sha256":"946826ac30ed0795069acf52f7cac13a5cd623f89003694ff81ebc07b31ba3e8","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
 {"name":"get","kind":"ArrowFunction","line":746,"sha256":"64808acde7930a0980ad330438b99123b552c3ede91bc76097223fbf20e45539","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"backend/security/handler.ts","sha256":"716c52ce3f19e714738eca9225de8f415e17a72a4ee42633b208c7b698e14ef3","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"backend/security/handler.ts","sha256":"7faa871d40b580d7d1a0bc9025fd122566c4ff9160ee2e13e9bbeb29c6038758","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"frozenSplit","kind":"FunctionDeclaration","line":143,"sha256":"85b88a0ffe6f322eaa9acb94afb17da3c234a156d9cb62a96efa187388aa90fe","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"notFound","kind":"FunctionDeclaration","line":164,"sha256":"06103c384bc95904fc63d8b8e7f978f2fc4519dc239204160fbec830e93c3b4e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"textField","kind":"FunctionDeclaration","line":168,"sha256":"af683d9b5ed8416b16025869586f49bee7574f0736e29a807f797a01ba6c3ad1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -1039,7 +1039,7 @@
 {"name":"triagerEvent","kind":"FunctionDeclaration","line":1616,"sha256":"7d536c05d525eb185919138b1433c1152870b5d424f3137653e611b11f4ea333","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"requireRole","kind":"FunctionDeclaration","line":1628,"sha256":"389df35d263d2ac7705946e5a0f00caf528d5e4f85746053c2d69350957761bf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"requireAction","kind":"FunctionDeclaration","line":1632,"sha256":"a7d97bf2294b87c8ed111aac1827843f54dcaed3f24698942640991f3f514d04","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"priorCaseDecider","kind":"FunctionDeclaration","line":1641,"sha256":"0b622b6e9d545e9b26c89549ff8ff94ced77a281fc56f3152d58b01e41a889e0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"priorCaseDecider","kind":"FunctionDeclaration","line":1641,"sha256":"fb7cb273c86963434a87fb813670cbe24f61a0856ed9a70289c68fa862e19551","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"planChange","kind":"FunctionDeclaration","line":1662,"sha256":"b5497839d72d56c430494975952736c52bbbd4f39dd70d8d684dcda0b0b90d54","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
 {"name":"actingRole","kind":"ArrowFunction","line":1674,"sha256":"91682de93a0d32f7386a4c1eedf6c75bbcc4793c85b8d98bfe435de0146fb091","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@1675>","kind":"ArrowFunction","line":1675,"sha256":"9ae8d69bcdde87957b522885ac3ef3f26e7e23118eb17d6e2321a82759b52fe4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

@@ -891,7 +891,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "716c52ce3f19e714738eca9225de8f415e17a72a4ee42633b208c7b698e14ef3",
+      "sha256": "7faa871d40b580d7d1a0bc9025fd122566c4ff9160ee2e13e9bbeb29c6038758",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
