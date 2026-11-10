@@ -227,8 +227,7 @@ type Leg = "bridge" | "buyback" | "burn";
 export function bridgeTerms(row: ConversionRow): BridgeTerms {
   const terms = JSON.parse(row.quote ?? "null") as Partial<BridgeTerms> | null;
   if (
-    !terms ||
-    terms.provider !== "debridge" ||
+    terms?.provider !== "debridge" ||
     typeof terms.orderId !== "string" ||
     !/^0x[0-9a-f]{64}$/u.test(terms.orderId) ||
     typeof terms.takeToken !== "string" ||

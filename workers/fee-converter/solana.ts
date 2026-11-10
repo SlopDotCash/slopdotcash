@@ -1508,7 +1508,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     /** The token amount of an SPL token account's base64 data. */
     const tokenAmount = (value: unknown): bigint => {
       const data = (value as { data?: [string, string] } | null)?.data;
-      if (!data || data[1] !== "base64")
+      if (data?.[1] !== "base64")
         throw new Error("Token account data is unavailable");
       const bytes = solanaBase64Bytes(data[0]);
       if (bytes.length < 72) throw new Error("Token account is malformed");
