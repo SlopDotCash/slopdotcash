@@ -58,10 +58,20 @@ export async function reconcileFailedAttempts(
   genesisHashes: Record<string, string> = {},
   now = new Date(),
 ): Promise<void> {
+  // Only the networks this Worker serves are reconciled here. `deployments`
+  // is exactly that set: the scheduled run builds it from PAYMENT_NETWORKS
+  // (registryDeployments). An attempt on a network removed from service
+  // belongs to that network's Worker; selecting it would throw "Reviewed
+  // deployment missing" on every scheduled run. Dispatch and uncertain
+  // recovery filter the same way (index.ts).
+  const servedNetworks = [
+    ...new Set(deployments.map((deployment) => deployment.network)),
+  ];
   const result = await db
     .prepare(
-      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
+      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved' AND o.network IN (SELECT value FROM json_each(?))",
     )
+    .bind(JSON.stringify(servedNetworks))
     .first<{ items: string }>();
   // One attempt's failure must not stop reconciliation of the others (PAY-07).
   const failures: unknown[] = [];

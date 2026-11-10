@@ -1137,7 +1137,7 @@
     },
     {
       "path": "backend/trace/handler.ts",
-      "sha256": "787f326bd3bedcc7ee07108ca603c432b4e975907f125ec19517da00fcd0531f",
+      "sha256": "57a676794e28a9a7c5d476386de2c956f78a6aae6a9c71a355612dc263798cbf",
       "models": [
         "formal/models/api/api_trace.qnt",
         "formal/models/api/api_trace_intent_admission.qnt",
@@ -1152,10 +1152,10 @@
         "formal/models/contributor/contributor_session_exchange.qnt"
       ],
       "candidateLines": [
-        87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 423, 431, 461, 520,
-        625, 633, 770, 773, 844, 848, 851, 891, 892, 938, 941, 942, 947, 983,
-        1041, 1042, 1065, 1069, 1075, 1096, 1101, 1103, 1107, 1108, 1109, 1110,
-        1123, 1159, 1163, 1230, 1238, 1246, 1412, 1543
+        87, 88, 103, 111, 125, 126, 128, 129, 130, 273, 283, 424, 432, 462, 521,
+        626, 634, 771, 774, 845, 849, 852, 892, 893, 939, 942, 943, 948, 984,
+        1042, 1043, 1066, 1070, 1076, 1097, 1102, 1104, 1108, 1109, 1110, 1111,
+        1124, 1160, 1164, 1231, 1239, 1247, 1413, 1544
       ],
       "review": "mapped-abstraction"
     },
@@ -5917,9 +5917,9 @@
     },
     {
       "path": "src/lib/payments/escrow-cycle.ts",
-      "sha256": "dbdf1ea009c92345c3c2aadaca24778d742827efc23761be39fbd56db48eedfc",
+      "sha256": "cd5be067c0317814ec19d314bac4ccaa58cc156d74ed1c784b1de2676dd8a7ea",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [173],
+      "candidateLines": [150, 187],
       "review": "mapped-abstraction"
     },
     {
@@ -7514,10 +7514,10 @@
     },
     {
       "path": "workers/payments/reconcile.ts",
-      "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
+      "sha256": "7d994bc20599451368e0ffdf6f4ebb6274c810ae42423aef9b996c02e54a754e",
       "models": ["formal/models/payments/payment_dispatch.qnt"],
       "candidateLines": [
-        7, 22, 27, 28, 47, 48, 52, 63, 101, 109, 115, 125, 133
+        7, 22, 27, 28, 47, 48, 52, 72, 111, 119, 125, 135, 143
       ],
       "review": "mapped-abstraction"
     },
