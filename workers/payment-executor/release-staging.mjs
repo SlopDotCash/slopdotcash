@@ -67,10 +67,12 @@ export function stagingReleasePlan({
         registryDatabase,
         monthlySchedule,
       });
+      const config = configs.attester;
+      assertStagingAttesterBoundary({ network, config });
       return [
         {
           network,
-          config: configs.attester,
+          config,
           secrets: ["PAYMENT_RPC_URLS", secret].sort(),
           binding: {
             binding,
@@ -81,6 +83,34 @@ export function stagingReleasePlan({
       ];
     },
   );
+}
+
+/**
+ * Staging mirror of the boundary check in mainnetReleasePlan
+ * (release-plan.mjs): a staging attester is a test-stack attester on its
+ * registry test network, with no dev/preview surface, no routes or extra
+ * services, and a five-minute binding schedule. A future configure.mjs
+ * change that moves any of these must fail here, never ship silently.
+ */
+export function assertStagingAttesterBoundary({ network, config }) {
+  const policy = ESCROW_NETWORKS[network];
+  const ordinary = JSON.parse(config.vars.PAYMENT_DEPLOYMENTS);
+  const privatePins = JSON.parse(
+    config.vars.SECURITY_PAYMENT_DEPLOYMENTS ?? "[]",
+  );
+  const pins = [...ordinary, ...privatePins];
+  if (
+    config.workers_dev !== false ||
+    config.preview_urls !== false ||
+    config.routes.length !== 0 ||
+    config.services !== undefined ||
+    config.vars.SIGNER_STACK !== "test" ||
+    config.vars.SIGNER_ROLE !== "attester" ||
+    config.vars.CHAIN_FAMILY !== policy.family ||
+    !pins.every((pin) => pin.network === network) ||
+    JSON.stringify(config.triggers.crons) !== JSON.stringify(["*/5 * * * *"])
+  )
+    throw new Error("Staging attester boundary drifted");
 }
 
 /** Publish reviewed test attesters before exposing their named owner entrypoints. */

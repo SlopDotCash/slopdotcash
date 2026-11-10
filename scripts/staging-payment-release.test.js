@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stagingPaymentProject } from "../tests/staging-payment-fixture.mjs";
 import {
+  assertStagingAttesterBoundary,
   releaseStagingPayments,
   runStagingWrangler,
   STAGING_MONTHLY_RELEASES,
@@ -105,6 +106,72 @@ test.each(Object.entries(STAGING_MONTHLY_RELEASES))(
     });
   },
 );
+
+test("staging attester boundary drift is refused, mirroring the mainnet plan check", async () => {
+  const [entry] = stagingReleasePlan({
+    registry: [stagingPaymentProject("base-sepolia")],
+    registryDatabase: database,
+    monthlySchedule: schedule,
+  });
+  assertStagingAttesterBoundary({
+    network: entry.network,
+    config: entry.config,
+  });
+  const drifts = {
+    workers_dev: (config) => {
+      config.workers_dev = true;
+    },
+    preview_urls: (config) => {
+      config.preview_urls = true;
+    },
+    routes: (config) => {
+      config.routes = [{ pattern: "*", service: "other" }];
+    },
+    services: (config) => {
+      config.services = [{ binding: "OTHER", service: "other" }];
+    },
+    SIGNER_STACK: (config) => {
+      config.vars.SIGNER_STACK = "production";
+    },
+    SIGNER_ROLE: (config) => {
+      config.vars.SIGNER_ROLE = "relayer";
+    },
+    CHAIN_FAMILY: (config) => {
+      config.vars.CHAIN_FAMILY = "solana";
+    },
+    pins: (config) => {
+      const pins = JSON.parse(config.vars.PAYMENT_DEPLOYMENTS);
+      pins[0].network = "ethereum-sepolia";
+      config.vars.PAYMENT_DEPLOYMENTS = JSON.stringify(pins);
+    },
+    crons: (config) => {
+      config.triggers.crons = [];
+    },
+  };
+  for (const [label, mutate] of Object.entries(drifts)) {
+    const drifted = JSON.parse(JSON.stringify(entry.config));
+    mutate(drifted);
+    expect(
+      () =>
+        assertStagingAttesterBoundary({
+          network: entry.network,
+          config: drifted,
+        }),
+      label,
+    ).toThrow("Staging attester boundary drifted");
+  }
+  // The same boundary holds for the Solana family, not just EVM.
+  const [solana] = stagingReleasePlan({
+    registry: [stagingPaymentProject("solana-devnet")],
+    registryDatabase: database,
+    monthlySchedule: schedule,
+  });
+  assertStagingAttesterBoundary({
+    network: solana.network,
+    config: solana.config,
+  });
+  expect(solana.config.vars.CHAIN_FAMILY).toBe("solana");
+});
 
 test("all test secret inventories pass before any service deploys", async () => {
   await fixture(async ({ directory, path, pages }) => {
