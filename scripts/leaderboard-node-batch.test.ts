@@ -112,6 +112,66 @@ test("the client reports an exhausted 502/504 gateway answer as an upstream erro
   expect(plain).not.toBeInstanceOf(GraphqlUpstreamError);
 });
 
+test("an HTTP 200 answer whose JSON body is empty on every attempt is an upstream error, so the batch splits around it", async () => {
+  const requested: number[] = [];
+  const gateway = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const { variables } = JSON.parse(String(init?.body)) as {
+      variables: { ids: string[] };
+    };
+    requested.push(variables.ids.length);
+    if (variables.ids.length > 12) {
+      // The gateway accepted the request, then cut the body to nothing.
+      return new Response("", {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+    return Response.json({
+      data: {
+        nodes: variables.ids.map((id) => ({ id })),
+        rateLimit: {
+          cost: 1,
+          limit: 5000,
+          remaining: 4900,
+          resetAt: "2026-11-09T00:00:00Z",
+        },
+      },
+    });
+  };
+  const client = new GitHubGraphqlClient("fixture-token", gateway, {
+    retryBaseDelayMs: 0,
+  });
+  const ids = Array.from({ length: 25 }, (_, index) => `PR_${index}`);
+  const data = await executeNodeBatch(client, QUERY, ids);
+  expect((data.nodes as { id: string }[]).map((node) => node.id)).toEqual(ids);
+  // 25 and 13 each exhaust the bounded retry before splitting; 7, 6 and 12
+  // answer on the first attempt.
+  expect(requested).toEqual([
+    ...Array.from({ length: MAX_GRAPHQL_REQUEST_ATTEMPTS }, () => 25),
+    ...Array.from({ length: MAX_GRAPHQL_REQUEST_ATTEMPTS }, () => 13),
+    7,
+    6,
+    12,
+  ]);
+
+  // A single id that still comes back empty fails closed with its status.
+  const empty = async (_input: RequestInfo | URL, _init?: RequestInit) =>
+    new Response("", {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  const strict = new GitHubGraphqlClient("fixture-token", empty, {
+    retryBaseDelayMs: 0,
+  });
+  const failure = await executeNodeBatch(strict, QUERY, ["PR_1"]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(failure).toBeInstanceOf(GraphqlUpstreamError);
+  expect((failure as GraphqlUpstreamError).status).toBe(200);
+  expect((failure as Error).message).toContain("malformed JSON");
+});
+
 /** A GraphQL transport whose rate-limit answers follow `answers` in order. */
 function rateLimitedTransport(
   answers: { remaining: number; resetAt: string }[],
