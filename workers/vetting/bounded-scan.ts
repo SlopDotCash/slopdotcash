@@ -2087,6 +2087,22 @@ export function composeScanResult(input: {
       scanner.review.inputManifestSha256 !== inspection.inventorySha256
     )
       throw new Error("A review read another inventory");
+  // The intake parser accepts at most 50 visibility gaps
+  // (parseVettingScanResult), so reserve room for the truncation notes
+  // before slicing: appending them after the slice emits 51-53 entries
+  // that no intake can record, and the assessment stays pending while
+  // every scan pass aborts on the same unpublishable result.
+  const truncationNotes = [
+    ...(inspection.dependencyLocks.length > 200
+      ? ["More than 200 dependency locks"]
+      : []),
+    ...(inspection.findings.length > 200
+      ? ["More than 200 scan findings"]
+      : []),
+    ...(inspection.artifacts.length > 500
+      ? ["More than 500 scan artifacts"]
+      : []),
+  ];
   const report = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: input.sourceInventorySha256
@@ -2132,12 +2148,15 @@ export function composeScanResult(input: {
     coverage: inspection.coverage,
     checks: inspection.checks,
     visibilityGaps: [
-      ...new Set([
-        ...inspection.visibilityGaps,
-        ...input.primary.visibilityGaps,
-        ...(input.specialist?.visibilityGaps ?? []),
-      ]),
-    ].slice(0, 50),
+      ...[
+        ...new Set([
+          ...inspection.visibilityGaps,
+          ...input.primary.visibilityGaps,
+          ...(input.specialist?.visibilityGaps ?? []),
+        ]),
+      ].slice(0, 50 - truncationNotes.length),
+      ...truncationNotes,
+    ],
     execution: input.execution ?? null,
     reusedAssessmentId: null,
     primaryReview: scanReview(input.primary),
@@ -2148,12 +2167,6 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
-  if (inspection.dependencyLocks.length > 200)
-    result.visibilityGaps.push("More than 200 dependency locks");
-  if (inspection.findings.length > 200)
-    result.visibilityGaps.push("More than 200 scan findings");
-  if (inspection.artifacts.length > 500)
-    result.visibilityGaps.push("More than 500 scan artifacts");
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {
