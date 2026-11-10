@@ -31,6 +31,10 @@ test("project agent setup falls back to the general prompt until cleared", async
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("/SKILL.md");
+  await expect(page.getByTitle("Hermes Agent")).toHaveAttribute(
+    "href",
+    "hermes://skill/install?identifier=http%3A%2F%2F127.0.0.1%3A4466%2FSKILL.md",
+  );
   // Public project pages keep work selection in the agent workflow.
   state = "blocked";
   await page.reload({ waitUntil: "networkidle" });
@@ -74,6 +78,10 @@ test("a cleared project keeps a plain agent setup without an open-work list", as
   await expect(
     setup.getByRole("status", { name: "Agent prompt" }),
   ).toContainText("elizaOS/eliza");
+  await expect(setup.getByTitle("Hermes Agent")).toHaveAttribute(
+    "href",
+    "hermes://skill/install?identifier=http%3A%2F%2F127.0.0.1%3A4466%2Fprojects%2Feliza%2FSKILL.md",
+  );
   await expectAccessible(page, { include: "#start" });
   // Agent links remain next in keyboard order after Copy.
   await setup.getByRole("button", { name: "Copy agent prompt" }).focus();

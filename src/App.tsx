@@ -931,9 +931,11 @@ const AGENT_DEEP_LINKS: readonly {
 function AgentPromptBox({
   prompt,
   openIn = false,
+  skillUrl,
 }: {
   prompt: string;
   openIn?: boolean;
+  skillUrl?: string;
 }) {
   const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
@@ -980,6 +982,7 @@ function AgentPromptBox({
   );
   if (!openIn) return box;
   const origin = window.location.origin.replace(/\/$/u, "");
+  const installUrl = skillUrl ?? `${origin}/SKILL.md`;
   return (
     <div className="agent-prompt">
       {box}
@@ -987,7 +990,7 @@ function AgentPromptBox({
         <span>Open in</span>
         <ul>
           {AGENT_DEEP_LINKS.map((agent) => {
-            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const href = agent.href(prompt, installUrl);
             const web = href.startsWith("https://");
             return (
               <li key={agent.name}>
@@ -1141,6 +1144,11 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
       <AgentPromptBox
         openIn
         prompt={ready ? projectAgentPrompt(project) : bootstrapAgentPrompt()}
+        skillUrl={
+          ready
+            ? `${window.location.origin.replace(/\/$/u, "")}/projects/${encodeURIComponent(project.id)}/SKILL.md`
+            : undefined
+        }
       />
     </div>
   );
