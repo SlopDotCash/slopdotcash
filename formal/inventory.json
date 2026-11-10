@@ -495,14 +495,14 @@
     },
     {
       "path": "backend/points/disputes.ts",
-      "sha256": "1db2e431dfa14c0e107736434e4a6f1e180c1034a6438d821043ea8c574cbb6a",
+      "sha256": "d0b9f213570b3e18a74e1da559167c0491ca0245393a3b1e4d828d400dc48f33",
       "models": [
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [59, 141, 208, 232],
+      "candidateLines": [59, 141, 176, 211, 235],
       "review": "mapped-abstraction"
     },
     {
@@ -1975,7 +1975,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "800594b9314850c69be6a3232e01d1ae91478a6e36747b44ad4f82980713e032",
+      "sha256": "b77156651f5ae25b6894d751adfb0dbb244786bfc84818940a3edaad6205e89e",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -1983,7 +1983,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [517, 518, 554, 567],
+      "candidateLines": [547, 548, 584, 597],
       "review": "mapped-abstraction"
     },
     {
@@ -7814,13 +7814,13 @@
     },
     {
       "path": "workers/slopbot/points-disputes.ts",
-      "sha256": "521021cbdcdf26e4c23a780132337182d3883e9feb247cf4728513caed6472f5",
+      "sha256": "cf06b5763b9fa10a3f17de2ab79aaaccc8e39fe498614751977e42b2705d7d43",
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [42, 72, 73, 182, 239, 273],
+      "candidateLines": [42, 72, 73, 182, 220, 250, 284],
       "review": "mapped-abstraction"
     },
     {
