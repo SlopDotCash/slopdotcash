@@ -28,9 +28,7 @@ export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
  *   This scope does not authorize paid API assessment of historical work.
  * - Review pool: one pool per pull request. It is the sum of the credited
  *   reviewers' highest assessed bands, capped at the pull request's own
- *   assessed size in thirds, and never less than one third when that size
- *   is positive. A zero assessed size pays no review credit: the floor
- *   must not create credit out of unassessed work.
+ *   assessed size in thirds, and never less than one third.
  */
 export const VALUE_SCORING_APPROVED_HISTORY_FROM =
   "2026-09-01T00:00:00.000Z" as const;
