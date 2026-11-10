@@ -430,18 +430,23 @@ async function reconcile(
       return false;
     case "finalized": {
       // The verified receipt is the credit; this balance is extra evidence.
-      const after = await client
-        .balance(row.targetToken)
-        .then((value) => value.toString())
-        .catch((error: unknown) => {
-          deps.log({
-            event: "fee_balance_unavailable",
-            network: row.network,
-            token: row.targetToken,
-            error: message(error),
-          });
-          return null;
-        });
+      // A bridge order's target is an asset on another network: this
+      // network's client cannot read it, so no balance is recorded.
+      const after =
+        row.route === "debridge"
+          ? null
+          : await client
+              .balance(row.targetToken)
+              .then((value) => value.toString())
+              .catch((error: unknown) => {
+                deps.log({
+                  event: "fee_balance_unavailable",
+                  network: row.network,
+                  token: row.targetToken,
+                  error: message(error),
+                });
+                return null;
+              });
       const below =
         row.minAmountOut !== null &&
         status.amountOut < BigInt(row.minAmountOut);
