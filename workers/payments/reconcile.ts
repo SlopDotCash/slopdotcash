@@ -66,9 +66,13 @@ export async function reconcileFailedAttempts(
   // judge them. The shared database also holds every other network's
   // attempts; those belong to their own networks' runs, so they stay
   // unselected here.
+  // The payment receipt is the txid to reconcile when one was submitted;
+  // a Solana binding txid is the fallback for an attempt that has not
+  // reached dispatch yet. The two live in separate columns so a bind can
+  // never present itself as the payment receipt.
   const result = await db
     .prepare(
-      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
+      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',COALESCE(a.transaction_id,a.binding_transaction_id))) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND a.state IN ('submitted','unknown') AND (a.transaction_id IS NOT NULL OR a.binding_transaction_id IS NOT NULL) AND o.state='reserved'",
     )
     .bind(JSON.stringify(networks))
     .first<{ items: string }>();
