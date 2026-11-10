@@ -243,7 +243,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
+      "sha256": "e298a9a167441038d5f135b0ffefac6076bd1e1abd07cdd05a82bb05f154ff6a",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -255,7 +255,7 @@
       "candidateLines": [
         15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
         290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 467, 483, 498, 530,
-        556, 585, 649, 666
+        556, 594, 620, 684, 701
       ],
       "review": "mapped-abstraction"
     },
@@ -7747,15 +7747,15 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "7d2ad887912bb99d65ea2971439e237b4988443fbd21c63a4f8f12354f4b1ea2",
+      "sha256": "c31c5ca48b5a892513d36861c1a1e74d92848180e95645a73a5aae30323ddf1a",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 223, 230, 231, 254, 260, 286, 315, 326, 365, 374, 386, 395, 400, 407,
-        417, 419, 429, 432, 435, 439, 485, 500, 509, 513, 538, 547, 571, 577,
-        587
+        3, 224, 231, 232, 255, 261, 287, 316, 327, 366, 375, 387, 396, 401, 408,
+        418, 420, 430, 433, 436, 440, 486, 501, 510, 514, 540, 549, 573, 579,
+        589
       ],
       "review": "mapped-abstraction"
     },
@@ -7814,13 +7814,13 @@
     },
     {
       "path": "workers/slopbot/points-disputes.ts",
-      "sha256": "a73e71d793799141421e76d777d737979c7d849d15e7a3e8af7864504981216c",
+      "sha256": "cf06b5763b9fa10a3f17de2ab79aaaccc8e39fe498614751977e42b2705d7d43",
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [41, 71, 72, 181, 218],
+      "candidateLines": [42, 72, 73, 182, 220, 250, 284],
       "review": "mapped-abstraction"
     },
     {
