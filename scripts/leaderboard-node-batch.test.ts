@@ -239,6 +239,59 @@ test("a full window drained by another consumer during the run waits instead of 
   expect(client.getRateLimit().remaining).toBe(4999);
 });
 
+test("a new reset window clears the prior window's consumed cost", async () => {
+  const start = new Date("2026-11-10T00:00:00.000Z").getTime();
+  const nativeSetTimeout = globalThis.setTimeout;
+  const waits: number[] = [];
+  setSystemTime(start);
+  const advanceTimeout = Object.assign(
+    (
+      ...[callback, delay, ...args]: Parameters<typeof globalThis.setTimeout>
+    ) => {
+      if (delay !== undefined && delay >= 60_000) {
+        waits.push(delay);
+        setSystemTime(Date.now() + delay);
+        return nativeSetTimeout(callback, 0, ...args);
+      }
+      return nativeSetTimeout(callback, delay, ...args);
+    },
+    { __promisify__: nativeSetTimeout.__promisify__ },
+  ) as typeof globalThis.setTimeout;
+  const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+    advanceTimeout,
+  );
+  try {
+    const { fetcher, requests } = rateLimitedTransport([
+      {
+        remaining: 4999,
+        resetAt: new Date(start + 200).toISOString(),
+      },
+      {
+        remaining: 2600,
+        resetAt: new Date(start + 3_600_000).toISOString(),
+      },
+      {
+        remaining: 2599,
+        resetAt: new Date(start + 3_600_000).toISOString(),
+      },
+    ]);
+    const client = new GitHubGraphqlClient("fixture-token", fetcher, {
+      maxGenerationCost: 2,
+      minimumRateLimitReserve: 0,
+      requestTimeoutMs: 10_000,
+    });
+    await client.execute(QUERY, { ids: ["PR_1"] });
+    await client.execute(QUERY, { ids: ["PR_2"] });
+    await client.execute(QUERY, { ids: ["PR_3"] });
+    expect(requests).toHaveLength(3);
+    expect(waits).toEqual([]);
+    expect(client.getRateLimit().remaining).toBe(2599);
+  } finally {
+    timers.mockRestore();
+    setSystemTime();
+  }
+});
+
 test("multiple valid reset windows can exceed an hour of total waiting", async () => {
   const start = new Date("2026-11-09T00:00:00.000Z").getTime();
   const nativeSetTimeout = globalThis.setTimeout;

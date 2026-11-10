@@ -1914,6 +1914,21 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (restPath) return envelope;
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
+    const resetAt = Date.parse(rateLimit.resetAt);
+    const previousResetAt = this.#rateLimit
+      ? Date.parse(this.#rateLimit.resetAt)
+      : Number.NaN;
+    // A new reported reset begins a new GitHub window. Keep cumulative run
+    // cost, but forget the previous window's limit and wait state.
+    if (
+      Number.isFinite(resetAt) &&
+      Number.isFinite(previousResetAt) &&
+      resetAt !== previousResetAt
+    ) {
+      this.#windowConsumedCost = 0;
+      this.#startingRemaining = null;
+      this.#waitedResetAt = null;
+    }
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
     this.#consumedCost += rateLimit.cost;

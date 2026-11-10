@@ -261,7 +261,7 @@
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "f614dba6f183b3561cd30a6316766262136c8f4901b8dd2df9508efe64cfcc7c",
+      "sha256": "bfaede28a5ec282915971f8e4df15d48c6051300cb40f52103ab962e0a71aa4b",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -269,7 +269,7 @@
         "formal/models/api/inbox_queries.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [61, 68, 69, 135, 168, 202, 206, 267, 300, 319, 320],
+      "candidateLines": [61, 68, 69, 140, 173, 207, 211, 274, 307, 327, 328],
       "review": "mapped-abstraction"
     },
     {
@@ -610,7 +610,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "8105959c6c4ecfcaee7ebe6b9e2971abfd6355e81f6678fa79fee7d8cbf15943",
+      "sha256": "b71be73c7f51c155d19745ef83dfea9762f9146413124d69735bea705a57962d",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -639,9 +639,9 @@
         1153, 1155, 1160, 1161, 1162, 1163, 1175, 1176, 1177, 1179, 1184, 1222,
         1281, 1331, 1365, 1383, 1450, 1531, 1542, 1551, 1554, 1574, 1616, 1622,
         1626, 1632, 1638, 1674, 1682, 1685, 1686, 1731, 1732, 1733, 1750, 1794,
-        1801, 1813, 1850, 1869, 1873, 1926, 2061, 2065, 2092, 2113, 2114, 2125,
-        2129, 2164, 2178, 2196, 2213, 2245, 2254, 2398, 2424, 2573, 2630, 2670,
-        2681, 2682, 2795, 2803, 2821, 3017
+        1801, 1813, 1850, 1869, 1873, 1926, 2071, 2075, 2102, 2123, 2124, 2135,
+        2139, 2174, 2188, 2206, 2223, 2255, 2264, 2408, 2434, 2583, 2640, 2680,
+        2691, 2692, 2805, 2813, 2831, 3027
       ],
       "review": "mapped-abstraction"
     },
@@ -983,7 +983,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "efc577e8a71a0e4a55be819a91ed3d87b21cdaef33cd9261e29131ca7ee578fa",
+      "sha256": "6a533ce358eadaaf8a6baaffe4f10a9a424d87a0c133436ec1dcf6a3d45a8332",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -997,8 +997,8 @@
       "candidateLines": [
         65, 102, 129, 148, 153, 174, 181, 198, 205, 245, 354, 361, 442, 455,
         497, 507, 522, 529, 547, 558, 571, 573, 599, 634, 644, 646, 826, 844,
-        855, 860, 865, 934, 1071, 1149, 1164, 1204, 1240, 1246, 1260, 1265,
-        1277, 1282, 1287
+        855, 860, 865, 934, 1077, 1155, 1170, 1210, 1246, 1252, 1266, 1271,
+        1283, 1288, 1293
       ],
       "review": "mapped-abstraction"
     },
@@ -1208,7 +1208,7 @@
     },
     {
       "path": "backend/vetting/evidence.ts",
-      "sha256": "4ee14430b3089f133eb76d4d2827e1b89b687fcbdba4435e8a43d15fd72a986c",
+      "sha256": "9351af09b1d08be64db1b7df73f0504152e267f49eb5d43567e0358dc3c9ed11",
       "models": [
         "formal/models/vetting/vetting_download_stream.qnt",
         "formal/models/vetting/vetting_evidence_access.qnt",
@@ -1223,10 +1223,10 @@
         "formal/models/vetting/vetting_verified_parts.qnt"
       ],
       "candidateLines": [
-        184, 185, 228, 286, 287, 289, 290, 291, 301, 306, 444, 518, 533, 582,
-        607, 641, 749, 750, 767, 1077, 1079, 1241, 1260, 1277, 1297, 1348, 1479,
-        1519, 1524, 1529, 1587, 1593, 1612, 1617, 1628, 1635, 1706, 1721, 1768,
-        2049
+        184, 185, 228, 286, 287, 289, 290, 291, 301, 307, 448, 522, 537, 586,
+        611, 645, 753, 754, 771, 1081, 1083, 1245, 1264, 1281, 1301, 1352, 1483,
+        1523, 1528, 1533, 1591, 1597, 1616, 1621, 1632, 1639, 1710, 1725, 1772,
+        2053
       ],
       "review": "mapped-abstraction"
     },
@@ -3648,12 +3648,12 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "9d433b7db7c57f35147efa79b43a8f20aba2db577708410fdc900f9355667208",
+      "sha256": "2e2c7f4897eb9865a76d59bf62e954d02e421409526e686bbdb72ca79b43011f",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
-      "candidateLines": [292, 293, 294, 317, 472, 569, 604],
+      "candidateLines": [295, 296, 297, 320, 475, 572, 607],
       "review": "mapped-abstraction"
     },
     {
@@ -3699,8 +3699,9 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "accca2ea0a3dc1cdd23a6255a12fff70614f774973849d83abcca1ae17307c1b",
+      "sha256": "b5164179b1114c391258721b4d821bfc08919e3995fdd6ac827b22a4863ced97",
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -3710,11 +3711,12 @@
         23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
         653, 685, 881, 1108, 1170, 1178, 1236, 1289, 1292, 1485, 1494, 1499,
         1506, 1589, 1590, 1737, 1738, 1795, 1821, 1839, 1841, 1845, 1879, 1882,
-        1883, 1886, 1888, 1899, 2114, 2117, 2425, 2444, 2542, 2555, 2566, 2567,
-        2744, 2746, 2938, 2954, 2966, 2973, 2999, 3009, 3013, 3017, 3021, 3076,
-        3095, 3122, 3139, 3173, 3174, 3176, 3192, 3209, 3210, 3211, 3220, 3225,
-        3405, 3763, 3785, 3794, 3844, 3879, 3885, 3892, 3961, 4046, 4198, 4413,
-        4423, 4425, 4438, 4467, 4469, 4470, 4474, 4478, 4533, 4587, 4638, 4641
+        1883, 1886, 1888, 1899, 1922, 2129, 2132, 2440, 2459, 2557, 2570, 2581,
+        2582, 2759, 2761, 2953, 2969, 2981, 2988, 3014, 3024, 3028, 3032, 3036,
+        3091, 3110, 3137, 3154, 3188, 3189, 3191, 3207, 3224, 3225, 3226, 3235,
+        3240, 3420, 3778, 3800, 3809, 3859, 3894, 3900, 3907, 3976, 4061, 4213,
+        4428, 4438, 4440, 4453, 4482, 4484, 4485, 4489, 4493, 4548, 4602, 4653,
+        4656
       ],
       "review": "mapped-abstraction"
     },
@@ -4521,7 +4523,7 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/live-report.mjs",
-      "sha256": "e470040af55a7efbd84fc20aaec4e54a61fd54b1f6601667624575a4b92434c3",
+      "sha256": "3983640752a74f80d20b5cbd98e7fc14d25638b12e100ecfccd86800fee3263a",
       "models": [
         "formal/models/contributor/contributor_command_completion.qnt",
         "formal/models/contributor/contributor_discovery_lock.qnt",
@@ -8615,10 +8617,10 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "12e1ccf0ba6c81120f8c43a91d40b6173794da1e7f4e08311001166602ad7c52",
+      "sha256": "9c91117652031b2a89d2d46acb75f8002cc03e97f84ededeb32fa7b064057d55",
       "models": ["formal/models/vetting/vetting_disposition.qnt"],
       "candidateLines": [
-        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050
+        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050, 2093
       ],
       "review": "mapped-abstraction"
     },
@@ -12751,6 +12753,15 @@
         "reportAloneCannotHoldTest",
         "signedHoldClearsApprovalTest",
         "substitutedWalletRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/github_budget_window.qnt",
+      "sha256": "dd873914f8256275f15bcabf22c961d4dbfbea2073d7f221741d0ab4cc07e61f",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "newWindowClearsConsumedCostTest",
+        "sameWindowBlocksAfterRetryTest"
       ]
     },
     {

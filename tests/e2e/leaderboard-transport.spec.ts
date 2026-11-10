@@ -66,7 +66,7 @@ for (const mode of ["complete", "corrupted", "slow", "stalled"] as const) {
         );
       await route.fulfill({
         body: broken ? Buffer.from("changed") : Buffer.from(bytes),
-        contentType: "application/octet-stream",
+        contentType: "text/plain; charset=utf-8",
       });
     });
     // Encode before navigation so fixture work is not charged to the
