@@ -87,6 +87,9 @@ test("acknowledges the terms.json slop.cash serves for a project without a bount
   expect(policy.securityBounty).toBeNull();
   expect(await acknowledge(policy)).toMatchObject({
     policyRevision: "draft-1",
+    // The fixture project is paused; the acknowledgement records the
+    // status it was issued under instead of implying the project is open.
+    status: "paused",
     licenseSha256: null,
     inboundTermsSha256: null,
     prizeRulesSha256: null,
@@ -200,5 +203,6 @@ test("the terms CLI verifies a paused project's documents without announcing wor
   );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("Project policy documents verified:");
+  expect(result.stdout).toContain("status paused");
   expect(result.stdout).not.toContain("contributions open");
 });

@@ -189,6 +189,11 @@ function sha256(value) {
 }
 
 function validatePolicyAcknowledgement(value) {
+  // Receipts minted before the project-status record was added carry no
+  // status; they stay valid. A present status must be one of the two project
+  // statuses, so a paused project's receipt can never be read as proof the
+  // project was open.
+  const hasStatus = Object.hasOwn(value ?? {}, "status");
   if (
     !hasExactKeys(value, [
       "acknowledgedAt",
@@ -196,9 +201,11 @@ function validatePolicyAcknowledgement(value) {
       "licenseSha256",
       "policyRevision",
       "prizeRulesSha256",
+      ...(hasStatus ? ["status"] : []),
     ]) ||
     typeof value.policyRevision !== "string" ||
     value.policyRevision.length === 0 ||
+    (hasStatus && value.status !== "active" && value.status !== "paused") ||
     (value.licenseSha256 !== null &&
       !SHA_PATTERN.test(value.licenseSha256 ?? "")) ||
     (value.inboundTermsSha256 !== null &&
@@ -1933,6 +1940,9 @@ export function marker(receipt) {
       ? {
           policy_acknowledgement: {
             policy_revision: receipt.policyAcknowledgement.policyRevision,
+            ...(receipt.policyAcknowledgement.status !== undefined
+              ? { project_status: receipt.policyAcknowledgement.status }
+              : {}),
             license_sha256: receipt.policyAcknowledgement.licenseSha256,
             inbound_terms_sha256:
               receipt.policyAcknowledgement.inboundTermsSha256,

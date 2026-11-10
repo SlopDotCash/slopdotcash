@@ -1,7 +1,8 @@
 // @source skills/project-contributor-template/scripts/skill-authority.mjs
 // @source scripts/skill-source-matches-commit.mjs
 // Exact immutable file/blob bytes precede admission. Generated roles also bind
-// a D1 manifest; only generated contributors require an observed open project.
+// a D1 manifest and require an observed open project; a paused or restricted
+// project refuses installation, updates and rollback for both roles.
 // Static skills reject a registry binding. Transient transport repeats at most3;
 // authority/size/hash errors do not retry. API credentials never reach raw origin.
 module skill_source_authority {
@@ -20,7 +21,7 @@ module skill_source_authority {
   action compare(files: bool, blobs: bool, manifest: bool): bool = all { s.transport=="done",not(s.admitted),s'=s.with("files",files).with("blobs",blobs).with("manifest",manifest) }
   action currentProject(open: bool): bool = all { not(s.admitted),s'=s.with("open",open) }
   val roleAuthority = if (s.role=="static") not(s.binding)
-    else s.binding and s.manifest and (s.role!="contributor" or s.open)
+    else s.binding and s.manifest and s.open
   action admit = all { s.transport=="done",s.files,s.blobs,roleAuthority,
     s'=s.with("admitted",true) }
   action step = {
@@ -41,9 +42,11 @@ module skill_source_authority {
     .expect(s.admitted and not(s.open) and not(s.manifest))
   run staticSkillRejectsRegistryBindingTest = init.then(selectRole("static",true))
     .then(fetch).then(complete).then(compare(true,true,true)).then(admit.fail())
-  run reviewerDoesNotRequireOpenProjectTest = init.then(selectRole("reviewer",true))
-    .then(fetch).then(complete).then(compare(true,true,true)).then(admit)
-    .expect(s.admitted and not(s.open))
+  run reviewerPausedProjectRefusedTest = init.then(selectRole("reviewer",true))
+    .then(fetch).then(complete).then(compare(true,true,true)).then(currentProject(false)).then(admit.fail())
+  run reviewerOpenProjectAdmittedTest = init.then(selectRole("reviewer",true))
+    .then(fetch).then(complete).then(compare(true,true,true)).then(currentProject(true)).then(admit)
+    .expect(s.admitted and s.open)
   run reviewerStillNeedsManifestTest = init.then(selectRole("reviewer",true))
     .then(fetch).then(complete).then(compare(true,true,false)).then(admit.fail())
   run contributorNeedsBindingTest = init.then(selectRole("contributor",false))

@@ -2679,6 +2679,119 @@ describe("generated project skill installation", () => {
     }
   });
 
+  it("refuses a paused project's reviewer install and rollback", () => {
+    // C1: the open-project gate applies to the reviewer role exactly like
+    // the contributor role, including explicit rollback, which reaches the
+    // same gate through verify_local_version (C3 is the same root cause,
+    // not a separate defect).
+    const root = freshRoot("generated-reviewer-paused");
+    const reviewerTemplate = "skills/project-reviewer-template";
+    const reviewerSkillName = "review-thenetwork-contributions";
+    const reviewerFiles = (): Record<string, Buffer> => {
+      const files: Record<string, Buffer> = {};
+      const walk = (directory: string, prefix: string) => {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+          const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) walk(join(directory, entry.name), path);
+          else files[path] = readFileSync(join(directory, entry.name));
+        }
+      };
+      walk(join(repositoryRoot, reviewerTemplate), "");
+      return files;
+    };
+    const reviewerArtifact = (
+      manifest: ProjectDefinition,
+      binding: { projectId: string; revision: number; manifestSha256: string },
+    ) => {
+      const rendered = Object.fromEntries(
+        Object.entries(
+          renderProjectSkill({
+            role: "reviewer",
+            templateFiles: reviewerFiles(),
+            manifest,
+            registry: binding,
+          }),
+        ).map(([path, contents]) => [path, Buffer.from(contents)]),
+      );
+      return writeArtifact(root, revisionA, rendered, {
+        name: reviewerSkillName,
+        sourcePath: reviewerTemplate,
+        registry: binding,
+      });
+    };
+    const reviewerAuthority = () =>
+      createInstallAuthorityFixture(join(root, "authority"), {
+        developHead: revisionA,
+        revisions: { [revisionA]: { files: reviewerFiles() } },
+        skillPath: reviewerTemplate,
+      });
+    const reviewerCommand = (
+      artifact: string,
+      authority: { apiOrigin: string; rawOrigin: string },
+    ) =>
+      createInstallCommand(
+        pathToFileURL(artifact).href.replace(/\/$/u, ""),
+        `\${CODEX_HOME:-\${HOME}/.codex}/skills`,
+        {
+          skillName: reviewerSkillName,
+          skillRepositoryPath: reviewerTemplate,
+          testAuthority: {
+            ...authority,
+            registryOrigin: pathToFileURL(join(root, "registry")).href,
+          },
+        },
+      );
+    const pause = (manifest: ProjectDefinition) =>
+      publishStatus(root, {
+        schemaVersion: "1",
+        project: { ...manifest, status: "paused" },
+        skillsPublished: true,
+      });
+
+    const manifest = manifestFor("Prefer small PRs.");
+    const binding = publishRevision(root, manifest, 3);
+    const artifact = reviewerArtifact(manifest, binding);
+    const authority = reviewerAuthority();
+    const installRoot = join(root, "install");
+    const installed = run(reviewerCommand(artifact, authority), installRoot);
+    expect(installed.status, installed.stderr).toBe(0);
+
+    pause(manifest);
+    const refused = run(
+      reviewerCommand(artifact, authority),
+      join(root, "install-paused"),
+    );
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("this project is paused");
+
+    // Advance to a newer revision while the project is open, then pause
+    // again: rolling back to the retained revision must hit the same gate.
+    const newer = manifestFor("Prefer smaller PRs.");
+    const newerBinding = publishRevision(root, newer, 4);
+    const updated = run(
+      reviewerCommand(reviewerArtifact(newer, newerBinding), authority),
+      installRoot,
+    );
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(
+      readlinkSync(
+        join(installRoot, "codex", "skills", reviewerSkillName),
+      ).replaceAll("\\", "/"),
+    ).toBe(`.${reviewerSkillName}-versions/${revisionA}-r4`);
+    pause(newer);
+    const rollback = run(reviewerCommand(artifact, authority), installRoot, {
+      SLOP_SKILL_OPERATION: "rollback",
+      SLOP_SKILL_REVISION: `${revisionA}-r3`,
+    });
+    expect(rollback.status).not.toBe(0);
+    expect(rollback.stderr).toContain("this project is paused");
+    expect(
+      readlinkSync(
+        join(installRoot, "codex", "skills", reviewerSkillName),
+      ).replaceAll("\\", "/"),
+    ).toBe(`.${reviewerSkillName}-versions/${revisionA}-r4`);
+  });
+
   it("refuses a registry revision whose bytes disagree with the approved digest", () => {
     const root = freshRoot("generated-digest");
     const manifest = manifestFor("Prefer small PRs.");

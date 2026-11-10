@@ -535,8 +535,12 @@ def expected_skill_bytes(revision, binding):
         return template_files, template_files
     if binding is None:
         raise ValueError("a generated project skill needs its registry binding")
-    if role == "contributor":
-        require_project_open(binding["projectId"])
+    # The open-project gate applies to both roles: a paused or restricted
+    # project refuses a reviewer install exactly like a contributor one
+    # (PRD section 5; AGENTS.md gates installation, updates and rollback
+    # with no role exception). Rollback reaches this through
+    # verify_local_version, so no separate gate is needed there.
+    require_project_open(binding["projectId"])
     manifest = registry_manifest(binding)
     return render_project_skill(role, template_files, manifest, binding), template_files
 

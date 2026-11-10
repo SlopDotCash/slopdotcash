@@ -280,6 +280,13 @@ export async function preflight(projectId, options = {}) {
   if (policy.schemaVersion !== "1" || policy.projectId !== projectId) {
     fail("project policy identity is invalid");
   }
+  // The acknowledgement records the project status it was issued under, so
+  // a receipt can never be read as proof the project was open: a paused
+  // project still verifies its documents (acknowledgement without admission,
+  // as the Quint terms-preflight model states), but the receipt says paused.
+  if (policy.status !== "active" && policy.status !== "paused") {
+    fail("project policy status is invalid");
+  }
   if (policy.authority?.state === "verified") {
     if (policy.authority.proof?.policyRevision !== policy.terms?.revision) {
       fail("repository proof does not bind the current terms revision");
@@ -318,6 +325,7 @@ export async function preflight(projectId, options = {}) {
   }
   return {
     policyRevision: policy.terms.revision,
+    status: policy.status,
     licenseSha256: policy.terms.repositoryLicense.fileSha256,
     inboundTermsSha256: policy.terms.inbound.fileSha256,
     prizeRulesSha256: policy.terms.externalPrize?.rulesSha256 ?? null,
@@ -342,7 +350,7 @@ if (direct) {
       process.stdout.write(`${JSON.stringify(acknowledgement)}\n`);
     } else {
       process.stdout.write(
-        `Project policy documents verified: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256?.slice(0, 12) ?? "not declared"}\n`,
+        `Project policy documents verified: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256?.slice(0, 12) ?? "not declared"} · status ${acknowledgement.status}\n`,
       );
     }
   } catch (error) {

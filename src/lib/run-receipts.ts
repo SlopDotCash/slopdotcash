@@ -60,6 +60,11 @@ export interface ProjectRunReceipt {
   skillSha256: string;
   policyAcknowledgement?: {
     policyRevision: string;
+    // The project status the acknowledgement was issued under. Receipts
+    // minted before this record was added omit it; a present value must be
+    // one of the two project statuses, so a paused project's receipt can
+    // never be read as proof the project was open.
+    status?: "active" | "paused";
     licenseSha256: string | null;
     inboundTermsSha256: string | null;
     prizeRulesSha256: string | null;
@@ -186,6 +191,7 @@ interface RunReceiptMarker {
     skill_sha256: string;
     policy_acknowledgement?: {
       policy_revision: string;
+      project_status?: "active" | "paused";
       license_sha256: string | null;
       inbound_terms_sha256: string | null;
       prize_rules_sha256: string | null;
@@ -283,6 +289,9 @@ export function assertProjectRunReceipt(value: unknown): ProjectRunReceipt {
         ? {
             policy_acknowledgement: {
               policy_revision: value.policyAcknowledgement.policyRevision,
+              ...(Object.hasOwn(value.policyAcknowledgement, "status")
+                ? { project_status: value.policyAcknowledgement.status }
+                : {}),
               license_sha256: value.policyAcknowledgement.licenseSha256,
               inbound_terms_sha256:
                 value.policyAcknowledgement.inboundTermsSha256,
@@ -621,6 +630,10 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
         "run marker.policy_acknowledgement must be an object",
       );
     }
+    const hasProjectStatus = Object.hasOwn(
+      value.run.policy_acknowledgement,
+      "project_status",
+    );
     exactKeys(
       value.run.policy_acknowledgement,
       [
@@ -629,6 +642,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
         "license_sha256",
         "policy_revision",
         "prize_rules_sha256",
+        ...(hasProjectStatus ? ["project_status"] : []),
       ],
       "run marker.policy_acknowledgement",
     );
@@ -637,8 +651,22 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
       "run marker.policy_acknowledgement.policy_revision",
       80,
     );
+    // Receipts minted before the project-status record was added omit it.
+    const rawStatus = value.run.policy_acknowledgement.project_status;
+    if (
+      rawStatus !== undefined &&
+      rawStatus !== "active" &&
+      rawStatus !== "paused"
+    ) {
+      throw new TypeError(
+        "run marker.policy_acknowledgement.project_status is invalid",
+      );
+    }
+    const projectStatus =
+      rawStatus === "active" || rawStatus === "paused" ? rawStatus : undefined;
     policyAcknowledgement = {
       policyRevision,
+      ...(projectStatus !== undefined ? { status: projectStatus } : {}),
       licenseSha256: optionalDigest(
         value.run.policy_acknowledgement.license_sha256,
         "run marker.policy_acknowledgement.license_sha256",
@@ -719,6 +747,9 @@ function runReceiptMarker(receipt: ProjectRunReceipt): RunReceiptMarker {
         ? {
             policy_acknowledgement: {
               policy_revision: receipt.policyAcknowledgement.policyRevision,
+              ...(receipt.policyAcknowledgement.status !== undefined
+                ? { project_status: receipt.policyAcknowledgement.status }
+                : {}),
               license_sha256: receipt.policyAcknowledgement.licenseSha256,
               inbound_terms_sha256:
                 receipt.policyAcknowledgement.inboundTermsSha256,
