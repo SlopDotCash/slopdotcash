@@ -4,7 +4,11 @@
  * full SQLite migrations and actual bindStoredDestination. The revert fault
  * changes only a fresh Anvil vault's code between preflight and broadcast,
  * executes the signed transaction, then restores the code. No receipt is faked.
- * All keys below are Anvil's public deterministic fixtures, never user keys.
+ * Also covers the request-path attester (`createEvmAttester.submit`, whose
+ * `bind:<idempotencyKey>` journal key must obey the same consent budget as
+ * the stored path) and the executor's in-place retry of a finalized revert
+ * under the same idempotency key. All keys below are Anvil's public
+ * deterministic fixtures, never user keys.
  */
 import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
@@ -36,6 +40,8 @@ import {
 import {
   type BindingCandidate,
   bindStoredDestination,
+  createEvmAttester,
+  createEvmExecutor,
   pendingStoredBindings,
   runStoredBindings,
 } from "./core";
@@ -277,6 +283,7 @@ interface Fixture {
   nonces: number[];
   broadcasts: number;
   revertNext: boolean;
+  dropBroadcast: boolean;
   revertedReceipt: Receipt | null;
 }
 let active: Fixture | undefined;
@@ -326,16 +333,22 @@ const proxy = Bun.serve({
       });
     }
     assert.equal(tx.to?.toLowerCase(), active.vault);
-    const row = active.journal
-      .entries()
-      .find(
-        (item) =>
-          item.key.replace(/^security:/, "").startsWith(STORED_BINDING) &&
-          item.value?.rawTransaction === raw &&
-          !item.key.includes(":reverted:"),
+    // Stored bindings, request-path bindings (`bind:<idempotencyKey>`) and
+    // executor payments (`pay:<idempotencyKey>`) all sign into the journal
+    // before broadcast; only the stored path carries a test-nonce budget.
+    const row = active.journal.entries().find((item) => {
+      const key = item.key.replace(/^security:/, "");
+      return (
+        (key.startsWith("bind:") || key.startsWith("pay:")) &&
+        item.value?.rawTransaction === raw &&
+        !item.key.includes(":reverted:")
       );
+    });
     assert(row, "Signed binding must be stored before broadcast");
-    if (active.env.BINDING_NONCE_LIMIT === 1) {
+    if (
+      active.env.BINDING_NONCE_LIMIT === 1 &&
+      row.key.replace(/^security:/, "").startsWith(STORED_BINDING)
+    ) {
       assert(row.value.bindingNonceBudgetKey);
       const budget = await active.env.JOURNAL.get<{
         transactionId: string;
@@ -346,8 +359,9 @@ const proxy = Bun.serve({
       assert.equal(budget.nonce, tx.nonce);
     }
     if (
+      row.value.bindingConsentBudgetKey &&
       JSON.parse(active.env.PAYMENT_DEPLOYMENTS)[0].bindingConsentNonceLimit ===
-      1
+        1
     ) {
       const budget = await active.env.JOURNAL.get<{
         transactionId: string;
@@ -362,6 +376,14 @@ const proxy = Bun.serve({
       assert(tx.gas * tx.maxFeePerGas <= BigInt(budget.nativeCeilingWei));
     }
     active.broadcasts++;
+    // A lost broadcast: the signed bytes are retained in the journal but
+    // no node ever sees them, so no receipt or pending transaction exists.
+    if (active.dropBroadcast)
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: keccak256(raw),
+      });
     if (!active.revertNext)
       return Response.json({
         ...(await request(body.method, body.params)),
@@ -591,8 +613,22 @@ async function fixture(
     nonces,
     broadcasts: 0,
     revertNext: false,
+    dropBroadcast: false,
     revertedReceipt: null,
   };
+}
+/** A payout attempt row, as the hosted `/v1/pay` handler records it before dispatch. */
+function addAttempt(
+  fixture: Fixture,
+  id: string,
+  obligationId: string,
+  claimId: string,
+) {
+  fixture.sql
+    .prepare(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,transaction_id,state) VALUES(?,?,?,?,NULL,'prepared')",
+    )
+    .run(id, obligationId, claimId, new Date().toISOString());
 }
 function setConsentLimit(fixture: Fixture, enabled: boolean) {
   const deployments = JSON.parse(fixture.env.PAYMENT_DEPLOYMENTS);
@@ -1138,6 +1174,106 @@ try {
     },
   );
   await run(
+    "request-path attester cannot spend one consent twice",
+    async () => {
+      active = await fixture("140", "consent");
+      const current = active;
+      const attester = createEvmAttester(current.env);
+      addAttempt(
+        current,
+        "request-a",
+        current.candidate.obligationId,
+        current.candidate.claimId,
+      );
+      addAttempt(
+        current,
+        "request-b",
+        current.candidate.obligationId,
+        current.candidate.claimId,
+      );
+      const input = (idempotencyKey: string) => ({
+        ...current.candidate,
+        idempotencyKey,
+      });
+      // The first binding is signed but its broadcast is lost: no node
+      // ever sees it, so the binding stays at version 0 and the second
+      // submit still reaches signing instead of the rotation check.
+      current.dropBroadcast = true;
+      try {
+        const first = await attester.submit(input("request-a"));
+        assert.match(first.transactionId, /^0x[0-9a-f]{64}$/);
+        assert.equal(current.signatures(), 1);
+        // The same wallet-signed consent under a second idempotency key
+        // must not sign a second nonce.
+        await assert.rejects(
+          attester.submit(input("request-b")),
+          /Binding consent nonce already consumed/,
+        );
+        assert.equal(current.signatures(), 1);
+        assert.equal(
+          current.journal
+            .entries()
+            .filter((row) => row.key.startsWith("bind:consent-nonce:")).length,
+          1,
+        );
+        // Reconciling the first attempt re-broadcasts its bytes instead
+        // of signing again.
+        const again = await attester.submit(input("request-a"));
+        assert.equal(again.transactionId, first.transactionId);
+        assert.equal(current.signatures(), 1);
+      } finally {
+        current.dropBroadcast = false;
+      }
+    },
+  );
+  await run(
+    "executor retries a finalized revert in place under the same id",
+    async () => {
+      active = await fixture("141", "consent");
+      await bindStoredDestination(active.env, active.candidate);
+      await mine(64);
+      assert.equal(
+        (await bindStoredDestination(active.env, active.candidate)).state,
+        "current",
+      );
+      // The executor's gas signer only pays gas: Anvil account 0, which is
+      // neither the identity authority nor the project owner.
+      const payer = privateKeyToAccount(
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      );
+      const executor = createEvmExecutor({
+        ...active.env,
+        SIGNER: {
+          address: payer.address,
+          signTransaction: (signed) => payer.signTransaction(signed),
+        },
+        ATTESTER: createEvmAttester(active.env),
+      });
+      addAttempt(
+        active,
+        "pay-1",
+        active.candidate.obligationId,
+        active.candidate.claimId,
+      );
+      const input = { ...active.candidate, idempotencyKey: "pay-1" };
+      active.revertNext = true;
+      const first = await executor.submit(input);
+      assert.match(first.transactionId, /^0x[0-9a-f]{64}$/);
+      assert(active.revertedReceipt);
+      assert.equal(active.revertedReceipt.status, "0x0");
+      const revertedTransactionId = first.transactionId;
+      active.revertNext = false;
+      const second = await executor.submit(input);
+      assert.match(second.transactionId, /^0x[0-9a-f]{64}$/);
+      assert.notEqual(second.transactionId, revertedTransactionId);
+      await mine(64);
+      // The retried payment is idempotent: a further submit returns the
+      // same finalized receipt instead of signing again.
+      const third = await executor.submit(input);
+      assert.equal(third.transactionId, second.transactionId);
+    },
+  );
+  await run(
     "expired consent cancellation retains the single nonce admission",
     async () => {
       active = await fixture("135", "consent");
@@ -1208,6 +1344,12 @@ try {
     "wallet replacement during the final budget read holds the signed binding",
     async () => {
       active = await fixture("136", "consent");
+      // The previous case jumps chain time past this fixture's 86400-second
+      // consent, so the on-chain estimate would revert with InvalidBinding
+      // before the race can be exercised. Renew the same consent (same
+      // claim, version and destination, later expiry) so the race itself
+      // is what the case exercises.
+      await renewConsent(active);
       const current = active;
       const before = await nonce();
       const journal = current.env.JOURNAL;

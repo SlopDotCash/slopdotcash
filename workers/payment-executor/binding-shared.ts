@@ -293,9 +293,15 @@ export async function assertBindingConsentBudget(
   if (!tx.data) throw new Error("Binding consent transaction unavailable");
   const consent = bindingConsentIdentity(config, tx.data);
   const budget = await store.get<BindingConsentBudget>(consent.key);
+  // The attempt fingerprint and the consent fingerprint are different
+  // domains: a stored binding names its operation by the consent
+  // fingerprint, while a request-path binding names it by the payout
+  // operation (obligation, claim, idempotency key). The attempt is bound
+  // to its budget by bindingConsentBudgetKey, the budget's own consent
+  // fingerprint, the signed nonce and the transaction id, so the attempt
+  // fingerprint is not also required to equal the consent fingerprint.
   if (
     attempt.bindingConsentBudgetKey !== consent.key ||
-    attempt.fingerprint !== consent.fingerprint ||
     !budget ||
     budget.schema !== "binding-consent-nonce-v1" ||
     JSON.stringify(budget.identity) !== JSON.stringify(consent.identity) ||
@@ -316,6 +322,23 @@ export async function assertBindingConsentBudget(
 }
 
 export const STORED_BINDING = "bind:stored:";
+
+/**
+ * Both binding attempt journal keys: the scheduled stored path
+ * (`bind:stored:<consent fingerprint>`) and the request path
+ * (`bind:<idempotencyKey>`). Consent-budget gates must cover both: the
+ * request path's idempotency key can never contain ':', so a stored-only
+ * prefix check silently exempts every request-path binding from the
+ * one-nonce consent budget. Budget records (`bind:consent-nonce:*`) and
+ * test-nonce records (`bind:test-nonce:*`) are not attempt keys.
+ */
+export function isBindingAttemptKey(key: string) {
+  return (
+    key.startsWith("bind:") &&
+    !key.startsWith("bind:consent-nonce:") &&
+    !key.startsWith("bind:test-nonce:")
+  );
+}
 
 /** Journal keys of stored bindings signed but not yet finalized. */
 export const PENDING_BINDINGS = "pending-stored-bindings";

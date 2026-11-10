@@ -7309,14 +7309,14 @@
     },
     {
       "path": "workers/payment-executor/binding-shared.ts",
-      "sha256": "50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3",
+      "sha256": "dd7e97ef3f9d6f2edd93c7eb9b9550516e2a3b090d3de087ac5c92a49e69a3d4",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
-      "candidateLines": [320, 321],
+      "candidateLines": [343, 344],
       "review": "mapped-abstraction"
     },
     {
@@ -7338,7 +7338,7 @@
     },
     {
       "path": "workers/payment-executor/core.ts",
-      "sha256": "b40045e2e2db336f5d80c0000113566d98efe250e040e6a9c2dd1659a56bb6a9",
+      "sha256": "d957e41b5bb5ad7b5bdac05ac5026372e335fcf97f46a408e3cfe16f2c98e742",
       "models": [
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/binding_cancellation.qnt",
@@ -7353,14 +7353,14 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        109, 119, 146, 208, 209, 211, 212, 254, 256, 262, 263, 264, 265, 272,
-        274, 275, 280, 282, 283, 284, 285, 286, 290, 310, 315, 318, 568, 679,
-        686, 688, 708, 1067, 1068, 1217, 1249, 1258, 1261, 1271, 1296, 1375,
-        1376, 1377, 1378, 1384, 1392, 1500, 1505, 1506, 1507, 1513, 1517, 1518,
-        1519, 1522, 1523, 1526, 1567, 1575, 1577, 1585, 1709, 1710, 1711, 1738,
-        1767, 1773, 1777, 1794, 1799, 1821, 1822, 1829, 1848, 1849, 1853, 2007,
-        2008, 2038, 2039, 2045, 2049, 2156, 2195, 2206, 2213, 2214, 2223, 2266,
-        2273, 2300, 2330, 2331, 2376, 2386, 2484, 2486, 2487, 2491
+        110, 120, 147, 209, 210, 212, 213, 255, 257, 263, 264, 265, 266, 273,
+        275, 276, 281, 283, 284, 285, 286, 287, 291, 311, 316, 319, 590, 712,
+        719, 721, 741, 1100, 1101, 1250, 1282, 1291, 1294, 1304, 1329, 1408,
+        1409, 1410, 1411, 1417, 1425, 1533, 1538, 1539, 1540, 1546, 1550, 1551,
+        1552, 1555, 1556, 1559, 1600, 1608, 1610, 1618, 1742, 1743, 1744, 1771,
+        1800, 1806, 1810, 1827, 1832, 1854, 1855, 1862, 1881, 1882, 1886, 2040,
+        2041, 2071, 2072, 2078, 2082, 2189, 2228, 2239, 2246, 2247, 2256, 2299,
+        2306, 2333, 2363, 2364, 2406, 2416, 2426, 2524, 2526, 2527, 2531
       ],
       "review": "mapped-abstraction"
     },
