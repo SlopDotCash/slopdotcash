@@ -1122,6 +1122,47 @@ test("retry on an escalated dispute without a draft returns the view without re-
   expect(h.started).toEqual([created.id]);
 });
 
+test("a duplicate create on a triage dispute still re-enqueues triage", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The manual award needs review.",
+  };
+  const created = await (await h.call("", input)).json();
+  expect(h.started).toEqual([created.id]);
+  const duplicate = await h.call("", input);
+  expect(duplicate.status).toBe(201);
+  expect(await duplicate.json()).toMatchObject({
+    id: created.id,
+    state: "triage",
+  });
+  expect(h.started).toEqual([created.id, created.id]);
+});
+
+test("a duplicate create on an escalated dispute without a draft returns the view without re-running triage", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The manual award needs review.",
+  };
+  const created = await (await h.call("", input)).json();
+  expect(h.started).toEqual([created.id]);
+  // Escalated by an early path that writes no draft, as triage failures do.
+  h.sqlite
+    .query("UPDATE points_disputes SET escalated_at=?,escalation=?")
+    .run(
+      "2026-10-30T15:00:00.000Z",
+      "Slopbot triage is unavailable; independent review is required",
+    );
+  const duplicate = await h.call("", input);
+  expect(duplicate.status).toBe(201);
+  expect(await duplicate.json()).toMatchObject({
+    id: created.id,
+    state: "review",
+  });
+  expect(h.started).toEqual([created.id]);
+});
+
 test("an overdue escalated dispute is re-notified to current moderators, once per day", async () => {
   const { remindOverduePointsDisputes } = await import(
     "../../workers/slopbot/points-disputes"
@@ -1194,6 +1235,86 @@ test("an overdue escalated dispute is re-notified to current moderators, once pe
   ).toBe(2);
   expect(count(moderator.githubId)).toBe(3);
   expect(count("44")).toBe(2);
+});
+
+test("the overdue reminder reaches every overdue dispute past the first 100", async () => {
+  const { remindOverduePointsDisputes } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const insert = h.sqlite.query(
+    "INSERT INTO points_disputes(appeal_key,revision_id,item_node_id,appellant_github_id,statement,opened_at,due_at,escalated_at,escalation) VALUES(?,?,?,?,?,?,?,?,?)",
+  );
+  const keys: string[] = [];
+  for (let i = 0; i < 101; i++) {
+    const key = `points-dispute:${i.toString(16).padStart(64, "0")}`;
+    keys.push(key);
+    insert.run(
+      key,
+      h.revision.id,
+      h.revision.id,
+      owner.githubId,
+      "The manual award needs review.",
+      "2026-10-30T14:00:00.000Z",
+      new Date(
+        Date.parse("2026-11-01T00:00:00.000Z") + i * 60_000,
+      ).toISOString(),
+      "2026-11-01T00:00:00.000Z",
+      "needs moderator review",
+    );
+  }
+  const env = {
+    SLOPBOT_DB: h.db,
+    SLOPBOT_APP_ID: "unused",
+    SLOPBOT_APP_PRIVATE_KEY: "unused",
+    PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+  };
+  const overdueEvents = () =>
+    (
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM notifications WHERE event_key LIKE 'slopbot-overdue:%:2026-11-10'",
+        )
+        .get() as { n: number }
+    ).n;
+  // Four same-day runs, as in the reviewer's reproduction: the first
+  // reminds the first 100, the second reaches the tail, the rest write
+  // nothing — no dispute is starved by the LIMIT 100 window.
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:00:00.000Z"),
+    ),
+  ).toBe(100);
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:05:00.000Z"),
+    ),
+  ).toBe(1);
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:10:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:15:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(overdueEvents()).toBe(101);
+  // Every dispute, including the latest-due tail, was reminded exactly once.
+  for (const key of keys) {
+    expect(
+      (
+        h.sqlite
+          .query("SELECT COUNT(*) AS n FROM notifications WHERE event_key=?")
+          .get(`slopbot-overdue:${key}:2026-11-10`) as { n: number }
+      ).n,
+    ).toBe(1);
+  }
 });
 
 test("the overdue reminder skips disputes that are not due, not escalated, or resolved", async () => {

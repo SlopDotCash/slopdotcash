@@ -170,9 +170,12 @@ export async function handlePointsDisputes(
         "already_submitted",
         "This Points record already has a dispute. Open it in Inbox.",
       );
-    process(id);
     const created = await appealByKey(deps.db, id, "points_disputes");
     if (!created) throw new Error("Points dispute was not retained");
+    // An escalated dispute is already with a moderator: a duplicate create
+    // must not re-run triage, mirroring the retry guard below. Triage
+    // disputes keep the established re-enqueue on duplicate create.
+    if (!created.escalated_at) process(id);
     return json(201, view(created));
   }
   if (!POINTS_DISPUTE_KEY.test(key))
