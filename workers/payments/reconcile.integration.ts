@@ -266,8 +266,12 @@ try {
     console.log("phase 1 passed: RPC outage isolated to its own attempt");
   }
 
-  // Phase 2: the first attempt names a deployment outside the reviewed set.
-  // The later Base attempt must still be reconciled from its revert proof.
+  // Phase 2: the first attempt is on a network this Worker no longer serves
+  // (removed from PAYMENT_NETWORKS, so it has no reviewed deployment). It is
+  // not this Worker's attempt — dispatch and uncertain recovery skip
+  // unserved networks the same way — so it is skipped silently instead of
+  // throwing on every scheduled run. The later Base attempt must still be
+  // reconciled from its revert proof.
   {
     const { directory, sql, db } = makeDatabase();
     try {
@@ -275,6 +279,54 @@ try {
         id: "attempt-ghost",
         actor: "303",
         network: "ghost-net",
+        chain: "base",
+        vault: "vault-ghost",
+        transactionId: `0x${"d".repeat(64)}`,
+        seed: "3",
+      });
+      seedAttempt(sql, {
+        id: "attempt-base",
+        actor: "101",
+        network: "base-local",
+        chain: "base",
+        vault: "vault-base",
+        transactionId: BASE_TX,
+        seed: "1",
+      });
+      const error = await captureError(() =>
+        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+      );
+      assert.equal(error, null);
+      assert.deepEqual(attemptState(sql, "attempt-base"), {
+        attemptState: "failed",
+        outboxState: "ready",
+        failureCount: 1,
+      });
+      // The unserved attempt is left untouched for its own network's Worker.
+      assert.deepEqual(attemptState(sql, "attempt-ghost"), {
+        attemptState: "submitted",
+        outboxState: "held",
+        failureCount: 0,
+      });
+    } finally {
+      sql.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+    console.log(
+      "phase 2 passed: unserved-network attempt skipped, served attempt reconciled",
+    );
+  }
+
+  // Phase 2b: an attempt on a served network whose vault is missing from
+  // the reviewed deployments is a real registry gap and must still surface
+  // as a per-attempt failure (PAY-07), without blocking later attempts.
+  {
+    const { directory, sql, db } = makeDatabase();
+    try {
+      seedAttempt(sql, {
+        id: "attempt-orphan",
+        actor: "303",
+        network: "base-local",
         chain: "base",
         vault: "vault-ghost",
         transactionId: `0x${"d".repeat(64)}`,
@@ -306,7 +358,7 @@ try {
         outboxState: "ready",
         failureCount: 1,
       });
-      assert.deepEqual(attemptState(sql, "attempt-ghost"), {
+      assert.deepEqual(attemptState(sql, "attempt-orphan"), {
         attemptState: "submitted",
         outboxState: "held",
         failureCount: 0,
@@ -315,7 +367,9 @@ try {
       sql.close();
       rmSync(directory, { recursive: true, force: true });
     }
-    console.log("phase 2 passed: missing deployment isolated to its attempt");
+    console.log(
+      "phase 2b passed: served-network missing deployment still reported",
+    );
   }
 
   // Phase 3: a single healthy attempt reconciles with no error at all.
