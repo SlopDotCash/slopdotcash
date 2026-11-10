@@ -240,7 +240,10 @@ export async function scanSolanaPayments(
         {
           commitment: "finalized",
           encoding: "jsonParsed",
-          maxSupportedTransactionVersion: 0,
+          // A versioned transaction that mentions the project account returns
+          // null at version 0, which wedged the scan before its checkpoint.
+          // Version 1 keeps the parsed instructions the indexer reads.
+          maxSupportedTransactionVersion: 1,
         },
       ])) as Record<string, unknown> | null;
       const meta = tx?.meta as { err: unknown } | undefined;

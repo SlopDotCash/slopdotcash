@@ -347,7 +347,10 @@ export function solanaPaymentAdapter(
           {
             commitment: "finalized",
             encoding: "jsonParsed",
-            maxSupportedTransactionVersion: 0,
+            // A versioned transaction returns null at version 0, so a reserve
+            // or payment sent as one could never verify. Version 1 keeps the
+            // parsed instructions this verifier reads.
+            maxSupportedTransactionVersion: 1,
           },
         ]),
       );
