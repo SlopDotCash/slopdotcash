@@ -1499,10 +1499,12 @@ describe("monthly coordinator", () => {
     const account = async () =>
       (await (
         await handlePaymentsApi(
-          new Request("https://slop.cash/api/v1/payments/me", {
+          new Request("https://staging.slop.cash/api/v1/payments/me", {
             headers: { cookie: `__Host-slop_points=${token}` },
           }),
-          { db, now: () => clock },
+          // The fixture deployment is base-sepolia (testnet); /me serves
+          // testnet awards only on staging.
+          { db, tier: "staging", now: () => clock },
         )
       ).json()) as PaymentsAccount;
     // A proposal under the owner's review is private; nothing is shown.
@@ -2171,10 +2173,12 @@ describe("monthly attestation input", () => {
       .run(await sha256Hex(token), "node-first", "2083-01-01T00:00:00.000Z");
     const account = (await (
       await handlePaymentsApi(
-        new Request("https://slop.cash/api/v1/payments/me", {
+        new Request("https://staging.slop.cash/api/v1/payments/me", {
           headers: { cookie: `__Host-slop_points=${token}` },
         }),
-        { db, now: () => clock },
+        // The fixture deployment is base-sepolia (testnet); /me serves
+        // testnet awards only on staging.
+        { db, tier: "staging", now: () => clock },
       )
     ).json()) as PaymentsAccount;
     expect(account.monthlyAwards).toMatchObject([
@@ -3524,10 +3528,12 @@ test("account keeps an award visible when a reservation is indexed during its re
   };
   const account = async () => {
     const response = await handlePaymentsApi(
-      new Request("https://slop.cash/api/v1/payments/me", {
+      new Request("https://staging.slop.cash/api/v1/payments/me", {
         headers: { cookie: `__Host-slop_points=${token}` },
       }),
-      { db: racingDb, now: () => afterCutoff },
+      // The fixture deployment is base-sepolia (testnet); /me serves
+      // testnet awards only on staging.
+      { db: racingDb, tier: "staging", now: () => afterCutoff },
     );
     expect(response.status).toBe(200);
     return (await response.json()) as PaymentsAccount;
