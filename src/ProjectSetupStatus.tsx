@@ -87,7 +87,8 @@ function SetupBadge({
 /**
  * One setup status per project (PRD section 4 and 7): the result, the next
  * action and each check, with funding shown separately. Checking runs every
- * setup check on the server; a project that passes activates then.
+ * setup check on the server; a project that passes activates then for its
+ * steward or a repository admin.
  */
 type ProjectSetupStatusProps = {
   actorId: string;

@@ -193,7 +193,7 @@ export function createProject(
   );
 }
 
-/** Runs the setup checks; a passing project activates as part of the check. */
+/** Runs the setup checks; a passing project activates as part of the check only when the caller is the project steward or a repository admin. */
 export function checkProjectSetup(
   projectId: string,
   requestScan = false,

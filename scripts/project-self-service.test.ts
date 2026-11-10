@@ -3,7 +3,8 @@
  * create projects without an admin, applications stored before the change
  * publish without being entered again, the registry stays unique, owner
  * revisions classify their changes, and setup activates a project only when
- * the installation reads write access and the exact content has a clean scan.
+ * the caller is the project steward or a repository admin, the installation
+ * reads their access, and the exact content has a clean scan.
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -536,7 +537,7 @@ test("creation requires the Slopbot installation, then queues the first scan and
   });
 });
 
-test("setup activates a project only with installation write access and a clean scan", async () => {
+test("setup activates a project only for its steward or a repository admin with a clean scan", async () => {
   const { persistence, call, create, state, deps } = registry();
   await create("open-registry", "example/open-registry");
   const check = async (actor = OWNER) =>
@@ -779,6 +780,28 @@ test("owner revisions publish presentation, require admission and apply money pr
     roleName: "write",
   };
   state.clearance = CLEARED;
+  // The creator holds write access but is neither the steward nor a
+  // repository admin, so the check reports the setup status without
+  // resuming the paused project.
+  const writerCheck = (
+    await call("POST", "project-setup/open-registry/check", OWNER, {})
+  ).body as { setup: Setup };
+  expect(writerCheck.setup).toMatchObject({
+    state: "action_required",
+    status: "paused",
+    activatedRevision: null,
+    nextAction: { kind: "activate_project" },
+  });
+  expect((await persistence.getProject("open-registry"))?.status).toBe(
+    "paused",
+  );
+  // A repository admin activates it with the same passing checks.
+  state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "admin",
+    roleName: "admin",
+  };
   await call("POST", "project-setup/open-registry/check", OWNER, {});
   const active = await persistence.getProject("open-registry");
   if (!active) throw new Error("project was not listed");

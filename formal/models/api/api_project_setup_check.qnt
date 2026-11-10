@@ -6,6 +6,10 @@
 // @evidence tests/e2e/project-access-retry.spec.ts
 // One setup check, one project, two revisions and one concurrent restriction.
 // Access, identity, clearance and queue replies are separate observations.
+// Resume authority (the caller is the project steward or a repository admin)
+// is a separate observation from repository permission: write access alone
+// verifies setup authority, but only a steward or a repository admin may
+// resume a paused project.
 // The status describes the captured/committed revision, not an atomic current
 // snapshot of all providers. Identity changes, DB atomicity, actual GitHub and
 // scanner evidence, and unbounded retries are outside this finite model.
@@ -25,7 +29,7 @@ module api_project_setup_check {
     requestScan: bool, access: str, authority: str, identity: str,
     clearance: str, queue: str, projection: Projection,
     secondClearance: str, committedRevision: int, activatedRevision: int,
-    writes: int, writeResponse: int }
+    writes: int, writeResponse: int, canResume: bool }
   var s: State
   pure val clearances = Set("unscanned", "stale", "queued", "quarantined",
     "banned", "cleared", "exempt", "unverified", "unavailable")
@@ -52,7 +56,7 @@ module api_project_setup_check {
       (s.requestScan and s.clearance == "quarantined"))
   val activationCandidate = open and s.allowActivation and not(s.capturedActive)
     and s.authority == "verified" and s.access == "installed"
-    and clear(s.clearance) and s.skills
+    and clear(s.clearance) and s.skills and s.canResume
   val displayedScan = if (s.clearance == "exempt" and s.queue != "unavailable") "exempt"
     else projectedScan(s.clearance, s.queue)
 
@@ -62,8 +66,10 @@ module api_project_setup_check {
     requestScan: false, access: "unknown", authority: "unknown", identity: "unknown",
     clearance: "unknown", queue: "none", projection: { state: "none", next: "none" },
     secondClearance: "unread", committedRevision: 0,
-    activatedRevision: 0, writes: 0, writeResponse: 0 }
+    activatedRevision: 0, writes: 0, writeResponse: 0, canResume: false }
   action initialActive = all { s.phase == "idle", s' = s.with("active", true) }
+  // The caller is the project steward or a repository admin.
+  action grantResume = all { s.phase == "idle", s' = s.with("canResume", true) }
   action retire = all { s.phase == "idle", s' = s.with("retired", true) }
   action omitSkills = all { s.phase == "idle", s' = s.with("skills", false) }
   action fund = s' = s.with("funded", true)
@@ -141,7 +147,7 @@ module api_project_setup_check {
     nondet outcome = Set("queued", "unavailable").oneOf()
     nondet second = Set("cleared", "refused", "throw").oneOf()
     nondet response = Set("ok", "error").oneOf()
-    any { initialActive, retire, omitSkills, fund, restrict, begin(allow, request),
+    any { initialActive, retire, omitSkills, fund, restrict, grantResume, begin(allow, request),
       accessReply(access, permission), identityReply(identity), attemptOrdinaryWrite,
       scanReply(clearance), queueReply(outcome), concurrentRevision, prepareDecision,
       recheckClearance(second), commitActivation, activationWriteFailure, finishActivation(response), s' = s }
@@ -149,7 +155,7 @@ module api_project_setup_check {
   val invariant = all {
     s.head >= 1, s.head <= 2, s.writes >= 0, s.writes <= 1,
     s.activatedRevision > 0 implies (s.writes == 1 and s.activatedRevision == s.captured and clear(s.clearance)
-      and s.authority == "verified" and s.access == "installed" and s.skills and s.allowActivation),
+      and s.authority == "verified" and s.access == "installed" and s.skills and s.allowActivation and s.canResume),
     s.committedRevision > 0 implies (s.writes == 1 and s.committedRevision == s.head
       and s.secondClearance == "cleared" and s.active),
     s.activatedRevision > 0 implies s.activatedRevision == s.committedRevision,
@@ -162,7 +168,7 @@ module api_project_setup_check {
   // Old catch path discarded known installation facts; kept outside step.
   val oldMismatchProjection = projection(false, false, false, "retry", "denied", "cleared")
 
-  action verified = begin(true, false).then(accessReply("installed", "write")).then(identityReply("matched"))
+  action verified = grantResume.then(begin(true, false)).then(accessReply("installed", "write")).then(identityReply("matched"))
   run unfundedActivationTest = init.then(verified).then(scanReply("cleared")).then(decide)
     .expect(s.projection.state == "ready" and s.writes == 1 and not(s.funded) and s.activatedRevision == 2)
   run alreadyActiveNeedsNoRevisionTest = init.then(initialActive).then(verified).then(scanReply("cleared")).then(decide)
@@ -209,6 +215,11 @@ module api_project_setup_check {
   run ownerEditDoesNotResumePausedProjectTest = init.then(begin(false, false)).then(accessReply("installed", "write"))
     .then(identityReply("matched")).then(scanReply("cleared")).then(decide)
     .expect(not(s.active) and s.writes == 0 and s.projection.next == "retry_scan")
+  // Write access verifies setup authority, but a collaborator who is
+  // neither the steward nor a repository admin cannot resume the project.
+  run writerWithoutResumeAuthorityDoesNotActivateTest = init.then(begin(true, false)).then(accessReply("installed", "write"))
+    .then(identityReply("matched")).then(scanReply("cleared")).then(decide)
+    .expect(not(s.active) and s.writes == 0 and s.activatedRevision == 0)
   run incompleteSkillsDoNotActivateTest = init.then(omitSkills).then(verified).then(scanReply("cleared")).then(decide)
     .expect(s.writes == 0 and not(s.active))
   run changedRevisionRefusesActivationTest = init.then(verified).then(scanReply("cleared")).then(concurrentRevision).then(decide)

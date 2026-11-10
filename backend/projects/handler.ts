@@ -1104,9 +1104,11 @@ async function queueScan(
 /**
  * Runs every setup check for `actor` and acts on the result: it queues a
  * scan for missing admission or fresh reinstatement, and activates a paused project
- * whose owner has write access read through Slopbot, whose repository has
+ * whose steward or repository admin holds write access, read through Slopbot, whose repository has
  * Slopbot installed and with retained clean repository admission. Activation
- * changes only the status, so the clearance carries over.
+ * changes only the status, so the clearance carries over. A collaborator with
+ * only write access can read the setup status, but cannot resume a project
+ * the steward or an admin deliberately paused.
  */
 async function runSetupCheck(
   request: Request,
@@ -1177,7 +1179,12 @@ async function runSetupCheck(
     access.state === "read" &&
     access.access.installation === "installed" &&
     clearance.state === "cleared" &&
-    publishesGeneratedSkills(project.manifest)
+    publishesGeneratedSkills(project.manifest) &&
+    // Only the steward or a repository admin may resume a paused project.
+    // A writer who is neither could otherwise undo a deliberate pause with
+    // one setup check, while the more sensitive owner operations already
+    // require this same gate (isProjectStewardOrAdmin).
+    isProjectStewardOrAdmin(project.manifest, actor, access)
   ) {
     project = await appendRevision(request, deps, {
       current: project,
@@ -1569,7 +1576,8 @@ async function ownerVault(
  * Publishes an owner's revision at once (PRD section 4). Presentation
  * changes publish as they are; skill edits retain admission for the same
  * immutable repository. An unadmitted repository needs a scan. A clean
- * result reactivates it on the next setup check; a financial change applies
+ * result reactivates it on the next setup check by the steward or a
+ * repository admin; a financial change applies
  * from the next UTC cycle.
  * Identity, status, listing, steward, authority and terms stay with the
  * reviewed exception paths. A stale `expectedRevision` fails with 409.
