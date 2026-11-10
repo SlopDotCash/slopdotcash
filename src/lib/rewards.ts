@@ -333,6 +333,11 @@ function assertWallet(
     };
   }
   if ("sourceClaimId" in wallet) {
+    // The trace possession flow issues attestations for Solana only, so
+    // only a Solana claim proof must reference one. Other chains keep the
+    // previous proof form; gating them would be a product policy decision,
+    // not this hardening.
+    const attested = chain === "solana";
     exactKeys(
       wallet,
       [
@@ -342,7 +347,7 @@ function assertWallet(
         "sourceActorId",
         "sourceClaimId",
         "sourceRecordSha256",
-        "sourceAttestationSha256",
+        ...(attested ? ["sourceAttestationSha256"] : []),
         "sourceUrl",
       ],
       path,
@@ -367,11 +372,15 @@ function assertWallet(
     // A claim alone records only the authenticated account's statement of
     // an address; the proof must reference the destination's possession
     // attestation before it can stand as an allocation wallet proof.
-    const sourceAttestationSha256 = text(
-      wallet.sourceAttestationSha256,
-      `${path}.sourceAttestationSha256`,
-      { pattern: /^[0-9a-f]{64}$/u },
-    );
+    const sourceAttestationSha256 = attested
+      ? text(
+          wallet.sourceAttestationSha256,
+          `${path}.sourceAttestationSha256`,
+          {
+            pattern: /^[0-9a-f]{64}$/u,
+          },
+        )
+      : undefined;
     if (
       parsedUrl.protocol !== "https:" ||
       parsedUrl.hostname !== "api.slop.cash" ||
@@ -393,7 +402,9 @@ function assertWallet(
       sourceActorId,
       sourceClaimId,
       sourceRecordSha256,
-      sourceAttestationSha256,
+      ...(sourceAttestationSha256 === undefined
+        ? {}
+        : { sourceAttestationSha256 }),
       sourceUrl,
     };
   }

@@ -108,16 +108,21 @@ function wallet(value: unknown, actor: ActorRef): void {
     )
       throw new TypeError("Wallet README does not bind actor and commit");
   } else if ("sourceClaimId" in v) {
+    // The trace possession flow issues attestations for Solana only, so
+    // only a Solana claim proof must reference one. Other chains keep the
+    // previous proof form; gating them would be a product policy decision,
+    // not this hardening.
+    const attested = v.chain === "solana";
     exactRecord(
       v,
-      `${common},sourceActorId,sourceClaimId,sourceRecordSha256,sourceAttestationSha256`,
+      `${common},sourceActorId,sourceClaimId,sourceRecordSha256${attested ? ",sourceAttestationSha256" : ""}`,
     );
     text(v.sourceClaimId, /^[A-Za-z0-9_-]{1,128}$/u);
     text(v.sourceRecordSha256, hash);
     // A claim alone records only the authenticated account's statement of
     // an address; the proof must reference the destination's possession
     // attestation before it can stand as a funding-review wallet proof.
-    text(v.sourceAttestationSha256, hash);
+    if (attested) text(v.sourceAttestationSha256, hash);
     if (
       v.sourceActorId !== actor.id ||
       v.sourceUrl !==

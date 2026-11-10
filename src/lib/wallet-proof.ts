@@ -30,11 +30,14 @@ export interface SlopDatabaseWalletProof {
   sourceRecordSha256: string;
   /**
    * Digest of the signed possession attestation for this claim, as published
-   * by the claim's public possession view (`messageDigest`). A claim records
-   * only the authenticated account's statement of an address, so a proof
-   * without this reference must not be used as a cycle-index wallet proof.
+   * by the claim's public possession view (`messageDigest`). Required on
+   * Solana proofs: a claim records only the authenticated account's
+   * statement of an address, so a Solana proof without this reference must
+   * not be used as a cycle-index wallet proof. The trace possession flow
+   * issues attestations for Solana only, so proofs on other chains carry no
+   * attestation reference.
    */
-  sourceAttestationSha256: string;
+  sourceAttestationSha256?: string;
   sourceUrl: string;
 }
 
