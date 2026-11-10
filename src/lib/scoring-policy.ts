@@ -8,6 +8,7 @@
  * a valid maintainer ratification remains the exception that takes
  * precedence. Payment authority stays separate: a score is never an award.
  */
+import { canonicalActorKey } from "./github-actor";
 import { isExactUtc } from "./record-validation.mjs";
 import { VALUE_RUBRIC_VERSION } from "./value-assessment";
 import { allocateWeighted } from "./verified-allocation";
@@ -176,8 +177,9 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
       throw new Error("Qualifying review lacks a verified submission time");
     if (!Number.isSafeInteger(review.thirds) || review.thirds < 1)
       throw new RangeError("Qualifying review needs a positive band");
-    if (!actorIndexes.has(review.actor.id))
-      actorIndexes.set(review.actor.id, actorIndexes.size);
+    const actorKey = canonicalActorKey(review.actor.id);
+    if (!actorIndexes.has(actorKey))
+      actorIndexes.set(actorKey, actorIndexes.size);
     timed.push({ review, submittedAt });
   }
   // Unique review IDs make this the same total order used within each old
@@ -199,7 +201,9 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
     () => [],
   );
   const entries = ordered.map((review) => {
-    const actor = actorIndexes.get(review.actor.id) as number;
+    const actor = actorIndexes.get(
+      canonicalActorKey(review.actor.id),
+    ) as number;
     grouped[actor].push(review);
     return { actor, thirds: review.thirds };
   });

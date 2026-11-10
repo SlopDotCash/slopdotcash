@@ -1,4 +1,4 @@
-import { compareActors } from "./github-actor";
+import { canonicalActorKey, compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
 import { periodBounds } from "./payments/monthly-allocation";
 /**
@@ -346,7 +346,9 @@ function selectUniqueRuns(
 
 function eventMatchesRun(event: ScoreEvent, run: UniqueRun): boolean {
   return (
-    run.attribution.actor?.id === event.actor.id &&
+    run.attribution.actor?.id !== undefined &&
+    canonicalActorKey(run.attribution.actor.id) ===
+      canonicalActorKey(event.actor.id) &&
     run.receipt.repositoryId === event.repository &&
     (run.attribution.artifactId === event.source.id ||
       run.attribution.sourceId === event.source.id)
@@ -365,7 +367,11 @@ function usageForActor(
   let cost = 0n;
 
   for (const run of runs) {
-    if (run.attribution.actor?.id !== actorId) continue;
+    if (
+      run.attribution.actor?.id === undefined ||
+      canonicalActorKey(run.attribution.actor.id) !== canonicalActorKey(actorId)
+    )
+      continue;
     const tokens = run.receipt.usage.totalTokens;
     const matchingEvents = events.filter((event) =>
       eventMatchesRun(event, run),
@@ -532,18 +538,18 @@ export function createProjectView(
   const actors = new Map<string, GitHubActor>();
   const eventsByActor = new Map<string, ScoreEvent[]>();
   for (const event of ledger) {
-    actors.set(event.actor.id, event.actor);
-    const events = eventsByActor.get(event.actor.id) ?? [];
+    actors.set(canonicalActorKey(event.actor.id), event.actor);
+    const events = eventsByActor.get(canonicalActorKey(event.actor.id)) ?? [];
     events.push(event);
-    eventsByActor.set(event.actor.id, events);
+    eventsByActor.set(canonicalActorKey(event.actor.id), events);
   }
   const runsByActor = new Map<string, UniqueRun[]>();
   for (const run of runs) {
     const actorId = run.attribution.actor?.id;
     if (actorId === undefined) continue;
-    const actorRuns = runsByActor.get(actorId) ?? [];
+    const actorRuns = runsByActor.get(canonicalActorKey(actorId)) ?? [];
     actorRuns.push(run);
-    runsByActor.set(actorId, actorRuns);
+    runsByActor.set(canonicalActorKey(actorId), actorRuns);
   }
   // Score and Points use the public ledger. Monetary previews must use the
   // same weights as the proposal, including payment-only reviewers at score 0.
@@ -560,7 +566,7 @@ export function createProjectView(
         )
       : null;
   for (const leader of paymentView?.leaders ?? [])
-    actors.set(leader.actor.id, leader.actor);
+    actors.set(canonicalActorKey(leader.actor.id), leader.actor);
   // The same debits as the snapshot, limited to this project and cycle.
   const deductions = penaltyDeductions(
     ledger,
@@ -574,14 +580,14 @@ export function createProjectView(
   ).byActor;
 
   const leaders = [...actors.values()].map<ProjectContributor>((actor) => {
-    const events = eventsByActor.get(actor.id) ?? [];
-    const actorRuns = runsByActor.get(actor.id) ?? [];
+    const events = eventsByActor.get(canonicalActorKey(actor.id)) ?? [];
+    const actorRuns = runsByActor.get(canonicalActorKey(actor.id)) ?? [];
     const usage = usageForActor(actor.id, events, actorRuns);
     const earnedThirds = events.reduce(
       (total, event) => total + eventThirds(event),
       0,
     );
-    const penaltyThirds = deductions.get(actor.id) ?? 0;
+    const penaltyThirds = deductions.get(canonicalActorKey(actor.id)) ?? 0;
     const rawThirds = earnedThirds - penaltyThirds;
     // The automatic monthly policy starts in November. Preserve archived
     // calculations; unpaid historical corrections require their own reviewed
@@ -660,7 +666,7 @@ export function createProjectView(
     .map((opportunity) => {
       const usage = capUsageForEvents(
         cycleId,
-        eventsByActor.get(opportunity.actor.id) ?? [],
+        eventsByActor.get(canonicalActorKey(opportunity.actor.id)) ?? [],
       );
       const potentialPoints = opportunityPointsWithinCap(opportunity, usage);
       if (potentialPoints === null) {
@@ -681,12 +687,13 @@ export function createProjectView(
   if (paymentView) {
     const weights = new Map(
       paymentView.leaders.map((leader) => [
-        leader.actor.id,
+        canonicalActorKey(leader.actor.id),
         leader.adjustedWeight,
       ]),
     );
     for (const leader of leaders)
-      leader.adjustedWeight = weights.get(leader.actor.id) ?? 0;
+      leader.adjustedWeight =
+        weights.get(canonicalActorKey(leader.actor.id)) ?? 0;
   }
   let reward: ProjectRewardProjection;
   if (project.reward.kind === "monthly-pool") {

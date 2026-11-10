@@ -1,4 +1,4 @@
-import { compareActors } from "./github-actor";
+import { canonicalActorKey, compareActors } from "./github-actor";
 import type { ActorRef } from "./leaderboard-types";
 /**
  * Builds the cumulative cross-project leaderboard from accepted score events
@@ -111,7 +111,10 @@ export function createGlobalLeaders(
   cycleIndex: CycleIndex,
 ): GlobalLeader[] {
   const currentActors = new Map(
-    snapshot.leaders.map((leader) => [leader.actor.id, leader.actor]),
+    snapshot.leaders.map((leader) => [
+      canonicalActorKey(leader.actor.id),
+      leader.actor,
+    ]),
   );
   type Row = {
     kind: "cycle" | "event" | "deduction" | "view";
@@ -129,10 +132,11 @@ export function createGlobalLeaders(
   let projectCount = 0,
     cycleCount = 0;
   const actorIndex = (id: string) => {
-    const found = actors.get(id);
+    const key = canonicalActorKey(id);
+    const found = actors.get(key);
     if (found !== undefined) return found;
     const next = actors.size;
-    actors.set(id, next);
+    actors.set(key, next);
     return next;
   };
   const membership = (
@@ -171,7 +175,7 @@ export function createGlobalLeaders(
     const key = cycleKey(cycle.projectId, cycle.cycleId);
     for (const contributor of cycle.contributors) {
       const actor =
-        currentActors.get(contributor.actor.id) ??
+        currentActors.get(canonicalActorKey(contributor.actor.id)) ??
         actorFromCycle(contributor.actor);
       const score = contributor.scoreThirds ?? contributor.score * 3;
       const paid = BigInt(contributor.paidMinor);

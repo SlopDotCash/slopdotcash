@@ -7,7 +7,7 @@ import {
   externalSourceId,
   externalWorkKey,
 } from "./external-sources";
-import { githubUserIdFromNodeId } from "./github-actor";
+import { canonicalActorKey, githubUserIdFromNodeId } from "./github-actor";
 import { githubWorkKey } from "./github-work";
 import type {
   AttributionAssessment,
@@ -226,7 +226,9 @@ function exactEvidenceBonusRun(
   return (
     attributions.find(
       (attribution) =>
-        attribution.actor?.id === event.actor.id &&
+        attribution.actor?.id !== undefined &&
+        canonicalActorKey(attribution.actor.id) ===
+          canonicalActorKey(event.actor.id) &&
         (attribution.artifactId === event.source.id ||
           attribution.sourceId === event.source.id) &&
         attribution.run !== null,
@@ -1606,7 +1608,7 @@ function actorEntry(
   entries: Map<string, MutableLeaderboardEntry>,
   actor: GitHubActor,
 ): MutableLeaderboardEntry {
-  const key = actor.id;
+  const key = canonicalActorKey(actor.id);
   const current = entries.get(key);
   if (current) {
     return current;
@@ -1718,7 +1720,10 @@ function participationBannedAt(
   actorId: string,
   occurredAt: string,
 ): boolean {
-  const bannedAt = participationBans.get(actorId);
+  // Bans are keyed by canonicalActorKey (loadParticipationBans stores them
+  // that way); the lookup canonicalizes too, so a ban follows the person
+  // across node-ID spellings.
+  const bannedAt = participationBans.get(canonicalActorKey(actorId));
   return (
     bannedAt !== undefined && parseIsoTime(occurredAt) >= parseIsoTime(bannedAt)
   );
@@ -2235,7 +2240,8 @@ function pullRequestClaim(
     (actor) =>
       !isBotActor(actor) &&
       (!pullRequest.author ||
-        (actor.id !== pullRequest.author.id &&
+        (canonicalActorKey(actor.id) !==
+          canonicalActorKey(pullRequest.author.id) &&
           actor.login.toLowerCase() !==
             pullRequest.author.login.toLowerCase())),
   );
@@ -3396,11 +3402,12 @@ function createSnapshotWithReviewCutoff(
       pullRequest.author && !isBotActor(pullRequest.author)
         ? pullRequest.author
         : null;
+    const authorKey = author === null ? null : canonicalActorKey(author.id);
     // Score v1 history credits the pull-request author only.
     let actors = mergeCreditActorsOf(pullRequest);
     creditActorIds.set(
       pullRequest.id,
-      new Set(actors.map((actor) => actor.id)),
+      new Set(actors.map((actor) => canonicalActorKey(actor.id))),
     );
     // A joint member is scored by its unit, never by a superseded per-PR record.
     const joint = valuePolicyApplies
@@ -3443,18 +3450,24 @@ function createSnapshotWithReviewCutoff(
       actors = ids
         .map((id) => {
           const actor =
-            actors.find((candidate) => candidate.id === id) ??
-            input.valueActors?.get(id);
-          if (!actor || actor.id !== id || isBotActor(actor))
+            actors.find(
+              (candidate) =>
+                canonicalActorKey(candidate.id) === canonicalActorKey(id),
+            ) ?? input.valueActors?.get(id);
+          if (
+            !actor ||
+            canonicalActorKey(actor.id) !== canonicalActorKey(id) ||
+            isBotActor(actor)
+          )
             throw new Error(
               "Value implementation actor lacks a verified GitHub identity",
             );
           return actor;
         })
         .sort((left, right) =>
-          left.id === author?.id
+          authorKey !== null && canonicalActorKey(left.id) === authorKey
             ? -1
-            : right.id === author?.id
+            : authorKey !== null && canonicalActorKey(right.id) === authorKey
               ? 1
               : compareCodeUnits(left.id, right.id),
         );
@@ -3471,6 +3484,14 @@ function createSnapshotWithReviewCutoff(
           "Overlapping accepted commits require joint value assessment",
         );
     }
+    // One person under both node spellings is one credit actor: dedup by
+    // canonical key before shares are split, or the same person takes two
+    // shares of one accepted outcome.
+    actors = [
+      ...new Map(
+        actors.map((actor) => [canonicalActorKey(actor.id), actor]),
+      ).values(),
+    ];
     if (actors.length === 0) continue;
     const totalThirds =
       ratification?.record.scoreThirds ??
@@ -3503,7 +3524,9 @@ function createSnapshotWithReviewCutoff(
     const contributionRun = input.verifyRunReceipt
       ? contributionAssessment.declarations.find(
           (declaration) =>
-            declaration.actor?.id === author?.id &&
+            declaration.actor?.id !== undefined &&
+            authorKey !== null &&
+            canonicalActorKey(declaration.actor.id) === authorKey &&
             declaration.artifactId === pullRequest.id,
         )?.run
       : null;
@@ -3515,7 +3538,8 @@ function createSnapshotWithReviewCutoff(
           ? "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
           : `Accepted outcome has provisional ${totalThirds === 3 ? "small" : "micro"} credit pending immutable maintainer ratification.`;
     for (const [index, actor] of actors.entries()) {
-      const isAuthor = actor.id === author?.id;
+      const isAuthor =
+        authorKey !== null && canonicalActorKey(actor.id) === authorKey;
       const scoreThirds = shares[index] as number;
       if (ratification && scoreThirds === 0) continue;
       const contributionBonus =
@@ -3678,21 +3702,32 @@ function createSnapshotWithReviewCutoff(
         .filter((source) => source !== undefined)
         .sort((a, b) => compareCodeUnits(a.pull.node_id, b.pull.node_id))[0];
       const primaryAuthorId = (retainedOriginal ?? first).pull.user.node_id;
+      const primaryAuthorKey = canonicalActorKey(primaryAuthorId);
+      // One person under both node spellings is one implementation actor:
+      // dedup the claimed IDs by canonical key before shares are split.
       const actors = [
-        ...new Set(scoped.flatMap((claim) => claim.implementationActorNodeIds)),
+        ...new Map(
+          scoped
+            .flatMap((claim) => claim.implementationActorNodeIds)
+            .map((id) => [canonicalActorKey(id), id] as const),
+        ).values(),
       ]
         .map((id) => {
           const actor = input.valueActors?.get(id);
-          if (!actor || actor.id !== id || isBotActor(actor))
+          if (
+            !actor ||
+            canonicalActorKey(actor.id) !== canonicalActorKey(id) ||
+            isBotActor(actor)
+          )
             throw new Error(
               "Joint implementation actor lacks a verified GitHub identity",
             );
           return actor;
         })
         .sort((a, b) =>
-          a.id === primaryAuthorId
+          canonicalActorKey(a.id) === primaryAuthorKey
             ? -1
-            : b.id === primaryAuthorId
+            : canonicalActorKey(b.id) === primaryAuthorKey
               ? 1
               : compareCodeUnits(a.id, b.id),
         );
@@ -3841,7 +3876,9 @@ function createSnapshotWithReviewCutoff(
         (source !== undefined &&
           (source.kind !== event.source.kind ||
             source.url !== event.source.url ||
-            source.author?.id !== event.actor.id ||
+            source.author?.id === undefined ||
+            canonicalActorKey(source.author.id) !==
+              canonicalActorKey(event.actor.id) ||
             parseIsoTime(source.createdAt) !== occurredAt)) ||
         (source === undefined &&
           evaluatedArtifactKeys.has(
@@ -3854,7 +3891,7 @@ function createSnapshotWithReviewCutoff(
       }
     }
     if (event.source.kind === "review") {
-      const reservationKey = `${event.repository}\0${event.source.number}\0${event.actor.id}`;
+      const reservationKey = `${event.repository}\0${event.source.number}\0${canonicalActorKey(event.actor.id)}`;
       if (evaluatedReviewReservations.has(reservationKey)) {
         throw new TypeError(
           `Evaluated contribution ${event.id} duplicates a reviewer/pull-request award`,
@@ -3888,9 +3925,11 @@ function createSnapshotWithReviewCutoff(
     for (; mergeCreditsIndexed < ledger.length; mergeCreditsIndexed++) {
       const event = ledger[mergeCreditsIndexed] as ScoreEvent;
       if (event.category === "merged-pull-request")
-        mergeCredits.add(`${event.source.id}\0${event.actor.id}`);
+        mergeCredits.add(
+          `${event.source.id}\0${canonicalActorKey(event.actor.id)}`,
+        );
     }
-    return mergeCredits.has(`${pullRequestId}\0${actorId}`);
+    return mergeCredits.has(`${pullRequestId}\0${canonicalActorKey(actorId)}`);
   };
   // Returns the review's assessed value when it qualifies for review credit.
   // Integrity failures throw; unassessed or zero-valued reviews earn nothing.
@@ -4052,7 +4091,7 @@ function createSnapshotWithReviewCutoff(
     if (!valuePolicy) return [];
     const eligible: ValueReviewCandidate[] = [];
     for (const candidate of candidates) {
-      if (awardedReviewers.has(candidate.actor.id))
+      if (awardedReviewers.has(canonicalActorKey(candidate.actor.id)))
         excludeReview(
           pullRequest,
           candidate.review,
@@ -4160,7 +4199,7 @@ function createSnapshotWithReviewCutoff(
     }
     return allocation.credited
       .filter((credited) => credited.shareThirds > 0)
-      .map((credited) => credited.actor.id);
+      .map((credited) => canonicalActorKey(credited.actor.id));
   };
 
   for (const pullRequest of mergedPullRequests) {
@@ -4283,10 +4322,11 @@ function createSnapshotWithReviewCutoff(
     // self-review on every review path, not only for its author.
     const isCreditActor = (actorId: string | undefined): boolean =>
       actorId !== undefined &&
-      (creditActorIds.get(pullRequest.id)?.has(actorId) ?? false);
+      (creditActorIds.get(pullRequest.id)?.has(canonicalActorKey(actorId)) ??
+        false);
     const hasEvaluatedReviewReservation = (actorId: string): boolean =>
       evaluatedReviewReservations.has(
-        `${repositoryId}\0${pullRequest.number}\0${actorId}`,
+        `${repositoryId}\0${pullRequest.number}\0${canonicalActorKey(actorId)}`,
       );
     for (const source of sources) {
       let rawReview: unknown | null;
@@ -4357,7 +4397,7 @@ function createSnapshotWithReviewCutoff(
           reason: `Automated ${record.reviewLoad} review${receipt.traceUpload ? " with finalized private trace" : " without private trace"}; maintainer scoring remains authoritative.`,
         })
       ) {
-        awardedReviewers.add(source.author.id);
+        awardedReviewers.add(canonicalActorKey(source.author.id));
         recordScoredSources([source]);
       }
     }
@@ -4413,7 +4453,7 @@ function createSnapshotWithReviewCutoff(
         },
       );
       if (scored) {
-        awardedReviewers.add(review.author.id);
+        awardedReviewers.add(canonicalActorKey(review.author.id));
         if (reviewSource) {
           recordScoredSources([reviewSource]);
         }
@@ -4431,7 +4471,7 @@ function createSnapshotWithReviewCutoff(
       const reservedEvaluatedReview =
         reviewerId !== undefined &&
         evaluatedReviewReservations.has(
-          `${repositoryId}\0${pullRequest.number}\0${reviewerId}`,
+          `${repositoryId}\0${pullRequest.number}\0${canonicalActorKey(reviewerId)}`,
         );
       // A reserved or earlier-policy review takes no pool share. Its unit
       // still contributes to the pull request's assessed size.
@@ -4552,7 +4592,9 @@ function createSnapshotWithReviewCutoff(
       const history: NonNullable<ScoreEvent["reviewHistory"]> = [];
       for (const review of orderedReviews.slice(firstIndex)) {
         if (
-          review.author?.id !== event.actor.id ||
+          review.author?.id === undefined ||
+          canonicalActorKey(review.author.id) !==
+            canonicalActorKey(event.actor.id) ||
           !review.commitId ||
           !review.submittedAt ||
           participationBannedAt(
@@ -4931,7 +4973,7 @@ function createSnapshotWithReviewCutoff(
     penaltyProjectOf,
   ).byActor;
   for (const entry of entries.values())
-    entry.scoreThirds -= deductions.get(entry.actor.id) ?? 0;
+    entry.scoreThirds -= deductions.get(canonicalActorKey(entry.actor.id)) ?? 0;
   const leaders = [...entries.values()]
     .filter(
       (entry) =>
@@ -4943,8 +4985,8 @@ function createSnapshotWithReviewCutoff(
       actor: entry.actor,
       score: Math.floor(entry.scoreThirds / 3),
       scoreThirds: entry.scoreThirds,
-      ...(deductions.has(entry.actor.id)
-        ? { penaltyThirds: deductions.get(entry.actor.id) }
+      ...(deductions.has(canonicalActorKey(entry.actor.id))
+        ? { penaltyThirds: deductions.get(canonicalActorKey(entry.actor.id)) }
         : {}),
       points: {
         mergedPullRequests: entry.pointThirds.mergedPullRequests / 3,
@@ -5304,10 +5346,15 @@ function assertNullableActor(
 }
 
 function assertActorCoherence(actors: GitHubActor[]): void {
+  // Coherence is per person, not per node-ID spelling: the two spellings of
+  // one user share a canonical key, so they must not trip the
+  // one-login-one-ID check. Two different numeric IDs under one login still
+  // throw, as do conflicting identity fields under one key.
   const byId = new Map<string, GitHubActor>();
   const idByLogin = new Map<string, string>();
   for (const actor of actors) {
-    const previous = byId.get(actor.id);
+    const actorKey = canonicalActorKey(actor.id);
+    const previous = byId.get(actorKey);
     if (
       previous &&
       (previous.login !== actor.login ||
@@ -5321,11 +5368,11 @@ function assertActorCoherence(actors: GitHubActor[]): void {
     }
     const loginKey = actor.login.toLowerCase();
     const previousId = idByLogin.get(loginKey);
-    if (previousId && previousId !== actor.id) {
+    if (previousId && previousId !== actorKey) {
       throw new Error(`GitHub login ${actor.login} maps to multiple actor IDs`);
     }
-    byId.set(actor.id, actor);
-    idByLogin.set(loginKey, actor.id);
+    byId.set(actorKey, actor);
+    idByLogin.set(loginKey, actorKey);
   }
 }
 
@@ -6637,7 +6684,11 @@ function replayRetainedReviewAttribution(
   if (candidate.format !== "machine-marker") {
     return reject("not-machine-marker");
   }
-  if (candidate.actor?.id !== event.actor.id) return reject("actor-mismatch");
+  if (
+    candidate.actor?.id === undefined ||
+    canonicalActorKey(candidate.actor.id) !== canonicalActorKey(event.actor.id)
+  )
+    return reject("actor-mismatch");
   if (candidate.sourceId !== event.source.id) return reject("source-mismatch");
   if (candidate.sourceUrl !== event.source.url) {
     return reject("source-url-mismatch");
@@ -6966,7 +7017,7 @@ export function assertLeaderboardSnapshot(
       event.category === "evaluated-contribution" &&
       event.source.kind === "review"
     ) {
-      const semanticKey = `${event.repository}\0${event.source.number}\0${event.actor.id}`;
+      const semanticKey = `${event.repository}\0${event.source.number}\0${canonicalActorKey(event.actor.id)}`;
       if (evaluatedReviewSemanticKeys.has(semanticKey)) {
         throw new Error(
           "snapshot.ledger repeats evaluated reviewer/pull-request credit",
@@ -6980,9 +7031,9 @@ export function assertLeaderboardSnapshot(
       const workKey = githubWorkKey(event.repository, event.source);
       if (workKey !== null) nonEvaluatedGitHubWork.add(workKey);
     }
-    const events = eventsByActor.get(event.actor.id) ?? [];
+    const events = eventsByActor.get(canonicalActorKey(event.actor.id)) ?? [];
     events.push(event);
-    eventsByActor.set(event.actor.id, events);
+    eventsByActor.set(canonicalActorKey(event.actor.id), events);
   }
   const mergedEventsByProjectMonth = new Map<string, ScoreEvent[]>();
   const projectCapUsage = new Map<
@@ -7001,7 +7052,7 @@ export function assertLeaderboardSnapshot(
     if (!repository) {
       throw new Error(`snapshot.ledger event ${event.id} has no project`);
     }
-    const capKey = `${event.actor.id}\0${repository.projectId}\0${event.occurredAt.slice(0, 7)}`;
+    const capKey = `${canonicalActorKey(event.actor.id)}\0${repository.projectId}\0${event.occurredAt.slice(0, 7)}`;
     const usage = projectCapUsage.get(capKey) ?? {
       evidencePoints: 0,
       evaluatedContributions: 0,
@@ -7013,7 +7064,7 @@ export function assertLeaderboardSnapshot(
     if (
       event.category === "substantive-review" &&
       evaluatedReviewSemanticKeys.has(
-        `${event.repository}\0${event.source.number}\0${event.actor.id}`,
+        `${event.repository}\0${event.source.number}\0${canonicalActorKey(event.actor.id)}`,
       )
     ) {
       throw new Error(
@@ -7111,17 +7162,17 @@ export function assertLeaderboardSnapshot(
     penaltyProjectOf,
   ).byActor;
   const leaderByActorId = new Map(
-    validatedLeaders.map((entry) => [entry.actor.id, entry]),
+    validatedLeaders.map((entry) => [canonicalActorKey(entry.actor.id), entry]),
   );
   for (const event of validatedLedger) {
-    if (!leaderByActorId.has(event.actor.id)) {
+    if (!leaderByActorId.has(canonicalActorKey(event.actor.id))) {
       throw new Error(
         `snapshot.ledger event ${event.id} has no corresponding leader`,
       );
     }
   }
   for (const leader of validatedLeaders) {
-    const events = eventsByActor.get(leader.actor.id) ?? [];
+    const events = eventsByActor.get(canonicalActorKey(leader.actor.id)) ?? [];
     const pointThirds = {
       mergedPullRequests: 0,
       resolvedIssues: 0,
@@ -7160,7 +7211,8 @@ export function assertLeaderboardSnapshot(
         outcomes.evaluatedContributions += 1;
       }
     }
-    const appliedPenaltyThirds = penaltyThirds.get(leader.actor.id) ?? 0;
+    const appliedPenaltyThirds =
+      penaltyThirds.get(canonicalActorKey(leader.actor.id)) ?? 0;
     const ledgerThirds =
       events.reduce(
         (total, event) => total + (event.scoreThirds ?? event.points * 3),
@@ -7239,7 +7291,7 @@ export function assertLeaderboardSnapshot(
   for (const event of validatedLedger) {
     if (event.source.kind === "pull-request") {
       causalAttributionKeys.add(
-        `${event.actor.id}\0artifact\0${event.source.id}`,
+        `${canonicalActorKey(event.actor.id)}\0artifact\0${event.source.id}`,
       );
     }
     if (
@@ -7247,7 +7299,7 @@ export function assertLeaderboardSnapshot(
       (event.source.kind === "review" || event.source.kind === "comment")
     ) {
       causalAttributionKeys.add(
-        `${event.actor.id}\0source\0${event.source.id}`,
+        `${canonicalActorKey(event.actor.id)}\0source\0${event.source.id}`,
       );
     }
     if (
@@ -7255,7 +7307,7 @@ export function assertLeaderboardSnapshot(
       (event.source.kind === "comment" || event.source.kind === "review")
     ) {
       causalAttributionKeys.add(
-        `${event.actor.id}\0source\0${event.source.id}`,
+        `${canonicalActorKey(event.actor.id)}\0source\0${event.source.id}`,
       );
     }
     if (event.category === "resolved-issue") {
@@ -7263,7 +7315,7 @@ export function assertLeaderboardSnapshot(
       const separatorIndex = event.id.lastIndexOf(separator);
       if (separatorIndex >= 0) {
         resolvedArtifactsByActor.add(
-          `${event.actor.id}\0${event.id.slice(separatorIndex + separator.length)}`,
+          `${canonicalActorKey(event.actor.id)}\0${event.id.slice(separatorIndex + separator.length)}`,
         );
       }
     }
@@ -7275,15 +7327,17 @@ export function assertLeaderboardSnapshot(
       );
     }
     const actorId = attribution.actor?.id;
+    const actorKey =
+      actorId === undefined ? undefined : canonicalActorKey(actorId);
     const hasCausalLedgerEvent =
-      actorId !== undefined &&
+      actorKey !== undefined &&
       (causalAttributionKeys.has(
-        `${actorId}\0artifact\0${attribution.artifactId}`,
+        `${actorKey}\0artifact\0${attribution.artifactId}`,
       ) ||
         causalAttributionKeys.has(
-          `${actorId}\0source\0${attribution.sourceId}`,
+          `${actorKey}\0source\0${attribution.sourceId}`,
         ) ||
-        resolvedArtifactsByActor.has(`${actorId}\0${attribution.artifactId}`));
+        resolvedArtifactsByActor.has(`${actorKey}\0${attribution.artifactId}`));
     if (!hasCausalLedgerEvent) {
       throw new Error(
         `snapshot attribution ${attribution.id} is not causally linked to a public ledger event by the same actor`,
@@ -7316,13 +7370,17 @@ export function assertLeaderboardSnapshot(
     if (!attribution.actor) continue;
     if (isUnavailableModelIdentifier(attribution.model)) continue;
     const identifiers =
-      reportedModelsByActor.get(attribution.actor.id) ?? new Set<string>();
+      reportedModelsByActor.get(canonicalActorKey(attribution.actor.id)) ??
+      new Set<string>();
     identifiers.add(attribution.identifier);
-    reportedModelsByActor.set(attribution.actor.id, identifiers);
+    reportedModelsByActor.set(
+      canonicalActorKey(attribution.actor.id),
+      identifiers,
+    );
   }
   for (const leader of validatedLeaders) {
     const reportedModels = uniqueSorted(
-      reportedModelsByActor.get(leader.actor.id) ?? [],
+      reportedModelsByActor.get(canonicalActorKey(leader.actor.id)) ?? [],
     );
     if (
       reportedModels.length !== leader.reportedModels.length ||

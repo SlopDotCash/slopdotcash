@@ -1,4 +1,5 @@
 import { type DeploymentTier, deploymentOrigins } from "../src/lib/deployment";
+import { canonicalActorKey } from "../src/lib/github-actor";
 import { canonicalActorAvatarUrl } from "../src/lib/leaderboard";
 /** Read only: no model calls, score publication or payment authority. */
 import type {
@@ -792,7 +793,12 @@ export async function loadParticipationBans(
       typeof account.node_id !== "string"
     )
       throw new Error("GitHub returned a different account for a ban");
-    bans.set(account.node_id, new Date(ban.bannedAt).toISOString());
+    // Key by canonicalActorKey: participationBannedAt looks the person up
+    // the same way, so the ban follows them across node-ID spellings.
+    bans.set(
+      canonicalActorKey(account.node_id),
+      new Date(ban.bannedAt).toISOString(),
+    );
   }
   return bans;
 }

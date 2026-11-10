@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { handlePointsApi } from "../backend/points/handler";
 import { sha256Hex } from "../src/lib/async-sha256.mjs";
+import { canonicalActorKey } from "../src/lib/github-actor";
 import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
 import type { PublishedPenalty } from "../src/lib/leaderboard-types";
 import {
@@ -146,7 +147,11 @@ test("safe penalties in three project scopes refuse an inexact actor total", () 
   const projectOf = (repository: string) => repository;
   for (const [index, event] of events.entries()) {
     const result = penaltyDeductions([event], [penalties[index]], projectOf);
-    expect(result.byActor.get(PENALIZED_AUTHOR.id)).toBe(maximum);
+    // byActor is keyed by canonicalActorKey (the person), not the raw node
+    // spelling the penalty was recorded under.
+    expect(result.byActor.get(canonicalActorKey(PENALIZED_AUTHOR.id))).toBe(
+      maximum,
+    );
     expect(result.byPenalty.get(penalties[index].id)).toBe(maximum);
   }
   // Every scope is exact by itself. The public actor total must not round

@@ -2,7 +2,7 @@
 
 import { deriveAllocationFundingBasis } from "./allocation-funding";
 import type { CycleWalletProof } from "./cycle-index";
-import { compareActors } from "./github-actor";
+import { canonicalActorKey, compareActors } from "./github-actor";
 import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
 import {
@@ -112,7 +112,8 @@ function wallet(value: unknown, actor: ActorRef): void {
     text(v.sourceClaimId, /^[A-Za-z0-9_-]{1,128}$/u);
     text(v.sourceRecordSha256, hash);
     if (
-      v.sourceActorId !== actor.id ||
+      typeof v.sourceActorId !== "string" ||
+      canonicalActorKey(v.sourceActorId) !== canonicalActorKey(actor.id) ||
       v.sourceUrl !==
         `https://api.slop.cash/api/v1/wallet-claims/${v.sourceClaimId}`
     )
@@ -128,7 +129,8 @@ function wallet(value: unknown, actor: ActorRef): void {
     date(v.sourceUpdatedAt);
     if (
       !v.sourceIssueNumber ||
-      v.sourceActorId !== actor.id ||
+      typeof v.sourceActorId !== "string" ||
+      canonicalActorKey(v.sourceActorId) !== canonicalActorKey(actor.id) ||
       v.sourceUrl !==
         `https://github.com/${WALLET_CLAIM_REPOSITORY}/issues/${v.sourceIssueNumber}`
     )

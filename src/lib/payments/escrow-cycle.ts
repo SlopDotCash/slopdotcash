@@ -2,7 +2,7 @@ import {
   ESCROW_PAYOUT_FEE_BASIS_POINTS,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
-import { githubUserIdFromNodeId } from "../github-actor";
+import { canonicalActorKey, githubUserIdFromNodeId } from "../github-actor";
 import { assertLeaderboardSnapshot } from "../leaderboard";
 import { assertProjectDefinition } from "../project-schema.mjs";
 import {
@@ -94,7 +94,8 @@ export function buildEscrowCycle(
       view.ledger.filter((event) =>
         view.leaders.some(
           (leader) =>
-            leader.actor.id === event.actor.id &&
+            canonicalActorKey(leader.actor.id) ===
+              canonicalActorKey(event.actor.id) &&
             leader.payoutExclusion === null,
         ),
       ),
@@ -135,7 +136,10 @@ export function buildEscrowCycle(
     throw new Error("Actor identity coverage differs from proposal");
   const combined = combineAwards(
     view.leaders.map((leader) => allocations.get(leader.actor.id) ?? 0n),
-    view.leaders.map((leader) => reviewAllocations.get(leader.actor.id) ?? 0n),
+    view.leaders.map(
+      (leader) =>
+        reviewAllocations.get(canonicalActorKey(leader.actor.id)) ?? 0n,
+    ),
     cap,
     reviewCap,
   );

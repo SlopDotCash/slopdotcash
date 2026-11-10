@@ -13,6 +13,7 @@ import {
   LAST_LEGACY_CAP_CYCLE,
 } from "./allocation-funding";
 import { fundingAssetForNetwork } from "./funding-address.mjs";
+import { canonicalActorKey } from "./github-actor";
 import type { LeaderboardSnapshot } from "./leaderboard";
 import {
   createPaymentProjectView,
@@ -144,10 +145,8 @@ export function additiveReviewBudgetWeights(
   const weights = new Map<string, number>();
   for (const event of events) {
     if (event.category !== "substantive-review") continue;
-    weights.set(
-      event.actor.id,
-      (weights.get(event.actor.id) ?? 0) + eventThirds(event),
-    );
+    const actorKey = canonicalActorKey(event.actor.id);
+    weights.set(actorKey, (weights.get(actorKey) ?? 0) + eventThirds(event));
   }
   return [...weights].map(([actorId, scoreThirds]) => ({
     actorId,
@@ -314,11 +313,12 @@ export function createRewardCycleProposal(
   const excluded = new Set(
     view.leaders
       .filter((leader) => leader.payoutExclusion !== null)
-      .map((leader) => leader.actor.id),
+      .map((leader) => canonicalActorKey(leader.actor.id)),
   );
   const reviewEvents = view.ledger.filter(
     (event) =>
-      event.category === "substantive-review" && !excluded.has(event.actor.id),
+      event.category === "substantive-review" &&
+      !excluded.has(canonicalActorKey(event.actor.id)),
   );
   const reviewAllocations = allocateReviewBudgetMinor(
     reviewBudgetTotal,
@@ -368,7 +368,8 @@ export function createRewardCycleProposal(
         const sharedPoolMinor =
           BigInt(input.priorAccruedMinor?.get(leader.actor.id) ?? "0") +
           BigInt(requiredProjection(leader.projectedMinor, "amount"));
-        const reviewMinor = reviewAllocations.get(leader.actor.id) ?? 0n;
+        const reviewMinor =
+          reviewAllocations.get(canonicalActorKey(leader.actor.id)) ?? 0n;
         const accruedMinor = (sharedPoolMinor + reviewMinor).toString();
         return {
           intentId: `pay_${intentComponent(input.projectId)}_${cycleComponent}_${String(index + 1).padStart(4, "0")}_${intentComponent(leader.actor.id)}`,
@@ -378,7 +379,8 @@ export function createRewardCycleProposal(
           accruedMinor,
           approvedMinor: "0",
           state:
-            excluded.has(leader.actor.id) && BigInt(accruedMinor) === 0n
+            excluded.has(canonicalActorKey(leader.actor.id)) &&
+            BigInt(accruedMinor) === 0n
               ? "excluded"
               : wallet
                 ? BigInt(accruedMinor) < BigInt(MINIMUM_TRANSFER_MINOR)
@@ -408,7 +410,11 @@ export function createRewardCycleProposal(
                     suggestedMinor: reviewMinor.toString(),
                     approvedMinor: "0",
                     evidenceEventIds: reviewEvents
-                      .filter((event) => event.actor.id === leader.actor.id)
+                      .filter(
+                        (event) =>
+                          canonicalActorKey(event.actor.id) ===
+                          canonicalActorKey(leader.actor.id),
+                      )
                       .map((event) => event.id),
                   },
                 },

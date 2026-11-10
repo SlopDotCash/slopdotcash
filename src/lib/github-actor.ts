@@ -8,6 +8,19 @@ import { githubUserIdFromPack } from "./verified-ids.ts";
  * deleted accounts, so no GitHub request is needed to join records by actor.
  */
 export function githubUserIdFromNodeId(nodeId: string): string | null {
+  const cached = decodedNodeIds.get(nodeId);
+  if (cached !== undefined) return cached;
+  const decoded = decodeGithubUserIdFromNodeId(nodeId);
+  decodedNodeIds.set(nodeId, decoded);
+  return decoded;
+}
+
+// Memoized: snapshot builds decode the same few actor IDs thousands of
+// times (every ledger event, deduction, and validator lookup). The decode
+// is pure, so caching by input string keeps the result identical.
+const decodedNodeIds = new Map<string, string | null>();
+
+function decodeGithubUserIdFromNodeId(nodeId: string): string | null {
   let bytes: Uint8Array;
   const current = nodeId.startsWith("U_");
   const text = current ? nodeId.slice(2) : nodeId;
@@ -49,6 +62,19 @@ export function githubUserIdFromNodeId(nodeId: string): string | null {
   // GitHub never emits, so it must not name the actor.
   const id = githubUserIdFromPack([...bytes]);
   return id > 0n ? id.toString() : null;
+}
+
+/**
+ * The grouping key for one GitHub person: the numeric user ID when the node
+ * ID decodes, else the raw ID. GitHub emits two spellings for the same user
+ * (legacy `MDQ6…` and current `U_…`), so grouping, dedup, and lookup keys
+ * must use this instead of the raw node ID — otherwise one person splits
+ * into two members, two entries, or two buckets. Stored record fields
+ * (`award.actor.id`, `pointKey`, ledger event IDs) keep the raw spelling;
+ * only the keys that group by person are canonicalized.
+ */
+export function canonicalActorKey(nodeId: string): string {
+  return githubUserIdFromNodeId(nodeId) ?? nodeId;
 }
 
 /**

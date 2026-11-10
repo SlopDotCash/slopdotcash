@@ -9,6 +9,7 @@
  * declared on, by the same actor.
  */
 
+import { canonicalActorKey } from "./github-actor";
 import type {
   LeaderboardSnapshot,
   ModelAttribution,
@@ -311,7 +312,10 @@ export function summarizeModelOutcomes(
         ? byArtifact.get(event.source.id)
         : bySource.get(event.source.id)) ?? [];
     const own = candidates.filter(
-      (attribution) => attribution.actor?.id === event.actor.id,
+      (attribution) =>
+        attribution.actor?.id !== undefined &&
+        canonicalActorKey(attribution.actor.id) ===
+          canonicalActorKey(event.actor.id),
     );
     if (own.length === 0) return;
     const keys = [

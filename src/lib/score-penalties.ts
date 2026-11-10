@@ -10,6 +10,8 @@
  * cycles bind their own snapshot bytes, so a later debit never changes an
  * approved, scheduled or paid award.
  */
+
+import { canonicalActorKey } from "./github-actor";
 import type {
   PenaltyHistoryRecord,
   PublishedPenalty,
@@ -77,7 +79,7 @@ export function assertPenaltyHistory(
 }
 
 export interface PenaltyDeductions {
-  /** Applied thirds per actor ID. */
+  /** Applied thirds per actor, keyed by canonicalActorKey. */
   byActor: Map<string, number>;
   /** Applied thirds per penalty ID. */
   byPenalty: Map<string, number>;
@@ -98,7 +100,7 @@ export function penaltyDeductions(
   projectOf: (repository: string) => string,
 ): PenaltyDeductions {
   const key = (actorId: string, repository: string, occurredAt: string) =>
-    `${actorId}\0${projectOf(repository)}\0${occurredAt.slice(0, 7)}`;
+    `${canonicalActorKey(actorId)}\0${projectOf(repository)}\0${occurredAt.slice(0, 7)}`;
   const buckets = new Map<string, number>();
   const bucketIndex = (value: string): number => {
     const existing = buckets.get(value);
@@ -139,10 +141,10 @@ export function penaltyDeductions(
     const applied = Number(exact);
     if (!Number.isSafeInteger(applied))
       throw new Error("Penalty total overflow");
-    if (!actors.has(penalty.actor.id))
-      actors.set(penalty.actor.id, actors.size);
+    const actorKey = canonicalActorKey(penalty.actor.id);
+    if (!actors.has(actorKey)) actors.set(actorKey, actors.size);
     actorCredits.push({
-      bucket: actors.get(penalty.actor.id) as number,
+      bucket: actors.get(actorKey) as number,
       amount: exact,
     });
     byPenalty.set(penalty.id, applied);

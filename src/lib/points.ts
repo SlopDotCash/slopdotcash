@@ -1,6 +1,6 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
 
-import { githubUserIdFromNodeId } from "./github-actor";
+import { canonicalActorKey, githubUserIdFromNodeId } from "./github-actor";
 import type {
   GitHubActor,
   LeaderboardSnapshot,
@@ -621,7 +621,7 @@ export function reconcilePointPenalties(
     }
   }
   const bucket = (award: PointAward) =>
-    `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
+    `${canonicalActorKey(award.actor.id)}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
   const buckets = new Map<string, number>();
   const bucketIndex = (key: string): number => {
     const existing = buckets.get(key);
@@ -1020,9 +1020,10 @@ export function pointMembers(
   const actors = new Map<string, PointRevision>();
   for (const revision of journal.revisions) {
     if (revision.award.category === "slopbot-penalty") continue;
-    const prior = actors.get(revision.award.actor.id);
+    const actorKey = canonicalActorKey(revision.award.actor.id);
+    const prior = actors.get(actorKey);
     if (!prior || revision.recordedAt >= prior.recordedAt)
-      actors.set(revision.award.actor.id, revision);
+      actors.set(actorKey, revision);
   }
   const firstContributionAt = new Map<string, string>();
   const revisions = [...latestPoints(journal).values()];
@@ -1040,9 +1041,10 @@ export function pointMembers(
       (projectId && award.projectId !== projectId)
     )
       continue;
-    const actorAwards = adjustments.get(award.actor.id) ?? [];
+    const actorAwards =
+      adjustments.get(canonicalActorKey(award.actor.id)) ?? [];
     actorAwards.push(award);
-    adjustments.set(award.actor.id, actorAwards);
+    adjustments.set(canonicalActorKey(award.actor.id), actorAwards);
   }
   // The dedup key is the canonical parsed PR identity, not the raw URL:
   // the journal validator accepts URL variants (owner/repo casing, default
@@ -1055,7 +1057,9 @@ export function pointMembers(
       .filter((a) => a.amount > 0 && a.category === "evaluated-contribution")
       .map((a) => {
         const identity = canonicalReviewIdentity(a.sourceUrl);
-        return identity === undefined ? undefined : `${a.actor.id}:${identity}`;
+        return identity === undefined
+          ? undefined
+          : `${canonicalActorKey(a.actor.id)}:${identity}`;
       })
       .filter((key): key is string => key !== undefined),
   );
@@ -1067,19 +1071,19 @@ export function pointMembers(
         : undefined;
     if (
       reviewIdentity !== undefined &&
-      evaluatedReviews.has(`${a.actor.id}:${reviewIdentity}`)
+      evaluatedReviews.has(`${canonicalActorKey(a.actor.id)}:${reviewIdentity}`)
     )
       continue;
     if (!a.amount || (projectId && a.projectId !== projectId)) continue;
     // The first contribution date comes from every counted record, not
     // only the surviving award: one work unit can have records in more than
     // one month, and the dedup below keeps only one of them.
-    const first = firstContributionAt.get(a.actor.id);
+    const first = firstContributionAt.get(canonicalActorKey(a.actor.id));
     if (first === undefined || a.occurredAt < first)
-      firstContributionAt.set(a.actor.id, a.occurredAt);
+      firstContributionAt.set(canonicalActorKey(a.actor.id), a.occurredAt);
     const key = JSON.stringify([
       a.projectId,
-      a.actor.id,
+      canonicalActorKey(a.actor.id),
       a.category,
       valueAwardKeys.has(a.key) ? a.occurredAt.slice(0, 7) : null,
       a.category === "substantive-review" && !a.provisional
@@ -1100,23 +1104,24 @@ export function pointMembers(
   const memberIndexes = new Map<string, number>();
   const earnedAmounts: { bucket: number; amount: bigint }[] = [];
   for (const a of groups.values()) {
-    const m = members.get(a.actor.id) ?? {
+    const actorKey = canonicalActorKey(a.actor.id);
+    const m = members.get(actorKey) ?? {
       actor: a.actor,
       total: 0,
       monthly: 0,
-      firstContributionAt: firstContributionAt.get(a.actor.id) ?? a.occurredAt,
+      firstContributionAt: firstContributionAt.get(actorKey) ?? a.occurredAt,
       projects: 0,
       badges: [],
       awards: [],
     };
-    if (!memberIndexes.has(a.actor.id))
-      memberIndexes.set(a.actor.id, memberIndexes.size);
-    const index = memberIndexes.get(a.actor.id) as number;
+    if (!memberIndexes.has(actorKey))
+      memberIndexes.set(actorKey, memberIndexes.size);
+    const index = memberIndexes.get(actorKey) as number;
     earnedAmounts.push({ bucket: index * 2, amount: BigInt(a.amount) });
     if (a.occurredAt.startsWith(month))
       earnedAmounts.push({ bucket: index * 2 + 1, amount: BigInt(a.amount) });
     m.awards.push(a);
-    members.set(a.actor.id, m);
+    members.set(actorKey, m);
   }
   // Preserve the existing refusal before applying negative adjustments: a
   // later debit does not make an overflowing positive earned total valid.
@@ -1137,9 +1142,9 @@ export function pointMembers(
       (projectId && award.projectId !== projectId)
     )
       continue;
-    const member = members.get(award.actor.id);
+    const member = members.get(canonicalActorKey(award.actor.id));
     if (!member) {
-      members.set(award.actor.id, {
+      members.set(canonicalActorKey(award.actor.id), {
         actor: award.actor,
         total: 0,
         monthly: 0,
@@ -1156,7 +1161,8 @@ export function pointMembers(
     }
   }
   for (const m of members.values()) {
-    const memberAdjustments = adjustments.get(m.actor.id) ?? [];
+    const memberAdjustments =
+      adjustments.get(canonicalActorKey(m.actor.id)) ?? [];
     const signedAmounts = [
       { bucket: 0, amount: BigInt(m.total) },
       { bucket: 1, amount: BigInt(m.monthly) },
@@ -1172,7 +1178,7 @@ export function pointMembers(
     m.monthly = Number(totals[1]);
     if (!Number.isSafeInteger(m.total) || !Number.isSafeInteger(m.monthly))
       throw new Error("Points total overflow");
-    m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
+    m.actor = actors.get(canonicalActorKey(m.actor.id))?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>
         b.occurredAt.localeCompare(a.occurredAt) || a.key.localeCompare(b.key),

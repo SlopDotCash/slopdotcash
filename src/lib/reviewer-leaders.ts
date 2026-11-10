@@ -5,6 +5,7 @@
  * never changes scoring, shares, or payouts.
  */
 
+import { canonicalActorKey } from "./github-actor";
 import {
   assignLeaderboardRanks,
   compareRankedEntries,
@@ -30,7 +31,8 @@ export function selectReviewerLeaders(
   for (const event of ledger) {
     if (event.category !== "substantive-review") continue;
     const thirds = eventThirds(event);
-    const current = byActor.get(event.actor.id) ?? {
+    const actorKey = canonicalActorKey(event.actor.id);
+    const current = byActor.get(actorKey) ?? {
       actor: event.actor,
       reviewThirds: 0,
       reviewEventCount: 0,
@@ -38,7 +40,7 @@ export function selectReviewerLeaders(
     current.actor = event.actor;
     current.reviewThirds += thirds;
     current.reviewEventCount += 1;
-    byActor.set(event.actor.id, current);
+    byActor.set(actorKey, current);
   }
   // LDR-03: equal primary values receive equal ranks, and stable actor-ID
   // ordering only stabilizes display. The review event count is secondary
