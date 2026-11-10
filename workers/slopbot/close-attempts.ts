@@ -145,6 +145,40 @@ export async function rejectClose(
     .run();
 }
 
+/**
+ * Rejects a pending close whose owning review can no longer be alive: its
+ * lease expired, or it already failed. A pending attempt has no expiry of its
+ * own (a request may still complete after its caller dies), so without this
+ * the still-open item throws ReviewBusyError on every later review, the queue
+ * retries 5 times and drops the job to the DLQ, and no scheduled job ever
+ * re-drives it. The caller has just read the item live from GitHub and found
+ * it still open, which proves the close did not land; the live lease is what
+ * protects a close that may still be in flight. If the close lands in the
+ * narrow race after the live read, the item re-enters review as closed and
+ * the close is re-confirmed under a fresh attempt; recordPenalty is
+ * INSERT OR IGNORE keyed by item, so the debit cannot double.
+ */
+export async function recoverStalePendingClose(
+  db: D1TransactionalDatabase,
+  attempt: CloseAttempt,
+): Promise<boolean> {
+  if (attempt.state !== "pending") return false;
+  const owner = await db
+    .prepare(
+      "SELECT status, lease_expires_at FROM slopbot_reviews WHERE review_key = ?",
+    )
+    .bind(attempt.review_key)
+    .first<{ status: string; lease_expires_at: string | null }>();
+  if (owner === null) return false;
+  const leaseDead =
+    owner.status === "failed" ||
+    (owner.lease_expires_at !== null &&
+      Date.parse(owner.lease_expires_at) <= Date.now());
+  if (!leaseDead) return false;
+  await rejectClose(db, attempt.attempt_id);
+  return true;
+}
+
 export async function confirmCloseComment(
   db: D1TransactionalDatabase,
   reviewKey: string,

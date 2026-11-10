@@ -25,6 +25,7 @@ import {
   type CloseRecovery,
   confirmClose,
   confirmCloseComment,
+  recoverStalePendingClose,
   rejectClose,
   reopenBreakerSql,
   reserveClose,
@@ -1160,7 +1161,14 @@ export async function reviewItem(
   const pendingClose = await unfinishedClose(db, issue.node_id);
   if (pendingClose !== null) {
     if (issue.state !== "closed") {
-      if (pendingClose.state === "pending") throw new store.ReviewBusyError(60);
+      // The close never landed (the item was just read live and is still
+      // open), but the attempt stays pending with no expiry of its own. Only
+      // release it once its owning review can no longer be alive; while the
+      // lease is live the close may still be in flight, so keep waiting.
+      if (pendingClose.state === "pending") {
+        if (!(await recoverStalePendingClose(db, pendingClose)))
+          throw new store.ReviewBusyError(60);
+      }
     } else if (
       pendingClose.revision === context.revision &&
       pendingClose.author_id === issue.user.id &&
