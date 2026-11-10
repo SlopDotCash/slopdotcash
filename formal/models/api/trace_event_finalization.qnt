@@ -20,6 +20,16 @@
 // fairness, provider verification or implementation refinement is assumed.
 // The existing workflow covers finalization/ban behavior; it does not execute
 // every event-constraint race or missing-count/readback outcome modeled here.
+// Verification reductions apply to step only; direct actions and scenarios keep
+// exact records. Reviewed reasoning: (1) each branch draws only the choices its
+// action reads. (2) owner "other" and "missing" take the same 404 branch and
+// are only compared with "own", so "missing" represents both. A finalization
+// never reads key or payload, and an event for another owner ends before its
+// key, payload or validity is read, so those use fixed values. (3) stamp is
+// read only by finalizeWrite, so an event request leaves it unset. (4) A done
+// slot is never read by an action and its settled conjuncts are stable (stored
+// event payloads and finalization never revert), so a settled done slot is
+// stored as one representative; an unsettled one keeps the exact record.
 module trace_event_finalization {
   val ids = Set(1, 2)
   val operations = Set("event", "finalize")
@@ -62,13 +72,15 @@ module trace_event_finalization {
       else request.with("phase", if (request.op == "event") "body" else "finalize-clock")
     all { request.phase == "owner", s' = s.with("requests", s.requests.set(id, nextValue)) }
   }
-  action validateEvent(id: int): bool = {
+  // Only finalizeWrite reads stamp, so step (exact = false) leaves it unset here.
+  action validateEventAs(id: int, exact: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "body",
       s' = s.with("requests", s.requests.set(id,
-        if (request.valid) request.with("phase", "event-read").with("stamp", s.now)
+        if (request.valid) request.with("phase", "event-read").with("stamp", if (exact) s.now else -1)
         else ending(request, "400"))) }
   }
+  action validateEvent(id: int): bool = validateEventAs(id, true)
   action readEvent(id: int): bool = {
     val request = s.requests.get(id)
     val existing = s.events.get(request.key)
@@ -128,34 +140,42 @@ module trace_event_finalization {
     all { Set("admission", "owner", "body", "event-read", "event-write", "finalize-clock", "finalize-write", "finalize-read", "conflict-ban").contains(request.phase),
       s' = s.with("requests", s.requests.set(id, ending(request, "error"))) }
   }
-  action respond(id: int, delivered: bool): bool = {
+  // A finished slot is never read again by an action. Each conjunct of
+  // settled is stable once the slot is done: events never leave a stored
+  // payload and finalized never resets. Step (exact = false) therefore keeps
+  // one done representative when settled holds and the exact record otherwise.
+  def settled(request: Request): bool = all {
+    request.committed implies request.owner == "own" and request.valid,
+    request.op == "event" and request.response == "201" implies request.committed,
+    request.returnedPayload != 0 implies request.returnedPayload == s.events.get(request.key),
+    request.op == "finalize" and request.response == "200" implies s.finalized }
+  action respondAs(id: int, delivered: bool, exact: bool): bool = {
     val request = s.requests.get(id)
+    val result = request.with("phase", "done").with("response", if (delivered) request.desired else "lost")
     all { request.phase == "response", s' = s.with("requests", s.requests.set(id,
-      request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
+      if (exact or not(settled(result))) result else idle.with("phase", "done"))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet key = ids.oneOf()
-    nondet payload = ids.oneOf()
-    nondet op = operations.oneOf()
-    nondet owner = owners.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet kind = replyKinds.oneOf()
-    any { attach, tick, setBan(yes), begin(id, op, key, payload, owner, yes), admission(id), readOwner(id),
-      validateEvent(id), readEvent(id), insertEvent(id), captureFinalizeTime(id), finalizeWrite(id),
-      writeReply(id, kind), readFinalized(id, yes), conflictBan(id), readOrWriteFailure(id), respond(id, yes), s' = s }
-  }
+  action respond(id: int, delivered: bool): bool = respondAs(id, delivered, true)
+  // Verification relation; the header states each reduction.
+  action step = any {
+    attach, tick,
+    { nondet yes = Set(false, true).oneOf() setBan(yes) },
+    { nondet id = ids.oneOf() nondet key = ids.oneOf() nondet payload = ids.oneOf()
+      nondet yes = Set(false, true).oneOf() begin(id, "event", key, payload, "own", yes) },
+    { nondet id = ids.oneOf() begin(id, "event", 1, 1, "missing", true) },
+    { nondet id = ids.oneOf() nondet owner = Set("own", "missing").oneOf()
+      nondet yes = Set(false, true).oneOf() begin(id, "finalize", 1, 1, owner, yes) },
+    { nondet id = ids.oneOf() any { admission(id), readOwner(id), validateEventAs(id, false), readEvent(id), insertEvent(id),
+      captureFinalizeTime(id), finalizeWrite(id), conflictBan(id), readOrWriteFailure(id) } },
+    { nondet id = ids.oneOf() nondet kind = replyKinds.oneOf() writeReply(id, kind) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() any { readFinalized(id, yes), respondAs(id, yes, false) } },
+    s' = s }
+
   val invariant = all {
     s.now >= 0, s.now <= 2, eventCount <= 2,
     s.finalized implies s.trace and s.finalizedAt >= 0 and s.finalizedAt <= s.now and eventCount == s.finalizedEvents,
     not(s.finalized) implies s.finalizedAt == -1,
-    ids.forall(id => {
-      val request = s.requests.get(id)
-      all { request.committed implies request.owner == "own" and request.valid,
-        request.op == "event" and request.response == "201" implies request.committed,
-        request.returnedPayload != 0 implies request.returnedPayload == s.events.get(request.key),
-        request.op == "finalize" and request.response == "200" implies s.finalized }
-    }) }
+    ids.forall(id => settled(s.requests.get(id))) }
   action eventReady(id: int, key: int, payload: int): bool = begin(id, "event", key, payload, "own", true)
     .then(admission(id)).then(readOwner(id)).then(validateEvent(id)).then(readEvent(id))
   action eventStored(id: int, key: int, payload: int): bool = eventReady(id, key, payload)

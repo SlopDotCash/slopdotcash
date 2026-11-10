@@ -5,6 +5,17 @@
 // one lookahead. Rank values stand for SQL TEXT order, not elapsed time or all
 // Date.parse-accepted encodings. Row 2 is a moderator-only appeal; row 3 is its owner's
 // Points-dispute receipt; row 5 belongs to actor 2. Page/count are independent.
+// Verification reductions in step only (direct actions and scenarios keep the
+// full behavior): (1) each branch draws only the choices its action reads.
+// (2) step inserts rows of one owner only. Every guard, update and invariant
+// conjunct about a request reads only rows visible to that request's actor, and
+// begin overwrites every per-request output, so each full state projects onto
+// a reduced state that keeps only the current actor's rows and the same
+// counters, moderators and request fields; earlier requests for the other actor
+// can still finish with the same query counts. World-only conjuncts are per row.
+// (3) world mutations stop after the second response settles: no request action
+// is then enabled, and no conjunct couples world and request fields, so later
+// world states only repeat world states already reachable before it began.
 module inbox_queries {
   val rows = Set(1, 2, 3, 4, 5)
   def owner(row: int): int = if (row == 5) 2 else 1
@@ -65,13 +76,17 @@ module inbox_queries {
     s' = s.with("result", "failure").with("countDone", true).with("countQueries", s.countQueries + 1) }
   action finish = all { s.result == "pending", s.pageDone, s.countDone,
     s' = s.with("result", "success") }
-  action step = {
-    nondet row = rows.oneOf()
-    nondet actor = Set(1, 2).oneOf()
-    nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf()
-    any { insert(row), mark(row), resolveReview(row), revoke(actor), begin(actor, cursor), rejectInput,
-      observePage(cursor), observeCount, failPage, failCount, finish, s' = s }
-  }
+  // Each branch draws only the choices its action reads: the same successor
+  // relation as one shared draw, without enumerating unused choices.
+  val finalResponse = s.requests == 2 and s.pageDone and s.countDone and s.result != "pending"
+  action step = any {
+    { nondet row = rows.oneOf() all { not(finalResponse),
+      s.present.forall(other => owner(other) == owner(row)), insert(row) } },
+    { nondet row = rows.oneOf() all { not(finalResponse), any { mark(row), resolveReview(row) } } },
+    { nondet actor = Set(1, 2).oneOf() all { not(finalResponse), revoke(actor) } },
+    { nondet actor = Set(1, 2).oneOf() nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf() begin(actor, cursor) },
+    { nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf() observePage(cursor) },
+    rejectInput, observeCount, failPage, failCount, finish, s' = s }
   val invariant = all {
     s.requests <= 2, s.pageQueries <= s.requests, s.countQueries <= s.requests,
     s.read.subseteq(s.present), s.resolved.subseteq(s.present), s.page.size() <= 2,

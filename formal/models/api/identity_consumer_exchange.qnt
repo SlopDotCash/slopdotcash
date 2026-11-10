@@ -24,6 +24,10 @@
 // bearer verifier, operator-role filtering and later route actions are separate.
 // Existing evidence covers selected Points failures and a synthetic-provider
 // browser workflow; it is not full adapter or trace-exchange conformance.
+// Verification: step draws only the choices each action reads, which keeps the
+// successor relation and the 523,063-state graph unchanged while removing
+// redundant enumerations. Scenario helpers start from initState, a copy of init,
+// because Quint cannot translate one action used as both init and step (QNT409).
 module identity_consumer_exchange {
   val ids = Set(1, 2)
   val callers = Set("points", "trace")
@@ -39,6 +43,8 @@ module identity_consumer_exchange {
     roles: Set(), identityReady: false }
   var s: { configured: bool, audience: str, now: int, spent: bool,
     consumedBy: int, commits: int, calls: int -> Exchange }
+  action initState = s' = { configured: false, audience: "trace", now: 0,
+    spent: false, consumedBy: 0, commits: 0, calls: ids.mapBy(_ => unused) }
   action init = s' = { configured: false, audience: "trace", now: 0,
     spent: false, consumedBy: 0, commits: 0, calls: ids.mapBy(_ => unused) }
   action configure(audience: str): bool = all { not(s.configured), callers.contains(audience),
@@ -108,16 +114,19 @@ module identity_consumer_exchange {
     all { call.phase == "response", s' = s.with("calls", s.calls.set(id,
       call.with("phase", "done").with("result", if (delivered) "token-returned" else "response-lost"))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet caller = callers.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet kind = replyKinds.oneOf()
-    nondet body = bodyKinds.oneOf()
-    any { configure(caller), tick, begin(id, caller, yes, other), remoteClock(id), consume(id), serviceFailure(id),
-      reply(id, kind), readBody(id, body, yes), project(id), captureClaims(id), sign(id, yes), respond(id, yes), s' = s }
-  }
+  // Each branch draws only the choices its action reads. This is the same
+  // successor relation as one shared draw of every choice (README, duplicate
+  // transition choices) without enumerating unused choices for every action.
+  action step = any {
+    { nondet caller = callers.oneOf() configure(caller) },
+    tick,
+    { nondet id = ids.oneOf() nondet caller = callers.oneOf() nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf() begin(id, caller, yes, other) },
+    { nondet id = ids.oneOf() any { remoteClock(id), consume(id), serviceFailure(id), project(id), captureClaims(id) } },
+    { nondet id = ids.oneOf() nondet kind = replyKinds.oneOf() reply(id, kind) },
+    { nondet id = ids.oneOf() nondet body = bodyKinds.oneOf() nondet yes = Set(false, true).oneOf() readBody(id, body, yes) },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() any { sign(id, yes), respond(id, yes) } },
+    s' = s }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.commits >= 0, s.commits <= 1, s.spent == (s.commits == 1),
     ids.forall(id => {
@@ -132,8 +141,8 @@ module identity_consumer_exchange {
         not(call.roles.contains("operator")), not(call.roles.contains("project_owner")) }
     }) }
 
-  action points = init.then(configure("points"))
-  action trace = init.then(configure("trace"))
+  action points = initState.then(configure("points"))
+  action trace = initState.then(configure("trace"))
   action consumed(id: int, caller: str): bool = begin(id, caller, true, true).then(remoteClock(id)).then(consume(id))
   action projected(id: int, caller: str, node: bool): bool = consumed(id, caller).then(reply(id, "ok"))
     .then(readBody(id, "valid", node)).then(project(id))

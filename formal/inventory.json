@@ -9885,7 +9885,7 @@
     },
     {
       "path": "formal/models/api/identity_consumer_exchange.qnt",
-      "sha256": "0873d8a1fdde472a511e058e9b74f4428e0cf26ad9cc2036873d4ad467bc903b",
+      "sha256": "6e84606eff969170b4a269c1f94c09d4dda29c6665e6d832600a58ad12a558c1",
       "sources": [
         "backend/identity-assertion.ts",
         "backend/points/handler.ts",
@@ -10038,7 +10038,7 @@
     },
     {
       "path": "formal/models/api/inbox_queries.qnt",
-      "sha256": "3994c09fc1cb5c0a26d614572c310b148501113b693e6f0a93270bbb1ecf96bb",
+      "sha256": "60a710e3601c1124f2108037e449c01ce5991241655ee8e6ac01ea770f3b46f5",
       "sources": [
         "backend/notifications/handler.ts",
         "src/lib/notifications.ts"
@@ -10066,7 +10066,7 @@
     },
     {
       "path": "formal/models/api/incomplete_assessment_queries.qnt",
-      "sha256": "39652147e2706cda5d18a4216c1bdf34bd72ade88ed019c59b65f5b760a062e8",
+      "sha256": "3469c180f9c8a09176210315608595772b85d2e0c7d5b28bab0a2e3b2866c43b",
       "sources": [
         "backend/notifications/handler.ts",
         "backend/notifications/incomplete-assessments.ts",
@@ -10315,7 +10315,7 @@
     },
     {
       "path": "formal/models/api/project_skill_publication.qnt",
-      "sha256": "97a03d415386aabfb096ee49199413e7b22a6ea10e8c8dc429d003104e0938b8",
+      "sha256": "305b9d71898b0df17e5955d9abbce8b76b3ccc0c00e545bd09e5d3e1776fbd6d",
       "sources": [
         "backend/pages.ts",
         "backend/projects/skill-publication.ts",
@@ -10362,7 +10362,7 @@
     },
     {
       "path": "formal/models/api/submission_authorization_wrappers.qnt",
-      "sha256": "0df6863c746d08c56047a06f7d213b4e5cfa8e6e3a65aee83f10e8c6f6310730",
+      "sha256": "4ea067d2e0e3b59d3654b99a73d3ca7d530ee1977f7f7757ca453ce920cb762c",
       "sources": [
         "backend/security/report-intake.ts",
         "backend/security/submissions.ts",
@@ -10393,7 +10393,7 @@
     },
     {
       "path": "formal/models/api/submission_receipt_verification.qnt",
-      "sha256": "4438d6c551f11770c3dfe5bece42f99bc97a8593b5b52b8d5c93a2de3b0b8576",
+      "sha256": "5749c67608a9f6e26783dc62a4c4f2d65128039221848adcedc7dbb665f7e691",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/handler.ts",
@@ -10425,7 +10425,7 @@
     },
     {
       "path": "formal/models/api/trace_bearer_tokens.qnt",
-      "sha256": "1c73ce136a5be42bc6963f5ef657332f3b1c055eb8d3e4eba077c1230f3e661f",
+      "sha256": "400bed6edacda4366c2d687e15c43c2e9525f11f3491c7507d6ec2e2f0313f8e",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/contracts.ts",
@@ -10462,7 +10462,7 @@
     },
     {
       "path": "formal/models/api/trace_event_finalization.qnt",
-      "sha256": "a56e313d7a81b6ef3a8430018ed14e314808ce66fe659268b5ec252cb02deeea",
+      "sha256": "c4a7d14b910be007d1bb674d5299fa255a1fec6a1f39c32027d94ed03221c3de",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/contracts.ts",
@@ -10498,7 +10498,7 @@
     },
     {
       "path": "formal/models/api/trace_route_authorization.qnt",
-      "sha256": "e7b4b5c8196bc4906d5b33ca3e032312329b84ad3ed59fe79e8c7984ff029002",
+      "sha256": "345e1359be918d721687cc8391509c15394caebc0e335a078713e22c8195358a",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/handler.ts",
@@ -10544,7 +10544,7 @@
     },
     {
       "path": "formal/models/api/trace_run_creation.qnt",
-      "sha256": "a0243ca9640ce137e1d7d7fdcdd1194ac5165a3300cba0a62becc6c925967849",
+      "sha256": "5ff816c791fcd7d73186ea58326f40adaf8a86c16755bfb6e2558bb4d9c4e5a8",
       "sources": [
         "backend/d1.ts",
         "backend/projects/account-bans.ts",

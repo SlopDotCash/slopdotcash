@@ -21,6 +21,8 @@
 // are abstracted; they grant no receipt, payout or severity authority. Provider
 // freshness, SQL implementation, actual grants and full reconciliation are
 // separate boundaries. All scenarios are source-authored and unexecuted.
+// Verification: step draws only the choices each action reads, so its
+// successor relation is unchanged without enumerating unused choices.
 module submission_receipt_verification {
   val ids = Set(1, 2)
   val faults = Set("valid", "unavailable", "not-found", "source", "author", "not-private", "future", "marker")
@@ -139,15 +141,16 @@ module submission_receipt_verification {
   }
   action recoverReceipt = all { s.receipt, s' = s.with("recovered", true) }
   val permanentFailure = s.rowState == "failed" and terminalFailures.contains(s.failureCode)
-  action step = {
-    nondet id = ids.oneOf()
-    nondet origin = Set("slop", "direct").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet fault = faults.oneOf()
-    nondet outcome = Set("ready", "none", "unavailable", "unexpected").oneOf()
-    any { configure(origin, yes), begin(id), terms(id, yes), advisory(id, fault), contacts(id, outcome),
-      prepare(id, yes), otherAdvisoryCase, concurrentTransition, batchFailureBeforeCommit(id), commit(id), lostBatchResult(id), reply(id, yes), resolve(id), recoverReceipt, s' = s }
-  }
+  // Each branch draws only the choices its action reads: the same successor
+  // relation as one shared draw, without enumerating unused choices.
+  action step = any {
+    { nondet origin = Set("slop", "direct").oneOf() nondet yes = Set(false, true).oneOf() configure(origin, yes) },
+    { nondet id = ids.oneOf() any { begin(id), batchFailureBeforeCommit(id), commit(id), lostBatchResult(id), resolve(id) } },
+    { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() any { terms(id, yes), prepare(id, yes), reply(id, yes) } },
+    { nondet id = ids.oneOf() nondet fault = faults.oneOf() advisory(id, fault) },
+    { nondet id = ids.oneOf() nondet outcome = Set("ready", "none", "unavailable", "unexpected").oneOf() contacts(id, outcome) },
+    otherAdvisoryCase, concurrentTransition, recoverReceipt, s' = s }
+
   val invariant = all { s.revision >= 1 and s.revision <= 5, s.caseCount >= 0 and s.caseCount <= 1,
     s.receipt implies s.rowState == "receipt-verified" and s.caseCount == 1,
     s.rowState == "failed" implies s.failureCode != "none",

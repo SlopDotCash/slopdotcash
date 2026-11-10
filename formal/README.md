@@ -159,6 +159,40 @@ reasoning, not a machine-checked equivalence theorem.
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
 
+### Verification relations of the API request models
+
+Several `api/` models keep their direct actions and scenarios exact and give
+`step` a reduced relation. Each model header states the argument for its
+case. This is reviewed reasoning, not a machine-checked equivalence theorem.
+
+- Per-branch choices: each `step` branch draws only the choices its action
+  reads. The successor relation is unchanged; TLC no longer enumerates every
+  unused choice for every action (`identity_consumer_exchange` explores the
+  same 523,063 states either way). A branch with many choices first checks
+  its action's own guard, outside the `nondet` block, so the TypeScript
+  simulator does not backtrack through every choice of a disabled action
+  (`trace_route_authorization`, `project_skill_publication`).
+- Read-time choices and a lazy environment: when an environment action
+  changes only fields that no conjunct reads and that a few actions read,
+  step performs the change as part of the next read that observes it, or
+  draws the observed value from the reachable values
+  (`submission_authorization_wrappers`, `trace_run_creation`,
+  `project_skill_publication`, `incomplete_assessment_queries`).
+- Representative request: when no action reads another request and every
+  conjunct concerns one request, step runs one request
+  (`project_skill_publication`), or one request when `begin` resets every
+  request field (`incomplete_assessment_queries`).
+- Settled records: a finished request slot that no action reads again, whose
+  conjuncts can no longer change, is stored as one representative; a record
+  that violates a conjunct is kept exactly (`trace_event_finalization`,
+  `trace_run_creation`, `submission_authorization_wrappers`).
+- Truth-preserving canonical values: a field read only by a range conjunct or
+  a write-only output maps every in-range value to one representative and
+  keeps out-of-range values, so each conjunct keeps its truth value.
+- Dead state: fields with no later reader are reset or frozen in step once
+  their last read has happened (`inbox_queries`,
+  `incomplete_assessment_queries`).
+
 ## Inventory and review
 
 A source is `mapped-abstraction` when a model names it,

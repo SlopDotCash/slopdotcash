@@ -30,6 +30,8 @@
 // Pages session/allowlist/Origin refusals and accepted recovery dispatch. These
 // existing definitions do not establish exhaustive dispatcher conformance and
 // were not executed for this source-only model.
+// Verification: step draws only the choices each action reads, so its
+// successor relation is unchanged without enumerating unused choices.
 module trace_route_authorization {
   val routes = Set("empty", "intake", "public-wallet", "upload", "identity",
     "wallet-current", "wallet-write", "run-write", "fallback", "recovery", "unknown")
@@ -124,21 +126,22 @@ module trace_route_authorization {
   action dispatch = all { s.phase == "invoke",
     s' = if (Set("fallback", "recovery").contains(s.route) and not(s.roles.contains("operator")))
       ended("403", "operator_required") else invoked(s.credential) }
-  action step = {
-    nondet route = routes.oneOf()
-    nondet origin = origins.oneOf()
-    nondet header = originHeaders.oneOf()
-    nondet auth = authHeaders.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet session = Set("found", "absent", "error").oneOf()
-    nondet verified = Set("accepted", "refused", "error").oneOf()
-    nondet roles = roleChoices.oneOf()
-    any { begin(route, origin, yes, other, header, auth, third), browserWrapper, authority, lookup,
-      requireSameOrigin, readSession(session), observeAllowlist(yes), sessionActor(yes), verifyBearer(verified, roles),
-      dispatch, s' = s }
-  }
+  // Each branch draws only the choices its action reads: the same successor
+  // relation as one shared draw, without enumerating unused choices. The
+  // begin branch first checks begin's own phase guard, so the simulator does
+  // not backtrack through every begin choice once begin is disabled.
+  action step = any {
+    all { s.phase == "new",
+      { nondet route = routes.oneOf() nondet origin = origins.oneOf() nondet header = originHeaders.oneOf()
+        nondet auth = authHeaders.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        nondet third = Set(false, true).oneOf() begin(route, origin, yes, other, header, auth, third) } },
+    browserWrapper, authority, lookup, requireSameOrigin, dispatch,
+    { nondet session = Set("found", "absent", "error").oneOf() readSession(session) },
+    { nondet yes = Set(false, true).oneOf() any { observeAllowlist(yes), sessionActor(yes) } },
+    all { s.phase == "bearer",
+      { nondet verified = Set("accepted", "refused", "error").oneOf() nondet roles = roleChoices.oneOf() verifyBearer(verified, roles) } },
+    s' = s }
+
   val pending = not(Set("new", "done", "delegated").contains(s.phase))
   val invariant = all {
     s.bearerCalls <= 1, s.sessionCalls <= 1, s.bearerCalls + s.sessionCalls <= 1,

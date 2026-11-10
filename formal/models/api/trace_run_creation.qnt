@@ -30,6 +30,19 @@
 // project-self-service's moderator-ban workflow covers a ban between initial
 // admission and insertion. Neither is comprehensive concurrent-create or lost
 // response conformance. This model and its named scenarios are unexecuted.
+// Verification reductions apply to step only; direct actions and scenarios keep
+// exact records. Reviewed reasoning: (1) each branch draws only the choices its
+// action reads. (2) Logins are only copied into rows and write-only snapshots
+// and checked for membership, so login 1 represents both. (3) Run state is
+// read only by advanceRun itself and the write-only snapshotState, so step
+// omits advanceRun. (4) Creation time is read only by the row range conjunct
+// and the write-only snapshotCreated; step stores 0 for any in-range value
+// and keeps an out-of-range value. The clock then has no reader in step, and
+// tick's guard keeps it within its conjunct, so step does not advance it. (5) A settled done slot keeps only what a
+// retry reads (attempt, actor, key); its settled conjuncts cannot change.
+// (6) Bans have no reader besides the three ban reads, and ban/reinstate can
+// reach any ban set between two reads, so step leaves bans empty and draws
+// each read's result; no conjunct reads bans.
 module trace_run_creation {
   val actors = Set(1, 2)
   val keyIds = Set(1, 2)
@@ -79,26 +92,33 @@ module trace_run_creation {
         .with("attempt", previous.attempt + 1).with("actor", actor).with("key", key)
         .with("payload", payload).with("login", login).with("priorResponse", previous.response))) }
   }
-  action initialBanRead(slot: int, ok: bool): bool = {
+  // Ban reads take the observed ban as a parameter; see the header.
+  action initialBanReadAs(slot: int, ok: bool, banned: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "initial-ban",
       s' = s.with("requests", s.requests.set(slot, if (not(ok)) finish(request, "500")
-        else if (s.bans.contains(request.actor)) finish(request, "403") else request.with("phase", "body"))) }
+        else if (banned) finish(request, "403") else request.with("phase", "body"))) }
   }
+  action initialBanRead(slot: int, ok: bool): bool =
+    initialBanReadAs(slot, ok, s.bans.contains(s.requests.get(slot).actor))
   action readBody(slot: int, result: str): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "body", bodyResults.contains(result),
       s' = s.with("requests", s.requests.set(slot, if (result == "valid") request.with("phase", "prepare")
         else finish(request, if (result == "error") "500" else result))) }
   }
-  action prepare(slot: int, randomIdOk: bool, fieldsValid: bool): bool = {
+  // created is read only by the row range conjunct and a write-only snapshot;
+  // step (exact = false) stores 0 for every in-range clock value.
+  action prepareAs(slot: int, randomIdOk: bool, fieldsValid: bool, exact: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "prepare",
       s' = s.with("requests", s.requests.set(slot, if (not(randomIdOk)) finish(request, "500")
         else if (not(fieldsValid)) finish(request, "400")
-        else request.with("phase", "lookup").with("created", s.now)
+        else request.with("phase", "lookup")
+          .with("created", if (exact or s.now < 0 or s.now > 2) s.now else 0)
           .with("generatedId", (slot - 1) * 2 + request.attempt))) }
   }
+  action prepare(slot: int, randomIdOk: bool, fieldsValid: bool): bool = prepareAs(slot, randomIdOk, fieldsValid, true)
   action readExisting(slot: int, ok: bool): bool = {
     val request = s.requests.get(slot)
     val row = s.rows.get(index(request.actor, request.key))
@@ -106,12 +126,12 @@ module trace_run_creation {
       else if (row.payload == request.payload) snapshot(request, row, "existing") else conflict(request)
     all { request.phase == "lookup", s' = s.with("requests", s.requests.set(slot, nextValue)) }
   }
-  action insert(slot: int): bool = {
+  action insertAs(slot: int, banned: bool): bool = {
     val request = s.requests.get(slot)
     val rowKey = index(request.actor, request.key)
     val row = s.rows.get(rowKey)
     // SELECT emits no candidate on a current ban, before uniqueness matters.
-    val outcome = if (s.bans.contains(request.actor)) "no-op" else if (row.exists) "constraint" else "inserted"
+    val outcome = if (banned) "no-op" else if (row.exists) "constraint" else "inserted"
     val created: Row = { exists: true, id: request.generatedId, actor: request.actor, key: request.key,
       payload: request.payload, login: request.login, created: request.created, state: "awaiting_trace" }
     all { request.phase == "insert",
@@ -119,6 +139,7 @@ module trace_run_creation {
         .with("insertions", s.insertions + (if (outcome == "inserted") 1 else 0))
         .with("requests", s.requests.set(slot, request.with("phase", "insert-result").with("insertOutcome", outcome))) }
   }
+  action insert(slot: int): bool = insertAs(slot, s.bans.contains(s.requests.get(slot).actor))
   action insertFailure(slot: int): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "insert", s' = s.with("requests", s.requests.set(slot, finish(request, "500"))) }
@@ -143,17 +164,31 @@ module trace_run_creation {
       s' = s.with("requests", s.requests.set(slot, if (not(ok)) finish(request, "500")
         else if (row.exists and row.id == request.generatedId) snapshot(request, row, "created") else conflict(request))) }
   }
-  action conflictBanRead(slot: int, ok: bool): bool = {
+  action conflictBanReadAs(slot: int, ok: bool, banned: bool): bool = {
     val request = s.requests.get(slot)
     all { request.phase == "conflict-ban",
       s' = s.with("requests", s.requests.set(slot, finish(request,
-        if (not(ok)) "500" else if (s.bans.contains(request.actor)) "403" else "409"))) }
+        if (not(ok)) "500" else if (banned) "403" else "409"))) }
   }
-  action respond(slot: int, delivered: bool): bool = {
+  action conflictBanRead(slot: int, ok: bool): bool =
+    conflictBanReadAs(slot, ok, s.bans.contains(s.requests.get(slot).actor))
+  // Every conjunct of settled is stable once a slot is done: rows are never
+  // removed and keep their id. A later begin reads only attempt, actor, key and
+  // the write-only response. Step (exact = false) keeps only those fields of a
+  // settled done slot and the exact record otherwise.
+  def settled(request: Request): bool = all { request.attempt >= 0, request.attempt <= 2,
+    request.snapshotId > 0 implies request.snapshotActor == request.actor and request.snapshotPayload == request.payload,
+    request.desired == "201" implies request.disposition == "created" and request.snapshotId == request.generatedId,
+    request.desired == "200" implies request.disposition == "existing" and request.snapshotId > 0,
+    request.insertOutcome == "inserted" implies s.rows.get(index(request.actor, request.key)).id == request.generatedId }
+  action respondAs(slot: int, delivered: bool, exact: bool): bool = {
     val request = s.requests.get(slot)
+    val result = request.with("phase", "done").with("response", if (delivered) request.desired else "lost")
     all { request.phase == "reply", s' = s.with("requests", s.requests.set(slot,
-      request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
+      if (exact or not(settled(result))) result
+      else idle.with("phase", "done").with("attempt", request.attempt).with("actor", request.actor).with("key", request.key))) }
   }
+  action respond(slot: int, delivered: bool): bool = respondAs(slot, delivered, true)
   action advanceRun(actor: int, key: int): bool = {
     val rowKey = index(actor, key)
     val row = s.rows.get(rowKey)
@@ -161,20 +196,21 @@ module trace_run_creation {
       s' = s.with("rows", s.rows.set(rowKey, row.with("state",
         if (row.state == "awaiting_trace") "trace_uploaded" else "finalized"))) }
   }
-  action step = {
-    nondet slot = slots.oneOf()
-    nondet actor = actors.oneOf()
-    nondet key = keyIds.oneOf()
-    nondet payload = payloads.oneOf()
-    nondet login = logins.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet body = bodyResults.oneOf()
-    any { tick, ban(actor), reinstate(actor), begin(slot, actor, key, payload, login), initialBanRead(slot, yes),
-      readBody(slot, body), prepare(slot, yes, other), readExisting(slot, yes), insert(slot), insertFailure(slot),
-      insertResult(slot, yes), raceRead(slot, yes), createdRead(slot, yes), conflictBanRead(slot, yes), respond(slot, yes),
-      advanceRun(actor, key), s' = s }
-  }
+  // Verification relation; the header states each reduction.
+  action step = any {
+    { nondet slot = slots.oneOf() nondet actor = actors.oneOf() nondet key = keyIds.oneOf()
+      nondet payload = payloads.oneOf() begin(slot, actor, key, payload, 1) },
+    { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() any {
+      readExisting(slot, yes), insertResult(slot, yes), raceRead(slot, yes), createdRead(slot, yes),
+      respondAs(slot, yes, false) } },
+    { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() nondet banned = Set(false, true).oneOf()
+      any { initialBanReadAs(slot, yes, banned), conflictBanReadAs(slot, yes, banned) } },
+    { nondet slot = slots.oneOf() nondet body = bodyResults.oneOf() readBody(slot, body) },
+    { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+      prepareAs(slot, yes, other, false) },
+    { nondet slot = slots.oneOf() nondet banned = Set(false, true).oneOf() any { insertAs(slot, banned), insertFailure(slot) } },
+    s' = s }
+
   val invariant = all {
     s.now >= 0, s.now <= 2, s.insertions == rowKeys.filter(key => s.rows.get(key).exists).size(), s.insertions <= 2,
     rowKeys.forall(key => {
@@ -184,14 +220,7 @@ module trace_run_creation {
     }),
     rowKeys.forall(a => rowKeys.forall(b => a == b or not(s.rows.get(a).exists and s.rows.get(b).exists)
       or s.rows.get(a).id != s.rows.get(b).id)),
-    slots.forall(slot => {
-      val request = s.requests.get(slot)
-      all { request.attempt >= 0, request.attempt <= 2,
-        request.snapshotId > 0 implies request.snapshotActor == request.actor and request.snapshotPayload == request.payload,
-        request.desired == "201" implies request.disposition == "created" and request.snapshotId == request.generatedId,
-        request.desired == "200" implies request.disposition == "existing" and request.snapshotId > 0,
-        request.insertOutcome == "inserted" implies s.rows.get(index(request.actor, request.key)).id == request.generatedId }
-    }) }
+    slots.forall(slot => settled(s.requests.get(slot))) }
 
   action prepared(slot: int, actor: int, key: int, payload: int, login: int): bool = begin(slot, actor, key, payload, login)
     .then(initialBanRead(slot, true)).then(readBody(slot, "valid")).then(prepare(slot, true, true))

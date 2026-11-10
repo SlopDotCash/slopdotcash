@@ -32,6 +32,26 @@
 // at this function boundary. This does not assert what the HTTP host transmits.
 // Existing workflow definitions cover only selected branches. These scenarios
 // have not been parsed, simulated or executed; mappings are not refinement.
+// Verification reductions apply to step only; direct actions and scenarios keep
+// both requests and every environment action. Reviewed reasoning:
+// (1) One representative request. Each conjunct concerns one request, no
+// action reads another request, and the only cross-request guard (omit needs
+// every request unused) only removes behavior; so each request's reachable
+// pairs with the shared state equal those of request 1 alone. Request and
+// project ids are never compared.
+// (2) Read-time records. With one request, the registry fields are read only
+// by readProjects, restrictions only by readRestrictions and evidence only by
+// clearanceReply, and no conjunct reads them. From init the environment can
+// reach any present, published and retired sets, active within the
+// unretired projects, and revision 1 or 2 each (omit happens before begin),
+// and any restriction set or evidence kind. Step draws these at the read and
+// leaves the stored copies unchanged. (3) clearance ignores the pin when
+// reinstatement is false, as publication always passes, so livePin is
+// write-only and step does not change it. (4) Template and asset changes
+// commute with the lookup actions, so step runs them only from the template
+// phase until the last file read. (5) After joined only the selected
+// project's captured revision is read, so step clears the other captured
+// registry and restriction fields.
 module project_skill_publication {
   val ids = Set(1, 2)
   val files = Set(1, 2, 3, 4)
@@ -84,40 +104,51 @@ module project_skill_publication {
     s' = s.with("requests", s.requests.set(id, idle.with("method", method).with("route", route)
       .with("project", project).with("pathExists", pathExists)
       .with("phase", if (method == "POST" or route == "unmatched") "fallthrough" else "lookup"))) }
-  action readProjects(id: int): bool = {
+  // The observed registry and restriction records are parameters so that step
+  // can draw them at the read (see header); the plain actions read the state.
+  action readProjectsAs(id: int, present: Set[int], active: Set[int], published: Set[int],
+    retired: Set[int], revisions: int -> int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "lookup", not(request.projectRead),
-      s' = s.with("requests", s.requests.set(id, request.with("projectRead", true).with("present", s.present)
-        .with("active", s.active).with("published", s.published).with("retired", s.retired).with("revisions", s.revisions))) }
+      s' = s.with("requests", s.requests.set(id, request.with("projectRead", true).with("present", present)
+        .with("active", active).with("published", published).with("retired", retired).with("revisions", revisions))) }
   }
-  action readRestrictions(id: int): bool = {
+  action readProjects(id: int): bool = readProjectsAs(id, s.present, s.active, s.published, s.retired, s.revisions)
+  action readRestrictionsAs(id: int, restrictions: Set[int]): bool = {
     val request = s.requests.get(id)
     all { request.phase == "lookup", not(request.restrictionsRead),
-      s' = s.with("requests", s.requests.set(id, request.with("restrictionsRead", true).with("restrictions", s.restrictions))) }
+      s' = s.with("requests", s.requests.set(id, request.with("restrictionsRead", true).with("restrictions", restrictions))) }
   }
-  action joined(id: int): bool = {
+  action readRestrictions(id: int): bool = readRestrictionsAs(id, s.restrictions)
+  // After joined only the selected project's revision is read again, so step
+  // (exact = false) clears the other captured registry and restriction fields.
+  def joinedRecord(request: Request, exact: bool): Request = if (exact) request
+    else request.with("present", Set()).with("active", Set()).with("published", Set()).with("retired", Set())
+      .with("restrictions", Set()).with("revisions", ids.mapBy(p => if (p == request.project) request.revisions.get(p) else 0))
+  action joinedAs(id: int, exact: bool): bool = {
     val request = s.requests.get(id)
     val listed = request.present.contains(request.project) and not(request.retired.contains(request.project))
     val candidates = request.present.intersect(request.active).intersect(request.published)
       .exclude(request.retired).exclude(request.restrictions)
     all { request.phase == "lookup", request.projectRead, request.restrictionsRead,
-      s' = s.with("requests", s.requests.set(id,
+      s' = s.with("requests", s.requests.set(id, joinedRecord(
         if (request.route == "discovery") request.with("phase", "template").with("candidates", candidates)
         else if (request.present.contains(request.project) and request.restrictions.contains(request.project)) respond(request, 410, false)
         else if (not(listed)) respond(request, 404, false)
         else if (request.route == "terms") respond(request, 200, false)
         else if (not(request.published.contains(request.project))) respond(request, 404, false)
-        else request.with("phase", "template").with("candidates", Set(request.project)))) }
+        else request.with("phase", "template").with("candidates", Set(request.project)), exact))) }
   }
+  action joined(id: int): bool = joinedAs(id, true)
   action templateReply(id: int, valid: bool): bool = {
     val request = s.requests.get(id)
     all { request.phase == "template", s' = s.with("requests", s.requests.set(id,
       if (valid) request.with("template", s.template).with("phase", if (request.candidates == Set()) "discovered" else "clearance")
       else respond(request, 503, true))) }
   }
-  action clearanceReply(id: int, project: int): bool = {
+  action clearanceReplyAs(id: int, project: int, evidence: str): bool = {
     val request = s.requests.get(id)
-    val result = clearance(s.evidence.get(project), false, s.livePin == 1)
+    val result = clearance(evidence, false, s.livePin == 1)
     val read = request.clearanceRead.union(Set(project))
     val cleared = if (result == "cleared") request.cleared.union(Set(project)) else request.cleared
     all { request.phase == "clearance", request.candidates.contains(project), not(request.clearanceRead.contains(project)),
@@ -126,6 +157,7 @@ module project_skill_publication {
         else request.with("clearanceRead", read).with("cleared", cleared)
           .with("phase", if (read != request.candidates) "clearance" else if (request.route == "discovery") "discovered" else "files"))) }
   }
+  action clearanceReply(id: int, project: int): bool = clearanceReplyAs(id, project, s.evidence.get(project))
   action discovered(id: int): bool = {
     val request = s.requests.get(id)
     all { request.phase == "discovered", s' = s.with("requests", s.requests.set(id, respond(request, 200, false))) }
@@ -160,19 +192,29 @@ module project_skill_publication {
     all { request.phase == "response", s' = s.with("requests", s.requests.set(id,
       request.with("phase", "done").with("delivered", received))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet project = ids.oneOf()
-    nondet method = Set("GET", "HEAD", "POST").oneOf()
-    nondet route = Set("artifact", "terms", "discovery", "unmatched").oneOf()
-    nondet file = files.oneOf()
-    nondet kind = Set("cleared", "unverified", "other").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { omit(project), unpublish(project), pause(project), retire(project), restrict(project), revise(project),
-      evidence(project, kind), changeLivePin, publishTemplate, mismatchedAsset(file), begin(id, method, route, project, yes),
-      readProjects(id), readRestrictions(id), joined(id), templateReply(id, yes), clearanceReply(id, project), discovered(id),
-      fileReply(id, yes), render(id, yes), selectRequest(id), dependencyFailure(id), deliver(id, yes), s' = s }
-  }
+  // Verification relation; the header states each reduction. It runs request 1.
+  val templateLive = Set("template", "clearance", "files", "render").contains(s.requests.get(1).phase)
+  // Each nondet branch first checks its action's own guard, so the simulator
+  // does not backtrack through every choice of a disabled action.
+  val first = s.requests.get(1)
+  action step = any {
+    all { templateLive, any { publishTemplate, { nondet file = files.oneOf() mismatchedAsset(file) } } },
+    all { first.phase == "unused",
+      { nondet method = Set("GET", "HEAD", "POST").oneOf() nondet route = Set("artifact", "terms", "discovery", "unmatched").oneOf()
+        nondet project = ids.oneOf() nondet yes = Set(false, true).oneOf() begin(1, method, route, project, yes) } },
+    all { first.phase == "lookup", not(first.projectRead),
+      { nondet present = ids.powerset().oneOf() nondet published = ids.powerset().oneOf()
+        nondet retired = ids.powerset().oneOf() nondet active = ids.exclude(retired).powerset().oneOf()
+        nondet rev1 = Set(1, 2).oneOf() nondet rev2 = Set(1, 2).oneOf()
+        readProjectsAs(1, present, active, published, retired, Map(1 -> rev1, 2 -> rev2)) } },
+    all { first.phase == "lookup", not(first.restrictionsRead),
+      { nondet restrictions = ids.powerset().oneOf() readRestrictionsAs(1, restrictions) } },
+    any { joinedAs(1, false), discovered(1), selectRequest(1), dependencyFailure(1) },
+    { nondet yes = Set(false, true).oneOf() any { templateReply(1, yes), fileReply(1, yes), render(1, yes), deliver(1, yes) } },
+    all { first.phase == "clearance",
+      { nondet project = ids.oneOf() nondet kind = Set("cleared", "unverified", "other").oneOf() clearanceReplyAs(1, project, kind) } },
+    s' = s }
+
   val invariant = all { ids.forall(id => {
     val request = s.requests.get(id)
     all { request.status > 0 implies request.noStore,

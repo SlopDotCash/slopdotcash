@@ -18,6 +18,10 @@
 // Token return is not authorization for an arbitrary route; see dispatcher model.
 // Existing workflows exercise signing/verification indirectly, not every
 // malformed-input, clock-boundary or crypto-error case below. All are unexecuted.
+// Verification: step draws only the choices each action reads, so its
+// successor relation is unchanged without enumerating unused choices.
+// Scenario helpers start from initState, a copy of init, because Quint cannot
+// translate one action used as both init and step (QNT409).
 module trace_bearer_tokens {
   type Times = { issued: int, expires: int }
   val roleSets = Set(Set(), Set("contributor"), Set("project_owner"), Set("operator"),
@@ -34,6 +38,9 @@ module trace_bearer_tokens {
     issued: int, expires: int, allowlisted: bool, laterNow: int,
     signed: bool, authenticated: bool, result: str }
   action init = s' = { phase: "setup", mode: "verify", roles: Set(), returnedRoles: Set(),
+    issued: 0, expires: 0, allowlisted: false, laterNow: 0,
+    signed: false, authenticated: false, result: "pending" }
+  action initState = s' = { phase: "setup", mode: "verify", roles: Set(), returnedRoles: Set(),
     issued: 0, expires: 0, allowlisted: false, laterNow: 0,
     signed: false, authenticated: false, result: "pending" }
   action configure(mode: str, roles: Set[str], time: Times, allowlisted: bool): bool = all {
@@ -76,16 +83,16 @@ module trace_bearer_tokens {
       s' = s.with("phase", "done").with("returnedRoles", roles)
         .with("authenticated", roles.size() > 0).with("result", if (roles.size() > 0) "actor" else "null") }
   }
-  action step = {
-    nondet mode = Set("sign", "verify").oneOf()
-    nondet roles = roleSets.oneOf()
-    nondet time = times.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet kind = headers.oneOf()
-    nondet result = cryptoResults.oneOf()
-    any { configure(mode, roles, time, yes), advanceNow, secret(yes), header(kind), decode(yes),
-      crypto(result), parse(yes), claims(yes), checkTime, filterRoles, s' = s }
-  }
+  // Each branch draws only the choices its action reads: the same successor
+  // relation as one shared draw, without enumerating unused choices.
+  action step = any {
+    { nondet mode = Set("sign", "verify").oneOf() nondet roles = roleSets.oneOf() nondet time = times.oneOf()
+      nondet yes = Set(false, true).oneOf() configure(mode, roles, time, yes) },
+    { nondet yes = Set(false, true).oneOf() any { secret(yes), decode(yes), parse(yes), claims(yes) } },
+    { nondet kind = headers.oneOf() header(kind) },
+    { nondet result = cryptoResults.oneOf() crypto(result) },
+    advanceNow, checkTime, filterRoles, s' = s }
+
   val invariant = all {
     Set(0, 31, 602).contains(s.laterNow),
     s.signed implies s.mode == "sign" and s.roles.size() > 0 and s.expires > s.issued,
@@ -96,10 +103,10 @@ module trace_bearer_tokens {
     s.result == "token" iff s.signed,
     Set("null", "error").contains(s.result) implies not(s.signed) and not(s.authenticated) }
 
-  action verifiedClaims(roles: Set[str], time: Times, allowed: bool): bool = init
+  action verifiedClaims(roles: Set[str], time: Times, allowed: bool): bool = initState
     .then(configure("verify", roles, time, allowed)).then(secret(true)).then(header("valid"))
     .then(decode(true)).then(crypto("ok")).then(parse(true)).then(claims(true))
-  action signing(roles: Set[str], time: Times): bool = init.then(configure("sign", roles, time, false))
+  action signing(roles: Set[str], time: Times): bool = initState.then(configure("sign", roles, time, false))
     .then(secret(true)).then(claims(true))
 
   run validContributorReturnsActorTest = verifiedClaims(Set("contributor"), {issued:0,expires:600}, false)
