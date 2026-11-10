@@ -4740,7 +4740,7 @@
     },
     {
       "path": "src/DirectBountyPayment.tsx",
-      "sha256": "94bafa9cd7cdf5ecec5191057a277ae6873114e924663c1e2eac6247d8f9fb2e",
+      "sha256": "81157b25b2dfcc41f018b66e691508291d179770818d317e2f9a19e8ca214c5e",
       "models": [
         "formal/models/payments/direct_bounty_journal.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
@@ -4749,8 +4749,8 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 7, 71, 101, 102, 103, 104, 108, 109, 110, 113, 141, 172, 176, 232,
-        235, 238, 245, 346, 443, 461, 531, 547
+        1, 7, 71, 101, 102, 103, 104, 108, 109, 110, 113, 141, 172, 181, 233,
+        236, 239, 246, 347, 444, 462, 532, 548
       ],
       "review": "mapped-abstraction"
     },
