@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
-import { keccak256, parseTransaction } from "viem";
+import { encodeFunctionData, keccak256, parseTransaction } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase } from "../../backend/d1";
 import { buildPaymentWalletMessage } from "../../backend/payments/possession";
@@ -33,9 +33,12 @@ import {
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { reconcileBindingWinner } from "./binding-recovery";
 import {
+  assertBindingConsentBudget,
+  bindingConsentIdentity,
   type ExecutorEnvironment,
   type JournalStore,
   STORED_BINDING,
+  storedBindingAbi,
 } from "./binding-shared";
 import {
   type BindingCandidate,
@@ -1224,6 +1227,112 @@ try {
       } finally {
         current.dropBroadcast = false;
       }
+    },
+  );
+  await run(
+    "stored binding budget still pins the consent after the fingerprint relaxation",
+    async () => {
+      active = await fixture("142", "consent");
+      const current = active;
+      const deployment = JSON.parse(current.env.PAYMENT_DEPLOYMENTS)[0];
+      // Sign the genuine stored binding but lose the broadcast, so the
+      // attempt and its consent budget stay journaled and the vault
+      // binding stays at version 0.
+      current.dropBroadcast = true;
+      try {
+        const submitted = await bindStoredDestination(
+          current.env,
+          current.candidate,
+        );
+        assert.equal(submitted.state, "submitted");
+        assert.equal(current.signatures(), 1);
+      } finally {
+        current.dropBroadcast = false;
+      }
+      const original = current.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      const storedKey = original.key;
+      const attempt = original.value;
+      assert(attempt.bindingConsentBudgetKey);
+      // Positive control: the genuine stored attempt still passes the
+      // budget gate after the relaxation.
+      const budget = await assertBindingConsentBudget(
+        current.env.JOURNAL,
+        deployment,
+        attempt,
+      );
+      assert(budget);
+      assert.equal(budget.transactionId, attempt.transactionId);
+      // Forge a second consent for a different destination, signed with
+      // the same nonce and gas terms as the genuine attempt, and swap it
+      // into the attempt record. bindingConsentIdentity only decodes the
+      // calldata, so the wallet signature bytes are arbitrary here; the
+      // point is the consent identity the signed bytes name.
+      const originalTx = parseTransaction(attempt.rawTransaction);
+      const forgedData = encodeFunctionData({
+        abi: storedBindingAbi,
+        functionName: "bindDestination",
+        args: [
+          BigInt(current.candidate.githubUserId),
+          fee,
+          0n,
+          `0x${current.candidate.claimDigest}`,
+          0n,
+          `0x${"11".repeat(65)}`,
+        ],
+      });
+      const forgedRaw = await attester.signTransaction({
+        type: "eip1559",
+        chainId: Number(chainId),
+        nonce: originalTx.nonce,
+        gas: originalTx.gas,
+        maxFeePerGas: originalTx.maxFeePerGas,
+        maxPriorityFeePerGas: originalTx.maxPriorityFeePerGas,
+        to: current.vault as `0x${string}`,
+        data: forgedData,
+        value: 0n,
+      });
+      const forgedConsent = bindingConsentIdentity(deployment, forgedData);
+      assert.notEqual(
+        forgedConsent.fingerprint,
+        bindingConsentIdentity(deployment, originalTx.data as `0x${string}`)
+          .fingerprint,
+      );
+      // Variant 1: the forged bytes keep the genuine budget key. The gate
+      // must refuse because the key no longer matches the consent the
+      // signed bytes name.
+      const swapped = {
+        ...attempt,
+        rawTransaction: forgedRaw,
+        transactionId: keccak256(forgedRaw),
+      };
+      await assert.rejects(
+        assertBindingConsentBudget(current.env.JOURNAL, deployment, swapped),
+        /Binding consent budget differs from signed attempt/,
+      );
+      // Variant 2: the forger also re-points the budget key at the forged
+      // consent. The gate must still refuse: no budget record was ever
+      // admitted for that consent.
+      const repointed = {
+        ...swapped,
+        bindingConsentBudgetKey: forgedConsent.key,
+      };
+      await assert.rejects(
+        assertBindingConsentBudget(current.env.JOURNAL, deployment, repointed),
+        /Binding consent budget differs from signed attempt/,
+      );
+      // End to end: swapping the forged bytes into the stored journal entry
+      // must not produce a broadcast. The resume path re-checks the budget
+      // before any signing or broadcast, and the stored broadcast gate
+      // re-derives the fingerprint from the signed bytes.
+      await current.journal.store.put(storedKey, swapped);
+      await assert.rejects(
+        bindStoredDestination(current.env, current.candidate),
+        /Binding consent budget differs from signed attempt/,
+      );
+      assert.equal(current.signatures(), 1);
     },
   );
   await run(
