@@ -2303,3 +2303,221 @@ describe("reporter payment state against the payout queue", () => {
     env.sqlite.close();
   });
 });
+
+describe("batch after-statements", () => {
+  const prepareVaultPayment = async (
+    env: ReturnType<typeof open>,
+    id: string,
+  ) => {
+    expect((await env.decide(id, "vault-drain")).status).toBe(200);
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    expect(
+      (
+        await env.act(REPORTER, id, {
+          action: "consent-payment",
+          network: "base-sepolia",
+          confirmation: true,
+        })
+      ).status,
+    ).toBe(200);
+    return env.act(MAINTAINER, id, {
+      action: "prepare-payment",
+      network: "base-sepolia",
+      confirmation: true,
+    });
+  };
+
+  test("prepare-payment records the vault settlement on the happy path", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      const prepared = await prepareVaultPayment(env, id);
+      expect(prepared.status).toBe(200);
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(1);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a settlement insert that misses its guard fails instead of reporting success", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect((await env.decide(id, "vault-drain")).status).toBe(200);
+      expect((await env.award(id, "1000000")).status).toBe(200);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "consent-payment",
+            network: "base-sepolia",
+            confirmation: true,
+          })
+        ).status,
+      ).toBe(200);
+      // The award approval is withdrawn between the read and the write
+      // batch, so the settlement INSERT's guard no longer matches. The
+      // payment state moves with it: the table requires an approved award
+      // whenever a payment rail is recorded.
+      env.setBeforeBatch(() => {
+        env.sqlite
+          .query(
+            "UPDATE security_cases SET award_state = 'pending', payment_state = 'not-applicable' WHERE id = ?",
+          )
+          .run(id);
+      });
+      const prepared = await env.act(MAINTAINER, id, {
+        action: "prepare-payment",
+        network: "base-sepolia",
+        confirmation: true,
+      });
+      expect(prepared.status).toBe(409);
+      expect(prepared.body.error).toBe("stale_revision");
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(0);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a failed after-statement leaves an auditable, retryable state", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect((await env.decide(id, "vault-drain")).status).toBe(200);
+      expect((await env.award(id, "1000000")).status).toBe(200);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "consent-payment",
+            network: "base-sepolia",
+            confirmation: true,
+          })
+        ).status,
+      ).toBe(200);
+      const before = env.sqlite
+        .query(
+          "SELECT revision, award_state, payment_state FROM security_cases WHERE id = ?",
+        )
+        .get(id) as {
+        revision: number;
+        award_state: string;
+        payment_state: string;
+      };
+      // Same concurrent withdrawal as the guard test above: the award
+      // approval is gone before the write batch runs.
+      env.setBeforeBatch(() => {
+        env.sqlite
+          .query(
+            "UPDATE security_cases SET award_state = 'pending', payment_state = 'not-applicable' WHERE id = ?",
+          )
+          .run(id);
+      });
+      const prepared = await env.act(MAINTAINER, id, {
+        action: "prepare-payment",
+        network: "base-sepolia",
+        confirmation: true,
+      });
+      expect(prepared.status).toBe(409);
+      expect(prepared.body.error).toBe("stale_revision");
+      // The batch already committed, so the failure is loud but not
+      // silent: the revision advanced by exactly one, the concurrent
+      // writer's values stand, and the side effect never landed. The case
+      // row itself carries no payment state: prepare-payment sets no
+      // columns, so nothing claims a settlement exists.
+      const after = env.sqlite
+        .query(
+          "SELECT revision, award_state, payment_state FROM security_cases WHERE id = ?",
+        )
+        .get(id) as {
+        revision: number;
+        award_state: string;
+        payment_state: string;
+      };
+      expect(after.revision).toBe(before.revision + 1);
+      expect(after.award_state).toBe("pending");
+      expect(after.payment_state).toBe("not-applicable");
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(0);
+      // The attempt stays in the audit trail: one event row at the new
+      // revision, and one generic inbox notice that carries only the case
+      // reference and a link — no amount, no payment claim.
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT kind FROM security_case_events WHERE case_id = ? AND case_revision = ?",
+            )
+            .get(id, after.revision) as { kind: string } | null
+        )?.kind,
+      ).toBe("prepare-payment");
+      expect(env.inbox(REPORTER, id)).toContain(
+        `security-case:${id}:${after.revision}`,
+      );
+      const notice = env.sqlite
+        .query(
+          "SELECT kind, subject, detail FROM notifications WHERE event_key = ?",
+        )
+        .get(`security-case:${id}:${after.revision}`) as {
+        kind: string;
+        subject: string;
+        detail: string | null;
+      };
+      expect(notice.kind).toBe("security_case");
+      expect(notice.subject).toBe(id);
+      expect(notice.detail).toBeNull();
+      // A retry from the fresh revision is refused at the gate instead
+      // of batching again: allowedActions offers prepare-payment only
+      // while award_state is approved, and the withdrawal moved it to
+      // pending. No second revision, no second event, no settlement —
+      // and the case is not stuck, because award is still offered and a
+      // maintainer can re-approve and prepare payment normally.
+      const retried = await env.act(MAINTAINER, id, {
+        action: "prepare-payment",
+        network: "base-sepolia",
+        confirmation: true,
+      });
+      expect(retried.status).toBe(409);
+      expect(retried.body.error).toBe("action_not_allowed");
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(0);
+      expect(
+        (
+          env.sqlite
+            .query("SELECT revision FROM security_cases WHERE id = ?")
+            .get(id) as { revision: number }
+        ).revision,
+      ).toBe(before.revision + 1);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+});

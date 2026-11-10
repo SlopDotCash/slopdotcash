@@ -3318,6 +3318,21 @@ async function actOnCase(
     }
     fail(409, "stale_revision", "The case changed since you loaded it");
   }
+  // Every after-statement must take effect. An INSERT ... SELECT whose
+  // fence no longer matches inserts zero rows without raising, so without
+  // this the batch would report success while its side effect never
+  // happened. Each statement must change at least one row: the
+  // transaction-uses insert covers every verified leg, so its count is a
+  // lower bound rather than exactly one, and verifyDirectPayment only
+  // returns its conditional inserts once they can match.
+  const after = change.after ?? [];
+  for (let index = 0; index < after.length; index++) {
+    const afterResult = results[(change.before ?? []).length + 2 + index];
+    if ((afterResult?.meta?.changes ?? 0) < 1) {
+      if (change.unmet) fail(409, change.unmet.code, change.unmet.message);
+      fail(409, "stale_revision", "The case changed since you loaded it");
+    }
+  }
   // Slopbot triages every appeal first; a moderator still decides it.
   if (change.kind === "appeal") await scheduleAppealTriage(deps, row.id);
   const updated = (await loadCase(deps, row.id)) as CaseRow;

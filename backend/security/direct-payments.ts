@@ -833,6 +833,17 @@ export async function verifyDirectPayment(
   const guard =
     "EXISTS(SELECT 1 FROM security_case_events WHERE case_id=? AND case_revision=? AND idempotency_key=? AND kind='verify-payment')";
   const expected = intent.chain === "solana" ? 1 : intent.transfers.length;
+  // The receipts and transaction-uses inserts only take effect once every
+  // leg is verified; a partial verification legitimately leaves them at
+  // zero rows, so they stay out of the batch until this call completes the
+  // set. The caller asserts every returned statement changes a row.
+  const existingLegs = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM security_direct_transfer_receipts WHERE case_id=?",
+    )
+    .bind(input.caseId)
+    .first<{ n: number }>();
+  const complete = (existingLegs?.n ?? 0) + proofs.length === expected;
   return [
     ...proofs.map((proof) =>
       db
@@ -851,31 +862,35 @@ export async function verifyDirectPayment(
           input.key,
         ),
     ),
-    db
-      .prepare(`INSERT INTO security_direct_payment_receipts(case_id,evidence,verified_at)
+    ...(complete
+      ? [
+          db
+            .prepare(`INSERT INTO security_direct_payment_receipts(case_id,evidence,verified_at)
       SELECT ?, (SELECT json_group_array(json(evidence)) FROM (SELECT evidence FROM security_direct_transfer_receipts WHERE case_id=? ORDER BY leg_index)), ?
       WHERE ${guard} AND (SELECT COUNT(*) FROM security_direct_transfer_receipts WHERE case_id=?)=?`)
-      .bind(
-        input.caseId,
-        input.caseId,
-        input.at,
-        input.caseId,
-        input.revision,
-        input.key,
-        input.caseId,
-        expected,
-      ),
-    db
-      .prepare(`INSERT INTO security_direct_transaction_uses(network,transaction_id,case_id)
+            .bind(
+              input.caseId,
+              input.caseId,
+              input.at,
+              input.caseId,
+              input.revision,
+              input.key,
+              input.caseId,
+              expected,
+            ),
+          db
+            .prepare(`INSERT INTO security_direct_transaction_uses(network,transaction_id,case_id)
       SELECT network,transaction_id,case_id FROM security_direct_transfer_receipts WHERE case_id=?
       AND EXISTS(SELECT 1 FROM security_direct_payment_receipts WHERE case_id=?) AND ${guard}`)
-      .bind(
-        input.caseId,
-        input.caseId,
-        input.caseId,
-        input.revision,
-        input.key,
-      ),
+            .bind(
+              input.caseId,
+              input.caseId,
+              input.caseId,
+              input.revision,
+              input.key,
+            ),
+        ]
+      : []),
   ];
 }
 
