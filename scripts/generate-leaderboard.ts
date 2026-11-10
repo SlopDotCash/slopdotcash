@@ -266,11 +266,12 @@ class GraphqlResponseBoundaryError extends Error {}
 const GATEWAY_FAILURE_STATUSES: readonly number[] = [502, 503, 504];
 
 /**
- * GitHub's gateway failed a request on every bounded attempt (502, 503 or
- * 504 with a non-JSON body). For a `nodes(ids:)` batch the usual cause is the
- * batch itself: twenty-five open pull requests that each carry over a thousand
- * changed files exceed what one GraphQL request can assemble, so batch callers
- * split the ids instead of failing the run (`executeNodeBatch`).
+ * GitHub's gateway failed a request on every bounded attempt: a 502, 503 or
+ * 504 with a non-JSON body, or an HTTP 200 whose JSON body arrived empty or
+ * cut off. For a `nodes(ids:)` batch the usual cause is the batch itself:
+ * twenty-five open pull requests that each carry over a thousand changed files
+ * exceed what one GraphQL request can assemble, so batch callers split the ids
+ * instead of failing the run (`executeNodeBatch`).
  */
 export class GraphqlUpstreamError extends Error {
   readonly status: number;
@@ -1872,14 +1873,16 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           continue;
         }
         // error-policy:J2 Retain the HTTP boundary context for malformed or
-        // non-JSON API failures; exhausted malformed-JSON retries fail closed.
-        // An exhausted gateway failure keeps its status so a node batch
-        // caller can split the batch instead of failing the run.
+        // non-JSON API failures; exhausted retries fail closed. An exhausted
+        // gateway failure, and an HTTP 200 JSON answer whose body stayed
+        // unparseable on every attempt (the gateway cut it to nothing), both
+        // keep their status so a node batch caller can split the batch
+        // instead of failing the run.
         const message = retryableMalformedJson
-          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
+          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}; ${responseBody.length} body bytes)`
           : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
         if (
-          !retryableMalformedJson &&
+          retryableMalformedJson ||
           GATEWAY_FAILURE_STATUSES.includes(response.status)
         ) {
           throw new GraphqlUpstreamError(message, response.status, { cause });
