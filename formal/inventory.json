@@ -357,13 +357,13 @@
     },
     {
       "path": "backend/payments/ledger.ts",
-      "sha256": "651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879",
+      "sha256": "cb8b74a61054c92213d279569f090d3fa448d0ad13132184a9f7547fbb38025e",
       "models": [
         "formal/models/payments/payment_dispatch.qnt",
         "formal/models/payments/payment_reopen_landing.qnt"
       ],
       "candidateLines": [
-        39, 94, 174, 182, 197, 261, 274, 279, 295, 315, 325, 332, 339
+        39, 94, 174, 182, 197, 284, 297, 302, 318, 338, 348, 355, 362
       ],
       "review": "mapped-abstraction"
     },

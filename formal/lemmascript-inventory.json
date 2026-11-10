@@ -209,11 +209,11 @@
 {"name":"<ArrowFunction@1270>","kind":"ArrowFunction","line":1270,"sha256":"e69d3fa3ddbb0c0dcc37724c61de15bab861b29a63bfb559f057554ffc8fa418","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"<ArrowFunction@1275>","kind":"ArrowFunction","line":1275,"sha256":"79f7a62025acb133f74e257b1573e6ab36b008e6403847ce1a62f832866958d3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"backend/payments/ledger.ts","sha256":"651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"backend/payments/ledger.ts","sha256":"cb8b74a61054c92213d279569f090d3fa448d0ad13132184a9f7547fbb38025e","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"evidenceFacts","kind":"FunctionDeclaration","line":40,"sha256":"b230566381912cdc5b2cf1e31a40906ee696dba3b8408352dcab3c6fcad5fd0f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@73>","kind":"ArrowFunction","line":73,"sha256":"585235a791ce7b1499587de315f62ed870540ac7315494fe7778d8c3798657f0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"indexPaymentEvent","kind":"FunctionDeclaration","line":118,"sha256":"392daf5b485b89421cda69000ef9b80d2937322b8c5a36595a1e82030ceca972","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@350>","kind":"ArrowFunction","line":350,"sha256":"bfcd2e4852f4992480ef1d534ef96510ff235aef94c4d2bf6d276fd29ce771f3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"indexPaymentEvent","kind":"FunctionDeclaration","line":118,"sha256":"c4b4e2c560159e82b6d7b8f21937588076f8110af043c617614fd613884fbb39","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@373>","kind":"ArrowFunction","line":373,"sha256":"bfcd2e4852f4992480ef1d534ef96510ff235aef94c4d2bf6d276fd29ce771f3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"backend/payments/monthly-attestation-types.ts","sha256":"85a061fece0c7c8931583922701299547590be1348b8f97b46c2e664ee934f90","language":"typescript","disposition":"no-function-body","functions":[
 
