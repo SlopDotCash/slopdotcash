@@ -169,6 +169,10 @@ module api_submission_recovery {
     s' = s.with("phase", "receipt-verified").with("revision", s.revision + 1)
       .with("receiptVerified", true).with("caseCount", 1) }
   action loseReceiptReply = all { s.receiptVerified, s' = s.with("receiptReplyLost", true) }
+  // Source bounds this hold: settle() keeps a contacts-unavailable row only
+  // until 2 * SUBMITTED_LIMIT_MS after the last such event, then expires it.
+  // These age classes stop at 5 (>= 24h), so they cover the hold inside the
+  // first limit only; the later expiry is outside this model.
   action verificationExpires = all { s.phase == "submitted", s.age == 5, not(s.contactsVerified), s.revision < 12,
     s' = s.with("phase", "failed").with("terminalFailure", true).with("revision", s.revision + 1).with("idleExpired", false) }
   action abandon = all { Set("draft", "failed").contains(s.phase), s.idleExpired, not(s.saved), s.revision < 12,

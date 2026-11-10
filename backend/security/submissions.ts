@@ -1073,7 +1073,17 @@ async function verifyDirect(
 ): Promise<Response> {
   const { actor, loaded } = await ownSubmissionAtRevision(request, deps, id);
   const row = await settle(deps, loaded);
-  if (row.origin !== "direct" || row.state !== "draft")
+  // A direct report GitHub could not confirm yet (not-found, or fields
+  // GitHub rejects) has no send to retry: it verifies again from `failed`,
+  // like a slop report resends from `failed`. Terminal failures stay closed.
+  if (
+    row.origin !== "direct" ||
+    !(
+      row.state === "draft" ||
+      (row.state === "failed" &&
+        !TERMINAL_FAILURES.includes(row.failure_code as FailureCode))
+    )
+  )
     fail(409, "action_not_allowed", "This submission cannot be verified now");
   const grant = await requireGrant(request, deps, intake, row);
   const verified = await verifyReceipt(deps, intake, row, grant);

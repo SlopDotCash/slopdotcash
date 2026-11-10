@@ -1893,6 +1893,44 @@ describe("private intake: send outcomes", () => {
     expect((await t.create()).status).toBe(201);
   });
 
+  test("a submitted report with no routing contacts stops blocking new reports once the contacts grace ends", async () => {
+    const t = setup({ noProgram: true });
+    const submission = await t.ready();
+    // The only registry candidate loses admin permission, so the receipt
+    // check stays the submission as contacts-unavailable.
+    t.setPermission("read");
+    const sent = await t.send(submission.id, 1);
+    expect(sent.status).toBe(202);
+    expect(t.row(submission.id).state).toBe("submitted");
+    expect(
+      t.sqlite
+        .query(
+          "SELECT kind FROM security_submission_events WHERE submission_id = ? AND kind = 'contacts-unavailable'",
+        )
+        .get(submission.id),
+    ).toMatchObject({ kind: "contacts-unavailable" });
+    // Still inside the grace: the hold survives the normal submitted limit
+    // so a reporter returning with fresh consent can still reconcile it.
+    t.advance(SUBMITTED_LIMIT_MS + 1000);
+    const held = await t.call(REPORTER, "GET", "security-submissions");
+    expect(
+      (held.body.submissions as { id: string }[]).find(
+        (entry) => entry.id === submission.id,
+      ),
+    ).toMatchObject({ state: "submitted" });
+    expect((await t.create()).body.error).toBe("submission_in_flight");
+    // With no fresh contact check for a second submitted limit, the report
+    // fails as unverifiable and stops blocking a new submission.
+    t.advance(SUBMITTED_LIMIT_MS);
+    const listed = await t.call(REPORTER, "GET", "security-submissions");
+    expect(
+      (listed.body.submissions as { id: string }[]).find(
+        (entry) => entry.id === submission.id,
+      ),
+    ).toMatchObject({ state: "failed", failureCode: "unverifiable" });
+    expect((await t.create()).status).toBe(201);
+  });
+
   test("a 201 that is not the reporter's well-formed advisory is uncertain", async () => {
     for (const fault of ["wrong-author-201", "malformed-201"] as const) {
       const t = setup();
@@ -2103,6 +2141,81 @@ describe("private intake: direct GitHub reports", () => {
     expect(verified.body.submission).toMatchObject({
       state: "failed",
       failureCode: "not-found",
+    });
+  });
+
+  test("a direct report that fails as not-found can be verified again", async () => {
+    const t = setup();
+    const created = await t.create(REPORTER, {
+      origin: "direct",
+      advisory: "GHSA-2222-3333-4444",
+    });
+    await t.authorize(REPORTER, created.body.authorizeUrl as string);
+    const path = `security-submissions/${created.body.submission?.id}/verify`;
+    const verified = await t.call(REPORTER, "POST", path, {
+      expectedRevision: 1,
+    });
+    expect(verified.body.submission).toMatchObject({
+      state: "failed",
+      failureCode: "not-found",
+    });
+    // not-found is not terminal: a later verification is admitted instead
+    // of refused, so a report that only just landed on GitHub can retry.
+    const again = await t.call(REPORTER, "POST", path, {
+      expectedRevision: verified.body.submission?.revision as number,
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.submission).toMatchObject({
+      state: "failed",
+      failureCode: "not-found",
+    });
+  });
+
+  test("a direct report that fails as invalid can be verified again once GitHub's clock catches up", async () => {
+    const t = setup();
+    // GitHub dates the advisory ten minutes ahead of Slop: past the skew
+    // tolerance, so the first verification fails as invalid.
+    const { verified } = await direct(t, REPORTER, "2026-10-23T10:10:00.000Z");
+    expect(verified.body.submission).toMatchObject({
+      state: "failed",
+      failureCode: "invalid",
+    });
+    const id = verified.body.submission?.id as string;
+    const path = `security-submissions/${id}/verify`;
+    const again = await t.call(REPORTER, "POST", path, {
+      expectedRevision: verified.body.submission?.revision as number,
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.submission).toMatchObject({
+      state: "failed",
+      failureCode: "invalid",
+    });
+    t.advance(15 * 60 * 1000);
+    const recovered = await t.call(REPORTER, "POST", path, {
+      expectedRevision: again.body.submission?.revision as number,
+    });
+    expect(recovered.body.submission?.state).toBe("receipt-verified");
+    expect(t.cases()).toHaveLength(1);
+  });
+
+  test("a direct report that fails terminally cannot be verified again", async () => {
+    const t = setup();
+    const { verified } = await direct(t, OTHER);
+    expect(verified.body.submission).toMatchObject({
+      state: "failed",
+      failureCode: "author-mismatch",
+    });
+    const again = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${verified.body.submission?.id}/verify`,
+      { expectedRevision: verified.body.submission?.revision as number },
+    );
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe("action_not_allowed");
+    expect(t.row(verified.body.submission?.id as string)).toMatchObject({
+      state: "failed",
+      failure_code: "author-mismatch",
     });
   });
 

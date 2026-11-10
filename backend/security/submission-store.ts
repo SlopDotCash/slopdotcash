@@ -57,6 +57,15 @@ export const RECONCILE_QUIET_MS = 5 * 60 * 1000;
  */
 export const SUBMITTED_LIMIT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * A row held for missing routing contacts stays recoverable this long after
+ * the last failed contact check: one extra submitted limit past the normal
+ * expiry, so a reporter returning with fresh consent can still reconcile
+ * it. After that it expires like any other unverified submission, so a
+ * permanently unroutable report stops blocking a new submission.
+ */
+export const CONTACTS_UNAVAILABLE_LIMIT_MS = 2 * SUBMITTED_LIMIT_MS;
+
 /** The reporter's view: state and identifiers, never report content. */
 export function submissionView(row: SubmissionRow): Record<string, unknown> {
   return {
@@ -255,18 +264,26 @@ export async function settle(
   )
     next = { state: "abandoned", kind: "abandoned", actorGithubId: null };
   if (next === null) return row;
-  if (
+  const lastContactsUnavailable =
     (row.state === "submitted" || row.state === "draft") &&
-    row.advisory_ghsa !== null &&
-    (await deps.db
-      .prepare(
-        "SELECT 1 AS verified FROM security_submission_events WHERE submission_id = ? AND revision <= ? AND kind = 'contacts-unavailable' LIMIT 1",
-      )
-      .bind(row.id, row.revision)
-      .first()) !== null
+    row.advisory_ghsa !== null
+      ? await deps.db
+          .prepare(
+            "SELECT MAX(at) AS at FROM security_submission_events WHERE submission_id = ? AND revision <= ? AND kind = 'contacts-unavailable'",
+          )
+          .bind(row.id, row.revision)
+          .first<{ at: string | null }>()
+      : null;
+  if (
+    lastContactsUnavailable?.at != null &&
+    now - Date.parse(lastContactsUnavailable.at) <=
+      CONTACTS_UNAVAILABLE_LIMIT_MS
   )
     // This event is written only after GitHub receipt identity checks pass.
-    // Missing routing contacts do not make that delivered report unverifiable.
+    // Missing routing contacts do not make that delivered report
+    // unverifiable — but only for one extra submitted limit after the last
+    // failed contact check, so a permanently unroutable report still
+    // expires and stops blocking a new submission for the program.
     return row;
   return (
     (await transition(deps, row, next)) ??

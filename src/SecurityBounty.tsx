@@ -1988,7 +1988,10 @@ function SubmissionCard({
             <IntakeReferenceNote />
           </form>
         ) : null}
-        {submission.origin === "direct" && submission.state === "draft" ? (
+        {submission.origin === "direct" &&
+        (submission.state === "draft" ||
+          (submission.state === "failed" &&
+            !TERMINAL_FAILURES.includes(submission.failureCode ?? ""))) ? (
           <button
             className="button primary-button"
             disabled={busy}
