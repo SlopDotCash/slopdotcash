@@ -157,6 +157,35 @@ test("a large inventory is split into budgeted batches, risky first, with nothin
   expect(planReview(inspection)).toEqual(plan);
 });
 
+test("dynamically classified installScripts in inventory.classifications lead in Tier 0 ahead of source and docs", () => {
+  const inspection = inspectRepository({
+    files: [
+      ...largeRepository(),
+      file(
+        "CMakeLists.txt",
+        'cmake_minimum_required(VERSION 3.20)\nproject(demo NONE)\ninclude("deps/fetch.txt")\n',
+      ),
+      file("deps/fetch.txt", 'message(STATUS "configured")\n'),
+      file("docs/bootstrap", "#!/bin/sh\necho bootstrapping\n"),
+    ],
+  });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const firstBatchIds = (
+    JSON.parse(plan.batches[0].evidence) as { items: { id: string }[] }
+  ).items.map((item) => item.id);
+  expect(firstBatchIds.slice(0, 8)).toEqual([
+    DETERMINISTIC_COVERAGE_ID,
+    "AGENTS.md",
+    "CMakeLists.txt",
+    "deps/fetch.txt",
+    "docs/assets/app-Abc12345.js#signals",
+    "docs/bootstrap",
+    "scripts/install.sh",
+    "aaa/first-copy.ts",
+  ]);
+});
+
 type ParsedBatch = {
   items: { id: string; text: string; sha256: string }[];
   sameBytesAs?: Record<string, string[]>;

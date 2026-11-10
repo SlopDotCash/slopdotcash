@@ -21,6 +21,7 @@ import {
   MAX_INVENTORY_BYTES,
   MAX_INVENTORY_ITEMS,
   type RepositoryInspection,
+  type ScanSurface,
   surfacesOf,
   textParts,
 } from "./bounded-scan";
@@ -52,6 +53,7 @@ type Item = { id: string; text: string; sha256: string };
 type PlannedItem = { item: Item; aliases: string[] };
 type Inventory = {
   items: Item[];
+  classifications?: { path: string; surfaces: ScanSurface[] }[];
   artifacts: unknown[];
   visibilityGaps: string[];
 };
@@ -129,7 +131,11 @@ function batchParts(item: Item, limit: number): Item[] {
 }
 
 /** Review order: 0 runs at install, build or agent time, or carries a risk signal. */
-function tier(id: string, risky: Set<string>): number {
+function tier(
+  id: string,
+  risky: Set<string>,
+  classified: ReadonlyMap<string, readonly ScanSurface[]>,
+): number {
   // A batch part of an already split file carries two part suffixes.
   const path = id.replace(/(?:#(?:part-\d+-of-\d+|signals))+$/u, "");
   if (
@@ -140,7 +146,7 @@ function tier(id: string, risky: Set<string>): number {
   )
     return 0;
   const lower = path.toLowerCase();
-  const surfaces = surfacesOf(path);
+  const surfaces = classified.get(path) ?? surfacesOf(path);
   if (
     risky.has(path) ||
     surfaces.includes("installScripts") ||
@@ -202,6 +208,12 @@ export function planReview(
       visibilityGaps: [],
     });
   const risky = new Set(inspection.riskSignals);
+  const classified = new Map(
+    (inventory.classifications ?? []).map((entry) => [
+      entry.path,
+      entry.surfaces,
+    ]),
+  );
   const limit = Math.min(batchTokens * BYTES_PER_TOKEN, MAX_INVENTORY_BYTES);
   // An item larger than one batch is reviewed in consecutive parts; a call
   // never receives more than one review call accepts.
@@ -238,8 +250,8 @@ export function planReview(
       position,
       // A shared copy is reviewed at the riskiest tier of any of its paths.
       tier: (sameBytes.get(item.id) ?? []).reduce(
-        (lowest, id) => Math.min(lowest, tier(id, risky)),
-        tier(item.id, risky),
+        (lowest, id) => Math.min(lowest, tier(id, risky, classified)),
+        tier(item.id, risky, classified),
       ),
     }))
     // Stable: within a tier, sorted inventory order groups each directory

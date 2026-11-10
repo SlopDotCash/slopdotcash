@@ -8672,7 +8672,7 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "c32d1f4b540c24baa6c02044c0a937de87452cd3b7966a55ae50ae7e5536df69",
+      "sha256": "47802e3b1d3496ced7965a214000d07a950bb12ec8fce77716372e03a636dea2",
       "models": [
         "formal/models/vetting/pr_review_retry.qnt",
         "formal/models/vetting/vetting_acquisition.qnt",
@@ -8680,8 +8680,8 @@
         "formal/models/vetting/vetting_review_batches.qnt"
       ],
       "candidateLines": [
-        14, 95, 438, 498, 515, 518, 519, 528, 535, 536, 571, 594, 662, 669, 689,
-        711, 739, 767
+        14, 97, 450, 510, 527, 530, 531, 540, 547, 548, 583, 606, 674, 681, 701,
+        723, 751, 779
       ],
       "review": "mapped-abstraction"
     },
