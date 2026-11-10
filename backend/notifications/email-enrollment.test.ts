@@ -1,6 +1,7 @@
 /** Real API/D1/outbox flow with an injected provider; no external email. */
 import { expect, test } from "bun:test";
-import { sqliteD1 } from "../../tests/sqlite-d1";
+import { readFileSync } from "node:fs";
+import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import { dispatchActivityMail } from "../../workers/notify/activity";
 import {
   handleEnrollmentMailRequest,
@@ -552,6 +553,74 @@ test("an expired unsubscribe token is rejected; a fresh mail issues a new token"
     ).toBe(200);
   } finally {
     h.sqlite.close();
+  }
+});
+
+test("migration 0121 applies to a database that already has unsubscribe tokens", async () => {
+  // Regression: 0121 originally ran its backfill UPDATE while the 0111
+  // no-update trigger (no WHEN clause) was still installed, so it aborted
+  // with "issued unsubscribe capabilities are immutable" on any non-empty
+  // table and the deploy could never record the migration. The migration
+  // must drop the old trigger before the backfill and create the new
+  // trigger after it (the new trigger's expires_at guard would abort the
+  // backfill too).
+  const { sqlite } = sqliteD1(
+    MIGRATIONS.filter((m) => m <= "0111_verified_notification_email.sql"),
+  );
+  try {
+    sqlite
+      .query(
+        "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at) VALUES(?,?,?)",
+      )
+      .run("a".repeat(64), "b".repeat(64), "2026-10-30T12:00:00.000Z");
+    expect(() =>
+      sqlite.exec(
+        readFileSync(
+          "migrations/0121_email_unsubscribe_token_expiry.sql",
+          "utf8",
+        ),
+      ),
+    ).not.toThrow();
+    expect(
+      sqlite
+        .query(
+          "SELECT expires_at,consumed_at FROM notification_email_unsubscribe_tokens",
+        )
+        .get(),
+    ).toEqual({
+      expires_at: "2026-11-29T12:00:00.000Z",
+      consumed_at: null,
+    });
+    // The new trigger still allows the claim (spend) while aborting a
+    // cleared spend, a moved expiry, or a changed issue time.
+    sqlite
+      .query(
+        "UPDATE notification_email_unsubscribe_tokens SET consumed_at=? WHERE token_hash=?",
+      )
+      .run("2026-10-30T12:00:00.000Z", "a".repeat(64));
+    expect(() =>
+      sqlite
+        .query(
+          "UPDATE notification_email_unsubscribe_tokens SET consumed_at=NULL WHERE token_hash=?",
+        )
+        .run("a".repeat(64)),
+    ).toThrow("issued unsubscribe capabilities are immutable");
+    expect(() =>
+      sqlite
+        .query(
+          "UPDATE notification_email_unsubscribe_tokens SET expires_at=? WHERE token_hash=?",
+        )
+        .run("2026-12-29T12:00:00.000Z", "a".repeat(64)),
+    ).toThrow("issued unsubscribe capabilities are immutable");
+    expect(() =>
+      sqlite
+        .query(
+          "UPDATE notification_email_unsubscribe_tokens SET issued_at=? WHERE token_hash=?",
+        )
+        .run("2026-10-29T12:00:00.000Z", "a".repeat(64)),
+    ).toThrow("issued unsubscribe capabilities are immutable");
+  } finally {
+    sqlite.close();
   }
 });
 

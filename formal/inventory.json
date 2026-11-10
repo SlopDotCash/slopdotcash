@@ -3218,9 +3218,9 @@
     },
     {
       "path": "migrations/0121_email_unsubscribe_token_expiry.sql",
-      "sha256": "c07e4aba2da220a542a862beccaa49c45a3c4b635fb3a8f03f87be422abf83f5",
+      "sha256": "c9f567e6c9c81063a2a7963991d3c83c0a10823fa71853b5869d3dcec576eb9a",
       "models": ["formal/models/api/api_email_consent.qnt"],
-      "candidateLines": [7, 13, 16],
+      "candidateLines": [6, 13, 19, 21],
       "review": "mapped-abstraction"
     },
     {
