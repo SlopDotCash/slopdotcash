@@ -219,12 +219,12 @@
     },
     {
       "path": "backend/notifications/email-destinations.ts",
-      "sha256": "8b6f844d5fe2683a96d30277e91d6da22a30b3e175952a410bb953c121651d9d",
+      "sha256": "65203e511016e56864affbb47a3fff60e1f9287c215b04b663940c125eb3f128",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_verification_completion.qnt"
       ],
-      "candidateLines": [120],
+      "candidateLines": [128],
       "review": "mapped-abstraction"
     },
     {
@@ -3214,6 +3214,13 @@
         "formal/models/slopbot/bot_value_attempt_recovery.qnt"
       ],
       "candidateLines": [1, 8, 9, 11, 12, 14, 15],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0121_email_unsubscribe_token_expiry.sql",
+      "sha256": "13cdfcfaf255473b2b41e00d26ae0743a5a21f46bc43676473591c35970df0f0",
+      "models": ["formal/models/api/api_email_consent.qnt"],
+      "candidateLines": [7, 14, 16],
       "review": "mapped-abstraction"
     },
     {
@@ -7202,12 +7209,12 @@
     },
     {
       "path": "workers/notify/enrollment.ts",
-      "sha256": "2995f3889da8c6886d1704ac03a5a072b40737fe1a9fb1afd0996733879a60e8",
+      "sha256": "0412859817c599f534e4d41d82364f4f83c05ac3e5bbf66267041fe58df4c615",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt"
       ],
-      "candidateLines": [36, 38, 90, 93, 95, 98, 105, 121, 125, 127, 147],
+      "candidateLines": [36, 38, 90, 93, 95, 98, 105, 121, 125, 127, 146, 160],
       "review": "mapped-abstraction"
     },
     {
@@ -8817,13 +8824,14 @@
     },
     {
       "path": "formal/models/api/api_email_consent.qnt",
-      "sha256": "1f642880d8247703ae921542bc8ee42df3d66c83437ebf20dcc62b3b108a3742",
+      "sha256": "e8fdc7cf9dbf9db94d9517cb9061ffa89fa3c98b7c93da183ae392c618ad613c",
       "sources": [
         "backend/notifications/email-destinations.ts",
         "backend/notifications/email.ts",
         "migrations/0033_optional_notification_email.sql",
         "migrations/0111_verified_notification_email.sql",
         "migrations/0116_email_preference_revision.sql",
+        "migrations/0121_email_unsubscribe_token_expiry.sql",
         "workers/notify/enrollment.ts"
       ],
       "scenarios": [

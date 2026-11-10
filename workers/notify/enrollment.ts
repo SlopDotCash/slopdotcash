@@ -129,17 +129,30 @@ export async function sendEmailVerification(
   return true;
 }
 
-/** This capability only disables this exact verified destination's consent. */
+/** This capability only disables this exact verified destination's consent.
+ * An issued token is single-use and expires: the spend is claimed
+ * atomically before the preference write, so a second use of the same
+ * token (or any use past its expiry) is rejected. A fresh mail re-issues
+ * the capability for its destination version. */
 async function unsubscribeEmail(
   deps: Pick<EnrollmentMailDependencies, "db" | "now">,
   token: string,
 ): Promise<boolean> {
   if (!/^[a-f0-9]{64}\.[a-f0-9]{64}$/u.test(token)) return false;
+  const now = deps.now().toISOString();
+  const tokenHash = await verificationTokenHash(token);
+  const claim = await deps.db
+    .prepare(
+      "UPDATE notification_email_unsubscribe_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL AND expires_at>?",
+    )
+    .bind(now, tokenHash, now)
+    .run();
+  if ((claim.meta?.changes ?? 0) !== 1) return false;
   const issued = await deps.db
     .prepare(
       "SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash=?",
     )
-    .bind(await verificationTokenHash(token))
+    .bind(tokenHash)
     .first<{ destination_version: string }>();
   if (!issued) return false;
   const version = issued.destination_version;

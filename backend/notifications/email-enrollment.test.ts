@@ -11,6 +11,7 @@ import { handleSecurityApi } from "../security/handler";
 import { handleEmailPreferences } from "./email";
 import {
   emailUnsubscribeToken,
+  issueEmailUnsubscribeToken,
   verificationTokenHash,
 } from "./email-destinations";
 
@@ -333,6 +334,16 @@ test("a repeated issued unsubscribe supersedes a pending opt-in at the same time
     expect(
       (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
     ).toBe(200);
+    // The first unsubscribe spends the issued token, so a second one needs
+    // a fresh issue, as the next notification mail would provide.
+    expect(
+      await issueEmailUnsubscribeToken(
+        h.db,
+        KEY,
+        verified.body.destinationVersion as string,
+        h.worker.now(),
+      ),
+    ).toBe(unsubscribe);
     pause = true;
     const pending = h.call("", {
       enabled: true,
@@ -371,6 +382,81 @@ test("a repeated issued unsubscribe supersedes a pending opt-in at the same time
     expect(h.mail).toHaveLength(3);
   } finally {
     release();
+    h.sqlite.close();
+  }
+});
+
+test("an issued unsubscribe token works once; a fresh mail re-issues it", async () => {
+  const h = await setup();
+  try {
+    await h.enroll();
+    const verified = await h.verify();
+    const version = verified.body.destinationVersion as string;
+    h.activity("single-use-activity");
+    await dispatchActivityMail(h.worker);
+    const unsubscribe = await emailUnsubscribeToken(KEY, version);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    expect(
+      (
+        await h.call("", {
+          enabled: true,
+          securityEnabled: true,
+          destinationVersion: version,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: true,
+      securityEnabled: true,
+    });
+    // The next notification mail renews the same token string.
+    h.activity("renewal-activity");
+    await dispatchActivityMail(h.worker);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+    expect((await h.call()).body).toMatchObject({
+      enabled: false,
+      securityEnabled: false,
+    });
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("an expired unsubscribe token is rejected until a fresh mail re-issues it", async () => {
+  const h = await setup();
+  try {
+    await h.enroll();
+    const verified = await h.verify();
+    const version = verified.body.destinationVersion as string;
+    h.activity("expiry-activity");
+    await dispatchActivityMail(h.worker);
+    const unsubscribe = await emailUnsubscribeToken(KEY, version);
+    expect(
+      h.sqlite
+        .query("SELECT expires_at FROM notification_email_unsubscribe_tokens")
+        .get(),
+    ).toEqual({ expires_at: "2026-11-29T12:00:00.000Z" });
+    h.advance(31 * 24 * 60 * 60 * 1000);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(409);
+    expect((await h.call()).body).toMatchObject({
+      enabled: true,
+      securityEnabled: true,
+    });
+    h.activity("renewal-after-expiry");
+    await dispatchActivityMail(h.worker);
+    expect(
+      (await h.call("/unsubscribe", { token: unsubscribe }, null)).status,
+    ).toBe(200);
+  } finally {
     h.sqlite.close();
   }
 });

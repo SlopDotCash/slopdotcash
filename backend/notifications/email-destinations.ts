@@ -82,6 +82,11 @@ export function validUnsubscribeKey(key: string | undefined): key is string {
   return typeof key === "string" && /^[a-f0-9]{64}$/u.test(key);
 }
 
+/** An issued unsubscribe capability lives 30 days from its latest issue.
+ * A fresh mail re-issues (renews) the same deterministic token, so the
+ * window is bounded after mail stops, never permanent. */
+export const EMAIL_UNSUBSCRIBE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 async function unsubscribeMac(
   key: string,
   version: string,
@@ -115,11 +120,19 @@ export async function issueEmailUnsubscribeToken(
   now: Date,
 ): Promise<string> {
   const token = await emailUnsubscribeToken(key, version);
+  // Re-issuing the same deterministic token renews it: a fresh mail extends
+  // its expiry and clears a previous spend, so the next unsubscribe from a
+  // current mail works while a stale capability stays dead.
   await db
     .prepare(
-      "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at) VALUES(?,?,?) ON CONFLICT(token_hash) DO NOTHING",
+      "INSERT INTO notification_email_unsubscribe_tokens(token_hash,destination_version,issued_at,expires_at,consumed_at) VALUES(?,?,?,?,NULL) ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at,consumed_at=NULL",
     )
-    .bind(await verificationTokenHash(token), version, now.toISOString())
+    .bind(
+      await verificationTokenHash(token),
+      version,
+      now.toISOString(),
+      new Date(now.getTime() + EMAIL_UNSUBSCRIBE_TTL_MS).toISOString(),
+    )
     .run();
   return token;
 }

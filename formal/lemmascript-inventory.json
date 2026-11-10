@@ -81,7 +81,7 @@
 {"path":"backend/identity-assertion.ts","sha256":"41891b107de4c8c017c4e905f03305aa10e9bed5e8eeded377ee4522933c87a2","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"consumeIdentityAssertion","kind":"FunctionDeclaration","line":17,"sha256":"50b22e5790fa14d4847ef2436f6d2a1615de858862da2ef2b9c828ba167fbd50","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
-{"path":"backend/notifications/email-destinations.ts","sha256":"8b6f844d5fe2683a96d30277e91d6da22a30b3e175952a410bb953c121651d9d","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"backend/notifications/email-destinations.ts","sha256":"65203e511016e56864affbb47a3fff60e1f9287c215b04b663940c125eb3f128","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"randomEmailToken","kind":"FunctionDeclaration","line":13,"sha256":"c215d1f23af24badea0e25c6f4a24fd38161d56b6a7ea22e4115165372128a45","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
 {"name":"enrolledDestination","kind":"FunctionDeclaration","line":17,"sha256":"de70dbe32bd4681264112deca1f0472017674cb3961a547a780bc0f8b4426644","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"mailServiceRequest","kind":"FunctionDeclaration","line":40,"sha256":"524c4b6f126a6db6e276133c9456df5986eff2ad52da189da32354fca9195540","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
@@ -89,10 +89,10 @@
 {"name":"hexBytes","kind":"FunctionDeclaration","line":75,"sha256":"b7c595693f76723e18942567b751dbbfe598a04aaa979afff749b4fad7f2434b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@76>","kind":"ArrowFunction","line":76,"sha256":"e89feb42aa0a8446ef585f80cc53d6aa3c012ad4bc4df700053d9a3daa12e14e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"validUnsubscribeKey","kind":"FunctionDeclaration","line":81,"sha256":"0971e29879902f7c36a4dc100612032823513c0fbb878f38fad15a9907ec6fa1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"unsubscribeMac","kind":"FunctionDeclaration","line":85,"sha256":"2cdfb5fe74fc9417d51ee430ab9ac5454efc8c9634728a4b88468cf6927c755d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
-{"name":"emailUnsubscribeToken","kind":"FunctionDeclaration","line":103,"sha256":"c3b677cb5a8cce1b88d37ab5c3c8923b8ae0a4e0909118d74e4c3833de26b6f3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"issueEmailUnsubscribeToken","kind":"FunctionDeclaration","line":111,"sha256":"5045a00de347bcaae8a3d12e83a3009b3a9a4bc48ef4c69ff526c908b5f93b64","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"verificationTokenHash","kind":"FunctionDeclaration","line":127,"sha256":"016e22c6bdae5c0f73823564f6033aa47b23cd6148018c16fe7bb9bfa43fcf7a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"unsubscribeMac","kind":"FunctionDeclaration","line":90,"sha256":"2cdfb5fe74fc9417d51ee430ab9ac5454efc8c9634728a4b88468cf6927c755d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"emailUnsubscribeToken","kind":"FunctionDeclaration","line":108,"sha256":"c3b677cb5a8cce1b88d37ab5c3c8923b8ae0a4e0909118d74e4c3833de26b6f3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"issueEmailUnsubscribeToken","kind":"FunctionDeclaration","line":116,"sha256":"c1fedad295c1b991601949bfe32efbbe818704476e3ec0af0014e3f8022bf330","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"verificationTokenHash","kind":"FunctionDeclaration","line":140,"sha256":"016e22c6bdae5c0f73823564f6033aa47b23cd6148018c16fe7bb9bfa43fcf7a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"backend/notifications/email.ts","sha256":"d638f73f8e7fcf7f0bffe1b8a3caa6405b302aba9528fae16de0127fe3857bdb","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"emailBatch","kind":"FunctionDeclaration","line":31,"sha256":"e6376837eca77e40e651694e68522fb71805a36082aeb2bbe8ea98049d5f0b70","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -9576,11 +9576,11 @@
 {"name":"validFailureNotice","kind":"FunctionDeclaration","line":53,"sha256":"4a27b2368edc2059636ad2a426748ab9525f08b37c1738691070c5c45fc743b6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"validSpendNotice","kind":"FunctionDeclaration","line":81,"sha256":"099d996c1989eb61b20a5ad1ba7efbbbb7cb15fffc199d0253ff33411349cce7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
 ]},
-{"path":"workers/notify/enrollment.ts","sha256":"2995f3889da8c6886d1704ac03a5a072b40737fe1a9fb1afd0996733879a60e8","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/notify/enrollment.ts","sha256":"0412859817c599f534e4d41d82364f4f83c05ac3e5bbf66267041fe58df4c615","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"handleEnrollmentMailRequest","kind":"FunctionDeclaration","line":20,"sha256":"bde01fdde3f43a9172d0c1fff230b274db031a45429c9428f053d029e283fa9a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"respond","kind":"ArrowFunction","line":36,"sha256":"a2564ce4356c35e730c2a4e33d0f8dfbcdbf1ad52fbbbf83fba9e488b3bc2b31","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"sendEmailVerification","kind":"FunctionDeclaration","line":73,"sha256":"45037a53da2831c1a3d2995b68938edaa51df53f20243df266107d4f37adb30e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
-{"name":"unsubscribeEmail","kind":"FunctionDeclaration","line":133,"sha256":"8472fde8e18411479418c1d3480e597d33ad033c3e503914e8f978951ab1c43d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"name":"unsubscribeEmail","kind":"FunctionDeclaration","line":137,"sha256":"3acb385700b153656a1b79f7e070961c552835ca372690fc91dbaa5c36c9b21a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"workers/notify/handler.ts","sha256":"15fd79fd2b2ed36681601f8c6de5043c6c98c7865529fcea03f87a7eaaef733e","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"parseAdminEmails","kind":"FunctionDeclaration","line":49,"sha256":"3ad244de9a30c5c9b04667776870445a5cdbb451dae87f871cd4e6c505701860","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},

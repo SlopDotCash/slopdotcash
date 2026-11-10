@@ -45,7 +45,8 @@ async function setup(
               p.startsWith("0063") ||
               p.startsWith("0065") ||
               p.startsWith("0079") ||
-              p.startsWith("0111")
+              p.startsWith("0111") ||
+              p.startsWith("0121")
             )),
       )
       .sort(),
@@ -1264,6 +1265,9 @@ test("pre-pilot inbox history is not mailed and does not expose a dead acknowled
   h.sqlite.exec(
     readFileSync("migrations/0111_verified_notification_email.sql", "utf8"),
   );
+  h.sqlite.exec(
+    readFileSync("migrations/0121_email_unsubscribe_token_expiry.sql", "utf8"),
+  );
   const response = await handleNotificationsApi(
     new Request(origin + "/api/v1/notifications"),
     {
@@ -1368,6 +1372,13 @@ test("populated mail upgrades preserve history and bind only future notices to n
     apply("0111_verified_notification_email.sql");
     expect(notices()).toEqual(populatedNotices);
     expect(securityQueue()).toEqual(oldSecurity);
+    // The unsubscribe-token lifecycle migration touches only its own table.
+    apply("0121_email_unsubscribe_token_expiry.sql");
+    expect(notices()).toEqual(populatedNotices);
+    expect(securityQueue()).toEqual(oldSecurity);
+    expect(activityQueue()).toEqual(oldActivity);
+    expect(securityEvidence()).toEqual(oldSecurityEvidence);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
     const boundVersions = () =>
       h.sqlite
         .query(
