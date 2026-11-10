@@ -19,6 +19,7 @@ import type {
   GitHubLabel,
   GitHubTextSource,
   InvalidAttributionMarker,
+  InvalidScoreRatificationMarker,
   IssueRecord,
   LeaderboardEntry,
   LeaderboardInput,
@@ -3156,6 +3157,9 @@ function createSnapshotWithReviewCutoff(
     string,
     { record: ScoreRatificationRecord; source: GitHubTextSource }
   >();
+  // Maintainer slop-score records skipped as invalid, in source order.
+  // The snapshot publishes them so a dropped ratification stays visible.
+  const invalidScoreRatifications: InvalidScoreRatificationMarker[] = [];
   for (const pullRequest of humanDecisionSources) {
     const repository = findRegisteredRepositoryById(
       repositoryIdFromUrl(pullRequest.url),
@@ -3184,117 +3188,134 @@ function createSnapshotWithReviewCutoff(
         )
       )
         continue;
-      const raw = parseScoreRatificationBlock(source.body);
-      if (raw === null) continue;
-      const record = assertScoreRatificationContext(raw, {
-        projectId: repository.projectId,
-        pullRequestNodeId: pullRequest.id,
-        headSha: pullRequest.headRefOid,
-        sourceNodeId: source.id,
-        authorAssociation: source.authorAssociation,
-        createdAt: source.createdAt,
-        updatedAt: source.updatedAt,
-      });
-      if (current === null && record.supersedes !== null) {
-        throw new TypeError(
-          "first slop-score record cannot supersede another record",
-        );
-      }
-      if (current !== null && record.supersedes !== current.source.id) {
-        throw new TypeError(
-          "slop-score correction must supersede the current record",
-        );
-      }
-      // Related-party scoring requires a second maintainer regardless of tier:
-      // a ratifier must never be the sole authority over their own outcome.
-      // Under SCR-04 a linked commit co-author shares that outcome too.
-      const outcome = outcomeById.get(pullRequest.id);
-      const sharesOutcome = (who: GitHubActor | null) =>
-        sameActor(who, pullRequest.author) ||
-        (outcome !== undefined &&
-          mergeCreditActorsOf(outcome).some((actor) => sameActor(who, actor)));
-      if (
-        sharesOutcome(source.author) &&
-        record.coRatifierNodeIds.length === 0
-      ) {
-        throw new TypeError(
-          "self slop-score requires a second maintainer co-ratifier",
-        );
-      }
-      for (const reviewNodeId of record.proposalReviewNodeIds) {
-        const reviewSource = sourceById.get(reviewNodeId);
-        const proposal = reviewSource
-          ? parseReviewRecordBlock(reviewSource.body)
-          : null;
-        if (!reviewSource || proposal === null) {
-          throw new TypeError(
-            "slop-score proposal does not reference a review record on this pull request",
-          );
-        }
-        if (
-          typeof proposal !== "object" ||
-          proposal === null ||
-          (proposal as { schemaVersion?: unknown }).schemaVersion !== "2"
-        ) {
-          throw new TypeError(
-            "non-micro slop-score requires a v2 Claude review proposal",
-          );
-        }
-        const proposedReview = assertReviewRecord(proposal);
-        const proposalAssessment = assessModelAttribution([reviewSource], {
-          requireEverySource: true,
-          verifyRunReceipt: input.verifyRunReceipt,
-        });
-        const proposalReceipt = input.verifyRunReceipt
-          ? (proposalAssessment.declarations[0]?.run ?? null)
-          : null;
-        assertReviewRecordReceiptJoin(proposedReview, proposalReceipt, {
-          artifactUrl: pullRequest.url,
+      // One invalid maintainer record must not abort the whole network
+      // snapshot: skip that comment and record it, the same way the
+      // slop-review path skips an invalid marker instead of throwing.
+      // The pull request keeps its provisional credit.
+      try {
+        const raw = parseScoreRatificationBlock(source.body);
+        if (raw === null) continue;
+        const record = assertScoreRatificationContext(raw, {
+          projectId: repository.projectId,
+          pullRequestNodeId: pullRequest.id,
           headSha: pullRequest.headRefOid,
+          sourceNodeId: source.id,
+          authorAssociation: source.authorAssociation,
+          createdAt: source.createdAt,
+          updatedAt: source.updatedAt,
         });
+        if (current === null && record.supersedes !== null) {
+          throw new TypeError(
+            "first slop-score record cannot supersede another record",
+          );
+        }
+        if (current !== null && record.supersedes !== current.source.id) {
+          throw new TypeError(
+            "slop-score correction must supersede the current record",
+          );
+        }
+        // Related-party scoring requires a second maintainer regardless of tier:
+        // a ratifier must never be the sole authority over their own outcome.
+        // Under SCR-04 a linked commit co-author shares that outcome too.
+        const outcome = outcomeById.get(pullRequest.id);
+        const sharesOutcome = (who: GitHubActor | null) =>
+          sameActor(who, pullRequest.author) ||
+          (outcome !== undefined &&
+            mergeCreditActorsOf(outcome).some((actor) =>
+              sameActor(who, actor),
+            ));
         if (
-          proposedReview.securityRisk !== "none" &&
+          sharesOutcome(source.author) &&
           record.coRatifierNodeIds.length === 0
         ) {
           throw new TypeError(
-            "security-sensitive slop-score requires a co-ratifier",
+            "self slop-score requires a second maintainer co-ratifier",
           );
         }
+        for (const reviewNodeId of record.proposalReviewNodeIds) {
+          const reviewSource = sourceById.get(reviewNodeId);
+          const proposal = reviewSource
+            ? parseReviewRecordBlock(reviewSource.body)
+            : null;
+          if (!reviewSource || proposal === null) {
+            throw new TypeError(
+              "slop-score proposal does not reference a review record on this pull request",
+            );
+          }
+          if (
+            typeof proposal !== "object" ||
+            proposal === null ||
+            (proposal as { schemaVersion?: unknown }).schemaVersion !== "2"
+          ) {
+            throw new TypeError(
+              "non-micro slop-score requires a v2 Claude review proposal",
+            );
+          }
+          const proposedReview = assertReviewRecord(proposal);
+          const proposalAssessment = assessModelAttribution([reviewSource], {
+            requireEverySource: true,
+            verifyRunReceipt: input.verifyRunReceipt,
+          });
+          const proposalReceipt = input.verifyRunReceipt
+            ? (proposalAssessment.declarations[0]?.run ?? null)
+            : null;
+          assertReviewRecordReceiptJoin(proposedReview, proposalReceipt, {
+            artifactUrl: pullRequest.url,
+            headSha: pullRequest.headRefOid,
+          });
+          if (
+            proposedReview.securityRisk !== "none" &&
+            record.coRatifierNodeIds.length === 0
+          ) {
+            throw new TypeError(
+              "security-sensitive slop-score requires a co-ratifier",
+            );
+          }
+        }
+        for (const ratifierNodeId of record.coRatifierNodeIds) {
+          const ratifier = sourceById.get(ratifierNodeId);
+          if (
+            !ratifier ||
+            !["OWNER", "MEMBER", "COLLABORATOR"].includes(
+              ratifier.authorAssociation ?? "",
+            ) ||
+            ratifier.createdAt !== ratifier.updatedAt
+          ) {
+            throw new TypeError(
+              "slop-score co-ratifier is not an immutable maintainer comment",
+            );
+          }
+          if (sameActor(ratifier.author, source.author)) {
+            throw new TypeError(
+              "slop-score co-ratifier must be a second maintainer",
+            );
+          }
+          // The second maintainer is the independent approval, so it cannot be
+          // a credit actor of the outcome it approves.
+          if (sharesOutcome(ratifier.author)) {
+            throw new TypeError(
+              "slop-score co-ratifier must not share the scored outcome",
+            );
+          }
+          const approval = parseScoreApprovalBlock(ratifier.body);
+          if (approval === null) {
+            throw new TypeError(
+              "slop-score co-ratifier lacks a score approval record",
+            );
+          }
+          assertScoreApprovalRecord(approval, record);
+        }
+        current = { record, source };
+      } catch (error: unknown) {
+        invalidScoreRatifications.push({
+          sourceId: source.id,
+          sourceUrl: source.url,
+          reason:
+            error instanceof Error
+              ? error.message
+              : "slop-score record is invalid",
+        });
       }
-      for (const ratifierNodeId of record.coRatifierNodeIds) {
-        const ratifier = sourceById.get(ratifierNodeId);
-        if (
-          !ratifier ||
-          !["OWNER", "MEMBER", "COLLABORATOR"].includes(
-            ratifier.authorAssociation ?? "",
-          ) ||
-          ratifier.createdAt !== ratifier.updatedAt
-        ) {
-          throw new TypeError(
-            "slop-score co-ratifier is not an immutable maintainer comment",
-          );
-        }
-        if (sameActor(ratifier.author, source.author)) {
-          throw new TypeError(
-            "slop-score co-ratifier must be a second maintainer",
-          );
-        }
-        // The second maintainer is the independent approval, so it cannot be
-        // a credit actor of the outcome it approves.
-        if (sharesOutcome(ratifier.author)) {
-          throw new TypeError(
-            "slop-score co-ratifier must not share the scored outcome",
-          );
-        }
-        const approval = parseScoreApprovalBlock(ratifier.body);
-        if (approval === null) {
-          throw new TypeError(
-            "slop-score co-ratifier lacks a score approval record",
-          );
-        }
-        assertScoreApprovalRecord(approval, record);
-      }
-      current = { record, source };
     }
     if (current) scoreRatifications.set(pullRequest.id, current);
   }
@@ -5058,6 +5079,9 @@ function createSnapshotWithReviewCutoff(
         left.sourceId.localeCompare(right.sourceId) ||
         left.reason.localeCompare(right.reason),
     ),
+    ...(invalidScoreRatifications.length > 0
+      ? { invalidScoreRatifications }
+      : {}),
     attributionCoverage,
     workQueue: {
       issues: issueQueue.map((result) => result.item).sort(compareWorkItems),
@@ -7352,6 +7376,25 @@ export function assertLeaderboardSnapshot(
     }
     assertString(marker.reason, `${markerPath}.reason`);
   });
+  if (snapshot.invalidScoreRatifications !== undefined) {
+    if (!Array.isArray(snapshot.invalidScoreRatifications)) {
+      throw new Error("snapshot.invalidScoreRatifications must be an array");
+    }
+    snapshot.invalidScoreRatifications.forEach((markerValue, index) => {
+      const markerPath = `snapshot.invalidScoreRatifications[${index}]`;
+      const marker = assertObject(markerValue, markerPath);
+      assertString(marker.sourceId, `${markerPath}.sourceId`);
+      assertRepositoryUrl(marker.sourceUrl, `${markerPath}.sourceUrl`);
+      if (
+        !repositoryIds.includes(repositoryIdFromUrl(marker.sourceUrl as string))
+      ) {
+        throw new Error(
+          `${markerPath}.sourceUrl must reference a collected repository`,
+        );
+      }
+      assertString(marker.reason, `${markerPath}.reason`);
+    });
+  }
   const attributionCoverage = assertObject(
     snapshot.attributionCoverage,
     "snapshot.attributionCoverage",
