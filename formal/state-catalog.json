@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2b8800b614c13675b11cf4f2760b3b6aa9106f965b37388681b1d688b3282da2",
+  "inventorySha256": "887f4bf71f26eb64dad955a68ba565d93379ca8ead6670a53085e7261c4c43ff",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -10,6 +10,7 @@
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
       "models": [
+        "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt"
       ],
@@ -1834,6 +1835,62 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0121_fee_buyback.sql",
+      "line": 21,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0121_fee_buyback.sql",
+      "line": 66,
+      "name": "state",
+      "kind": "sql-check",
+      "values": [
+        "failed",
+        "finalized",
+        "no_route",
+        "pending",
+        "quoted",
+        "skipped",
+        "submitted",
+        "unknown"
+      ],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "no_route",
+        "pending",
+        "quoted",
+        "skipped"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0121_fee_buyback.sql",
+      "line": 180,
+      "name": "outcome",
+      "kind": "sql-check",
+      "values": ["arrived", "refunded"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -3147,6 +3204,71 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/fee-converter/buyback.ts",
+      "line": 149,
+      "name": "outcome",
+      "kind": "string-union",
+      "values": ["arrived", "refunded"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/fee-converter/buyback.ts",
+      "line": 211,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/fee-converter/buyback.ts",
+      "line": 217,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/fee-converter/buyback.ts",
+      "line": 318,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["no_route", "pending", "quoted", "skipped"],
+      "models": [
+        "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_bridge_order.qnt",
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_slop_accounting.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "no_route",
+        "pending",
+        "quoted",
+        "skipped"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/fee-converter/config.ts",
       "line": 11,
       "name": "Mode",
@@ -3162,7 +3284,7 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 24,
+      "line": 29,
       "name": "ConversionState",
       "kind": "string-union",
       "values": [
@@ -3176,6 +3298,7 @@
         "unknown"
       ],
       "models": [
+        "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -3189,11 +3312,12 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 40,
+      "line": 49,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
       "models": [
+        "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -3207,11 +3331,12 @@
     },
     {
       "path": "workers/fee-converter/core.ts",
-      "line": 299,
+      "line": 315,
       "name": "status",
       "kind": "string-union",
       "values": ["locked", "not_converted", "ran"],
       "models": [
+        "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -3225,11 +3350,12 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "line": 44,
+      "line": 50,
       "name": "state",
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
       "models": [
+        "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
         "formal/models/fees/native_budget.qnt",

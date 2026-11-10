@@ -6816,7 +6816,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "1320e95a8aade4de9eeb199bc98812492f5705802f49077ad9ef549a9c6279eb",
+      "sha256": "63c7b8b25b682c7a5e7978b0a51816200d573c9423f2094957440b5140ea19c5",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
@@ -6824,9 +6824,9 @@
         "formal/models/fees/buyback_slop_accounting.qnt"
       ],
       "candidateLines": [
-        4, 16, 86, 93, 95, 96, 118, 200, 301, 317, 319, 326, 331, 332, 333, 338,
-        364, 366, 373, 377, 396, 397, 417, 491, 587, 616, 621, 731, 735, 765,
-        774, 776, 821, 827, 829, 864, 865, 866
+        4, 16, 86, 93, 95, 96, 118, 200, 300, 316, 318, 325, 330, 331, 332, 337,
+        363, 365, 372, 376, 395, 396, 416, 490, 586, 615, 620, 730, 734, 764,
+        773, 775, 820, 826, 828, 863, 864, 865
       ],
       "review": "mapped-abstraction"
     },
@@ -7047,7 +7047,7 @@
     },
     {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "33a6aa4e50051712f0efb230f975a28b666812f43b0e1cfcb512b51f807b0e77",
+      "sha256": "68c2f7c2a4f4ff7e13de4a3f35c447c00f25903281c1d72c33569612319f87ca",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/fee_conversion.qnt",
