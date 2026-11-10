@@ -43,6 +43,7 @@
     "src/lib/vault-setup.ts",
     "src/lib/vault-setup-attempt.ts",
     "src/lib/pending-attempt.ts",
+    "src/lib/direct-payment-plan.ts",
     "src/lib/byte-encoding.ts",
     "src/lib/solana-wire.ts",
     "src/lib/canonical-json.ts",

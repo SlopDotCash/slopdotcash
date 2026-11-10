@@ -1,10 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { encodeBase58Bytes } from "./lib/base58";
 import { decodeBase64 } from "./lib/byte-encoding";
+import {
+  type ApprovedDirectTransfer,
+  type ApprovedSolanaAsset,
+  matchesApprovedSolanaPlan,
+} from "./lib/direct-payment-plan";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import { isSolanaTransactionId } from "./lib/funding-address.mjs";
 import {
   clearPendingAttempt,
+  clearUnreadableRecord,
   createPendingAttempt,
   type PendingAttempt,
   updatePendingAttempt,
@@ -39,12 +45,17 @@ function readPending(raw: string | null, transaction: string): Pending | null {
   return saved;
 }
 
+const UNREADABLE_MESSAGE =
+  "The saved wallet request cannot be read. Check wallet activity before continuing.";
+
 /** Sends only the retained transaction through the owner's selected wallet. */
 export function SolanaBountyPayment({
   caseId,
   generation,
   payer,
   plan,
+  expectedTransfers,
+  asset,
   authorize,
   authorizeVerification,
   verify,
@@ -53,6 +64,13 @@ export function SolanaBountyPayment({
   generation: number;
   payer: string;
   plan: DirectSolanaPlan;
+  /**
+   * The approved transfers the plan must perform. When present, the
+   * transaction is checked against them before any wallet prompt; a plan
+   * that disagrees is refused instead of signed.
+   */
+  expectedTransfers?: ApprovedDirectTransfer[];
+  asset?: ApprovedSolanaAsset;
   authorize: () => Promise<void>;
   authorizeVerification: () => Promise<void>;
   verify: (signature: string) => Promise<void>;
@@ -63,6 +81,10 @@ export function SolanaBountyPayment({
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [actor, setActor] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [unreadable, setUnreadable] = useState<{
+    key: string;
+    raw: string | null;
+  } | null>(null);
   const storedPending = useRef<Pending | null>(null);
   const [candidate, setCandidate] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -70,34 +92,56 @@ export function SolanaBountyPayment({
   const sending = useRef(false);
   const { busy, error, setError, run } = useAction();
   const key = `slop:bounty-solana:v1:${caseId}:${generation}:${plan.messageId}:${actor ?? ""}`;
+  /** Reads the saved request, remembering an unreadable record for recovery. */
+  const readSessionPending = useCallback(async () => {
+    const session = await currentProjectSession();
+    if (!session) throw new Error("Sign in before making a payment.");
+    const storageKey = `slop:bounty-solana:v1:${caseId}:${generation}:${plan.messageId}:${session.githubId}`;
+    const raw = sessionStorage.getItem(storageKey);
+    try {
+      return {
+        actor: session.githubId,
+        saved: readPending(raw, plan.transaction),
+        storageKey,
+      };
+    } catch {
+      setUnreadable({ key: storageKey, raw });
+      throw new Error(UNREADABLE_MESSAGE);
+    }
+  }, [caseId, generation, plan.messageId, plan.transaction]);
   useEffect(() => {
     mounted.current = true;
-    void currentProjectSession()
-      .then((session) => {
-        if (!mounted.current) return;
-        if (!session) throw new Error("Sign in before making a payment.");
-        const storageKey = `slop:bounty-solana:v1:${caseId}:${generation}:${plan.messageId}:${session.githubId}`;
-        const saved = readPending(
-          sessionStorage.getItem(storageKey),
-          plan.transaction,
-        );
-        storedPending.current = saved;
-        setActor(session.githubId);
-        setPending(saved);
+    let active = true;
+    void readSessionPending()
+      .then((loaded) => {
+        if (!active || !mounted.current) return;
+        storedPending.current = loaded.saved;
+        setActor(loaded.actor);
+        setPending(loaded.saved);
         setReady(true);
       })
       .catch((cause: unknown) => {
-        if (mounted.current)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "The payment session could not be checked.",
-          );
+        if (active && mounted.current)
+          setError(cause instanceof Error ? cause.message : UNREADABLE_MESSAGE);
       });
     return () => {
+      active = false;
       mounted.current = false;
     };
-  }, [caseId, generation, plan.messageId, plan.transaction, setError]);
+  }, [readSessionPending, setError]);
+  /** Removes the unreadable record only if this tab did not change it. */
+  const clearUnreadable = () =>
+    void run(async () => {
+      if (!unreadable) return;
+      if (!clearUnreadableRecord(unreadable.key, unreadable.raw))
+        throw new Error("The saved request changed. Reload before continuing.");
+      setUnreadable(null);
+      const loaded = await readSessionPending();
+      storedPending.current = loaded.saved;
+      setActor(loaded.actor);
+      setPending(loaded.saved);
+      setReady(true);
+    });
   const remember = (value: Pending, previous?: Pending) => {
     const stored = previous
       ? updatePendingAttempt(key, previous, value)
@@ -128,6 +172,10 @@ export function SolanaBountyPayment({
     sending.current = true;
     void run(async () => {
       try {
+        if (planMismatch)
+          throw new Error(
+            "The prepared payment does not match the approved transfers. Refresh the case before signing.",
+          );
         if (!ready || pending || !wallet?.solanaSend) return;
         await guard();
         if (wallet.address !== payer)
@@ -207,6 +255,11 @@ export function SolanaBountyPayment({
     });
   };
   const signature = candidate ?? pending?.candidate ?? pending?.signature ?? "";
+  /** The transaction must perform exactly the approved transfers. */
+  const planMismatch =
+    expectedTransfers !== undefined &&
+    asset !== undefined &&
+    !matchesApprovedSolanaPlan(plan, expectedTransfers, asset, payer);
   const check = () =>
     void run(async () => {
       if (!pending || !isSolanaTransactionId(signature)) return;
@@ -235,6 +288,22 @@ export function SolanaBountyPayment({
         empty={<NoWalletFound solana />}
         onConnect={connect}
       />
+      {unreadable ? (
+        <div role="status">
+          <p>
+            The saved request cannot be read. Check wallet activity, then clear
+            it to continue.
+          </p>
+          <button
+            className="button secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={clearUnreadable}
+          >
+            I checked wallet activity. Clear saved request
+          </button>
+        </div>
+      ) : null}
       {pending ? (
         <>
           <label>
@@ -257,7 +326,7 @@ export function SolanaBountyPayment({
           <button
             className="button primary-button"
             type="button"
-            disabled={busy || !ready || !wallet}
+            disabled={busy || !ready || !wallet || planMismatch}
             onClick={send}
           >
             Pay approved award
@@ -274,6 +343,12 @@ export function SolanaBountyPayment({
           </button>
         ) : null}
       </div>
+      {planMismatch ? (
+        <p className="form-error" role="alert">
+          The prepared payment does not match the approved transfers. Refresh
+          the case before signing.
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}

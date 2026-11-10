@@ -74,3 +74,18 @@ export function clearPendingAttempt(
   storage.removeItem(key);
   return true;
 }
+
+/**
+ * Removes a saved record that cannot be parsed at all, only when this tab
+ * has not changed it since it was read. A corrupt record carries no attempt
+ * identity to compare, so the raw bytes are the comparison.
+ */
+export function clearUnreadableRecord(
+  key: string,
+  capturedRaw: string | null,
+  storage: Storage = sessionStorage,
+) {
+  if (storage.getItem(key) !== capturedRaw) return false;
+  storage.removeItem(key);
+  return true;
+}

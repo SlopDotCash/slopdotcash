@@ -19,6 +19,7 @@ const firefoxStreamWorkflows =
 // desktop run.
 const desktopOnlySpecs = [
   "contributor-allocation",
+  "direct-payment-plan",
   "email-preference-actor-binding",
   "inbox-report-account-change",
   "inbox-reports-session",

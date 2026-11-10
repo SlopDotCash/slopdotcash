@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ApprovedDirectTransfer,
+  matchesApprovedEvmPlan,
+} from "./lib/direct-payment-plan";
 import type { VaultConnection } from "./lib/evm-vault-actions";
+import { clearUnreadableRecord } from "./lib/pending-attempt";
 import { currentProjectSession } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -38,10 +43,9 @@ function selectedHash(
   return hash && HASH.test(hash) ? hash : null;
 }
 
-function readJournal(key: string, payer: string): Journal {
-  const saved = sessionStorage.getItem(key);
-  const entries = saved ? (JSON.parse(saved) as Journal) : {};
-  for (const [nonce, entry] of Object.entries(entries)) {
+function parseJournal(raw: string | null, payer: string): Journal {
+  const saved = raw ? (JSON.parse(raw) as Journal) : {};
+  for (const [nonce, entry] of Object.entries(saved)) {
     if (
       !entry ||
       entry.transaction.nonce !== nonce ||
@@ -58,8 +62,11 @@ function readJournal(key: string, payer: string): Journal {
         "The saved wallet request cannot be read. Check wallet activity before continuing.",
       );
   }
-  return entries;
+  return saved;
 }
+
+const UNREADABLE_MESSAGE =
+  "The saved wallet request cannot be read. Check wallet activity before continuing.";
 
 /** Each wallet prompt is recorded before it can broadcast; unknown outcomes never retry automatically. */
 export function DirectBountyPayment({
@@ -68,6 +75,8 @@ export function DirectBountyPayment({
   payer,
   transactions,
   cancellation = false,
+  expectedTransfers,
+  assetAddress,
   authorize,
   authorizeVerification,
   verify,
@@ -77,6 +86,14 @@ export function DirectBountyPayment({
   payer: string;
   transactions: DirectEvmTransaction[];
   cancellation?: boolean;
+  /**
+   * The approved transfers the plan must perform. When present, every
+   * transaction is checked against them before any wallet prompt; a plan
+   * that disagrees is refused instead of signed. Cancellation requests
+   * carry no transfers, so they leave this unset and skip the check.
+   */
+  expectedTransfers?: ApprovedDirectTransfer[];
+  assetAddress?: string;
   authorize: () => Promise<void>;
   authorizeVerification?: () => Promise<void>;
   verify: (hashes: string[]) => Promise<void>;
@@ -84,6 +101,10 @@ export function DirectBountyPayment({
   const [actor, setActor] = useState<string | null>(null);
   const [journal, setJournal] = useState<Journal>({});
   const [storageReady, setStorageReady] = useState(false);
+  const [unreadable, setUnreadable] = useState<{
+    key: string;
+    raw: string | null;
+  } | null>(null);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [recovered, setRecovered] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -99,35 +120,65 @@ export function DirectBountyPayment({
   const wallets = usePayoutWallets().filter((entry) => entry.family === "evm");
   const purpose = cancellation ? "cancel" : "pay";
   const key = `slop:bounty-send:v1:${caseId}:${generation}:${purpose}:${actor ?? ""}`;
+  /** Reads the saved journal, remembering an unreadable record for recovery. */
+  const readSessionJournal = useCallback(async () => {
+    const session = await currentProjectSession();
+    if (!session)
+      throw new Error("Sign in before connecting a payment wallet.");
+    const storageKey = `slop:bounty-send:v1:${caseId}:${generation}:${purpose}:${session.githubId}`;
+    const raw = sessionStorage.getItem(storageKey);
+    try {
+      return {
+        actor: session.githubId,
+        entries: parseJournal(raw, payer),
+        storageKey,
+      };
+    } catch {
+      setUnreadable({ key: storageKey, raw });
+      throw new Error(UNREADABLE_MESSAGE);
+    }
+  }, [caseId, generation, payer, purpose]);
   useEffect(() => {
     let active = true;
-    void currentProjectSession()
-      .then((session) => {
+    void readSessionJournal()
+      .then((loaded) => {
         if (!active) return;
-        if (!session)
-          throw new Error("Sign in before connecting a payment wallet.");
-        const storageKey = `slop:bounty-send:v1:${caseId}:${generation}:${purpose}:${session.githubId}`;
-        const entries = readJournal(storageKey, payer);
-        setActor(session.githubId);
-        setJournal(entries);
+        setActor(loaded.actor);
+        setJournal(loaded.entries);
         setStorageReady(true);
       })
       .catch((cause: unknown) => {
         if (active)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "The saved wallet request cannot be read.",
-          );
+          setError(cause instanceof Error ? cause.message : UNREADABLE_MESSAGE);
       });
     return () => {
       active = false;
     };
-  }, [caseId, generation, payer, purpose, setError]);
+  }, [readSessionJournal, setError]);
+  /** Removes the unreadable record only if this tab did not change it. */
+  const clearUnreadable = () =>
+    void run(async () => {
+      if (!unreadable) return;
+      if (!clearUnreadableRecord(unreadable.key, unreadable.raw))
+        throw new Error("The saved request changed. Reload before continuing.");
+      setUnreadable(null);
+      const loaded = await readSessionJournal();
+      setActor(loaded.actor);
+      setJournal(loaded.entries);
+      setStorageReady(true);
+    });
   // Each mutation rereads this key synchronously. A late result must merge
   // only its own nonce into the latest journal, never an earlier whole copy.
   const remember = (update: (latest: Journal) => Journal) => {
-    const entries = update(readJournal(key, payer));
+    const raw = sessionStorage.getItem(key);
+    let latest: Journal;
+    try {
+      latest = parseJournal(raw, payer);
+    } catch {
+      setUnreadable({ key, raw });
+      throw new Error(UNREADABLE_MESSAGE);
+    }
+    const entries = update(latest);
     sessionStorage.setItem(key, JSON.stringify(entries));
     if (mounted.current) setJournal(entries);
     return entries;
@@ -204,6 +255,11 @@ export function DirectBountyPayment({
       journal[transaction.nonce] &&
       bytes(journal[transaction.nonce].transaction) !== bytes(transaction),
   );
+  /** The plan must perform exactly the approved transfers. */
+  const planMismatch =
+    expectedTransfers !== undefined &&
+    assetAddress !== undefined &&
+    !matchesApprovedEvmPlan(transactions, expectedTransfers, assetAddress);
   const unsent = transactions.filter(
     (transaction) => !journal[transaction.nonce],
   );
@@ -212,6 +268,10 @@ export function DirectBountyPayment({
     sending.current = true;
     void run(async () => {
       try {
+        if (planMismatch)
+          throw new Error(
+            "The prepared payment does not match the approved transfers. Refresh the case before signing.",
+          );
         if (!storageReady || uncertain || mismatched || !wallet) return;
         setNotice("");
         for (const transaction of unsent) {
@@ -398,6 +458,22 @@ export function DirectBountyPayment({
         empty={<NoWalletFound solana={false} />}
         onConnect={connect}
       />
+      {unreadable ? (
+        <div role="status">
+          <p>
+            The saved request cannot be read. Check wallet activity, then clear
+            it to continue.
+          </p>
+          <button
+            className="button secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={clearUnreadable}
+          >
+            I checked wallet activity. Clear saved request
+          </button>
+        </div>
+      ) : null}
       {transactions.map((transaction) => {
         const entry = journal[transaction.nonce];
         return entry ? (
@@ -429,7 +505,12 @@ export function DirectBountyPayment({
             className="button primary-button"
             type="button"
             disabled={
-              busy || !wallet || !storageReady || uncertain || mismatched
+              busy ||
+              !wallet ||
+              !storageReady ||
+              uncertain ||
+              mismatched ||
+              planMismatch
             }
             onClick={send}
           >
@@ -456,6 +537,12 @@ export function DirectBountyPayment({
         <p className="form-error" role="alert">
           The saved payment differs from this request. Check wallet activity
           before continuing.
+        </p>
+      ) : null}
+      {planMismatch ? (
+        <p className="form-error" role="alert">
+          The prepared payment does not match the approved transfers. Refresh
+          the case before signing.
         </p>
       ) : null}
       {notice ? <p role="status">{notice}</p> : null}

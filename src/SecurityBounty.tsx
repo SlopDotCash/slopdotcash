@@ -3913,6 +3913,8 @@ function CaseDetail({
                     record.settlement.ownerRequest
                       .transactions as DirectEvmTransaction[]
                   }
+                  expectedTransfers={directRequest?.transfers}
+                  assetAddress={directRequest?.asset.address}
                   authorize={async () => {
                     const current = await privateRequest<{
                       case: SecurityCase;
@@ -3959,6 +3961,8 @@ function CaseDetail({
                         .ownerRequest as unknown as DirectOwnerRequest
                     ).solana as DirectSolanaPlan
                   }
+                  expectedTransfers={directRequest?.transfers}
+                  asset={directRequest?.asset}
                   authorize={async () => {
                     const current = await privateRequest<{
                       case: SecurityCase;

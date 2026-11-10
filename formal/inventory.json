@@ -3225,13 +3225,13 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "f2a8fa41356504868bdb5c6ddaba1ddee18e2e60434a53da764940738e005543",
+      "sha256": "091e556ae14c778260d45baf8780e11e604b42bc0aa04ff42012665900e6d44b",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/tooling/dev_server_lifecycle.qnt"
       ],
-      "candidateLines": [17, 42],
+      "candidateLines": [17, 43],
       "review": "mapped-abstraction"
     },
     {
@@ -4740,7 +4740,7 @@
     },
     {
       "path": "src/DirectBountyPayment.tsx",
-      "sha256": "22022aeb84ca6c0f71141943bd471fc027caf9326ea4c9d142028238e2200316",
+      "sha256": "94bafa9cd7cdf5ecec5191057a277ae6873114e924663c1e2eac6247d8f9fb2e",
       "models": [
         "formal/models/payments/direct_bounty_journal.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
@@ -4749,8 +4749,8 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 64, 84, 85, 86, 87, 88, 89, 92, 102, 129, 130, 182, 185, 188, 195,
-        287, 384, 451, 461
+        1, 7, 71, 101, 102, 103, 104, 108, 109, 110, 113, 141, 172, 176, 232,
+        235, 238, 245, 346, 443, 461, 531, 547
       ],
       "review": "mapped-abstraction"
     },
@@ -5297,7 +5297,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "6a186a6f5922ac218645a6ea719871073e6e6a2c98637242155f347401fa431d",
+      "sha256": "7aa3df71823455c1704ca1f94f53e894115bc182f0559fb678bb2a3c691e9300",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -5333,11 +5333,11 @@
         3034, 3035, 3042, 3058, 3080, 3097, 3098, 3099, 3102, 3126, 3127, 3136,
         3167, 3184, 3185, 3186, 3189, 3215, 3216, 3225, 3278, 3341, 3372, 3390,
         3402, 3403, 3405, 3409, 3415, 3418, 3420, 3424, 3492, 3512, 3550, 3554,
-        3556, 3559, 3633, 3635, 3667, 3689, 3713, 3849, 3981, 4120, 4123, 4132,
-        4137, 4142, 4143, 4145, 4150, 4173, 4202, 4205, 4212, 4253, 4258, 4270,
-        4271, 4277, 4302, 4304, 4306, 4310, 4311, 4315, 4318, 4319, 4321, 4339,
-        4357, 4362, 4365, 4370, 4373, 4375, 4379, 4384, 4409, 4415, 4458, 4461,
-        4466, 4468, 4506, 4508, 4549, 4568
+        3556, 3559, 3633, 3635, 3667, 3689, 3713, 3849, 3985, 4124, 4127, 4136,
+        4141, 4146, 4147, 4149, 4154, 4177, 4206, 4209, 4216, 4257, 4262, 4274,
+        4275, 4281, 4306, 4308, 4310, 4314, 4315, 4319, 4322, 4323, 4325, 4343,
+        4361, 4366, 4369, 4374, 4377, 4379, 4383, 4388, 4413, 4419, 4462, 4465,
+        4470, 4472, 4510, 4512, 4553, 4572
       ],
       "review": "mapped-abstraction"
     },
@@ -5365,7 +5365,7 @@
     },
     {
       "path": "src/SolanaBountyPayment.tsx",
-      "sha256": "8bc3adfa6e68d4113e4ed0b3fd4aa99e2e9adb5320f618a657e6993473142d55",
+      "sha256": "1d6b63779b92f912e2226a99ffd4423741d9f8aada14aad553ce082621f4d922",
       "models": [
         "formal/models/ui/solana_wallet_provider.qnt",
         "formal/models/ui/ui_bounty_payment_parent.qnt",
@@ -5374,8 +5374,8 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 13, 20, 26, 27, 63, 64, 65, 66, 67, 68, 73, 101, 131, 136, 209, 212,
-        218, 238, 248, 249, 250, 256, 266
+        1, 19, 26, 32, 33, 81, 82, 83, 84, 88, 89, 90, 112, 145, 179, 184, 257,
+        265, 271, 292, 307, 317, 318, 319, 325, 335
       ],
       "review": "mapped-abstraction"
     },
@@ -5592,6 +5592,14 @@
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure deployment-tier/origin selection and local-origin predicate; no runtime effect or transition."
+    },
+    {
+      "path": "src/lib/direct-payment-plan.ts",
+      "sha256": "8b45d778f859b62dcae95034d5beea087f25e3042f5d2286b865fb918c373d09",
+      "models": [],
+      "candidateLines": [30, 31],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure pre-sign comparison of a direct-payment plan against the approved transfers (EVM calldata/native fields, Solana legacy-message instructions). No I/O, mutation, timer or lifecycle; the payment components call it before any wallet prompt and the backend still verifies finalized receipts."
     },
     {
       "path": "src/lib/document-head.ts",
@@ -5978,7 +5986,7 @@
     },
     {
       "path": "src/lib/pending-attempt.ts",
-      "sha256": "5a7a4fd958aedbbb8d1c926051decfd60d206e38f7e9997447ca1d7ff5a1e0a0",
+      "sha256": "014e6f478589b0d34fe7408ceef412067e72a7db1ebd1a76a6b1d4d4c7d42e81",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
