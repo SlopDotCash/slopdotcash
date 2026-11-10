@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { decodeFunctionData, encodeFunctionData, type Hex } from "viem";
+import orders from "../../tests/fixtures/dln-orders.json";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   type BridgeQuote,
@@ -17,6 +19,9 @@ import {
 } from "./buyback-config";
 import { D1BuybackStore } from "./buyback-store";
 import { parseConfig } from "./config";
+import { checkedDlnOrder, DLN_SOURCE_ABI } from "./debridge";
+import { checkedSolanaDlnOrder, dlnGiveOrderWallet } from "./debridge-solana";
+import { parseTransaction } from "./solana-transaction";
 import {
   type ChainClient,
   type ConversionRow,
@@ -1083,5 +1088,204 @@ describe("configuration", () => {
         BUYBACK_MODE: "dry_run",
       } as never),
     ).rejects.toThrow(/needs robinhood in FEE_CONVERTER_NETWORKS/u);
+  });
+});
+
+describe("bridge order checks against captured deBridge proposals", () => {
+  const evm = orders.evm;
+  const intent = {
+    wallet: evm.wallet,
+    giveToken: evm.giveToken,
+    giveAmount: BigInt(evm.giveAmount),
+    takeToken: ROBINHOOD_USDG,
+    takeChainId: 4663n,
+    receiver: evm.wallet,
+  };
+
+  test("an EVM order is accepted only for the exact fee-wallet intent", () => {
+    expect(checkedDlnOrder(evm.data as Hex, intent).takeAmount).toBe(
+      BigInt(evm.takeAmount),
+    );
+    for (const changed of [
+      { receiver: "0x00000000000000000000000000000000000000aa" },
+      { wallet: "0x00000000000000000000000000000000000000aa" },
+      { giveAmount: intent.giveAmount + 1n },
+      { giveToken: ROBINHOOD_USDG },
+      { takeToken: SLOP_TOKEN },
+      { takeChainId: 8453n },
+    ])
+      expect(() =>
+        checkedDlnOrder(evm.data as Hex, { ...intent, ...changed }),
+      ).toThrow(/differs from the fee-wallet intent/u);
+  });
+
+  test("an EVM order with an unknown taker, an external call, an affiliate fee or stray bytes is refused", () => {
+    const decoded = decodeFunctionData({
+      abi: DLN_SOURCE_ABI,
+      data: evm.data as Hex,
+    });
+    const [order, salt, , referral, permit, metadata] =
+      decoded.args as unknown as [
+        Record<string, unknown>,
+        bigint,
+        Hex,
+        number,
+        Hex,
+        Hex,
+      ];
+    const encode = (
+      fields: Record<string, unknown>,
+      affiliate: Hex = "0x",
+      code = referral,
+    ) =>
+      encodeFunctionData({
+        abi: DLN_SOURCE_ABI,
+        functionName: "createSaltedOrder",
+        args: [
+          { ...order, ...fields } as never,
+          salt,
+          affiliate,
+          code,
+          permit,
+          metadata,
+        ],
+      });
+    expect(() =>
+      checkedDlnOrder(
+        encode({
+          allowedTakerDst: "0x00000000000000000000000000000000000000bb",
+        }),
+        intent,
+      ),
+    ).toThrow(/unknown taker/u);
+    // An open order, which any taker may fill, is allowed.
+    expect(
+      checkedDlnOrder(encode({ allowedTakerDst: "0x" }), intent).takeAmount,
+    ).toBe(BigInt(evm.takeAmount));
+    for (const data of [
+      encode({ externalCall: "0x01" }),
+      encode({ allowedCancelBeneficiarySrc: "0x" }),
+      encode({}, `0x${"11".repeat(52)}`),
+      encode({}, "0x", 7),
+    ])
+      expect(() => checkedDlnOrder(data, intent)).toThrow(
+        /differs from the fee-wallet intent/u,
+      );
+    expect(() =>
+      checkedDlnOrder(`${evm.data}${"00".repeat(32)}` as Hex, intent),
+    ).toThrow(/bytes outside the checked order/u);
+    expect(() => checkedDlnOrder("0x095ea7b3" as Hex, intent)).toThrow();
+  });
+
+  const solana = orders.solana;
+  const raw = () =>
+    Uint8Array.from(solana.data.slice(2).match(/../gu) ?? [], (byte) =>
+      Number.parseInt(byte, 16),
+    );
+  const solanaIntent = {
+    wallet: solana.wallet,
+    mint: solana.mint,
+    giveAmount: BigInt(solana.giveAmount),
+    takeToken: ROBINHOOD_USDG,
+    takeChainId: 4663n,
+    receiver: solana.receiver,
+    orderId: solana.orderId,
+  };
+
+  test("a Solana order is accepted only for the exact intent and its derived accounts", () => {
+    const order = checkedSolanaDlnOrder(parseTransaction(raw()), solanaIntent);
+    expect(order.takeAmount).toBe(BigInt(solana.takeAmount));
+    expect(order.giveOrderWallet).toBe(dlnGiveOrderWallet(solana.orderId));
+    for (const [changed, reason] of [
+      [{ receiver: "0x00000000000000000000000000000000000000aa" }, /intent/u],
+      [{ giveAmount: 1n }, /intent/u],
+      [{ takeChainId: 1n }, /intent/u],
+      [{ takeToken: SLOP_TOKEN }, /intent/u],
+      // The order's accounts are program addresses of its order id.
+      [{ orderId: `0x${"11".repeat(32)}` }, /accounts differ/u],
+      [{ wallet: solana.mint }, /only signer/u],
+    ] as const)
+      expect(() =>
+        checkedSolanaDlnOrder(parseTransaction(raw()), {
+          ...solanaIntent,
+          ...changed,
+        }),
+      ).toThrow(reason);
+  });
+
+  test("a Solana order with a changed argument, another program or a high priority bid is refused", () => {
+    const parsed = parseTransaction(raw());
+    const order = parsed.instructions.at(-1);
+    if (!order) throw new Error("fixture has no order instruction");
+    const mutate = (change: (data: Uint8Array) => void) => {
+      const data = order.data.slice();
+      change(data);
+      return {
+        ...parsed,
+        instructions: [...parsed.instructions.slice(0, -1), { ...order, data }],
+      };
+    };
+    // One more base unit of USDC than the intent.
+    expect(() =>
+      checkedSolanaDlnOrder(
+        mutate((data) => {
+          data[8] += 1;
+        }),
+        solanaIntent,
+      ),
+    ).toThrow(/intent/u);
+    // A different instruction of the same program.
+    expect(() =>
+      checkedSolanaDlnOrder(
+        mutate((data) => {
+          data[0] ^= 0xff;
+        }),
+        solanaIntent,
+      ),
+    ).toThrow(/not create_order_with_nonce/u);
+    expect(() =>
+      checkedSolanaDlnOrder(
+        {
+          ...parsed,
+          instructions: [
+            {
+              program: "11111111111111111111111111111111",
+              accounts: [0, 1],
+              data: Uint8Array.of(2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0),
+            },
+            order,
+          ],
+        },
+        solanaIntent,
+      ),
+    ).toThrow(/calls 11111111111111111111111111111111/u);
+    // 1.4M units at 1,000,000 micro-lamports is 1.4 SOL of priority fee.
+    expect(() =>
+      checkedSolanaDlnOrder(
+        {
+          ...parsed,
+          instructions: [
+            {
+              program: "ComputeBudget111111111111111111111111111111",
+              accounts: [],
+              data: Uint8Array.of(3, 0x40, 0x42, 0x0f, 0, 0, 0, 0, 0),
+            },
+            {
+              program: "ComputeBudget111111111111111111111111111111",
+              accounts: [],
+              data: Uint8Array.of(2, 0xc0, 0x5c, 0x15, 0),
+            },
+            order,
+          ],
+        },
+        solanaIntent,
+      ),
+    ).toThrow(/priority-fee limit/u);
+    expect(() =>
+      checkedSolanaDlnOrder(
+        { ...parsed, lookups: [{ address: "x", writable: [0], readonly: [] }] },
+        solanaIntent,
+      ),
+    ).toThrow(/lookup tables/u);
   });
 });

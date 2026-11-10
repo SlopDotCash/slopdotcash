@@ -6,6 +6,7 @@
  */
 
 import type { FeeConverterEnv, Mode, Network } from "./config";
+import { type NativeGasLimits, validateNativeLimits } from "./native-gas";
 
 /** The only token the buyback acquires: Slop Cash on Robinhood Chain (4663). */
 export const SLOP_TOKEN = "0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae";
@@ -68,6 +69,12 @@ export interface BuybackLimits {
   dailyCapMicro: bigint;
   /** A deposited order not filled after this long is reported for the owner. */
   unfilledAlertSeconds: bigint;
+  /**
+   * Native limits of Solana bridge orders, in lamports, separate from the
+   * fee-conversion budget: an order pays the fixed protocol fee and the rent
+   * of its order accounts. Null means no Solana order can be signed.
+   */
+  solanaBridgeNative: NativeGasLimits | null;
 }
 
 export interface BuybackConfig {
@@ -91,6 +98,8 @@ export interface BuybackEnv extends FeeConverterEnv {
   BUYBACK_RUN_CAP_MICRO?: string;
   BUYBACK_DAILY_CAP_MICRO?: string;
   BUYBACK_UNFILLED_ALERT_SECONDS?: string;
+  /** Optional JSON `{"perTransaction":"…","perDay":"…"}` in lamports. */
+  BUYBACK_SOLANA_BRIDGE_NATIVE?: string;
 }
 
 function required(value: string | undefined, name: string): bigint {
@@ -153,6 +162,31 @@ export function parseBuybackConfig(
       `BUYBACK_MAX_BRIDGE_NATIVE_FEE.${name}`,
     );
   }
+  let solanaBridgeNative: NativeGasLimits | null = null;
+  if (env.BUYBACK_SOLANA_BRIDGE_NATIVE?.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(env.BUYBACK_SOLANA_BRIDGE_NATIVE);
+    } catch {
+      throw new TypeError("BUYBACK_SOLANA_BRIDGE_NATIVE must be a JSON object");
+    }
+    const value = parsed as Partial<NativeGasLimits> | null;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.perTransaction !== "string" ||
+      typeof value.perDay !== "string"
+    )
+      throw new TypeError(
+        "BUYBACK_SOLANA_BRIDGE_NATIVE needs perTransaction and perDay",
+      );
+    solanaBridgeNative = {
+      perTransaction: value.perTransaction,
+      perDay: value.perDay,
+      additionalFeeReserve: "0",
+    };
+    validateNativeLimits(solanaBridgeNative);
+  }
   const limits: BuybackLimits = {
     // Normalized so it compares with the journal's millisecond timestamps.
     startAt: new Date(startAt).toISOString(),
@@ -187,6 +221,7 @@ export function parseBuybackConfig(
       env.BUYBACK_UNFILLED_ALERT_SECONDS,
       "BUYBACK_UNFILLED_ALERT_SECONDS",
     ),
+    solanaBridgeNative,
   };
   return { mode, limits };
 }

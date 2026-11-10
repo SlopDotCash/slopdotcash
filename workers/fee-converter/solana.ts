@@ -53,7 +53,27 @@ import {
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
+import type {
+  BridgeQuote,
+  BridgeTerms,
+  BuybackChainClient,
+  OutcomeEvidence,
+  PreparedBridge,
+} from "./buyback";
+import {
+  type BuybackLimits,
+  DLN,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_USDG,
+} from "./buyback-config";
 import type { Limits, NetworkConfig } from "./config";
+import { DLN_DESTINATION_ABI, proposeDlnOrder, TAKE_STATUS } from "./debridge";
+import {
+  type CheckedSolanaDlnOrder,
+  checkedSolanaDlnOrder,
+  dlnGiveOrderWallet,
+} from "./debridge-solana";
 import type {
   AccruedFees,
   ChainClient,
@@ -125,6 +145,19 @@ interface SolanaClientOptions {
    */
   verifyDeployment?: (config: SolanaEscrowConfig) => Promise<Uint8Array>;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * SLOP buyback bridge (PRD section 6). Absent leaves this client exactly
+   * as before. `bridgeGas` is the separate native budget of bridge orders;
+   * without it the client can quote an order but never sign one.
+   */
+  buyback?: {
+    limits: BuybackLimits;
+    /** The Robinhood Chain fee wallet every order delivers to. */
+    receiver: string;
+    /** Read-only Robinhood Chain RPC, used to prove a cancelled order. */
+    robinhoodRpcUrl: string;
+    bridgeGas?: NativeGasJournal;
+  };
 }
 
 /** Project account offset of `accrued_fees` (contracts/solana/adapter.ts). */
@@ -369,8 +402,14 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
     reviewedProof?: SolanaAccountProof,
+    /**
+     * A bridge order reserves against its own journal and ceiling. Its whole
+     * native wallet debit (order-account rent and the fixed protocol fee) and
+     * the network fee together must fit that ceiling.
+     */
+    bridge?: { journal: NativeGasJournal; ceiling: bigint },
   ) {
-    const journal = options.nativeGas;
+    const journal = bridge?.journal ?? options.nativeGas;
     if (!journal || !config.nativeBudget)
       throw new Error(
         "Solana signing needs native limits and the durable budget journal",
@@ -409,7 +448,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         ]),
       );
     }
-    const maximum = networkFee + rent;
+    const maximum = bridge ? bridge.ceiling : networkFee + rent;
     if (networkFee === 0n)
       throw new Error("Solana signature fee evidence is missing");
     const before = nativeInteger(
@@ -437,14 +476,22 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       !simulated.value.accounts?.[0] ||
       before -
         nativeInteger(simulated.value.accounts[0].lamports) -
-        nativePrincipal >
+        nativePrincipal +
+        (bridge ? networkFee : 0n) >
         maximum ||
       (nativePrincipal > 0n &&
         before - nativeInteger(simulated.value.accounts?.[0]?.lamports) <
           nativePrincipal)
     )
       throw new Error("Solana simulation has unbounded native wallet debit");
-    if (maximum > BigInt(config.nativeBudget.perTransaction))
+    if (
+      maximum >
+      BigInt(
+        bridge
+          ? bridge.journal.limits.perTransaction
+          : config.nativeBudget.perTransaction,
+      )
+    )
       throw new Error(
         "Solana native fee and account creation exceed the transaction budget",
       );
@@ -1068,7 +1115,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
     },
   };
 
-  return {
+  const self: ChainClient = {
     vaultFees,
 
     reconcileNativeGas: reconcileNative,
@@ -1339,8 +1386,31 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
         if (status.err !== null)
           return {
             kind: "failed",
-            reason: `${row.kind === "claim" ? "claim" : "swap"} transaction failed on chain`,
+            reason: `${row.kind === "claim" ? "claim" : row.kind === "bridge" ? "bridge order" : "swap"} transaction failed on chain`,
           };
+        if (row.kind === "bridge") {
+          // The finalized signature is of the journaled bytes, which were
+          // checked field by field before signing. The receipt must show
+          // exactly the recorded amount leaving this wallet.
+          const receipt = await rpc<TransactionReceipt | null>(
+            "getTransaction",
+            [
+              row.txId,
+              {
+                commitment: "finalized",
+                encoding: "json",
+                maxSupportedTransactionVersion: 0,
+              },
+            ],
+          );
+          if (!receipt) return { kind: "pending" };
+          const paid = -delta(receipt.meta, wallet, row.token);
+          if (receipt.meta.err !== null || paid !== BigInt(row.amountIn))
+            throw new Error(
+              "Bridge receipt debit differs from the recorded amount",
+            );
+          return { kind: "finalized", amountOut: paid };
+        }
         if (row.kind !== "claim") {
           const retained = (await options.nativeGas?.rows())?.find(
             (entry) => entry.tx_id === row.txId,
@@ -1416,6 +1486,265 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       return { kind: "rebroadcast" };
     },
   };
+
+  const buyback = options.buyback;
+  if (buyback) {
+    interface Draft {
+      raw: Uint8Array;
+      order: CheckedSolanaDlnOrder;
+      orderId: string;
+      lastValidBlockHeight: number;
+    }
+    const drafts = new WeakMap<BridgeQuote, Draft>();
+    const intent = (amount: bigint, orderId: string) => ({
+      wallet,
+      mint: usdc,
+      giveAmount: amount,
+      takeToken: ROBINHOOD_USDG,
+      takeChainId: ROBINHOOD_CHAIN_ID,
+      receiver: buyback.receiver,
+      orderId,
+    });
+    /** The token amount of an SPL token account's base64 data. */
+    const tokenAmount = (value: unknown): bigint => {
+      const data = (value as { data?: [string, string] } | null)?.data;
+      if (!data || data[1] !== "base64")
+        throw new Error("Token account data is unavailable");
+      const bytes = solanaBase64Bytes(data[0]);
+      if (bytes.length < 72) throw new Error("Token account is malformed");
+      let amount = 0n;
+      for (let i = 71; i >= 64; i--) amount = (amount << 8n) | BigInt(bytes[i]);
+      return amount;
+    };
+    const bridge: NonNullable<BuybackChainClient["bridge"]> = {
+      async quote(amount) {
+        const proposal = await proposeDlnOrder(doFetch, {
+          srcChainId: DLN.solanaChainId,
+          giveToken: usdc,
+          giveAmount: amount,
+          takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+          takeToken: ROBINHOOD_USDG,
+          wallet,
+          receiver: buyback.receiver,
+        });
+        if ("noRoute" in proposal) return proposal;
+        const raw = Uint8Array.from(
+          proposal.data.slice(2).match(/../gu) ?? [],
+          (byte) => Number.parseInt(byte, 16),
+        );
+        const parsed = parseTransaction(raw);
+        // Stamp this Worker's own recent blockhash, so the order's expiry
+        // height is known and recorded with it.
+        const latest = await rpc<{
+          value: { blockhash: string; lastValidBlockHeight: number };
+        }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+        raw.set(
+          decodeBase58Bytes(latest.value.blockhash),
+          parsed.blockhashOffset,
+        );
+        const order = checkedSolanaDlnOrder(
+          parsed,
+          intent(amount, proposal.orderId),
+        );
+        if (order.takeAmount > amount)
+          throw new Error("DLN proposal delivers more than its input");
+        const [lamports, held] = await Promise.all([
+          rpc<{ value: number }>("getBalance", [
+            wallet,
+            { commitment: "confirmed" },
+          ]),
+          rpc<{ value: unknown }>("getAccountInfo", [
+            order.makerWallet,
+            { encoding: "base64", commitment: "confirmed" },
+          ]),
+        ]);
+        const simulation = await rpc<{
+          value: {
+            err: unknown;
+            accounts:
+              | ({ lamports: number; data: [string, string] } | null)[]
+              | null;
+          };
+        }>("simulateTransaction", [
+          solanaBase64(raw),
+          {
+            encoding: "base64",
+            sigVerify: false,
+            replaceRecentBlockhash: false,
+            commitment: "confirmed",
+            accounts: {
+              encoding: "base64",
+              addresses: [wallet, order.makerWallet],
+            },
+          },
+        ]);
+        const [after, source] = simulation.value.accounts ?? [];
+        if (simulation.value.err !== null || !after || !source)
+          throw new Error("DLN order simulation is unavailable or failed");
+        // The order takes exactly the decided amount of USDC, nothing more.
+        if (tokenAmount(held.value) - tokenAmount(source) !== amount)
+          throw new Error("DLN order simulation debits a different amount");
+        const fee = await rpc<{ value: number | null }>("getFeeForMessage", [
+          solanaBase64(raw.slice(parsed.messageOffset)),
+          { commitment: "confirmed" },
+        ]);
+        const debit =
+          nativeInteger(lamports.value) - nativeInteger(after.lamports);
+        if (debit < 0n) throw new Error("DLN order simulation credits SOL");
+        // Order-account rent, the fixed protocol fee and the network fee.
+        const nativeFee = debit + nativeInteger(fee.value);
+        const priced = await fetchQuote(
+          "So11111111111111111111111111111111111111112",
+          nativeFee,
+          limits.maxSlippageBps,
+        );
+        const nativeMicro = BigInt(priced.outAmount);
+        if (nativeMicro <= 0n)
+          throw new Error("Bridge native cost cannot be priced");
+        const quote: BridgeQuote = {
+          amountIn: amount,
+          takeToken: ROBINHOOD_USDG,
+          takeAmount: order.takeAmount,
+          nativeFee,
+          costMicro: amount - order.takeAmount + nativeMicro,
+          receiver: buyback.receiver,
+          summary: {
+            provider: "debridge",
+            program: DLN.solanaProgram,
+            orderId: proposal.orderId,
+            takeAmount: order.takeAmount.toString(),
+            takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+            receiver: buyback.receiver.toLowerCase(),
+            nativeFee: nativeFee.toString(),
+            nativeFeeMicro: nativeMicro.toString(),
+            observedAt: new Date().toISOString(),
+          },
+        };
+        drafts.set(quote, {
+          raw,
+          order,
+          orderId: proposal.orderId,
+          lastValidBlockHeight: latest.value.lastValidBlockHeight,
+        });
+        return quote;
+      },
+
+      async prepare(quote, _nonceFloor, assertLease): Promise<PreparedBridge> {
+        if (!seed)
+          throw new Error("Signing is disabled without a fee-wallet key");
+        if (!buyback.bridgeGas)
+          throw new Error("Bridge signing needs its approved native budget");
+        const draft = drafts.get(quote);
+        if (!draft) throw new Error("Bridge quote has no checked proposal");
+        // Check the same bytes again at the moment of signing.
+        const parsed = parseTransaction(draft.raw);
+        const order = checkedSolanaDlnOrder(
+          parsed,
+          intent(quote.amountIn, draft.orderId),
+        );
+        if (order.takeAmount !== quote.takeAmount)
+          throw new Error("Bridge proposal differs from its quote");
+        const nativeGasId = await reserveNative(
+          draft.raw,
+          quote.amountIn,
+          assertLease,
+          undefined,
+          {
+            journal: buyback.bridgeGas,
+            ceiling: BigInt(buyback.bridgeGas.limits.perTransaction),
+          },
+        );
+        const signature = ed25519.sign(
+          draft.raw.slice(parsed.messageOffset),
+          seed,
+        );
+        draft.raw.set(signature, parsed.messageOffset - 64);
+        const terms: BridgeTerms = {
+          provider: "debridge",
+          orderId: draft.orderId,
+          takeToken: ROBINHOOD_USDG,
+          takeAmount: order.takeAmount.toString(),
+          takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+          receiver: buyback.receiver.toLowerCase(),
+          nativeFee: quote.nativeFee.toString(),
+          salt: order.nonce.toString(),
+        };
+        return {
+          kind: "bridge",
+          nativeGasId,
+          txId: solanaBase58(signature),
+          rawTx: solanaBase64(draft.raw),
+          evmNonce: null,
+          expiresAt: draft.lastValidBlockHeight,
+          approvalTxId: null,
+          minAmountOut: order.takeAmount,
+          terms,
+        };
+      },
+
+      /**
+       * The order's escrow is emptied by exactly one of two paths: the
+       * taker's unlock after a fill, or the cancellation refund, which the
+       * order pins to this fee wallet. A cancellation sent from Robinhood
+       * Chain excludes a fill, so an empty escrow then proves the refund.
+       */
+      async refund(terms): Promise<OutcomeEvidence | null> {
+        const response = await doFetch(buyback.robinhoodRpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_call",
+            params: [
+              {
+                to: DLN.destination,
+                data: encodeFunctionData({
+                  abi: DLN_DESTINATION_ABI,
+                  functionName: "takeOrders",
+                  args: [terms.orderId as Hex],
+                }),
+              },
+              "finalized",
+            ],
+          }),
+        });
+        const body = (await response.json()) as { result?: unknown };
+        if (
+          !response.ok ||
+          typeof body.result !== "string" ||
+          !/^0x[0-9a-fA-F]{256}$/u.test(body.result)
+        )
+          throw new Error("Robinhood Chain order status is unavailable");
+        const [status] = decodeFunctionResult({
+          abi: DLN_DESTINATION_ABI,
+          functionName: "takeOrders",
+          data: body.result as Hex,
+        });
+        if (status !== TAKE_STATUS.sentCancel) return null;
+        const latest = await rpc<{
+          context: { slot: number };
+          value: { blockhash: string };
+        }>("getLatestBlockhash", [{ commitment: "finalized" }]);
+        const escrow = await rpc<{ value: unknown }>("getAccountInfo", [
+          dlnGiveOrderWallet(terms.orderId),
+          {
+            encoding: "base64",
+            commitment: "finalized",
+            minContextSlot: latest.context.slot,
+          },
+        ]);
+        if (escrow.value !== null && tokenAmount(escrow.value) !== 0n)
+          return null;
+        return {
+          block: latest.context.slot,
+          blockHash: latest.value.blockhash,
+        };
+      },
+    };
+    self.buyback = { bridge };
+  }
+  return self;
 }
 
 interface TokenBalance {

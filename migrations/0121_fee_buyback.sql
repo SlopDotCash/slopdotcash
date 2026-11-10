@@ -217,3 +217,13 @@ CREATE TRIGGER fee_bridge_outcomes_immutable BEFORE UPDATE ON fee_bridge_outcome
 BEGIN SELECT RAISE(ABORT, 'bridge outcome is immutable'); END;
 CREATE TRIGGER fee_bridge_outcomes_no_delete BEFORE DELETE ON fee_bridge_outcomes
 BEGIN SELECT RAISE(ABORT, 'bridge outcomes are permanent'); END;
+
+-- A Solana bridge order pays the protocol's fixed fee and the rent of its
+-- order accounts in SOL, far above the fee-conversion transaction ceiling.
+-- Its native reservations use their own approved limits, so a bridge neither
+-- borrows from nor exhausts the conversion budget. Existing rows are `fees`.
+ALTER TABLE fee_native_gas ADD COLUMN purpose TEXT NOT NULL DEFAULT 'fees'
+  CHECK (purpose IN ('fees', 'bridge'));
+CREATE TRIGGER fee_native_gas_purpose_immutable BEFORE UPDATE ON fee_native_gas
+WHEN NEW.purpose IS NOT OLD.purpose
+BEGIN SELECT RAISE(ABORT, 'native gas purpose is immutable'); END;

@@ -84,6 +84,8 @@ export function chainClient(
     localBlockhash?: boolean;
     localGenesisHash?: string;
     nativeGas?: NativeGasJournal;
+    /** The separate native budget of Solana bridge orders. */
+    bridgeGas?: NativeGasJournal;
     now?: () => Date;
     buyback?: BuybackConfig;
   } = {},
@@ -137,6 +139,19 @@ export function chainClient(
         localGenesisHash: overrides.localGenesisHash,
         recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
         nativeGas: overrides.nativeGas,
+        buyback:
+          buyback?.limits && buybackReceiver(config, buyback)
+            ? {
+                limits: buyback.limits,
+                receiver: buybackReceiver(config, buyback) as string,
+                robinhoodRpcUrl: (
+                  config.networks.find(
+                    (entry) => entry.network === BUYBACK_NETWORK,
+                  ) as NetworkConfig
+                ).rpcUrl,
+                bridgeGas: overrides.bridgeGas,
+              }
+            : undefined,
       });
 }
 
@@ -216,6 +231,18 @@ export async function runOnce(
                     now,
                   )
                 : undefined,
+              bridgeGas:
+                n.network === "solana" && buyback.limits?.solanaBridgeNative
+                  ? new NativeGasJournal(
+                      env.FEE_DB,
+                      n.network,
+                      n.feeWallet,
+                      runId,
+                      buyback.limits.solanaBridgeNative,
+                      now,
+                      "bridge",
+                    )
+                  : undefined,
             }),
           log: (event) => console.log(JSON.stringify(event)),
         }),

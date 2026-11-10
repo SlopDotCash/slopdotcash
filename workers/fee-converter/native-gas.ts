@@ -34,6 +34,12 @@ export function validateNativeLimits(limits: NativeGasLimits) {
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );
 }
+/**
+ * `fees`: claims, approvals, conversions and their replacements. `bridge`: a
+ * Solana buyback bridge order, whose fixed protocol fee and order-account
+ * rent have their own approved limits. Each purpose has its own daily total.
+ */
+export type NativeGasPurpose = "fees" | "bridge";
 interface NativeAttempt {
   id: string;
   network: Network;
@@ -47,6 +53,8 @@ interface NativeAttempt {
   actual_wei: string | null;
   solana_blockhash_slot: number | null;
   solana_account_proof: string | null;
+  /** The budget this reservation counts against (migration 0121). */
+  purpose: NativeGasPurpose;
   settled_day: string | null;
   receipt_block_hash: string | null;
 }
@@ -74,6 +82,7 @@ export class NativeGasJournal {
     readonly runId: string,
     readonly limits: NativeGasLimits,
     private readonly now: () => Date,
+    readonly purpose: NativeGasPurpose = "fees",
   ) {
     validateNativeLimits(limits);
   }
@@ -211,12 +220,18 @@ export class NativeGasJournal {
         entries.push({ kind: "abandoned" });
         continue;
       }
+      // An overrun in any purpose holds all signing on the network.
+      if (
+        row.actual_wei !== null &&
+        nativeInteger(row.actual_wei) > nativeInteger(row.maximum_wei)
+      )
+        throw new Error(
+          "A finalized native fee exceeded its reserved maximum; signing is held",
+        );
+      // Each purpose is bounded by its own daily limit.
+      if (row.purpose !== this.purpose) continue;
       if (row.actual_wei !== null) {
         const actual = nativeInteger(row.actual_wei);
-        if (actual > nativeInteger(row.maximum_wei))
-          throw new Error(
-            "A finalized native fee exceeded its reserved maximum; signing is held",
-          );
         entries.push({
           kind: "actual",
           settlement:
@@ -247,8 +262,8 @@ export class NativeGasJournal {
     const id = crypto.randomUUID();
     const result = await this.db
       .prepare(`INSERT INTO fee_native_gas
-      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot,solana_account_proof)
-      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,?,? WHERE ${LEASE}
+      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot,solana_account_proof,purpose)
+      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,?,?,? WHERE ${LEASE}
       AND (SELECT gas_revision FROM fee_converter_locks WHERE network=?)=?`)
       .bind(
         id,
@@ -265,6 +280,7 @@ export class NativeGasJournal {
         input.solanaAccountProof
           ? JSON.stringify(input.solanaAccountProof)
           : null,
+        this.purpose,
         ...this.lease(),
         this.network,
         revision.gas_revision,
