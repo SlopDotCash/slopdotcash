@@ -7209,12 +7209,12 @@
     },
     {
       "path": "workers/notify/enrollment.ts",
-      "sha256": "bc58e4d80530ad06d88758e49dbed780a95280243e384e05bd8d2101631f0a5d",
+      "sha256": "359e4cc44b6ac79066b1c4d732b79023551a4028a16bded1903bb2dfbba358d8",
       "models": [
         "formal/models/api/api_email_consent.qnt",
         "formal/models/api/email_enrollment_delivery.qnt"
       ],
-      "candidateLines": [36, 38, 90, 93, 95, 98, 105, 121, 125, 127, 146, 160],
+      "candidateLines": [35, 37, 89, 92, 94, 97, 104, 120, 124, 126, 145, 159],
       "review": "mapped-abstraction"
     },
     {
@@ -7229,12 +7229,12 @@
     },
     {
       "path": "workers/notify/index.ts",
-      "sha256": "08cda26562908497fb89feb0c18000830a5a28292ed5c045d6496d1ba183ce5f",
+      "sha256": "deffd0b0903630fc1367f1792cd30dd767ed377db407a790732ee20611c97ac1",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_admin_fanout.qnt"
       ],
-      "candidateLines": [139, 180, 182, 215, 217],
+      "candidateLines": [139, 179, 181, 214, 216],
       "review": "mapped-abstraction"
     },
     {
@@ -8824,7 +8824,7 @@
     },
     {
       "path": "formal/models/api/api_email_consent.qnt",
-      "sha256": "7b59c58d96732b83489ed6e55dcee52216e7c936d23a692bd2afef1439274bc0",
+      "sha256": "4b10c52dce52ff056e27baf95776c95e7486d7f458111589e059481eb8d1a521",
       "sources": [
         "backend/notifications/email-destinations.ts",
         "backend/notifications/email.ts",
@@ -8840,7 +8840,11 @@
         "consumedTokenCannotVerifyAgainTest",
         "expiredTokenTest",
         "freshVerificationAfterOptOutTest",
+        "newUnsubGenerationWorksAfterReissueTest",
+        "oldUnsubGenerationDeadAfterReissueTest",
         "optOutWinsTest",
+        "unsubExpiryTest",
+        "unsubSingleUseTest",
         "verificationTest"
       ]
     },

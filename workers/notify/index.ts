@@ -158,7 +158,6 @@ export default {
           ? {
               ...configured,
               inboxUrl: configured.config.inboxUrl,
-              unsubscribeKey: configured.unsubscribeKey,
             }
           : null;
       const response = await handleEnrollmentMailRequest(

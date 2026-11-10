@@ -12,7 +12,6 @@ type EnrollmentMailDependencies = {
   now(): Date;
   fromAddress: string;
   inboxUrl: string;
-  unsubscribeKey: string;
   sendEmail(from: string, to: string, mime: string): Promise<void>;
 };
 

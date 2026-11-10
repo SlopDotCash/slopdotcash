@@ -233,9 +233,12 @@ provider quota rejections use the existing bounded retry schedule.
 
 Every general notice includes an unsubscribe link and one-click mail headers.
 The capability can only turn off both email preferences for its exact address
-version. `NOTIFY_UNSUBSCRIBE_KEY` generates it, and D1 retains only the hash of
-each issued capability with that version. Verification uses the issued hash,
-so a signing-key rotation does not break older links or require old keys.
+version. Each mail issues a fresh, independent random capability; D1 retains
+only its SHA-256 hash, expiry, and consumption state. The configured
+`NOTIFY_UNSUBSCRIBE_KEY` is a release gate only: the Worker refuses to issue
+without a valid key, and the key never derives or verifies a capability.
+A capability expires 30 days after its own mail and is spent on first use;
+a spent capability stays spent when a later mail issues a new one.
 GET never unsubscribes. The browser presents an explicit action; mail clients
 may send the RFC 8058 POST. A later verified address makes the old capability
 invalid. Token-only opt-out remains available when sending is paused.
