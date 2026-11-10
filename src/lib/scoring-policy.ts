@@ -28,7 +28,9 @@ export const VALUE_SCORING_POLICY_ID = "slop-value-v1" as const;
  *   This scope does not authorize paid API assessment of historical work.
  * - Review pool: one pool per pull request. It is the sum of the credited
  *   reviewers' highest assessed bands, capped at the pull request's own
- *   assessed size in thirds, and never less than one third.
+ *   assessed size in thirds, and never less than one third when that size
+ *   is positive. A zero assessed size pays no review credit: the floor
+ *   must not create credit out of unassessed work.
  */
 export const VALUE_SCORING_APPROVED_HISTORY_FROM =
   "2026-09-01T00:00:00.000Z" as const;
@@ -85,8 +87,10 @@ export function valueScoringPolicy(): ValueScoringPolicy {
 
 /**
  * The review pool of one pull request: the credited reviewers' bands, capped
- * at the pull request's assessed size, with a minimum of one third. A lone
- * small review cannot earn a large pool, and reviews cannot outweigh the work.
+ * at the pull request's assessed size, with a minimum of one third when the
+ * assessed size is positive. A lone small review cannot earn a large pool,
+ * and reviews cannot outweigh the work. A zero assessed size pays no review
+ * credit, so the floor cannot create credit out of unassessed work.
  */
 function reviewCreditPoolThirds(
   creditedBands: readonly number[],
@@ -94,6 +98,7 @@ function reviewCreditPoolThirds(
 ): number {
   if (!Number.isSafeInteger(assessedSizeThirds) || assessedSizeThirds < 0)
     throw new RangeError("Assessed size must be a non-negative integer");
+  if (assessedSizeThirds === 0) return 0;
   return cappedTotal(
     [...creditedBands],
     assessedSizeThirds,
@@ -144,7 +149,8 @@ interface CreditedReviewer<Actor extends { id: string }> {
 }
 
 interface ReviewCreditAllocation<Actor extends { id: string }> {
-  /** The pool shared by the credited reviewers; zero when nobody qualifies. */
+  /** The pool shared by the credited reviewers; zero when nobody qualifies
+   * or the assessed size is zero. */
   poolThirds: number;
   credited: CreditedReviewer<Actor>[];
   /** Qualifying reviews by reviewers after the first five. */
@@ -217,7 +223,12 @@ export function allocatePullRequestReviewCredit<Actor extends { id: string }>(
   const poolThirds = bands.length
     ? reviewCreditPoolThirds(bands, assessedSizeThirds)
     : 0;
-  const shares = bands.length ? allocateReviewCredit(poolThirds, bands) : [];
+  // A zero pool pays zero shares; allocateReviewCredit requires a positive
+  // pool, and the caller excludes zero-share reviewers.
+  const shares =
+    poolThirds > 0
+      ? allocateReviewCredit(poolThirds, bands)
+      : bands.map(() => 0);
   return {
     poolThirds,
     credited: creditedReviewers.map((reviewer, index) => ({

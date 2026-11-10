@@ -6319,7 +6319,7 @@
     },
     {
       "path": "src/lib/scoring-policy.ts",
-      "sha256": "cc5956ebeba9965aa703d074cb75e2d1b9df3e9e825a392e71d3668bc73735b9",
+      "sha256": "cec02f451672f405d531b34647e00fa9ee2815302f3c1776cf4e910c2bdee178",
       "models": [
         "formal/models/rewards/review_credit.qnt",
         "formal/models/ui/ui_review_pool.qnt"
@@ -13597,7 +13597,7 @@
     },
     {
       "path": "formal/models/rewards/review_credit.qnt",
-      "sha256": "ddfd8bf2b074b3a7580dbe9066776a2140ce29c7f70cb606ac987c762816c3d9",
+      "sha256": "687f4831ed6ab52f5be3846b4766a324d702d4b44e7629d23baf62b5472aeeff",
       "sources": [
         "src/lib/scoring-policy.ts",
         "src/lib/verified-reviewers.ts",
@@ -13605,9 +13605,9 @@
       ],
       "scenarios": [
         "duplicateSourceRefusedTest",
-        "minimumPoolTest",
         "sampledReviewTest",
-        "unorderedHighestBandTest"
+        "unorderedHighestBandTest",
+        "zeroSizePoolTest"
       ]
     },
     {

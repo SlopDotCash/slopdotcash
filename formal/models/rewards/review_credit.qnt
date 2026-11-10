@@ -14,7 +14,7 @@ module review_credit {
     s' = s.with("seen", s.seen.union(Set(id))).with("order", s.order.append(id)) }
   action allocate = all { s.seen == 1.to(7), not(s.done),
     s' = s.with("done", true).with("credited", List(1, 2, 3, 4, 5)).with("sourceA", 3)
-      .with("pool", if(s.size == 0) 1 else s.size) }
+      .with("pool", s.size) }
   action chooseAnySize = { nondet assessed = 0.to(5).oneOf() chooseSize(assessed) }
   action ingestAny = { nondet id = 1.to(7).exclude(s.seen).oneOf() ingest(id) }
   action produce = chooseAnySize.then(ingestAny).then(ingestAny).then(ingestAny)
@@ -25,14 +25,14 @@ module review_credit {
     any { chooseSize(assessed), ingest(id), allocate, s' = s }
   }
   val invariant = all { not(s.paid), s.seen.subseteq(1.to(7)),
-    s.done implies s.credited == List(1, 2, 3, 4, 5) and s.sourceA == 3 and s.pool >= 1 and s.pool <= 5 }
+    s.done implies s.credited == List(1, 2, 3, 4, 5) and s.sourceA == 3 and s.pool >= 0 and s.pool <= 5 }
   run unorderedHighestBandTest = init.then(chooseSize(5))
     .then(ingest(7)).then(ingest(6)).then(ingest(5)).then(ingest(4))
     .then(ingest(3)).then(ingest(2)).then(ingest(1)).then(allocate)
     .expect(s.sourceA == 3 and s.credited == List(1, 2, 3, 4, 5) and s.pool == 5 and invariant)
-  run minimumPoolTest = init.then(chooseSize(0))
+  run zeroSizePoolTest = init.then(chooseSize(0))
     .then(ingest(1)).then(ingest(2)).then(ingest(3)).then(ingest(4))
-    .then(ingest(5)).then(ingest(6)).then(ingest(7)).then(allocate).expect(s.pool == 1 and invariant)
+    .then(ingest(5)).then(ingest(6)).then(ingest(7)).then(allocate).expect(s.pool == 0 and invariant)
   run duplicateSourceRefusedTest = init.then(ingest(1)).then(ingest(1).fail())
   run sampledReviewTest = init.then(produce).expect(invariant)
 }
