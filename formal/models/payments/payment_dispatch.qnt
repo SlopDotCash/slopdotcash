@@ -8,6 +8,11 @@
 // @source workers/payments/scanner.ts
 // @source workers/security-payments/index.ts
 // @source migrations/0057_private_security_payments.sql
+// @source migrations/0121_solana_binding_transaction.sql
+// 0121: the binding txid and its expiry live in their own attempt columns;
+// transaction_id stays the payment receipt, so a bind can no longer hold
+// the next dispatch or present itself as the payment receipt. Reconcile
+// reads the payment txid when present, else the binding txid.
 // @source backend/security/payment-database.ts
 // @source backend/payments/handler.ts
 // 0057 and payment-database.ts: the private security rail renames the same

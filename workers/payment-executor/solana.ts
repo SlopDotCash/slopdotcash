@@ -287,6 +287,10 @@ interface PreparedBinding {
   transactionId: string;
   /** Base64 transaction carrying the identity signature and an empty slot for the destination wallet. */
   transaction?: string;
+  /** Finalized block height the returned transaction expires after. */
+  lastValidBlockHeight: number;
+  /** The expired attempt this transaction replaces, if send() rotated after proving expiry. */
+  supersededTransactionId?: string;
 }
 async function send(
   env: PublicSolanaExecutorEnvironment,
@@ -324,7 +328,10 @@ async function send(
   if (attempt) {
     const status = await solanaTransactionStatus(ctx, attempt);
     if (status && !status.failed)
-      return { transactionId: attempt.transactionId };
+      return {
+        transactionId: attempt.transactionId,
+        lastValidBlockHeight: attempt.lastValidBlockHeight,
+      };
     if (status?.failed && (role !== "keeper" || !status.finalized))
       throw new Error("Existing transaction failed; reconcile before retry");
     const height = await solanaRpc(ctx.config, "getBlockHeight", [
@@ -412,9 +419,30 @@ async function send(
       return candidate;
     });
   }
+  // Only the attester can say a recorded txid expired: it proved the
+  // finalized height passed the old attempt's lastValidBlockHeight before
+  // signing a replacement. The superseded txid is that proof, so the
+  // handler may replace exactly that recorded binding and no other.
+  const superseded = provenExpired
+    ? { supersededTransactionId: provenExpired.transactionId }
+    : {};
   if (attempt.cosigner)
-    return { transactionId: attempt.transactionId, transaction: attempt.raw };
-  return broadcastSolanaTransaction(ctx, attempt, beforeBroadcast);
+    return {
+      transactionId: attempt.transactionId,
+      transaction: attempt.raw,
+      lastValidBlockHeight: attempt.lastValidBlockHeight,
+      ...superseded,
+    };
+  const broadcast = await broadcastSolanaTransaction(
+    ctx,
+    attempt,
+    beforeBroadcast,
+  );
+  return {
+    ...broadcast,
+    lastValidBlockHeight: attempt.lastValidBlockHeight,
+    ...superseded,
+  };
 }
 /** An observed signature is submission evidence, never proof of payment finality. */
 export async function solanaTransactionStatus(
@@ -491,7 +519,7 @@ export async function completeSolanaBinding(
   env: SolanaExecutorEnvironment,
   input: Input,
   transaction: string,
-): Promise<{ transactionId: string }> {
+): Promise<{ transactionId: string; lastValidBlockHeight: number }> {
   const ctx = await authorized(env, input);
   const key = `solana:attester:${input.network}:${input.idempotencyKey}`;
   const attempt = await env.JOURNAL.get<Attempt>(key);
@@ -500,8 +528,19 @@ export async function completeSolanaBinding(
   const beforeBroadcast = async () => {
     await authorizeRegistry(env, input, "solana");
   };
-  if (!attempt.cosigner)
-    return broadcastSolanaTransaction(ctx, attempt, beforeBroadcast);
+  // Complete never re-signs, so it never supersedes: it reports the
+  // journaled attempt's expiry alongside its txid for the D1 record.
+  if (!attempt.cosigner) {
+    const broadcast = await broadcastSolanaTransaction(
+      ctx,
+      attempt,
+      beforeBroadcast,
+    );
+    return {
+      ...broadcast,
+      lastValidBlockHeight: attempt.lastValidBlockHeight,
+    };
+  }
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(transaction))
     throw new Error("Invalid signed transaction encoding");
   const signed = decodeBase64(transaction);
@@ -539,7 +578,15 @@ export async function completeSolanaBinding(
     await store.put(key, next);
     return next;
   });
-  return broadcastSolanaTransaction(ctx, completed, beforeBroadcast);
+  const broadcast = await broadcastSolanaTransaction(
+    ctx,
+    completed,
+    beforeBroadcast,
+  );
+  return {
+    ...broadcast,
+    lastValidBlockHeight: attempt.lastValidBlockHeight,
+  };
 }
 /** Prepares and half-signs a binding; the destination wallet must co-sign the same bytes. */
 export function createSolanaAttester(env: SolanaExecutorEnvironment): {
