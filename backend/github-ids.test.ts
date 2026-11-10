@@ -42,10 +42,21 @@ test("the Pages entry point fails loudly on a malformed moderator list", async (
   );
 });
 
-test("the Pages entry point fails loudly on a malformed admin list", async () => {
-  await expect(
-    onRequest(pagesContext({ ADMIN_GITHUB_IDS: "abc" })),
-  ).rejects.toThrow("ADMIN_GITHUB_IDS contains a malformed GitHub ID");
+test("a malformed admin list does not break the points routes that never use it", async () => {
+  // The admin set is parsed only where a route enforces it (value import,
+  // admin-gated project routes, fee conversions, notifications). A typo in
+  // it must not take down the points subsystem, so this request reaches
+  // normal handling (401 for an unsigned request) instead of throwing.
+  const response = await onRequest(pagesContext({ ADMIN_GITHUB_IDS: "abc" }));
+  expect(response.status).toBe(401);
+});
+
+test("a malformed operator list does not break the points routes that never use it", async () => {
+  // The operator set gates trace routes only; points routes never read it.
+  const response = await onRequest(
+    pagesContext({ OPERATOR_GITHUB_IDS: "abc" }),
+  );
+  expect(response.status).toBe(401);
 });
 
 test("a well-formed moderator list reaches request handling instead of failing at parse time", async () => {
