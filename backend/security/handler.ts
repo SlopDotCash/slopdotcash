@@ -1651,7 +1651,7 @@ async function priorCaseDecider(
   return (
     (await deps.db
       .prepare(
-        "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide', 'award', 'decide-related-party', 'decide-appeal') LIMIT 1",
+        "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide', 'award', 'decide-related-party', 'decide-appeal', 'verify-link', 'record') LIMIT 1",
       )
       .bind(row.id, githubId)
       .first<{ found: number }>()) !== null

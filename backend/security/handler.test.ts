@@ -2303,3 +2303,91 @@ describe("reporter payment state against the payout queue", () => {
     env.sqlite.close();
   });
 });
+
+describe("backdated receipts and prior deciders", () => {
+/** A program where DISPUTE is also a technical approver. */
+  const openDualRole = () =>
+    open({
+      ...OPEN_PROGRAM,
+      approvers: {
+        ...OPEN_PROGRAM.approvers,
+        technical: [MAINTAINER, DISPUTE],
+      },
+    });
+
+  const appealOpen = async (env: ReturnType<typeof open>, id: string) => {
+    expect((await env.decide(id, "vault-drain")).status).toBe(200);
+    expect(
+      (
+        await env.act(MAINTAINER, id, {
+          action: "award",
+          decision: "none",
+          reason: "Already known and mitigated before the report.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await env.act(REPORTER, id, {
+          action: "appeal",
+          reason: "The mitigation did not cover the path I reported.",
+        })
+      ).status,
+    ).toBe(200);
+  };
+
+  test("a maintainer who verified the link cannot decide the appeal", async () => {
+    const env = openDualRole();
+    try {
+      const id = "sc_dual_verify";
+      env.claim(id, "GHSA-9c9f-9g9h-9j9m", REPORTER);
+      expect(
+        (
+          await env.act(DISPUTE, id, {
+            action: "verify-link",
+            confirmation: true,
+            receivedAt: "2026-10-19T09:10:00.000Z",
+          })
+        ).status,
+      ).toBe(200);
+      await appealOpen(env, id);
+      const decided = await env.act(DISPUTE, id, {
+        action: "decide-appeal",
+        outcome: "uphold",
+        reason: "Trying to uphold my own verification.",
+      });
+      expect(decided.status).toBe(403);
+      expect(decided.body.error).toBe("conflicted");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a maintainer who recorded the case cannot decide the appeal", async () => {
+    const env = openDualRole();
+    try {
+      const recorded = await env.call(DISPUTE, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(201);
+      const id = recorded.body.case.id as string;
+      await appealOpen(env, id);
+      const decided = await env.act(DISPUTE, id, {
+        action: "decide-appeal",
+        outcome: "uphold",
+        reason: "Trying to uphold my own record.",
+      });
+      expect(decided.status).toBe(403);
+      expect(decided.body.error).toBe("conflicted");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+});
