@@ -70,7 +70,7 @@ export function clearPendingAttempt(
   expected: PendingAttempt,
   storage: Storage = sessionStorage,
 ) {
-  if (!matchesPendingRecord(storage.getItem(key), expected)) return false;
+  if (!matchesPendingAttempt(storage.getItem(key), expected)) return false;
   storage.removeItem(key);
   return true;
 }
