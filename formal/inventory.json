@@ -1476,6 +1476,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/evm/script/DeployReferralDistributorRobinhood.s.sol",
+      "sha256": "2602c0999c05a55adae25872c63fcfd0209c85b8ec96b680ef780f41504a0a4b",
+      "models": ["formal/models/contracts/referral_mainnet_deployment.qnt"],
+      "candidateLines": [63],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/evm/script/DeployReferralDistributorRobinhoodTestnet.s.sol",
       "sha256": "548855bdfa95b32acd979c8e4f8c0a85c8c238fc02c5c8099799ebe19a940d4f",
       "models": ["formal/models/contracts/test_contract_deployment.qnt"],
@@ -10935,6 +10942,22 @@
         "contracts/solana/integration/fee-converter-native-fixture.mjs"
       ],
       "scenarios": ["claimRequiresAccrualTest", "claimsFeesNotPrincipalTest"]
+    },
+    {
+      "path": "formal/models/contracts/referral_mainnet_deployment.qnt",
+      "sha256": "6d59e45a659f602f1d839c445a0e2036c874537e114e2c54097f711650541fac",
+      "sources": [
+        "contracts/evm/script/DeployReferralDistributorRobinhood.s.sol"
+      ],
+      "scenarios": [
+        "deployedEmptyAndInactiveTest",
+        "mismatchedDeploymentRefusedTest",
+        "missingOrSharedRolesRefusedTest",
+        "otherChainRefusedTest",
+        "secondDeploymentRefusedTest",
+        "unreadDeploymentNotReportedTest",
+        "unrecordedTokenRefusedTest"
+      ]
     },
     {
       "path": "formal/models/contracts/solana_container_lifecycle.qnt",

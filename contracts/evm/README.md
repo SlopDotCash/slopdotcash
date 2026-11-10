@@ -507,7 +507,8 @@ remain launch gates.
 
 `src/ReferralDistributor.sol` is a separate, non-upgradeable contract for the
 Slop Cash S.P. project-referral program approved in PRD section 11,
-"Referral program". The program token is not deployed yet. It is separate from the
+"Referral program". The program token and the distributor are deployed on
+Robinhood Chain; the distributor is unfunded. It is separate from the
 escrow: it holds one ERC-20 (the program token), has no factory, no proxy, no
 project id and no vault role, and the escrow never calls it.
 
@@ -546,6 +547,22 @@ three-leaf tree and a fuzz over two epochs. `test/ReferralControlRegression.t.so
 also checks lower-total history and repeated voids. `script/DeployReferralDistributorRobinhoodTestnet.s.sol`
 deploys it on chain id 46630 with `integration/MockReferralToken.sol`; see
 [`docs/referral-distributor-testnet-runbook.md`](../../docs/referral-distributor-testnet-runbook.md)
-(prepare only; nothing has been deployed). The AI-assisted internal review is
+(prepare only; nothing has been deployed). `script/DeployReferralDistributorRobinhood.s.sol`
+is the mainnet (chain id 4663) deployment: it fixes the program token
+`0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE`, the 2,000,000-token growth limit
+and 27 days between live posts, takes only `REFERRAL_OWNER` and
+`REFERRAL_POSTER` from the environment, refuses any other chain or token, and
+reads the deployed values back before it reports. It moves no tokens and
+activates nothing; `test/ReferralMainnetDeploy.t.sol` covers its refusals.
+It was run once, on 10 November 2026: the distributor is at
+`0x6A24E993E59cbA950C6F91A964BEF2A5F91227CC` (transaction
+`0xeece586c2004be2880ff888ce0077960a36315d61245e659a59870739576c5e0`, block
+111162445, runtime code hash
+`0xefde415000d56976d6320dc6efd6d1c262eb7a8bcd83e247b708fa11173c10e4`). Its
+owner is the Slop Cash S.P. operating wallet
+`0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7`. Its poster is the unusable
+address `0x000000000000000000000000000000000000dEaD`, so no root can be posted
+until the owner sets a poster at activation. It holds no tokens and the
+program is inactive; `workers/referral-accrual/wrangler.toml` is unchanged. The AI-assisted internal review is
 [`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
 it is not an audit.

@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 719,
+    "files": 721,
     "functions": 10128,
     "selectedContractTargets": 183,
     "unprovedFunctions": 9945,
-    "nonTypeScriptFiles": 53
+    "nonTypeScriptFiles": 55
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -1809,6 +1809,9 @@
 {"path":"contracts/evm/script/DeployEthereumSepolia.s.sol","sha256":"33e0d9f02a5ade5549a86d11879fc5afd9a071df85a9ec70525a48aaa8aeeea0","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
+{"path":"contracts/evm/script/DeployReferralDistributorRobinhood.s.sol","sha256":"2602c0999c05a55adae25872c63fcfd0209c85b8ec96b680ef780f41504a0a4b","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
 {"path":"contracts/evm/script/DeployReferralDistributorRobinhoodTestnet.s.sol","sha256":"548855bdfa95b32acd979c8e4f8c0a85c8c238fc02c5c8099799ebe19a940d4f","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
@@ -1873,6 +1876,9 @@
 
 ]},
 {"path":"contracts/evm/test/ReferralDistributor.t.sol","sha256":"c79dba944a6f4b1bf37506b2c80e0a8dec93e2c7b1663b231c8bf18e3ef7b5bd","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/ReferralMainnetDeploy.t.sol","sha256":"ada3bfc5f2897d665432294a6bc0908ce217153d73362598ed55929159ffd292","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/SonnetParity.t.sol","sha256":"de524c6f8f0b4499733debdcafa697c656ace3250b459f839f0b370864e94917","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
