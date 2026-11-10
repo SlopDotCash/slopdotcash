@@ -1,6 +1,7 @@
 import {
   clearPendingAttempt,
   createPendingAttempt,
+  isCurrentPendingAttempt,
   type PendingAttempt,
   updatePendingAttempt,
 } from "./pending-attempt";
@@ -19,8 +20,8 @@ export function vaultSetupAttempt<T extends SavedRequest>(
   return {
     /** Saves the request before the wallet prompt; refuses an occupied slot. */
     begin: () => createPendingAttempt(key, ready),
-    /** True while this attempt still owns the slot. */
-    stillCurrent: () => updatePendingAttempt(key, ready, ready),
+    /** True while this attempt still owns the slot; reads without rewriting it. */
+    stillCurrent: () => isCurrentPendingAttempt(key, ready),
     /** Records the returned hash only on this attempt's own record. */
     submitted: (hash: string) =>
       updatePendingAttempt(key, ready, { ...ready, hash }),

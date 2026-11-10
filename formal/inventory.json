@@ -5978,7 +5978,7 @@
     },
     {
       "path": "src/lib/pending-attempt.ts",
-      "sha256": "5a7a4fd958aedbbb8d1c926051decfd60d206e38f7e9997447ca1d7ff5a1e0a0",
+      "sha256": "acf7429fd871b8f1966f3b322706d881e28b4ff77d1dd702fd5ea9a413cd9a83",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_owner_vault_setup.qnt",
@@ -5987,7 +5987,7 @@
         "formal/models/ui/ui_referral_read_ownership.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt"
       ],
-      "candidateLines": [43, 67],
+      "candidateLines": [52, 76],
       "review": "mapped-abstraction"
     },
     {
@@ -6547,9 +6547,9 @@
     },
     {
       "path": "src/lib/vault-setup-attempt.ts",
-      "sha256": "3a399100cc034c3864fc28f894c6047d158b5d1fec1ccd044134dc311d1af615",
+      "sha256": "1cbad00a925e484a2e82d11347de162e754e46350e8c6438cfeb5cac05befa3d",
       "models": ["formal/models/ui/ui_owner_vault_setup_storage.qnt"],
-      "candidateLines": [6],
+      "candidateLines": [7],
       "review": "mapped-abstraction"
     },
     {
@@ -6696,7 +6696,7 @@
     },
     {
       "path": "src/lib/verified-security-split.ts",
-      "sha256": "b0fff2da3f8f3dd8799f9228342d2b23c093ba9c047a6c0da6e209953023674c",
+      "sha256": "5b9e53c954fed4677c07c80c5bd614610420a14936390fc85112497f2e4f7fdd",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",

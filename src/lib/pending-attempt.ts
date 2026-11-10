@@ -29,6 +29,15 @@ function matchesPendingRecord(raw: string | null, expected: PendingAttempt) {
   );
 }
 
+/** True while this attempt still owns the slot; reads without rewriting it. */
+export function isCurrentPendingAttempt(
+  key: string,
+  expected: PendingAttempt,
+  storage: Storage = sessionStorage,
+) {
+  return matchesPendingAttempt(storage.getItem(key), expected);
+}
+
 /** A new prompt cannot overwrite an unexpected request in this storage slot. */
 export function createPendingAttempt(
   key: string,
@@ -70,7 +79,7 @@ export function clearPendingAttempt(
   expected: PendingAttempt,
   storage: Storage = sessionStorage,
 ) {
-  if (!matchesPendingRecord(storage.getItem(key), expected)) return false;
+  if (!matchesPendingAttempt(storage.getItem(key), expected)) return false;
   storage.removeItem(key);
   return true;
 }
