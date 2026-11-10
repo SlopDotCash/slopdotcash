@@ -12,6 +12,11 @@
 
 import { FeeCapTooLowError } from "viem";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
+import type {
+  BuybackChainClient,
+  BuybackHook,
+  BuybackSummary,
+} from "./buyback";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
 import {
   acceptableMinimum,
@@ -33,8 +38,12 @@ export type ConversionState =
 
 export interface ConversionRow {
   id: string;
-  /** Existing rows are conversions. All send kinds share the pending-token guard. */
-  kind?: "conversion" | "claim" | "approval";
+  /**
+   * Existing rows are conversions. All send kinds share the pending-token
+   * guard. `bridge`, `buyback` and `burn` are the SLOP buyback legs
+   * (migration 0121).
+   */
+  kind?: "conversion" | "claim" | "approval" | "bridge" | "buyback" | "burn";
   runId: string;
   network: Network;
   mode: "dry_run" | "live";
@@ -42,7 +51,7 @@ export interface ConversionRow {
   token: string;
   targetToken: string;
   amountIn: string;
-  route: "kyberswap" | "jupiter" | null;
+  route: "kyberswap" | "jupiter" | "debridge" | null;
   quoteAmountOut: string | null;
   minAmountOut: string | null;
   quoteValueMicro: number | null;
@@ -121,8 +130,8 @@ export type QuoteResult = Quote | { noRoute: string };
 /** A signed send, recorded before it is broadcast. */
 export interface PreparedSend {
   nativeGasId?: string;
-  /** EVM approvals are separate immutable sends before a later swap. */
-  kind?: "conversion" | "approval";
+  /** EVM approvals are separate immutable sends before a later swap or bridge order. */
+  kind?: "conversion" | "approval" | "bridge" | "buyback" | "burn";
   txId: string;
   rawTx: string;
   evmNonce: number | null;
@@ -183,6 +192,8 @@ export interface ChainClient {
    * the wallet's balances.
    */
   vaultFees?: VaultFeeClient;
+  /** SLOP buyback legs of this network (buyback.ts); absent when it has none. */
+  buyback?: BuybackChainClient;
 }
 
 /**
@@ -288,6 +299,11 @@ export interface RunDependencies {
   projectVaults?: (config: NetworkConfig) => Promise<FeeVault[]>;
   client: (config: NetworkConfig, runId: string) => ChainClient;
   log: (event: Record<string, unknown>) => void;
+  /**
+   * SLOP buyback (PRD section 6). Absent or inactive leaves every existing
+   * behavior unchanged, including Robinhood's unconverted retention.
+   */
+  buyback?: BuybackHook;
 }
 
 export interface NetworkRunResult {
@@ -301,6 +317,8 @@ export interface NetworkRunResult {
   records: Record<ConversionState, number>;
   /** Vaults whose accrued fees this run moved into the fee wallet. */
   claimed: number;
+  /** Present only when the buyback is active on this network. */
+  buyback?: BuybackSummary;
 }
 
 const QUOTE_ABANDON_MS = 60 * 60 * 1000;
@@ -364,7 +382,7 @@ const MAX_SAFE_QUOTE_MICRO = BigInt(Number.MAX_SAFE_INTEGER);
  * `fee_conversions.quote_value_micro` is a STRICT SQLite INTEGER bound through
  * JavaScript numbers. Refuse lossy or non-integer float conversions.
  */
-function exactQuoteMicro(value: bigint): number | null {
+export function exactQuoteMicro(value: bigint): number | null {
   return value >= 0n && value <= MAX_SAFE_QUOTE_MICRO ? Number(value) : null;
 }
 
@@ -442,7 +460,13 @@ async function reconcile(
             ? "fee_claim_finalized"
             : row.kind === "approval"
               ? "fee_approval_finalized"
-              : "fee_conversion_finalized",
+              : row.kind === "bridge"
+                ? "fee_bridge_deposited"
+                : row.kind === "buyback"
+                  ? "fee_buyback_finalized"
+                  : row.kind === "burn"
+                    ? "fee_burn_finalized"
+                    : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
         txId: status.txId ?? row.txId,
@@ -590,7 +614,7 @@ async function replaceSend(
  * its nonce as free; a new send must not take it, or the two would outbid
  * each other through their fee replacements.
  */
-async function nonceFloor(
+export async function nonceFloor(
   network: Network,
   store: ConversionStore,
 ): Promise<number> {
@@ -694,6 +718,16 @@ export async function runNetwork(
     }
 
     const usdc = config.definition.usdc;
+    const buyback = deps.buyback?.active(config) ? deps.buyback : undefined;
+    const buybackContext = {
+      config,
+      client,
+      deps,
+      runId,
+      blocked,
+      leased,
+      assertLease,
+    };
     if (usdc === null) {
       // No conversion target is configured: retain each received asset unchanged.
       deps.log({
@@ -702,6 +736,26 @@ export async function runNetwork(
         reason: "received assets retained without conversion",
       });
       result.status = "not_converted";
+      const reference = config.definition.stable;
+      if (!buyback || reference === null) return result;
+      // The buyback spends its share of fees received here, so a recovery
+      // scan first claims them. The claim signs only in the buyback's own
+      // mode; the retained share is still never converted.
+      if (client.vaultFees && deps.projectVaults && deps.trigger !== "receipts")
+        result.claimed = await claimVaultFees(
+          await deps.projectVaults(config),
+          reference,
+          config,
+          client,
+          client.vaultFees,
+          { ...deps, mode: buyback.mode },
+          leased,
+          blocked,
+          runId,
+          assertLease,
+        );
+      if (deps.trigger !== "receipts")
+        result.buyback = await buyback.run(buybackContext);
       return result;
     }
     const candidates = [
@@ -790,6 +844,10 @@ export async function runNetwork(
         });
       }
     }
+    // After conversions, a recovery scan bridges the buyback share of the
+    // USDC this network's fees became. A failure here never fails the run.
+    if (buyback && deps.trigger !== "receipts")
+      result.buyback = await buyback.run(buybackContext);
   } finally {
     await deps.store.releaseLock(config.network, runId, deps.now());
   }
