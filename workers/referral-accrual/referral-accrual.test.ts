@@ -719,6 +719,28 @@ describe("one accrual run", () => {
       body.referrers.map((r: { wallet: string | null }) => r.wallet),
     ).toEqual([WALLET, null]);
     expect(body.totals.treeTotalBase).toBe((3n * ONE_TOKEN).toString());
+    // The dropped referrer is marked in the file, so readers know the
+    // cumulative is stranded rather than pending a root; the pool total
+    // still counts it (the accrual rows stand) while the tree excludes it.
+    expect(body.referrers[1]).toMatchObject({
+      cumulativeBase: (3n * ONE_TOKEN).toString(),
+      wallet: null,
+      walletShared: true,
+    });
+    expect(body.referrers[0]).not.toHaveProperty("walletShared");
+    expect(body.totals.poolAccruedBase).toBe((6n * ONE_TOKEN).toString());
+    // A second period rebuilds the same conflict; the flag persists.
+    await runOnce(env(db), at("2027-01-02T00:00:00.000Z"));
+    const secondBody = JSON.parse(files(sqlite)[1].body);
+    expect(secondBody.referrers[1]).toMatchObject({
+      cumulativeBase: (3n * ONE_TOKEN).toString(),
+      wallet: null,
+      walletShared: true,
+    });
+    expect(secondBody.totals).toEqual({
+      poolAccruedBase: (6n * ONE_TOKEN).toString(),
+      treeTotalBase: (3n * ONE_TOKEN).toString(),
+    });
     expect(
       logs.find((entry) => entry.event === "referral_wallet_shared"),
     ).toMatchObject({

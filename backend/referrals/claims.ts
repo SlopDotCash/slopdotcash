@@ -147,6 +147,15 @@ async function referralAccount(
     throw new Error("Referral claim totals differ");
   result.claimedBase = claimed.toString();
   result.claimableBase = claimable.toString();
-  result.pendingBase = (accrued - claimed - claimable).toString();
+  // A referrer whose registered wallet is another referrer's leaf wallet
+  // has no leaf in any file, so while that wallet stays registered the
+  // accrued amount can never become claimable. It is stranded, not
+  // pending: showing it as pending promises a claim that cannot arrive.
+  // The accrual itself stays in `accruedBase` (and in the filed cumulative),
+  // because the referrer was never pinned and can still enter a later tree
+  // with the full cumulative by registering a different wallet.
+  result.pendingBase = referrer?.walletShared
+    ? "0"
+    : (accrued - claimed - claimable).toString();
   return json(referralResponse(result));
 }

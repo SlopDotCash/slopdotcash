@@ -13,7 +13,10 @@ const code: Hex = "0x60006000";
 const unit = 10n ** 18n;
 const now = new Date();
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-function harness(mode: "live" | "dry_run" = "live") {
+function harness(
+  mode: "live" | "dry_run" = "live",
+  extra: Record<string, unknown>[] = [],
+) {
   const { db, sqlite } = sqliteD1();
   function file(period: string, epoch: number, cumulative: bigint) {
     const tree = buildTree([{ address: wallet, cumulativeBase: cumulative }]);
@@ -27,6 +30,7 @@ function harness(mode: "live" | "dry_run" = "live") {
           cumulativeBase: cumulative.toString(),
           leaf: { hash: tree.leaves[0].hash, proof: tree.leaves[0].proof },
         },
+        ...extra,
       ],
     });
     sqlite
@@ -130,6 +134,51 @@ test("claim API maps contract epoch through its filed period and keeps another a
     claimedBase: "0",
     claimableBase: "0",
     claim: null,
+  });
+  h.sqlite.close();
+});
+
+test("a referrer dropped for a shared wallet shows no pending, while a wallet-less referrer still does", async () => {
+  const shared = {
+    githubId: "900000200",
+    githubLogin: "referrer-two",
+    cumulativeBase: (60n * unit).toString(),
+    wallet: null,
+    walletShared: true,
+  };
+  const walletless = {
+    githubId: "900000300",
+    githubLogin: "referrer-three",
+    cumulativeBase: (40n * unit).toString(),
+    wallet: null,
+  };
+  const h = harness("live", [shared, walletless]);
+  // Stranded, not pending: no leaf can ever pay this while the shared
+  // wallet stays registered, so none of it is shown as pending.
+  expect((await h.read("900000200")).body).toMatchObject({
+    wallet: null,
+    accruedBase: (60n * unit).toString(),
+    claimedBase: "0",
+    claimableBase: "0",
+    pendingBase: "0",
+    claim: null,
+  });
+  // No wallet registered yet: the amount may still enter a later tree once
+  // a wallet is confirmed, so it stays pending.
+  expect((await h.read("900000300")).body).toMatchObject({
+    wallet: null,
+    accruedBase: (40n * unit).toString(),
+    claimedBase: "0",
+    claimableBase: "0",
+    pendingBase: (40n * unit).toString(),
+    claim: null,
+  });
+  // The first referrer keeps its claim and its own pending slice.
+  expect((await h.read()).body).toMatchObject({
+    accruedBase: (150n * unit).toString(),
+    claimedBase: (20n * unit).toString(),
+    claimableBase: (80n * unit).toString(),
+    pendingBase: (50n * unit).toString(),
   });
   h.sqlite.close();
 });

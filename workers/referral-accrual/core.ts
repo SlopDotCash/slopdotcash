@@ -408,6 +408,15 @@ export interface FileReferrer {
    * cumulative twice and dropping one would strand it.
    */
   wallet: string | null;
+  /**
+   * Set when the referrer's registered claim wallet is already another
+   * referrer's leaf wallet, so this referrer has no leaf in this file and
+   * its cumulative cannot be claimed while that wallet stays registered.
+   * The amount stays in `cumulativeBase`: the referrer was never pinned,
+   * so registering a different wallet lets a later file include the full
+   * cumulative. Readers must not show it as pending claimable.
+   */
+  walletShared?: boolean;
   /** Present only for referrers in the tree. */
   leaf?: { hash: string; proof: string[] };
 }
@@ -450,6 +459,7 @@ export async function buildFile(
         if (pin === null) pins.push({ githubId, wallet });
       } else {
         referrer.wallet = null;
+        referrer.walletShared = true;
         deps.log({
           event: "referral_wallet_shared",
           period,
