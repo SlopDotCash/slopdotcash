@@ -9065,7 +9065,7 @@
 {"name":"bps","kind":"FunctionDeclaration","line":112,"sha256":"0a6ca2520e2b238e30ff40eb2606edeac6764511b7ab003d027673f9c90322d1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"parseBuybackConfig","kind":"FunctionDeclaration","line":125,"sha256":"fb03779f813ae3bf5565b3cf3d07ef63048d4c7abea05f7a7ea339aa737671ac","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
-{"path":"workers/fee-converter/buyback-store.ts","sha256":"5688e10ea0334ecba6157461495cfa3e207afc75d1eb4091ccc1daa6e37bfcf4","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/fee-converter/buyback-store.ts","sha256":"9039fa775c3d1e0fa9b9c23c993292fba0a9fa2eeb3c44b2a04c462f56d5dc5f","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"total","kind":"FunctionDeclaration","line":16,"sha256":"92f32c5847eb1c54bbd16405700a2719f8415a06e47244e1237d1a79b9dfe4b5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"same","kind":"ArrowFunction","line":27,"sha256":"22b942a260609e7caa569beaf3bd3ef49e0e5045e91a66841ce03761372024ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<Constructor@33>","kind":"Constructor","line":33,"sha256":"54afb7d49149c28f124d9eb049dfc579f63d0a165c84dcd977273c6fe8ad71d4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -9433,7 +9433,7 @@
 {"name":"<ArrowFunction@53>","kind":"ArrowFunction","line":53,"sha256":"5900d6b6747276efec5d523ee2e9fab01af2a87230291b510988547044a507aa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@66>","kind":"ArrowFunction","line":66,"sha256":"eb78b60e09839bcdeeb1523eb3782ff0c1552bf04934c70674b3586a06954e3d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/fee-converter/solana.ts","sha256":"68c2f7c2a4f4ff7e13de4a3f35c447c00f25903281c1d72c33569612319f87ca","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/fee-converter/solana.ts","sha256":"c9d7fdf63a1951c9f05abb9651b3afa3c962c83d00eede2f92b49bc0a45fb008","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"solanaEscrowConfig","kind":"FunctionDeclaration","line":174,"sha256":"a8530a5877ee02936102b252d16a1b5a879458679a433b29e26e0b0c9afc34c3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"text","kind":"ArrowFunction","line":179,"sha256":"3da28632fd20fcc89c5c517b4fd28ebffa971f9bf0ba8ae7541226167bdaac15","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"decimalBps","kind":"FunctionDeclaration","line":214,"sha256":"ebe1009284223b04446f830e191799ded8a8adb6ae52372f09a01fbedc94fd5a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

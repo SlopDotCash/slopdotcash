@@ -5,7 +5,7 @@
  * summed here as BigInt; a SQL SUM of base units would overflow.
  */
 
-import type { BuybackStore, BridgeOutcome } from "./buyback";
+import type { BridgeOutcome, BuybackStore } from "./buyback";
 import { NETWORK_DEFINITIONS, type Network } from "./config";
 import type { ConversionRow } from "./core";
 import type { D1Value, FeeD1Database } from "./d1";

@@ -23,7 +23,7 @@ import { closeSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
-import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { programAddress, solanaBase58 } from "../../contracts/solana/adapter";
 import { ata } from "../../contracts/solana/transactions";
 import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
