@@ -28,6 +28,7 @@ async function uncertainReview(
     deliver: (jobs: Job[]) => Promise<void>;
     setDraft: (v: boolean) => void;
     setMaintainerComments: (value: boolean) => void;
+    setAuthorWrite: (value: boolean) => void;
     setExtraTimeline: (entries: Record<string, unknown>[]) => void;
     setVerdict: (category: Category, nextConfidence: number) => void;
     job: (kind: string, extra: Record<string, unknown>) => Job;
@@ -77,6 +78,7 @@ async function uncertainReview(
   );
   const repositoryId = Number(project.authority.repositoryId);
   let pullDraft = false;
+  let authorWrite = false;
   let extraTimeline: Record<string, unknown>[] = [];
   let currentCategory: Category = "busywork";
   let currentConfidence = confidence;
@@ -186,7 +188,11 @@ async function uncertainReview(
         return Response.json({ login: "maintainer", id: 43 });
       if (path.endsWith("/permission"))
         return Response.json({
-          permission: path.includes("/maintainer/") ? "write" : "read",
+          permission:
+            path.includes("/maintainer/") ||
+            (authorWrite && path.includes("/author/"))
+              ? "write"
+              : "read",
         });
       if (path.endsWith("/issues/5/timeline")) {
         await interleave("timeline");
@@ -295,6 +301,9 @@ async function uncertainReview(
       },
       setMaintainerComments: (value) => {
         maintainerComments = value;
+      },
+      setAuthorWrite: (value) => {
+        authorWrite = value;
       },
       setExtraTimeline: (entries) => {
         extraTimeline = entries;
@@ -424,6 +433,24 @@ test("a maintainer who acts inside the window keeps the decision; Slopbot adds n
     expect(run.writes.some((w) => w.endsWith("/labels"))).toBe(false);
     expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
       { outcome: "maintainer_acted" },
+    ]);
+  });
+});
+
+test("an author's own comment is not maintainer action", async () => {
+  await uncertainReview(false, async (run) => {
+    const start = Date.now();
+    await run.review();
+    // The author has write access and comments on their own PR after the
+    // hold began. Only a maintainer's action may end the hold; the author's
+    // own activity is not maintainer review of the finding.
+    run.setAuthorWrite(true);
+    setSystemTime(new Date(start + 8 * day));
+    await run.deliver(await run.tick());
+    expect(run.writes.some((w) => w.endsWith("/labels"))).toBe(true);
+    expect(run.labels).toEqual([{ name: "slopbot:uncertain" }]);
+    expect(run.sql("SELECT outcome FROM slopbot_maintainer_holds")).toEqual([
+      { outcome: "labeled" },
     ]);
   });
 });

@@ -7882,7 +7882,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "df4bef27b1951efe0b8bbcf087c7fb4eb8abcc2eacb676f0b61b4b3fe278f4b0",
+      "sha256": "a85aaac026a02e88b69a6c94193255ef4dbadc1f73fc1456561d7ea64a8ae045",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -7900,7 +7900,7 @@
         1471, 1586, 1593, 1594, 1629, 1646, 1649, 1650, 1812, 1817, 1879, 1892,
         1897, 1904, 1905, 1909, 1910, 1918, 1934, 1991, 2138, 2198, 2204, 2215,
         2243, 2268, 2276, 2299, 2304, 2380, 2381, 2423, 2458, 2509, 2654, 2911,
-        2986, 3152, 3163, 3171, 3269, 3270, 3310, 3360, 3374, 3390
+        2986, 3152, 3163, 3171, 3269, 3272, 3314, 3364, 3378, 3394
       ],
       "review": "mapped-abstraction"
     },

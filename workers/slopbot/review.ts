@@ -3266,7 +3266,9 @@ const PASSIVE_TIMELINE_EVENTS = new Set([
 ]);
 
 /** True when a repository maintainer acted on the item since the hold began:
- * any comment, review, label, assignment or state change. Unknown maintainer
+ * any comment, review, label, assignment or state change by someone other
+ * than the item's author. The author's own activity is not maintainer review
+ * of the finding, even when the author holds write access. Unknown maintainer
  * status fails closed: the queue retries and nothing is labeled.
  */
 async function maintainerActedSince(
@@ -3275,6 +3277,7 @@ async function maintainerActedSince(
   repo: Repo,
   job: Job,
   since: string,
+  authorId: number,
 ): Promise<boolean> {
   const actors = new Map<number, { login: string; id: number }>();
   for (let page = 1; ; page++) {
@@ -3292,6 +3295,7 @@ async function maintainerActedSince(
         PASSIVE_TIMELINE_EVENTS.has(entry.event ?? "") ||
         Date.parse(at) < Date.parse(since) ||
         !actor ||
+        actor.id === authorId ||
         String(actor.id) === env.SLOPBOT_APP_USER_ID
       )
         continue;
@@ -3406,7 +3410,16 @@ export async function applyMaintainerHold(
   // reviewed item changed, including a corrected current-target comparison.
   if ((await sha256Hex(context.itemText)) !== reviewed.content_digest)
     return supersede("reviewed source changed");
-  if (await maintainerActedSince(env, github, repo, job, hold.held_at)) {
+  if (
+    await maintainerActedSince(
+      env,
+      github,
+      repo,
+      job,
+      hold.held_at,
+      issue.user.id,
+    )
+  ) {
     await resolveHold(db, job.reviewKey, "maintainer_acted");
     return "maintainer acted; no label";
   }
