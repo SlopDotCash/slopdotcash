@@ -99,6 +99,13 @@ export const MAX_GRAPHQL_RESPONSE_BYTES = 64 * 1024 * 1024;
 // by the limit GitHub reports, so a 1,000-point token still stops at 900.
 export const MAX_GENERATION_COST = 4_900;
 export const MINIMUM_RATE_LIMIT_RESERVE = 100;
+/**
+ * Open pull requests above this many changed files keep `files: null`
+ * instead of paging the whole file list (#2447 option 3). Their records
+ * only feed the work queue, so the material-test-change hint is the only
+ * thing lost; merged and closed pull requests stay complete.
+ */
+export const MAX_OPEN_PULL_REQUEST_FILES = 300;
 export const MINIMUM_STARTING_RATE_LIMIT = 900;
 export const MAX_EVIDENCE_ARTIFACTS_PER_SNAPSHOT = 64;
 export const MAX_EVIDENCE_SOURCES_PER_SNAPSHOT = 64;
@@ -2745,6 +2752,20 @@ async function completePullRequestConnections(
   );
 
   let filesState = parsed.pages.files;
+  if (
+    parsed.state === "OPEN" &&
+    pullRequest.changedFiles > MAX_OPEN_PULL_REQUEST_FILES &&
+    filesState?.pageInfo.hasNextPage
+  ) {
+    // #2447 option 3: paging every 100-file page of a huge open PR costs a
+    // GraphQL request per page for records that only feed the work queue,
+    // and the paging fails outright while the PR keeps changing. Keep the
+    // existing `files: null` state (the same representation oversized
+    // drafts already use) instead of the partial first page; the open-PR
+    // opportunity paths treat null as no test-change signal.
+    pullRequest.files = null;
+    filesState = null;
+  }
   while (filesState?.pageInfo.hasNextPage) {
     if (!filesState.pageInfo.endCursor) {
       throw new Error(`PR #${pullRequest.number} files cursor is missing`);

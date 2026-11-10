@@ -109,6 +109,26 @@ const openPull = (id: string, number: number) => ({
 });
 const stillOpenPull = openPull("PR_still_open", 81);
 const mergedAfterListing = openPull("PR_merged_after_listing", 82);
+// #2447 option 3: an open PR whose file list costs a GraphQL request per 100
+// files, for records that only feed the work queue.
+const oversizedOpenPull = openPull("PR_oversized_open", 83);
+const OVERSIZED_FILE_COUNT = 1108;
+const oversizedFilesPage = (page: number) => {
+  const start = (page - 1) * 100;
+  const count = Math.min(100, OVERSIZED_FILE_COUNT - start);
+  return {
+    totalCount: OVERSIZED_FILE_COUNT,
+    nodes: Array.from({ length: count }, (_, index) => ({
+      path: `src/oversized-${String(start + index).padStart(4, "0")}.txt`,
+      additions: 1,
+      deletions: 0,
+    })),
+    pageInfo: {
+      hasNextPage: start + count < OVERSIZED_FILE_COUNT,
+      endCursor: `files-page-${page}`,
+    },
+  };
+};
 const openIssueNode = (id: string, number: number, open: boolean) => ({
   __typename: "Issue",
   id,
@@ -292,7 +312,13 @@ async function nativeFileFixture(): Promise<NativeFileFixture> {
 }
 
 async function fixture(
-  mode: "removed" | "persistent" | "joint" | "healthy" | "open-closure",
+  mode:
+    | "removed"
+    | "persistent"
+    | "joint"
+    | "healthy"
+    | "open-closure"
+    | "open-oversized",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
@@ -300,6 +326,7 @@ async function fixture(
 ) {
   let missingSeen = false;
   let requests = 0;
+  let moreFilesRequests = 0;
   let attempts = 0;
   let repositoryReads = 0;
   let forbiddenSourceReads = 0;
@@ -370,6 +397,7 @@ async function fixture(
             searchQuery: string;
             ids: string[];
             id: string;
+            after: string;
           };
         };
         requests++;
@@ -436,9 +464,13 @@ async function fixture(
             ? "issues"
             : "pullRequests";
           const listed =
-            mode === "open-closure" &&
+            (mode === "open-closure" || mode === "open-oversized") &&
             v.owner === repository.owner &&
             v.name === repository.name;
+          const openPulls =
+            mode === "open-oversized"
+              ? [oversizedOpenPull]
+              : [stillOpenPull, mergedAfterListing];
           data.repository = {
             id: nodeId(v.owner, v.name),
             [field]: connection(
@@ -449,7 +481,7 @@ async function fixture(
                       id,
                       updatedAt: unaffected.updatedAt,
                     }))
-                  : [stillOpenPull, mergedAfterListing].map((pull) => ({
+                  : openPulls.map((pull) => ({
                       id: pull.id,
                       updatedAt: pull.updatedAt,
                       headRefOid: pull.headRefOid,
@@ -512,20 +544,41 @@ async function fixture(
           if (failure === "mixed")
             errors.push({ type: "INTERNAL", path: ["nodes", 0] });
           if (failure === "partial") data.nodes = [];
+        } else if (query.includes("query LeaderboardMoreFiles")) {
+          moreFilesRequests++;
+          const page =
+            Number(String(v.after ?? "").replace("files-page-", "")) + 1;
+          data.node = {
+            __typename: "PullRequest",
+            id: v.id,
+            state: "OPEN",
+            isDraft: false,
+            headRefOid: oversizedOpenPull.headRefOid,
+            files: oversizedFilesPage(page),
+          };
         } else if (
           query.includes("query LeaderboardPullRequestDetails") ||
           query.includes("query LeaderboardMergedPullRequestReviews")
         ) {
           data.nodes = v.ids.map((id: string) =>
-            id === stillOpenPull.id
-              ? { ...nodeFor(stillOpenPull), state: "OPEN" }
-              : id === mergedAfterListing.id
-                ? {
-                    ...nodeFor(mergedAfterListing),
-                    mergedAt: GENERATED_AT,
-                    closedAt: GENERATED_AT,
-                  }
-                : sourceNodeFor(required(pulls.find((p) => p.id === id))),
+            id === oversizedOpenPull.id
+              ? {
+                  ...nodeFor(oversizedOpenPull),
+                  state: "OPEN",
+                  files: oversizedFilesPage(1),
+                  additions: 5000,
+                  deletions: 2000,
+                  changedFiles: OVERSIZED_FILE_COUNT,
+                }
+              : id === stillOpenPull.id
+                ? { ...nodeFor(stillOpenPull), state: "OPEN" }
+                : id === mergedAfterListing.id
+                  ? {
+                      ...nodeFor(mergedAfterListing),
+                      mergedAt: GENERATED_AT,
+                      closedAt: GENERATED_AT,
+                    }
+                  : sourceNodeFor(required(pulls.find((p) => p.id === id))),
           );
         } else
           throw new Error(
@@ -689,6 +742,7 @@ async function fixture(
     output,
     stats: () => ({
       requests,
+      moreFilesRequests,
       attempts,
       repositoryReads,
       forbiddenSourceReads,
@@ -1390,6 +1444,30 @@ test("a gateway failure on the joint-hold availability batch splits instead of f
     expect(availabilityBatchSizes[0]).toBe(2);
     expect(availabilityBatchSizes.filter((size) => size === 1)).toHaveLength(2);
     expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  } finally {
+    await f.close();
+  }
+});
+
+// #2447 option 3: an open PR above the file threshold must not page its file
+// list. Its 1,108 changed files would otherwise cost eleven MORE_FILES
+// requests for records that only feed the work queue, and the paging fails
+// outright while the PR keeps changing. The PR stays in the work queue
+// through its size signals; only the material-test-change hint is lost.
+test("an oversized open pull request keeps files null instead of paging them", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-oversized");
+  try {
+    const snapshot = await f.generate();
+    expect(f.stats().moreFilesRequests).toBe(0);
+    expect(snapshot.source.counts).toMatchObject({
+      openPullRequests: 1,
+      mergedPullRequests: 2,
+    });
+    expect(snapshot.workQueue.pullRequests.map((item) => item.id)).toEqual([
+      oversizedOpenPull.id,
+    ]);
+    assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
   } finally {
     await f.close();
   }
