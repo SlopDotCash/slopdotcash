@@ -1374,7 +1374,7 @@ function FeeConversionsSection({ actorId }: { actorId: string }) {
                   </dd>
                   {totals.length > 0 ? (
                     totals.map((total) => (
-                      <dd key={total.token}>
+                      <dd key={`${total.token}:${total.targetToken}`}>
                         {total.conversions}{" "}
                         {total.conversions === 1 ? "conversion" : "conversions"}
                         : {total.amountIn} base units of{" "}
