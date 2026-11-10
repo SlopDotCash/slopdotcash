@@ -299,6 +299,12 @@ export function paymentStack({
           }
         : {
             PAYMENT_NETWORKS: JSON.stringify([network]),
+            // A dispatcher is only generated for non-production stacks,
+            // which serve one registry test network (paymentStack rejects
+            // a mainnet here), so it declares the staging tier the tier
+            // gate requires; without it the gate would classify the
+            // dispatcher as production and refuse the testnet on every tick.
+            SLOP_ENVIRONMENT: "staging",
             // The ordinary dispatcher runs the monthly coordinator with the
             // owner-decided cutoff of the Pages configuration (decision D1).
             ...(scope === "ordinary" && monthlySchedule !== undefined

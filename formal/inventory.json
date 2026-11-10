@@ -7331,9 +7331,9 @@
     },
     {
       "path": "workers/payment-executor/configure.mjs",
-      "sha256": "1dae5843a1b1109dc004719c12414e0f37618e94ae652727ced8ad870014478c",
+      "sha256": "e31b95b747c0b0bdc4002451eb77b562992e139ef290a6e113ddf1aeb2e41e4a",
       "models": ["formal/models/payments/deployment_plan.qnt"],
-      "candidateLines": [1, 417, 443, 454, 485],
+      "candidateLines": [1, 423, 449, 460, 491],
       "review": "mapped-abstraction"
     },
     {
