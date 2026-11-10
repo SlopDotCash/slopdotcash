@@ -574,6 +574,41 @@ export function notifySlopbotAppeal<S>(
     );
 }
 
+/**
+ * Overdue reminder for an escalated Points dispute that is still awaiting a
+ * moderator decision past its due date. The escalation notice fires once, so
+ * a moderator who joined later, or missed it, would otherwise never see the
+ * dispute. The event key carries the UTC calendar day, so each moderator gets
+ * at most one reminder per day until the dispute is resolved; the row is
+ * written only while the dispute is still escalated and unresolved.
+ */
+export function notifyOverduePointsDispute<S>(
+  db: Preparer<S>,
+  appealKey: string,
+  recipient: string,
+  at: string,
+  day: string,
+): S {
+  return db
+    .prepare(
+      `${INSERT}
+    SELECT 'slopbot-overdue:' || a.appeal_key || ':' || ?5, ?2, 'slopbot_appeal_review',
+           a.item_node_id, NULL, ?4, a.escalated_at, ?3
+      FROM points_disputes a
+     WHERE a.appeal_key = ?1 AND a.escalated_at IS NOT NULL
+       AND a.resolved_at IS NULL AND a.appellant_github_id <> ?2
+       AND ${GITHUB_ID("?2")}
+    ${ONCE}`,
+    )
+    .bind(
+      appealKey,
+      recipient,
+      at,
+      `/inbox?pointsDispute=${encodeURIComponent(appealKey)}`,
+      day,
+    );
+}
+
 /** The private intake receipt and final decision are separate unread events. */
 export function notifyPointsDispute<S>(
   db: Preparer<S>,

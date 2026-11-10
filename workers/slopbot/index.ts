@@ -12,6 +12,7 @@ import { activePenaltyPage } from "./penalties";
 import * as store from "./persistence";
 import {
   processPendingPointsDisputes,
+  remindOverduePointsDisputes,
   routePointsDisputes,
 } from "./points-disputes";
 import { QUALITY_MARKER } from "./quality";
@@ -527,6 +528,7 @@ export default {
       dispatchMaintainerHolds(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       dispatchDueAppeals(env.SLOPBOT_DB, env.SLOPBOT_QUEUE),
       processPendingPointsDisputes(env),
+      remindOverduePointsDisputes(env),
       consumePendingValueRequests(env),
       ...(env.SLOP_NOTIFY
         ? [

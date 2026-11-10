@@ -243,7 +243,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
+      "sha256": "e298a9a167441038d5f135b0ffefac6076bd1e1abd07cdd05a82bb05f154ff6a",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -255,7 +255,7 @@
       "candidateLines": [
         15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
         290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 467, 483, 498, 530,
-        556, 585, 649, 666
+        556, 594, 620, 684, 701
       ],
       "review": "mapped-abstraction"
     },
@@ -495,14 +495,14 @@
     },
     {
       "path": "backend/points/disputes.ts",
-      "sha256": "93280e129dd89424bcffcd2d0dbb7c7b4c2111655b8881fc79e6246a962be3b4",
+      "sha256": "1db2e431dfa14c0e107736434e4a6f1e180c1034a6438d821043ea8c574cbb6a",
       "models": [
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [59, 141, 208, 228],
+      "candidateLines": [59, 141, 208, 232],
       "review": "mapped-abstraction"
     },
     {
@@ -1975,7 +1975,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "4190667c9e19dd6e25be8a1ae76bb15cab020995f4280f45b76ac190493322fc",
+      "sha256": "800594b9314850c69be6a3232e01d1ae91478a6e36747b44ad4f82980713e032",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -1983,7 +1983,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [519, 520, 556, 569],
+      "candidateLines": [517, 518, 554, 567],
       "review": "mapped-abstraction"
     },
     {
@@ -7747,15 +7747,15 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "7d2ad887912bb99d65ea2971439e237b4988443fbd21c63a4f8f12354f4b1ea2",
+      "sha256": "c31c5ca48b5a892513d36861c1a1e74d92848180e95645a73a5aae30323ddf1a",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 223, 230, 231, 254, 260, 286, 315, 326, 365, 374, 386, 395, 400, 407,
-        417, 419, 429, 432, 435, 439, 485, 500, 509, 513, 538, 547, 571, 577,
-        587
+        3, 224, 231, 232, 255, 261, 287, 316, 327, 366, 375, 387, 396, 401, 408,
+        418, 420, 430, 433, 436, 440, 486, 501, 510, 514, 540, 549, 573, 579,
+        589
       ],
       "review": "mapped-abstraction"
     },
@@ -7814,13 +7814,13 @@
     },
     {
       "path": "workers/slopbot/points-disputes.ts",
-      "sha256": "a73e71d793799141421e76d777d737979c7d849d15e7a3e8af7864504981216c",
+      "sha256": "521021cbdcdf26e4c23a780132337182d3883e9feb247cf4728513caed6472f5",
       "models": [
         "formal/models/api/api_points_dispute_lease.qnt",
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [41, 71, 72, 181, 218],
+      "candidateLines": [42, 72, 73, 182, 239, 273],
       "review": "mapped-abstraction"
     },
     {

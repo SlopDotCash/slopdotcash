@@ -1,6 +1,7 @@
 /** Ordinary Points intake shares Slopbot's draft and moderator escalation rules. */
 
 import type { D1TransactionalDatabase } from "../../backend/d1";
+import { notifyOverduePointsDispute } from "../../backend/notifications/events";
 import {
   POINTS_DISPUTE_KEY,
   POINTS_DISPUTE_URL,
@@ -202,6 +203,60 @@ export async function processPendingPointsDisputes(env: Env) {
   }
   if (failures.length)
     throw new AggregateError(failures, "Points dispute failures");
+}
+
+/**
+ * Remind the current moderators about escalated Points disputes that are
+ * still unresolved past their due date. The escalation notice fires once, so
+ * a dispute whose moderator missed it — or whose moderators were configured
+ * after the escalation — would otherwise sit in `review` forever with no
+ * re-visit, no re-notice and no timeout. This only re-notifies; it never
+ * decides a dispute. Each moderator gets at most one reminder per UTC day,
+ * via the date-bucketed event key in `notifyOverduePointsDispute`.
+ */
+export async function remindOverduePointsDisputes(
+  env: Env,
+  now = new Date(),
+): Promise<number> {
+  const at = now.toISOString();
+  const rows =
+    await env.SLOPBOT_DB.prepare(`SELECT json_group_array(appeal_key) AS rows FROM (SELECT appeal_key FROM points_disputes
+    WHERE resolved_at IS NULL AND escalated_at IS NOT NULL AND due_at <= ?
+    ORDER BY due_at LIMIT 100)`)
+      .bind(at)
+      .first<{ rows: string }>();
+  const keys = JSON.parse(rows?.rows ?? "[]") as string[];
+  if (keys.length === 0) return 0;
+  const moderators = moderatorIds(env.PROJECT_MODERATOR_GITHUB_IDS);
+  if (moderators.size === 0) {
+    console.warn(
+      "PROJECT_MODERATOR_GITHUB_IDS names no moderator for overdue Points disputes",
+    );
+    return 0;
+  }
+  const day = at.slice(0, 10);
+  // One dispute that fails to batch must not stop the rest from being
+  // reminded; the batch must still fail loudly, as the pending sweep does.
+  const failures: unknown[] = [];
+  let reminded = 0;
+  for (const key of keys) {
+    try {
+      const results = await env.SLOPBOT_DB.batch(
+        [...moderators].map((id) =>
+          notifyOverduePointsDispute(env.SLOPBOT_DB, key, id, at, day),
+        ),
+      );
+      for (const result of results) reminded += result.meta?.changes ?? 0;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(
+      failures,
+      "Overdue Points dispute reminders failed",
+    );
+  return reminded;
 }
 
 export function routePointsDisputes(

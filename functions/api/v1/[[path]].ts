@@ -91,6 +91,7 @@ import {
   isLocalDevelopmentOrigin,
 } from "../../../src/lib/deployment";
 import { ESCROW_NETWORKS } from "../../../src/lib/escrow-policy.mjs";
+import { githubIdSet } from "../../../src/lib/github-ids";
 import { parseMonthlySchedule } from "../../../src/lib/payments/monthly-allocation";
 import type { GithubActor } from "../../../src/lib/project-contracts";
 import type { MonthlyReleaseResult } from "../../../workers/payment-executor/monthly-release";
@@ -147,15 +148,6 @@ function privateIntake(env: PagesEnv): IntakeConfig | undefined {
   };
 }
 
-function githubIdSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => /^[1-9]\d*$/u.test(entry)),
-  );
-}
-
 /** A private RPC endpoint from `PAYMENT_RPC_URLS`; never returned to the browser. */
 function paymentRpcUrl(env: PagesEnv, network: string): string {
   const value = (
@@ -208,9 +200,15 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   const randomId = () => crypto.randomUUID();
   const sessionActor = (request: Request) =>
     sessionGithubActor(request, db, new Date().toISOString());
-  const adminGithubIds = githubIdSet(env.ADMIN_GITHUB_IDS);
-  const moderatorGithubIds = githubIdSet(env.PROJECT_MODERATOR_GITHUB_IDS);
-  const walletOperatorGithubIds = githubIdSet(env.OPERATOR_GITHUB_IDS);
+  const adminGithubIds = githubIdSet(env.ADMIN_GITHUB_IDS, "ADMIN_GITHUB_IDS");
+  const moderatorGithubIds = githubIdSet(
+    env.PROJECT_MODERATOR_GITHUB_IDS,
+    "PROJECT_MODERATOR_GITHUB_IDS",
+  );
+  const walletOperatorGithubIds = githubIdSet(
+    env.OPERATOR_GITHUB_IDS,
+    "OPERATOR_GITHUB_IDS",
+  );
   const cache = edgeCache();
   const waitUntil = context.waitUntil?.bind(context);
   const send = (url: string, init: RequestInit) => fetch(url, init);

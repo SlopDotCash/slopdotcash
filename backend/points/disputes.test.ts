@@ -1085,3 +1085,238 @@ test("the dispute list finds awards recorded under the other node spelling of th
   };
   expect(other.awards).toEqual([]);
 });
+
+test("retry on a triage dispute still re-runs triage", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  expect(h.started).toEqual([created.id]);
+  const retry = await h.call(`/${created.id}`, { action: "retry" });
+  expect(retry.status).toBe(202);
+  expect(h.started).toEqual([created.id, created.id]);
+});
+
+test("retry on an escalated dispute without a draft returns the view without re-running triage", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  expect(h.started).toEqual([created.id]);
+  // Escalated by an early path that writes no draft, as triage failures do.
+  h.sqlite
+    .query("UPDATE points_disputes SET escalated_at=?,escalation=?")
+    .run(
+      "2026-10-30T15:00:00.000Z",
+      "Slopbot triage is unavailable; independent review is required",
+    );
+  const retry = await h.call(`/${created.id}`, { action: "retry" });
+  expect(retry.status).toBe(202);
+  expect(await retry.json()).toMatchObject({ state: "review" });
+  expect(h.started).toEqual([created.id]);
+});
+
+test("an overdue escalated dispute is re-notified to current moderators, once per day", async () => {
+  const { remindOverduePointsDisputes } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  // The dispute opened 2026-10-30, so its due date (2026-11-06) is already
+  // past every reminder date used below.
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "needs moderator review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  const count = (id: string) =>
+    (
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM notifications WHERE recipient_github_id=?",
+        )
+        .get(id) as { n: number }
+    ).n;
+  expect(count(moderator.githubId)).toBe(1);
+  const env = {
+    SLOPBOT_DB: h.db,
+    SLOPBOT_APP_ID: "unused",
+    SLOPBOT_APP_PRIVATE_KEY: "unused",
+    PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+  };
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:00:00.000Z"),
+    ),
+  ).toBe(1);
+  expect(count(moderator.githubId)).toBe(2);
+  // A same-day repeat writes nothing: one reminder per moderator per day.
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T18:00:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(count(moderator.githubId)).toBe(2);
+  // A moderator added after the escalation is reached by the reminder.
+  const wider = {
+    ...env,
+    PROJECT_MODERATOR_GITHUB_IDS: `${moderator.githubId},44`,
+  };
+  expect(
+    await remindOverduePointsDisputes(
+      wider,
+      new Date("2026-11-10T19:00:00.000Z"),
+    ),
+  ).toBe(1);
+  expect(count("44")).toBe(1);
+  expect(count(moderator.githubId)).toBe(2);
+  // The next day reminds every current moderator again.
+  expect(
+    await remindOverduePointsDisputes(
+      wider,
+      new Date("2026-11-11T12:00:00.000Z"),
+    ),
+  ).toBe(2);
+  expect(count(moderator.githubId)).toBe(3);
+  expect(count("44")).toBe(2);
+});
+
+test("the overdue reminder skips disputes that are not due, not escalated, or resolved", async () => {
+  const { remindOverduePointsDisputes } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  const env = {
+    SLOPBOT_DB: h.db,
+    SLOPBOT_APP_ID: "unused",
+    SLOPBOT_APP_PRIVATE_KEY: "unused",
+    PROJECT_MODERATOR_GITHUB_IDS: moderator.githubId,
+  };
+  const count = (id: string) =>
+    (
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM notifications WHERE recipient_github_id=?",
+        )
+        .get(id) as { n: number }
+    ).n;
+  // Not yet due (due 2026-11-06) and still in triage: no reminder.
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-01T12:00:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(count(moderator.githubId)).toBe(0);
+  // Overdue but still in triage: no reminder.
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:00:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(count(moderator.githubId)).toBe(0);
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "needs moderator review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  expect(count(moderator.githubId)).toBe(1);
+  // Escalated but not yet due: no reminder.
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-01T12:00:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(count(moderator.githubId)).toBe(1);
+  // Resolved by a moderator decision: no reminder once past due.
+  const decided = await h.call(
+    `/${created.id}`,
+    { action: "deny", reason: "The record is correct." },
+    otherToken,
+  );
+  expect(decided.status).toBe(200);
+  expect(
+    await remindOverduePointsDisputes(
+      env,
+      new Date("2026-11-10T12:00:00.000Z"),
+    ),
+  ).toBe(0);
+  expect(count(moderator.githubId)).toBe(1);
+});
+
+test("the overdue reminder warns instead of throwing when no moderator is configured", async () => {
+  const { remindOverduePointsDisputes } = await import(
+    "../../workers/slopbot/points-disputes"
+  );
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  await escalateAppeal(
+    h.db,
+    created.id,
+    "needs moderator review",
+    new Set([moderator.githubId]),
+    "points_disputes",
+  );
+  const warnings: unknown[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+  };
+  try {
+    expect(
+      await remindOverduePointsDisputes(
+        {
+          SLOPBOT_DB: h.db,
+          SLOPBOT_APP_ID: "unused",
+          SLOPBOT_APP_PRIVATE_KEY: "unused",
+          PROJECT_MODERATOR_GITHUB_IDS: undefined,
+        },
+        new Date("2026-11-10T12:00:00.000Z"),
+      ),
+    ).toBe(0);
+  } finally {
+    console.warn = warn;
+  }
+  expect(warnings).toEqual([
+    "PROJECT_MODERATOR_GITHUB_IDS names no moderator for overdue Points disputes",
+  ]);
+  expect(
+    (
+      h.sqlite
+        .query(
+          "SELECT COUNT(*) AS n FROM notifications WHERE recipient_github_id=?",
+        )
+        .get(moderator.githubId) as { n: number }
+    ).n,
+  ).toBe(1);
+});
