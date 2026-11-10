@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2b8800b614c13675b11cf4f2760b3b6aa9106f965b37388681b1d688b3282da2",
+  "inventorySha256": "e2a8559e9b0b2ee33d29e21526e58fcc6966bc654006cb2d8ddb1fe11857fd02",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2750,7 +2750,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 339,
+      "line": 346,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -2760,7 +2760,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 490,
+      "line": 497,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
@@ -2770,7 +2770,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 498,
+      "line": 505,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
@@ -2780,7 +2780,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 545,
+      "line": 552,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
@@ -2790,7 +2790,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 645,
+      "line": 652,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2800,7 +2800,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 736,
+      "line": 749,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -2814,7 +2814,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4570,
+      "line": 4602,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
