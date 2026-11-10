@@ -15,6 +15,7 @@ import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
+import { POINTS_NOTICE } from "./lib/points";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
@@ -208,6 +209,34 @@ export function HowItWorksPage() {
                 Merged pull requests and their qualifying reviews appear at the
                 next site update. There is no waiting period or minimum account
                 age.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>How do points work?</h3>
+            <div>
+              <p>
+                Points record accepted work. Slopbot sizes each accepted pull
+                request with the tiers in the <a href="#points">Points</a>{" "}
+                table. {POINTS_NOTICE}
+              </p>
+              <p>
+                Points count toward a payout only on a project with a funded
+                pool, and only for the UTC month they come from. Your share is
+                your points that month ÷ the project&apos;s points that month ×
+                that month&apos;s funded pool.
+              </p>
+              <p>
+                Points from a month without a funded pool stay on your record.
+                They do not count toward a later month&apos;s pool, even after
+                the project funds one. Your total carries over from month to
+                month and changes only through recorded corrections.
+              </p>
+              <p>
+                Each project&apos;s owner decides whether and when to fund a
+                pool. Check the project&apos;s page before relying on one, and
+                follow your points and any funded awards in{" "}
+                <Link href="/earnings">Payouts</Link>.
               </p>
             </div>
           </article>
