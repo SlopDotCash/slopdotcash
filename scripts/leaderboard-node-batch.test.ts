@@ -133,6 +133,7 @@ function rateLimitedTransport(
 
 test("a window drained by another consumer waits for the reported reset instead of failing", async () => {
   const resetAt = Date.now() + 200;
+  const waits: string[] = [];
   const { fetcher, requests } = rateLimitedTransport([
     { remaining: 99, resetAt: new Date(resetAt).toISOString() },
     {
@@ -140,12 +141,19 @@ test("a window drained by another consumer waits for the reported reset instead 
       resetAt: new Date(resetAt + 3_600_000).toISOString(),
     },
   ]);
-  const client = new GitHubGraphqlClient("fixture-token", fetcher);
+  const client = new GitHubGraphqlClient("fixture-token", fetcher, {
+    onBudgetWait: (message) => waits.push(message),
+  });
   await client.execute(QUERY, { ids: ["PR_1"] });
   await client.execute(QUERY, { ids: ["PR_2"] });
   expect(requests).toHaveLength(2);
   expect(requests[1]).toBeGreaterThanOrEqual(resetAt + 1_000);
   expect(client.getRateLimit().remaining).toBe(4999);
+  expect(waits).toEqual([
+    expect.stringContaining(
+      `GitHub GraphQL budget reset at ${new Date(resetAt).toISOString()}`,
+    ),
+  ]);
 });
 
 test("a window still exhausted after its reported reset fails closed", async () => {

@@ -409,7 +409,9 @@ export interface GeneratorDependencies {
     options?: GenerateOptions,
   ) => Promise<LeaderboardSnapshot>;
   write: (snapshot: LeaderboardSnapshot, outputPath: string) => Promise<void>;
-  onCensusRetry?: () => void;
+  onCensusRetry?: (
+    error: ReviewCensusChangedError | SourceNodeUnavailableError,
+  ) => void;
 }
 
 const ACTOR_FRAGMENT = `
@@ -1440,6 +1442,7 @@ export interface GitHubGraphqlClientOptions {
   minimumRateLimitReserve?: number;
   retryBaseDelayMs?: number;
   recoverFiles?: typeof recoverPullRequestGitFiles;
+  onBudgetWait?: (message: string) => void;
 }
 
 function isTransientNetworkError(value: unknown): boolean {
@@ -1605,6 +1608,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   readonly #minimumRateLimitReserve: number;
   readonly #retryBaseDelayMs: number;
   readonly #recoverFiles: typeof recoverPullRequestGitFiles;
+  readonly #onBudgetWait: (message: string) => void;
   #requestCount = 0;
   #rateLimit: RateLimitSnapshot | null = null;
   #consumedCost = 0;
@@ -1653,6 +1657,9 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     this.#minimumRateLimitReserve = minimumRateLimitReserve;
     this.#retryBaseDelayMs = retryBaseDelayMs;
     this.#recoverFiles = options.recoverFiles ?? recoverPullRequestGitFiles;
+    this.#onBudgetWait =
+      options.onBudgetWait ??
+      ((message) => process.stderr.write(`[slop.cash] ${message}\n`));
   }
 
   async ensureBudget(requiredCost: number): Promise<void> {
@@ -1693,6 +1700,9 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     }
     const waitMs = Math.max(0, resetAt - Date.now() + 1_000);
     this.#waitedResetAt = resetAt;
+    this.#onBudgetWait(
+      `waiting ${waitMs} ms for the GitHub GraphQL budget reset at ${this.#rateLimit.resetAt}; required ${requiredCost} points (${budgetSummary})`,
+    );
     await retryDelay(waitMs);
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
@@ -4595,9 +4605,9 @@ export async function runGenerator(
     createClient: (token) => new GitHubGraphqlClient(token),
     generate: generateLeaderboardFromGitHub,
     write: writeLeaderboardAtomically,
-    onCensusRetry: () => {
+    onCensusRetry: (error) => {
       process.stderr.write(
-        "[slop.cash] source census changed or a node became unavailable; recollecting once with the existing GraphQL budget\n",
+        `[slop.cash] ${error.name} caused a complete recollection with the existing GraphQL budget\n`,
       );
     },
   },
@@ -4630,7 +4640,7 @@ export async function runGenerator(
         ...error.sources,
       );
     generationOptions.sourceRecovery.allowJointHolds = true;
-    dependencies.onCensusRetry?.();
+    dependencies.onCensusRetry?.(error);
     // Recollect every source; never reuse a partially assembled first attempt.
     // The same client retains consumed cost, request counts, reserve and reset state.
     snapshot = await dependencies.generate(client, generationOptions);
