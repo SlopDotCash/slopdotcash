@@ -200,6 +200,31 @@ function choice<T extends string>(
   return value as T;
 }
 
+/**
+ * A maintainer-attested receipt time must not revive paid terms the program
+ * no longer offers: the receipt time is the maintainer's word, not GitHub's,
+ * so backdating past a closure or capacity deadline would freeze terms the
+ * program has already withdrawn. GitHub-verified intake keeps receipt-time
+ * terms (see `submissions.ts`): GitHub attests that time, so a report
+ * received while the program was open stays payable even if the program
+ * closed before intake ran.
+ */
+async function refuseResurrectedTerms(
+  deps: SecurityApiDependencies,
+  projectId: string,
+  frozen: { terms: FrozenTerms | null },
+  at: string,
+): Promise<void> {
+  if (frozen.terms === null) return;
+  const current = await termsAtReceipt(deps, projectId, at);
+  if (current.terms === null)
+    fail(
+      409,
+      "terms_closed",
+      "The program's paid terms are closed; a backdated receipt cannot revive them",
+    );
+}
+
 function timestampField(
   body: Record<string, unknown>,
   key: string,
@@ -1438,6 +1463,7 @@ async function createCase(
       receivedAt,
       ...(await termsAtReceipt(deps, projectId, receivedAt)),
     };
+    await refuseResurrectedTerms(deps, projectId, verified, at);
   }
   const linked = await deps.db
     .prepare(
@@ -1651,7 +1677,7 @@ async function priorCaseDecider(
   return (
     (await deps.db
       .prepare(
-        "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide', 'award', 'decide-related-party', 'decide-appeal') LIMIT 1",
+        "SELECT 1 AS found FROM security_case_events WHERE case_id = ? AND actor_github_id = ? AND kind IN ('decide', 'award', 'decide-related-party', 'decide-appeal', 'verify-link', 'record') LIMIT 1",
       )
       .bind(row.id, githubId)
       .first<{ found: number }>()) !== null
@@ -1688,6 +1714,7 @@ async function planChange(
         past: true,
       });
       const frozen = await termsAtReceipt(deps, row.project_id, receivedAt);
+      await refuseResurrectedTerms(deps, row.project_id, frozen, at);
       return {
         kind: action,
         role: "security-maintainer",
@@ -3317,6 +3344,21 @@ async function actOnCase(
       fail(409, change.unmet.code, change.unmet.message);
     }
     fail(409, "stale_revision", "The case changed since you loaded it");
+  }
+  // Every after-statement must take effect. An INSERT ... SELECT whose
+  // fence no longer matches inserts zero rows without raising, so without
+  // this the batch would report success while its side effect never
+  // happened. Each statement must change at least one row: the
+  // transaction-uses insert covers every verified leg, so its count is a
+  // lower bound rather than exactly one, and verifyDirectPayment only
+  // returns its conditional inserts once they can match.
+  const after = change.after ?? [];
+  for (let index = 0; index < after.length; index++) {
+    const afterResult = results[(change.before ?? []).length + 2 + index];
+    if ((afterResult?.meta?.changes ?? 0) < 1) {
+      if (change.unmet) fail(409, change.unmet.code, change.unmet.message);
+      fail(409, "stale_revision", "The case changed since you loaded it");
+    }
   }
   // Slopbot triages every appeal first; a moderator still decides it.
   if (change.kind === "appeal") await scheduleAppealTriage(deps, row.id);

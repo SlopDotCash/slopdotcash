@@ -2303,3 +2303,260 @@ describe("reporter payment state against the payout queue", () => {
     env.sqlite.close();
   });
 });
+
+describe("backdated receipts and prior deciders", () => {
+  /** Appends a closed paid-terms revision after the open revision. */
+  const closeProgram = (env: ReturnType<typeof open>) => {
+    const closed = programManifest({ ...OPEN_PROGRAM, status: "closed" });
+    const digest = createHash("sha256").update(closed).digest("hex");
+    env.sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 2, ?, ?, 'Close paid terms', ?)",
+      )
+      .run(PROJECT, closed, digest, "2026-10-19T09:30:00.000Z");
+    env.sqlite
+      .query(
+        "UPDATE projects SET revision = 2, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(closed, digest, "2026-10-19T09:30:00.000Z", PROJECT);
+  };
+
+  test("a backdated record cannot revive paid terms after the program closes", async () => {
+    const env = open();
+    try {
+      closeProgram(env);
+      const recorded = await env.call(MAINTAINER, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(409);
+      expect(recorded.body.error).toBe("terms_closed");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a backdated verify-link cannot revive paid terms after the program closes", async () => {
+    const env = open();
+    try {
+      const id = "sc_backdated_verify";
+      env.claim(id, "GHSA-9c9f-9g9h-9j9m", REPORTER);
+      closeProgram(env);
+      const verified = await env.act(MAINTAINER, id, {
+        action: "verify-link",
+        confirmation: true,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+      });
+      expect(verified.status).toBe(409);
+      expect(verified.body.error).toBe("terms_closed");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a backdated record still verifies while the program is open", async () => {
+    const env = open();
+    try {
+      const recorded = await env.call(MAINTAINER, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(201);
+      expect(recorded.body.case).toMatchObject({
+        submissionState: "verified",
+        awardState: "pending",
+      });
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  /** A program where DISPUTE is also a technical approver. */
+  const openDualRole = () =>
+    open({
+      ...OPEN_PROGRAM,
+      approvers: {
+        ...OPEN_PROGRAM.approvers,
+        technical: [MAINTAINER, DISPUTE],
+      },
+    });
+
+  const appealOpen = async (env: ReturnType<typeof open>, id: string) => {
+    expect((await env.decide(id, "vault-drain")).status).toBe(200);
+    expect(
+      (
+        await env.act(MAINTAINER, id, {
+          action: "award",
+          decision: "none",
+          reason: "Already known and mitigated before the report.",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await env.act(REPORTER, id, {
+          action: "appeal",
+          reason: "The mitigation did not cover the path I reported.",
+        })
+      ).status,
+    ).toBe(200);
+  };
+
+  test("a maintainer who verified the link cannot decide the appeal", async () => {
+    const env = openDualRole();
+    try {
+      const id = "sc_dual_verify";
+      env.claim(id, "GHSA-9c9f-9g9h-9j9m", REPORTER);
+      expect(
+        (
+          await env.act(DISPUTE, id, {
+            action: "verify-link",
+            confirmation: true,
+            receivedAt: "2026-10-19T09:10:00.000Z",
+          })
+        ).status,
+      ).toBe(200);
+      await appealOpen(env, id);
+      const decided = await env.act(DISPUTE, id, {
+        action: "decide-appeal",
+        outcome: "uphold",
+        reason: "Trying to uphold my own verification.",
+      });
+      expect(decided.status).toBe(403);
+      expect(decided.body.error).toBe("conflicted");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a maintainer who recorded the case cannot decide the appeal", async () => {
+    const env = openDualRole();
+    try {
+      const recorded = await env.call(DISPUTE, "POST", "security-cases", {
+        mode: "record",
+        projectId: PROJECT,
+        advisory: "GHSA-9c9f-9g9h-9j9m",
+        idempotencyKey: env.key(),
+        reporterGithubId: REPORTER.githubId,
+        reporterGithubLogin: REPORTER.githubLogin,
+        receivedAt: "2026-10-19T09:10:00.000Z",
+        confirmation: true,
+      });
+      expect(recorded.status).toBe(201);
+      const id = recorded.body.case.id as string;
+      await appealOpen(env, id);
+      const decided = await env.act(DISPUTE, id, {
+        action: "decide-appeal",
+        outcome: "uphold",
+        reason: "Trying to uphold my own record.",
+      });
+      expect(decided.status).toBe(403);
+      expect(decided.body.error).toBe("conflicted");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+});
+
+describe("batch after-statements", () => {
+  const prepareVaultPayment = async (
+    env: ReturnType<typeof open>,
+    id: string,
+  ) => {
+    expect((await env.decide(id, "vault-drain")).status).toBe(200);
+    expect((await env.award(id, "1000000")).status).toBe(200);
+    expect(
+      (
+        await env.act(REPORTER, id, {
+          action: "consent-payment",
+          network: "base-sepolia",
+          confirmation: true,
+        })
+      ).status,
+    ).toBe(200);
+    return env.act(MAINTAINER, id, {
+      action: "prepare-payment",
+      network: "base-sepolia",
+      confirmation: true,
+    });
+  };
+
+  test("prepare-payment records the vault settlement on the happy path", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      const prepared = await prepareVaultPayment(env, id);
+      expect(prepared.status).toBe(200);
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(1);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a settlement insert that misses its guard fails instead of reporting success", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect((await env.decide(id, "vault-drain")).status).toBe(200);
+      expect((await env.award(id, "1000000")).status).toBe(200);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "consent-payment",
+            network: "base-sepolia",
+            confirmation: true,
+          })
+        ).status,
+      ).toBe(200);
+      // The award approval is withdrawn between the read and the write
+      // batch, so the settlement INSERT's guard no longer matches. The
+      // payment state moves with it: the table requires an approved award
+      // whenever a payment rail is recorded.
+      env.setBeforeBatch(() => {
+        env.sqlite
+          .query(
+            "UPDATE security_cases SET award_state = 'pending', payment_state = 'not-applicable' WHERE id = ?",
+          )
+          .run(id);
+      });
+      const prepared = await env.act(MAINTAINER, id, {
+        action: "prepare-payment",
+        network: "base-sepolia",
+        confirmation: true,
+      });
+      expect(prepared.status).toBe(409);
+      expect(prepared.body.error).toBe("stale_revision");
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(0);
+    } finally {
+      env.sqlite.close();
+    }
+  });
+});

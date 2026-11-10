@@ -2,14 +2,18 @@
 // stops the unsigned Solana request is the payer's refusal to act on. It must
 // reach the API as a refusal with its reason, not as an unhandled Error that
 // `backend/http.ts` turns into HTTP 500 "Internal error".
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import { directConsent, prepareDirectIntent } from "./direct-payments";
+import {
+  directConsent,
+  directSettlementView,
+  prepareDirectIntent,
+} from "./direct-payments";
 
 const OWNER = { githubId: "720000001", githubLogin: "direct-owner" };
 const REPORTER = { githubId: "720000002", githubLogin: "direct-reporter" };
@@ -229,4 +233,152 @@ test("an RPC on another cluster is still an internal fault, not a refusal", asyn
   expect(caught).toBeInstanceOf(Error);
   expect((caught as Error).message).toBe("Wrong Solana cluster");
   expect((caught as { status?: unknown }).status).toBeUndefined();
+});
+
+describe("direct settlement recipient view", () => {
+  /** Seeds one case with a direct payment whose recipient is `claim`. */
+  async function settlementView(options: {
+    claimGithubId: string;
+    claimChain: string;
+    claimSource: "d1_registry" | "github_issue";
+    intentChain: string;
+  }) {
+    const { db, sqlite } = sqliteD1();
+    const stamp = "2026-10-30T00:00:00.000Z";
+    const caseId = "sc_recipient_view";
+    const manifest = JSON.stringify({ id: "direct-pay", status: "active" });
+    sqlite
+      .prepare(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('direct-pay',1,?,?,'seed',?)",
+      )
+      .run(manifest, hash(manifest), stamp);
+    sqlite
+      .prepare(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('direct-pay','active',1,?,?,?,?)",
+      )
+      .run(manifest, hash(manifest), stamp, stamp);
+    sqlite
+      .prepare(
+        "INSERT INTO security_cases(id,project_id,advisory_repository,advisory_ghsa,reporter_github_id,reporter_github_login,submission_state,received_at,verified_at,verified_by_github_id,policy_revision,terms,receipt_state,remediation_state,award_state,payment_state,disclosure_state,recognition,severity,loss_finding,root_cause_key,appeal_state,revision,created_at,updated_at) VALUES(?,'direct-pay','example/direct-pay','GHSA-aaaa-bbbb-cccc',?,?,'verified',?,?,?,1,?,'confirmed','not-started','approved','rail-unavailable','embargoed','private','critical','verified-potential','root-audit','none',2,?,?)",
+      )
+      .run(
+        caseId,
+        REPORTER.githubId,
+        REPORTER.githubLogin,
+        stamp,
+        stamp,
+        OWNER.githubId,
+        JSON.stringify({ currency: "USDC", decimals: 6, network: "base" }),
+        stamp,
+        stamp,
+      );
+    sqlite
+      .prepare(
+        "INSERT INTO security_direct_awards(case_id,project_id,root_cause_key,terms,gross_base,approved_at) VALUES(?, 'direct-pay', 'root-audit', '{}', '1000000', ?)",
+      )
+      .run(caseId, stamp);
+    const claimId = "claim-recipient";
+    const digest = hash("claim-recipient-record");
+    sqlite
+      .prepare(
+        "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,issue_repository,issue_number,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        claimId,
+        options.claimGithubId,
+        "recipient",
+        keypair(2),
+        options.claimSource,
+        options.claimSource === "github_issue" ? "example/direct-pay" : null,
+        options.claimSource === "github_issue" ? 1 : null,
+        hash(claimId),
+        stamp,
+        digest,
+        stamp,
+        options.claimChain,
+      );
+    sqlite
+      .prepare(
+        "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(?,?,?,'seed',?,?)",
+      )
+      .run(
+        `challenge-${claimId}`,
+        claimId,
+        options.claimGithubId,
+        "2027-01-01T00:00:00.000Z",
+        stamp,
+      );
+    sqlite
+      .prepare(
+        "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,?,'seed')",
+      )
+      .run(claimId, options.claimGithubId, stamp, `challenge-${claimId}`);
+    const intent = {
+      rail: "direct",
+      network: "base",
+      chain: options.intentChain,
+      asset: { address: `0x${"a".repeat(40)}`, decimals: 6, symbol: "USDC" },
+      payer: { id: "claim-payer", address: keypair(1), digest: hash("payer") },
+      recipient: { id: claimId, address: keypair(2), digest },
+      grossBase: "1000000",
+      feeBase: "250000",
+      netBase: "750000",
+      preparedAt: stamp,
+      afterBlock: "100",
+      transfers: [
+        { recipient: keypair(2), amountBase: "750000" },
+        { recipient: keypair(3), amountBase: "250000" },
+      ],
+    };
+    sqlite
+      .prepare(
+        "INSERT INTO security_direct_payments(case_id,network,intent,prepared_at) VALUES(?,?,?,?)",
+      )
+      .run(caseId, "base", JSON.stringify(intent), stamp);
+    try {
+      return await directSettlementView(db, caseId);
+    } finally {
+      sqlite.close();
+    }
+  }
+
+  test("the reporter's own authorized registry wallet is current", async () => {
+    const view = await settlementView({
+      claimGithubId: REPORTER.githubId,
+      claimChain: "base",
+      claimSource: "d1_registry",
+      intentChain: "base",
+    });
+    expect(view?.walletReviewRequired).toBe(false);
+  });
+
+  test("a claim owned by another account is not the current recipient", async () => {
+    const view = await settlementView({
+      claimGithubId: OWNER.githubId,
+      claimChain: "base",
+      claimSource: "d1_registry",
+      intentChain: "base",
+    });
+    expect(view?.walletReviewRequired).toBe(true);
+  });
+
+  test("a claim on another chain is not the current recipient", async () => {
+    const view = await settlementView({
+      claimGithubId: REPORTER.githubId,
+      claimChain: "base",
+      claimSource: "d1_registry",
+      intentChain: "solana",
+    });
+    expect(view?.walletReviewRequired).toBe(true);
+  });
+
+  test("a claim from another registry source is not the current recipient", async () => {
+    const view = await settlementView({
+      claimGithubId: REPORTER.githubId,
+      claimChain: "base",
+      claimSource: "github_issue",
+      intentChain: "base",
+    });
+    expect(view?.walletReviewRequired).toBe(true);
+  });
 });
