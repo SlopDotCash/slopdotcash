@@ -23,11 +23,9 @@ module bot_inference_retention {
   var s: { rows: int -> Attempt, current: int, retained: int, published: bool }
   action init = s' = { rows: ids.mapBy(_ => empty), current: 0,
     retained: 0, published: false }
-  val counted = ids.filter(id => {
-    val row = s.rows.get(id)
-    row.reserved and not(row.usage and row.free)
-      and not(row.completed and row.zeroReconciled and not(row.usage))
-  }).size()
+  def rowCounted(row: Attempt): bool = row.reserved and not(row.usage and row.free)
+    and not(row.completed and row.zeroReconciled and not(row.usage))
+  val counted = ids.filter(id => rowCounted(s.rows.get(id))).size()
   action admit(id: int): bool = all { ids.contains(id), s.current == 0,
     not(s.rows.get(id).admitted), counted < 3, s.retained == 0,
     s' = s.with("current", id).with("rows",
@@ -71,11 +69,31 @@ module bot_inference_retention {
       s.rows.get(s.current).with("zeroReconciled", true))) }
   action finish = all { s.current > 0, s' = s.with("current", 0) }
   action publish = all { s.retained > 0, s' = s.with("published", true) }
-  action step = {
-    nondet id = ids.oneOf()
-    any { admit(id), reserve, budgetRefused, call, freeDenial, mixedDenial,
-      recordUsage, validate, retain, complete, reconcileZeroCall, finish, publish, s' = s }
+  // Identities are interchangeable: every guard, update and invariant treats
+  // them only by equality, and `retained`/`current` follow the same renaming.
+  // Step therefore admits the lowest unadmitted identity; admitting any other
+  // one reaches an identity-permuted copy of the same state (formal/README.md,
+  // "Write-only fields and canonical choices").
+  // Only the current row changes, and a released identity is never admitted
+  // again. A released row is then read only through `admitted`, its counted
+  // contribution and, if retained, the retained conjunct. Its other invariant
+  // conjuncts were checked while it was current and hold for the canonical
+  // row too. stepFinish stores one canonical counted or uncounted row unless the
+  // row is retained. budgetRefused has the same successor as finish, so step
+  // keeps finish alone.
+  action stepFinish = {
+    val row = s.rows.get(s.current)
+    val released = if (rowCounted(row)) empty.with("admitted", true).with("reserved", true)
+      else empty.with("admitted", true)
+    all { s.current > 0, s' = s.with("current", 0)
+      .with("rows", if (s.retained == s.current) s.rows else s.rows.set(s.current, released)) }
   }
+  action stepAdmit = {
+    nondet id = ids.oneOf()
+    all { ids.forall(earlier => earlier < id implies s.rows.get(earlier).admitted), admit(id) }
+  }
+  action step = any { stepAdmit, reserve, call, freeDenial, mixedDenial,
+    recordUsage, validate, retain, complete, reconcileZeroCall, stepFinish, publish, s' = s }
   val invariant = all { counted <= 3,
     ids.forall(id => s.rows.get(id).called implies s.rows.get(id).reserved),
     ids.forall(id => s.rows.get(id).zeroReconciled implies

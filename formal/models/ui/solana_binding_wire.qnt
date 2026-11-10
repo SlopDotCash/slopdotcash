@@ -37,7 +37,9 @@ module solana_binding_wire {
     output: int, outputShape: bool, authorityValid: bool, walletValid: bool,
     signedAccepted: bool, posted: bool, postedIdentity: int, error: str,
     version: int, expiry: int, now: int, walletCalled: bool }
-  action init = s' = { phase: "input", input: "valid", prepared: 1, reviewed: 0, preparedEmpty: true,
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { phase: "input", input: "valid", prepared: 1, reviewed: 0, preparedEmpty: true,
     prepareAccepted: false, inputPrivate: true, outputPrivate: true, providerOutput: 0,
     output: 0, outputShape: false, authorityValid: false, walletValid: false,
     signedAccepted: false, posted: false, postedIdentity: 0, error: "none",
@@ -109,7 +111,7 @@ module solana_binding_wire {
     s.signedAccepted implies s.prepareAccepted and s.output == s.reviewed,
     s.posted implies s.signedAccepted and s.postedIdentity == s.reviewed,
     s.prepareAccepted implies Set("valid", "other-attester", "vault-only").contains(s.input) }
-  action prepared(kind: str): bool = init.then(configure(kind, 0, 1)).then(checkPrepared)
+  action prepared(kind: str): bool = initState.then(configure(kind, 0, 1)).then(checkPrepared)
   action offered = prepared("valid").then(handoff)
   action signed(kind: str): bool = offered.then(walletReply(kind)).then(checkSigned)
 
@@ -149,7 +151,7 @@ module solana_binding_wire {
     .expect(s.providerOutput == 2 and s.postedIdentity == 1 and invariant)
   run providerMutationBeforeVerificationCannotChangePrivateCopyTest = offered.then(walletReply("separate")).then(mutateProviderOutput)
     .then(checkSigned).then(post).expect(s.providerOutput == 2 and s.postedIdentity == 1 and invariant)
-  run expiryAndVersionAreNotFreshnessProofTest = init.then(configure("valid", 1, 0)).then(checkPrepared).then(advance).then(advance)
+  run expiryAndVersionAreNotFreshnessProofTest = initState.then(configure("valid", 1, 0)).then(checkPrepared).then(advance).then(advance)
     .then(handoff).then(walletReply("separate")).then(checkSigned).then(post)
     .expect(s.expiry < s.now and s.version == 1 and s.posted and invariant)
   run independentlyUnpinnedAttesterIsOutsideThisCheckTest = prepared("other-attester").then(handoff).then(walletReply("separate"))

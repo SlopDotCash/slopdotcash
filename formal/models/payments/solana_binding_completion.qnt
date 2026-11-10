@@ -58,7 +58,9 @@ module solana_binding_completion {
   var s: { claim: int, generation: int, height: int, now: int,
     rows: int -> str, signatures: int -> int, known: int -> str,
     calls: int -> Call }
-  action init = s' = { claim: 1, generation: 1, height: 0, now: 0,
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { claim: 1, generation: 1, height: 0, now: 0,
     rows: Map(1 -> "half", 2 -> "absent"), signatures: generations.mapBy(_ => 0),
     known: generations.mapBy(_ => "none"), calls: ids.mapBy(_ => idle) }
   def ended(call: Call, result: str): Call = call.with("phase", "response").with("desired", result)
@@ -176,18 +178,65 @@ module solana_binding_completion {
     val call = s.calls.get(id)
     all { call.phase == "final-auth", s' = s.with("calls", s.calls.set(id, call.with("phase", "ready"))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet generation = generations.oneOf()
-    nondet mode = modes.oneOf()
-    nondet body = bodies.oneOf()
-    nondet kind = Set("exact", "mismatch", "throw").oneOf()
-    nondet a = Set(false, true).oneOf()
-    any { replaceClaim, advanceHeight, advanceTime, refreshGeneration,
-      externalStatus(generation, a), begin(id, mode, generation, body), initialAuthorization(id, a),
-      readJournal(id), validateWalletBytes(id), commitCompletion(id), commitReply(id, a),
-      readStatus(id, a), finalAuthorization(id, a), transmit(id, a), sendReply(id, kind),
-      awaitFailure(id), respond(id, a), s' = s }
+  // Step-only reductions (formal/README.md, "Write-only fields and canonical
+  // choices"). `now` is read only by its own range conjunct, which advanceTime
+  // preserves, so step leaves it at 0. Height is read only by refreshGeneration
+  // as `height > 1`, so 0 and 1 are equivalent; step moves 0 to 2 and stops once
+  // generation, claim or known(1) has permanently disabled refresh. The five
+  // byte-invalid bodies and the two signature-invalid bodies are each read only
+  // through the same class predicates, so one representative of each remains.
+  // `response` is read by no guard or invariant, so step delivers each reply.
+  // Call slots are symmetric in every action and invariant, so step begins the
+  // lowest unused slot first; any other order reaches a slot-permuted state.
+  val stepBodies = Set("valid-a", "valid-b", "encoding", "wallet")
+  action stepAdvanceHeight = all { s.height == 0, s.generation == 1, s.claim == 1, s.known.get(1) == "none",
+    s' = s.with("height", 2) }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product.
+  // The step relation and every successor are unchanged (formal/README.md,
+  // "Branch-local nondeterministic choices").
+  action step = any {
+    replaceClaim,
+    stepAdvanceHeight,
+    refreshGeneration,
+    { nondet generation = generations.oneOf()
+      nondet a = Set(false, true).oneOf()
+      externalStatus(generation, a) },
+    { nondet id = ids.oneOf()
+      nondet generation = generations.oneOf()
+      nondet mode = modes.oneOf()
+      nondet body = stepBodies.oneOf()
+      all { ids.forall(earlier => earlier < id implies s.calls.get(earlier).phase != "unused"),
+        begin(id, mode, generation, body) } },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      initialAuthorization(id, a) },
+    { nondet id = ids.oneOf()
+      readJournal(id) },
+    { nondet id = ids.oneOf()
+      validateWalletBytes(id) },
+    { nondet id = ids.oneOf()
+      commitCompletion(id) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      commitReply(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      readStatus(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      finalAuthorization(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      transmit(id, a) },
+    { nondet id = ids.oneOf()
+      nondet kind = Set("exact", "mismatch", "throw").oneOf()
+      sendReply(id, kind) },
+    { nondet id = ids.oneOf()
+      awaitFailure(id) },
+    { nondet id = ids.oneOf()
+      respond(id, true) },
+    s' = s
   }
   val invariant = all {
     generations.contains(s.generation), Set(1, 2).contains(s.claim),
@@ -217,44 +266,44 @@ module solana_binding_completion {
   action completed(id: int): bool = commitCompletion(id).then(commitReply(id, true))
   action ready(id: int): bool = readStatus(id, true).then(finalAuthorization(id, true))
   action submitted(id: int): bool = transmit(id, true).then(sendReply(id, "exact")).then(respond(id, true))
-  action firstFull = init.then(validatedCall(1, "valid-a")).then(completed(1))
+  action firstFull = initState.then(validatedCall(1, "valid-a")).then(completed(1))
 
   run walletSlotCompletionPreservesGenerationTest = firstFull.then(ready(1)).then(submitted(1))
     .expect(s.rows.get(1) == "full" and s.signatures.get(1) == 1 and s.calls.get(1).selectedGeneration == 1 and invariant)
-  run initialAuthorizationRefusesObsoleteClaimTest = init.then(replaceClaim).then(begin(1, "complete", 1, "valid-a"))
+  run initialAuthorizationRefusesObsoleteClaimTest = initState.then(replaceClaim).then(begin(1, "complete", 1, "valid-a"))
     .then(initialAuthorization(1, true)).then(respond(1, true)).expect(s.calls.get(1).response == "authority-error" and s.rows.get(1) == "half" and invariant)
-  run invalidContextRefusesBeforeJournalTest = init.then(begin(1, "complete", 1, "valid-a")).then(initialAuthorization(1, false))
+  run invalidContextRefusesBeforeJournalTest = initState.then(begin(1, "complete", 1, "valid-a")).then(initialAuthorization(1, false))
     .then(respond(1, true)).expect(s.calls.get(1).response == "authority-error" and s.calls.get(1).readGeneration == 0 and invariant)
-  run invalidEncodingRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "encoding")).then(validateWalletBytes(1))
+  run invalidEncodingRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "encoding")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "bytes-error" and s.rows.get(1) == "half" and invariant)
-  run changedLengthRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "length")).then(validateWalletBytes(1))
+  run changedLengthRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "length")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "bytes-error" and invariant)
-  run changedSignatureCountRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "header")).then(validateWalletBytes(1))
+  run changedSignatureCountRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "header")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "bytes-error" and invariant)
-  run changedAuthoritySignatureRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "authority")).then(validateWalletBytes(1))
+  run changedAuthoritySignatureRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "authority")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "bytes-error" and invariant)
-  run changedMessageRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "message")).then(validateWalletBytes(1))
+  run changedMessageRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "message")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "bytes-error" and invariant)
-  run invalidWalletSignatureRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "wallet")).then(validateWalletBytes(1))
+  run invalidWalletSignatureRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "wallet")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "signature-error" and invariant)
-  run foreignCosignerRefusesBeforeCompletionTest = init.then(authorizedCall(1, "complete", 1, "foreign-wallet")).then(validateWalletBytes(1))
+  run foreignCosignerRefusesBeforeCompletionTest = initState.then(authorizedCall(1, "complete", 1, "foreign-wallet")).then(validateWalletBytes(1))
     .then(respond(1, true)).expect(s.calls.get(1).response == "signature-error" and invariant)
-  run changedGenerationRefusesCapturedCompletionTest = init.then(validatedCall(1, "valid-a")).then(advanceHeight).then(advanceHeight)
+  run changedGenerationRefusesCapturedCompletionTest = initState.then(validatedCall(1, "valid-a")).then(advanceHeight).then(advanceHeight)
     .then(refreshGeneration).then(commitCompletion(1)).then(respond(1, true))
     .expect(s.generation == 2 and s.rows.get(1) == "half" and s.calls.get(1).response == "generation-error" and invariant)
-  run priorGenerationBytesDoNotCompleteNewGenerationTest = init.then(advanceHeight).then(advanceHeight).then(refreshGeneration)
+  run priorGenerationBytesDoNotCompleteNewGenerationTest = initState.then(advanceHeight).then(advanceHeight).then(refreshGeneration)
     .then(authorizedCall(1, "complete", 1, "valid-a")).then(validateWalletBytes(1)).then(respond(1, true))
     .expect(s.calls.get(1).readGeneration == 2 and s.calls.get(1).response == "bytes-error" and invariant)
-  run concurrentCompletionsRetainFirstWalletSignatureTest = init.then(validatedCall(1, "valid-a")).then(validatedCall(2, "valid-b"))
+  run concurrentCompletionsRetainFirstWalletSignatureTest = initState.then(validatedCall(1, "valid-a")).then(validatedCall(2, "valid-b"))
     .then(completed(1)).then(completed(2)).then(ready(2)).then(submitted(2))
     .expect(s.signatures.get(1) == 1 and s.calls.get(2).coalesced and s.calls.get(2).selectedSignature == 1 and invariant)
-  run committedCompletionSurvivesRejectedJournalReplyTest = init.then(validatedCall(1, "valid-a")).then(commitCompletion(1))
+  run committedCompletionSurvivesRejectedJournalReplyTest = initState.then(validatedCall(1, "valid-a")).then(commitCompletion(1))
     .then(commitReply(1, false)).then(respond(1, true))
     .expect(s.rows.get(1) == "full" and s.signatures.get(1) == 1 and s.calls.get(1).response == "journal-error" and invariant)
   run completedRetryUsesStoredBytesWithoutNewWalletValidationTest = firstFull.then(authorizedCall(2, "complete", 1, "wallet"))
     .then(ready(2)).then(submitted(2))
     .expect(not(s.calls.get(2).validated) and s.calls.get(2).selectedSignature == 1 and s.calls.get(2).response == "submitted" and invariant)
-  run lateClaimChangeDuringJournalAwaitRefusesSendTest = init.then(begin(1, "complete", 1, "valid-a"))
+  run lateClaimChangeDuringJournalAwaitRefusesSendTest = initState.then(begin(1, "complete", 1, "valid-a"))
     .then(initialAuthorization(1, true)).then(replaceClaim).then(readJournal(1)).then(validateWalletBytes(1)).then(completed(1))
     .then(ready(1)).then(respond(1, true)).expect(s.rows.get(1) == "full" and not(s.calls.get(1).sent) and s.calls.get(1).response == "authority-error" and invariant)
   run lateClaimChangeDuringStatusAwaitRefusesSendTest = firstFull.then(replaceClaim).then(ready(1)).then(respond(1, true))
@@ -278,7 +327,7 @@ module solana_binding_completion {
     .then(respond(1, true)).expect(s.calls.get(1).response == "signature-mismatch" and s.known.get(1) == "success" and invariant)
   run lostHttpReplyDoesNotUndoFullJournalTest = firstFull.then(ready(1)).then(transmit(1, true)).then(sendReply(1, "exact"))
     .then(respond(1, false)).expect(s.calls.get(1).response == "lost" and s.rows.get(1) == "full" and invariant)
-  run prepareReusesHalfSignedBytesWithoutBroadcastTest = init.then(authorizedCall(1, "prepare-reuse", 1, "valid-a"))
+  run prepareReusesHalfSignedBytesWithoutBroadcastTest = initState.then(authorizedCall(1, "prepare-reuse", 1, "valid-a"))
     .then(respond(1, true)).expect(s.calls.get(1).response == "prepared" and s.rows.get(1) == "half" and not(s.calls.get(1).sent) and invariant)
   run prepareFullRowReuseAlsoRechecksAuthorityTest = firstFull.then(begin(2, "prepare-reuse", 1, "valid-a"))
     .then(initialAuthorization(2, true)).then(readJournal(2)).then(replaceClaim).then(ready(2)).then(respond(2, true))

@@ -87,6 +87,9 @@ refinement. The runner refuses stale or unexpected view evidence.
   progress property. A timeout or retry bound must settle visibly; fairness
   must not assume that a payment, provider request or human approval succeeds.
 - Record finite bounds and abstractions in the model's comments.
+- Use `init` only as the initial action. Quint refuses an action used both as
+  `init` and inside `step` or a scenario (QNT409), so scenarios start from a
+  separate `initState` action with the same body.
 
 ### Tracked storage key
 
@@ -158,6 +161,58 @@ reasoning, not a machine-checked equivalence theorem.
 - `referral_root_history` stores a voided epoch in one fixed form. Nothing
   un-voids an epoch and every reader skips voided epochs, so only the list
   length and the already checked `priorMax` range remain observable.
+- `solana_binding_completion` leaves the unread clock at 0, merges heights 0
+  and 1 (read only as `height > 1`), keeps one body per invalid-byte and
+  invalid-signature class, delivers every unread response and begins the
+  lowest unused call slot first.
+- `solana_executor_journal` advances height in steps of 2 (heights are compared
+  only with `>` against odd quotes 1, 3, 5), suppresses environment updates
+  once no request phase can read them, and resets a finished request's unread
+  fingerprint, payment flag and snapshot.
+- `stored_binding_broadcast_authority` suppresses environment changes once no
+  call phase can read them, keeps `replaceClaim` for the two changes read only
+  through `registryMatches`, stops the clock at 1, delivers every unread
+  response, begins the lowest unused slot first and stores one canonical
+  record for a finished unsent call.
+- `bot_inference_retention` admits the lowest unadmitted identity and stores a
+  released, unretained row as one canonical counted or uncounted row.
+- `evm_wallet_discovery` clears the legacy set once connect leaves `idle`,
+  stores `kind` "rpc" for a call that is no longer pending and invokes the
+  lowest unused call slot first.
+- `dev_identity_bridge` begins the lowest unused poll and consumer slot first,
+  ticks only while a later comparison can observe the clock, stores captured
+  stamps as their comparison class, and writes "410" (poll) or "401"
+  (consumer) for every result code other than "200", since codes are read only
+  as `== "200"` and copied. A poll whose reply will be non-200 (a refused
+  read or claim, a refused remote write reply, or a caller lost after its
+  claim) and a consumer that will not commit change no shared field before
+  they finish, so step moves them straight to their canonical finished record;
+  a claim by a lost caller still updates the remote flow.
+
+### Branch-local nondeterministic choices
+
+A `step` that binds every `nondet` value before one `any` makes TLC enumerate
+the product of all choices for every branch. Binding each choice inside the
+one branch that reads it enumerates their sum instead. The step relation and
+every successor are unchanged; only the generated-state count falls. Used by
+`solana_binding_completion`, `solana_executor_journal`,
+`solana_history_retirement`, `stored_binding_broadcast_authority`,
+`historical_subscription_intake`, `evm_wallet_discovery` and
+`dev_identity_bridge`.
+
+### Fused local request steps
+
+`historical_subscription_intake` runs each request-local stage (headers,
+session, body, envelope, reconstruct, prepare and delivery) together with the
+preceding action of the same request, because those stages read and write only
+their own request and commute with every other transition. It chooses request
+parameters when they are first read, delivers a refused request at once,
+clears per-request copies after their last reader, applies a one-time
+environment change only with the first reader that observes it, keeps pause as
+the representative of the three changes that refuse the same stages, uses
+payload 1 (copied, never guarded) and stores the two slots in rank order. The
+model header numbers each argument. Direct actions and named scenarios keep
+the original behavior.
 
 ## Inventory and review
 

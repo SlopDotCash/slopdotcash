@@ -282,22 +282,254 @@ module dev_identity_bridge {
         val call = s.consumers.get(id)
         if (Set("unused", "done").contains(call.phase)) call
         else call.with("phase", "done").with("response", "process-lost") })) }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet fourth = Set(false, true).oneOf()
-    nondet remoteReply = remoteReplies.oneOf()
-    nondet writeReply = writeReplies.oneOf()
-    any { tick, beginStart(yes, other), captureStartClock, createRemoteFlow, startHeaders(yes), startBody(yes),
-      validateStart(yes, other), startFailure, startReply(yes), authorize(yes, other), completeRemote, cleanupRemoteFlow,
-      beginPoll(id, yes), pollBody(id, yes, other, third), lookupFlow(id), readRemote(id), remoteClock(id),
-      claimRemote(id), remoteWriteReply(id, remoteReply), remoteFailure(id), loseRemoteCaller(id), remoteResponse(id),
-      pollResponseBody(id, yes, other), deleteFlow(id), mintAssertion(id, yes), assertionHash(id, yes),
-      storeAssertion(id), localFailure(id), storeReply(id, writeReply), readLocalAssertion(id, yes), pollReply(id, yes),
-      beginConsume(id), consumeBody(id, yes, other, third, fourth), consumeHash(id, yes), consumeWrite(id),
-      consumeFailure(id), consumeReply(id, yes), restart, s' = s }
+  // Step-only reductions (formal/README.md, "Write-only fields and canonical
+  // choices"). Poll slots and consumer slots are each symmetric, so step begins
+  // the lowest unused slot first. `created` is copied only into `rowCreated`,
+  // which no guard or invariant reads, so step leaves both at -1.
+  // Clock ticks are offered only while a later comparison can still observe
+  // them. Before the start clock is captured, every later comparison is between
+  // values captured after it (a pre-capture consumer stamp is below any row
+  // expiry either way), so an earlier tick only shifts the timeline and spends
+  // part of the bounded clock. Once the remote expiry has passed, every
+  // remote comparison is fixed; if no poll can still mint and every pending or
+  // stored row expiry has passed, later consumer stamps fail either way. A
+  // tick in either case changes only `now`.
+  val mintPhases = Set("remote-write", "remote-write-reply", "remote-reply", "remote-body", "delete-map", "mint")
+  val timeDecided = all {
+    s.now >= s.remoteExpiry,
+    ids.forall(id => not(mintPhases.contains(s.polls.get(id).phase))),
+    ids.forall(id => Set("hash", "store").contains(s.polls.get(id).phase) implies s.now >= s.polls.get(id).expiry),
+    s.rowPresent implies s.now >= s.rowExpiry }
+  action stepTick = all { s.remoteExpiry >= 0, not(timeDecided), tick }
+  // Captured stamps are read only by one comparison with a fixed bound:
+  // remoteStamp and issueStamp against remoteExpiry (fixed once captured), and a
+  // consumer stamp against rowExpiry (fixed once a row exists). Step stores the
+  // class representative 0 or the bound itself, and clears a stamp or a poll
+  // expiry once its only reader has run. authorizeResult is read only as
+  // `== "none"`, so step records one refusal value for 403/410.
+  def classStamp(bound: int): int = if (s.now < bound) 0 else bound
+  // Result codes are read only as `== "200"` (poll desired/response/remoteResult,
+  // consumer response) and otherwise only copied, so step writes "410" for
+  // every other poll code and "401" for every other consumer code. Fields of a
+  // finished poll or consumer other than its response, `claimed` and
+  // `accepted`/`stamp` are read by no guard or invariant. `claimed` of a
+  // finished non-200 poll is read only by `claimed implies remoteClaims == 1`,
+  // which stays true from its claim on because remoteClaims never decreases
+  // and `remoteClaims <= 1` is still checked, so step clears it. A poll whose
+  // reply will be non-200 and a consumer that will not commit change no shared
+  // field before they finish (their reply, refusal, failure and restart all
+  // end in the same canonical record), so step moves them to that record at
+  // once instead of through their invisible local phases.
+  def settled(response: str): Poll =
+    unusedPoll.with("phase", "done").with("response", response).with("claimed", response == "200")
+  val settledCall: Consume = unusedConsume.with("phase", "done").with("response", "401")
+  def callDone(call: Consume, delivered: bool): Consume =
+    if (call.accepted) call.with("phase", "done").with("response", if (delivered) "200" else "401") else settledCall
+  def setPoll(id: int, poll: Poll): State = s.with("polls", s.polls.set(id, poll))
+  def setCall(id: int, call: Consume): State = s.with("consumers", s.consumers.set(id, call))
+  action stepBeginPoll(id: int, originAllowed: bool): bool = all {
+    s.polls.get(id).phase == "unused",
+    ids.forall(earlier => earlier < id implies s.polls.get(earlier).phase != "unused"),
+    s' = pruned(s).with("polls", s.polls.set(id, if (originAllowed) unusedPoll.with("phase", "body") else settled("410"))) }
+  action stepPollBody(id: int, accepted: bool, capability: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "body", capability implies s.flowKnown,
+      s' = setPoll(id, if (accepted) poll.with("phase", "lookup").with("capability", capability) else settled("410")) }
+  }
+  action stepLookupFlow(id: int): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "lookup",
+      s' = setPoll(id, if (s.mapPresent and poll.capability)
+        poll.with("phase", "remote-read").with("remoteStamp", classStamp(s.remoteExpiry)) else settled("410")) }
+  }
+  action stepReadRemote(id: int): bool = {
+    val poll = s.polls.get(id)
+    val available = s.remotePresent and poll.remoteStamp < s.remoteExpiry
+    val ready = available and s.remoteStatus == "complete"
+    all { poll.phase == "remote-read",
+      s' = setPoll(id, if (ready) poll.with("phase", "remote-clock").with("remoteStamp", -1) else settled("410")) }
+  }
+  action stepRemoteClock(id: int): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "remote-clock",
+      s' = setPoll(id, poll.with("phase", "remote-write").with("issueStamp", classStamp(s.remoteExpiry))) }
+  }
+  action stepClaimRemote(id: int): bool = {
+    val poll = s.polls.get(id)
+    val accepted = s.remotePresent and s.remoteStatus == "complete" and poll.issueStamp < s.remoteExpiry
+    all { poll.phase == "remote-write",
+      s' = s.with("remoteStatus", if (accepted) "issued" else s.remoteStatus)
+        .with("remoteClaims", s.remoteClaims + (if (accepted) 1 else 0))
+        .with("polls", s.polls.set(id, if (accepted and poll.alive)
+          poll.with("phase", "remote-write-reply").with("claimed", true).with("issueStamp", -1) else settled("410"))) }
+  }
+  action stepRemoteWriteReply(id: int, ok: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "remote-write-reply",
+      s' = setPoll(id, if (ok and poll.claimed and poll.alive) poll.with("phase", "remote-reply").with("remoteResult", "200")
+        else settled("410")) }
+  }
+  action stepRemoteFailure(id: int): bool = all {
+    Set("remote-read", "remote-clock", "remote-write", "remote-write-reply", "remote-reply").contains(s.polls.get(id).phase),
+    s' = setPoll(id, settled("410")) }
+  action stepLoseRemoteCaller(id: int): bool = {
+    val poll = s.polls.get(id)
+    all { poll.alive, Set("remote-read", "remote-clock", "remote-write").contains(poll.phase),
+      s' = setPoll(id, poll.with("alive", false).with("response", "410")) }
+  }
+  action stepRemoteResponse(id: int): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "remote-reply",
+      s' = setPoll(id, if (poll.alive) poll.with("phase", "remote-body") else settled("410")) }
+  }
+  action stepPollResponseBody(id: int, ok: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "remote-body",
+      s' = setPoll(id, if (ok and poll.remoteResult == "200") poll.with("phase", "delete-map") else settled("410")) }
+  }
+  action stepMintAssertion(id: int, randomSucceeded: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "mint",
+      s' = setPoll(id, if (randomSucceeded) poll.with("phase", "hash").with("expiry", s.now + 2) else settled("410")) }
+  }
+  action stepAssertionHash(id: int, ok: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "hash", s' = setPoll(id, if (ok) poll.with("phase", "store") else settled("410")) }
+  }
+  action stepStoreAssertion(id: int): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "store", not(s.rowPresent),
+      s' = s.with("rowPresent", true).with("rowExpiry", poll.expiry)
+        .with("localWrites", s.localWrites + 1)
+        .with("polls", s.polls.set(id, poll.with("phase", "store-reply").with("expiry", -1))) }
+  }
+  action stepLocalFailure(id: int): bool = all {
+    Set("store", "readback").contains(s.polls.get(id).phase), s' = setPoll(id, settled("410")) }
+  action stepStoreReply(id: int, ok: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "store-reply", s' = setPoll(id, if (ok) poll.with("phase", "readback") else settled("410")) }
+  }
+  action stepReadLocalAssertion(id: int, matching: bool): bool = {
+    val poll = s.polls.get(id)
+    all { poll.phase == "readback",
+      s' = setPoll(id, if (matching and s.rowPresent and not(s.rowConsumed)) ending(poll, "200") else settled("410")) }
+  }
+  action stepPollReply(id: int, delivered: bool): bool = {
+    val poll = s.polls.get(id)
+    val disclosed = delivered and poll.desired == "200"
+    all { poll.phase == "finish",
+      s' = s.with("tokenKnown", s.tokenKnown or disclosed)
+        .with("polls", s.polls.set(id, settled(if (disclosed) "200" else "410"))) }
+  }
+  action stepBeginConsume(id: int): bool = all {
+    ids.forall(earlier => earlier < id implies s.consumers.get(earlier).phase != "unused"), beginConsume(id) }
+  action stepConsumeBody(id: int, matched: bool): bool = all {
+    s.consumers.get(id).phase == "body", matched implies s.tokenKnown,
+    s' = setCall(id, if (matched) s.consumers.get(id).with("phase", "hash").with("matches", true) else settledCall) }
+  action stepConsumeHash(id: int, ok: bool): bool = {
+    val call = s.consumers.get(id)
+    all { call.phase == "hash",
+      s' = setCall(id, if (ok) call.with("phase", "write").with("stamp", if (s.rowPresent) classStamp(s.rowExpiry) else s.now)
+        else settledCall) }
+  }
+  action stepConsumeWrite(id: int): bool = {
+    val call = s.consumers.get(id)
+    val accepted = call.matches and s.rowPresent and not(s.rowConsumed) and call.stamp < s.rowExpiry
+    all { call.phase == "write",
+      s' = s.with("rowConsumed", s.rowConsumed or accepted)
+        .with("consumeCommits", s.consumeCommits + (if (accepted) 1 else 0))
+        .with("consumers", s.consumers.set(id, if (accepted) call.with("phase", "reply").with("accepted", true) else settledCall)) }
+  }
+  action stepConsumeFailure(id: int): bool = all { s.consumers.get(id).phase == "write", s' = setCall(id, settledCall) }
+  action stepConsumeReply(id: int, delivered: bool): bool = all {
+    s.consumers.get(id).phase == "reply", s' = setCall(id, callDone(s.consumers.get(id), delivered)) }
+  action stepRestart = all { not(s.restarted),
+    s' = s.with("restarted", true).with("mapPresent", false)
+      .with("startPhase", if (s.startPhase == "done" or s.startPhase == "unused") s.startPhase else "done")
+      .with("startResult", if (s.startPhase == "done" or s.startPhase == "unused") s.startResult else "process-lost")
+      .with("polls", ids.mapBy(id => {
+        val poll = s.polls.get(id)
+        if (Set("unused", "done").contains(poll.phase)) poll
+        else if (Set("remote-read", "remote-clock", "remote-write").contains(poll.phase))
+          poll.with("alive", false).with("response", "410")
+        else settled("410") }))
+      .with("consumers", ids.mapBy(id => {
+        val call = s.consumers.get(id)
+        if (Set("unused", "done").contains(call.phase)) call else callDone(call, false) })) }
+  action stepAuthorize(originAllowed: bool, exactQuery: bool): bool = {
+    val state = pruned(s)
+    all { s.authorizeResult == "none", exactQuery implies s.flowKnown,
+      s' = state.with("authorizeResult", if (originAllowed and state.mapPresent and exactQuery) "302" else "410") }
+  }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product
+  // (formal/README.md, "Branch-local nondeterministic choices"). Boolean
+  // predicate classes whose refusals end in the same canonical record are
+  // merged into one choice.
+  action step = any {
+    stepTick,
+    { nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      beginStart(yes, other) },
+    captureStartClock,
+    createRemoteFlow,
+    { nondet yes = Set(false, true).oneOf()
+      startHeaders(yes) },
+    { nondet yes = Set(false, true).oneOf()
+      startBody(yes) },
+    { nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      validateStart(yes, other) },
+    startFailure,
+    { nondet yes = Set(false, true).oneOf()
+      startReply(yes) },
+    { nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      stepAuthorize(yes, other) },
+    completeRemote,
+    cleanupRemoteFlow,
+    stepRestart,
+    s' = s,
+    { nondet id = ids.oneOf()
+      any {
+        { nondet yes = Set(false, true).oneOf()
+          stepBeginPoll(id, yes) },
+        { nondet yes = Set(false, true).oneOf()
+          nondet other = Set(false, true).oneOf()
+          stepPollBody(id, yes, other) },
+        stepLookupFlow(id),
+        stepReadRemote(id),
+        stepRemoteClock(id),
+        stepClaimRemote(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepRemoteWriteReply(id, yes) },
+        stepRemoteFailure(id),
+        stepLoseRemoteCaller(id),
+        stepRemoteResponse(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepPollResponseBody(id, yes) },
+        deleteFlow(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepMintAssertion(id, yes) },
+        { nondet yes = Set(false, true).oneOf()
+          stepAssertionHash(id, yes) },
+        stepStoreAssertion(id),
+        stepLocalFailure(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepStoreReply(id, yes) },
+        { nondet yes = Set(false, true).oneOf()
+          stepReadLocalAssertion(id, yes) },
+        { nondet yes = Set(false, true).oneOf()
+          stepPollReply(id, yes) },
+        stepBeginConsume(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepConsumeBody(id, yes) },
+        { nondet yes = Set(false, true).oneOf()
+          stepConsumeHash(id, yes) },
+        stepConsumeWrite(id),
+        stepConsumeFailure(id),
+        { nondet yes = Set(false, true).oneOf()
+          stepConsumeReply(id, yes) } } }
   }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.remoteClaims <= 1, s.localWrites <= 1, s.consumeCommits <= 1,

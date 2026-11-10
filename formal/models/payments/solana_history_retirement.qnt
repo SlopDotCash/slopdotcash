@@ -44,7 +44,9 @@ module solana_history_retirement {
     observations: int -> str, failureIds: int -> int,
     found: Set[int], proofs: Set[int], incomplete: bool, scanEffects: Set[int], result: str }
   var s: State
-  action init = s' = { phase: "input", plans: Set(), supplied: Set(), invalidSignature: "none",
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { phase: "input", plans: Set(), supplied: Set(), invalidSignature: "none",
     plan: 1, provider: 1, pairTrusted: false, validity: "none", expired: Set(),
     signaturesChecked: false, challenges: Set(), observations: pairIds.mapBy(_ => "none"),
     failureIds: pairIds.mapBy(_ => 0), found: Set(), proofs: Set(), incomplete: false,
@@ -117,20 +119,43 @@ module solana_history_retirement {
   action caughtFailure = all { Set("genesis", "anchor", "validity", "height", "history-status", "history-receipt", "failure-proof", "coverage").contains(s.phase),
     s' = done("history-check") }
   action finish = all { s.phase == "finish", s' = done(if (s.found.size() > 0) "payment-found" else if (s.incomplete) "history-check" else "retired") }
-  action step = {
-    nondet kind = Set("valid", "empty", "over-plans", "over-signatures").oneOf()
-    nondet plans = planIds.oneOf()
-    nondet supplied = selections.oneOf()
-    nondet invalid = Set("none", "unknown", "duplicate", "invalid").oneOf()
-    nondet message = Set("valid", "wire", "hash", "anchor", "duplicate").oneOf()
-    nondet pairKind = Set("independent", "local-nonmainnet", "local-mainnet", "missing", "same", "unknown", "invalid-url").oneOf()
-    nondet value = Set(-1, 1, 2, 3).oneOf()
-    nondet valid = Set(false, true).oneOf()
-    nondet validityKind = Set("false", "true", "missing-value", "bad-context").oneOf()
-    nondet observationKind = Set("absent", "candidate-failure", "found").oneOf()
-    any { input(kind, plans, supplied, invalid), payer(valid), messages(message), providerPair(pairKind),
-      genesis(valid), anchor(valid), validity(validityKind), height(value), signatures, historyStatus(valid),
-      observation(observationKind), failureProof(valid, plans), planResult, retainScan(plans), coverage(valid), caughtFailure, finish, s' = s }
+  // Each nondeterministic choice is local to the one branch that reads it, so
+  // TLC enumerates their sum instead of their product; the step relation and
+  // every successor are unchanged.
+  action step = any {
+    { nondet kind = Set("valid", "empty", "over-plans", "over-signatures").oneOf()
+      nondet plans = planIds.oneOf()
+      nondet supplied = selections.oneOf()
+      nondet invalid = Set("none", "unknown", "duplicate", "invalid").oneOf()
+      input(kind, plans, supplied, invalid) },
+    { nondet valid = Set(false, true).oneOf()
+      payer(valid) },
+    { nondet message = Set("valid", "wire", "hash", "anchor", "duplicate").oneOf()
+      messages(message) },
+    { nondet pairKind = Set("independent", "local-nonmainnet", "local-mainnet", "missing", "same", "unknown", "invalid-url").oneOf()
+      providerPair(pairKind) },
+    { nondet valid = Set(false, true).oneOf()
+      genesis(valid) },
+    { nondet valid = Set(false, true).oneOf()
+      anchor(valid) },
+    { nondet validityKind = Set("false", "true", "missing-value", "bad-context").oneOf()
+      validity(validityKind) },
+    { nondet value = Set(-1, 1, 2, 3).oneOf()
+      height(value) },
+    signatures,
+    { nondet valid = Set(false, true).oneOf()
+      historyStatus(valid) },
+    { nondet observationKind = Set("absent", "candidate-failure", "found").oneOf()
+      observation(observationKind) },
+    { nondet valid = Set(false, true).oneOf()
+      nondet identity = planIds.oneOf()
+      failureProof(valid, identity) },
+    planResult,
+    { nondet provider = planIds.oneOf()
+      retainScan(provider) },
+    { nondet valid = Set(false, true).oneOf()
+      coverage(valid) },
+    caughtFailure, finish, s' = s
   }
   val expectedPairs = s.plans.fold(Set(), (pairs, plan) => pairs.union(Set(pair(plan, 1), pair(plan, 2))))
   val invariant = all {
@@ -141,7 +166,7 @@ module solana_history_retirement {
       and s.supplied == s.plans and s.found == Set() and not(s.incomplete) and s.proofs == s.plans,
     s.result == "payment-found" implies s.found.size() > 0 and s.signaturesChecked,
     s.signaturesChecked implies s.expired == expectedPairs }
-  action ready(plans: int, supplied: Set[int], invalid: str): bool = init.then(input("valid", plans, supplied, invalid))
+  action ready(plans: int, supplied: Set[int], invalid: str): bool = initState.then(input("valid", plans, supplied, invalid))
     .then(payer(true)).then(messages("valid")).then(providerPair("independent"))
   action expiredPlan = anchor(true).then(validity("false")).then(height(3))
   action expiredOne = genesis(true).then(expiredPlan).then(genesis(true)).then(expiredPlan)
@@ -151,22 +176,22 @@ module solana_history_retirement {
   action failed(identity: int): bool = historyStatus(true).then(observation("candidate-failure")).then(failureProof(true, identity))
   action found = historyStatus(true).then(observation("found"))
 
-  run emptyPlanListRefusesTest = init.then(input("empty", 1, Set(), "none")).expect(s.result == "input-error" and invariant)
-  run over64PlansRefusesTest = init.then(input("over-plans", 2, Set(), "none")).expect(s.result == "input-error" and invariant)
-  run over64SignaturesRefusesTest = init.then(input("over-signatures", 2, planIds, "none")).expect(s.result == "input-error" and invariant)
-  run malformedRetainedMessageRefusesTest = init.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("wire"))
+  run emptyPlanListRefusesTest = initState.then(input("empty", 1, Set(), "none")).expect(s.result == "input-error" and invariant)
+  run over64PlansRefusesTest = initState.then(input("over-plans", 2, Set(), "none")).expect(s.result == "input-error" and invariant)
+  run over64SignaturesRefusesTest = initState.then(input("over-signatures", 2, planIds, "none")).expect(s.result == "input-error" and invariant)
+  run malformedRetainedMessageRefusesTest = initState.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("wire"))
     .expect(s.result == "input-error" and invariant)
-  run duplicateRetainedMessageIdRefusesTest = init.then(input("valid", 2, Set(), "none")).then(payer(true)).then(messages("duplicate"))
+  run duplicateRetainedMessageIdRefusesTest = initState.then(input("valid", 2, Set(), "none")).then(payer(true)).then(messages("duplicate"))
     .expect(s.result == "input-error" and invariant)
-  run noncanonicalPayerRefusesTest = init.then(input("valid", 1, Set(), "none")).then(payer(false))
+  run noncanonicalPayerRefusesTest = initState.then(input("valid", 1, Set(), "none")).then(payer(false))
     .expect(s.result == "input-error" and invariant)
-  run sameOperatorCannotSupplyIndependentHistoryTest = init.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
+  run sameOperatorCannotSupplyIndependentHistoryTest = initState.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
     .then(providerPair("same")).expect(s.result == "history-check" and invariant)
-  run invalidProviderUrlThrowsBeforeCaughtRpcPhaseTest = init.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
+  run invalidProviderUrlThrowsBeforeCaughtRpcPhaseTest = initState.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
     .then(providerPair("invalid-url")).expect(s.result == "input-error" and invariant)
-  run mainnetLoopbackExceptionIsRefusedTest = init.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
+  run mainnetLoopbackExceptionIsRefusedTest = initState.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
     .then(providerPair("local-mainnet")).expect(s.result == "history-check" and invariant)
-  run nonmainnetDistinctLoopbacksCanReachExpiryChecksTest = init.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
+  run nonmainnetDistinctLoopbacksCanReachExpiryChecksTest = initState.then(input("valid", 1, Set(), "none")).then(payer(true)).then(messages("valid"))
     .then(providerPair("local-nonmainnet")).expect(s.phase == "genesis" and s.pairTrusted and invariant)
   run oneLivePlanWithholdsEveryChallengeTest = ready(2, Set(), "invalid").then(genesis(true)).then(expiredPlan)
     .then(anchor(true)).then(validity("true")).then(height(3))

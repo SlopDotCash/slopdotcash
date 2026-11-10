@@ -17,6 +17,13 @@
 // not trusted wallet branding or atomic provider revocation. No provider call,
 // browser test, parser or checker ran for this model. Old connect completion
 // without its final trust check is a negative control excluded from step.
+// State reductions (formal/README.md, "Write-only fields and canonical
+// choices"): `legacy` is read only by selectLegacy and legacyChoices, and
+// selectLegacy needs phase "idle", which never returns once connect leaves it;
+// the invariant's legacy conjunct holds for any set. So connect clears it and a
+// later legacy update stores the empty set. A call's `kind` is read only by
+// reply while the call is pending, so a refused or finished call stores "rpc".
+// Call slots are symmetric, so invoke uses the lowest unused slot first.
 module evm_wallet_discovery {
   val ids = Set(1, 2)
   val providers = Set(1, 2, 3)
@@ -28,7 +35,9 @@ module evm_wallet_discovery {
     blockedProviders: Set[int], legacy: Set[int], selected: int, selectedId: int,
     phase: str, chooseAccount: bool, permissionCalls: int, accountCalls: int,
     addressReady: bool, checkedAccountReply: bool, calls: int -> Call }
-  action init = s' = { listening: true, announced: ids.mapBy(_ => absent), blockedIds: Set(),
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { listening: true, announced: ids.mapBy(_ => absent), blockedIds: Set(),
     blockedProviders: Set(), legacy: Set(), selected: 0, selectedId: 0, phase: "idle",
     chooseAccount: false, permissionCalls: 0, accountCalls: 0, addressReady: false,
     checkedAccountReply: false, calls: ids.mapBy(_ => idleCall) }
@@ -49,15 +58,16 @@ module evm_wallet_discovery {
         else if (previous.provider == 0) s.with("announced", s.announced.set(id, { provider: provider, metadata: metadata }))
         else s }
   }
-  action legacy(providersNow: Set[int]): bool = all { s.listening, providersNow.subseteq(providers), s' = s.with("legacy", providersNow) }
+  action legacy(providersNow: Set[int]): bool = all { s.listening, providersNow.subseteq(providers),
+    s' = s.with("legacy", if (s.phase == "idle") providersNow else Set()) }
   action cleanup = all { s.listening, s' = s.with("listening", false) }
   action selectAnnounced(id: int): bool = all { s.phase == "idle", announcedChoices.contains(id),
     s' = s.with("selected", s.announced.get(id).provider).with("selectedId", id) }
   action selectLegacy(provider: int): bool = all { s.phase == "idle", legacyChoices.contains(provider),
     s' = s.with("selected", provider).with("selectedId", 0) }
   action connect(picker: bool): bool = all { s.phase == "idle", s.selected > 0,
-    s' = if (not(trusted)) s.with("phase", "error")
-      else s.with("chooseAccount", picker).with("phase", if (picker) "permissions" else "accounts-pending")
+    s' = if (not(trusted)) s.with("phase", "error").with("legacy", Set())
+      else s.with("chooseAccount", picker).with("phase", if (picker) "permissions" else "accounts-pending").with("legacy", Set())
         .with("permissionCalls", if (picker) 1 else 0).with("accountCalls", if (picker) 0 else 1) }
   action permissionReply(outcome: str): bool = all { s.phase == "permissions", Set("ok", "unsupported", "rejected", "other-error").contains(outcome),
     s' = s.with("phase", if (outcome == "rejected" or not(trusted)) "error" else "accounts-pending")
@@ -69,30 +79,51 @@ module evm_wallet_discovery {
   action invoke(id: int, kind: str): bool = {
     val call = s.calls.get(id)
     all { s.addressReady, ids.contains(id), call.phase == "unused", Set("rpc", "sign").contains(kind),
+      ids.forall(earlier => earlier < id implies s.calls.get(earlier).phase != "unused"),
       s' = s.with("calls", s.calls.set(id,
-        call.with("kind", kind).with("trusted", trusted).with("phase", if (trusted) "pending" else "done")
+        call.with("kind", if (trusted) kind else "rpc").with("trusted", trusted).with("phase", if (trusted) "pending" else "done")
           .with("result", if (trusted) "none" else "conflict"))) }
   }
   action reply(id: int, stringResult: bool, failed: bool): bool = {
     val call = s.calls.get(id)
     all { call.phase == "pending", s' = s.with("calls", s.calls.set(id,
-      call.with("phase", "done").with("result", if (failed) "error"
+      call.with("phase", "done").with("kind", "rpc").with("result", if (failed) "error"
         else if (call.kind == "sign" and not(stringResult)) "invalid-signature" else "returned"))) }
   }
   action oldAccountReply = all { s.phase == "accounts-pending",
     s' = s.with("phase", "connected").with("addressReady", true) }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet provider = providers.oneOf()
-    nondet metadata = Set(1, 2).oneOf()
-    nondet kind = Set("rpc", "sign").oneOf()
-    nondet outcome = Set("ok", "unsupported", "rejected", "other-error").oneOf()
-    nondet globals = Set(Set(), Set(1), Set(2), Set(1, 2, 3)).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { announce(id, provider, metadata, yes), legacy(globals), cleanup,
-      selectAnnounced(id), selectLegacy(provider), connect(yes), permissionReply(outcome),
-      accountReply(yes), accountError, invoke(id, kind), reply(id, yes, other), s' = s }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product.
+  // The step relation and every successor are unchanged (formal/README.md,
+  // "Branch-local nondeterministic choices").
+  action step = any {
+    { nondet id = ids.oneOf()
+      nondet provider = providers.oneOf()
+      nondet metadata = Set(1, 2).oneOf()
+      nondet yes = Set(false, true).oneOf()
+      announce(id, provider, metadata, yes) },
+    { nondet globals = Set(Set(), Set(1), Set(2), Set(1, 2, 3)).oneOf()
+      legacy(globals) },
+    cleanup,
+    { nondet id = ids.oneOf()
+      selectAnnounced(id) },
+    { nondet provider = providers.oneOf()
+      selectLegacy(provider) },
+    { nondet yes = Set(false, true).oneOf()
+      connect(yes) },
+    { nondet outcome = Set("ok", "unsupported", "rejected", "other-error").oneOf()
+      permissionReply(outcome) },
+    { nondet yes = Set(false, true).oneOf()
+      accountReply(yes) },
+    accountError,
+    { nondet id = ids.oneOf()
+      nondet kind = Set("rpc", "sign").oneOf()
+      invoke(id, kind) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      reply(id, yes, other) },
+    s' = s
   }
   val invariant = all {
     s.blockedIds.subseteq(ids), s.blockedProviders.subseteq(providers),
@@ -102,13 +133,13 @@ module evm_wallet_discovery {
     s.addressReady implies s.checkedAccountReply,
     ids.forall(id => s.calls.get(id).phase == "pending" implies s.calls.get(id).trusted),
     ids.forall(id => s.calls.get(id).result == "returned" implies s.calls.get(id).trusted) }
-  action selected = init.then(announce(1, 1, 1, true)).then(selectAnnounced(1))
+  action selected = initState.then(announce(1, 1, 1, true)).then(selectAnnounced(1))
   action connected = selected.then(connect(false)).then(accountReply(true))
 
-  run discoveryNeverConnectsTest = init.then(announce(1, 1, 1, true)).then(legacy(Set(2)))
+  run discoveryNeverConnectsTest = initState.then(announce(1, 1, 1, true)).then(legacy(Set(2)))
     .expect(s.permissionCalls == 0 and s.accountCalls == 0 and invariant)
-  run invalidAnnouncementIsIgnoredTest = init.then(announce(1, 1, 1, false)).expect(announcedProviders == Set() and invariant)
-  run exactReannouncementIsIdempotentTest = init.then(announce(1, 1, 1, true)).then(announce(1, 1, 1, true))
+  run invalidAnnouncementIsIgnoredTest = initState.then(announce(1, 1, 1, false)).expect(announcedProviders == Set() and invariant)
+  run exactReannouncementIsIdempotentTest = initState.then(announce(1, 1, 1, true)).then(announce(1, 1, 1, true))
     .expect(announcedChoices == Set(1) and s.blockedProviders == Set() and invariant)
   run changedProviderBlocksBothTest = selected.then(announce(1, 2, 1, true))
     .expect(s.blockedIds == Set(1) and s.blockedProviders == Set(1, 2) and invariant)
@@ -118,13 +149,13 @@ module evm_wallet_discovery {
     .expect(s.blockedProviders == providers and invariant)
   run genuineRetryCannotRestoreConflictedIdTest = selected.then(announce(1, 2, 1, true)).then(announce(1, 1, 1, true))
     .expect(announcedChoices == Set() and invariant)
-  run providerAliasSharesConflictTest = init.then(announce(1, 1, 1, true)).then(announce(2, 1, 1, true)).then(announce(1, 2, 1, true))
+  run providerAliasSharesConflictTest = initState.then(announce(1, 1, 1, true)).then(announce(2, 1, 1, true)).then(announce(1, 2, 1, true))
     .expect(announcedChoices == Set() and invariant)
-  run legacyDoesNotDuplicateAnnouncedObjectTest = init.then(legacy(Set(1, 2))).then(announce(1, 1, 1, true))
+  run legacyDoesNotDuplicateAnnouncedObjectTest = initState.then(legacy(Set(1, 2))).then(announce(1, 1, 1, true))
     .expect(legacyChoices == Set(2) and invariant)
   run conflictingAnnouncementCannotReappearAsLegacyTest = selected.then(legacy(Set(1, 2))).then(announce(1, 2, 1, true))
     .expect(legacyChoices == Set() and invariant)
-  run legacyChoiceCanConnectTest = init.then(legacy(Set(2))).then(selectLegacy(2)).then(connect(false))
+  run legacyChoiceCanConnectTest = initState.then(legacy(Set(2))).then(selectLegacy(2)).then(connect(false))
     .then(accountReply(true)).expect(s.selected == 2 and s.addressReady and invariant)
   run staleSelectedProviderRefusesBeforeConnectTest = selected.then(announce(1, 2, 1, true)).then(connect(false))
     .expect(s.phase == "error" and s.accountCalls == 0 and invariant)
@@ -152,7 +183,7 @@ module evm_wallet_discovery {
     .expect(s.calls.get(1).result == "invalid-signature" and invariant)
   run rawRpcResponseIsNotSignatureValidatedTest = connected.then(invoke(1, "rpc")).then(reply(1, false, false))
     .expect(s.calls.get(1).result == "returned" and invariant)
-  run changingLegacyGlobalDoesNotRevokeCapturedWrapperTest = init.then(legacy(Set(2))).then(selectLegacy(2)).then(legacy(Set()))
+  run changingLegacyGlobalDoesNotRevokeCapturedWrapperTest = initState.then(legacy(Set(2))).then(selectLegacy(2)).then(legacy(Set()))
     .then(connect(false)).then(accountReply(true)).expect(s.addressReady and invariant)
   run cleanupStopsAnnouncementsTest = selected.then(cleanup).expect(s.blockedProviders == Set() and invariant).then(announce(1, 2, 1, true).fail())
   run cleanupDoesNotCancelProviderPromiseTest = connected.then(invoke(1, "rpc")).then(cleanup).then(reply(1, true, false))

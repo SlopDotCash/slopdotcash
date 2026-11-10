@@ -12504,7 +12504,7 @@
     },
     {
       "path": "formal/models/payments/solana_binding_completion.qnt",
-      "sha256": "c252954040cf1c11bcd9cb455f96e6e88847873bf2470d226bf98ce855adff98",
+      "sha256": "baa5933a3abe7d0b3ed2d298aa964085b701fa5b526d19be5f97d16c965e945f",
       "sources": [
         "backend/payments/handler.ts",
         "contracts/solana/programs/slop-escrow/src/lib.rs",
@@ -12548,7 +12548,7 @@
     },
     {
       "path": "formal/models/payments/solana_executor_journal.qnt",
-      "sha256": "08fa0849fa0f15a9ddfb595191af6a789e8c3cfc87aaf537b0cdc0307b6f4ccd",
+      "sha256": "d8e475c1f7ced2d39c76a86b0c94e65528a9f72e8b96ea9416f8e0f3672f7f69",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/payment-executor/solana.ts"
@@ -12582,7 +12582,7 @@
     },
     {
       "path": "formal/models/payments/solana_history_retirement.qnt",
-      "sha256": "8fc7433053aea137ede00bfc85aa6bdd9be43dccb0eeec004478464aae7c6c4a",
+      "sha256": "2104b78fcfbe063e50bb06861f9c4f787dc5e2d9f1a75d8cc2d9622d56701d0c",
       "sources": [
         "backend/security/direct-payments.ts",
         "backend/security/direct-solana-recovery.ts",
@@ -12651,7 +12651,7 @@
     },
     {
       "path": "formal/models/payments/stored_binding_broadcast_authority.qnt",
-      "sha256": "c9b32a46f8ccb50512c3ac1d91b7438245d2089192ff95958cce0cae004763c6",
+      "sha256": "ce2b9f0525839fba604d26caa66cf804e579c6dd06840355e294aa4485a435d4",
       "sources": [
         "migrations/0016_binding_authorizations.sql",
         "scripts/payment-keeper/keeper.ts",
@@ -13784,7 +13784,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_inference_retention.qnt",
-      "sha256": "ad85eaa67a2ff4df4887be8b5f0f45734457bfbbd11d2a36847bb96b0140e806",
+      "sha256": "6dcf289d705f625d763cda86bd9fb539b7ce14042b14a5b77dd5a42691f6e51d",
       "sources": [
         "migrations/0054_slopbot_value_inference_results.sql",
         "migrations/0104_slopbot_value_inference_attempts.sql",
@@ -14347,7 +14347,7 @@
     },
     {
       "path": "formal/models/slopbot/historical_subscription_intake.qnt",
-      "sha256": "40927ba6b7ff2424b31c48368f4dae8150eb5ac86d8dde95749d4a8b13501d43",
+      "sha256": "79171db379bf52fbd4516227a3afc398fad36413b1fad5d2f50d1c9f94a6f94d",
       "sources": [
         "backend/slopbot/value-import.ts",
         "migrations/0038_slopbot_value_journal.sql",
@@ -14539,7 +14539,7 @@
     },
     {
       "path": "formal/models/tooling/dev_identity_bridge.qnt",
-      "sha256": "6b49d13b1e1aebe8e05788ea1f575f9d967f6b31acd9314ad9e731246756631c",
+      "sha256": "00769d870a588ae1bbf16a37cbce109d149ad398ef8c4523ad29be7624a3fa73",
       "sources": [
         "scripts/dev-backend.ts",
         "scripts/dev-identity-bridge.ts",
@@ -14647,7 +14647,7 @@
     },
     {
       "path": "formal/models/tooling/evidence_capture.qnt",
-      "sha256": "29de841b532b05a8322d7a03ae0139acc13bdd90f57352b29037a49dd9055624",
+      "sha256": "86930a0673fad5ab56dda692f18b10d69cfd9fae3ce4318c283b2f33d71fcf63",
       "sources": [
         "scripts/evidence-bundle.mjs",
         "scripts/evidence-contract.mjs",
@@ -14968,7 +14968,7 @@
     },
     {
       "path": "formal/models/ui/evm_wallet_discovery.qnt",
-      "sha256": "2c5a2cc8d35a4242c65425ae6b546219b53f58e688e1725836f3ae280302bd28",
+      "sha256": "fe882a83bc1bc8b08b87391bc7bc26ef1488f9e7032aa2f7ddeb3f07ea3f9d18",
       "sources": ["src/lib/use-payout-wallets.ts"],
       "scenarios": [
         "changedMetadataBlocksSameProviderTest",
@@ -15002,7 +15002,7 @@
     },
     {
       "path": "formal/models/ui/solana_binding_wire.qnt",
-      "sha256": "ce4fcc90c2bab5d56ecf6d02b3aaf7ffd4af2af3dfcd6f2440ecf54522a7bc16",
+      "sha256": "10d6c70ff50948eb97f5795abab869c048fbee871f1d4e270aae503db33b4825",
       "sources": [
         "contracts/solana/transactions.ts",
         "src/PayoutConsent.tsx",

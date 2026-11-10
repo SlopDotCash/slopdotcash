@@ -59,7 +59,13 @@ module stored_binding_broadcast_authority {
     paid: false, version: 0, signed: Set(1), known: Set(),
     receipts: candidates.mapBy(_ => "none"), calls: ids.mapBy(_ => idle) }
   val registryMatches = s.claim == 1 and s.registryAllowed
-  def ended(call: Call, result: str): Call = call.with("phase", "response").with("desired", result)
+  // An unsent call's check flags are read only under `sent`, which never becomes
+  // true after the call ends, so ended clears them. consentStamp stays for the
+  // submission-margin scenario.
+  def ended(call: Call, result: str): Call = if (call.sent) call.with("phase", "response").with("desired", result)
+    else call.with("phase", "response").with("desired", result).with("budget", false).with("afterBudget", false)
+      .with("checkedCandidate", 0).with("firstRegistry", false).with("signer", false).with("unpaid", false)
+      .with("version", -1).with("policy", false).with("consent", false).with("finalRegistry", false)
   def submitted(call: Call): str = if (call.waiting) "waiting" else "submitted"
   val receiptCandidate = s.signed.fold(0, (prior, candidate) =>
     if (s.receipts.get(candidate) != "none" and candidate > prior) candidate else prior)
@@ -193,17 +199,99 @@ module stored_binding_broadcast_authority {
     all { call.phase == "old-budget", s' = s.with("calls", s.calls.set(id,
       call.with("phase", "ready").with("budget", true))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet candidate = candidates.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    any { advance, replaceClaim, restrictRegistry, rotateSigner, payAward, changeVersion,
-      retainVariant(candidate), mine(candidate, a), begin(id, candidate, a),
-      receiptRead(id), budgetReply(id, a), intentReply(id, a), firstRegistryRead(id),
-      signerRead(id), unpaidRead(id), versionRead(id), policyReply(id, a), startConsentRead(id),
-      consentReply(id, a), finalRegistryRead(id), awaitFailure(id), transmit(id, a),
-      rpcReply(id, a), hashRead(id, a), respond(id, b), s' = s }
+  // Step-only reductions (formal/README.md, "Write-only fields and canonical
+  // choices"). Each environment change below is read only by the named call
+  // phases, and call phases never move backward, so step suppresses the change
+  // once no call can still read it; the suppressed successor differs only in a
+  // field that no later guard or update reads, and the invariant reads those
+  // fields only through their range conjuncts. restrictRegistry and replaceClaim
+  // are read only through registryMatches, so step keeps replaceClaim as the one
+  // representative. Clock values 1 and 2 both fail `expiry > stamp + margin` and
+  // have no other reader, so step stops the clock at 1. `response` is read by no
+  // guard or invariant, so step delivers every reply. Call slots are symmetric,
+  // so step begins the lowest unused slot first. A finished call is never
+  // updated again. If it did not send, its invariant conjuncts were checked in
+  // its response state and stay true, because `signed` only grows and every
+  // other conjunct is guarded by `sent` or a sending result; step therefore
+  // stores one canonical unsent record. A sent call already holds every
+  // check value, so its record is kept unchanged.
+  action stepRespond(id: int): bool = {
+    val call = s.calls.get(id)
+    all { call.phase == "response", s' = s.with("calls", s.calls.set(id,
+      if (call.sent) call.with("phase", "done").with("response", call.desired)
+      else idle.with("phase", "done"))) }
+  }
+  def callIn(phases: Set[str]): bool = ids.exists(id => phases.contains(s.calls.get(id).phase))
+  val beforeSigner = Set("unused", "receipt", "budget", "intent", "registry-first", "signer")
+  val beforeUnpaid = beforeSigner.union(Set("unpaid"))
+  val beforeVersion = beforeUnpaid.union(Set("version"))
+  val beforeConsent = beforeVersion.union(Set("policy", "consent-start"))
+  val beforeFinal = beforeConsent.union(Set("consent-reply", "registry-final"))
+  action stepAdvance = all { s.now == 0, callIn(beforeConsent), advance }
+  action stepReplaceClaim = all { callIn(beforeFinal), replaceClaim }
+  action stepRotateSigner = all { callIn(beforeSigner), rotateSigner }
+  action stepPayAward = all { callIn(beforeUnpaid), payAward }
+  action stepChangeVersion = all { callIn(beforeVersion), changeVersion }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product.
+  // The step relation and every successor are unchanged (formal/README.md,
+  // "Branch-local nondeterministic choices").
+  action step = any {
+    stepAdvance,
+    stepReplaceClaim,
+    stepRotateSigner,
+    stepPayAward,
+    stepChangeVersion,
+    { nondet candidate = candidates.oneOf()
+      retainVariant(candidate) },
+    { nondet candidate = candidates.oneOf()
+      nondet a = Set(false, true).oneOf()
+      mine(candidate, a) },
+    { nondet id = ids.oneOf()
+      nondet candidate = candidates.oneOf()
+      nondet a = Set(false, true).oneOf()
+      all { ids.forall(earlier => earlier < id implies s.calls.get(earlier).phase != "unused"),
+        begin(id, candidate, a) } },
+    { nondet id = ids.oneOf()
+      receiptRead(id) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      budgetReply(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      intentReply(id, a) },
+    { nondet id = ids.oneOf()
+      firstRegistryRead(id) },
+    { nondet id = ids.oneOf()
+      signerRead(id) },
+    { nondet id = ids.oneOf()
+      unpaidRead(id) },
+    { nondet id = ids.oneOf()
+      versionRead(id) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      policyReply(id, a) },
+    { nondet id = ids.oneOf()
+      startConsentRead(id) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      consentReply(id, a) },
+    { nondet id = ids.oneOf()
+      finalRegistryRead(id) },
+    { nondet id = ids.oneOf()
+      awaitFailure(id) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      transmit(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      rpcReply(id, a) },
+    { nondet id = ids.oneOf()
+      nondet a = Set(false, true).oneOf()
+      hashRead(id, a) },
+    { nondet id = ids.oneOf()
+      stepRespond(id) },
+    s' = s
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.now), Set(1, 2).contains(s.claim), Set(0, 1).contains(s.version),

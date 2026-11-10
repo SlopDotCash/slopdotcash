@@ -12,7 +12,9 @@ module evidence_capture {
     complete: bool, current: int, previous: int, backup: bool, staged: bool,
     rootError: str, primary: str, recoveryError: bool, cleanupErrors: Set[str],
     attempted: Set[str], previewStopped: bool, result: str, logged: bool }
-  action init = s' = { phase: "new", transaction: "none", buildBound: false,
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { phase: "new", transaction: "none", buildBound: false,
     browserClean: false, complete: false, current: 1, previous: 1, backup: false,
     staged: false, rootError: "none", primary: "none", recoveryError: false,
     cleanupErrors: Set(), attempted: Set(), previewStopped: false,
@@ -102,62 +104,62 @@ module evidence_capture {
     s.logged implies s.result == "success" and s.transaction == "published" and s.previewStopped,
     s.result == "success" implies s.transaction == "published" and s.primary == "none" and s.cleanupErrors == Set() }
 
-  run cleanCaptureTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run cleanCaptureTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(true))
     .then(stopPreview(true)).then(abort(true)).then(logSuccess).expect(s.current == 2 and s.logged and invariant)
-  run failedSwapRestoresTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run failedSwapRestoresTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(false)).then(restoreOnError(true))
     .then(stopPreview(true)).then(abort(true)).expect(s.current == 1 and s.result == "failure" and invariant)
-  run interruptedSwapIsExplicitTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run interruptedSwapIsExplicitTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(crashBetweenRenames)
     .expect(s.current == 0 and s.backup and s.staged and invariant)
-  run committedCleanupFailureKeepsNewBundleTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run committedCleanupFailureKeepsNewBundleTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(false))
     .then(stopPreview(true)).then(abort(true)).expect(s.current == 2 and s.backup
       and s.transaction == "published" and s.primary == "published-cleanup" and invariant)
-  run failedRestorationPreservesBothInputsTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run failedRestorationPreservesBothInputsTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(false)).then(restoreOnError(false))
     .then(stopPreview(true)).then(abort(true)).expect(s.current == 0 and s.backup and s.staged
       and s.transaction == "recovery-required" and s.primary == "publication" and s.recoveryError and invariant)
-  run concurrentWinnerIsNotOverwrittenTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run concurrentWinnerIsNotOverwrittenTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(concurrentWinner).then(publish(false))
     .then(restoreOnError(true)).then(stopPreview(true)).then(abort(true))
     .expect(s.current == 3 and s.backup and s.staged and s.transaction == "recovery-required" and invariant)
-  run previewFailureStillAbortsStagingTest = init.then(stage).then(setupFailure)
+  run previewFailureStillAbortsStagingTest = initState.then(stage).then(setupFailure)
     .then(stopPreview(false)).then(abort(true)).expect(s.transaction == "aborted"
       and s.primary == "setup" and s.cleanupErrors == Set("preview") and invariant)
-  run captureAndBothFinalizersPreserveFirstErrorTest = init.then(stage).then(capture(false, true))
+  run captureAndBothFinalizersPreserveFirstErrorTest = initState.then(stage).then(capture(false, true))
     .then(closeBrowser(true)).then(stopPreview(false)).then(abort(false))
     .expect(s.primary == "capture" and s.cleanupErrors == Set("preview", "abort") and s.staged and invariant)
-  run browserCloseFailurePreventsPublicationTest = init.then(stage).then(capture(true, true))
+  run browserCloseFailurePreventsPublicationTest = initState.then(stage).then(capture(true, true))
     .then(closeBrowser(false)).then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and s.transaction == "aborted" and s.primary == "browser-close" and invariant)
-  run captureFailureSurvivesBrowserCloseFailureTest = init.then(stage).then(capture(false, true))
+  run captureFailureSurvivesBrowserCloseFailureTest = initState.then(stage).then(capture(false, true))
     .then(closeBrowser(false)).then(stopPreview(true)).then(abort(true))
     .expect(s.primary == "capture" and s.cleanupErrors.contains("browser") and invariant)
-  run setupFailureUsesOwnedFinalizersTest = init.then(stage).then(setupFailure)
+  run setupFailureUsesOwnedFinalizersTest = initState.then(stage).then(setupFailure)
     .then(stopPreview(true)).then(abort(true)).expect(not(s.staged) and s.attempted == Set("preview", "abort") and invariant)
-  run failedAbortRemainsRetryableTest = init.then(stage).then(setupFailure)
+  run failedAbortRemainsRetryableTest = initState.then(stage).then(setupFailure)
     .then(stopPreview(true)).then(abort(false)).expect(s.transaction == "open" and s.staged)
     .then(retryAbort(true)).expect(s.transaction == "aborted" and not(s.staged) and s.result == "failure" and invariant)
-  run firstBundleNeedsNoPreviousBackupTest = init.then(noPrior).then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run firstBundleNeedsNoPreviousBackupTest = initState.then(noPrior).then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(true))
     .then(stopPreview(true)).then(abort(true)).then(logSuccess).expect(s.current == 2 and not(s.backup) and invariant)
-  run failedPreviousMoveKeepsOldBundleTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run failedPreviousMoveKeepsOldBundleTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(false)).then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and not(s.backup) and s.primary == "publication" and invariant)
-  action invalidBundle = init.then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
+  action invalidBundle = initState.then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
   run invalidBundleCannotPublishTest = invalidBundle.then(movePrevious(true).fail())
   run invalidBundleFinalizesFailureTest = invalidBundle.then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and s.primary == "validation" and invariant)
-  run crashAfterCommitKeepsPublishedStateTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run crashAfterCommitKeepsPublishedStateTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(crashAfterPublication)
     .expect(s.current == 2 and s.transaction == "published" and s.backup and invariant)
-  run postCommitPreviewFailureCannotLogSuccessTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run postCommitPreviewFailureCannotLogSuccessTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(true))
     .then(stopPreview(false)).then(abort(true))
     .expect(s.current == 2 and s.result == "failure" and s.primary == "preview-stop" and invariant).then(logSuccess.fail())
-  run protectedAbortDoesNotDeletePublishedBundleTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
+  run protectedAbortDoesNotDeletePublishedBundleTest = initState.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(false))
     .then(stopPreview(true)).then(abort(true)).then(protectedAbort)
     .expect(s.current == 2 and s.backup and s.transaction == "published" and invariant)

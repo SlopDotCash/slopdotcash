@@ -52,10 +52,11 @@ module historical_subscription_intake {
     payload: 1, bundle: false, members: Set(), collected: Set(), refreshed: Set(),
     sourceRevisions: sources.mapBy(_ => 0), registryRevision: 0, status: 0,
     returnedRow: 0, returnedPayload: 0, noStore: false, received: false }
-  var s: { requests: int -> Request, sourceRevisions: int -> int, registryRevision: int,
+  type State = { requests: int -> Request, sourceRevisions: int -> int, registryRevision: int,
     active: bool, installed: bool, selected: Set[int], tip: int,
     records: int -> Record, sourceIndex: int -> Set[int], claimIndex: int -> Set[int],
     parentIndex: int -> Set[int] }
+  var s: State
   action init = s' = { requests: slots.mapBy(_ => idle), sourceRevisions: sources.mapBy(_ => 1),
     registryRevision: 1, active: true, installed: true, selected: sources, tip: 0,
     records: rows.mapBy(_ => absent), sourceIndex: rows.mapBy(_ => Set()),
@@ -142,12 +143,14 @@ module historical_subscription_intake {
     all { r.phase == "prepare", s' = s.with("requests", s.requests.set(id,
       if (valid) r.with("phase", "preflight") else respond(r, 409))) }
   }
-  action preflight(id: int): bool = {
-    val r = s.requests.get(id)
+  def preflightResult(r: Request): Request = {
     val replay = rowAt(rowOf(r)).exists
     val allowed = replay or (r.parent == s.tip and not(r.mode == "single" and rowAt(s.tip).mode == "joint"))
-    all { r.phase == "preflight", s' = s.with("requests", s.requests.set(id,
-      if (allowed) r.with("phase", "append") else respond(r, 409))) }
+    if (allowed) r.with("phase", "append") else respond(r, 409)
+  }
+  action preflight(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "preflight", s' = s.with("requests", s.requests.set(id, preflightResult(r))) }
   }
   action appendRecord(id: int, lostReply: bool): bool = {
     val r = s.requests.get(id)
@@ -183,20 +186,261 @@ module historical_subscription_intake {
     val r = s.requests.get(id)
     all { r.phase == "response", s' = s.with("requests", s.requests.set(id, r.with("phase", "done").with("received", received))) }
   }
-  action step = {
-    nondet id = slots.oneOf()
-    nondet source = sources.oneOf()
-    nondet mode = Set("single", "joint").oneOf()
-    nondet key = Set(1, 2).oneOf()
-    nondet parent = 0.to(4).oneOf()
-    nondet payload = Set(1, 2).oneOf()
-    nondet result = Set("admin", "missing", "forbidden", "error").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { sourceChanges(source), registryChanges, pause, removeSource(source), revokeInstallation,
-      begin(id, mode, key, parent, payload, yes), headers(id, yes, other), session(id, result, yes), body(id, yes), envelope(id, yes), installation(id, yes),
-      collect(id, source, yes, other), reconstruct(id, yes), capture(id), refresh(id, source, yes), prepare(id, yes),
-      preflight(id), appendRecord(id, yes), readback(id, yes), failure(id), send(id, yes), s' = s }
+  // Step-only reductions. Direct actions and named scenarios keep the original
+  // behavior; formal/README.md ("Fused local request steps") states the pattern.
+  // 1. Slots are symmetric, so a first attempt uses the lowest unused slot.
+  // 2. Request parameters are chosen when first read: mode and bundle by the
+  //    envelope check, key, parent and payload by preflight. Until then a
+  //    request stores the unread markers "unset", 0, -1 and 0 and empty members.
+  //    Every concrete choice has identical successors until that reader, and a
+  //    retry repeats chosen parameters while unread ones stay open, matching
+  //    begin's equality guard.
+  // 3. headers, session, body, envelope, reconstruct, prepare and delivery read
+  //    and write only their own request, which no other action reads, so they
+  //    commute with every other transition. Step runs each one together with
+  //    the preceding action of the same request. Their refusal statuses are
+  //    read by no guard; the invariant reads only `status > 0`, which respond
+  //    pairs with noStore, and `status == 200`.
+  // 4. A refused request goes straight to its delivered form. Its response
+  //    state satisfies every request conjunct (respond keeps the subset chain
+  //    and sets noStore) and differs from its predecessor only in that request.
+  //    A delivered request is changed again only by begin, which reads its
+  //    attempt count and, for a retry, its parameters; records are never
+  //    removed or rewritten, so its conjuncts stay true. `received` has no
+  //    reader besides one named scenario. A 200 reply keeps its response state.
+  // 5. Source copies, collected and refreshed sets have no reader after the
+  //    last refresh, and the registry copy none after append, so step clears
+  //    them. Clearing keeps the subset conjuncts true.
+  // 6. Each environment change is a one-time update that no invariant conjunct
+  //    reads and that commutes with every transition that does not read the
+  //    changed field. Step therefore applies a change only together with the
+  //    first reader that observes it: collect, capture and a non-replay append
+  //    for pause and selection, a non-replay append for the registry, and
+  //    refresh for a source. A change applied with a reader that would refuse
+  //    anyway, or with a replay, is unobserved there and is left to a later
+  //    reader. Source and registry revisions are read only by comparing a
+  //    request's copy with the current value, so a change before the copy only
+  //    renames the value; step offers it only where the copy differs.
+  // 7. Pausing, revoking the installation and deselecting source 1 each make
+  //    every installation-to-append path that has not appended refuse:
+  //    installation or collect, capture, and every non-replay append. They
+  //    differ only in which of those stages refuses, and the stages between
+  //    are request-local, so each reaches the same delivered request. Step
+  //    keeps pause as the representative. After any of them every other
+  //    installation, selection or registry change is read only by stages that
+  //    already refuse, so step offers none. Deselecting source 2 refuses only
+  //    joint requests and stays separate. Source changes remain, because
+  //    refresh still decides whether a replay reaches readback.
+  val environmentChanges = Set("none", "pause", "drop2", "registry", "source1", "source2")
+  // 8. A payload is read only when it is copied into a record and from that
+  //    record into returnedPayload, which the invariant compares with the same
+  //    record. No guard reads it, so step uses payload 1; the named scenarios
+  //    keep both payloads.
+  val live = s.active and s.installed and s.selected.contains(1)
+  // 9. Slots are symmetric in every action and in the invariant, and no other
+  //    state names a slot. After each request update step stores the two
+  //    requests in rank order; a rank tie keeps the order it has. Either order
+  //    is a slot-permuted copy of the same state.
+  def phaseRank(phase: str): int = if (phase == "unused") 0 else if (phase == "done") 1
+    else if (phase == "installation") 2 else if (phase == "collect") 3 else if (phase == "capture") 4
+    else if (phase == "refresh") 5 else if (phase == "preflight") 6 else if (phase == "append") 7
+    else if (phase == "readback") 8 else 9
+  def slotRank(r: Request): int = {
+    val modeRank = if (r.mode == "single") 1 else if (r.mode == "joint") 2 else 0
+    ((((((phaseRank(r.phase) * 3 + r.attempt) * 3 + modeRank) * 2 + (if (r.bundle) 1 else 0)) * 3 + r.key) * 6
+      + r.parent + 1) * 4 + r.collected.size() + 2 * r.refreshed.size()) * 3 + r.registryRevision
+  }
+  def sortedSlots(current: int -> Request, id: int, r: Request): int -> Request = {
+    val updated = current.set(id, r)
+    if (slotRank(updated.get(1)) <= slotRank(updated.get(2))) updated
+    else updated.set(1, updated.get(2)).set(2, updated.get(1))
+  }
+  def carried(prior: Request): Request = idle.with("attempt", prior.attempt + 1)
+    .with("mode", if (prior.attempt > 0) prior.mode else "unset")
+    .with("bundle", prior.attempt > 0 and prior.bundle)
+    .with("members", if (prior.attempt > 0 and prior.mode == "single") Set(1)
+      else if (prior.attempt > 0 and prior.mode == "joint") sources else Set())
+    .with("key", if (prior.attempt > 0) prior.key else 0)
+    .with("parent", if (prior.attempt > 0) prior.parent else -1)
+    .with("payload", if (prior.attempt > 0) prior.payload else 0)
+  def delivered(r: Request): Request = if (r.attempt >= 2) idle.with("phase", "done").with("attempt", r.attempt)
+    else idle.with("phase", "done").with("attempt", r.attempt).with("mode", r.mode).with("key", r.key)
+      .with("parent", r.parent).with("payload", r.payload).with("bundle", r.bundle)
+  def canBegin(id: int): bool = {
+    val prior = s.requests.get(id)
+    all { Set("unused", "done").contains(prior.phase), prior.attempt < 2,
+      prior.phase == "unused" implies slots.forall(earlier => earlier < id implies s.requests.get(earlier).phase != "unused") }
+  }
+  action stepRefuseEarly(id: int): bool = all { canBegin(id),
+    s' = s.with("requests", sortedSlots(s.requests, id, delivered(carried(s.requests.get(id))))) }
+  action stepAdmit(id: int, valid: bool, mode: str, bundle: bool): bool = {
+    val r = carried(s.requests.get(id))
+    val chosen = if (r.mode != "unset") r
+      else r.with("mode", mode).with("bundle", bundle).with("members", if (mode == "single") Set(1) else sources)
+    all { canBegin(id), r.mode == "unset" or (mode == r.mode and bundle == r.bundle),
+      s' = s.with("requests", sortedSlots(s.requests, id,
+        if (valid and not(chosen.mode == "single" and chosen.bundle)) chosen.with("phase", "installation")
+        else delivered(chosen))) }
+  }
+  action stepInstallation(id: int, available: bool): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "installation", s' = s.with("requests", sortedSlots(s.requests, id,
+      if (s.installed and available) r.with("phase", "collect") else delivered(r))) }
+  }
+  // Environment changes as observed by readers (item 6).
+  def changeAllowed(change: str): bool = if (change == "none") true
+    else if (change == "pause") live
+    else if (change == "drop2") live and s.selected.contains(2)
+    else if (change == "registry") live and s.registryRevision == 1
+    else if (change == "source1") s.sourceRevisions.get(1) == 1
+    else if (change == "source2") s.sourceRevisions.get(2) == 1
+    else false
+  def changedEnvironment(change: str): State =
+    if (change == "pause") s.with("active", false).with("registryRevision", 2)
+    else if (change == "drop2") s.with("selected", s.selected.exclude(Set(2)))
+    else if (change == "registry") s.with("registryRevision", 2)
+    else if (change == "source1") s.with("sourceRevisions", s.sourceRevisions.set(1, 2))
+    else if (change == "source2") s.with("sourceRevisions", s.sourceRevisions.set(2, 2))
+    else s
+  action stepCollect(id: int, source: int, valid: bool, reconstructed: bool, change: str): bool = {
+    val r = s.requests.get(id)
+    val e = changedEnvironment(change)
+    val collected = r.collected.union(Set(source))
+    val gathered = r.with("collected", collected).with("sourceRevisions", r.sourceRevisions.set(source, e.sourceRevisions.get(source)))
+    all { r.phase == "collect", r.members.contains(source), not(r.collected.contains(source)), reconstructed or (r.bundle and collected == r.members),
+      changeAllowed(change), Set("none", "pause", if (source == 2) "drop2" else "none").contains(change), change != "none" implies valid,
+      s' = e.with("requests", sortedSlots(e.requests, id,
+        if (not(valid and e.active and e.selected.contains(source))) delivered(r)
+        else if (collected != r.members) gathered
+        else if (r.bundle and not(reconstructed)) delivered(r)
+        else gathered.with("phase", "capture"))) }
+  }
+  action stepCapture(id: int, change: str): bool = {
+    val r = s.requests.get(id)
+    val e = changedEnvironment(change)
+    all { r.phase == "capture", changeAllowed(change),
+      Set("none", "pause", if (r.members.contains(2)) "drop2" else "none").contains(change),
+      s' = e.with("requests", sortedSlots(e.requests, id,
+      if (e.active and e.installed and r.members.subseteq(e.selected))
+        r.with("registryRevision", e.registryRevision).with("phase", "refresh") else delivered(r))) }
+  }
+  action stepRefresh(id: int, source: int, valid: bool, prepared: bool, change: str): bool = {
+    val r = s.requests.get(id)
+    val e = changedEnvironment(change)
+    val refreshed = r.refreshed.union(Set(source))
+    all { r.phase == "refresh", r.members.contains(source), not(r.refreshed.contains(source)), prepared or refreshed == r.members,
+      changeAllowed(change), Set("none", if (source == 1) "source1" else "source2").contains(change), change != "none" implies valid,
+      s' = e.with("requests", sortedSlots(e.requests, id,
+        if (not(valid) or r.sourceRevisions.get(source) != e.sourceRevisions.get(source)) delivered(r)
+        else if (refreshed != r.members) r.with("refreshed", refreshed)
+        else if (not(prepared)) delivered(r)
+        else r.with("phase", "preflight").with("collected", Set()).with("refreshed", Set())
+          .with("sourceRevisions", idle.sourceRevisions))) }
+  }
+  // 10. The parent is read only by preflight and a non-replay append, both as
+  //    `parent == tip`, and is copied into a new record. A replay never reads
+  //    it, now or on a retry, because rows are never removed, so a replaying
+  //    request leaves it unread (-1). A last attempt that does not match the
+  //    tip is refused and delivered without parameters, so one mismatching
+  //    value represents the others. A first attempt keeps every value for its
+  //    retry.
+  action stepPreflight(id: int, key: int, parent: int, payload: int): bool = {
+    val r = s.requests.get(id)
+    val keyed = if (r.key != 0) r else r.with("key", key).with("payload", payload)
+    val replayNow = rowAt(rowOf(keyed)).exists
+    val mismatch = if (s.tip == 0) 1 else 0
+    val chosen = if (r.parent != -1) keyed else keyed.with("parent", parent)
+    val checked = preflightResult(chosen)
+    all { r.phase == "preflight", r.key == 0 or (key == r.key and payload == r.payload),
+      if (r.parent != -1) parent == r.parent
+      else if (replayNow) parent == -1
+      else if (r.attempt >= 2) parent == s.tip or parent == mismatch
+      else parent >= 0,
+      s' = s.with("requests", sortedSlots(s.requests, id, if (checked.phase == "append") checked else delivered(chosen))) }
+  }
+  action stepAppend(id: int, lostReply: bool, change: str): bool = {
+    val r = s.requests.get(id)
+    val e = changedEnvironment(change)
+    val row = rowOf(r)
+    val replay = rowAt(row).exists
+    val valid = e.active and e.installed and r.members.subseteq(e.selected) and r.registryRevision == e.registryRevision
+      and r.parent == s.tip and not(r.mode == "single" and rowAt(s.tip).mode == "joint")
+    val nextValue = if (lostReply) delivered(r) else r.with("phase", "readback").with("registryRevision", 0)
+    val record: Record = { exists: true, mode: r.mode, parent: r.parent, payload: r.payload, members: r.members }
+    all { r.phase == "append", changeAllowed(change), change != "none" implies not(replay),
+      Set("none", "pause", "registry", if (r.members.contains(2)) "drop2" else "none").contains(change),
+      s' = if (replay) e.with("requests", sortedSlots(e.requests, id, nextValue))
+        else if (not(valid)) e.with("requests", sortedSlots(e.requests, id, delivered(r)))
+        else e.with("records", s.records.set(row, record)).with("tip", row)
+          .with("sourceIndex", s.sourceIndex.set(row, if (r.mode == "joint") r.members else Set()))
+          .with("claimIndex", s.claimIndex.set(row, if (r.mode == "joint") r.members else Set()))
+          .with("parentIndex", s.parentIndex.set(row, if (r.mode == "joint" and rowAt(r.parent).mode == "joint") Set(r.parent) else Set()))
+          .with("requests", sortedSlots(e.requests, id, nextValue)) }
+  }
+  action stepReadback(id: int, available: bool): bool = {
+    val r = s.requests.get(id)
+    val row = rowOf(r)
+    val stored = rowAt(row)
+    all { r.phase == "readback", s' = s.with("requests", sortedSlots(s.requests, id,
+      if (available and stored.exists) respond(r, 200).with("returnedRow", row).with("returnedPayload", stored.payload)
+      else delivered(r))) }
+  }
+  // Installation, collect and refresh failures equal their own refusal
+  // outcomes, so stepFailure covers the remaining phases.
+  action stepFailure(id: int): bool = {
+    val r = s.requests.get(id)
+    all { Set("capture", "preflight", "append").contains(r.phase),
+      s' = s.with("requests", sortedSlots(s.requests, id, delivered(r))) }
+  }
+  action stepSend(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "response", s' = s.with("requests", sortedSlots(s.requests, id, delivered(r))) }
+  }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product
+  // (formal/README.md, "Branch-local nondeterministic choices").
+  action step = any {
+    { nondet id = slots.oneOf()
+      stepRefuseEarly(id) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet mode = Set("single", "joint").oneOf()
+      nondet bundle = Set(false, true).oneOf()
+      stepAdmit(id, yes, mode, bundle) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      stepInstallation(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet source = sources.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet third = Set(false, true).oneOf()
+      nondet change = environmentChanges.oneOf()
+      stepCollect(id, source, yes, third, change) },
+    { nondet id = slots.oneOf()
+      nondet change = environmentChanges.oneOf()
+      stepCapture(id, change) },
+    { nondet id = slots.oneOf()
+      nondet source = sources.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      nondet change = environmentChanges.oneOf()
+      stepRefresh(id, source, yes, other, change) },
+    { nondet id = slots.oneOf()
+      nondet key = Set(1, 2).oneOf()
+      nondet parent = (-1).to(4).oneOf()
+      stepPreflight(id, key, parent, 1) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet change = environmentChanges.oneOf()
+      stepAppend(id, yes, change) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      stepReadback(id, yes) },
+    { nondet id = slots.oneOf()
+      stepFailure(id) },
+    { nondet id = slots.oneOf()
+      stepSend(id) },
+    s' = s
   }
   val invariant = all {
     0.to(4).contains(s.tip), s.tip > 0 implies rowAt(s.tip).exists,

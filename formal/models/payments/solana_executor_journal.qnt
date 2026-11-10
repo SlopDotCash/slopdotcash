@@ -40,7 +40,9 @@ module solana_executor_journal {
     quote: 0, signed: false, result: "none", returned: absent }
   var s: { configured: bool, role: str, height: int, paid: bool, bound: bool,
     retired: bool, active: Row, archive: int -> Row, requests: int -> Request }
-  action init = s' = { configured: false, role: "attester", height: 0,
+  action init = s' = initialState
+  action initState = s' = initialState
+  val initialState = { configured: false, role: "attester", height: 0,
     paid: false, bound: false, retired: false, active: absent,
     archive: quotes.mapBy(_ => absent), requests: ids.mapBy(_ => idle) }
   action configure(role: str, retained: bool): bool = all {
@@ -48,7 +50,10 @@ module solana_executor_journal {
     s' = s.with("configured", true).with("role", role).with("active",
       if (retained) { exists: true, identity: 1, fingerprint: 1, generation: 1,
         cosigner: role == "attester", completed: false } else absent) }
+  // A finished request's fingerprint, captured payment flag and snapshot are
+  // read by no guard, update, invariant or scenario, so they are reset.
   def finish(request: Request, result: str): Request = request.with("phase", "done").with("result", result)
+    .with("fingerprint", 1).with("capturedPaid", false).with("snapshot", absent)
   action advance = all { s.configured, s.height < 6, s' = s.with("height", s.height + 1) }
   action pay = all { s.configured, not(s.paid), s' = s.with("paid", true) }
   action bind = all { s.configured, not(s.bound), s' = s.with("bound", true) }
@@ -126,17 +131,56 @@ module solana_executor_journal {
       s' = s.with("requests", s.requests.set(id, finish(request.with("returned", request.snapshot),
         if (request.snapshot.cosigner) "partial" else "broadcast"))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet role = roles.oneOf()
-    nondet fingerprint = Set(1, 2).oneOf()
-    nondet generation = quotes.oneOf()
-    nondet outcome = Set("absent", "success", "failed-pending", "failed-final", "error").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { configure(role, yes), advance, pay, bind, retire, cosign, begin(id, fingerprint), load(id),
-      status(id, outcome), height(id, yes), refresh(id, yes), quote(id, generation, yes),
-      admit(id, yes, other), handoff(id), s' = s }
+  // Step-only guards suppress environment updates once no request can read the
+  // updated flag again. The suppressed successor differs only in a field that
+  // every later guard and update ignores, and the invariant reads none of them
+  // except the height bound, which advance preserves. Phases never move backward.
+  def requestIn(phases: Set[str]): bool = ids.exists(id => phases.contains(s.requests.get(id).phase))
+  val beforeHeight = Set("unused", "load", "status", "height")
+  // Every height comparison is against a quote in {1, 3, 5}, so heights 2k and
+  // 2k+1 (k < 3) satisfy the same guards and invariant; step uses 0, 2, 4, 6.
+  action stepAdvance = all { requestIn(beforeHeight), s.configured, s.height < 6, s' = s.with("height", s.height + 2) }
+  action stepPay = all { requestIn(Set("unused")) or (s.role != "attester" and requestIn(beforeHeight.union(Set("refresh")))), pay }
+  action stepBind = all { s.role == "attester", requestIn(beforeHeight.union(Set("refresh"))), bind }
+  action stepRetire = all { requestIn(beforeHeight.union(Set("refresh", "quote", "admit"))), retire }
+  // Each nondeterministic choice is bound inside the one branch that reads it,
+  // so TLC enumerates the sum of the branch choices instead of their product.
+  // The step relation and every successor are unchanged (formal/README.md,
+  // "Branch-local nondeterministic choices").
+  action step = any {
+    { nondet role = roles.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      configure(role, yes) },
+    stepAdvance,
+    stepPay,
+    stepBind,
+    stepRetire,
+    cosign,
+    { nondet id = ids.oneOf()
+      nondet fingerprint = Set(1, 2).oneOf()
+      begin(id, fingerprint) },
+    { nondet id = ids.oneOf()
+      load(id) },
+    { nondet id = ids.oneOf()
+      nondet outcome = Set("absent", "success", "failed-pending", "failed-final", "error").oneOf()
+      status(id, outcome) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      height(id, yes) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      refresh(id, yes) },
+    { nondet id = ids.oneOf()
+      nondet generation = quotes.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      quote(id, generation, yes) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      nondet other = Set(false, true).oneOf()
+      admit(id, yes, other) },
+    { nondet id = ids.oneOf()
+      handoff(id) },
+    s' = s
   }
   val invariant = all {
     s.height >= 0 and s.height <= 6, roles.contains(s.role),
@@ -151,8 +195,8 @@ module solana_executor_journal {
         request.signed implies quotes.contains(request.quote),
         request.result == "observed" implies request.returned.exists }
     }) }
-  action empty(role: str): bool = init.then(configure(role, false))
-  action retained(role: str): bool = init.then(configure(role, true))
+  action empty(role: str): bool = initState.then(configure(role, false))
+  action retained(role: str): bool = initState.then(configure(role, true))
   action fresh(id: int, generation: int): bool = begin(id, 1).then(load(id)).then(quote(id, generation, true))
   action expire(id: int): bool = begin(id, 1).then(load(id)).then(status(id, "absent")).then(height(id, true)).then(refresh(id, true))
 
