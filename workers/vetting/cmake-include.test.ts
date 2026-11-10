@@ -106,6 +106,42 @@ test("a quoted path and a trailing comment still resolve", () => {
   ]);
 });
 
+test("multi-line include() calls with intervening comments still resolve", () => {
+  const inspection = inspected([
+    {
+      path: "CMakeLists.txt",
+      text: LIST(
+        [
+          "include(",
+          "  # comment before quoted argument",
+          '  "deps/fetch.txt"',
+          ")",
+          "include(",
+          "  # comment before unquoted argument",
+          "  deps/steps.txt",
+          ")",
+        ].join("\n"),
+      ),
+    },
+    {
+      path: "deps/fetch.txt",
+      text: `execute_process(COMMAND sh -c "${PAYLOAD}")\n`,
+    },
+    {
+      path: "deps/steps.txt",
+      text: `execute_process(COMMAND sh -c "${PAYLOAD}")\n`,
+    },
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 3,
+  });
+  expect(inspection.findings.map((finding) => finding.path)).toEqual([
+    "deps/fetch.txt",
+    "deps/steps.txt",
+  ]);
+});
+
 test("a plain text file outside include() stays unclassified", () => {
   expect(surfacesOf("NOTES.txt")).toEqual([]);
   expect(surfacesOf("src/main.cpp")).toEqual(["source"]);

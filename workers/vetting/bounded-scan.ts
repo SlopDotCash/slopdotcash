@@ -1588,14 +1588,15 @@ const CMAKE_SOURCE = /(?:^|\/)cmakelists\.txt$|\.cmake$/iu;
  */
 function cmakeIncludeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
-  for (const line of text.split(/\r?\n/u)) {
-    const code = line.replace(/#.*$/u, "");
-    for (const match of code.matchAll(/\binclude\s*\(/giu)) {
-      const rest = code.slice((match.index ?? 0) + match[0].length);
-      const argument = /^\s*(?:"([^"]*)"|([^\s")]+))/u.exec(rest);
-      const value = argument?.[1] ?? argument?.[2];
-      if (value !== undefined && value !== "") specifiers.push(value);
-    }
+  const uncommented = text
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/#.*$/u, ""))
+    .join("\n");
+  for (const match of uncommented.matchAll(
+    /\binclude\s*\(\s*(?:"([^"\r\n]*)"|([^\s"()]+))/giu,
+  )) {
+    const value = match[1] ?? match[2];
+    if (value !== undefined && value !== "") specifiers.push(value);
   }
   return specifiers;
 }
@@ -1679,14 +1680,17 @@ export function inspectRepository(input: {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length > 0)
-      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
     if (
       EXECUTABLE_BINARIES.test(file.path) ||
       ARCHIVES.test(file.path) ||
       binaryMagic(file.bytes)
     ) {
+      if (surfaces.length > 0)
+        classifications.push({
+          path: file.path,
+          surfaces: [...surfaces].sort(),
+        });
       // A committed binary or archive cannot be judged from text. It stays
       // quarantined until a specialist or isolated analysis releases it.
       artifacts.push({
@@ -1716,6 +1720,7 @@ export function inspectRepository(input: {
       if (!surfaces.includes("source")) surfaces.push("source");
     }
     if (surfaces.length === 0) continue;
+    classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
