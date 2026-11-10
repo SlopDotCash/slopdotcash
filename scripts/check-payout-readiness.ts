@@ -108,7 +108,10 @@ export function payoutReadiness(input: ReadinessInput): NetworkReadiness[] {
   );
   const servedBy = (network: string) =>
     dispatchers.filter((config) =>
-      parsePaymentNetworks(config.vars?.PAYMENT_NETWORKS).includes(
+      // Readiness only reports which networks each dispatcher configuration
+      // serves, across test and production stacks; it never serves one.
+      // The tier gate is enforced where a Worker starts, not in this report.
+      parsePaymentNetworks(config.vars?.PAYMENT_NETWORKS, "staging").includes(
         network as Network,
       ),
     );

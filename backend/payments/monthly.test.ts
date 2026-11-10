@@ -194,6 +194,7 @@ for (const worker of [false, true]) {
               PAYMENTS_DB: isolated.db,
               REGISTRY_DB: db,
               PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+              SLOP_ENVIRONMENT: "staging",
               PAYMENT_RPC_URLS: "{}",
               MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
             },
@@ -437,7 +438,7 @@ for (const [boundary, initiallyOff] of [
   });
 }
 for (const mutation of ["allocation", "enable", "disable"] as const) {
-  test(`a queued ${mutation} refuses a registry authority change before its INSERT`, async () => {
+  test(`a queued ${mutation} ${mutation === "disable" ? "survives" : "refuses"} a registry authority change before its INSERT`, async () => {
     clock = beforeCutoff;
     const persistence = new CloudflareProjectPersistence(db);
     const original = await persistence.getProject(project.id);
@@ -561,10 +562,20 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
         ),
       ).toBe("updated");
       releaseInsert();
-      await rejects(pending, "project_changed");
-      expect(held).toBe(true);
-      expect(count("monthly_payment_settings")).toBe(beforeSettings);
-      expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      if (mutation === "disable") {
+        // An opt-out always wins: the revision guard must not block turning
+        // automatic payment off, even when the registry revision changed
+        // while the write was queued.
+        expect(await pending).toEqual({ automatic: false });
+        expect(held).toBe(true);
+        expect(count("monthly_payment_settings")).toBe(beforeSettings + 1);
+        expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      } else {
+        await rejects(pending, "project_changed");
+        expect(held).toBe(true);
+        expect(count("monthly_payment_settings")).toBe(beforeSettings);
+        expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      }
       expect(count("monthly_payment_runs")).toBe(0);
       const current = await persistence.getProject(project.id);
       expect(current?.revision).toBe(original.revision + 1);
@@ -2488,6 +2499,7 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -2892,6 +2904,7 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -3150,6 +3163,7 @@ test("monthly dispatcher resumes an older Solana reservation after opt-out and r
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["solana-devnet"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     SOLANA_PAYMENT_EXECUTOR: {
@@ -3214,6 +3228,7 @@ test("monthly dispatcher sends a new EVM V2 reservation before an older month's 
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -3273,6 +3288,7 @@ test("monthly dispatcher keeps a legacy EVM month open while its re-sent nonce i
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {

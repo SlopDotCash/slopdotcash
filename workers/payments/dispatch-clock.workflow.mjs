@@ -36,7 +36,7 @@ export default {async fetch(request,env){
       if(first){first=false;notify();await gate;}
       return Response.json({retired:true,transactionId:null});
     }};
-    const recovery={PAYMENTS_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',EVM_PAYMENT_EXECUTOR:service};
+    const recovery={PAYMENTS_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',SLOP_ENVIRONMENT:'staging',EVM_PAYMENT_EXECUTOR:service};
     const pending=recoverUncertainAttempts(recovery);
     await reached;
     try{
@@ -60,7 +60,7 @@ export default {async fetch(request,env){
     }
     return Response.json({transactionId:payment.obligationId===${JSON.stringify(ids[0])}?'fixture-first':'fixture-second'});
   }};
-  await runPaymentDispatch({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',PAYMENT_RPC_URLS:'{}',EVM_PAYMENT_EXECUTOR:service});
+  await runPaymentDispatch({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',SLOP_ENVIRONMENT:'staging',PAYMENT_RPC_URLS:'{}',EVM_PAYMENT_EXECUTOR:service});
   return Response.json({probeCalls,probeOutcome,leaseUntil,now:new Date().toISOString()});
 }};`,
   });

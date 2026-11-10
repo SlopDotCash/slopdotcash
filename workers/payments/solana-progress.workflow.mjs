@@ -82,7 +82,7 @@ export default {async fetch(request,env){
   });
   const db={prepare(sql){return wrap(env.DB.prepare(sql));},batch(statements){queries++;batches++;return env.DB.batch(statements.map(statement=>statement.native));}};
   try {await payments.scheduled(null,{
-    PAYMENTS_DB:db,REGISTRY_DB:db,PAYMENT_NETWORKS:'["solana-devnet"]',
+    PAYMENTS_DB:db,REGISTRY_DB:db,PAYMENT_NETWORKS:'["solana-devnet"]',SLOP_ENVIRONMENT:'staging',
     PAYMENT_RPC_URLS:${JSON.stringify(JSON.stringify({ "solana-devnet": rpcUrl }))},
     SOLANA_PAYMENT_EXECUTOR:{async fetch(request){return Response.json({transactionId:${JSON.stringify(submittedId)},submitted:true});}}
   });return Response.json({complete:true,queries,batches});}

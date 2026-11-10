@@ -30,7 +30,7 @@ export default {
         db: env.SLOP_DB,
         getProject: (id) => projects.getProject(id),
         restricted: async () => false,
-        networks: () => parsePaymentNetworks(env.PAYMENT_NETWORKS),
+        networks: () => parsePaymentNetworks(env.PAYMENT_NETWORKS, "staging"),
         schedule: () => parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE),
         now: () => new Date("2026-12-04T00:01:00.000Z"),
         // The test supplies the independently authenticated owner identity;

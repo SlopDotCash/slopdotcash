@@ -171,7 +171,10 @@ export function vaultSetupNetworks(env: PagesEnv): PaymentNetwork[] {
   const networks = new Set<PaymentNetwork>(
     env.PAYMENT_NETWORKS === undefined || env.PAYMENT_NETWORKS === "[]"
       ? []
-      : parsePaymentNetworks(env.PAYMENT_NETWORKS),
+      : parsePaymentNetworks(
+          env.PAYMENT_NETWORKS,
+          deploymentTier(env.SLOP_ENVIRONMENT),
+        ),
   );
   for (const reviewed of [
     ...REVIEWED_EVM_FACTORIES,
@@ -521,7 +524,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         // or reserved here.
         networks: () => {
           try {
-            return parsePaymentNetworks(env.PAYMENT_NETWORKS);
+            return parsePaymentNetworks(env.PAYMENT_NETWORKS, tier);
           } catch {
             if (env.PAYMENT_NETWORKS !== undefined)
               console.error("PAYMENT_NETWORKS is invalid");
@@ -581,9 +584,9 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       // Binding consent names a vault recorded in the D1 project registry for
       // a served network; a vault of any other network is unknown.
       paymentDeployments: async () =>
-        registryDeployments(parsePaymentNetworks(env.PAYMENT_NETWORKS)),
+        registryDeployments(parsePaymentNetworks(env.PAYMENT_NETWORKS, tier)),
       bindingVersion: async (network, vault, actor) => {
-        const selected = parsePaymentNetworks(env.PAYMENT_NETWORKS).find(
+        const selected = parsePaymentNetworks(env.PAYMENT_NETWORKS, tier).find(
           (name) => name === network,
         );
         if (!selected || ESCROW_NETWORKS[selected].family !== "evm")
