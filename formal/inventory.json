@@ -7434,9 +7434,9 @@
     },
     {
       "path": "workers/payment-executor/release-staging.mjs",
-      "sha256": "1772c671e82b285f1ee60b129aaaab2d1841b6c94fc033ebbd66b65329c2ed90",
+      "sha256": "cb1714cdadd089471d1b86b9aba76f3100938754051a598cfaffd95ce3fe7f62",
       "models": ["formal/models/payments/staging_attester_release.qnt"],
-      "candidateLines": [3, 39, 125, 133, 134, 149, 166, 192, 194, 223],
+      "candidateLines": [3, 39, 155, 163, 164, 179, 196, 222, 224, 253],
       "review": "mapped-abstraction"
     },
     {
