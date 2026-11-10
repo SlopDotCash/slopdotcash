@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "92036d49bb0bb2dd4b1990fe17f266e21fc31cacdfef02f0dec032bb02ca314b",
+  "inventorySha256": "96c94663f79e5cf29d2f884de6fe75fa8f780147d6568a2684abef409b2108d0",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -106,7 +106,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2309,
+      "line": 2319,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -136,7 +136,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2513,
+      "line": 2523,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -1954,6 +1954,7 @@
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -1964,7 +1965,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 351,
+      "line": 352,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -1974,6 +1975,7 @@
         "resolved-issues"
       ],
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -1989,11 +1991,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3187,
+      "line": 3205,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -2004,11 +2007,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3791,
+      "line": 3809,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
@@ -3831,7 +3835,7 @@
     },
     {
       "path": "workers/vetting/run.ts",
-      "line": 138,
+      "line": 141,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "rejected", "unknown"],
