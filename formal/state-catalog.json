@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2b8800b614c13675b11cf4f2760b3b6aa9106f965b37388681b1d688b3282da2",
+  "inventorySha256": "954fa53e4dcd0471a20e285efb43033faf308a1246b10c1e8b2c999e30a35205",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3404,7 +3404,7 @@
     },
     {
       "path": "workers/referral-accrual/core.ts",
-      "line": 593,
+      "line": 603,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "finalized", "submitted", "unknown", "voided"],
@@ -3417,7 +3417,7 @@
     },
     {
       "path": "workers/referral-accrual/core.ts",
-      "line": 690,
+      "line": 700,
       "name": "status",
       "kind": "string-union",
       "values": [
