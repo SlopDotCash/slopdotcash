@@ -58,6 +58,9 @@ const verificationTimeouts = {
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
   "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
+  // The qualified provider-wait quotient exceeded 180s with 1,471,827
+  // distinct states and 446,535 queued. Keep its entire model and safety VIEW.
+  "formal/models/ui/solana_wallet_provider.qnt": 600_000,
   // The equivalent configure-guard revision still had 143,371 states queued
   // after 600s. Preserve its complete model and reviewed safety VIEW.
   "formal/models/payments/solana_binding_api.qnt": 1_200_000,
