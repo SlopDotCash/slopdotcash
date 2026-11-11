@@ -404,7 +404,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "785169e071c54f213ba5ca61d13ad9eda425bd74e636d03e0e25714b779f8779",
+      "sha256": "891cc369738808b983339c423b720dd71ad70f4e2cd6676d2d229cd7c4c3e30b",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -414,8 +414,8 @@
       ],
       "candidateLines": [
         73, 116, 124, 230, 320, 431, 460, 462, 476, 486, 495, 501, 519, 627,
-        631, 654, 659, 682, 729, 756, 765, 785, 863, 997, 1052, 1098, 1160,
-        1245, 1268, 1280, 1293, 1299, 1330, 1356, 1362, 1366, 1421, 1438
+        631, 654, 659, 682, 729, 756, 765, 785, 863, 981, 1036, 1082, 1144,
+        1223, 1228, 1250, 1297, 1310, 1316, 1347, 1373, 1379, 1383, 1438, 1455
       ],
       "review": "mapped-abstraction"
     },
@@ -13509,7 +13509,7 @@
     },
     {
       "path": "formal/models/rewards/monthly_owner_completion.qnt",
-      "sha256": "3b3d97b0b19f68309011fab0cb9098a4cebddaecef7550e0222d0115b94fdf8f",
+      "sha256": "a52099c54e9b5461dd64ba38dd6f5b92dfd86ed3d63ed712a50fbbfb7360b3fc",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/monthly.ts",
@@ -13526,12 +13526,14 @@
         "cutoffPrecedesCompetingAllocationRefusalTest",
         "cutoffPrecedesFrozenMonthRefusalTest",
         "delayedEnableCannotOvertakeOptOutTest",
-        "disableCommitsDespiteChangedAuthorityTest",
+        "disableCommitsDespiteSameStewardRevisionTest",
+        "disableRefusesChangedStewardTest",
         "enableRefusesChangedAuthorityTest",
         "explicitOffCanFollowAnotherOffTest",
         "frozenMonthStillRefusesTest",
         "missingRegistryRefusesMutationTest",
         "newBanStillRefusesTest",
+        "staleDisableCannotOvertakeNewOwnerEnableTest",
         "unchangedPausedProjectMayUpdateSettingTest"
       ]
     },

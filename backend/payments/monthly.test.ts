@@ -436,8 +436,15 @@ for (const [boundary, initiallyOff] of [
     expect((await coordinate(clock)).frozen).toEqual([`${project.id}/2082-11`]);
   });
 }
-for (const mutation of ["allocation", "enable", "disable"] as const) {
-  test(`a queued ${mutation} ${mutation === "disable" ? "survives" : "refuses"} a registry authority change before its INSERT`, async () => {
+for (const [mutation, stewardChanges] of [
+  ["allocation", true],
+  ["enable", true],
+  ["disable", true],
+  ["allocation", false],
+  ["enable", false],
+  ["disable", false],
+] as const) {
+  test(`a queued ${mutation} ${mutation === "disable" && !stewardChanges ? "survives" : "refuses"} a registry ${stewardChanges ? "authority" : "revision"} change before its INSERT`, async () => {
     clock = beforeCutoff;
     const persistence = new CloudflareProjectPersistence(db);
     const original = await persistence.getProject(project.id);
@@ -528,21 +535,32 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
           );
         }),
       ]);
-      const manifest = {
-        ...original.manifest,
-        steward: {
-          ...original.manifest.steward,
-          displayName: "Next fixture owner",
-          kind: "individual" as const,
-          github: {
-            actorId: "900000072",
-            nodeId: "U_fixtureNextMonthlyOwner",
-            login: "next-fixture-owner",
-            type: "User" as const,
-            profileUrl: "https://github.com/next-fixture-owner",
-          },
-        },
-      };
+      // A steward change rebinds the authorized owner; any other manifest
+      // edit only bumps the revision. Only the first must refuse a queued
+      // opt-out from the former owner.
+      const manifest = stewardChanges
+        ? {
+            ...original.manifest,
+            steward: {
+              ...original.manifest.steward,
+              displayName: "Next fixture owner",
+              kind: "individual" as const,
+              github: {
+                actorId: "900000072",
+                nodeId: "U_fixtureNextMonthlyOwner",
+                login: "next-fixture-owner",
+                type: "User" as const,
+                profileUrl: "https://github.com/next-fixture-owner",
+              },
+            },
+          }
+        : {
+            ...original.manifest,
+            steward: {
+              ...original.manifest.steward,
+              displayName: "Same fixture owner",
+            },
+          };
       assertProjectDefinition(manifest);
       const text = JSON.stringify(manifest);
       expect(
@@ -553,7 +571,9 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
             manifest,
             manifestText: text,
             manifestSha256: await sha256Hex(text),
-            reason: "Change fixture authority while the old owner INSERT waits",
+            reason: stewardChanges
+              ? "Change fixture authority while the old owner INSERT waits"
+              : "Change fixture manifest while the old owner INSERT waits",
             actor,
             at: clock.toISOString(),
           },
@@ -561,10 +581,9 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
         ),
       ).toBe("updated");
       releaseInsert();
-      if (mutation === "disable") {
-        // An opt-out always wins: the revision guard must not block turning
-        // automatic payment off, even when the registry revision changed
-        // while the write was queued.
+      if (mutation === "disable" && !stewardChanges) {
+        // Same steward, new revision: the opt-out retries once against the
+        // fresh revision and commits.
         expect(await pending).toEqual({ automatic: false });
         expect(held).toBe(true);
         expect(count("monthly_payment_settings")).toBe(beforeSettings + 1);
@@ -578,12 +597,16 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
       expect(count("monthly_payment_runs")).toBe(0);
       const current = await persistence.getProject(project.id);
       expect(current?.revision).toBe(original.revision + 1);
-      expect(current?.manifest.steward.github.actorId).toBe("900000072");
-      // The same caller is now explicitly refused by current authority.
-      await rejects(
-        service.setAutomatic(project.id, actor, false),
-        "owner_required",
+      expect(current?.manifest.steward.github.actorId).toBe(
+        stewardChanges ? "900000072" : original.manifest.steward.github.actorId,
       );
+      if (stewardChanges) {
+        // The same caller is now explicitly refused by current authority.
+        await rejects(
+          service.setAutomatic(project.id, actor, false),
+          "owner_required",
+        );
+      }
     } finally {
       releaseInsert();
       db.prepare = prepare;
@@ -591,6 +614,150 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
     }
   });
 }
+
+test("a stale opt-out cannot overtake the new owner's fresh enable", async () => {
+  // remarbical's reproduction against the real monthlyOwnerService and real
+  // D1 migrations: the former owner's opt-out INSERT is held, the registry
+  // revision is bumped to a new steward, the new owner enables and is told
+  // it succeeded, then the stale opt-out is released. It must refuse with
+  // project_changed and leave the new owner's enable in force.
+  clock = beforeCutoff;
+  const persistence = new CloudflareProjectPersistence(db);
+  const original = await persistence.getProject(project.id);
+  if (!original) throw new Error("Missing fixture project");
+  const beforeSettings = count("monthly_payment_settings");
+  const service = monthlyOwnerService({
+    db,
+    ...projects(),
+    networks: () => ["base-sepolia"],
+    schedule: () => schedule,
+    now: () => clock,
+    // GitHub remains controlled, but the selected User steward must match.
+    verifyAuthority: async (current, who) => {
+      if (
+        current.manifest.steward.github.type === "User" &&
+        current.manifest.steward.github.actorId !== who.githubId
+      )
+        throw new MonthlyPaymentError(
+          403,
+          "owner_required",
+          "The current project steward must authorize the change.",
+        );
+      return true;
+    },
+  });
+  let reachedInsert = () => {};
+  let releaseInsert = () => {};
+  const queued = new Promise<void>((resolve) => {
+    reachedInsert = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseInsert = resolve;
+  });
+  const prepare = db.prepare.bind(db);
+  let held = false;
+  db.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (!sql.startsWith("INSERT INTO monthly_payment_settings("))
+      return statement;
+    return new Proxy(statement, {
+      get(statementTarget, key) {
+        if (key === "bind")
+          return (...args: unknown[]) => {
+            const bound = statementTarget.bind(...args);
+            return new Proxy(bound, {
+              get(inner, method) {
+                if (method === "run")
+                  return async () => {
+                    if (!held) {
+                      held = true;
+                      reachedInsert();
+                      await released;
+                    }
+                    return inner.run();
+                  };
+                const value = Reflect.get(inner, method);
+                return typeof value === "function" ? value.bind(inner) : value;
+              },
+            });
+          };
+        const value = Reflect.get(statementTarget, key);
+        return typeof value === "function"
+          ? value.bind(statementTarget)
+          : value;
+      },
+    });
+  };
+  const pending = service.setAutomatic(project.id, actor, false);
+  try {
+    await Promise.race([
+      queued,
+      pending.then(() => {
+        throw new Error(
+          "The monthly mutation completed before its INSERT was held.",
+        );
+      }),
+    ]);
+    const manifest = {
+      ...original.manifest,
+      steward: {
+        ...original.manifest.steward,
+        displayName: "Next fixture owner",
+        kind: "individual" as const,
+        github: {
+          actorId: "900000072",
+          nodeId: "U_fixtureNextMonthlyOwner",
+          login: "next-fixture-owner",
+          type: "User" as const,
+          profileUrl: "https://github.com/next-fixture-owner",
+        },
+      },
+    };
+    assertProjectDefinition(manifest);
+    const text = JSON.stringify(manifest);
+    expect(
+      await persistence.appendProjectRevision(
+        {
+          projectId: project.id,
+          expectedRevision: original.revision,
+          manifest,
+          manifestText: text,
+          manifestSha256: await sha256Hex(text),
+          reason: "Change fixture authority while the old owner INSERT waits",
+          actor,
+          at: clock.toISOString(),
+        },
+        0,
+      ),
+    ).toBe("updated");
+    const nextOwner = {
+      githubId: "900000072",
+      githubLogin: "next-fixture-owner",
+    };
+    expect(await service.setAutomatic(project.id, nextOwner, true)).toEqual({
+      automatic: true,
+    });
+    expect(count("monthly_payment_settings")).toBe(beforeSettings + 1);
+    releaseInsert();
+    await rejects(pending, "project_changed");
+    expect(held).toBe(true);
+    expect(count("monthly_payment_settings")).toBe(beforeSettings + 1);
+    const latest = sqlite
+      .prepare(
+        "SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1",
+      )
+      .get(project.id) as { automatic: number };
+    expect(latest.automatic).toBe(1);
+    expect(count("monthly_payment_runs")).toBe(0);
+    const current = await persistence.getProject(project.id);
+    expect(current?.revision).toBe(original.revision + 1);
+    expect(current?.manifest.steward.github.actorId).toBe("900000072");
+  } finally {
+    releaseInsert();
+    db.prepare = prepare;
+    await pending.catch(() => {});
+  }
+});
 
 test("write collaborators on an organization project may read monthly awards but not change them", async () => {
   // The same D1 project, owned by an organization: the steward is not a

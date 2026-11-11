@@ -912,22 +912,6 @@ export function monthlyOwnerService(deps: {
         "The project changed. Reload its awards.",
       );
   }
-  /**
-   * The registry row must still exist for an opt-out write; its revision
-   * no longer gates one, so a missing row is the only registry refusal.
-   */
-  async function mutationProjectExists(project: ProjectRecord) {
-    const current = await deps.db
-      .prepare("SELECT 1 AS present FROM projects WHERE id=?")
-      .bind(project.id)
-      .first<{ present: number }>();
-    if (!current)
-      throw new MonthlyPaymentError(
-        503,
-        "payment_registry_unavailable",
-        "Monthly changes require the current project registry in the payment database.",
-      );
-  }
   async function view(
     project: ProjectRecord,
     period: string,
@@ -1232,47 +1216,80 @@ export function monthlyOwnerService(deps: {
         : 0;
       const { project } = await authorized(projectId, actor, "owner");
       await assertMonthlyParticipation(deps.db, actor.githubId);
-      let changed: number | undefined;
-      try {
-        // A later registry revision can change the authorized owner while
-        // the earlier authority/participation requests are still in flight.
-        // An opt-out still wins over that revision: turning automatic
-        // payment off only stops the coordinator from freezing a month, so
-        // the write requires the project row to exist but not the seen
-        // revision. An enable keeps the full revision guard.
-        const inserted = await deps.db
-          .prepare(
-            `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND (?=0 OR (revision=? AND manifest_sha256=?)))`,
-          )
-          .bind(
-            project.id,
-            on ? 1 : 0,
-            actor.githubId,
-            deps.now().toISOString(),
-            project.id,
-            actor.githubId,
-            Number(on),
-            expectedSequence,
-            project.id,
-            Number(on),
-            project.revision,
-            project.manifestSha256,
-          )
-          .run();
-        changed = inserted.meta?.changes;
-      } catch (error) {
-        if (!isConstraintFailure(error)) throw error;
-        throw new MonthlyPaymentError(
-          409,
-          "setting_changed",
-          "The setting changed at the same time. Retry.",
-        );
+      // A later registry revision can change the authorized owner while
+      // the earlier authority/participation requests are still in flight.
+      // The write binds to the seen revision either way; an opt-out whose
+      // revision moved but whose authorizing steward did not gets one
+      // retry against the fresh revision below.
+      async function insertSetting(revision: number, manifestSha256: string) {
+        try {
+          const inserted = await deps.db
+            .prepare(
+              `INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) SELECT ?,COALESCE(MAX(sequence),0)+1,?,?,? FROM monthly_payment_settings WHERE project_id=? HAVING NOT EXISTS (${PARTICIPATION_BAN_QUERY}) AND (?=0 OR COALESCE(MAX(sequence),0)=?) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=?)`,
+            )
+            .bind(
+              project.id,
+              on ? 1 : 0,
+              actor.githubId,
+              deps.now().toISOString(),
+              project.id,
+              actor.githubId,
+              Number(on),
+              expectedSequence,
+              project.id,
+              revision,
+              manifestSha256,
+            )
+            .run();
+          return inserted.meta?.changes;
+        } catch (error) {
+          if (!isConstraintFailure(error)) throw error;
+          throw new MonthlyPaymentError(
+            409,
+            "setting_changed",
+            "The setting changed at the same time. Retry.",
+          );
+        }
       }
+      let changed = await insertSetting(
+        project.revision,
+        project.manifestSha256,
+      );
       if (changed !== 1) {
-        // The revision guard cannot have refused an opt-out; only a missing
-        // registry row or a ban can leave its write uninserted.
-        if (on) await mutationProjectUnchanged(project);
-        else await mutationProjectExists(project);
+        if (on) {
+          await mutationProjectUnchanged(project);
+        } else {
+          // The opt-out bypass is steward-scoped, not revision-scoped: a
+          // revision that rebinds the steward must still refuse a queued
+          // opt-out from the former owner, or it would silently undo the
+          // new owner's fresh enable. Compare against the steward the
+          // request was authorized against, not the caller: an organization
+          // steward's acting admin is not the steward actor id.
+          const current = await deps.getProject(project.id);
+          if (!current)
+            throw new MonthlyPaymentError(
+              503,
+              "payment_registry_unavailable",
+              "Monthly changes require the current project registry in the payment database.",
+            );
+          if (
+            current.manifest.steward.github.actorId !==
+            project.manifest.steward.github.actorId
+          )
+            throw new MonthlyPaymentError(
+              409,
+              "project_changed",
+              "The project changed. Reload its awards.",
+            );
+          changed = await insertSetting(
+            current.revision,
+            current.manifestSha256,
+          );
+          if (changed === 1)
+            return {
+              automatic: await automaticMonthlyPayment(deps.db, project.id),
+            };
+        }
         await assertMonthlyParticipation(deps.db, actor.githubId);
         throw new MonthlyPaymentError(
           409,
