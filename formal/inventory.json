@@ -12960,7 +12960,7 @@
     },
     {
       "path": "formal/models/payments/solana_history_retirement.qnt",
-      "sha256": "41794eb0ff7c3f09eb1d88c06438a9ac004729e90144ef4396e15f44e73883ee",
+      "sha256": "d1e1c95300bf4111f469e38431774f2ff2c8233b52cad30ddcbe3ebed646ba6e",
       "sources": [
         "backend/security/direct-payments.ts",
         "backend/security/direct-solana-recovery.ts",
@@ -15455,7 +15455,7 @@
     },
     {
       "path": "formal/models/ui/evm_wallet_discovery.qnt",
-      "sha256": "d22cd5d017bc156d96fc7a95157f78ce893c08875981b486daa52d69a0c6b5d0",
+      "sha256": "a1df006c2dbada0c529340dbb26856609eaceebc0a2e43ccde2f0497f8da7b1c",
       "sources": ["src/lib/use-payout-wallets.ts"],
       "scenarios": [
         "changedMetadataBlocksSameProviderTest",
@@ -15489,7 +15489,7 @@
     },
     {
       "path": "formal/models/ui/solana_binding_wire.qnt",
-      "sha256": "daa78a198b630ab2634c6a345d8bdf7e9fdddde7a14620abdb46c4638ac4974b",
+      "sha256": "b74b54973222ca8c168972aac088b6b05778261fc44a0a05002d40f8a2a42b3a",
       "sources": [
         "contracts/solana/transactions.ts",
         "src/PayoutConsent.tsx",
