@@ -4,6 +4,24 @@ import { readBoundedText } from "../src/lib/browser-json";
 const CASH_DOMAIN = "slop.cash";
 const TECH_DOMAIN = "slop.tech";
 const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
+// Cloudflare Web Analytics (PRD s.9). Cloudflare injects this tag into the
+// static pages itself, but not into HTML this function serves, so the
+// production apex adds the same tag here. The token is the public site tag
+// Cloudflare prints into every page; staging and slop.tech never get it.
+const WEB_ANALYTICS_HOSTNAME = CASH_DOMAIN;
+const WEB_ANALYTICS_TAG =
+  '<script defer src="https://static.cloudflareinsights.com/beacon.min.js" ' +
+  'data-cf-beacon=\'{"token":"230b277fc6fe4a279c8b06cf7e569719","spa":true}\'></script>';
+
+function addWebAnalytics(contents: string): string {
+  if (contents.includes("static.cloudflareinsights.com")) return contents;
+  return replaceExactCount(
+    contents,
+    "</body>",
+    `${WEB_ANALYTICS_TAG}</body>`,
+    1,
+  );
+}
 
 type PublicDomain = typeof CASH_DOMAIN | typeof TECH_DOMAIN;
 
@@ -96,6 +114,23 @@ export async function onRequest(
     headers.set(
       "cache-control",
       cacheControl === null ? "no-transform" : `${cacheControl}, no-transform`,
+    );
+  }
+
+  if (hostname.toLowerCase().replace(/\.$/u, "") === WEB_ANALYTICS_HOSTNAME) {
+    return new Response(
+      addWebAnalytics(
+        await readBoundedText(
+          response,
+          MAX_TRANSFORMED_HTML_BYTES,
+          "HTML response",
+        ),
+      ),
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      },
     );
   }
 

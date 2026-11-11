@@ -66,7 +66,24 @@ alias only.
     awards or payments. Per-run and daily caps bound it. Owners authorize USDC
     sweeps to separate owner-controlled software wallets, with sweep keys held
     in their local `.env`, not by the Worker (PRD sections 6 and 11,
-    24 October 2026). `workers/fee-converter/wrangler.toml` sets the mode of
+    24 October 2026). Owner decision of 10 November 2026 (PRD section 6,
+    "SLOP buyback and burn"): half of all fee income funds a programmatic
+    buyback of SLOP (`0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood
+    Chain). For that share only, the same keys may also sign: an exact
+    approval and one deBridge DLN order that sends USDC from Base, Ethereum
+    or Solana to the Robinhood Chain fee wallet as USDG; on Robinhood Chain,
+    fee claims on reviewed vaults, an exact approval and a checked swap of the
+    buyback share into SLOP with output to the same wallet; and a transfer of
+    half of the acquired SLOP to the burn address
+    `0x000000000000000000000000000000000000dEaD`. Every order names that fee
+    wallet as receiver, order authority and refund beneficiary, checked before
+    signing. The other half of each fee keeps its earlier handling; on
+    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is off in the
+    checked-in configuration. Source approval does not activate the buyback:
+    activation needs its own reviewed change, the owner's confirmation of each
+    limit, and the readiness checks in `workers/fee-converter/README.md`. The
+    Worker never cancels an order; cancelling an unfilled order is an owner
+    action. `workers/fee-converter/wrangler.toml` sets the mode of
     each network. The Worker deploys only when the
     `SLOP_FEE_CONVERTER_RELEASE` repository variable is `enabled`. Fee handling starts only after the fee wallets are
     funded and the limits and readiness are verified (PRD section 11, #1285).
@@ -240,6 +257,17 @@ decision. Display "Owner-approved exemption", never a passed scan. Retain
 earlier assessments; later investigations, flags, pauses, account restrictions,
 confirmed malice and fresh reinstatement checks still apply. Retain revocations
 and restore the ordinary admission gate after revocation.
+Owner decision, 11 November 2026: an administrator may record community
+admission after a cursory review of the latest development source under PRD
+section 8. An old pin or unproven source-to-binary match is not a manual-review
+gate. Record the actual branch/head, scope and limitations, and display
+"Owner-approved exemption", never a complete passed scan. The approver needs
+platform administrator authority; the registered creator or individual steward
+must separately retain current GitHub write/maintain authority through Slopbot.
+Do not impersonate that maintainer. Keep immutable identity/revision binding,
+earlier assessments, restrictions and confirmed-malicious controls. Contributors
+still review before installation. Automated results retain their actual pins
+and complete-evidence requirements.
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates
@@ -506,6 +534,9 @@ the network fee wallet at payout. No contract converts it. A scheduled backend
 job converts fees already in the fee wallet to USDC (PRD section 6) inside
 that wallet (TOK-07, MVP-07c). Robinhood Chain retains the received asset and
 shows "not converted"; USDG stays USDG and project tokens stay unchanged.
+When the SLOP buyback is active (owner decision, 10 November 2026), its half
+of each fee is bridged or swapped into SLOP as PRD section 6 describes; the
+retained half is handled exactly as before.
 Other networks without a verified USDC route keep the fee token pending.
 Conversion never blocks or touches a contributor payment. The approved keeper and
 fee-converter EVM replacement changes only fee fields, with the same nonce and

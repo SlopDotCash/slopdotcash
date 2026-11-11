@@ -51,17 +51,31 @@ writeFileSync(
   join(root, "workers/fee-converter/config.ts"),
   `export { parseConfig } from ${JSON.stringify(join(source, "workers/fee-converter/config.ts"))};\n`,
 );
+writeFileSync(
+  join(root, "workers/fee-converter/buyback-config.ts"),
+  `export { parseBuybackConfig } from ${JSON.stringify(join(source, "workers/fee-converter/buyback-config.ts"))};\n`,
+);
 const reviewed = readFileSync(
   join(source, "workers/fee-converter/wrangler.toml"),
   "utf8",
 );
 
-function release(mode: string, networks: string, secrets: string[]) {
-  const toml = reviewed
+function release(
+  mode: string,
+  networks: string,
+  secrets: string[],
+  buyback: Record<string, string> = {},
+) {
+  let toml = reviewed
     .replace(/^FEE_CONVERTER_MODE = ".*"$/mu, `FEE_CONVERTER_MODE = "${mode}"`)
     .replace(
       /^FEE_CONVERTER_NETWORKS = ".*"$/mu,
       `FEE_CONVERTER_NETWORKS = "${networks}"`,
+    );
+  for (const [key, value] of Object.entries(buyback))
+    toml = toml.replace(
+      new RegExp(`^${key} = .*$`, "mu"),
+      `${key} = ${JSON.stringify(value)}`,
     );
   writeFileSync(join(root, "workers/fee-converter/wrangler.toml"), toml);
   const inventory = join(root, "secrets.json");
@@ -113,6 +127,53 @@ test("the release continues when every enabled live network has its key", () => 
     "FEE_WALLET_KEY_BASE",
     "FEE_WALLET_KEY_ETHEREUM",
   ]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+const LIVE_BUYBACK = {
+  BUYBACK_MODE: "live",
+  BUYBACK_START_AT: "2026-11-10T00:00:00.000Z",
+};
+
+test.each([
+  [
+    "a live buyback without Robinhood enabled",
+    "base,ethereum",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ETHEREUM"],
+    LIVE_BUYBACK,
+  ],
+  [
+    "a live buyback without the Robinhood key",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE"],
+    LIVE_BUYBACK,
+  ],
+  [
+    "a buyback with no start instant",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    { BUYBACK_MODE: "live" },
+  ],
+  [
+    "a buyback with a missing limit",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    { ...LIVE_BUYBACK, BUYBACK_SHARE_BPS: "" },
+  ],
+])("the release stops before upload on %s", (_, networks, secrets, buyback) => {
+  const result = release("live", networks, secrets, buyback);
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("fee-converter upload reached");
+});
+
+test("the release continues for a complete live buyback with every key", () => {
+  const result = release(
+    "live",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    LIVE_BUYBACK,
+  );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("fee-converter upload reached");
 });

@@ -30,7 +30,7 @@ function provider(result: unknown = verdict, status = 200) {
           ? {
               type: "message",
               role: "assistant",
-              model: "claude-opus-5.5",
+              model: "claude-sonnet-5.5",
               usage: {
                 input_tokens: 20,
                 output_tokens: 30,
@@ -60,7 +60,7 @@ test("general-review qualification retains marker uncertainty", async () => {
   expect(result).toMatchObject({
     path: "general-review-counterexample",
     provider: "surplus",
-    model: "claude-opus-5.5",
+    model: "claude-sonnet-5.5",
     requests: 1,
   });
   expect(source.requests).toHaveLength(1);
@@ -101,7 +101,7 @@ test("general-review transport allows only one zero-cost request", async () => {
     new Request("https://api.surplusintelligence.ai/anthropic/v1/messages", {
       method: "POST",
       body: JSON.stringify({
-        model: "claude-opus-5.5",
+        model: "claude-sonnet-5.5",
         item: "Synthetic marker-file review qualification",
       }),
     });
