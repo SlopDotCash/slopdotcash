@@ -26,18 +26,33 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ProjectEnforcementPanel } from "./AdminProjectEnforcement";
 import "./operations-design.css";
 import "./admin-design.css";
 import { ActivationClearance, VettingSection } from "./AdminVetting";
 import { GeneratedSkillPreview } from "./GeneratedSkillPreview";
 import { Link } from "./Link";
+import {
+  checkedAdminActionFailure,
+  isAdminActionAccessLoss,
+  requireAdminActionActor,
+} from "./lib/admin-request";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { CONTRIBUTION_LABELS } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
+  currentProjectSession,
+  ProjectApiError,
   projectApiRequest,
   useProjectSession,
 } from "./lib/project-api";
@@ -46,6 +61,7 @@ import {
   type ContributionField,
   PROJECT_SKILL_TEMPLATES,
 } from "./lib/project-schema.mjs";
+import { CANONICAL_UINT, isRecord } from "./lib/record-validation.mjs";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -53,6 +69,7 @@ import {
   rewardAssetChoice,
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
+import { transientHttpStatus } from "./lib/verified-frontend";
 import { ChangeReview } from "./OwnerPresentation";
 import {
   formatDateTime,
@@ -114,12 +131,70 @@ function LoadNotice({
   );
 }
 
+class AdminReadIdentityError extends Error {}
+class RecheckedAdminReadFailure extends ProjectApiError {}
+
+const retainAdminRead = (error: unknown) =>
+  error instanceof RecheckedAdminReadFailure;
+
+async function requireAdminReadActor(actorId: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  let session;
+  try {
+    session = await currentProjectSession();
+  } catch {
+    signal.throwIfAborted();
+    throw new AdminReadIdentityError(
+      "Your admin session could not be checked. Retry.",
+    );
+  }
+  signal.throwIfAborted();
+  if (session?.githubId !== actorId || !session.admin)
+    throw new AdminReadIdentityError(
+      "Your admin account or access changed. Reload this page.",
+    );
+}
+
+async function readAdminResource<T>(
+  path: string,
+  actorId: string,
+  signal: AbortSignal,
+): Promise<T> {
+  await requireAdminReadActor(actorId, signal);
+  try {
+    const value = await projectApiRequest<T>("GET", path, undefined, {
+      expectedActorGithubId: actorId,
+    });
+    signal.throwIfAborted();
+    await requireAdminReadActor(actorId, signal);
+    return value;
+  } catch (error) {
+    signal.throwIfAborted();
+    if (
+      error instanceof AdminReadIdentityError ||
+      (error instanceof ProjectApiError &&
+        ([401, 403, 404, 410].includes(error.status) ||
+          error.code === "actor_changed"))
+    )
+      throw error;
+    await requireAdminReadActor(actorId, signal);
+    if (error instanceof ProjectApiError && transientHttpStatus(error.status))
+      throw new RecheckedAdminReadFailure(
+        error.status,
+        error.code,
+        error.message,
+      );
+    throw error;
+  }
+}
+
 /** The admin project list; the API checks admin authority on every read. */
-const loadAdminProjects = async () => ({
+const loadAdminProjects = async (actorId: string, signal: AbortSignal) => ({
   projects: (
-    await projectApiRequest<{ projects: AdminProject[] }>(
-      "GET",
+    await readAdminResource<{ projects: AdminProject[] }>(
       "admin/projects",
+      actorId,
+      signal,
     )
   ).projects,
 });
@@ -152,14 +227,26 @@ function initialAsset(project: AdminProject): AssetDraft {
  */
 function ProjectEditor({
   project,
+  actorId,
+  onAccessLost,
   onSaved,
   onCancel,
 }: {
   project: AdminProject;
+  actorId: string;
+  onAccessLost: () => void;
   onSaved: (note: string) => void;
   onCancel: () => void;
 }) {
   const draftKey = `slop:admin-project:${project.id}:${project.revision}`;
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [restored] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem(draftKey) ?? "null") as {
@@ -206,17 +293,26 @@ function ProjectEditor({
   };
   const [status, setStatus] = useState(restored?.status ?? project.status);
   const [reason, setReason] = useState(restored?.reason ?? "");
+  const draft = JSON.stringify({
+    text,
+    skill,
+    asset,
+    assetSelected,
+    status,
+    reason,
+  });
+  const currentDraft = useRef(draft);
+  useLayoutEffect(() => {
+    currentDraft.current = draft;
+  }, [draft]);
   useEffect(() => {
     try {
-      sessionStorage.setItem(
-        draftKey,
-        JSON.stringify({ text, skill, asset, assetSelected, status, reason }),
-      );
+      sessionStorage.setItem(draftKey, draft);
       setDraftError(false);
     } catch {
       setDraftError(true);
     }
-  }, [draftKey, text, skill, asset, assetSelected, status, reason]);
+  }, [draftKey, draft]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skillStarted = CONTRIBUTION_FIELDS.some(
@@ -340,8 +436,9 @@ function ProjectEditor({
           ) !== JSON.stringify(preview?.[key]),
       )
     : [];
-  const save = (event: FormEvent) => {
+  const save = async (event: FormEvent) => {
     event.preventDefault();
+    if (!mounted.current || inFlight.current) return;
     let next: Record<string, unknown>;
     try {
       next = buildManifest();
@@ -349,26 +446,48 @@ function ProjectEditor({
       setError(errorMessage(caught));
       return;
     }
+    const submittedDraft = draft;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
-    projectApiRequest(
-      "PUT",
-      `admin/projects/${encodeURIComponent(project.id)}/manifest`,
-      { manifest: next, expectedRevision: project.revision, reason },
-    ).then(
-      () => {
-        try {
+    try {
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      await projectApiRequest(
+        "PUT",
+        `admin/projects/${encodeURIComponent(project.id)}/manifest`,
+        { manifest: next, expectedRevision: project.revision, reason },
+        { expectedActorGithubId: actorId },
+      );
+      try {
+        if (sessionStorage.getItem(draftKey) === submittedDraft)
           sessionStorage.removeItem(draftKey);
-        } catch {
-          // A saved revision has a new draft key; storage failure cannot undo it.
-        }
-        onSaved(SAVED_NOTE);
-      },
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+      } catch {
+        // An accepted revision remains saved even if draft cleanup fails.
+      }
+      if (!mounted.current) return;
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      if (currentDraft.current !== submittedDraft) {
+        setError(
+          "Revision saved. Your newer edits are still here; copy them before reloading.",
+        );
+        return;
+      }
+      onSaved(SAVED_NOTE);
+    } catch (caught) {
+      if (!mounted.current) return;
+      const failure = await checkedAdminActionFailure(caught, actorId);
+      if (!mounted.current) return;
+      if (isAdminActionAccessLoss(failure)) {
+        onAccessLost();
+        return;
+      }
+      setError(errorMessage(failure));
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(false);
+    }
   };
   return (
     <form className="admin-editor" onSubmit={save}>
@@ -413,6 +532,8 @@ function ProjectEditor({
       <fieldset className="admin-fieldset">
         <legend>Status</legend>
         <ActivationClearance
+          actorId={actorId}
+          onAccessLost={onAccessLost}
           projectId={project.id}
           revision={project.revision}
         />
@@ -700,37 +821,63 @@ const SAVED_NOTE = "Saved.";
 /** Delisting keeps history: the project becomes paused and retired. */
 function DelistButton({
   project,
+  actorId,
+  onAccessLost,
   onDone,
 }: {
   project: AdminProject;
+  actorId: string;
+  onAccessLost: () => void;
   onDone: (note: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   if (project.manifest.listingTier === "retired") return null;
-  const delist = () => {
+  const delist = async () => {
+    if (!mounted.current || inFlight.current) return;
+    const body = {
+      manifest: {
+        ...project.manifest,
+        status: "paused",
+        listingTier: "retired",
+      },
+      expectedRevision: project.revision,
+      reason: "Delisted by an admin",
+    };
+    inFlight.current = true;
     setBusy(true);
     setError(null);
-    projectApiRequest(
-      "PUT",
-      `admin/projects/${encodeURIComponent(project.id)}/manifest`,
-      {
-        manifest: {
-          ...project.manifest,
-          status: "paused",
-          listingTier: "retired",
-        },
-        expectedRevision: project.revision,
-        reason: "Delisted by an admin",
-      },
-    ).then(
-      () => onDone(SAVED_NOTE),
-      (caught: unknown) => {
-        setBusy(false);
-        setError(errorMessage(caught));
-      },
-    );
+    try {
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      await projectApiRequest(
+        "PUT",
+        `admin/projects/${encodeURIComponent(project.id)}/manifest`,
+        body,
+        { expectedActorGithubId: actorId },
+      );
+      if (!mounted.current) return;
+      await requireAdminActionActor(actorId);
+      if (mounted.current) onDone(SAVED_NOTE);
+    } catch (caught) {
+      if (!mounted.current) return;
+      const failure = await checkedAdminActionFailure(caught, actorId);
+      if (!mounted.current) return;
+      if (isAdminActionAccessLoss(failure)) onAccessLost();
+      else setError(errorMessage(failure));
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(false);
+    }
   };
   return (
     <div className="admin-actions">
@@ -809,23 +956,31 @@ function projectState(project: AdminProject) {
 }
 
 function ProjectsSection({
+  actorId,
+  onAccessLost,
   selectedProject,
   section,
 }: {
+  actorId: string;
+  onAccessLost: () => void;
   selectedProject: string | null;
   section: ProjectSection;
 }) {
   const [query, setQuery] = useState("");
+  const load = useCallback(
+    (signal: AbortSignal) => loadAdminProjects(actorId, signal),
+    [actorId],
+  );
   // A save reloads this list while it is on screen; a transient failure
   // keeps the loaded projects visible, but an authorization failure
   // (401/403) still replaces them with the full error, so private data
   // and the admin controls leave the screen together.
   const [state, reload] = usePublicResource(
     true,
-    loadAdminProjects,
+    load,
     "Projects could not load.",
     undefined,
-    { retainOnTransientFailure: true },
+    { retainOnTransientFailure: true, retainFailure: retainAdminRead },
   );
   const [note, setNote] = useState<string | null>(null);
   const refreshError =
@@ -1017,15 +1172,31 @@ function ProjectsSection({
                       </dd>
                     </div>
                   </dl>
-                  <ProjectEnforcementPanel onDone={saved} project={project} />
-                  <DelistButton onDone={saved} project={project} />
+                  <ProjectEnforcementPanel
+                    actorId={actorId}
+                    onAccessLost={onAccessLost}
+                    onDone={saved}
+                    project={project}
+                  />
+                  <DelistButton
+                    actorId={actorId}
+                    onAccessLost={onAccessLost}
+                    onDone={saved}
+                    project={project}
+                  />
                 </>
               ) : section === "security" ? (
-                <VettingSection projectId={project.id} />
+                <VettingSection
+                  actorId={actorId}
+                  onAccessLost={onAccessLost}
+                  projectId={project.id}
+                />
               ) : section === "settings" ? (
                 <ProjectEditor
                   key={`${project.id}:${project.revision}`}
                   project={project}
+                  actorId={actorId}
+                  onAccessLost={onAccessLost}
                   onCancel={backToOverview}
                   onSaved={(message) => {
                     saved(message);
@@ -1095,13 +1266,45 @@ type FeeConversionReport = {
   }[];
 };
 
-const loadFeeConversions = async () => {
-  const { routes, totals } = await projectApiRequest<FeeConversionReport>(
-    "GET",
-    "admin/fee-conversions",
+/** Validate the fields this view reads before publishing a ready report. */
+function parseFeeConversionReport(value: unknown): FeeConversionReport {
+  const text = (field: unknown) =>
+    typeof field === "string" && field.length > 0;
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.routes) ||
+    !Array.isArray(value.totals) ||
+    value.routes.some(
+      (row) =>
+        !isRecord(row) ||
+        !text(row.network) ||
+        !(
+          (row.status === "usdc" && text(row.targetToken)) ||
+          (row.status === "not_converted" && row.targetToken === null)
+        ),
+    ) ||
+    value.totals.some(
+      (row) =>
+        !isRecord(row) ||
+        !text(row.network) ||
+        !text(row.token) ||
+        !text(row.targetToken) ||
+        !Number.isSafeInteger(row.conversions) ||
+        (row.conversions as number) <= 0 ||
+        typeof row.amountIn !== "string" ||
+        !CANONICAL_UINT.test(row.amountIn) ||
+        typeof row.amountOut !== "string" ||
+        !CANONICAL_UINT.test(row.amountOut),
+    )
+  )
+    throw new TypeError("The fee conversion report is invalid.");
+  return { routes: value.routes, totals: value.totals } as FeeConversionReport;
+}
+
+const loadFeeConversions = async (actorId: string, signal: AbortSignal) =>
+  parseFeeConversionReport(
+    await readAdminResource<unknown>("admin/fee-conversions", actorId, signal),
   );
-  return { routes, totals };
-};
 
 function networkName(network: string): string {
   return Object.hasOwn(NETWORK_NAMES, network)
@@ -1137,10 +1340,14 @@ function convertedAmount(
  * Robinhood Chain keeps each received asset and shows it as "not converted",
  * not pending. Totals count finalized live conversions only.
  */
-function FeeConversionsSection() {
+function FeeConversionsSection({ actorId }: { actorId: string }) {
+  const load = useCallback(
+    (signal: AbortSignal) => loadFeeConversions(actorId, signal),
+    [actorId],
+  );
   const [state, reload] = usePublicResource(
     true,
-    loadFeeConversions,
+    load,
     "Fee conversions could not load.",
   );
   return (
@@ -1214,7 +1421,12 @@ export default function AdminPage() {
         ? "security"
         : "overview";
   const fees = !selectedProject && requestedSection === "fees";
-  const state = useProjectSession();
+  const [sessionRevision, setSessionRevision] = useState(0);
+  const state = useProjectSession(sessionRevision);
+  const onAccessLost = useCallback(
+    () => setSessionRevision((revision) => revision + 1),
+    [],
+  );
   let body: ReactNode;
   if (state.status !== "signed-in") {
     body = (
@@ -1248,9 +1460,15 @@ export default function AdminPage() {
           </Link>
         </nav>
         {fees ? (
-          <FeeConversionsSection />
+          <FeeConversionsSection
+            key={state.session.githubId}
+            actorId={state.session.githubId}
+          />
         ) : (
           <ProjectsSection
+            key={state.session.githubId}
+            actorId={state.session.githubId}
+            onAccessLost={onAccessLost}
             selectedProject={selectedProject}
             section={section}
           />

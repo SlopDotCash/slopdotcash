@@ -6,6 +6,8 @@
  * caller must not leave the page for GitHub without a saved draft.
  */
 
+import { draftStillNeeded } from "./verified-frontend";
+
 export type ReportDraft = {
   summary: string;
   description: string;
@@ -33,7 +35,7 @@ export const TERMINAL_FAILURES: readonly string[] = [
 ];
 
 /** The fields of a submission that decide whether its draft is still needed. */
-export type DraftOwner = {
+type DraftOwner = {
   id: string;
   origin: "slop" | "direct";
   state: string;
@@ -63,12 +65,11 @@ function draftKey(id: string): string {
  * send whose outcome is being reconciled, or a fixable refusal.
  */
 export function needsDraft(submission: DraftOwner): boolean {
-  if (submission.origin !== "slop" || submission.advisory) return false;
-  if (["draft", "submitting", "uncertain"].includes(submission.state))
-    return true;
-  return (
-    submission.state === "failed" &&
-    !TERMINAL_FAILURES.includes(submission.failureCode ?? "")
+  return draftStillNeeded(
+    submission.origin === "slop",
+    Boolean(submission.advisory),
+    submission.state,
+    TERMINAL_FAILURES.includes(submission.failureCode ?? ""),
   );
 }
 

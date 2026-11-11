@@ -1,4 +1,5 @@
-import type { EvidenceClient } from "./value-evidence";
+import { gitObjectSha1 } from "./git-object";
+import type { EvidenceClient } from "./value-evidence-types";
 
 interface Entry {
   path: string;
@@ -39,18 +40,13 @@ async function treeDigest(entries: Entry[]): Promise<string> {
     return bytes;
   });
   const size = chunks.reduce((n, chunk) => n + chunk.length, 0);
-  const header = encoder.encode(`tree ${size}\0`);
-  const bytes = new Uint8Array(header.length + size);
-  bytes.set(header);
-  let offset = header.length;
+  const content = new Uint8Array(size);
+  let offset = 0;
   for (const chunk of chunks) {
-    bytes.set(chunk, offset);
+    content.set(chunk, offset);
     offset += chunk.length;
   }
-  const actual = [...new Uint8Array(await crypto.subtle.digest("SHA-1", bytes))]
-    .map((n) => n.toString(16).padStart(2, "0"))
-    .join("");
-  return actual;
+  return gitObjectSha1("tree", content);
 }
 
 /** A complete, hash-verified Git tree proves absence as well as presence.

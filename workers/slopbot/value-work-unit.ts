@@ -10,10 +10,9 @@ import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
   findRepository,
-  type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
-import type { ValueMergeRecipe } from "./value-merge-profile";
+import type { ValueEvidence } from "./value-evidence-types";
 import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
   NO_CHANGE_PROMOTION_CONTEXT,
@@ -21,12 +20,13 @@ import {
 } from "./value-no-change-promotion";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
-
-export interface WorkUnitSource {
-  evidence: ValueEvidence;
-  policy: { sha: string; text: string };
-  mergeRecipe?: ValueMergeRecipe;
-}
+import type {
+  WorkUnitClaim,
+  WorkUnitEvidence,
+  WorkUnitSource,
+} from "./value-work-unit-types";
+import { selectAcceptedCommitIndices } from "./verified-source-ownership";
+import { completeClaimPartition } from "./verified-work-unit";
 
 /** Discovery and valuation must use the same accepted commit selection.
  * Merge-resolution scope is verified below before any claim is admitted.
@@ -35,38 +35,17 @@ export function acceptedWorkUnitCommits(
   evidence: ValueEvidence,
 ): ValueEvidence["commits"] {
   const indirect = evidence.indirectAcceptance;
-  return evidence.commits.filter(
-    (entry) =>
-      (entry.parents.length <= 1 ||
-        evidence.mergeResolutions?.some(
-          (resolution) => resolution.commitSha === entry.sha,
-        )) &&
-      (!indirect || indirect.acceptedCommitShas.includes(entry.sha)),
+  const selected = selectAcceptedCommitIndices(
+    evidence.commits.map((entry) => ({
+      sha: entry.sha,
+      parentCount: entry.parents.length,
+    })),
+    (evidence.mergeResolutions ?? []).map((resolution) => resolution.commitSha),
+    indirect
+      ? { kind: "indirect", shas: indirect.acceptedCommitShas }
+      : { kind: "direct" },
   );
-}
-
-export interface WorkUnitClaim {
-  id: string;
-  repositoryNodeId: string;
-  commitSha: string;
-  path: string;
-  carrierPullRequestIds: string[];
-  creditPullRequestId: string;
-  implementationActorNodeIds: string[];
-  retainedCopy?: {
-    acceptancePullRequestId: string;
-    acceptedCommitSha: string;
-    preexistingCommitShas: string[];
-  };
-}
-
-export interface WorkUnitEvidence {
-  projectId: string;
-  sources: WorkUnitSource[];
-  sourceDigests: { pullRequestNodeId: string; digest: string }[];
-  claims: WorkUnitClaim[];
-  limitations: string[];
-  sourceDigest: string;
+  return selected.map((index) => evidence.commits[index]);
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -495,14 +474,11 @@ export function validateWorkUnitPartition(
   units: readonly { claimIds: readonly string[] }[],
 ): boolean {
   if (evidence.limitations.length > 0) return false;
-  const available = new Set(evidence.claims.map((claim) => claim.id));
-  const consumed = new Set<string>();
-  for (const unit of units) {
-    if (unit.claimIds.length === 0) return false;
-    for (const id of unit.claimIds) {
-      if (!available.has(id) || consumed.has(id)) return false;
-      consumed.add(id);
-    }
-  }
-  return consumed.size === available.size;
+  const available = new Map<string, number>();
+  for (const claim of evidence.claims)
+    if (!available.has(claim.id)) available.set(claim.id, available.size);
+  return completeClaimPartition(
+    available.size,
+    units.map((unit) => unit.claimIds.map((id) => available.get(id) ?? -1)),
+  );
 }

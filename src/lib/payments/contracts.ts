@@ -4,6 +4,11 @@ import {
   type EscrowChain,
   MAX_BASE_UNITS,
 } from "../escrow-policy.mjs";
+import {
+  bountyFeeAmount,
+  ordinaryFeeAmount,
+  payoutFeeAccepted,
+} from "../verified-money";
 
 export { formatBaseUnits };
 
@@ -138,7 +143,7 @@ export interface PublicVaultPaymentPage {
   next: number | null;
   total: number;
 }
-export { isBaseUnits, MAX_BASE_UNITS } from "../escrow-policy.mjs";
+export { isBaseUnits } from "../escrow-policy.mjs";
 export type PayoutPolicy = "ordinary" | "security-bounty";
 /** The 2% payout fee is deducted from the gross award, in base units of the award asset.
  * It rounds up, ceil(gross / 50), on both chains, as does the unused-funds withdrawal fee. */
@@ -150,14 +155,14 @@ export function payoutFee(
     throw new Error("Invalid gross award");
   if (policy === "security-bounty") {
     if (gross % 4n !== 0n) throw new Error("Bounty split must be exact");
-    return gross / 4n;
+    return bountyFeeAmount(gross);
   }
   if (policy !== "ordinary") throw new Error("Unknown payout policy");
-  return (gross + 49n) / 50n;
+  return ordinaryFeeAmount(gross);
 }
 /** The 2% ordinary fee for any amount, rounded up; zero for zero. For projections and plans. */
 export function ordinaryFee(gross: bigint): bigint {
-  return gross > 0n ? (gross + 49n) / 50n : 0n;
+  return ordinaryFeeAmount(gross);
 }
 /** The fee a vault records for `gross`. Vaults deployed before fees rounded up still record
  * floor(gross / 50) until their upgrade, so reconciliation accepts either 2% rounding and
@@ -168,11 +173,9 @@ export function acceptsPayoutFee(
   fee: bigint,
   policy: PayoutPolicy = "ordinary",
 ): boolean {
-  const expected = payoutFee(gross, policy);
-  return (
-    fee === expected ||
-    (policy === "ordinary" && fee === gross / 50n && fee + 1n === expected)
-  );
+  // Refuses an invalid gross, an inexact bounty, or an unknown policy first.
+  payoutFee(gross, policy);
+  return payoutFeeAccepted(gross, fee, policy === "security-bounty");
 }
 export function isAssetDecimals(value: unknown): value is number {
   return (
@@ -261,6 +264,20 @@ export function reservedGross(snapshot: {
 /** A snapshot older than this is shown with a stale warning. Cron runs every 5 minutes. */
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;
 
+/** Mainnet block-explorer origins of the EVM networks. */
+const EVM_EXPLORER_ORIGIN = {
+  base: "https://basescan.org",
+  robinhood: "https://robinhoodchain.blockscout.com",
+  ethereum: "https://etherscan.io",
+} as const;
+
+/** The mainnet explorer of an EVM network; Ethereum for any other network. */
+export function evmExplorerOrigin(network: string): string {
+  return Object.hasOwn(EVM_EXPLORER_ORIGIN, network)
+    ? EVM_EXPLORER_ORIGIN[network as keyof typeof EVM_EXPLORER_ORIGIN]
+    : EVM_EXPLORER_ORIGIN.ethereum;
+}
+
 /** Public explorer link for a payment transaction, or null when none exists. */
 export function transactionUrl(
   network: string,
@@ -270,17 +287,17 @@ export function transactionUrl(
   if (network === "base-sepolia")
     return `https://sepolia.basescan.org/tx/${encodeURIComponent(id)}`;
   if (network === "base-mainnet")
-    return `https://basescan.org/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.base}/tx/${encodeURIComponent(id)}`;
   if (network === "solana-mainnet")
     return `https://explorer.solana.com/tx/${encodeURIComponent(id)}`;
   if (network === "solana-devnet" || network === "solana-testnet")
     return `https://explorer.solana.com/tx/${encodeURIComponent(id)}?cluster=${network.slice(7)}`;
   if (network === "ethereum")
-    return `https://etherscan.io/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.ethereum}/tx/${encodeURIComponent(id)}`;
   if (network === "ethereum-sepolia")
     return `https://sepolia.etherscan.io/tx/${encodeURIComponent(id)}`;
   if (network === "robinhood-mainnet")
-    return `https://robinhoodchain.blockscout.com/tx/${encodeURIComponent(id)}`;
+    return `${EVM_EXPLORER_ORIGIN.robinhood}/tx/${encodeURIComponent(id)}`;
   if (network === "robinhood-testnet")
     return `https://explorer.testnet.chain.robinhood.com/tx/${encodeURIComponent(id)}`;
   return null;

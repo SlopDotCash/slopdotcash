@@ -199,7 +199,10 @@ or spend provider tokens as a deployment fallback.
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
 retries it. Repository size is never a refusal. A policy refusal of the bound
-assignment, such as an invalid tree path or a repository identity mismatch,
+assignment, such as an invalid tree path, a repository identity mismatch or a
+registered repository that GitHub reports missing (404: deleted, hidden or
+private) or redirects (3xx: renamed or transferred before a revision records
+the current path; a rate limit or outage still retries),
 instead publishes an incomplete result and notifies each owner once. It
 records the fixed refusal reason. Every
 surface is unsupported, every threat check is not run, and the configured
@@ -211,7 +214,12 @@ published even when the evidence upload fails, because the intake needs
 retained evidence only for a clean result: the quarantine is recorded and the
 models are not called again on every pass. A published attempt is journaled, so a
 later pass never sends it again; an uncertain or rejected attempt waits for
-an operator. The pass removes the acquired bytes after each assessment. It
+an operator. The pass removes the acquired bytes after each assessment. An
+error that escapes one assessment (for example a refused journal reservation)
+is reported for that assessment alone, as `retry` at step `assessment` with
+the error name and never its message; the assessment stays pending and the
+pass continues with the next queued project, so one repository cannot hold
+back every project queued behind it. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.
 
@@ -230,9 +238,10 @@ SURPLUS_API_KEY=... SLOP_VETTING_SIGNING_JWK='{"kty":"OKP","crv":"Ed25519","x":"
 
 The configuration file names `origin`, `policyVersion`, `workDirectory`,
 `journalDirectory`, and the `primary` and `specialist` profiles without
-keys. Owner decision D16 pins the primary to the Surplus Anthropic Messages
-endpoint with `claude-opus-5.5` and the specialist to the Surplus OpenAI
-Responses endpoint with `gpt-6.1-sol`. Both use `SURPLUS_API_KEY`. The
+keys. Owner decision D16 pins the transports. The 11 November 2026 model decision
+pins the primary to the Surplus Anthropic Messages
+endpoint with `claude-sonnet-5.5` and the specialist to the Surplus OpenAI
+Responses endpoint with `gpt-6.1-terra`. Both use `SURPLUS_API_KEY`. The
 service refuses to start, and a scan pass refuses to contact the queue or a
 provider, when either profile names another endpoint, model or reviewer, so
 the key never reaches any other endpoint. The output lists safe assessment
@@ -381,6 +390,17 @@ model mismatches and stop reasons are not retried. Each retry waits 2 s times
 its attempt number, counts against a cache's `maxCallsPerPass`, and adds its
 usage and cost to the call it retried; the pass records `attempts`.
 
+A review the provider declines (`stop-refusal` or
+`incomplete-content_filter`, in a single call, any batch or the synthesis)
+is the one failed review that is not a service failure: the same pinned
+content is declined again on every pass, and a batched review would spend
+its whole call budget each time. The scan publishes once as incomplete,
+with that review recorded as `failed` against the assessed inventory and
+no further model call (no specialist after a declined primary review). The
+pass report shows `published` with the declined review's category as
+`reason`. Like every incomplete result it does not establish clearance;
+an administrator can queue a fresh scan.
+
 Estimated primary-review input at 3 bytes per token (real tokenizers report
 fewer), measured on the real acquisitions of 28 October 2026:
 
@@ -437,7 +457,7 @@ only in the disposable Cloudflare sandbox described below.
 | Item | Requirement or decision |
 | --- | --- |
 | Scanner service deployment | `run.ts` is the service source; this source does not deploy it. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the in-source evidence policy (`EVIDENCE_POLICY` in `evidence.ts`). |
-| Provider and model | Owner decision D16: Surplus `claude-opus-5.5` is the primary model and Surplus `gpt-6.1-sol` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
+| Provider and model | Model decision of 11 November 2026: Surplus `claude-sonnet-5.5` is the primary model and Surplus `gpt-6.1-terra` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
 | Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. `workers/vetting-sandbox` implements it; see [Private artifact execution](#private-artifact-execution). |
 | Specialist authority | Owner decision D3: moderators confirm malice and release quarantined artifacts. A model label alone cannot; a signed malicious result restricts the project until a moderator decides. |
 | Live acceptance | Prove the clean, incomplete, malicious, flag and reinstatement paths on staging with the real services (PRD section 11). |

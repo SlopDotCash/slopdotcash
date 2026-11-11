@@ -26,7 +26,10 @@ import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-per
 import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
-import { evidenceLocation } from "../backend/vetting/evidence-chunks";
+import {
+  EvidenceStorage,
+  type EvidenceStorageRow,
+} from "../backend/vetting/evidence-storage";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -50,6 +53,7 @@ import {
   readAcquiredSource,
 } from "../workers/vetting/bounded-scan";
 import { publishResult } from "../workers/vetting/publication";
+import { filePublicationJournal } from "../workers/vetting/publication-journal";
 import { acquireQueuedAssessment } from "../workers/vetting/queue";
 import {
   runScanPass,
@@ -122,6 +126,10 @@ let publicGitHubLimit: number;
 let reviewedItems: { id: string; text: string }[] = [];
 /** The repository's current GitHub name; a recorded rename changes it. */
 let githubName = "example/open-registry";
+/** True when GitHub reports the registered repository missing (404). */
+let githubMissing = false;
+/** True when GitHub redirects the registered repository's path (301). */
+let githubMoved = false;
 /** What the synthetic Surplus provider answers on each transport. */
 let provider: {
   up: boolean;
@@ -129,6 +137,11 @@ let provider: {
   primary: "no-findings" | "findings" | "malicious-suspected";
   /** False makes every evidence route answer 503. */
   evidenceUp: boolean;
+  /**
+   * Which calls the provider declines to review: the primary transport
+   * answers stop reason `refusal`, the specialist `content_filter`.
+   */
+  declines: (path: string, items: { id: string }[]) => boolean;
   calls: { path: string; model: string; authorization: string | null }[];
 };
 
@@ -212,6 +225,14 @@ async function surplus(request: Request, path: string): Promise<Response> {
   if (path === "/anthropic/v1/messages") {
     const items = JSON.parse(body.messages?.[0].content ?? "{}").items;
     reviewedItems = items;
+    if (provider.declines(path, items))
+      return Response.json({
+        id: "msg_fixture",
+        model: body.model,
+        stop_reason: "refusal",
+        content: [],
+        usage,
+      });
     return Response.json({
       id: "msg_fixture",
       model: body.model,
@@ -231,6 +252,20 @@ async function surplus(request: Request, path: string): Promise<Response> {
     });
   }
   const items = JSON.parse(body.input ?? "{}").items;
+  if (provider.declines(path, items))
+    return Response.json({
+      id: "resp_fixture",
+      model: body.model,
+      status: "incomplete",
+      error: null,
+      incomplete_details: { reason: "content_filter" },
+      output: [],
+      usage: {
+        input_tokens: 8,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens: 0,
+      },
+    });
   return Response.json({
     id: "resp_fixture",
     model: body.model,
@@ -322,11 +357,24 @@ function github(url: URL): Response {
   const path = url.pathname;
   // Only the current name answers: GitHub redirects a former name, and
   // acquisition follows no redirects.
-  if (path === `/repos/${githubName}`)
+  if (path === `/repos/${githubName}` && githubMoved)
+    return new Response(null, {
+      status: 301,
+      headers: { location: "https://api.github.com/repositories/123456789" },
+    });
+  if (path === `/repos/${githubName}` && !githubMissing)
     return Response.json({
       id: 123456789,
       node_id: "R_example",
       full_name: githubName,
+      private: false,
+    });
+  // A second registered repository, for passes that queue two projects.
+  if (path === "/repos/example/second-registry")
+    return Response.json({
+      id: 123456790,
+      node_id: "R_second",
+      full_name: "example/second-registry",
       private: false,
     });
   const user = /^\/user\/([0-9]+)$/u.exec(path)?.[1];
@@ -478,6 +526,8 @@ beforeEach(async () => {
   templateSha256 = digest(JSON.stringify(templateInputs));
   clock = NOW;
   githubName = "example/open-registry";
+  githubMissing = false;
+  githubMoved = false;
   root = await mkdtemp(join(tmpdir(), "slop-scan-service-"));
   repository = join(root, "git");
   await mkdir(repository);
@@ -515,6 +565,7 @@ beforeEach(async () => {
     specialistUp: true,
     primary: "no-findings",
     evidenceUp: true,
+    declines: () => false,
     calls: [],
   };
   server = Bun.serve({ port: 0, fetch: route });
@@ -536,8 +587,8 @@ beforeEach(async () => {
         );
       }) as typeof fetch,
     },
-    primary: profile("anthropic-messages", "opus", "claude-opus-5.5"),
-    specialist: profile("openai-responses", "astra", "gpt-6.1-sol"),
+    primary: profile("anthropic-messages", "opus", "claude-sonnet-5.5"),
+    specialist: profile("openai-responses", "astra", "gpt-6.1-terra"),
     policyVersion: "scan-policy-1",
     workDirectory: join(root, "work"),
     journalDirectory: join(root, "journal"),
@@ -898,6 +949,102 @@ test("a pending investigation on an exempt project recovers without changing its
   expect((await runScanPass(config)).assessments).toEqual([]);
 });
 
+test("an error that escapes one assessment leaves it pending and the pass continues to the next project", async () => {
+  // A second registered project is queued in the same pass.
+  const created = await projectApi(
+    new Request(`${ORIGIN}/api/v1/projects`, {
+      method: "POST",
+      headers: {
+        "x-test-actor": "applicant",
+        "content-type": "application/json",
+        origin: ORIGIN,
+      },
+      body: JSON.stringify({
+        manifest: applicationManifest(
+          "second-registry",
+          "example/second-registry",
+          {
+            authority: {
+              state: "unverified",
+              reason: "missing-repository-proof",
+              role: "project-steward",
+              repositoryId: "123456790",
+              repositoryNodeId: "R_second",
+              proof: null,
+            },
+          },
+        ),
+      }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  // The signed service journal refuses one reservation, after the review and
+  // the evidence upload. Nothing in the assessment handles that, so the error
+  // escapes it.
+  const file = filePublicationJournal(config.journalDirectory);
+  let refusals = 1;
+  config.journal = {
+    has: (id) => file.has(id),
+    reserve: async (intent) => {
+      if (refusals > 0) {
+        refusals -= 1;
+        throw new Error("fixture: journal reservation refused");
+      }
+      await file.reserve(intent);
+    },
+    complete: (receipt) => file.complete(receipt),
+  };
+  const pass = await runScanPass(config);
+  expect(pass.refreshed).toBe(true);
+  expect(pass.assessments).toHaveLength(2);
+  const refused = pass.assessments.find((a) => a.state === "retry");
+  const published = pass.assessments.find((a) => a.state === "published");
+  if (!refused || !published) throw new Error("Both outcomes are expected");
+  // The escaped error names its step and error, never its message.
+  expect(refused).toEqual({
+    assessmentId: refused.assessmentId,
+    state: "retry",
+    step: "assessment",
+    reason: "Error",
+  });
+  expect(published).toEqual({
+    assessmentId: published.assessmentId,
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    specialist: false,
+    evidence: "retained",
+  });
+  const pending = await vetting.getAssessment(refused.assessmentId);
+  const cleared = await vetting.getAssessment(published.assessmentId);
+  expect(pending?.state).toBe("pending");
+  expect(cleared?.state).toBe("clean");
+  expect(new Set([pending?.projectId, cleared?.projectId])).toEqual(
+    new Set(["open-registry", "second-registry"]),
+  );
+  // Only the published attempt is journaled; the acquired bytes are gone.
+  expect(await readdir(config.journalDirectory)).toEqual([
+    published.assessmentId,
+  ]);
+  expect(await readdir(config.workDirectory)).toEqual([]);
+  // The next pass completes the assessment whose publication was refused.
+  const next = await runScanPass(config);
+  expect(next.assessments).toEqual([
+    {
+      assessmentId: refused.assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect((await vetting.getAssessment(refused.assessmentId))?.state).toBe(
+    "clean",
+  );
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
   provider.up = false;
   const failed = await runScanPass(config);
@@ -934,7 +1081,7 @@ test("a provider outage leaves the scan pending; the next pass clears the projec
   expect(provider.calls).toEqual([
     {
       path: "/anthropic/v1/messages",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       authorization: "Bearer fixture-surplus-key",
     },
   ]);
@@ -1015,8 +1162,8 @@ test("an ambiguous primary review runs the Surplus specialist once before public
     },
   ]);
   expect(provider.calls.map((call) => [call.path, call.model])).toEqual([
-    ["/anthropic/v1/messages", "claude-opus-5.5"],
-    ["/v1/responses", "gpt-6.1-sol"],
+    ["/anthropic/v1/messages", "claude-sonnet-5.5"],
+    ["/v1/responses", "gpt-6.1-terra"],
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   expect(assessment?.state).toBe("clean");
@@ -1508,15 +1655,19 @@ for (const kind of [
       const original = await retainedNativeFixture();
       const row = sqlite
         .query(
-          "SELECT object_key, sha256, storage, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
+          "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
         )
-        .get(original.result.assessmentId, original[kind]) as {
-        object_key: string;
-        sha256: string;
-        storage: string;
-        size_bytes: number;
-      };
-      const key = evidenceLocation(row);
+        .get(
+          original.result.assessmentId,
+          original[kind],
+        ) as EvidenceStorageRow;
+      const key = await new EvidenceStorage(
+        retained.evidence.deps.db,
+        retained.evidence.deps.bucket!,
+        () => clock,
+        () => crypto.randomUUID(),
+      ).partKey(row);
+      if (key === null) throw new Error("Missing published evidence target");
       if (damage === "missing") await retained.bucket.delete(key);
       else {
         const object = await retained.bucket.head(key);
@@ -1710,14 +1861,17 @@ test("scan reuse requires the original report to remain in private R2", async ()
   if (!original) throw new Error("Missing original scan");
   const object = sqlite
     .query(
-      "SELECT object_key, sha256, storage FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
+      "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
     )
-    .get(original.id) as {
-    object_key: string;
-    sha256: string;
-    storage: string;
-  };
-  await retained.bucket.delete(evidenceLocation(object));
+    .get(original.id) as EvidenceStorageRow;
+  const key = await new EvidenceStorage(
+    retained.evidence.deps.db,
+    retained.evidence.deps.bucket!,
+    () => clock,
+    () => crypto.randomUUID(),
+  ).partKey(object);
+  if (key === null) throw new Error("Missing published evidence target");
+  await retained.bucket.delete(key);
   provider.calls = [];
   emptyCommit("Same source after evidence loss");
   await requestInvestigation();
@@ -1784,6 +1938,169 @@ for (const status of [404, 503]) {
     );
   });
 }
+
+/** The recorded scan result of a published assessment. */
+async function recordedResult(assessmentId: string) {
+  const result = (await vetting.getAssessment(assessmentId))?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing scan result");
+  return result;
+}
+
+test("a primary review the provider declines publishes an incomplete result once; later passes call no model", async () => {
+  provider.declines = (path) => path === "/anthropic/v1/messages";
+  const pass = await runScanPass(config);
+  const [{ assessmentId }] = pass.assessments;
+  expect(pass.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+      reason: "stop-refusal",
+    },
+  ]);
+  // A declined review is final for this pin: no specialist, no retry.
+  expect(provider.calls.map((call) => call.path)).toEqual([
+    "/anthropic/v1/messages",
+  ]);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
+  const result = await recordedResult(assessmentId);
+  expect(result.primaryReview).toMatchObject({
+    status: "failed",
+    verdict: null,
+    risk: null,
+    inputManifestSha256: result.assessed.inputManifestSha256,
+  });
+  expect(result.specialistReview).toBeNull();
+  expect(result.visibilityGaps).toContain("opus:review-failed-or-unavailable");
+  expect((await activate()).status).toBe(422);
+  provider.calls = [];
+  expect((await runScanPass(config)).assessments).toEqual([]);
+  expect(provider.calls).toEqual([]);
+});
+
+test("one declined batch of a batched review publishes an incomplete result without the synthesis", async () => {
+  await commit(
+    Object.fromEntries(
+      Array.from({ length: 1100 }, (_, index) => [
+        `many/file-${String(index).padStart(4, "0")}.ts`,
+        `export const value${index} = ${JSON.stringify("value ".repeat(170))};\n`,
+      ]),
+    ),
+    "A repository larger than one review call",
+  );
+  provider.declines = (path, items) =>
+    path === "/anthropic/v1/messages" &&
+    items.some((item) => item.id === "many/file-0000.ts");
+  const pass = await runScanPass(config);
+  const [outcome] = pass.assessments;
+  expect(outcome).toMatchObject({
+    state: "published",
+    disposition: "incomplete",
+    outcome: "accepted",
+    specialist: false,
+    evidence: "retained",
+  });
+  expect((outcome as { reason?: string }).reason).toMatch(
+    /^batch-[0-9]+-of-[0-9]+:stop-refusal$/u,
+  );
+  // No repository-level synthesis and no specialist ran.
+  expect(reviewedItems[0]?.id).not.toBe("prepass");
+  expect(
+    provider.calls.every((call) => call.path === "/anthropic/v1/messages"),
+  ).toBe(true);
+  const result = await recordedResult(outcome.assessmentId);
+  // The failed review names the whole assessed inventory, not one batch.
+  expect(result.primaryReview).toMatchObject({
+    status: "failed",
+    inputManifestSha256: result.assessed.inputManifestSha256,
+  });
+  provider.calls = [];
+  expect((await runScanPass(config)).assessments).toEqual([]);
+  expect(provider.calls).toEqual([]);
+}, 120_000);
+
+test("a specialist review the provider declines publishes an incomplete result once", async () => {
+  provider.primary = "findings";
+  provider.declines = (path) => path === "/v1/responses";
+  const pass = await runScanPass(config);
+  const [{ assessmentId }] = pass.assessments;
+  expect(pass.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: true,
+      evidence: "retained",
+      reason: "incomplete-content_filter",
+    },
+  ]);
+  expect(provider.calls.map((call) => call.path)).toEqual([
+    "/anthropic/v1/messages",
+    "/v1/responses",
+  ]);
+  const result = await recordedResult(assessmentId);
+  expect(result.primaryReview.status).toBe("completed");
+  expect(result.specialistReview).toMatchObject({
+    status: "failed",
+    verdict: null,
+    inputManifestSha256: result.assessed.inputManifestSha256,
+  });
+  provider.calls = [];
+  expect((await runScanPass(config)).assessments).toEqual([]);
+  expect(provider.calls).toEqual([]);
+});
+
+test("a registered repository GitHub reports missing completes as incomplete instead of retrying every pass", async () => {
+  githubMissing = true;
+  const pass = await runScanPass(config);
+  const [{ assessmentId }] = pass.assessments;
+  expect(pass.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect(provider.calls).toEqual([]);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
+  const result = await recordedResult(assessmentId);
+  expect(result.visibilityGaps).toEqual([
+    "Acquisition refused before inspection: Repository not found on GitHub",
+  ]);
+  expect(result.primaryReview.status).toBe("not-started");
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
+test("a registered repository GitHub redirects completes as incomplete instead of retrying every pass", async () => {
+  githubMoved = true;
+  const pass = await runScanPass(config);
+  const [{ assessmentId }] = pass.assessments;
+  expect(pass.assessments).toEqual([
+    {
+      assessmentId,
+      state: "published",
+      disposition: "incomplete",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect(provider.calls).toEqual([]);
+  expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
+  const result = await recordedResult(assessmentId);
+  expect(result.visibilityGaps).toEqual([
+    "Acquisition refused before inspection: Repository moved on GitHub",
+  ]);
+  expect(result.primaryReview.status).toBe("not-started");
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
 
 test("a failed specialist is a service failure: nothing is published and the scan retries", async () => {
   provider.primary = "findings";
@@ -1890,8 +2207,8 @@ test("an incomplete result is published although the evidence store fails, so th
   ]);
   // A binary needs the specialist; each model runs once.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
   provider.calls = [];
@@ -1924,8 +2241,8 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   ]);
   // The specialist runs only because the primary review was high risk.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   const result = assessment?.result;
@@ -1935,7 +2252,7 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   expect(result.primaryReview.risk).toBe("high");
   expect(result.specialistReview).toMatchObject({
     provider: "surplus",
-    model: "gpt-6.1-sol",
+    model: "gpt-6.1-terra",
   });
   // A model label alone never bans: a moderator confirms malice.
   expect(result.confirmation).toBeNull();
@@ -2044,15 +2361,15 @@ test("an unpinned endpoint or model fails closed before the queue or any provide
       config.primary,
       { ...config.specialist, endpoint: "https://api.openai.com/v1/responses" },
     ],
-    [{ ...config.primary, model: "claude-opus-5" }, config.specialist],
-    [config.primary, { ...config.specialist, model: "gpt-6.1" }],
+    [{ ...config.primary, model: "claude-opus-5.5" }, config.specialist],
+    [config.primary, { ...config.specialist, model: "gpt-6.1-sol" }],
     // The specialist never stands in for the primary review.
     [config.specialist, config.primary],
   ] as [ScannerProfile, ScannerProfile][]) {
     await expect(
       runScanPass({ ...config, connection: counting, primary, specialist }),
     ).rejects.toThrow(
-      /Unapproved scanner profile|must be Surplus claude-opus-5\.5/,
+      /Unapproved scanner profile|must be Surplus claude-sonnet-5\.5/,
     );
   }
   expect(contacted).toEqual([]);

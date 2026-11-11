@@ -108,7 +108,7 @@ async function reviewEmptyPull(
           id: "local-input-control",
           type: "message",
           role: "assistant",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "end_turn",
           content: [
             {

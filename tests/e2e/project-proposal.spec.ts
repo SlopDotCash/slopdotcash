@@ -2,8 +2,8 @@
  * The setup wizard reads public GitHub facts through the same-origin
  * /api/v1/project-github API. The preview lane has no Pages Functions, so the
  * route below runs the real server lookup code against fixtures of GitHub's
- * REST responses; the page, validation, manifest and handoff are the real
- * application, and the browser never calls api.github.com.
+ * REST and immutable-node GraphQL responses; the page, validation, manifest
+ * and handoff are real, and the browser never calls api.github.com.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -20,6 +20,13 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
 import { expect, expectAccessible, test } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  patchProposalDraft,
+  readProposalDraft,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -27,8 +34,16 @@ const deployment = deploymentOrigins(
 
 const LICENSE_TEXT = "MIT License\n\nCopyright (c) Example Research\n";
 const COMMIT = "c".repeat(40);
+const PUBLIC_GITHUB_TOKEN = "public-only-read-token-fixture";
+const LICENSE_BLOB = createHash("sha1")
+  .update(`blob ${Buffer.byteLength(LICENSE_TEXT)}\0`)
+  .update(LICENSE_TEXT)
+  .digest("hex");
 
-type GithubFixture = (url: URL) => Promise<Response> | Response;
+type GithubFixture = (
+  url: URL,
+  init: RequestInit,
+) => Promise<Response> | Response;
 
 /** Uses the picker's organization/URL entry mode; valid input looks up itself. */
 async function enterRepository(page: Page, repository: string) {
@@ -50,8 +65,10 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
       "/api/v1/project-github/".length,
     );
     const fetcher = async (url: string, init: RequestInit) => {
-      expect(new Headers(init.headers).get("authorization")).toBeNull();
-      return github(new URL(url));
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        `Bearer ${PUBLIC_GITHUB_TOKEN}`,
+      );
+      return github(new URL(url), init);
     };
     try {
       const body =
@@ -59,14 +76,14 @@ async function serveGithubLookups(page: Page, github: GithubFixture) {
           ? {
               repositories: await listOwnedRepositories(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 "example",
               ),
             }
           : {
               repository: await lookupGitHubRepository(
                 fetcher,
-                undefined,
+                PUBLIC_GITHUB_TOKEN,
                 path.replace(/^repositories\//u, ""),
               ),
             };
@@ -98,7 +115,7 @@ async function routeGitHub(
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#f65b22"/></svg>',
     }),
   );
-  await serveGithubLookups(page, async (url) => {
+  await serveGithubLookups(page, async (url, init) => {
     if (url.pathname === "/repos/example/open-protein") {
       await beforeRepository?.();
       return Response.json(
@@ -125,29 +142,59 @@ async function routeGitHub(
         },
       );
     }
-    if (url.pathname === "/repos/example/open-protein/branches")
-      return Response.json(
-        [integrationBranch, "main", "development"].map((name) => ({
-          name,
-          commit: { sha: COMMIT },
-        })),
-      );
-    if (
-      url.pathname ===
-      `/repos/example/open-protein/branches/${encodeURIComponent(integrationBranch)}`
-    )
-      return Response.json({ commit: { sha: COMMIT } });
+    if (url.pathname === "/graphql") {
+      expect(init.method).toBe("POST");
+      const { query, variables } = JSON.parse(String(init.body));
+      expect(variables.id).toBe("R_fixture");
+      const branch = (name: string) => ({
+        name,
+        prefix: "refs/heads/",
+        target: { __typename: "Commit", oid: COMMIT },
+      });
+      let value: Record<string, unknown>;
+      if (query.includes("ProjectRepositoryBranches")) {
+        expect(variables.cursor).toBeNull();
+        value = {
+          refs: {
+            nodes: [...new Set([integrationBranch, "main", "development"])].map(
+              branch,
+            ),
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      } else if (query.includes("ProjectRepositoryHead")) {
+        expect(variables.qualifiedName).toBe(`refs/heads/${integrationBranch}`);
+        value = { ref: branch(integrationBranch) };
+      } else {
+        expect(query).toContain("ProjectRepositoryLicense");
+        expect(variables.expression).toBe(`${COMMIT}:LICENSE`);
+        value = { object: { __typename: "Blob", oid: LICENSE_BLOB } };
+      }
+      return Response.json({
+        data: {
+          node: {
+            __typename: "Repository",
+            id: "R_fixture",
+            fullDatabaseId: "123456789",
+            isPrivate: false,
+            ...value,
+          },
+        },
+      });
+    }
     if (url.pathname === "/repos/example/open-protein/license") {
       expect(url.searchParams.get("ref")).toBe(COMMIT);
       return Response.json({
         path: licensePath,
+        type: "file",
+        sha: LICENSE_BLOB,
         encoding: "base64",
         content: Buffer.from(LICENSE_TEXT).toString("base64"),
         license: { spdx_id: "MIT" },
       });
     }
     if (url.pathname === "/users/example/repos")
-      return owned ? owned(url) : Response.json([]);
+      return owned ? owned(url, init) : Response.json([]);
     return Response.json({}, { status: 500 });
   });
 }
@@ -214,6 +261,187 @@ test.beforeEach(async ({ page }) => {
       },
     }),
   );
+});
+
+async function prepareCreationReview(page: Page) {
+  await routeGitHub(page);
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await enterRepository(page, "example/open-protein");
+  await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
+  await page.getByLabel("Project name").fill("Open Protein");
+  await page
+    .getByLabel("Short description")
+    .fill("Reproducible protein-folding benchmarks.");
+  await page.getByLabel("Goal").fill("Make protein research reproducible.");
+  await page.getByRole("button", { name: "Next: Rewards" }).click();
+  await page.getByRole("button", { name: "Next: Review" }).click();
+  await expect(page.locator(".setup-actor")).toHaveText("@example-maintainer");
+}
+
+test("committed proposal unmount retires creation before dispatch", async ({
+  page,
+}) => {
+  let writes = 0;
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  await holdProjectSessionUntilUnmount(page, ".proposal-form");
+  await page.evaluate(() => {
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", "/projects/new");
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await leaveEditorWithHeldSession(page);
+    await expect(page.locator(".proposal-form")).toHaveCount(0);
+    expect(writes).toBe(0);
+  } finally {
+    await releaseHeldEditorSession(page);
+  }
+});
+
+test("project creation refuses a silent account change before dispatch", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let writes = 0;
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await routeCreation(page, () => {
+    writes += 1;
+    return {
+      status: 201,
+      json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+    };
+  });
+  await prepareCreationReview(page);
+  actor = "4343";
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  expect(writes).toBe(0);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("an accepted project creation is not displayed under a later account", async ({
+  page,
+}) => {
+  let actor = "4242";
+  let accepted = 0;
+  let release = () => {};
+  let started = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    accepted += 1;
+    started();
+    await held;
+    await route.fulfill({
+      status: 201,
+      json: {
+        project: { id: "open-protein", revision: 1 },
+        setup: CREATED_SETUP,
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await waiting;
+  try {
+    actor = "4343";
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("alert")).toContainText("Your account changed");
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
+  expect(accepted).toBe(1);
+});
+
+test("a stale session observation cannot authorize creation for a new actor", async ({
+  page,
+  diagnostics,
+}) => {
+  let actor = "4242";
+  let attempts = 0;
+  diagnostics.allowResponse(403, "POST", "/api/v1/projects");
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: actor,
+          githubLogin: "example-maintainer",
+          admin: false,
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/projects", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    // The account changes after the editor's last session observation, so
+    // the create request still carries the previous actor.
+    actor = "4343";
+    attempts += 1;
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
+    await route.fulfill({
+      status: 403,
+      json: {
+        error: "actor_changed",
+        message:
+          "The signed-in account changed. Retry with the current account.",
+      },
+    });
+  });
+  await prepareCreationReview(page);
+  await page
+    .getByRole("button", { name: "Create project", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText(
+    "signed-in account changed",
+  );
+  expect(attempts).toBe(1);
+  await expect(
+    page.getByRole("heading", { name: "Project created", exact: true }),
+  ).toHaveCount(0);
 });
 
 for (const integrationBranch of ["release/2026+10", "개발/다음"]) {
@@ -332,11 +560,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     "main",
     "trunk",
   ]);
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
   });
@@ -347,11 +571,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(branch).toHaveValue("development");
   await enterRepository(page, "example/another-repository");
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "",
     repositoryNodeId: "",
     integrationBranch: "main",
@@ -370,6 +590,9 @@ test("drafts a project through the setup steps and creates it without an admin",
   });
   await expect(closure).toBeChecked();
   await closure.uncheck();
+  // Reload observes committed bytes, not the visible Saving state of the
+  // queued draft write. Check the actual saved choice before navigating.
+  expect((await readProposalDraft(page)).automaticClosure).toBe("false");
   await page.reload();
   await expect(closure).not.toBeChecked();
   await expect(branch).toHaveValue("development");
@@ -644,9 +867,7 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.getByLabel("GitHub repository")).toHaveValue(
     "example/open-protein",
   );
-  const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-  );
+  const stored = await readProposalDraft(page);
   expect(stored.name).toBe("Open Protein");
   expect(stored.integrationBranch).toBe("trunk");
   await expect(branch).toHaveValue("trunk");
@@ -654,13 +875,7 @@ test("drafts a project through the setup steps and creates it without an admin",
     Object.keys(stored).some((key) => /token|secret|key$/iu.test(key)),
   ).toBe(false);
   // A branch removed since a draft was saved needs a new explicit choice.
-  await page.evaluate(() => {
-    const draft = JSON.parse(
-      localStorage.getItem("slop:project-proposal:v1") ?? "{}",
-    );
-    draft.integrationBranch = "retired-branch";
-    localStorage.setItem("slop:project-proposal:v1", JSON.stringify(draft));
-  });
+  await patchProposalDraft(page, { integrationBranch: "retired-branch" });
   await page.reload();
   await expect(branch).toHaveValue("");
   await page.getByRole("button", { name: "Next: Rewards" }).click();
@@ -678,22 +893,17 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   diagnostics.allow(
     /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
   );
-  // A changed or cleared draft cancels its pending lookup below.
+  // The loop changes open-protein to new-project, then clears that draft.
+  // Either in-flight lookup may be canceled by that explicit next edit.
   diagnostics.allow(
-    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\/example\/open-protein$/u,
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\/example\/(?:open-protein|new-project)$/u,
   );
   await routeGitHub(page, { repository: 404 });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   await enterRepository(page, "example/open-protein");
   await expect(page.locator("#field-repository-error")).toBeVisible();
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .repositoryNumericId,
-    ),
-  ).toBe("");
+  expect((await readProposalDraft(page)).repositoryNumericId).toBe("");
 
   await page.unrouteAll();
   await routeGitHub(page, { repository: 403 });
@@ -707,23 +917,13 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   await (await rateLimitedLookup).finished();
   await expect(page.locator("#field-repository-error")).toBeVisible();
   await expect(page.getByLabel("Integration branch")).toBeDisabled();
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .repositoryNumericId,
-    ),
-  ).toBe("");
+  expect((await readProposalDraft(page)).repositoryNumericId).toBe("");
 
   await page.unrouteAll();
   await routeGitHub(page, { licensePath: "LICENSE.md" });
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByLabel("Integration branch")).toHaveValue("trunk");
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
     licenseSpdx: "",
@@ -759,13 +959,7 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
     await page.waitForLoadState("networkidle");
     const expected = action === "clear" ? "" : "example/new-project";
     await expect(page.getByLabel("GitHub repository")).toHaveValue(expected);
-    expect(
-      await page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-            .repository,
-      ),
-    ).toBe(expected);
+    expect((await readProposalDraft(page)).repository).toBe(expected);
   }
 });
 
@@ -948,14 +1142,7 @@ test("a saved native reward with an unknown network stays editable until correct
     .getByRole("radio", { name: "ETH", exact: true })
     .check();
   await page.getByLabel("Monthly amount (ETH)").fill("1");
-  await page.evaluate(() => {
-    const key = "slop:project-proposal:v1";
-    const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
-    localStorage.setItem(
-      key,
-      JSON.stringify({ ...saved, settlementChain: "retired-network" }),
-    );
-  });
+  await patchProposalDraft(page, { settlementChain: "retired-network" });
   await page.reload({ waitUntil: "networkidle" });
   await expect(
     page.getByRole("heading", { name: "Add a project", exact: true }),
@@ -967,13 +1154,9 @@ test("a saved native reward with an unknown network stays editable until correct
   ).toHaveCount(0);
   const networks = page.getByRole("group", { name: "Network", exact: true });
   await expect(networks.locator("input:checked")).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}")
-          .settlementChain,
-    ),
-  ).toBe("retired-network");
+  expect((await readProposalDraft(page)).settlementChain).toBe(
+    "retired-network",
+  );
   await page.screenshot({
     path: test.info().outputPath("saved-native-network-error.png"),
     fullPage: true,
@@ -1131,11 +1314,7 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("GitHub repository")).toHaveValue(
     "example/open-protein",
   );
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({
+  expect(await readProposalDraft(page)).toMatchObject({
     repositoryNumericId: "123456789",
     repositoryNodeId: "R_fixture",
   });
@@ -1143,11 +1322,10 @@ test("a signed-in maintainer picks an owned repository and gets suggested text",
   await expect(page.getByLabel("Short description")).toHaveValue(description);
   await expect(page.getByLabel("Goal")).toHaveValue(description);
   // Fresh projects retain Unknown terms without asking for legal evidence.
-  expect(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("slop:project-proposal:v1") ?? "{}"),
-    ),
-  ).toMatchObject({ copyrightModel: "unknown", inboundMode: "unknown" });
+  expect(await readProposalDraft(page)).toMatchObject({
+    copyrightModel: "unknown",
+    inboundMode: "unknown",
+  });
   // The maintainer's own words survive a later lookup of the same repository.
   await page.getByLabel("Project name").fill("Open Protein");
   await enterRepository(page, "");
@@ -1294,3 +1472,205 @@ for (const [name, expectedId] of [
     });
   });
 }
+
+test("a failed repository list retries and then offers the maintainer's repositories", async ({
+  diagnostics,
+  page,
+}) => {
+  const failed = diagnostics.allowResponse(
+    503,
+    "GET",
+    "/api/v1/project-github/owned-repositories",
+  );
+  let reads = 0;
+  await page.route("**/api/v1/project-github/owned-repositories", (route) => {
+    reads += 1;
+    return route.fulfill(
+      reads === 1
+        ? {
+            status: 503,
+            json: {
+              error: "github_unavailable",
+              message: "GitHub is temporarily unavailable.",
+            },
+          }
+        : {
+            json: {
+              repositories: [
+                { repository: "example/open-protein", description: null },
+              ],
+            },
+          },
+    );
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  await expect(
+    page.getByText("GitHub is temporarily unavailable.", { exact: false }),
+  ).toBeVisible();
+  // Manual entry stays available while the list is unavailable.
+  await expect(
+    page.getByRole("textbox", { name: "GitHub repository", exact: true }),
+  ).toBeEditable();
+  expect(diagnostics.count(failed)).toBe(1);
+  await expectAccessible(page);
+  await page
+    .getByRole("button", { name: "Retry repositories", exact: true })
+    .click();
+  const picker = page.getByRole("combobox", {
+    name: "GitHub repository",
+    exact: true,
+  });
+  await expect(
+    picker.locator('option[value="example/open-protein"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Retry repositories", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("GitHub is temporarily unavailable.", { exact: false }),
+  ).toHaveCount(0);
+  expect(reads).toBe(2);
+  await expectAccessible(page);
+});
+
+test("a saved application change publishes after a retry and reports its setup", async ({
+  diagnostics,
+  page,
+}) => {
+  const application = (id: string, name: string, revision?: number) => ({
+    id,
+    projectId: id.replace(/^app-/u, ""),
+    repository: `example/${id.replace(/^app-/u, "")}`,
+    manifest: { name },
+    manifestSha256: "b".repeat(64),
+    acceptanceCriteria: "Accepted outcomes only.",
+    applicant: { githubId: "4242", githubLogin: "example-maintainer" },
+    submittedAt: "2026-10-18T00:00:00.000Z",
+    status: "pending",
+    adminNotification: "sent",
+    adminNotificationAt: null,
+    decidedAt: null,
+    decidedBy: null,
+    decisionReason: null,
+    githubCheck: null,
+    referrer: null,
+    ...(revision === undefined
+      ? {}
+      : { expectedRevision: revision, changeReason: "Update the scope." }),
+  });
+  const listFailed = diagnostics.allowResponse(
+    503,
+    "GET",
+    "/api/v1/project-setup",
+  );
+  const publishFailed = diagnostics.allowResponse(
+    409,
+    "POST",
+    "/api/v1/project-applications/app-open-protein/publish",
+  );
+  await page.route("**/api/v1/project-github/owned-repositories", (route) =>
+    route.fulfill({ json: { repositories: [] } }),
+  );
+  let listReads = 0;
+  await page.route("**/api/v1/project-setup", (route) => {
+    listReads += 1;
+    return route.fulfill(
+      listReads === 1
+        ? {
+            status: 503,
+            json: {
+              error: "unavailable",
+              message: "Saved applications are temporarily unavailable.",
+            },
+          }
+        : {
+            json: {
+              projects: [],
+              applications: [
+                application("app-open-protein", "Open Protein", 3),
+                application("app-new-lab", "New Lab"),
+                {
+                  ...application("app-decided", "Decided"),
+                  status: "published",
+                },
+              ],
+            },
+          },
+    );
+  });
+  const publishes: { url: string; body: unknown }[] = [];
+  await page.route("**/api/v1/project-applications/*/publish", (route) => {
+    publishes.push({
+      url: new URL(route.request().url()).pathname,
+      body: route.request().postDataJSON(),
+    });
+    return route.fulfill(
+      publishes.length === 1
+        ? {
+            status: 409,
+            json: {
+              error: "slopbot_required",
+              message: "Install Slopbot on example/open-protein first.",
+            },
+          }
+        : {
+            json: { project: { id: "open-protein" }, setup: CREATED_SETUP },
+          },
+    );
+  });
+  await page.goto("/projects/new", { waitUntil: "networkidle" });
+  const pending = page.getByRole("region", {
+    name: "Pending applications",
+    exact: true,
+  });
+  await expect(pending.getByRole("alert")).toHaveText(
+    "Saved applications are temporarily unavailable.",
+  );
+  await pending.getByRole("button", { name: "Retry", exact: true }).click();
+  const change = pending.getByRole("article", {
+    name: "Pending application: Open Protein",
+    exact: true,
+  });
+  await expect(change).toBeVisible();
+  // A new project's saved application offers creation instead.
+  await expect(
+    pending
+      .getByRole("article", { name: "Pending application: New Lab" })
+      .getByRole("button", { name: "Create this project", exact: true }),
+  ).toBeVisible();
+  // Decided applications are not offered again.
+  await expect(
+    pending.getByRole("article", { name: "Pending application: Decided" }),
+  ).toHaveCount(0);
+  expect(listReads).toBe(2);
+  expect(diagnostics.count(listFailed)).toBe(1);
+
+  await change
+    .getByRole("button", { name: "Publish this change", exact: true })
+    .click();
+  await expect(change.getByRole("alert")).toContainText(
+    "Install Slopbot on example/open-protein first.",
+  );
+  await expect(
+    change.getByRole("link", { name: "Install Slopbot", exact: true }),
+  ).toHaveAttribute("href", /github\.com\/apps\/slopdotcash/u);
+  expect(diagnostics.count(publishFailed)).toBe(1);
+  await expectAccessible(page);
+
+  await change.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    change.getByRole("link", { name: "Open Protein", exact: true }),
+  ).toHaveAttribute("href", "/projects/open-protein/manage");
+  await expect(change.getByRole("alert")).toHaveCount(0);
+  await expect(
+    change.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+  await expect(change).toContainText(
+    "The security scan is queued. Nothing is needed from you.",
+  );
+  expect(publishes).toEqual([
+    { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
+    { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
+  ]);
+  await expectAccessible(page);
+});

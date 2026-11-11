@@ -6,9 +6,9 @@
 import type { CycleIndex } from "../src/lib/cycle-index";
 import {
   type LeaderboardSnapshot,
-  SCORE_RULE_VERSION,
   TARGET_REPOSITORIES,
 } from "../src/lib/leaderboard";
+import { SCORE_RULE_VERSION } from "../src/lib/leaderboard-constants";
 
 export function cycleIndexFixture(): CycleIndex {
   return {

@@ -1,26 +1,13 @@
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
+import { gitObjectSha1 } from "./git-object";
 import { valueFileReader } from "./value-blob";
 import type {
   EvidenceClient,
   FileChange,
   ValueEvidence,
-} from "./value-evidence";
+} from "./value-evidence-types";
 import { readValueTreeProof } from "./value-tree";
-
-/** Private source bytes, not a textual patch or proof of what a recording shows. */
-export interface AddedBinaryProof {
-  schemaVersion: 1;
-  path: string;
-  baseSha: string;
-  headSha: string;
-  baseTreeSha: string;
-  headTreeSha: string;
-  mode: "100644";
-  blobSha: string;
-  size: number;
-  sha256: string;
-  contentBase64: string;
-  contentReview: "unviewed";
-}
 
 const oid = /^[a-f0-9]{40}$/u;
 const digest = /^[a-f0-9]{64}$/u;
@@ -32,16 +19,6 @@ const validPath = (path: string) =>
   !path.split("/").some((part) => !part || part === "." || part === "..");
 const keys =
   "baseSha,baseTreeSha,blobSha,contentBase64,contentReview,headSha,headTreeSha,mode,path,schemaVersion,sha256,size";
-const hex = (bytes: ArrayBuffer) =>
-  [...new Uint8Array(bytes)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-
-function encode(bytes: Uint8Array): string {
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text);
-}
 
 function binary(bytes: Uint8Array): boolean {
   // A Git LFS pointer describes other bytes and is never the media itself.
@@ -75,13 +52,9 @@ export function needsAddedBinaryProof(file: FileChange): boolean {
 }
 
 async function identities(bytes: Uint8Array) {
-  const prefix = new TextEncoder().encode(`blob ${bytes.length}\0`);
-  const object = new Uint8Array(prefix.length + bytes.length);
-  object.set(prefix);
-  object.set(bytes, prefix.length);
   return {
-    blobSha: hex(await crypto.subtle.digest("SHA-1", object)),
-    sha256: hex(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+    blobSha: await gitObjectSha1("blob", bytes),
+    sha256: await sha256Hex(bytes),
   };
 }
 
@@ -135,7 +108,7 @@ export function addedBinaryRecovery(
         mode: "100644",
         size: blob.bytes.length,
         ...(await identities(blob.bytes)),
-        contentBase64: encode(blob.bytes),
+        contentBase64: encodeBase64(blob.bytes),
         contentReview: "unviewed",
       };
     }
@@ -144,9 +117,7 @@ export function addedBinaryRecovery(
 
 /** Validate retained bodies before a private assessment can use them. Import
  * also regenerates the tree/byte proof through the authenticated collector. */
-export async function validAddedBinaryProof(
-  file: FileChange,
-): Promise<boolean> {
+async function validAddedBinaryProof(file: FileChange): Promise<boolean> {
   const proof = file.addedBinary;
   if (
     !proof ||
@@ -177,12 +148,10 @@ export async function validAddedBinaryProof(
   )
     return false;
   try {
-    const bytes = Uint8Array.from(atob(proof.contentBase64), (value) =>
-      value.charCodeAt(0),
-    );
+    const bytes = decodeBase64(proof.contentBase64);
     if (
       bytes.length !== proof.size ||
-      encode(bytes) !== proof.contentBase64 ||
+      encodeBase64(bytes) !== proof.contentBase64 ||
       !binary(bytes)
     )
       return false;
@@ -193,7 +162,7 @@ export async function validAddedBinaryProof(
   }
 }
 
-export function sameAddedBinary(left: FileChange, right: FileChange): boolean {
+function sameAddedBinary(left: FileChange, right: FileChange): boolean {
   const a = left.addedBinary;
   const b = right.addedBinary;
   return (

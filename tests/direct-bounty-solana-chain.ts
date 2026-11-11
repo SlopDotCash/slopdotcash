@@ -1,14 +1,14 @@
 /** Disposable native-SOL wallet for the real Pages/D1 browser workflow. */
-import { execFileSync, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createPrivateKey, sign } from "node:crypto";
 import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { childEnvironment } from "../scripts/child-environment.mjs";
+import { startLocalSolanaValidator } from "../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../src/lib/escrow-policy.mjs";
+import { seedVerifiedWalletRows } from "./bounty-wallet-seed";
 
 const fixtureRequire = createRequire(import.meta.url);
 const { REVIEWED_SOLANA_PROGRAMS } = fixtureRequire(
@@ -33,26 +33,35 @@ export async function startLocalDirectSolanaFixture(port: number) {
     throw new Error("Invalid disposable Solana port");
   const directory = mkdtempSync(join(tmpdir(), "slop-browser-solana-"));
   const log = openSync(join(directory, "validator.log"), "w", 0o600);
-  const validator = spawn(
-    "solana-test-validator",
-    [
-      "--reset",
-      "--quiet",
-      "--ticks-per-slot",
-      "8",
-      "--ledger",
-      join(directory, "ledger"),
-      "--rpc-port",
-      String(port),
-      "--faucet-port",
-      String(port + 41),
-      "--dynamic-port-range",
-      `${port + 2}-${port + 31}`,
-      "--bind-address",
-      "127.0.0.1",
-    ],
-    { env: childEnvironment(), stdio: ["ignore", log, log] },
-  );
+  let launched: Awaited<ReturnType<typeof startLocalSolanaValidator>>;
+  try {
+    launched = await startLocalSolanaValidator({
+      rpcPort: port,
+      args: [
+        "--reset",
+        "--quiet",
+        "--ticks-per-slot",
+        "8",
+        "--ledger",
+        join(directory, "ledger"),
+        "--rpc-port",
+        String(port),
+        "--faucet-port",
+        String(port + 41),
+        "--dynamic-port-range",
+        `${port + 2}-${port + 31}`,
+        "--bind-address",
+        "127.0.0.1",
+      ],
+      stdio: ["ignore", log, log],
+      receiptPath: process.env.SLOP_SOLANA_CONTAINER_RECEIPT,
+    });
+  } catch (error) {
+    closeSync(log);
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  const validator = launched.process;
   const rpcUrl = `http://127.0.0.1:${port}`;
   const connection = new Connection(rpcUrl, {
     commitment: "confirmed",
@@ -95,19 +104,12 @@ export async function startLocalDirectSolanaFixture(port: number) {
     connection._rpcWebSocket.close();
     if (history.listening)
       await new Promise<void>((resolve) => history.close(() => resolve()));
-    if (validator.exitCode === null && validator.signalCode === null) {
-      const exited = new Promise<void>((resolve) =>
-        validator.once("exit", () => resolve()),
-      );
-      validator.kill("SIGTERM");
-      await Promise.race([exited, sleep(5000)]);
-      if (validator.exitCode === null && validator.signalCode === null) {
-        validator.kill("SIGKILL");
-        await exited;
-      }
+    try {
+      await launched.close();
+    } finally {
+      closeSync(log);
+      rmSync(directory, { recursive: true, force: true });
     }
-    closeSync(log);
-    rmSync(directory, { recursive: true, force: true });
   }
   try {
     if (!fee) throw new Error("Missing reviewed Solana fee recipient");
@@ -148,6 +150,34 @@ export async function startLocalDirectSolanaFixture(port: number) {
       fee,
       asset: SOLANA_NATIVE_ASSET,
       publicKey: decodeBase58Bytes(payer),
+      /** Sign only this disposable wallet's server-issued possession message. */
+      signWalletAuthorization(address: string, message: string): string {
+        const key =
+          address === reporter
+            ? reporterKey
+            : address === recoveryAddress
+              ? recoveryKey
+              : null;
+        if (
+          !key ||
+          !message.startsWith(
+            "Authorize Slop automatic contributor payouts\nAudience: slop.cash\n",
+          ) ||
+          !message.includes(`\nChain: solana\nWallet: ${address}\n`)
+        )
+          throw new Error("Unexpected disposable wallet authorization");
+        const privateKey = createPrivateKey({
+          key: Buffer.concat([
+            Buffer.from("302e020100300506032b657004220420", "hex"),
+            Buffer.from(key.secretKey.subarray(0, 32)),
+          ]),
+          type: "pkcs8",
+          format: "der",
+        });
+        return sign(null, Buffer.from(message, "utf8"), privateKey).toString(
+          "base64",
+        );
+      },
       async balance(
         address: string,
         asset: "native" | "token" = "native",
@@ -210,95 +240,12 @@ export function seedVerifiedSolanaBountyWallets(
   persistTo: string,
   actors: { githubId: string; githubLogin: string; address: string }[],
 ) {
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const hash = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
-  const statements: string[] = [];
-  for (const actor of actors) {
-    if (
-      !/^[1-9]\d{0,19}$/u.test(actor.githubId) ||
-      decodeBase58Bytes(actor.address).length !== 32
-    )
-      throw new Error("Invalid disposable Solana wallet actor");
-    const id = `direct-solana-browser-${actor.githubId}`,
-      challenge = `${id}-challenge`,
-      at = new Date().toISOString();
-    statements.push(
-      `INSERT OR IGNORE INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(${[id, actor.githubId, actor.githubLogin, actor.address, "d1_registry", hash(id), at, hash(`${id}:${actor.address}`), at, "solana"].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES(${[challenge, id, actor.githubId, "disposable browser fixture", new Date(Date.now() + 86_400_000).toISOString(), at].map(quote).join(",")});`,
-    );
-    statements.push(
-      `INSERT OR IGNORE INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(${[id, actor.githubId, at, challenge, "disposable verified wallet fixture"].map(quote).join(",")});`,
-    );
-  }
-  execFileSync(
-    "node",
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "d1",
-      "execute",
-      "slop-private",
-      "--local",
-      "--persist-to",
-      persistTo,
-      "--command",
-      statements.join("\n"),
-    ],
-    { stdio: "pipe", maxBuffer: 4 * 1024 * 1024 },
-  );
-}
-
-/** Append a verified successor in disposable D1; the wallet keys stay in this fixture. */
-export function rotateVerifiedSolanaBountyWallet(
-  persistTo: string,
-  actor: { githubId: string; githubLogin: string; address: string },
-) {
-  if (
-    !/^[1-9]\d{0,19}$/u.test(actor.githubId) ||
-    decodeBase58Bytes(actor.address).length !== 32
-  )
-    throw new Error("Invalid disposable Solana wallet actor");
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const digest = createHash("sha256")
-    .update(`${actor.githubId}:${actor.address}`)
-    .digest("hex");
-  const id = `direct-solana-rotated-${actor.githubId}-${randomUUID()}`,
-    challenge = `${id}-challenge`,
-    at = new Date().toISOString();
-  const recordDigest = createHash("sha256")
-    .update(`${id}:${digest}:${at}`)
-    .digest("hex");
-  const sql = [
-    `INSERT OR IGNORE INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain,supersedes_claim_id) SELECT ${quote(id)},github_user_id,${quote(actor.githubLogin)},${quote(actor.address)},'d1_registry',${quote(digest)},${quote(at)},${quote(recordDigest)},${quote(at)},chain,id FROM effective_payment_wallet_claims WHERE github_user_id=${quote(actor.githubId)} AND chain='solana' AND wallet_address<>${quote(actor.address)};`,
-    `INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) SELECT ${[challenge, id, actor.githubId, "disposable browser rotation", new Date(Date.now() + 86_400_000).toISOString(), at].map(quote).join(",")} WHERE EXISTS(SELECT 1 FROM wallet_claims WHERE id=${quote(id)});`,
-    `INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) SELECT ${[id, actor.githubId, at, challenge, "disposable verified wallet fixture"].map(quote).join(",")} WHERE EXISTS(SELECT 1 FROM wallet_claims WHERE id=${quote(id)});`,
-    `SELECT id FROM effective_payment_wallet_claims WHERE github_user_id=${quote(actor.githubId)} AND chain='solana' AND wallet_address=${quote(actor.address)};`,
-  ].join("\n");
-  const output = execFileSync(
-    "node",
-    [
-      "node_modules/wrangler/bin/wrangler.js",
-      "d1",
-      "execute",
-      "slop-private",
-      "--local",
-      "--persist-to",
-      persistTo,
-      "--command",
-      sql,
-      "--json",
-    ],
-    { stdio: "pipe", encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
-  );
-  const results = JSON.parse(output) as { results?: { id?: string }[] }[];
-  const current = results
-    .flatMap((result) => result.results ?? [])
-    .find((result) => typeof result.id === "string")?.id;
-  if (!current)
-    throw new Error(
-      "Solana fixture wallet rotation did not resolve a current claim",
-    );
-  return current;
+  seedVerifiedWalletRows(persistTo, actors, {
+    chain: "solana",
+    idPrefix: "direct-solana-browser-",
+    valid: (actor) =>
+      /^[1-9]\d{0,19}$/u.test(actor.githubId) &&
+      decodeBase58Bytes(actor.address).length === 32,
+    invalidMessage: "Invalid disposable Solana wallet actor",
+  });
 }

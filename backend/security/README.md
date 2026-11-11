@@ -239,6 +239,16 @@ activate intake or prove that GitHub or Surplus is available.
   `__Secure-slop_intake_grant` cookie (path `/api/v1/security-submissions`,
   2 hours) bound to the submission and the site session. No access or
   refresh token is stored in D1. GitHub records the reporter as the author.
+  Callbacks leave the encrypted flow cookie until its original ten-minute
+  expiry, so an older response cannot delete a newer pending authorization.
+  State, PKCE, account and expiry checks still apply. Code replay protection
+  is the provider's OAuth responsibility, not cookie deletion:
+  [RFC 6749 section 4.1.2](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.2)
+  requires one-use authorization codes; [GitHub's token-error documentation](https://docs.github.com/en/apps/oauth-apps/maintaining-oauth-apps/troubleshooting-oauth-app-access-token-request-errors)
+  describes rejected verification codes. The local fixture models consumed
+  codes; this is not live-provider evidence. The browser still has one grant
+  cookie: a later successful authorization replaces the earlier grant, so a
+  different submission may require authorization again.
 - `security_submissions` (migration 0059) holds no report content. States:
   `draft`, `submitting`, `uncertain`, `submitted`, `receipt-verified`,
   `failed`, `abandoned`. Every transition is a revision compare-and-set
@@ -293,7 +303,7 @@ activate intake or prove that GitHub or Surplus is available.
   them. It never sets severity, receipt, award or disclosure.
 - After verified receipt, `analysis.ts` schedules a private proposal. The
   owner selected Surplus Intelligence only, with `SURPLUS_API_KEY`. It requests
-  `claude-opus-5.5` through the Surplus Messages API. The requested model is
+  `claude-sonnet-5.5` through the Surplus Messages API. The requested model is
   not proof of the model served by the marketplace. A zero-data-retention
   agreement is not required. Retention follows the applicable account terms.
   There is no fallback: without the key every analysis is `unavailable`.
@@ -400,7 +410,7 @@ confirmed finding without an award. `uphold` restores the receipt unchanged;
 
 Slopbot triages every appeal first (PRD section 8). When the reporter files
 the appeal, the same analyzer as the report analysis (Surplus
-`claude-opus-5.5`, prompt `slop-security-appeal-triage-1`) reads the appealed
+`claude-sonnet-5.5`, prompt `slop-security-appeal-triage-1`) reads the appealed
 decision, its reason, the appeal reason, Slopbot's earlier report summary and
 the program scope from the case's recorded policy revision. Both report
 analysis and appeal triage use that revision, not later project edits. If no
@@ -471,6 +481,13 @@ recover a consumed nonce. An unpaid fee can recover after the researcher is paid
 without asking the reporter to consent again. A successful unrelated transaction
 is not cancellation proof and requires manual review. A legacy EVM request without a pinned nonce cannot be
 redirected automatically; renewed consent can restore only its original address.
+
+Initial preparation binds both current authorized wallet records and the reporter's
+exact consent in the case-update transaction. Recovery also requires its current
+payment generation and both wallet records at commit, except that fee-only
+recovery preserves the paid reporter's original destination independently of later
+reporter wallet changes. A payer wallet change during chain verification refuses
+the stale successor; it does not invalidate already finalized transfer evidence.
 
 Solana reuses the original unsigned bytes while their blockhash is valid. A new
 message, including one for the same wallet, requires retirement of every issued

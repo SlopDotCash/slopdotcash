@@ -18,6 +18,13 @@ const OTHER = { githubId: "4244", githubLogin: "other" };
 
 function fixture() {
   const { db, sqlite } = sqliteD1();
+  // Project metadata remains historical; live queue operations need leases
+  // beyond SQLite's current clock, even when a test supplies its own time.
+  const clock = sqlite
+    .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+    .get() as { at: string };
+  const at = (hours = 0) =>
+    new Date(Date.parse(clock.at) + (hours + 1) * 3_600_000);
   const project = applicationManifest("incomplete", "example/repo");
   Object.assign(project.rewardAsset as object, {
     chainId: "1",
@@ -84,12 +91,16 @@ function fixture() {
       {
         db,
         sessionActor: async () => actor,
-        now: () => new Date(AT),
+        now: () => at(),
         adminGithubIds: new Set([ADMIN.githubId]),
         repositoryAccess,
       },
     );
-  const seed = async (id = "delivery-one", number = 7, received = AT) => {
+  const seed = async (
+    id = "delivery-one",
+    number = 7,
+    received = at().toISOString(),
+  ) => {
     sqlite.run(
       "INSERT INTO slopbot_deliveries(delivery_id,event,received_at) VALUES(?,'pull_request',?)",
       [id, received],
@@ -119,6 +130,7 @@ function fixture() {
   return {
     db,
     sqlite,
+    at,
     seed,
     inbox,
     list,
@@ -143,8 +155,8 @@ test("a source gap appears once in the current maintainer and admin private Inbo
         projectName: "Project incomplete",
         repository: "example/repo",
         pullRequest: 7,
-        since: AT,
-        retryAt: "2026-10-30T01:00:00.000Z",
+        since: f.at().toISOString(),
+        retryAt: f.at(1).toISOString(),
         running: false,
       },
     ],
@@ -165,7 +177,7 @@ test("a source gap survives automatic retry and clears only with a completed sou
   await f.seed();
   await f.seed("duplicate-delivery");
   expect((await f.list()).items).toHaveLength(1);
-  const at = new Date("2026-10-30T01:00:00.000Z");
+  const at = f.at(1);
   const claim = await claimValueRequest(f.db, "delivery-one", at);
   if (!claim) throw new Error("Retry claim refused");
   expect((await f.list()).items[0].running).toBe(true);
@@ -177,7 +189,7 @@ test("a source gap survives automatic retry and clears only with a completed sou
     at,
   );
   expect((await f.list()).items).toHaveLength(1);
-  const finalAt = new Date("2026-10-30T02:00:00.000Z");
+  const finalAt = f.at(2);
   const finalClaim = await claimValueRequest(f.db, "delivery-one", finalAt);
   if (!finalClaim) throw new Error("Final claim refused");
   await finishValueRequest(f.db, finalClaim, "published", null, finalAt);
@@ -225,13 +237,13 @@ test("revoked, unavailable or changed project authority does not expose the priv
 test("a later completed assessment resolves an exhausted sibling's retained source gap", async () => {
   const f = fixture();
   await f.seed();
-  const at = new Date("2026-10-30T01:00:00.000Z");
+  const at = f.at(1);
   const exhausted = await claimValueRequest(f.db, "delivery-one", at);
   if (!exhausted) throw new Error("Exhausted claim refused");
   await finishValueRequest(f.db, exhausted, "attempts-exhausted", null, at);
   expect((await f.list()).items).toHaveLength(1);
-  await f.seed("new-source", 7, "2026-10-30T02:00:00.000Z");
-  const resolvedAt = new Date("2026-10-30T03:00:00.000Z");
+  await f.seed("new-source", 7, f.at(2).toISOString());
+  const resolvedAt = f.at(3);
   const completed = await claimValueRequest(f.db, "new-source", resolvedAt);
   if (!completed) throw new Error("Completed claim refused");
   await finishValueRequest(f.db, completed, "published", null, resolvedAt);
@@ -271,14 +283,14 @@ test("private queue pagination preserves numeric PR ordering without dropping en
 test("a new source gap after a completed assessment returns to the Inbox", async () => {
   const f = fixture();
   await f.seed();
-  const completedAt = new Date("2026-10-30T01:00:00.000Z");
+  const completedAt = f.at(1);
   const claim = await claimValueRequest(f.db, "delivery-one", completedAt);
   if (!claim) throw new Error("Fixture completion claim refused");
   await finishValueRequest(f.db, claim, "published", null, completedAt);
   expect((await f.list()).items).toEqual([]);
-  await f.seed("new-source-gap", 7, "2026-10-30T02:00:00.000Z");
+  await f.seed("new-source-gap", 7, f.at(2).toISOString());
   expect((await f.list()).items).toHaveLength(1);
-  expect((await f.list()).items[0].since).toBe("2026-10-30T02:00:00.000Z");
+  expect((await f.list()).items[0].since).toBe(f.at(2).toISOString());
   f.sqlite.close();
 });
 

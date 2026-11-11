@@ -9,9 +9,12 @@ At 02:17 UTC, the scheduled handler starts one snapshot for that UTC date.
 The queue copies `vetting/` objects that existed at the snapshot start. A page
 contains at most 32 objects. Each stored object is at most the existing 8 MiB
 evidence-part limit. Large logical evidence files already use several parts.
-Copies retain each original R2 key and SHA-256 in private page receipts. Both
-source and copied bytes are read and checked. Missing or changed bytes fail
-the page. A completion receipt is written only after every page succeeds.
+Copies retain each original R2 key and the observed byte SHA-256 in private
+page receipts. The Worker hashes the actual bounded body rather than trusting
+its evidence metadata. This preserves corrupt old targets for recovery without
+claiming that they match the declared evidence. Missing or unreadable bodies
+fail the page. Canonical retirement markers are verified and skipped; they
+contain no original evidence. A completion receipt follows every successful page.
 
 The start receipt, page receipts and byte copies are create-only. Duplicate
 delivery reuses the verified page and continues from its cursor. A failed
@@ -28,8 +31,9 @@ longer than that rule. A raw-byte backup does not back up D1 assessment,
 inventory, policy or audit rows. Coordinated D1/R2 recovery and hosted
 recovery verification remain separate required controls.
 
-`restoreCheck` verifies the completion receipt and page hash chain, reads the
-selected copied bytes, and restores them under a separate `restore-checks/`
+`restoreCheck` verifies the completion receipt and page hash chain, plus any
+selected retirement supplement bound to that snapshot. It reads the copied
+bytes and restores them under a separate `restore-checks/`
 prefix in a supplied private destination. It checks the restored bytes too.
 It cannot replace a live evidence key. Use an isolated destination with its
 own disposal policy for a live restoration exercise; this source does not
@@ -47,19 +51,53 @@ The admission gate still verifies all required retained bytes; retention is not
 proof of a passed scan. Closure comes from migration
 0066 and the policy-owner route in the evidence API.
 
-Before deleting an object, the worker checks that every exact part exists in
-that day's backup and verifies its digest and size against the immutable
-inventory. It deletes only canonical scanner keys and verifies their absence.
-A durable deletion receipt is written afterward. A failed or interrupted
-object can be retried: its backup is checked again and already absent parts
-remain absent. Manifests, case closures and deletion receipts are retained.
-A missing backup, invalid key or failed delete prevents completion.
+Migration 0119 separates new content references into immutable storage
+generations. Every writer reserves a fresh physical target before a create-only
+PUT. A repair publishes a new target through a pointer compare-and-set; it never
+overwrites an old target. Cleanup atomically freezes a generation only when all
+its remaining references meet the retention predicate. New references, target
+reservations and pointer publication then refuse for that generation.
+
+The Worker processes every reserved target, including unpublished writes and
+old layouts, in batches of 16. Existing bytes are copied and verified before a
+permanent, non-evidence marker replaces them. Targets uploaded after the daily
+snapshot receive supplemental byte copies and immutable receipts under
+`daily/<day>/retirement/`, bound to the snapshot completion digest. Original
+declared identity and observed byte identity remain separate. An exact copy is
+`backed`; different observed bytes are `changed` and remain restorable for
+investigation. Changed bytes never qualify the original declared slot as backed.
+
+For an apparently missing target, cleanup first writes a create-only marker.
+An earlier admitted PUT either wins first and is backed up, or loses to that
+marker. Only a verified missing marker permits a `missing` receipt. Missing is
+never backup evidence. Backed or changed paths publish their byte receipt before
+the marker overwrite, so retries cannot infer a backup from an unbound orphan
+payload. Lost replies retain committed copies, markers and receipts. The next
+attempt verifies the same target and classification before proceeding.
+
+The generation retires only after every reserved target has a verified marker
+and D1 retirement record. A per-reference deletion receipt additionally requires
+every declared full slot tuple to have a backed current head. Missing or changed
+slots receive `retention-missing` instead. The cycle can advance past those gaps
+without asserting complete evidence. Manifests, target history, heads, closures
+and receipts remain. Marker objects must remain permanently present in the source
+bucket; source lifecycle rules must not remove them. This safety argument assumes
+all writers follow the new create-only protocol and no external actor removes or
+overwrites markers. It is not an atomic transaction across D1 and R2.
+
+Legacy null-generation references keep their existing locations and bytes.
+They receive `retention-held` and no automatic deletion receipt. Old admitted
+unconditional writers cannot be made safe retroactively; do not treat deploying
+this source as evidence that such writers have drained. The historical DELETE
+counterexamples remain documented in `vetting_retention`, while
+`vetting_generation_retirement` models the new forward protocol.
 
 Keep `max_concurrency = 1` and `max_batch_size = 1` on the queue. Do not call
 backup or cleanup routines concurrently from another service. The active D1
 cycle excludes a new scheduled snapshot until all cleanup messages finish.
-The backup bucket's 30-day lifecycle still governs old copies after deletion.
-Keep deletion disabled until the hosted backup and restoration check passes.
+The backup bucket's 30-day lifecycle still governs primary and supplemental
+copies. Permanent markers are not backups. Keep retirement disabled until the
+reviewed migration, writer rollout, hosted backup and restoration gates pass.
 
 ## Access-log retention
 
@@ -95,9 +133,17 @@ The checked-in local configuration is off by default.
 Run `node workers/vetting-backup/workflow.mjs` from the repository root. It
 uses local workerd R2 and a real queue consumer with 65 harmless objects. It
 checks pagination, duplicate scheduling, restore integrity, source
-preservation, exclusion of non-scanner objects, and refusal of corrupted
-source or backup bytes. It does not prove hosted scheduling, lifecycle
+preservation, exclusion of non-scanner objects, raw recovery of changed
+source bytes, and refusal of corrupted backup copies. It does not prove hosted scheduling, lifecycle
 deletion, D1 recovery or production access controls.
+
+`generation-retirement.workflow.mjs` defines the new generation counterpart:
+actual API registration/repair, migrated D1 and local R2; shared-reference hold;
+all-target pagination; missing-target versus admitted PUT; zero-byte originals;
+lost marker reply and interrupted retry; changed-byte recovery; corrupt or
+unbound backup refusal; missing-head receipts; and a fresh successor generation.
+These definitions and the new finite model were authored and manually reviewed
+without executing tests, models, parsers or runtime checks in this change.
 
 ### Protected hosted recovery qualification
 
@@ -141,12 +187,11 @@ A separate fixed command runs the existing storage core on the same disposable
 D1/R2 bindings with fixture-only retention enabled. Its sequential subjobs use a
 controlled queue adapter for fault insertion; they do not claim hosted queue retry
 evidence. The original backup phase still exercises real queue deliveries.
-Incomplete, missing or corrupt exact backups must refuse deletion. An injected
-interruption after one real part deletion must recover without an early completion
-receipt. Open and recent cases and the non-scanner sentinel remain. Missing
-inventory stays audited without a complete deletion receipt. Deleted harmless
-chunks restore under the separate destination prefix. Replays preserve permanent
-receipts. The actual scheduled handler prunes only old audit fixtures; disabled
+The legacy retention fixture records held references without deleting bytes or
+issuing deletion receipts. Open and recent cases and the non-scanner sentinel
+remain. Its backup/restore and corruption cases remain separate from the new
+generation workflow's marker and retry cases. The actual scheduled handler
+prunes only old audit fixtures; disabled
 backup mode and the migration guards preserve current and invalid-date audit.
 Timestamps are explicitly aged fixtures, not elapsed lifecycle observations.
 
@@ -174,10 +219,9 @@ operator-browser acceptance, production Pages bindings, elapsed 90-day retention
 and observed 30-day bucket expiry. Daily deployed scheduling and isolation
 remain separate acceptance work. This controlled proof is not activation of production deletion.
 
-Incomplete uploads can leave inventory without bytes. Cleanup audits parts absent
-from both source and backup as `retention-missing`; it does not record a complete
-deletion receipt for that object. It deletes an existing part only after verifying
-its exact backup. A durable cleanup cursor advances past gaps and rechecks them
-in the next daily cycle. Missing evidence stays distinct from successful deletion
-and cannot prevent later daily backups. An existing source without a valid backup
-still stops cleanup.
+Incomplete uploads can leave inventory without bytes. For new generations,
+cleanup fences every reserved target and audits absent backed heads as
+`retention-missing`; it does not fabricate a deletion receipt. A durable cleanup
+cursor advances past these gaps. Missing evidence stays distinct from complete
+retirement and cannot prevent later daily backups. Unreadable bytes, conflicting
+copies, invalid receipts or an unconfirmed marker still stop that target's work.

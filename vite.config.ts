@@ -89,7 +89,11 @@ export default defineConfig(({ command, isPreview }) => {
           });
           if (!automaticBackend || !localBackend) return;
           let child: ChildProcess | undefined;
-          const stop = () => child?.kill("SIGTERM");
+          let closed = false;
+          const stop = () => {
+            closed = true;
+            child?.kill("SIGTERM");
+          };
           server.httpServer?.once("close", stop);
           server.httpServer?.once("listening", () => {
             const address = server.httpServer?.address();
@@ -113,6 +117,9 @@ export default defineConfig(({ command, isPreview }) => {
                 );
                 return;
               } catch {
+                // The health read may finish after Vite closed. Its close
+                // event already ran, so a newly spawned child would be orphaned.
+                if (closed) return;
                 child = spawn("bun", ["scripts/dev-backend.ts"], {
                   cwd: server.config.root,
                   env: {

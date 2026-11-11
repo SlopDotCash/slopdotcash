@@ -83,7 +83,7 @@ export type ConfigResult =
   | { ok: true; config: RepositoryConfig }
   | { ok: false; config: RepositoryConfig; problem: string };
 
-export function parseRepositoryConfig(text: string): ConfigResult {
+function parseRepositoryConfig(text: string): ConfigResult {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -294,7 +294,37 @@ type Rate = {
 };
 type PriceEntry = Rate & { reconciliation: "list-price" | "estimated" };
 
-export const PRICES: Record<string, PriceEntry> = {
+const PRICES: Record<string, PriceEntry> = {
+  // New model identities added on 11 November 2026. The historical rates below
+  // stay unchanged. Catalogue prices estimate cost; provider receipts reconcile it.
+  "orbio/anthropic/claude-sonnet-5.5": {
+    input: 2_000_000,
+    cacheWrite: 2_500_000,
+    cacheRead: 100_000,
+    output: 10_000_000,
+    reconciliation: "list-price",
+  },
+  "orbio/openai/gpt-6.1-terra": {
+    input: 1_000_000,
+    cacheWrite: 1_250_000,
+    cacheRead: 50_000,
+    output: 5_000_000,
+    reconciliation: "list-price",
+  },
+  "surplus/claude-sonnet-5.5": {
+    input: 2_000_000,
+    cacheWrite: 2_500_000,
+    cacheRead: 100_000,
+    output: 10_000_000,
+    reconciliation: "estimated",
+  },
+  "surplus/gpt-6.1-terra": {
+    input: 1_000_000,
+    cacheWrite: 1_250_000,
+    cacheRead: 50_000,
+    output: 5_000_000,
+    reconciliation: "estimated",
+  },
   // Best listed Surplus offer on 9 October 2026. Actual offers vary, so the
   // row stays "estimated" until reconciled against Surplus spend. Surplus
   // publishes no cache prices; input price is charged for cache tokens.

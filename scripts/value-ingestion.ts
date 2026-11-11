@@ -26,12 +26,12 @@ import {
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
 import type { valueHistory } from "../workers/slopbot/value-journal";
 import type { ValueMergeRecipe } from "../workers/slopbot/value-merge-profile";
-import type { WorkUnitSource } from "../workers/slopbot/value-work-unit";
 import {
   consumeWorkUnitHistory,
   readWorkUnitHistory,
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
@@ -59,17 +59,59 @@ export class ValueFeedUnavailableError extends Error {
 /** Process exit status for a value feed outage (EX_TEMPFAIL). */
 export const VALUE_FEED_UNAVAILABLE_EXIT_CODE = 75;
 
+/** A native fetch body may fulfill with a prefix after its request expires. */
+function assertFeedDeadline(signal: AbortSignal): void {
+  if (signal.aborted) throw new ValueFeedUnavailableError(signal.reason);
+}
+
 /** Any failure to read an answered body (interrupted, reset or timed out) is
  * an outage. Malformed JSON in a complete body is an integrity failure and
  * stops the publication. */
-async function readFeedJson<T>(response: Response): Promise<T> {
+async function readFeedJson<T>(
+  response: Response,
+  signal: AbortSignal,
+): Promise<T> {
   let text: string;
   try {
     text = await response.text();
   } catch (error) {
     throw new ValueFeedUnavailableError(error);
   }
+  assertFeedDeadline(signal);
   return JSON.parse(text) as T;
+}
+
+/** Reads one authoritative Slopbot JSON feed. A transport failure, timeout,
+ * 404 (a release without the route), 408, 429 or 5xx is an outage that keeps
+ * the last published snapshot; any other non-200 answer or a redirect is an
+ * integrity failure reported as `unavailable`. */
+async function fetchAuthoritativeFeed<T>(
+  url: URL | string,
+  transport: Fetch,
+  unavailable: string,
+): Promise<T> {
+  const signal = AbortSignal.timeout(30_000);
+  let response: Response;
+  try {
+    response = await transport(url, {
+      redirect: "manual",
+      cache: "no-store",
+      signal,
+    });
+  } catch (error) {
+    throw new ValueFeedUnavailableError(error);
+  }
+  assertFeedDeadline(signal);
+  if (
+    response.status === 404 ||
+    response.status === 408 ||
+    response.status === 429 ||
+    response.status >= 500
+  )
+    throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
+  if (response.status !== 200 || response.redirected)
+    throw new Error(unavailable);
+  return readFeedJson<T>(response, signal);
 }
 
 /** The fixed HTTPS origin, not a digest supplied by an arbitrary URL, is the
@@ -122,16 +164,18 @@ async function fetchHistoryPage(
   url.searchParams.set("pull", String(pull));
   url.searchParams.set("after", String(after));
   if (through !== null) url.searchParams.set("through", String(through));
+  const signal = AbortSignal.timeout(30_000);
   let response: Response;
   try {
     response = await transport(url, {
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
+      signal,
     });
   } catch (error) {
     throw new ValueFeedUnavailableError(error);
   }
+  assertFeedDeadline(signal);
   if (
     response.status === 408 ||
     response.status === 429 ||
@@ -158,6 +202,7 @@ async function fetchHistoryPage(
     }
     chunks.push(result.value);
   }
+  assertFeedDeadline(signal);
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
@@ -272,33 +317,14 @@ async function fetchPenaltyRecords(
     url.searchParams.set("project", projectId);
     url.searchParams.set("after", after);
     if (history) url.searchParams.set("history", "1");
-    let response: Response;
-    try {
-      response = await transport(url, {
-        redirect: "manual",
-        cache: "no-store",
-        signal: AbortSignal.timeout(30_000),
-      });
-    } catch (error) {
-      throw new ValueFeedUnavailableError(error);
-    }
     // A Slopbot release without this route (404) is an outage too: keep the
     // last published snapshot instead of publishing scores without debits.
-    if (
-      response.status === 404 ||
-      response.status === 408 ||
-      response.status === 429 ||
-      response.status >= 500
-    )
-      throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
-    if (response.status !== 200 || response.redirected)
-      throw new Error("Authoritative penalty feed is unavailable");
-    const body = await readFeedJson<{
+    const body = await fetchAuthoritativeFeed<{
       schemaVersion?: unknown;
       project?: unknown;
       records?: unknown;
       nextAfter?: unknown;
-    }>(response);
+    }>(url, transport, "Authoritative penalty feed is unavailable");
     if (
       !(
         body?.schemaVersion ===
@@ -733,29 +759,11 @@ export async function loadParticipationBans(
   github: Pick<GitHubClient, "get">,
   transport: Fetch = fetch,
 ): Promise<Map<string, string>> {
-  let response: Response;
-  try {
-    response = await transport(ACCOUNT_BAN_FEED, {
-      redirect: "manual",
-      cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (error) {
-    throw new ValueFeedUnavailableError(error);
-  }
   // 404 covers the release window before the route is deployed.
-  if (
-    response.status === 404 ||
-    response.status === 408 ||
-    response.status === 429 ||
-    response.status >= 500
-  )
-    throw new ValueFeedUnavailableError(`HTTP ${response.status}`);
-  if (response.status !== 200 || response.redirected)
-    throw new Error("The account ban feed is unavailable");
-  const body = await readFeedJson<{ schemaVersion?: unknown; bans?: unknown }>(
-    response,
-  );
+  const body = await fetchAuthoritativeFeed<{
+    schemaVersion?: unknown;
+    bans?: unknown;
+  }>(ACCOUNT_BAN_FEED, transport, "The account ban feed is unavailable");
   if (
     body?.schemaVersion !== "slop-account-bans:v1" ||
     !Array.isArray(body.bans) ||

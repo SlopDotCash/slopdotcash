@@ -41,6 +41,27 @@ import {
 } from "../../contracts/evm/adapter";
 import { evmReceiptNativeCost } from "../../contracts/evm/native-cost";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
+import { nextReplacementFees } from "../verified-fee-replacement";
+import type {
+  BridgeQuote,
+  BridgeTerms,
+  BurnQuote,
+  BuybackChainClient,
+  BuyQuote,
+  FillState,
+  OutcomeEvidence,
+  PreparedBridge,
+} from "./buyback";
+import { bridgeTerms } from "./buyback";
+import {
+  BURN_ADDRESS,
+  BUYBACK_NETWORK,
+  type BuybackLimits,
+  DLN,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_USDG,
+  SLOP_TOKEN,
+} from "./buyback-config";
 import type { Limits, NetworkConfig } from "./config";
 import type {
   ChainClient,
@@ -53,7 +74,23 @@ import type {
   SendReplacement,
   SendStatus,
 } from "./core";
+import {
+  checkedDlnOrder,
+  DLN_DESTINATION_ABI,
+  DLN_SOURCE_ABI,
+  type DlnProposal,
+  GIVE_STATUS,
+  proposeDlnOrder,
+  TAKE_STATUS,
+} from "./debridge";
 import type { NativeGasJournal, RecordedNativeSend } from "./native-gas";
+import {
+  minimumOutput,
+  priceImpactCeiling,
+  roundedDivision,
+  spendableNative,
+} from "./verified-arithmetic";
+import { bridgeFeeWithin } from "./verified-buyback";
 
 const KYBER_API = "https://aggregator-api.kyberswap.com";
 /** KyberSwap's address for the chain's native currency, used to price gas. */
@@ -111,14 +148,13 @@ const CLAIM_FEES = encodeFunctionData({
 const DEADLINE_SECONDS = 20 * 60;
 const RECEIPT_WAIT_MS = 60_000;
 /**
- * Same-nonce fee replacement policy (owner decision of 25 October 2026).
+ * Same-nonce fee replacement policy (owner decision of 25 October 2026),
+ * shared with the payment keeper in `workers/verified-fee-replacement.ts`.
  * Each step raises both fee fields by 25%, never above three times the
  * original send's fields. Every step must raise both fields by at least 10%,
  * the minimum that nodes accept for an EIP-1559 replacement; a step that
  * cannot is the cap.
  */
-const REPLACEMENT_STEP_PERCENT = 125n;
-const REPLACEMENT_MIN_PERCENT = 110n;
 const REPLACEMENT_CAP_MULTIPLE = 3n;
 /**
  * A swap replacement reuses the signed calldata and so its router deadline.
@@ -134,9 +170,6 @@ function assertNonceFree(nonce: number, nonceFloor: number) {
       `fee-wallet nonce ${nonce} is held by an open journaled send; next free nonce is ${nonceFloor}`,
     );
 }
-
-const ceilPercent = (value: bigint, percent: bigint) =>
-  (value * percent + 99n) / 100n;
 
 const DESCRIPTION = {
   type: "tuple",
@@ -196,7 +229,7 @@ export const KYBER_ROUTER_ABI = [
 
 type Fetch = typeof fetch;
 
-export interface EvmClientOptions {
+interface EvmClientOptions {
   config: NetworkConfig;
   limits: Limits;
   kyberClientId: string;
@@ -206,7 +239,37 @@ export interface EvmClientOptions {
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   nativeGas?: NativeGasJournal;
+  /**
+   * SLOP buyback (PRD section 6). Absent leaves this client exactly as
+   * before: no bridge, purchase or burn method exists and Robinhood Chain
+   * neither quotes nor signs.
+   */
+  buyback?: {
+    limits: BuybackLimits;
+    /** The Robinhood Chain fee wallet every bridge order delivers to. */
+    receiver: string;
+  };
 }
+
+/** Conservative gas for one DLN order, used only to price its cost. */
+const DLN_ORDER_GAS = 700_000n;
+interface BridgeCost {
+  token: string;
+  amount: bigint;
+  takeAmount: bigint;
+  nativeFee: bigint;
+  /** An approval also leaves room for the following order's native ceiling. */
+  approval: boolean;
+}
+const PAUSED_ABI = [
+  {
+    type: "function",
+    name: "paused",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
 
 /**
  * Parses a non-negative decimal dollar string into integer micro-units.
@@ -222,12 +285,21 @@ export function usdMicro(
   const text = String(value);
   const match = /^(\d+)(?:\.(\d+))?(?:e-(\d+))?$/u.exec(text);
   if (!match) return null;
-  if (match[3]) return 0n; // exponent form only appears for tiny values
-  const fraction = (match[2] ?? "").padEnd(6, "0");
-  const whole = BigInt(match[1]) * 1_000_000n + BigInt(fraction.slice(0, 6));
-  const rest =
-    direction === "up" && /[1-9]/u.test((match[2] ?? "").slice(6)) ? 1n : 0n;
-  return whole + rest;
+  const fraction = match[2] ?? "";
+  const digits = match[1] + fraction;
+  // A negative exponent larger than this text can only be sub-micro. Handle
+  // it before building any bigint power, so hostile exponents cannot request
+  // an unbounded power of ten or round positive gas cost down to zero.
+  const exponent = match[3] === undefined ? 0 : Number(match[3]);
+  const discarded = fraction.length + exponent - 6;
+  if (discarded >= digits.length)
+    return direction === "up" && /[1-9]/u.test(digits) ? 1n : 0n;
+  if (discarded <= 0) return BigInt(digits) * 10n ** BigInt(-discarded);
+  return roundedDivision(
+    BigInt(digits),
+    10n ** BigInt(discarded),
+    direction === "up",
+  );
 }
 
 interface KyberRoute {
@@ -248,11 +320,17 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
   const sleep =
     options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const router = definition.router as Address;
-  /** The USDC target; a network without a verified one never quotes or signs. */
+  /**
+   * The stablecoin that prices value and gas: the network's USDC, or on a
+   * network without a conversion target its pricing reference, and that only
+   * while the buyback is configured. Without either, nothing quotes or signs.
+   */
   const usdc = (): string => {
-    if (definition.usdc === null)
+    const reference =
+      definition.usdc ?? (options.buyback ? definition.stable : null);
+    if (reference === null)
       throw new Error(`no verified USDC target on ${config.network}`);
-    return definition.usdc;
+    return reference;
   };
   const wallet = config.feeWallet as Address;
   const nativeAsset = (token: string) =>
@@ -320,12 +398,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     return body.data as T;
   }
 
-  /** A KyberSwap route from `token` to this network's USDC. */
-  const kyberRoute = (token: string, amountIn: bigint) =>
+  /** A KyberSwap route from `token` to `target`, by default this network's USDC. */
+  const kyberRoute = (token: string, amountIn: bigint, target = usdc()) =>
     kyber<KyberRoute>(
       `routes?${new URLSearchParams({
         tokenIn: routeToken(token),
-        tokenOut: usdc(),
+        tokenOut: target,
         amountIn: amountIn.toString(),
         gasInclude: "true",
       })}`,
@@ -338,15 +416,78 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     if (row.kind === "claim" && !(await verifiedVault(recordedVault(row))))
       throw new Error("Recorded claim pays another fee wallet");
   }
-  /** The approval calldata grants exactly the row's amount to the pinned router. */
+  /**
+   * The one spender an approval row may name: the pinned bridge contract for
+   * a bridge approval (route `debridge`), otherwise the pinned swap router.
+   */
+  const approvalSpender = (row: ConversionRow) =>
+    row.route === "debridge" ? (DLN.source as Address) : router;
+  /** The approval calldata grants exactly the row's amount to its pinned spender. */
   function boundedApproval(row: ConversionRow, data: Hex, value?: bigint) {
     const decoded = decodeFunctionData({ abi: erc20Abi, data });
     return (
       (value ?? 0n) === 0n &&
       decoded.functionName === "approve" &&
-      decoded.args[0].toLowerCase() === router &&
+      decoded.args[0].toLowerCase() === approvalSpender(row) &&
       decoded.args[1] === BigInt(row.amountIn)
     );
+  }
+  /** The exact burn calldata: a transfer of the row's amount to the burn address. */
+  const burnCalldata = (amount: bigint) =>
+    encodeFunctionData({
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [BURN_ADDRESS as Address, amount],
+    });
+  /** The contract a recorded send must call, by its kind. */
+  const sendRecipient = (row: ConversionRow): string =>
+    row.kind === "claim"
+      ? recordedVault(row).vault
+      : row.kind === "approval"
+        ? row.token
+        : row.kind === "bridge"
+          ? DLN.source
+          : row.kind === "burn"
+            ? SLOP_TOKEN
+            : router;
+  /**
+   * A recorded bridge order or burn must still be exactly the send that was
+   * journaled: the pinned contract and the recorded terms, nothing else.
+   */
+  function assertBuybackIntent(
+    row: ConversionRow,
+    to: string | null | undefined,
+    data: Hex,
+    value: bigint,
+  ) {
+    if (row.kind === "burn") {
+      if (
+        to?.toLowerCase() !== SLOP_TOKEN ||
+        value !== 0n ||
+        data.toLowerCase() !== burnCalldata(BigInt(row.amountIn)).toLowerCase()
+      )
+        throw new Error("Recorded burn differs from its exact transfer");
+      return;
+    }
+    if (row.kind !== "bridge") return;
+    const terms = bridgeTerms(row);
+    const order = checkedDlnOrder(data, {
+      wallet,
+      giveToken: row.token,
+      giveAmount: BigInt(row.amountIn),
+      takeToken: terms.takeToken,
+      takeChainId: BigInt(terms.takeChainId),
+      receiver: terms.receiver,
+    });
+    if (
+      to?.toLowerCase() !== DLN.source ||
+      value !== BigInt(terms.nativeFee) ||
+      order.takeAmount !== BigInt(terms.takeAmount) ||
+      order.salt !== BigInt(terms.salt) ||
+      terms.takeToken.toLowerCase() !== ROBINHOOD_USDG ||
+      BigInt(terms.takeChainId) !== ROBINHOOD_CHAIN_ID
+    )
+      throw new Error("Recorded bridge order differs from its terms");
   }
 
   async function sendRaw(raw: Hex): Promise<void> {
@@ -409,6 +550,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
     replaces?: string,
+    bridge?: BridgeCost,
   ) {
     if (!account || !options.nativeGas || !config.nativeBudget)
       throw new Error("Fee signing needs the durable native budget");
@@ -434,6 +576,32 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     }
     const maximum =
       (input.gas as bigint) * (input.maxFeePerGas as bigint) + extra;
+    if (bridge) {
+      const buybackLimits = options.buyback?.limits;
+      if (!buybackLimits)
+        throw new Error("Bridge signing needs buyback limits");
+      const preparation = await options.nativeGas.bridgePreparationNative(
+        bridge.token,
+        { nonce: input.nonce as number, maximum },
+      );
+      const native =
+        preparation +
+        bridge.nativeFee +
+        (bridge.approval ? BigInt(config.nativeBudget.perTransaction) : 0n);
+      const priced = await self.quote(NATIVE, native);
+      if (
+        "noRoute" in priced ||
+        priced.amountOut >= bridge.takeAmount ||
+        !bridgeFeeWithin(
+          bridge.amount,
+          bridge.takeAmount - priced.amountOut,
+          buybackLimits.maxBridgeCostBps,
+        )
+      )
+        throw new Error(
+          "Final prepared bridge cost exceeds the cap or cannot be priced",
+        );
+    }
     if ((input.value ?? 0n) > 0n) {
       const balance = await client.getBalance({ address: wallet });
       if (balance < (input.value ?? 0n) + maximum)
@@ -465,6 +633,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
     value = 0n,
+    bridge?: BridgeCost,
   ): Promise<{ raw: Hex; hash: Hex; nativeGasId: string }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
@@ -489,6 +658,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       },
       valueMicro,
       assertLease,
+      undefined,
+      bridge,
     );
   }
 
@@ -716,6 +887,272 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       throw new Error("Recorded native transaction bounds are unavailable");
     return intent;
   }
+  /**
+   * A finalized bridge order: the pinned contract created exactly the
+   * recorded order and took exactly the recorded amount from this wallet.
+   */
+  function bridgeReceipt(row: ConversionRow, receipt: TransactionReceipt) {
+    const terms = bridgeTerms(row);
+    const created = parseEventLogs({
+      abi: DLN_SOURCE_ABI,
+      eventName: "CreatedOrder",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === DLN.source,
+      ),
+    });
+    if (
+      created.length !== 1 ||
+      created[0].args.orderId.toLowerCase() !== terms.orderId ||
+      created[0].args.order.takeAmount !== BigInt(terms.takeAmount) ||
+      created[0].args.order.takeChainId !== BigInt(terms.takeChainId) ||
+      created[0].args.order.takeTokenAddress.toLowerCase() !==
+        terms.takeToken.toLowerCase() ||
+      created[0].args.order.receiverDst.toLowerCase() !==
+        terms.receiver.toLowerCase()
+    )
+      throw new Error("Bridge receipt lacks the recorded order");
+    let paid = 0n;
+    for (const { args } of parseEventLogs({
+      abi: erc20Abi,
+      eventName: "Transfer",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === row.token.toLowerCase(),
+      ),
+    })) {
+      if (args.from.toLowerCase() === wallet) paid += args.value;
+      if (args.to.toLowerCase() === wallet) paid -= args.value;
+    }
+    if (paid !== BigInt(row.amountIn))
+      throw new Error("Bridge receipt debit differs from the recorded amount");
+    return paid;
+  }
+
+  /** A finalized burn: exactly the recorded SLOP left this wallet for the burn address. */
+  function burnReceipt(row: ConversionRow, receipt: TransactionReceipt) {
+    let burned = 0n;
+    let left = 0n;
+    for (const { args } of parseEventLogs({
+      abi: erc20Abi,
+      eventName: "Transfer",
+      logs: receipt.logs.filter(
+        (log) => log.address.toLowerCase() === SLOP_TOKEN,
+      ),
+    })) {
+      if (args.from.toLowerCase() !== wallet) continue;
+      left += args.value;
+      if (args.to.toLowerCase() === BURN_ADDRESS) burned += args.value;
+    }
+    if (burned !== BigInt(row.amountIn) || left !== burned)
+      throw new Error("Burn receipt differs from the recorded amount");
+    return burned;
+  }
+
+  /**
+   * A checked KyberSwap quote from `token` to `target`. The minimum output is
+   * this Worker's own floor of the quote at `slippageBps`.
+   */
+  async function quoteTo(
+    token: string,
+    amount: bigint,
+    target: string,
+    slippageBps: number,
+  ): Promise<QuoteResult> {
+    let route: KyberRoute;
+    try {
+      route = await kyberRoute(token, amount, target);
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      // 4xx: no pool or an unsupported token. Anything else is a fault.
+      if (status !== undefined && status >= 400 && status < 500)
+        return { noRoute: (error as Error).message };
+      throw error;
+    }
+    const summary = route.routeSummary;
+    if (
+      route.routerAddress.toLowerCase() !== router ||
+      summary.tokenIn.toLowerCase() !== routeToken(token) ||
+      summary.tokenOut.toLowerCase() !== target ||
+      summary.amountIn !== amount.toString() ||
+      !/^\d+$/u.test(summary.amountOut)
+    )
+      throw new Error("KyberSwap route does not match the request");
+    const amountOut = BigInt(summary.amountOut);
+    if (amountOut === 0n) return { noRoute: "KyberSwap quoted zero output" };
+    const inUsd = usdMicro(summary.amountInUsd);
+    // The output rounds down: rounding it up would shrink the measured
+    // impact below the cap it is checked against.
+    const outUsd = usdMicro(summary.amountOutUsd, "down");
+    // Rounded up so a cap is never undercounted, as on Solana.
+    const priceImpactBps =
+      inUsd !== null && outUsd !== null && inUsd > 0n
+        ? Number(priceImpactCeiling(inUsd, outUsd))
+        : null;
+    const gasUsd = usdMicro(summary.gasUsd);
+    // Ethereum has no separate L1 posting fee. Base needs both estimates;
+    // an unavailable price must not weaken the conversion's 10x gas gate.
+    const l1FeeUsd =
+      summary.l1FeeUsd === undefined && config.network === "ethereum"
+        ? 0n
+        : usdMicro(summary.l1FeeUsd);
+    if (gasUsd === null || l1FeeUsd === null)
+      throw new Error("KyberSwap gas cost is unavailable");
+    const gasCostMicro = gasUsd + l1FeeUsd;
+    return {
+      route: "kyberswap",
+      amountIn: amount,
+      amountOut,
+      minAmountOut: minimumOutput(amountOut, BigInt(slippageBps)),
+      priceImpactBps,
+      gasCostMicro,
+      summary: {
+        aggregator: "kyberswap",
+        chain: definition.kyberChain,
+        router: route.routerAddress.toLowerCase(),
+        amountInUsd: summary.amountInUsd ?? null,
+        amountOutUsd: summary.amountOutUsd ?? null,
+        gas: summary.gas ?? null,
+        gasUsd: summary.gasUsd ?? null,
+        l1FeeUsd: summary.l1FeeUsd ?? null,
+        hops: Array.isArray(summary.route)
+          ? (summary.route as unknown[][]).flat().length
+          : null,
+        observedAt: now().toISOString(),
+      },
+    };
+  }
+  /**
+   * Signs the exact approval or the checked swap of `token` into `target`.
+   * `valueMicro` is the send's stablecoin value for the final gas check.
+   */
+  async function prepareSwap(
+    token: string,
+    quote: Quote,
+    target: string,
+    slippageBps: number,
+    valueMicro: bigint,
+    nonceFloor: number,
+    assertLease?: () => Promise<void>,
+  ): Promise<PreparedSend> {
+    if (!account)
+      throw new Error("Signing is disabled without a fee-wallet key");
+    // Approve exactly the order amount to the pinned router, never more.
+    const native = nativeAsset(token);
+    const allowance = native
+      ? quote.amountIn
+      : await client.readContract({
+          address: token as Address,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [wallet, router],
+        });
+    const nonce = await client.getTransactionCount({
+      address: wallet,
+      blockTag: "pending",
+    });
+    // A node that dropped an open send reports its nonce as free. Never
+    // reuse it: the two sends would outbid each other.
+    assertNonceFree(nonce, nonceFloor);
+    if (allowance < quote.amountIn) {
+      const approval = await signAndSend(
+        token as Address,
+        encodeFunctionData({
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [router, quote.amountIn],
+        }),
+        nonce,
+        valueMicro,
+        assertLease,
+      );
+      return {
+        kind: "approval",
+        txId: approval.hash,
+        rawTx: approval.raw,
+        evmNonce: nonce,
+        expiresAt: null,
+        approvalTxId: approval.hash,
+        minAmountOut: 0n,
+        nativeGasId: approval.nativeGasId,
+      };
+    }
+
+    // Re-route at the moment of signing with half the slippage budget, so
+    // the signed minimum stays at or above the recorded quote minimum.
+    const fresh = await kyberRoute(token, quote.amountIn, target);
+    const deadline = Math.floor(now().getTime() / 1000) + DEADLINE_SECONDS;
+    const built = await kyber<{
+      data: Hex;
+      routerAddress: string;
+      transactionValue: string;
+      amountIn: string;
+      amountOut: string;
+    }>("route/build", {
+      method: "POST",
+      body: JSON.stringify({
+        routeSummary: fresh.routeSummary,
+        sender: wallet,
+        recipient: wallet,
+        slippageTolerance: Math.max(1, Math.floor(slippageBps / 2)),
+        deadline,
+        source: options.kyberClientId,
+      }),
+    });
+    if (built.routerAddress.toLowerCase() !== router)
+      throw new Error("KyberSwap build names an unexpected router");
+    const value = native ? quote.amountIn : 0n;
+    if (built.transactionValue !== value.toString())
+      throw new Error("KyberSwap build carries a different native value");
+    const decoded = decodeFunctionData({
+      abi: KYBER_ROUTER_ABI,
+      data: built.data,
+    });
+    const desc =
+      decoded.functionName === "swap" ? decoded.args[0].desc : decoded.args[1];
+    if (
+      desc.srcToken.toLowerCase() !== routeToken(token) ||
+      desc.dstToken.toLowerCase() !== target ||
+      desc.dstReceiver.toLowerCase() !== wallet ||
+      desc.amount !== quote.amountIn ||
+      desc.feeReceivers.length !== 0 ||
+      desc.feeAmounts.length !== 0
+    )
+      throw new Error("KyberSwap calldata does not match the order");
+    if (desc.minReturnAmount < quote.minAmountOut)
+      throw new Error("price moved below the recorded minimum");
+
+    const simulated = await client.call({
+      account: wallet,
+      to: router,
+      data: built.data,
+      value,
+    });
+    if (!simulated.data) throw new Error("swap simulation returned no data");
+    const [returnAmount] = decodeFunctionResult({
+      abi: KYBER_ROUTER_ABI,
+      functionName: decoded.functionName,
+      data: simulated.data,
+    }) as readonly [bigint, bigint];
+    if (returnAmount < desc.minReturnAmount)
+      throw new Error("swap simulation returned less than the signed minimum");
+
+    const swap = await signAndSend(
+      router,
+      built.data,
+      nonce,
+      valueMicro,
+      assertLease,
+      value,
+    );
+    return {
+      txId: swap.hash,
+      rawTx: swap.raw,
+      evmNonce: nonce,
+      expiresAt: deadline,
+      approvalTxId: null,
+      minAmountOut: desc.minReturnAmount,
+      nativeGasId: swap.nativeGasId,
+    };
+  }
   const self: ChainClient = {
     async reconcileNativeGas() {
       const journal = options.nativeGas;
@@ -796,7 +1233,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           blockTag: "finalized",
         });
         const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
-        return balance > reserve ? balance - reserve : 0n;
+        return spendableNative(balance, reserve);
       }
       return client.readContract({
         address: token as Address,
@@ -806,75 +1243,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       });
     },
 
-    async quote(token, amount): Promise<QuoteResult> {
-      let route: KyberRoute;
-      try {
-        route = await kyberRoute(token, amount);
-      } catch (error) {
-        const status = (error as { status?: number }).status;
-        // 4xx: no pool or an unsupported token. Anything else is a fault.
-        if (status !== undefined && status >= 400 && status < 500)
-          return { noRoute: (error as Error).message };
-        throw error;
-      }
-      const summary = route.routeSummary;
-      if (
-        route.routerAddress.toLowerCase() !== router ||
-        summary.tokenIn.toLowerCase() !== routeToken(token) ||
-        summary.tokenOut.toLowerCase() !== usdc() ||
-        summary.amountIn !== amount.toString() ||
-        !/^\d+$/u.test(summary.amountOut)
-      )
-        throw new Error("KyberSwap route does not match the request");
-      const amountOut = BigInt(summary.amountOut);
-      if (amountOut === 0n) return { noRoute: "KyberSwap quoted zero output" };
-      const inUsd = usdMicro(summary.amountInUsd);
-      // The output rounds down: rounding it up would shrink the measured
-      // impact below the cap it is checked against.
-      const outUsd = usdMicro(summary.amountOutUsd, "down");
-      // Rounded up so a cap is never undercounted, as on Solana.
-      const priceImpactBps =
-        inUsd !== null && outUsd !== null && inUsd > 0n
-          ? Number(
-              inUsd > outUsd
-                ? ((inUsd - outUsd) * 10_000n + inUsd - 1n) / inUsd
-                : 0n,
-            )
-          : null;
-      const gasUsd = usdMicro(summary.gasUsd);
-      // Ethereum has no separate L1 posting fee. Base needs both estimates;
-      // an unavailable price must not weaken the conversion's 10x gas gate.
-      const l1FeeUsd =
-        summary.l1FeeUsd === undefined && config.network === "ethereum"
-          ? 0n
-          : usdMicro(summary.l1FeeUsd);
-      if (gasUsd === null || l1FeeUsd === null)
-        throw new Error("KyberSwap gas cost is unavailable");
-      const gasCostMicro = gasUsd + l1FeeUsd;
-      return {
-        route: "kyberswap",
-        amountIn: amount,
-        amountOut,
-        minAmountOut:
-          (amountOut * BigInt(10_000 - limits.maxSlippageBps)) / 10_000n,
-        priceImpactBps,
-        gasCostMicro,
-        summary: {
-          aggregator: "kyberswap",
-          chain: definition.kyberChain,
-          router: route.routerAddress.toLowerCase(),
-          amountInUsd: summary.amountInUsd ?? null,
-          amountOutUsd: summary.amountOutUsd ?? null,
-          gas: summary.gas ?? null,
-          gasUsd: summary.gasUsd ?? null,
-          l1FeeUsd: summary.l1FeeUsd ?? null,
-          hops: Array.isArray(summary.route)
-            ? (summary.route as unknown[][]).flat().length
-            : null,
-          observedAt: now().toISOString(),
-        },
-      };
-    },
+    quote: (token, amount) =>
+      quoteTo(token, amount, usdc(), limits.maxSlippageBps),
 
     async prepare(
       token,
@@ -882,129 +1252,18 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       nonceFloor = 0,
       assertLease?: () => Promise<void>,
     ): Promise<PreparedSend> {
-      if (!account)
-        throw new Error("Signing is disabled without a fee-wallet key");
-      // Approve exactly the order amount to the pinned router, never more.
-      const native = nativeAsset(token);
-      const allowance = native
-        ? quote.amountIn
-        : await client.readContract({
-            address: token as Address,
-            abi: erc20Abi,
-            functionName: "allowance",
-            args: [wallet, router],
-          });
-      const nonce = await client.getTransactionCount({
-        address: wallet,
-        blockTag: "pending",
-      });
-      // A node that dropped an open send reports its nonce as free. Never
-      // reuse it: the two sends would outbid each other.
-      assertNonceFree(nonce, nonceFloor);
-      if (allowance < quote.amountIn) {
-        const approval = await signAndSend(
-          token as Address,
-          encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [router, quote.amountIn],
-          }),
-          nonce,
-          quote.amountOut,
-          assertLease,
-        );
-        return {
-          kind: "approval",
-          txId: approval.hash,
-          rawTx: approval.raw,
-          evmNonce: nonce,
-          expiresAt: null,
-          approvalTxId: approval.hash,
-          minAmountOut: 0n,
-          nativeGasId: approval.nativeGasId,
-        };
-      }
-
-      // Re-route at the moment of signing with half the slippage budget, so
-      // the signed minimum stays at or above the recorded quote minimum.
-      const fresh = await kyberRoute(token, quote.amountIn);
-      const deadline = Math.floor(now().getTime() / 1000) + DEADLINE_SECONDS;
-      const built = await kyber<{
-        data: Hex;
-        routerAddress: string;
-        transactionValue: string;
-        amountIn: string;
-        amountOut: string;
-      }>("route/build", {
-        method: "POST",
-        body: JSON.stringify({
-          routeSummary: fresh.routeSummary,
-          sender: wallet,
-          recipient: wallet,
-          slippageTolerance: Math.max(1, Math.floor(limits.maxSlippageBps / 2)),
-          deadline,
-          source: options.kyberClientId,
-        }),
-      });
-      if (built.routerAddress.toLowerCase() !== router)
-        throw new Error("KyberSwap build names an unexpected router");
-      const value = native ? quote.amountIn : 0n;
-      if (built.transactionValue !== value.toString())
-        throw new Error("KyberSwap build carries a different native value");
-      const decoded = decodeFunctionData({
-        abi: KYBER_ROUTER_ABI,
-        data: built.data,
-      });
-      const desc =
-        decoded.functionName === "swap"
-          ? decoded.args[0].desc
-          : decoded.args[1];
-      if (
-        desc.srcToken.toLowerCase() !== routeToken(token) ||
-        desc.dstToken.toLowerCase() !== usdc() ||
-        desc.dstReceiver.toLowerCase() !== wallet ||
-        desc.amount !== quote.amountIn ||
-        desc.feeReceivers.length !== 0 ||
-        desc.feeAmounts.length !== 0
-      )
-        throw new Error("KyberSwap calldata does not match the order");
-      if (desc.minReturnAmount < quote.minAmountOut)
-        throw new Error("price moved below the recorded minimum");
-
-      const simulated = await client.call({
-        account: wallet,
-        to: router,
-        data: built.data,
-        value,
-      });
-      if (!simulated.data) throw new Error("swap simulation returned no data");
-      const [returnAmount] = decodeFunctionResult({
-        abi: KYBER_ROUTER_ABI,
-        functionName: decoded.functionName,
-        data: simulated.data,
-      }) as readonly [bigint, bigint];
-      if (returnAmount < desc.minReturnAmount)
-        throw new Error(
-          "swap simulation returned less than the signed minimum",
-        );
-
-      const swap = await signAndSend(
-        router,
-        built.data,
-        nonce,
+      // A pricing reference is never a conversion target.
+      if (definition.usdc === null)
+        throw new Error(`no verified USDC target on ${config.network}`);
+      return prepareSwap(
+        token,
+        quote,
+        definition.usdc,
+        limits.maxSlippageBps,
         quote.amountOut,
+        nonceFloor,
         assertLease,
-        value,
       );
-      return {
-        txId: swap.hash,
-        rawTx: swap.raw,
-        evmNonce: nonce,
-        expiresAt: deadline,
-        approvalTxId: null,
-        minAmountOut: desc.minReturnAmount,
-        nativeGasId: swap.nativeGasId,
-      };
     },
 
     broadcast: (raw) => sendRaw(raw as Hex),
@@ -1066,17 +1325,56 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
             address: row.token as Address,
             abi: erc20Abi,
             functionName: "allowance",
-            args: [wallet, router],
+            args: [wallet, approvalSpender(row)],
             blockNumber: receipt.blockNumber,
           });
           if (allowance !== BigInt(row.amountIn))
             throw new Error("Finalized approval allowance differs");
           return { kind: "finalized", amountOut: 0n, ...landed };
         }
+        if (row.kind === "bridge" || row.kind === "burn") {
+          // The landed attempt must be the journaled send: the pinned
+          // contract and the recorded terms, from this wallet and nonce.
+          const transaction = await client.getTransaction({ hash });
+          if (
+            transaction.hash.toLowerCase() !== hash.toLowerCase() ||
+            transaction.from.toLowerCase() !== wallet ||
+            transaction.nonce !== row.evmNonce ||
+            transaction.blockHash !== receipt.blockHash ||
+            transaction.blockNumber !== receipt.blockNumber
+          )
+            throw new Error("Buyback receipt differs from its recorded send");
+          assertBuybackIntent(
+            row,
+            transaction.to,
+            transaction.input,
+            transaction.value,
+          );
+        }
         if (receipt.status !== "success")
           return {
             kind: "failed",
-            reason: `${row.kind === "claim" ? "claim" : "swap"} transaction reverted`,
+            reason: `${
+              row.kind === "claim"
+                ? "claim"
+                : row.kind === "bridge"
+                  ? "bridge order"
+                  : row.kind === "burn"
+                    ? "burn transfer"
+                    : "swap"
+            } transaction reverted`,
+            ...landed,
+          };
+        if (row.kind === "bridge")
+          return {
+            kind: "finalized",
+            amountOut: bridgeReceipt(row, receipt),
+            ...landed,
+          };
+        if (row.kind === "burn")
+          return {
+            kind: "finalized",
+            amountOut: burnReceipt(row, receipt),
             ...landed,
           };
         if (row.kind === "claim")
@@ -1124,19 +1422,27 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         await assertRecordedClaim(row);
         return { kind: "rebroadcast", rawTx: latestRaw };
       }
-      // Our nonce consumed in a finalized block by another transaction means
-      // this send can never land.
+      // A finalized nonce advance proves consumption, not which transaction
+      // won. Our swap can already have succeeded while both hash lookups lag.
+      // Keep every send open until its own canonical receipt is available;
+      // otherwise immutable failed history would hide a later success.
       const finalizedNonce = await client.getTransactionCount({
         address: wallet,
         blockTag: "finalized",
       });
       if (row.evmNonce !== null && finalizedNonce > row.evmNonce)
-        // A claim may itself have consumed the nonce while its hash lookups
-        // are unavailable. Only its receipt proves what entered the wallet.
-        // It is not replaced: the nonce is already spent.
-        return row.kind === "claim" || row.kind === "approval"
-          ? { kind: "pending", mined: true }
-          : { kind: "failed", reason: "nonce used by another transaction" };
+        return { kind: "pending", mined: true };
+      // An included transaction can also precede finality while hash lookups
+      // are unavailable. Its successful execution may predate the deadline;
+      // do not turn that uncertainty into immutable expiry failure.
+      if (
+        row.evmNonce !== null &&
+        (await client.getTransactionCount({
+          address: wallet,
+          blockTag: "latest",
+        })) > row.evmNonce
+      )
+        return { kind: "pending", mined: true };
       // Past the router deadline the swap reverts even if it is mined later.
       if (deadlinePassed)
         return {
@@ -1166,12 +1472,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       const previous = parseTransaction(
         (replacements.at(-1)?.rawTx ?? row.rawTx) as Hex,
       );
-      const recipient =
-        row.kind === "claim"
-          ? recordedVault(row).vault
-          : row.kind === "approval"
-            ? row.token
-            : router;
+      const recipient = sendRecipient(row);
       if (
         original.type !== "eip1559" ||
         previous.type !== "eip1559" ||
@@ -1208,6 +1509,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         !boundedApproval(row, original.data as Hex, original.value)
       )
         throw new Error("Recorded approval differs from its bounded intent");
+      assertBuybackIntent(
+        row,
+        original.to,
+        original.data as Hex,
+        original.value ?? 0n,
+      );
       const block = await client.getBlock({ blockTag: "latest" });
       if (block.baseFeePerGas === null || block.baseFeePerGas === undefined)
         return { wait: "the current network base fee is unavailable" };
@@ -1215,25 +1522,38 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       // tip does not make an otherwise includable transaction underpriced.
       if (block.baseFeePerGas <= previous.maxFeePerGas)
         return { wait: "the signed fee covers the current network fee" };
-      const step = (last: bigint, first: bigint) => {
-        const raised = ceilPercent(last, REPLACEMENT_STEP_PERCENT);
-        const cap = first * REPLACEMENT_CAP_MULTIPLE;
-        return raised < cap ? raised : cap;
-      };
-      const maxFeePerGas = step(previous.maxFeePerGas, original.maxFeePerGas);
-      const maxPriorityFeePerGas = step(
-        previous.maxPriorityFeePerGas,
-        original.maxPriorityFeePerGas,
-      );
-      if (
-        maxFeePerGas <
-          ceilPercent(previous.maxFeePerGas, REPLACEMENT_MIN_PERCENT) ||
-        maxPriorityFeePerGas <
-          ceilPercent(previous.maxPriorityFeePerGas, REPLACEMENT_MIN_PERCENT)
-      )
-        return { wait: "fee replacement cap reached" };
+      const next =
+        original.maxFeePerGas > 0n &&
+        original.maxPriorityFeePerGas >= 0n &&
+        previous.maxFeePerGas > 0n &&
+        previous.maxPriorityFeePerGas >= 0n
+          ? nextReplacementFees(
+              original.maxFeePerGas,
+              original.maxPriorityFeePerGas,
+              previous.maxFeePerGas,
+              previous.maxPriorityFeePerGas,
+              // This route has no absolute ceiling beyond three times the original.
+              original.maxFeePerGas * REPLACEMENT_CAP_MULTIPLE,
+            )
+          : null;
+      if (!next?.ok) return { wait: "fee replacement cap reached" };
       if (row.quoteValueMicro === null)
         return { wait: "the send has no recorded value to bound its fee" };
+      let bridge: BridgeCost | undefined;
+      if (row.route === "debridge") {
+        if (!options.buyback)
+          return { wait: "bridge replacement needs the active buyback limits" };
+        const terms = JSON.parse(row.quote as string) as { nativeFee?: string };
+        if (!terms.nativeFee || row.quoteAmountOut === null)
+          throw new Error("Bridge replacement lacks its recorded cost terms");
+        bridge = {
+          token: row.token,
+          amount: BigInt(row.amountIn),
+          takeAmount: BigInt(row.quoteAmountOut),
+          nativeFee: BigInt(terms.nativeFee),
+          approval: row.kind === "approval",
+        };
+      }
       await assertRecordedClaim(row);
       const signed = await signIntent(
         {
@@ -1245,19 +1565,20 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           nonce: original.nonce,
           gas: original.gas,
           accessList: original.accessList,
-          maxFeePerGas,
-          maxPriorityFeePerGas,
+          maxFeePerGas: next.maxFeePerGas,
+          maxPriorityFeePerGas: next.maxPriorityFeePerGas,
         },
         BigInt(row.quoteValueMicro),
         assertLease,
         row.txId as string,
+        bridge,
       );
       return {
         txId: signed.hash,
         rawTx: signed.raw,
         nativeGasId: signed.nativeGasId,
-        maxFeePerGas,
-        maxPriorityFeePerGas,
+        maxFeePerGas: next.maxFeePerGas,
+        maxPriorityFeePerGas: next.maxPriorityFeePerGas,
       };
     },
 
@@ -1336,5 +1657,358 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       },
     },
   };
+
+  /** The network fee of `gas` units at the current maximum fee, in micro-units. */
+  async function gasMicro(gas: bigint): Promise<bigint> {
+    const fees = await client.estimateFeesPerGas();
+    const priced = await self.quote(NATIVE, gas * fees.maxFeePerGas);
+    if ("noRoute" in priced) throw new Error("Network fee cannot be priced");
+    return priced.amountOut;
+  }
+  /** One free nonce with no earlier fee-wallet transaction still pending. */
+  async function freeNonce(nonceFloor: number): Promise<number> {
+    const [latest, pending] = await Promise.all([
+      client.getTransactionCount({ address: wallet, blockTag: "latest" }),
+      client.getTransactionCount({ address: wallet, blockTag: "pending" }),
+    ]);
+    if (pending !== latest)
+      throw new Error("an earlier fee-wallet transaction is still pending");
+    assertNonceFree(latest, nonceFloor);
+    return latest;
+  }
+  /** A finalized block read: evidence is never taken from an unfinalized head. */
+  async function finalizedBlock() {
+    const block = await client.getBlock({ blockTag: "finalized" });
+    if (typeof block.number !== "bigint" || !block.hash)
+      throw new Error("Finalized block is unavailable");
+    return { number: block.number, hash: block.hash };
+  }
+
+  const buyback = options.buyback;
+  if (buyback && definition.usdc !== null) {
+    const source = definition.usdc;
+    const proposals = new WeakMap<BridgeQuote, DlnProposal>();
+    const bridge: NonNullable<BuybackChainClient["bridge"]> = {
+      async quote(amount) {
+        const proposal = await proposeDlnOrder(doFetch, {
+          srcChainId: String(chain.id),
+          giveToken: source,
+          giveAmount: amount,
+          takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+          takeToken: ROBINHOOD_USDG,
+          wallet,
+          receiver: buyback.receiver,
+        });
+        if ("noRoute" in proposal) return proposal;
+        if (proposal.to.toLowerCase() !== DLN.source)
+          throw new Error("DLN proposal names an unexpected contract");
+        const order = checkedDlnOrder(proposal.data, {
+          wallet,
+          giveToken: source,
+          giveAmount: amount,
+          takeToken: ROBINHOOD_USDG,
+          takeChainId: ROBINHOOD_CHAIN_ID,
+          receiver: buyback.receiver,
+        });
+        // The order pays exactly the contract's own fixed fee, read on chain.
+        const fixedFee = await client.readContract({
+          address: DLN.source as Address,
+          abi: DLN_SOURCE_ABI,
+          functionName: "globalFixedNativeFee",
+        });
+        if (proposal.value !== fixedFee)
+          throw new Error("DLN proposal value differs from the fixed fee");
+        if (order.takeAmount > amount)
+          throw new Error("DLN proposal delivers more than its input");
+        const feeValue =
+          fixedFee === 0n ? 0n : await self.quote(NATIVE, fixedFee);
+        if (typeof feeValue !== "bigint" && "noRoute" in feeValue)
+          throw new Error("Fixed bridge fee cannot be priced");
+        const feeMicro =
+          typeof feeValue === "bigint" ? feeValue : feeValue.amountOut;
+        const networkMicro = await gasMicro(DLN_ORDER_GAS);
+        const quote: BridgeQuote = {
+          amountIn: amount,
+          takeToken: ROBINHOOD_USDG,
+          takeAmount: order.takeAmount,
+          nativeFee: fixedFee,
+          costMicro: amount - order.takeAmount + feeMicro + networkMicro,
+          receiver: buyback.receiver,
+          summary: {
+            provider: "debridge",
+            contract: DLN.source,
+            orderId: proposal.orderId,
+            takeAmount: order.takeAmount.toString(),
+            takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+            receiver: buyback.receiver.toLowerCase(),
+            nativeFee: fixedFee.toString(),
+            nativeFeeMicro: feeMicro.toString(),
+            networkFeeMicro: networkMicro.toString(),
+            observedAt: now().toISOString(),
+          },
+        };
+        proposals.set(quote, proposal);
+        return quote;
+      },
+
+      async prepare(quote, nonceFloor, assertLease): Promise<PreparedBridge> {
+        if (!account)
+          throw new Error("Signing is disabled without a fee-wallet key");
+        const proposal = proposals.get(quote);
+        if (!proposal) throw new Error("Bridge quote has no checked proposal");
+        const allowance = await client.readContract({
+          address: source as Address,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [wallet, DLN.source as Address],
+        });
+        const nonce = await freeNonce(nonceFloor);
+        // Approve exactly the order amount to the pinned bridge, never more.
+        if (allowance < quote.amountIn) {
+          const approval = await signAndSend(
+            source as Address,
+            encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [DLN.source as Address, quote.amountIn],
+            }),
+            nonce,
+            quote.amountIn,
+            assertLease,
+            0n,
+            {
+              token: source,
+              amount: quote.amountIn,
+              takeAmount: quote.takeAmount,
+              nativeFee: quote.nativeFee,
+              approval: true,
+            },
+          );
+          return {
+            kind: "approval",
+            txId: approval.hash,
+            rawTx: approval.raw,
+            evmNonce: nonce,
+            expiresAt: null,
+            approvalTxId: approval.hash,
+            minAmountOut: 0n,
+            nativeGasId: approval.nativeGasId,
+            terms: null,
+          };
+        }
+        // Check the same bytes again at the moment of signing.
+        const order = checkedDlnOrder(proposal.data, {
+          wallet,
+          giveToken: source,
+          giveAmount: quote.amountIn,
+          takeToken: ROBINHOOD_USDG,
+          takeChainId: ROBINHOOD_CHAIN_ID,
+          receiver: buyback.receiver,
+        });
+        if (
+          order.takeAmount !== quote.takeAmount ||
+          proposal.value !== quote.nativeFee
+        )
+          throw new Error("Bridge proposal differs from its quote");
+        // The contract itself names the order id it would create.
+        const simulated = await client.call({
+          account: wallet,
+          to: DLN.source as Address,
+          data: proposal.data,
+          value: proposal.value,
+        });
+        if (!simulated.data)
+          throw new Error("bridge simulation returned no data");
+        const orderId = decodeFunctionResult({
+          abi: DLN_SOURCE_ABI,
+          functionName: "createSaltedOrder",
+          data: simulated.data,
+        }).toLowerCase();
+        if (orderId !== proposal.orderId)
+          throw new Error(
+            "Simulated bridge order id differs from the proposal",
+          );
+        const signed = await signAndSend(
+          DLN.source as Address,
+          proposal.data,
+          nonce,
+          quote.amountIn,
+          assertLease,
+          proposal.value,
+          {
+            token: source,
+            amount: quote.amountIn,
+            takeAmount: quote.takeAmount,
+            nativeFee: quote.nativeFee,
+            approval: false,
+          },
+        );
+        const terms: BridgeTerms = {
+          provider: "debridge",
+          orderId,
+          takeToken: ROBINHOOD_USDG,
+          takeAmount: order.takeAmount.toString(),
+          takeChainId: ROBINHOOD_CHAIN_ID.toString(),
+          receiver: buyback.receiver.toLowerCase(),
+          nativeFee: proposal.value.toString(),
+          salt: order.salt.toString(),
+        };
+        return {
+          kind: "bridge",
+          txId: signed.hash,
+          rawTx: signed.raw,
+          evmNonce: nonce,
+          expiresAt: null,
+          approvalTxId: null,
+          minAmountOut: order.takeAmount,
+          nativeGasId: signed.nativeGasId,
+          terms,
+        };
+      },
+
+      async refund(terms): Promise<OutcomeEvidence | null> {
+        const block = await finalizedBlock();
+        const [status] = await client.readContract({
+          address: DLN.source as Address,
+          abi: DLN_SOURCE_ABI,
+          functionName: "giveOrders",
+          args: [terms.orderId as Hex],
+          blockNumber: block.number,
+        });
+        return status === GIVE_STATUS.claimedCancel
+          ? { block: Number(block.number), blockHash: block.hash }
+          : null;
+      },
+    };
+    self.buyback = { bridge };
+  }
+
+  if (buyback && config.network === BUYBACK_NETWORK) {
+    const reference = usdc();
+    const market: NonNullable<BuybackChainClient["market"]> = {
+      async fill(terms): Promise<FillState> {
+        if (
+          terms.takeToken.toLowerCase() !== ROBINHOOD_USDG ||
+          BigInt(terms.takeChainId) !== ROBINHOOD_CHAIN_ID ||
+          terms.receiver.toLowerCase() !== wallet
+        )
+          throw new Error("Bridge order does not deliver to this fee wallet");
+        const block = await finalizedBlock();
+        const [status] = await client.readContract({
+          address: DLN.destination as Address,
+          abi: DLN_DESTINATION_ABI,
+          functionName: "takeOrders",
+          args: [terms.orderId as Hex],
+          blockNumber: block.number,
+        });
+        if (
+          status === TAKE_STATUS.fulfilled ||
+          status === TAKE_STATUS.sentUnlock
+        )
+          return {
+            state: "arrived",
+            evidence: { block: Number(block.number), blockHash: block.hash },
+          };
+        return status === TAKE_STATUS.sentCancel
+          ? { state: "cancelling" }
+          : { state: "open" };
+      },
+
+      async quoteBuy(token, amount) {
+        if (token.toLowerCase() === SLOP_TOKEN)
+          throw new Error("SLOP is never an input of its own purchase");
+        const quote = await quoteTo(
+          token,
+          amount,
+          SLOP_TOKEN,
+          buyback.limits.maxSlippageBps,
+        );
+        if ("noRoute" in quote) return quote;
+        // The input's own stablecoin value bounds the caps and the gas check.
+        let valueMicro = amount;
+        if (token.toLowerCase() !== reference) {
+          const valued = await self.quote(token, amount);
+          if ("noRoute" in valued)
+            return { noRoute: `value unavailable: ${valued.noRoute}` };
+          valueMicro = valued.amountOut;
+        }
+        return { ...quote, valueMicro };
+      },
+
+      prepareBuy: (token, quote: BuyQuote, nonceFloor, assertLease) =>
+        prepareSwap(
+          token,
+          quote,
+          SLOP_TOKEN,
+          buyback.limits.maxSlippageBps,
+          quote.valueMicro,
+          nonceFloor,
+          assertLease,
+        ).then((prepared) => ({
+          ...prepared,
+          kind: prepared.kind === "approval" ? "approval" : "buyback",
+        })),
+
+      async quoteBurn(amount): Promise<BurnQuote | { blocked: string }> {
+        if (
+          await client.readContract({
+            address: SLOP_TOKEN as Address,
+            abi: PAUSED_ABI,
+            functionName: "paused",
+          })
+        )
+          return { blocked: "SLOP transfers are paused" };
+        const data = burnCalldata(amount);
+        const simulated = await client
+          .call({ account: wallet, to: SLOP_TOKEN as Address, data })
+          .catch(() => null);
+        if (
+          !simulated?.data ||
+          !decodeFunctionResult({
+            abi: erc20Abi,
+            functionName: "transfer",
+            data: simulated.data,
+          })
+        )
+          return { blocked: "burn transfer simulation failed" };
+        const valued = await self.quote(SLOP_TOKEN, amount);
+        if ("noRoute" in valued)
+          return { blocked: `burn value unavailable: ${valued.noRoute}` };
+        const gas = await client.estimateGas({
+          account: wallet,
+          to: SLOP_TOKEN as Address,
+          data,
+        });
+        return {
+          valueMicro: valued.amountOut,
+          gasCostMicro: await gasMicro((gas * 13n) / 10n),
+        };
+      },
+
+      async prepareBurn(amount, quote, nonceFloor, assertLease) {
+        if (!account)
+          throw new Error("Signing is disabled without a fee-wallet key");
+        const nonce = await freeNonce(nonceFloor);
+        const signed = await signAndSend(
+          SLOP_TOKEN as Address,
+          burnCalldata(amount),
+          nonce,
+          quote.valueMicro,
+          assertLease,
+        );
+        return {
+          kind: "burn",
+          txId: signed.hash,
+          rawTx: signed.raw,
+          evmNonce: nonce,
+          expiresAt: null,
+          approvalTxId: null,
+          minAmountOut: 0n,
+          nativeGasId: signed.nativeGasId,
+        };
+      },
+    };
+    self.buyback = { market };
+  }
   return self;
 }

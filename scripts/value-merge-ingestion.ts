@@ -14,7 +14,7 @@ import {
   type ValueMergeRecipe,
   validMergeRecipe,
 } from "../workers/slopbot/value-merge-profile";
-import type { WorkUnitSource } from "../workers/slopbot/value-work-unit";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import { collectVerifiedMergeResolutions } from "./value-merge-resolution";
 
 export interface PublicMergeRepository {

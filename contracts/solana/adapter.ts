@@ -1,7 +1,10 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { PaymentChainAdapter } from "../../backend/payments/ledger";
-import { decodeBase58Bytes } from "../../src/lib/base58";
+import {
+  encodeBase58Bytes as base58,
+  decodeBase58Bytes,
+} from "../../src/lib/base58";
 import {
   acceptsPayoutFee,
   type PayoutPolicy,
@@ -13,8 +16,13 @@ import {
   SOLANA_NATIVE_DECIMALS,
 } from "./native";
 
-export { SOLANA_NATIVE_ASSET, SOLANA_NATIVE_DECIMALS } from "./native";
+export { SOLANA_NATIVE_ASSET } from "./native";
 
+import {
+  decodeBase64,
+  encodeBase64,
+  bytesToHex as hex,
+} from "../../src/lib/byte-encoding";
 import { CLASSIC_TOKEN_PROGRAM, TOKEN_2022_PROGRAM } from "./token";
 import {
   readTokenAccount,
@@ -84,8 +92,6 @@ const list = (value: unknown): unknown[] => {
   if (!Array.isArray(value)) throw new Error("Invalid RPC list");
   return value;
 };
-const hex = (bytes: Uint8Array) =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 const encoder = new TextEncoder();
 const anchorDiscriminator = (name: string) =>
   hex(sha256(encoder.encode(`global:${name}`)).slice(0, 8));
@@ -97,24 +103,6 @@ const COMMIT = anchorDiscriminator("commit"),
 export const CONFIG_DISCRIMINATOR = hex(
   sha256(encoder.encode("account:Config")).slice(0, 8),
 );
-const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-function base58(bytes: Uint8Array): string {
-  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  let value = 0n;
-  for (const byte of bytes) value = value * 256n + BigInt(byte);
-  let result = "";
-  while (value > 0n) {
-    result = alphabet[Number(value % 58n)] + result;
-    value /= 58n;
-  }
-  for (const byte of bytes) {
-    if (byte !== 0) break;
-    result = `1${result}`;
-  }
-  return result;
-}
 const uint = (bytes: Uint8Array, offset: number) =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(
     offset,
@@ -128,7 +116,7 @@ function publicKeyBytes(value: string): Uint8Array {
   return bytes;
 }
 /** Solana `find_program_address`: the first bump from 255 down whose hash is off the curve. */
-function programAddress(programId: string, seeds: Uint8Array[]): string {
+export function programAddress(programId: string, seeds: Uint8Array[]): string {
   const program = publicKeyBytes(programId);
   const marker = encoder.encode("ProgramDerivedAddress");
   for (let bump = 255; bump >= 0; bump--) {
@@ -230,7 +218,7 @@ function account(
   if (info.owner !== owner) throw new Error("Account owner mismatch");
   const data = list(info.data);
   if (data[1] !== "base64") throw new Error("Wrong account encoding");
-  const bytes = decode(string(data[0]));
+  const bytes = decodeBase64(string(data[0]));
   if (bytes.length !== size || hex(bytes.slice(0, 8)) !== discriminator)
     throw new Error("Account layout mismatch");
   return bytes;
@@ -302,7 +290,7 @@ export async function verifySolanaProgram(
     data = list(program.data);
   if (program.executable !== true || data[1] !== "base64")
     throw new Error("Program is not executable");
-  let code = decode(string(data[0]));
+  let code = decodeBase64(string(data[0]));
   if (program.owner === "BPFLoaderUpgradeab1e11111111111111111111111") {
     if (
       code.length !== 36 ||
@@ -324,7 +312,7 @@ export async function verifySolanaProgram(
       pdData[1] !== "base64"
     )
       throw new Error("ProgramData owner mismatch");
-    const content = decode(string(pdData[0]));
+    const content = decodeBase64(string(pdData[0]));
     if (
       content.length <= 45 ||
       new DataView(content.buffer).getUint32(0, true) !== 3 ||
@@ -421,7 +409,7 @@ export async function verifySolanaDeployment(
   return project;
 }
 
-export interface SolanaAuthorityRotation {
+interface SolanaAuthorityRotation {
   identityAuthority: string;
   /** Null when no rotation is proposed. */
   pendingIdentityAuthority: string | null;
@@ -449,7 +437,7 @@ export function solanaAuthorityRotation(
 
 /** The program's project purpose for a payout policy: 0 ordinary awards, 1 private bounties. It
  * is the last project PDA seed: ["project", owner, project ID, purpose]. */
-export function solanaProjectPurpose(policy: PayoutPolicy = "ordinary") {
+function solanaProjectPurpose(policy: PayoutPolicy = "ordinary") {
   return policy === "security-bounty" ? 1 : 0;
 }
 
@@ -606,7 +594,7 @@ export function solanaAwardId(
   );
 }
 
-export interface EscrowInvocation {
+interface EscrowInvocation {
   /** Position in the transaction's flattened instruction list. */
   index: number;
   kind: "reserved" | "paid";
@@ -739,7 +727,13 @@ export function solanaPaymentAdapter(
             filters: [
               { dataSize: OBLIGATION_SIZE },
               { memcmp: { offset: 48, bytes: config.projectPda } },
-              { memcmp: { offset: 80, bytes: b64(award), encoding: "base64" } },
+              {
+                memcmp: {
+                  offset: 80,
+                  bytes: encodeBase64(award),
+                  encoding: "base64",
+                },
+              },
             ],
           },
         ]),
@@ -1050,10 +1044,10 @@ export async function readVaultTotals(config: {
 
 export {
   account as solanaAccount,
-  b64 as solanaBase64,
   base58 as solanaBase58,
-  decode as solanaBase64Bytes,
+  decodeBase64 as solanaBase64Bytes,
   digest as solanaDigest,
+  encodeBase64 as solanaBase64,
   programAddress as solanaProgramAddress,
   pubkey as solanaPubkey,
   publicKeyBytes as solanaPublicKeyBytes,

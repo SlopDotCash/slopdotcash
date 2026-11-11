@@ -3,7 +3,7 @@
  */
 
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { FileChange, ValueEvidence } from "./value-evidence";
+import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
   hasCompleteValuePatch,
@@ -12,7 +12,14 @@ import {
   valuePatch,
 } from "./value-patch";
 import { hasRetainedMergeReference } from "./value-retained-reference";
-import type { WorkUnitSource } from "./value-work-unit";
+import type { WorkUnitSource } from "./value-work-unit-types";
+import {
+  type CandidateHunkFile,
+  type HunkCandidate,
+  orderedHunkDifference,
+  retainedAncestors,
+  uniqueHunkBindings,
+} from "./verified-retained-binding";
 
 /** An exact same-author reopen already retains authenticated attribution.
  * A rebase can change every commit SHA without changing the delivered work.
@@ -111,7 +118,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
-export async function retainedCopySources(
+async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
 ): Promise<WorkUnitSource[]> {
@@ -163,7 +170,7 @@ export async function retainedCopySources(
  * hunk offsets may change when other accepted fixes precede a copied commit.
  * This identifies exact retained edits for review, not their semantic value.
  */
-export function retainedEditIdentity(file: FileChange): string | null {
+function retainedEditIdentity(file: FileChange): string | null {
   if (
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||
@@ -190,25 +197,33 @@ function changedHunks(file: FileChange): string[] | null {
   return new Set(hunks).size === hunks.length ? hunks : null;
 }
 
-function isAncestor(
-  source: WorkUnitSource,
-  before: string,
-  after: string,
-): boolean {
+/** Preserve captured Map identity (including last-duplicate SHA precedence). */
+function capturedParentGraph(integration: WorkUnitSource, acceptedSha: string) {
   const commits = new Map(
-    source.evidence.commits.map((commit) => [commit.sha, commit]),
+    integration.evidence.commits.map((commit) => [commit.sha, commit]),
   );
-  const pending = [after];
-  const seen = new Set<string>();
-  while (pending.length) {
-    const sha = pending.pop();
-    if (!sha || seen.has(sha)) continue;
-    if (sha === before) return true;
-    seen.add(sha);
-    for (const parent of commits.get(sha)?.parents ?? [])
-      pending.push(parent.sha);
+  const indices = new Map<string, number>();
+  const include = (sha: string) => {
+    // The original traversal skips an empty pending SHA before comparing it.
+    if (sha && !indices.has(sha)) indices.set(sha, indices.size);
+  };
+  include(acceptedSha);
+  for (const [sha, commit] of commits) {
+    include(sha);
+    for (const parent of commit.parents) include(parent.sha);
   }
-  return false;
+  for (const candidate of integration.evidence.commitAttribution)
+    include(candidate.sha);
+  const graph: number[][] = Array.from({ length: indices.size }, () => []);
+  for (const [sha, commit] of commits) {
+    const index = indices.get(sha);
+    if (index === undefined) continue;
+    for (const parent of commit.parents) {
+      const next = indices.get(parent.sha);
+      if (next !== undefined) graph[index].push(next);
+    }
+  }
+  return { graph, indices, start: indices.get(acceptedSha) ?? -1 };
 }
 
 /** A rebase may omit a hunk already introduced by another accepted fix.
@@ -228,32 +243,56 @@ function preexistingHunks(
     return null;
   const before = changedHunks(original);
   const after = changedHunks(copied);
-  if (
-    !before ||
-    !after?.length ||
-    after.length >= before.length ||
-    after.some((hunk) => !before.includes(hunk))
-  )
-    return null;
-  const retainedOrder = before.filter((hunk) => after.includes(hunk));
-  if (JSON.stringify(retainedOrder) !== JSON.stringify(after)) return null;
-  const prior = new Set<string>();
-  for (const missing of before.filter((hunk) => !after.includes(hunk))) {
-    const matches = integration.evidence.commitAttribution.filter(
-      (candidate) =>
+  if (before === null || after === null) return null;
+  const difference = orderedHunkDifference(before, after);
+  if (difference.kind === "invalid") return null;
+  const { graph, indices, start } = capturedParentGraph(
+    integration,
+    acceptedSha,
+  );
+  const ancestors = retainedAncestors(graph, start);
+  const candidates: HunkCandidate[] =
+    integration.evidence.commitAttribution.map((candidate) => {
+      const vertex = indices.get(candidate.sha) ?? -1;
+      const files: CandidateHunkFile[] = [];
+      if (
         candidate.sha !== acceptedSha &&
         candidate.limitations.length === 0 &&
-        isAncestor(integration, candidate.sha, acceptedSha) &&
-        candidate.files?.some(
-          (file) =>
-            file.filename === original.filename &&
-            changedHunks(file)?.includes(missing),
-        ),
-    );
-    if (matches.length !== 1) return null;
-    prior.add(matches[0].sha);
-  }
-  return [...prior].sort();
+        vertex >= 0 &&
+        ancestors[vertex]
+      ) {
+        for (const file of candidate.files ?? []) {
+          if (file.filename !== original.filename) continue;
+          const hunks = changedHunks(file);
+          files.push({
+            path: file.filename,
+            hunks:
+              hunks === null
+                ? { kind: "unavailable" }
+                : { kind: "parsed", values: hunks },
+          });
+        }
+      }
+      return {
+        sha: candidate.sha,
+        vertex,
+        limitations: candidate.limitations.length,
+        files,
+      };
+    });
+  const bindings = uniqueHunkBindings(
+    graph,
+    start,
+    acceptedSha,
+    original.filename,
+    before,
+    difference.missing,
+    candidates,
+  );
+  if (bindings.kind === "ambiguous") return null;
+  return [
+    ...new Set(bindings.candidates.map((index) => candidates[index].sha)),
+  ].sort();
 }
 
 /** A closed promotion can contain only squash commits already accepted from

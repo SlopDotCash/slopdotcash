@@ -10,6 +10,8 @@
     "types": ["node", "bun-types"]
   },
   "include": [
+    "src/lib/verified-*.ts",
+    "src/lib/weighted-allocation.ts",
     "tests/*.ts",
     "src/lib/payments/**/*.ts",
     "contracts/evm/adapter.ts",
@@ -22,6 +24,7 @@
     "contracts/solana/adapter.ts",
     "contracts/solana/native.ts",
     "contracts/solana/token-extensions.ts",
+    "contracts/solana/verified-token-extensions.ts",
     "contracts/solana/token.ts",
     "contracts/solana/token.test.ts",
     "contracts/solana/adapter.test.ts",
@@ -38,7 +41,10 @@
     "src/lib/base58.ts",
     "src/lib/security-program-draft.ts",
     "src/lib/vault-setup.ts",
+    "src/lib/vault-setup-attempt.ts",
+    "src/lib/pending-attempt.ts",
     "src/lib/byte-encoding.ts",
+    "src/lib/solana-wire.ts",
     "src/lib/canonical-json.ts",
     "src/lib/project-revision-changes.ts",
     "src/lib/points.ts",
@@ -56,6 +62,7 @@
     "src/lib/referral-claims.ts",
     "src/lib/contributor-allocation.ts",
     "src/lib/use-payout-wallets.ts",
+    "src/lib/use-time-boundary.ts",
     "src/lib/notifications.ts",
     "src/lib/incomplete-assessments.ts",
     "src/lib/github-actor.ts",
@@ -71,6 +78,7 @@
     "src/lib/cycle-index.ts",
     "src/lib/site-routes.ts",
     "src/lib/project-contracts.ts",
+    "src/lib/scan-clearance.ts",
     "src/lib/vetting-contracts.ts",
     "src/lib/project-proposal.ts",
     "src/lib/security-bounty-proposal.ts",
@@ -92,7 +100,9 @@
     "src/lib/points-summary.ts",
     "src/lib/use-snapshot.ts",
     "src/lib/profile-activity.ts",
+    "src/lib/profile-actor.ts",
     "src/lib/reward-amount.ts",
+    "src/lib/project-reward-summary.ts",
     "src/lib/reward-cycle.ts",
     "src/lib/reward-finalization.ts",
     "src/lib/rewards.ts",
@@ -106,10 +116,13 @@
     "src/lib/wallets.ts",
     "src/lib/wallet-proof.ts",
     "src/lib/leaderboard-types.ts",
+    "src/lib/leaderboard-constants.ts",
     "src/lib/reviewer-leaders.ts",
     "src/lib/profiles.ts",
     "src/lib/model-outcomes.ts",
-    "src/lib/deployment.ts"
+    "src/brand-tokens.ts",
+    "src/lib/deployment.ts",
+    "formal/tests/**/*.ts"
   ],
   "exclude": ["tests/registry-preload.ts"]
 }

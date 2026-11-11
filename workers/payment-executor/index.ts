@@ -3,7 +3,10 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { privateKeyToAccount } from "viem/accounts";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import type { PaymentExecutor } from "../../backend/payments/dispatch";
-import type { MonthlyAttestationRequest } from "../../backend/payments/monthly-attestation";
+import type {
+  MonthlyAttestationRequest,
+  MonthlyAuthorization,
+} from "../../backend/payments/monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import {
   isMonthlyReleaseCheck,
@@ -18,7 +21,7 @@ import { securityPaymentDatabase } from "../../backend/security/payment-database
 import {
   EvmMonthlyAlreadyAdmitted,
   prepareEvmMonthlyReservation,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
@@ -32,22 +35,23 @@ import {
   reconcileBindingWinner,
 } from "./binding-recovery";
 import {
+  type JournalStore,
+  preflightEvmDeployment,
+  type Signer,
+} from "./binding-shared";
+import {
   assertEvmMonthlySources,
   type BindingRunReport,
   bindingCandidates,
   createEvmAttester,
   createEvmExecutor,
-  type JournalStore,
   lookupAttempt,
   observedEvmTransaction,
   pendingStoredBindings,
-  preflightEvmDeployment,
   retireUnsignedAttempt,
   runStoredBindings,
-  type Signer,
   submitEvmMonthly,
 } from "./core";
-import type { MonthlyAuthorization } from "./monthly";
 import { signMonthlyAllocation } from "./monthly";
 import {
   checkMonthlyReserveRelease,

@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { childEnvironment } from "./child-environment.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
+import { createRunnerCancellation } from "./runner-cancellation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const modes = [
@@ -35,37 +36,60 @@ checks.push({
   args: ["workers/payment-executor/binding-recovery.workflow.mjs"],
 });
 
+const cancellation = createRunnerCancellation();
 async function availablePort() {
+  await cancellation.checkpoint();
   const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const { port } = server.address();
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
-  return String(port);
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    cancellation.check();
+    return String(server.address().port);
+  } finally {
+    if (server.listening)
+      await new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+  }
 }
 
 // Every scenario owns its ports and database. Bound concurrent local chains.
 let next = 0;
-const statuses = new Array(checks.length);
-await Promise.all(
-  Array.from({ length: 2 }, async () => {
+async function worker() {
+  try {
     while (next < checks.length) {
+      await cancellation.checkpoint();
+      if (next >= checks.length) break;
       const index = next++;
-      statuses[index] = await runE2ePhase({
+      const anvilPort = await availablePort();
+      const directPort = await availablePort();
+      await cancellation.checkpoint();
+      const status = await runE2ePhase({
         ...checks[index],
         cwd: root,
         env: {
           ...childEnvironment(),
-          SLOP_SECURITY_ANVIL_PORT: await availablePort(),
-          SLOP_DIRECT_TEST_PORT: await availablePort(),
+          SLOP_SECURITY_ANVIL_PORT: anvilPort,
+          SLOP_DIRECT_TEST_PORT: directPort,
         },
         timeoutMs: 10 * 60_000,
+        signal: cancellation.signal,
       });
+      cancellation.record(status);
     }
-  }),
-);
-if (statuses.some((status) => status !== 0)) process.exitCode = 1;
+  } catch (error) {
+    if (!cancellation.signal.aborted) console.error(error);
+    // A startup failure stops new work and aborts the sibling phase, but both
+    // workers remain awaited until their owned process groups have settled.
+    cancellation.abort(1);
+  }
+}
+try {
+  await Promise.all([worker(), worker()]);
+} finally {
+  // Repeated signals remain handled throughout the workers' cleanup.
+  cancellation.dispose();
+}
+process.exitCode = cancellation.exitCode;

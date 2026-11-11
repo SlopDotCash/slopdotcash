@@ -1,5 +1,9 @@
 import { valueFileReader } from "./value-blob";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type {
+  AcceptedPatchReplay,
+  EvidenceClient,
+  FileChange,
+} from "./value-evidence-types";
 import {
   hasCompleteValuePatch,
   valueAdditionCount,
@@ -16,20 +20,6 @@ interface Hunk {
   before: string;
   after: string;
   label: string;
-}
-
-export interface AcceptedPatchReplay {
-  schemaVersion: 1;
-  headSha: string;
-  mergeSha: string;
-  parentSha: string;
-  files: {
-    path: string;
-    mode: string;
-    submittedBlobSha: string;
-    parentBlobSha: string | null;
-    acceptedBlobSha: string;
-  }[];
 }
 
 /** Parse complete unified hunks without normalizing any content bytes. */

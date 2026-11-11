@@ -2,8 +2,10 @@
 import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
+import { compareActors } from "./github-actor";
+import { allocateWeightedRows } from "./weighted-allocation";
 
-export const QUALITY_TIERS = {
+const QUALITY_TIERS = {
   micro: 1,
   small: 3,
   medium: 9,
@@ -11,7 +13,7 @@ export const QUALITY_TIERS = {
   xl: 45,
   exceptional: 75,
 } as const;
-export type QualityTier = keyof typeof QUALITY_TIERS;
+type QualityTier = keyof typeof QUALITY_TIERS;
 export interface QualityEvent {
   id: string;
   actorId: string;
@@ -204,7 +206,7 @@ export function assertQualityEvidence(
  * the canonical actor order with English case folding and collation, so the
  * leftover units land on the same contributors on every host.
  */
-export function allocateQualityWeights(
+function allocateQualityWeights(
   weights: Map<string, bigint>,
   capMinor: string,
   actorLogins: ReadonlyMap<string, string> = new Map(),
@@ -215,33 +217,20 @@ export function allocateQualityWeights(
     "Negative quality weight",
   );
   const cap = BigInt(capMinor);
-  const total = [...weights.values()].reduce((sum, weight) => sum + weight, 0n);
-  const rows = [...weights].map(([id, weight]) => ({
-    id,
-    amount: total ? (cap * weight) / total : 0n,
-    remainder: total ? (cap * weight) % total : 0n,
-  }));
-  rows.sort((a, b) => {
-    if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
-    const left = actorLogins.get(a.id) ?? a.id,
-      right = actorLogins.get(b.id) ?? b.id;
-    const leftLogin = left.toLocaleLowerCase("en"),
-      rightLogin = right.toLocaleLowerCase("en");
-    return (
-      leftLogin.localeCompare(rightLogin, "en") ||
-      left.localeCompare(right, "en") ||
-      a.id.localeCompare(b.id, "en")
-    );
-  });
-  let remaining = total
-    ? cap - rows.reduce((sum, row) => sum + row.amount, 0n)
-    : 0n;
-  for (const row of rows)
-    if (remaining > 0n) {
-      row.amount++;
-      remaining--;
-    }
-  return new Map(rows.map((row) => [row.id, row.amount.toString()]));
+  const rows = [...weights].map(([id, weight]) => ({ id, weight }));
+  const allocated = allocateWeightedRows(
+    cap,
+    rows,
+    (row) => row.weight,
+    (a, b) =>
+      compareActors(
+        { id: a.id, login: actorLogins.get(a.id) ?? a.id },
+        { id: b.id, login: actorLogins.get(b.id) ?? b.id },
+      ),
+  );
+  return new Map(
+    allocated.map(({ row, amount }) => [row.id, amount.toString()]),
+  );
 }
 export function calculateQualityReview(
   evidence: QualityEvidence,
@@ -388,7 +377,7 @@ export function calculateQualityReview(
 }
 
 /** Explicit draft only; unmerged submissions already have zero implementation credit. */
-export interface QualityBurdenDecision {
+interface QualityBurdenDecision {
   actorId: string;
   closedPrIds: string[];
   deductionBasisPoints: number;

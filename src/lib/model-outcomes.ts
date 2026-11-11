@@ -40,10 +40,7 @@ interface ModelIdentityKey {
  * `claude-opus-5-5` folds to its dotted form `claude-opus-5.5`. Anything else
  * stays exactly as declared.
  */
-export function modelIdentityKey(
-  provider: string,
-  model: string,
-): ModelIdentityKey {
+function modelIdentityKey(provider: string, model: string): ModelIdentityKey {
   const rawProvider = provider.trim().toLowerCase();
   const normalizedProvider = Object.hasOwn(PROVIDER_ALIASES, rawProvider)
     ? PROVIDER_ALIASES[rawProvider]
@@ -73,7 +70,7 @@ export function modelIdentityKey(
   };
 }
 
-export interface ModelOutcomeRow {
+interface ModelOutcomeRow {
   key: string;
   provider: string;
   model: string;
@@ -91,7 +88,7 @@ export interface ModelOutcomeRow {
   declaredAs: Array<{ identifier: string; count: number }>;
 }
 
-export interface ClientOutcomeRow {
+interface ClientOutcomeRow {
   client: string;
   signedRuns: number;
   contributors: number;
@@ -102,7 +99,7 @@ export interface ClientOutcomeRow {
   runsWithExactUsage: number;
 }
 
-export interface ModelOutcomeTotals {
+interface ModelOutcomeTotals {
   /** Declarations that name an exact model. */
   declarations: number;
   /** Declarations that state the exact model could not be established. */
@@ -122,7 +119,7 @@ export interface ModelOutcomeTotals {
   acceptedReviewsWithModel: number;
 }
 
-export interface ModelOutcomeSummary {
+interface ModelOutcomeSummary {
   totals: ModelOutcomeTotals;
   models: ModelOutcomeRow[];
   clients: ClientOutcomeRow[];

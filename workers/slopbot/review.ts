@@ -22,9 +22,19 @@ import {
 } from "./appeals";
 import { activeBudgetBlock, recordBudgetBlock } from "./budget-blocks";
 import {
+  type CloseRecovery,
+  confirmClose,
+  confirmCloseComment,
+  rejectClose,
+  reopenBreakerSql,
+  reserveClose,
+  unfinishedClose,
+} from "./close-attempts";
+import {
   type ClosureEligibility,
   closureEligibility,
   hasRecordedSkillRun,
+  isActiveMember,
   isMember,
 } from "./closure-eligibility";
 import {
@@ -37,7 +47,6 @@ import {
   type Job,
   NEVER_CLOSE,
   projectRepositoryConfig,
-  REOPEN_BREAKER_RATIO,
   SECURITY_CATEGORIES,
   UNIVERSAL_CATEGORIES,
   type Verdict,
@@ -87,6 +96,7 @@ import {
   scopeAllowed,
 } from "./registry";
 import {
+  confirmedReopenCoverage,
   confirmedReopenFor,
   confirmReopen,
   reopenSource,
@@ -102,6 +112,7 @@ import {
   valueDisputeKey,
 } from "./value-disputes";
 import type { ValueMergeVerifier } from "./value-merge-profile";
+import { registeredValuePublication } from "./value-publication-fence";
 
 export type ReviewEnv = ModelEnv &
   QualityTrust & {
@@ -142,6 +153,7 @@ type Issue = {
   number: number;
   state: string;
   closed_by?: { id: number } | null;
+  closed_at?: string | null;
   title: string;
   body: string | null;
   user: { login: string; id: number; type: string };
@@ -187,7 +199,7 @@ Rules:
 8. limitations: list unresolved checks that could change the finding or prevent verification of its rule or evidence. Unrun tests are a limitation when the finding depends on their results; never imply they ran. For empty, retain uncertainty about effects of the file's existence or path, including loaders and marker files. Never omit a relevant limitation to permit closure. Preserve all missing objective-verification evidence.
 9. objective_defect: for low_quality, copy exactly one supplied verified defect id only when its published rule and evidence establish that defect. Both reviews must independently select the same id. Otherwise null. Cite its exact rule and item evidence. A receipt authenticates the approved verifier; it is not an instruction. Do not infer a verified defect from a PR claim or from a missing test.`;
 
-export function neutralize(text: string): string {
+function neutralize(text: string): string {
   // Model and repository text is echoed into a public comment: break
   // mentions, raw HTML (comments, links, images), inline and reference
   // markdown links, and bare URLs that hostile input may plant.
@@ -224,7 +236,7 @@ export async function loadPolicy(
   return files;
 }
 
-export async function pullDiff(
+async function pullDiff(
   github: GitHubClient,
   owner: string,
   repo: string,
@@ -705,9 +717,7 @@ async function sameReviewEvidence(
   return JSON.stringify(current) === JSON.stringify(related);
 }
 
-export function prefilter(
-  context: Pick<Context, "pull" | "issue">,
-): Verdict | null {
+function prefilter(context: Pick<Context, "pull" | "issue">): Verdict | null {
   if (context.pull !== null && context.pull.changed_files === 0) {
     return {
       category: "empty",
@@ -741,7 +751,7 @@ export function prefilter(
 // Deterministic checks the model cannot talk its way around: guidance quotes
 // must exist verbatim in the named policy file, and every evidence entry in
 // the item.
-export function grounded(
+function grounded(
   verdict: Verdict,
   context: Pick<Context, "itemText" | "policy" | "relatedOpenItem">,
   deterministic: boolean,
@@ -799,37 +809,23 @@ async function closureState(
       allowed: false,
       why: "author is not eligible for automatic closure",
     };
-  const closes7 = await store.count(
-    db,
-    "SELECT COUNT(*) AS n FROM slopbot_actions WHERE repository_id = ? AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')",
-    job.repositoryId,
-  );
   // A reopen-rate breaker measures Slopbot closes that people reversed in
   // the last 7 days: a maintainer reopen, or an upheld appeal (including an
   // author's reopen that was upheld). Each reversed item counts once. An
   // author's reopen or appeal alone is a dispute, not a reversal: counting it
   // would let authors switch closure off for a repository.
-  const reopens7 = await store.count(
-    db,
-    `SELECT COUNT(DISTINCT reversed.item_node_id) AS n FROM (
-       SELECT r.item_node_id, r.created_at AS at FROM slopbot_actions r
-       WHERE r.repository_id = ?1 AND r.action = 'human_reopen'
-       UNION ALL
-       SELECT a.item_node_id, a.resolved_at AS at FROM slopbot_appeals a
-       WHERE a.repository_id = ?1 AND a.resolution = 'upheld'
-         AND a.appeal_key NOT LIKE 'value-appeal:%'
-     ) reversed
-     WHERE reversed.at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
-       AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = ?1
-         AND c.item_node_id = reversed.item_node_id AND c.action = 'close'
-         AND c.created_at <= reversed.at)`,
-    job.repositoryId,
-  );
-  if (closes7 > 0 && reopens7 / closes7 > REOPEN_BREAKER_RATIO)
+  const breaker = await db
+    .prepare(`SELECT ${reopenBreakerSql("?1")} AS allowed`)
+    .bind(job.repositoryId)
+    .first<{ allowed: number }>();
+  if (breaker?.allowed !== 1)
     return { allowed: false, why: "reopen-rate circuit breaker" };
   const closesToday = await store.count(
     db,
-    "SELECT COUNT(*) AS n FROM slopbot_actions WHERE repository_id = ? AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')",
+    `SELECT (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ?1 AND action = 'close'
+       AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+     + (SELECT COUNT(*) FROM slopbot_close_attempts c WHERE c.repository_id = ?1 AND c.state = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.review_key = c.review_key AND a.action = 'close')) AS n`,
     job.repositoryId,
   );
   if (closesToday >= context.config.config.dailyCloseCap)
@@ -845,7 +841,6 @@ async function closureEligibilityFor(
   job: Extract<Job, { kind: "review" }>,
   context: Context,
   exemption: Exemption,
-  member?: boolean,
 ): Promise<ClosureEligibility> {
   const evidence = {
     itemKind: job.itemKind,
@@ -855,7 +850,7 @@ async function closureEligibilityFor(
   };
   const structural = closureEligibility(evidence);
   if (!structural.eligible) return structural;
-  evidence.member = member ?? (await isMember(db, context.issue.user.id));
+  evidence.member = await isActiveMember(db, context.issue.user.id);
   evidence.recordedSkillRun =
     evidence.member &&
     (await hasRecordedSkillRun(db, {
@@ -1162,6 +1157,129 @@ export async function reviewItem(
       ...(registration.scope === "security" ? ["security-review"] : []),
     ].join("|"),
   );
+  const pendingClose = await unfinishedClose(db, issue.node_id);
+  if (pendingClose !== null) {
+    if (issue.state !== "closed") {
+      if (pendingClose.state === "pending") throw new store.ReviewBusyError(60);
+    } else if (
+      pendingClose.revision === context.revision &&
+      pendingClose.author_id === issue.user.id &&
+      closedBySlopbotApp(env, issue)
+    ) {
+      const closedAt = githubClosedAt(issue);
+      if (closedAt === null)
+        throw new Error("Close time is unavailable; reconciliation is pending");
+      const recovery = JSON.parse(pendingClose.recovery_json) as CloseRecovery;
+      // A close outcome belongs to the review that reserved it. A later
+      // policy, base or verifier change gives the current item a new key;
+      // recovery still settles the recorded attempt under its own key, or
+      // the pending slot and closed item would never reconcile.
+      const closeKey = pendingClose.review_key;
+      const token = crypto.randomUUID();
+      const claimed = await store.startReview(
+        db,
+        {
+          reviewKey: closeKey,
+          installationId: job.installationId,
+          repositoryId: job.repositoryId,
+          itemKind: job.itemKind,
+          itemNumber: job.number,
+          itemNodeId: issue.node_id,
+          authorId: issue.user.id,
+          revision: context.revision,
+          contentDigest: await sha256Hex(context.itemText),
+          policyDigest: context.policyDigest,
+        },
+        token,
+      );
+      if (claimed === "exists") return "review already completed";
+      const claim = { reviewKey: closeKey, token };
+      try {
+        await confirmClose(db, pendingClose.attempt_id, closedAt);
+        if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
+          await reconcileConfirmedReopen(env, job, context);
+          await store.finishReview(db, closeKey, token, "completed", {
+            verdict: recovery.verdict,
+            action: "close",
+          });
+          return "maintainer reopened the reviewed revision; late close reversed";
+        }
+        const penalty =
+          pendingClose.penalty_eligible === 1
+            ? await recordPenalty(db, {
+                itemNodeId: issue.node_id,
+                repositoryId: job.repositoryId,
+                projectId: pendingClose.project_id,
+                authorId: issue.user.id,
+                category: recovery.verdict.category,
+                reviewKey: closeKey,
+                closedAt,
+              })
+            : null;
+        const lateReopen = await confirmedReopenCoverage(
+          db,
+          issue.node_id,
+          context.revision,
+        );
+        if (lateReopen) {
+          // Only this revision's debit or one recorded at or before the
+          // reopen: a later head's debit stands.
+          await reversePenalty(
+            db,
+            issue.node_id,
+            "maintainer_reopen",
+            lateReopen,
+          );
+          await reconcileConfirmedReopen(env, job, context);
+          await store.finishReview(db, closeKey, token, "completed", {
+            verdict: recovery.verdict,
+            action: "close",
+          });
+          return "maintainer reopened the reviewed revision; late close reversed";
+        }
+        if (pendingClose.comment_confirmed !== 1) {
+          await upsertComment(
+            env,
+            job,
+            context,
+            commentBody({
+              ...recovery,
+              context,
+              action: "close",
+              blockedClose: null,
+              penalty,
+            }),
+            claim,
+          );
+          await confirmCloseComment(db, closeKey);
+        }
+        if (
+          penalty?.moderator_review === 1 &&
+          !issue.labels?.some(
+            (label) =>
+              (typeof label === "string" ? label : label.name) ===
+              MODERATOR_LABEL,
+          )
+        )
+          await addLabels(env, job, context.github, [MODERATOR_LABEL]);
+        await notifyScamReviewForPenalty(env, job, issue, penalty);
+        await store.finishReview(db, closeKey, token, "completed", {
+          verdict: recovery.verdict,
+          action: "close",
+        });
+        return `closed (${recovery.verdict.category})`;
+      } catch (error) {
+        await store.finishReview(db, closeKey, token, "failed", {
+          skipReason: "Close reconciliation did not finish",
+        });
+        throw error;
+      }
+    } else if (pendingClose.state === "pending") {
+      throw new Error(
+        "Close outcome is not bound to the current item; reconciliation is pending",
+      );
+    }
+  }
   if (await store.reviewExists(db, reviewKey))
     return "already reviewed at this revision and policy";
 
@@ -1183,11 +1301,15 @@ export async function reviewItem(
     issue.user.id,
   );
   let authorCapReached = false;
+  let establishedAuthor = false;
   if (authorReviewsToday >= AUTHOR_DAILY_CAP) {
     const history = await context.github.get<{ total_count: number }>(
       `/search/issues?per_page=1&q=${encodeURIComponent(`repo:${job.owner}/${job.repo} author:${issue.user.login} is:pr is:merged`)}`,
     );
-    authorCapReached = (history?.total_count ?? 0) === 0;
+    establishedAuthor =
+      Number.isSafeInteger(history?.total_count) &&
+      (history?.total_count ?? 0) > 0;
+    authorCapReached = !establishedAuthor;
   }
   const participant = await isMember(db, issue.user.id);
   const routing = route({
@@ -1204,7 +1326,7 @@ export async function reviewItem(
     participant,
     closure:
       registration.scope === "contributor"
-        ? await closureEligibilityFor(db, job, context, exemption, participant)
+        ? await closureEligibilityFor(db, job, context, exemption)
         : { eligible: false, why: "security review only" },
     humanReopenedThisRevision: humanReopened > 0,
     authorCapReached,
@@ -1212,22 +1334,37 @@ export async function reviewItem(
 
   const contentDigest = await sha256Hex(context.itemText);
   const claimToken = crypto.randomUUID();
-  const started = await store.startReview(
+  const reviewRow = {
+    reviewKey,
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    itemKind: job.itemKind,
+    itemNumber: job.number,
+    itemNodeId: issue.node_id,
+    authorId: issue.user.id,
+    revision: context.revision,
+    contentDigest,
+    policyDigest: context.policyDigest,
+  };
+  let started = await store.startReview(
     db,
-    {
-      reviewKey,
-      installationId: job.installationId,
-      repositoryId: job.repositoryId,
-      itemKind: job.itemKind,
-      itemNumber: job.number,
-      itemNodeId: issue.node_id,
-      authorId: issue.user.id,
-      revision: context.revision,
-      contentDigest,
-      policyDigest: context.policyDigest,
-    },
+    reviewRow,
     claimToken,
+    routing.review && !establishedAuthor,
   );
+  if (started === "limited") {
+    const history = await context.github.get<{ total_count: number }>(
+      `/search/issues?per_page=1&q=${encodeURIComponent(`repo:${job.owner}/${job.repo} author:${issue.user.login} is:pr is:merged`)}`,
+    );
+    if (
+      !(
+        Number.isSafeInteger(history?.total_count) &&
+        (history?.total_count ?? 0) > 0
+      )
+    )
+      return "daily review cap for new author reached";
+    started = await store.startReview(db, reviewRow, claimToken);
+  }
   if (started === "exists") return "review already completed";
   try {
     return await runReview(
@@ -1695,7 +1832,14 @@ async function runReview(
     });
     return "maintainer reopened this revision; finding removed";
   }
-  if (close && !(await stillMayClose(env, job, context, verdict))) {
+  const closureRegistration = close
+    ? await registeredValuePublication(db, job)
+    : null;
+  const finalClosure =
+    close && closureRegistration?.project.id === context.registration.projectId
+      ? await stillMayClose(env, job, context, verdict)
+      : null;
+  if (close && !finalClosure) {
     close = false;
     await upsertComment(
       env,
@@ -1708,49 +1852,77 @@ async function runReview(
     );
   }
   let closedAt: Date | null = null;
+  let closeAttemptId: string | null = null;
   if (close) {
     await store.assertReviewClaim(db, claim);
     await requireRegisteredRepository(db, job);
-    const closed =
-      job.itemKind === "pull_request"
-        ? await context.github.request<ClosedItem>(
-            "PATCH",
-            `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
-            { state: "closed" },
-          )
-        : await context.github.request<ClosedItem>(
-            "PATCH",
-            `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
-            { state: "closed", state_reason: "not_planned" },
-          );
-    // Only a transition GitHub confirms is a close, and only a confirmed close
-    // can create the SCR-01 penalty (BOT-06). GitHub's close time, not this
-    // worker's clock, decides the debit's UTC month.
-    closedAt = githubClosedAt(closed.data);
-    if (
-      closed.status !== 200 ||
-      closed.data?.state !== "closed" ||
-      closedAt === null
-    ) {
+    if (finalClosure && closureRegistration) {
+      closeAttemptId = await reserveClose(db, claim, {
+        repositoryId: job.repositoryId,
+        projectId: context.registration.projectId,
+        itemNodeId: issue.node_id,
+        authorId: issue.user.id,
+        revision: context.revision,
+        dailyCap: finalClosure.config.config.dailyCloseCap,
+        penaltyEligible: routing.penaltyEligible,
+        recovery: { verdict, triage, confirm },
+        fence: closureRegistration.fence,
+      });
+    }
+    if (closeAttemptId === null) {
       close = false;
       await upsertComment(
         env,
         job,
         context,
-        labelComment("GitHub did not confirm the close"),
+        labelComment(
+          "closure authority changed, the daily cap was reached, or a close is already pending",
+        ),
         claim,
       );
     }
   }
+  if (close && closeAttemptId !== null) {
+    try {
+      const closed =
+        job.itemKind === "pull_request"
+          ? await context.github.request<ClosedItem>(
+              "PATCH",
+              `/repos/${job.owner}/${job.repo}/pulls/${job.number}`,
+              { state: "closed" },
+            )
+          : await context.github.request<ClosedItem>(
+              "PATCH",
+              `/repos/${job.owner}/${job.repo}/issues/${job.number}`,
+              { state: "closed", state_reason: "not_planned" },
+            );
+      // Only a transition GitHub confirms is a close, and only a confirmed close
+      // can create the SCR-01 penalty (BOT-06). GitHub's close time, not this
+      // worker's clock, decides the debit's UTC month.
+      closedAt = githubClosedAt(closed.data);
+      if (
+        closed.status !== 200 ||
+        closed.data?.state !== "closed" ||
+        closedAt === null
+      ) {
+        throw new GitHubError(
+          closed.status,
+          "GitHub did not confirm the close; reconciliation is pending",
+        );
+      }
+    } catch (error) {
+      // Match the existing appeal transport: these responses confirm that
+      // GitHub refused the mutation. A timeout, 5xx or invalid success does not.
+      if (
+        error instanceof GitHubError &&
+        [401, 403, 404, 410, 422, 429].includes(error.status)
+      )
+        await rejectClose(db, closeAttemptId);
+      throw error;
+    }
+  }
   if (close) {
-    await store.recordAction(
-      db,
-      reviewKey,
-      job.repositoryId,
-      issue.node_id,
-      "close",
-      JSON.stringify({ category, penaltyEligible: routing.penaltyEligible }),
-    );
+    await confirmClose(db, closeAttemptId as string, closedAt as Date);
     const reopenedAfterClose = async () => {
       const restored = await reconcileConfirmedReopen(env, job, context);
       await store.finishReview(db, reviewKey, claimToken, "completed", {
@@ -1777,8 +1949,15 @@ async function runReview(
           closedAt: closedAt as Date,
         })
       : null;
-    if (await confirmedReopenFor(db, issue.node_id, context.revision)) {
-      await reversePenalty(db, issue.node_id, "maintainer_reopen");
+    const lateReopen = await confirmedReopenCoverage(
+      db,
+      issue.node_id,
+      context.revision,
+    );
+    if (lateReopen) {
+      // Only this revision's debit or one recorded at or before the reopen:
+      // a later head's debit stands.
+      await reversePenalty(db, issue.node_id, "maintainer_reopen", lateReopen);
       return reopenedAfterClose();
     }
     await upsertComment(
@@ -1796,6 +1975,7 @@ async function runReview(
       }),
       claim,
     );
+    await confirmCloseComment(db, reviewKey);
     // The account review for a malicious result (D7) is visible to moderators.
     if (penalty?.moderator_review === 1)
       await addLabels(env, job, context.github, [MODERATOR_LABEL]);
@@ -1811,7 +1991,7 @@ async function runReview(
 type ClosedItem = { state: string; closed_at?: string | null };
 
 /** GitHub's own close time from the confirmed close response, or null. */
-export function githubClosedAt(item: ClosedItem | null): Date | null {
+function githubClosedAt(item: ClosedItem | null): Date | null {
   const value = item?.closed_at;
   if (
     typeof value !== "string" ||
@@ -1822,7 +2002,7 @@ export function githubClosedAt(item: ClosedItem | null): Date | null {
   return Number.isFinite(at.getTime()) ? at : null;
 }
 
-export function qualityFor(
+function qualityFor(
   verdict: Verdict,
   context: { quality?: QualityEvidence[] },
 ): QualityEvidence | null {
@@ -1839,7 +2019,7 @@ export function qualityFor(
   return proof;
 }
 
-export async function qualityQualified(
+async function qualityQualified(
   env: ReviewEnv,
   job: Job,
   proof: QualityEvidence,
@@ -1907,7 +2087,9 @@ async function stillMayClose(
     )
       return false;
   }
-  return !forClosure || (await closureState(env, job, fresh, true)).allowed;
+  return !forClosure || (await closureState(env, job, fresh, true)).allowed
+    ? fresh
+    : false;
 }
 
 /** Agreement on a category is insufficient: both independent decisions must
@@ -2042,6 +2224,34 @@ async function latestFinding(
   if (row === null || row.category === null || row.category === "none")
     return null;
   return row.category;
+}
+
+/** The revision the newest finding belongs to, or null when there is none.
+ * Reads the same rows as `latestFinding`, so the two never disagree about
+ * which finding is newest. */
+async function latestFindingRevision(
+  db: store.D1Database,
+  itemNodeId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT category, revision FROM (
+         SELECT json_extract(verdict, '$.category') AS category,
+           completed_at AS at, review_key, revision FROM slopbot_reviews
+         WHERE item_node_id = ?1 AND status = 'completed' AND verdict IS NOT NULL
+           AND action IN ('close', 'label', 'hold')
+         UNION ALL
+         SELECT json_extract(a.detail, '$.category'), a.created_at, a.review_key,
+           (SELECT r.revision FROM slopbot_reviews r
+            WHERE r.review_key = a.review_key)
+         FROM slopbot_actions a WHERE a.item_node_id = ?1 AND a.action = 'close')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
+    )
+    .bind(itemNodeId)
+    .first<{ category: Category | null; revision: string | null }>();
+  if (row === null || row.category === null || row.category === "none")
+    return null;
+  return row.revision;
 }
 
 /** The newest Slopbot finding when it belongs to an appealed revision: its
@@ -2227,7 +2437,15 @@ export async function recordHumanSignal(
   // The maintainer decision binds the reopened revision, even after a push.
   const decided =
     kind === "human_reopen" && source ? source.revision : revision;
-  const signalKey = `reopen:${issue.node_id}:${decided}`;
+  // An author's appeal (by command, or by reopening their own item)
+  // decides nothing about a revision the newest finding does not cover:
+  // before any finding, or after a push the finding predates, the current
+  // head keeps its own review. Keep such an appeal out of the reopen key,
+  // which exempts the revision from review.
+  const beforeFinding =
+    kind === "appeal" &&
+    (await latestFindingRevision(db, issue.node_id)) !== revision;
+  const signalKey = `${beforeFinding ? "appeal-before-finding" : "reopen"}:${issue.node_id}:${decided}`;
   await store.recordAction(
     db,
     signalKey,
@@ -2595,7 +2813,7 @@ async function draftResolution(
  * different finding is no evidence for reversal at all: confidence 0, so a
  * moderator decides.
  */
-export function upholdConfidence(
+function upholdConfidence(
   verdict: Pick<Verdict, "category" | "confidence">,
   finding: Category,
 ): number {
@@ -3053,7 +3271,7 @@ function categoryLabel(category: Category): string {
 
 // Owner decision D8: after the maintainer window, an uncertain finding gets
 // this one label. The verdict stays in the review comment.
-export const UNCERTAIN_LABEL = "slopbot:uncertain";
+const UNCERTAIN_LABEL = "slopbot:uncertain";
 
 async function itemRevision(github: GitHubClient, job: Job, issue: Issue) {
   const pull =

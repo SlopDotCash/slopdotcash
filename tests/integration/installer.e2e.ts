@@ -314,7 +314,177 @@ afterEach(() => {
   }
 });
 
+function completionFaults(
+  root: string,
+  faults: { readback?: boolean; cleanup?: boolean; activation?: boolean },
+): Record<string, string> {
+  const injection = join(root, "completion-injection");
+  mkdirSync(injection);
+  writeFileSync(
+    join(injection, "sitecustomize.py"),
+    `import os, shutil
+original_symlink = os.symlink
+original_readlink = os.readlink
+original_rmtree = shutil.rmtree
+link_prepared = False
+def symlink(source, destination, *args, **kwargs):
+    global link_prepared
+    managed = os.path.basename(os.fsdecode(destination)).startswith('.contribute-to-eliza-link-')
+    if managed and os.environ.get('SLOP_TEST_ACTIVATION_FAILURE') == '1':
+        raise OSError('synthetic activation failure')
+    result = original_symlink(source, destination, *args, **kwargs)
+    if managed: link_prepared = True
+    return result
+def readlink(path, *args, **kwargs):
+    if link_prepared and os.path.basename(os.fsdecode(path)) == 'contribute-to-eliza' and os.environ.get('SLOP_TEST_READBACK_FAILURE') == '1':
+        raise OSError('synthetic post-activation readback failure')
+    return original_readlink(path, *args, **kwargs)
+def rmtree(path, *args, **kwargs):
+    if os.path.basename(os.fsdecode(path)).startswith('.contribute-to-eliza-stage-') and os.environ.get('SLOP_TEST_CLEANUP_FAILURE') == '1':
+        raise OSError('synthetic staging cleanup failure')
+    return original_rmtree(path, *args, **kwargs)
+os.symlink = symlink
+os.readlink = readlink
+shutil.rmtree = rmtree
+`,
+  );
+  return {
+    PYTHONPATH: injection,
+    SLOP_TEST_READBACK_FAILURE: faults.readback ? "1" : "0",
+    SLOP_TEST_CLEANUP_FAILURE: faults.cleanup ? "1" : "0",
+    SLOP_TEST_ACTIVATION_FAILURE: faults.activation ? "1" : "0",
+  };
+}
+
+function completionFixture(label: string) {
+  const root = freshRoot(label);
+  const filesA = baseFiles("completion-a");
+  const filesB = baseFiles("completion-b");
+  const artifactA = writeArtifact(root, revisionA, filesA);
+  const artifactB = writeArtifact(root, revisionB, filesB);
+  const authority = configureAuthority(root, {
+    developHead: revisionB,
+    revisions: {
+      [revisionA]: { files: filesA },
+      [revisionB]: { files: filesB },
+    },
+  });
+  return {
+    root,
+    artifactA,
+    artifactB,
+    authority,
+    installRoot: join(root, "install"),
+  };
+}
+
 describe("authenticated skill installer lifecycle", () => {
+  for (const operation of ["install", "update", "rollback"] as const) {
+    it(`reports committed ${operation} when post-activation readback fails`, () => {
+      const f = completionFixture(`completion-${operation}`);
+      if (operation !== "install")
+        expect(
+          run(command(f.artifactA, f.authority), f.installRoot).status,
+        ).toBe(0);
+      if (operation === "rollback")
+        expect(
+          run(command(f.artifactB, f.authority), f.installRoot).status,
+        ).toBe(0);
+      const selected = operation === "update" ? revisionB : revisionA;
+      const script = command(
+        operation === "install" ? f.artifactA : f.artifactB,
+        f.authority,
+      );
+      const result = run(script, f.installRoot, {
+        ...completionFaults(f.root, { readback: true }),
+        ...(operation === "rollback"
+          ? { SLOP_SKILL_OPERATION: "rollback", SLOP_SKILL_REVISION: revisionA }
+          : {}),
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        `Skill activation committed at ${selected}.`,
+      );
+      expect(result.stderr).toContain(
+        "Post-activation verification did not complete.",
+      );
+      expect(result.stderr).toContain(
+        "synthetic post-activation readback failure",
+      );
+      expect(result.stderr).toContain(
+        "The committed activation was not reverted.",
+      );
+      expect(result.stderr).not.toContain("Refusing skill operation:");
+      expect(currentLink(f.installRoot)).toBe(
+        `.contribute-to-eliza-versions/${selected}`,
+      );
+      expect(existsSync(versionPath(f.installRoot, revisionA))).toBe(true);
+      if (operation !== "install")
+        expect(existsSync(versionPath(f.installRoot, revisionB))).toBe(true);
+    });
+  }
+
+  for (const readback of [false, true]) {
+    it(`preserves the ${readback ? "readback error" : "verified activation"} when staging cleanup fails`, () => {
+      const f = completionFixture(`completion-cleanup-${readback}`);
+      const script = command(f.artifactA, f.authority);
+      const result = run(
+        script,
+        f.installRoot,
+        completionFaults(f.root, { readback, cleanup: true }),
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        `Skill activation committed at ${revisionA}.`,
+      );
+      expect(result.stderr).toContain("synthetic staging cleanup failure");
+      expect(result.stderr).not.toContain("Refusing skill operation:");
+      expect(result.stderr).toContain(
+        readback
+          ? "The operation failed: synthetic post-activation readback failure."
+          : "Post-activation verification succeeded.",
+      );
+      if (readback)
+        expect(result.stderr).toContain("Additional staging cleanup failure:");
+      expect(currentLink(f.installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+      const skills = join(f.installRoot, "codex", "skills");
+      const leftovers = readdirSync(skills).filter((name) =>
+        name.startsWith(".contribute-to-eliza-stage-"),
+      );
+      expect(leftovers).toHaveLength(1);
+      const retry = run(script, f.installRoot);
+      expect(retry.status, retry.stderr).toBe(0);
+      expect(retry.stdout).toContain("is already verified");
+      expect(
+        readdirSync(skills).filter((name) =>
+          name.startsWith(".contribute-to-eliza-stage-"),
+        ),
+      ).toEqual(leftovers);
+    });
+  }
+
+  it("keeps the pre-activation error when staging cleanup also fails", () => {
+    const f = completionFixture("completion-before-activation");
+    const result = run(
+      command(f.artifactA, f.authority),
+      f.installRoot,
+      completionFaults(f.root, { activation: true, cleanup: true }),
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Refusing skill operation: synthetic activation failure",
+    );
+    expect(result.stderr).toContain("Additional staging cleanup failure:");
+    expect(result.stderr).toContain("synthetic staging cleanup failure");
+    expect(result.stderr).not.toContain("Skill activation committed");
+    expect(existsSync(versionPath(f.installRoot, revisionA))).toBe(true);
+    expect(
+      existsSync(join(f.installRoot, "codex", "skills", "contribute-to-eliza")),
+    ).toBe(false);
+  });
+
   it("explains Windows symlink privilege refusal and reuses the verified version", () => {
     const root = freshRoot("symlink-privilege");
     const files = baseFiles("revision-a");
@@ -2149,6 +2319,129 @@ describe("generated project skill installation", () => {
         "/",
       ),
     ).toBe(`.${skillName}-versions/${revisionA}-r3`);
+  });
+
+  it("does not publish an invalid receipt after a small backward clock change and can retry", () => {
+    const root = freshRoot("receipt-clock");
+    const manifest = manifestFor("Prefer small PRs.");
+    const binding = publishRevision(root, manifest, 3);
+    const { artifact } = generatedArtifact(root, manifest, binding);
+    const installRoot = join(root, "install");
+    const installed = run(
+      generatedCommand(artifact, generatedAuthority(root), root),
+      installRoot,
+    );
+    expect(installed.status, installed.stderr).toBe(0);
+    const installedSkill = join(installRoot, "codex", "skills", skillName);
+    const script = join(installedSkill, "scripts", "run-receipt.mjs");
+    const project = JSON.parse(
+      readFileSync(join(installedSkill, "project.json"), "utf8"),
+    );
+    const target = join(root, "target");
+    execFileSync("git", ["init", "--quiet", target]);
+    execFileSync("git", [
+      "-C",
+      target,
+      "remote",
+      "add",
+      "origin",
+      `https://github.com/${project.repositoryId}.git`,
+    ]);
+    const configuration = join(root, "state");
+    const invokeAt = (timestamp: number, args: string[]) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `
+            import { pathToFileURL } from 'node:url';
+            const [script, timestamp, args] = process.argv.slice(1);
+            const now = Number(timestamp);
+            const NativeDate = Date;
+            globalThis.Date = class extends NativeDate {
+              constructor(...values) { super(...(values.length ? values : [now])); }
+              static now() { return now; }
+            };
+            process.argv = [process.execPath];
+            const { main } = await import(pathToFileURL(script).href);
+            try { await main(JSON.parse(args)); }
+            catch (error) {
+              process.stderr.write(String(error.message) + '\\n');
+              process.exitCode = 1;
+            }
+          `,
+          script,
+          String(timestamp),
+          JSON.stringify(args),
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, XDG_CONFIG_HOME: configuration },
+        },
+      );
+    const declared = [
+      "--client",
+      "codex",
+      "--provider",
+      "fixture",
+      "--model",
+      "fixture-model",
+      "--lane",
+      "clock",
+      "--repo-root",
+      target,
+      "--usage-unavailable",
+      "--json",
+    ];
+    const startedAt = Date.parse("2026-11-08T12:00:00.000Z");
+    const started = invokeAt(startedAt, ["start", ...declared]);
+    expect(started.status, started.stderr).toBe(0);
+    const runId = JSON.parse(started.stdout).runId;
+    const active = join(
+      configuration,
+      "slop",
+      "runs",
+      "active",
+      `${runId}.json`,
+    );
+    const completed = join(
+      configuration,
+      "slop",
+      "runs",
+      "completed",
+      `${runId}.json`,
+    );
+    const activeBytes = readFileSync(active);
+    const finishArgs = ["finish", ...declared, "--run", runId];
+    const backward = invokeAt(startedAt - 1_000, finishArgs);
+    expect(backward.status).not.toBe(0);
+    expect(backward.stderr).toContain("system clock moved backward");
+    expect(existsSync(completed)).toBe(false);
+    expect(readFileSync(active)).toEqual(activeBytes);
+    const retried = invokeAt(startedAt + 1_000, finishArgs);
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(JSON.parse(retried.stdout).receipt.completedAt).toBe(
+      "2026-11-08T12:00:01.000Z",
+    );
+    expect(existsSync(active)).toBe(false);
+    const committed = readFileSync(completed);
+    const replayed = invokeAt(startedAt + 2_000, finishArgs);
+    expect(replayed.status, replayed.stderr).toBe(0);
+    expect(readFileSync(completed)).toEqual(committed);
+    expect(JSON.parse(replayed.stdout).receipt).toEqual(
+      JSON.parse(retried.stdout).receipt,
+    );
+
+    // A pre-existing invalid record remains an explicit error, never a target
+    // that a retry silently replaces. Model historical invalid bytes locally.
+    const historical = JSON.parse(committed.toString());
+    historical.receipt.completedAt = "2026-11-08T11:59:59.000Z";
+    const invalid = Buffer.from(`${JSON.stringify(historical)}\n`);
+    writeFileSync(completed, invalid);
+    const refused = invokeAt(startedAt + 3_000, finishArgs);
+    expect(refused.status).not.toBe(0);
+    expect(readFileSync(completed)).toEqual(invalid);
   });
 
   it("refuses offline use of tampered installations and a clean uninstalled checkout", () => {

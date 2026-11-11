@@ -12,6 +12,7 @@ import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
 import {
   type SolanaProgramConfig,
   SolanaRpcUnavailable,
+  verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
@@ -25,6 +26,8 @@ import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
   isBaseUnits,
+  type PaymentDeploymentRecord,
+  paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
 import type {
@@ -37,10 +40,18 @@ import type {
   VaultSetupReview,
 } from "../../src/lib/vault-setup";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
+import { readDeploymentVaultTotals } from "../../workers/payments/index";
 import type { D1TransactionalDatabase } from "../d1";
 import { fail } from "../http";
+import { storeVaultSnapshot } from "../payments/vault-snapshots";
+import { securityPaymentDatabase } from "../security/payment-database";
 
 export interface OwnerVaultSetup {
+  observe(
+    project: ProjectRecord,
+    deployment: EscrowDeployment,
+    payoutPolicy?: VaultSetupInput["payoutPolicy"],
+  ): Promise<void>;
   networks(
     project: ProjectRecord,
     payoutPolicy?: PayoutPolicy,
@@ -58,6 +69,40 @@ export interface OwnerVaultSetup {
   ): Promise<EscrowDeployment | null>;
 }
 
+/** Bind observations to the registered chain, reviewed program and exact project. */
+export async function readRegisteredVaultTotals(
+  deployment: PaymentDeploymentRecord & { payoutPolicy?: PayoutPolicy },
+  rpcUrl: string,
+) {
+  const network = ESCROW_NETWORKS[deployment.network];
+  if (network.family === "solana") {
+    if (
+      !network.genesisHash ||
+      !deployment.programId ||
+      !deployment.projectPda ||
+      !deployment.networkDomain ||
+      !deployment.rotationAuthority ||
+      deployment.rotationDelaySeconds === null
+    )
+      throw new Error("Reviewed Solana deployment is incomplete");
+    await verifySolanaDeployment(
+      {
+        ...deployment,
+        rpcUrl,
+        genesisHash: network.genesisHash,
+        programId: deployment.programId,
+        projectPda: deployment.projectPda,
+        networkDomain: deployment.networkDomain,
+        rotationAuthority: deployment.rotationAuthority,
+        rotationDelaySeconds: deployment.rotationDelaySeconds,
+        mint: deployment.asset,
+      },
+      registryProjectDigest(deployment.projectId),
+    );
+  }
+  return readDeploymentVaultTotals(deployment, rpcUrl);
+}
+
 /**
  * The RPC gave no usable answer, so the chain state is unknown. This is not a
  * refusal of the factory or the transaction, and nothing needs review.
@@ -67,6 +112,21 @@ function networkUnavailable(): never {
     503,
     "vault_network_unavailable",
     "The network could not be read. Nothing needs review. Try again in a minute.",
+  );
+}
+
+function registrationFailure(error: unknown, family: "evm" | "solana"): never {
+  fail(
+    422,
+    error instanceof EvmVaultCreationFailed ||
+      error instanceof SolanaVaultCreationFailed
+      ? "vault_creation_failed"
+      : "vault_creation_invalid",
+    error instanceof Error
+      ? error.message
+      : family === "evm"
+        ? "The creation transaction could not be verified. Check again."
+        : "The creation transaction could not be verified.",
   );
 }
 
@@ -208,8 +268,8 @@ export function ownerVaultSetupService(deps: {
     }
     return reviewed;
   }
-  /** `prepareEvm` checks one reviewed factory for this creation; a refusal
-   * skips to the next template. */
+  /** Preparation and, for registration, the exact creation transaction must
+   * match the same reviewed candidate. A mismatch tries the next template. */
   async function resolve<EvmPrepared>(
     project: ProjectRecord,
     actor: GithubActor,
@@ -218,7 +278,7 @@ export function ownerVaultSetupService(deps: {
       config: EvmFactoryConfig,
       creation: EvmVaultCreation,
     ) => Promise<EvmPrepared>,
-    registrationOnly = false,
+    transactionId?: string,
   ) {
     const network = ESCROW_NETWORKS[input.network];
     const reward = project.manifest.reward;
@@ -272,6 +332,7 @@ export function ownerVaultSetupService(deps: {
           "The monthly amount exceeds the Solana vault limit.",
         );
       let creationError: SolanaWalletActionError | undefined;
+      let verificationError: { error: unknown } | undefined;
       for (const template of await programs(project, input.payoutPolicy)) {
         if (template.network !== input.network || !network.genesisHash)
           continue;
@@ -298,20 +359,13 @@ export function ownerVaultSetupService(deps: {
                 payoutPolicy: "ordinary" as const,
               }),
         };
+        let plan: Awaited<ReturnType<typeof prepareSolanaVaultCreation>>;
         try {
-          const { tokenProgram, ...prepared } =
-            await prepareSolanaVaultCreation(
-              config,
-              creation,
-              registrationOnly,
-            );
-          return {
-            family: "solana" as const,
-            template,
+          plan = await prepareSolanaVaultCreation(
             config,
-            creation: { ...creation, tokenProgram },
-            prepared,
-          };
+            creation,
+            transactionId !== undefined,
+          );
         } catch (error) {
           // The request can be valid while the chain is unreadable.
           if (error instanceof SolanaRpcUnavailable) networkUnavailable();
@@ -320,8 +374,39 @@ export function ownerVaultSetupService(deps: {
           // as a new review. Preserve the failure if none matches this vault.
           if (error instanceof SolanaWalletActionError) creationError ??= error;
           // Only a current verified program and Config may anchor new owner creation.
+          continue;
         }
+        const { tokenProgram, ...prepared } = plan;
+        const preparedCreation = { ...creation, tokenProgram };
+        let verified:
+          | Awaited<ReturnType<typeof verifySolanaVaultCreation>>
+          | undefined;
+        if (transactionId !== undefined) {
+          try {
+            verified = await verifySolanaVaultCreation(
+              config,
+              preparedCreation,
+              transactionId,
+            );
+          } catch (error) {
+            if (error instanceof SolanaRpcUnavailable) networkUnavailable();
+            if (error instanceof SolanaVaultCreationFailed)
+              registrationFailure(error, "solana");
+            verificationError ??= { error };
+            continue;
+          }
+        }
+        return {
+          family: "solana" as const,
+          template,
+          config,
+          creation: preparedCreation,
+          prepared,
+          verified,
+        };
       }
+      if (verificationError)
+        registrationFailure(verificationError.error, "solana");
       if (creationError)
         fail(422, "vault_creation_invalid", creationError.message);
       fail(
@@ -338,6 +423,7 @@ export function ownerVaultSetupService(deps: {
       monthlyEnabled: input.automatic,
       payoutPolicy: input.payoutPolicy ?? "ordinary",
     };
+    let verificationError: { error: unknown } | undefined;
     for (const template of await factories(project, input.payoutPolicy)) {
       if (template.network !== input.network || !network.chainId) continue;
       const config: EvmFactoryConfig = {
@@ -365,8 +451,34 @@ export function ownerVaultSetupService(deps: {
           "vault_role_conflict",
           "The platform fee wallet must be separate from the vault owner and identity authority.",
         );
-      return { family: "evm" as const, template, config, creation, prepared };
+      let verified:
+        | Awaited<ReturnType<typeof verifyEvmVaultCreation>>
+        | undefined;
+      if (transactionId !== undefined) {
+        try {
+          verified = await verifyEvmVaultCreation(
+            config,
+            creation,
+            transactionId,
+          );
+        } catch (error) {
+          if (error instanceof EvmRpcUnavailable) networkUnavailable();
+          if (error instanceof EvmVaultCreationFailed)
+            registrationFailure(error, "evm");
+          verificationError ??= { error };
+          continue;
+        }
+      }
+      return {
+        family: "evm" as const,
+        template,
+        config,
+        creation,
+        prepared,
+        verified,
+      };
     }
+    if (verificationError) registrationFailure(verificationError.error, "evm");
     fail(
       503,
       "vault_setup_unavailable",
@@ -374,6 +486,32 @@ export function ownerVaultSetupService(deps: {
     );
   }
   return {
+    async observe(project, deployment, payoutPolicy) {
+      const registered = {
+        ...paymentDeploymentRecord(project.id, deployment),
+        ...(payoutPolicy === "security-bounty" ? { payoutPolicy } : {}),
+      };
+      try {
+        const totals = await readRegisteredVaultTotals(
+          registered,
+          deps.rpcUrl(deployment.network),
+        );
+        await storeVaultSnapshot(
+          payoutPolicy === "security-bounty"
+            ? securityPaymentDatabase(deps.db)
+            : deps.db,
+          registered,
+          totals,
+          new Date().toISOString(),
+        );
+      } catch {
+        fail(
+          503,
+          "vault_snapshot_unavailable",
+          "The vault is registered. Its finalized balances could not be saved. Check again.",
+        );
+      }
+    },
     async networks(project, payoutPolicy) {
       return [
         ...new Set([
@@ -433,65 +571,31 @@ export function ownerVaultSetupService(deps: {
       };
     },
     async register(project, actor, input, transactionId) {
-      // Check the creation factory only. verifyEvmVaultCreation reads the
-      // created vault at its receipt block, so the latest-block vault lookup
-      // and the creation simulation of a review would repeat chain reads.
+      // Use factory-only preparation; resolve also verifies the exact receipt
+      // before selecting a candidate. A review's latest-block vault lookup and
+      // creation simulation would repeat those registration reads.
       const result = await resolve(
         project,
         actor,
         input,
         (config) =>
           verifyEvmFactory(config, "finalized", { forCreation: true }),
-        true,
+        transactionId,
       );
       if (result.family === "solana") {
-        try {
-          const verified = await verifySolanaVaultCreation(
-            result.config,
-            result.creation,
-            transactionId,
-          );
-          if (!verified) return null;
-          return {
-            ...result.template,
-            factory: null,
-            factoryCodeSha256: null,
-            registrar: null,
-            ...verified,
-            owner: result.creation.owner,
-            asset: result.creation.mint,
-            deploymentTransaction: transactionId,
-          };
-        } catch (error) {
-          if (error instanceof SolanaRpcUnavailable) networkUnavailable();
-          fail(
-            422,
-            error instanceof SolanaVaultCreationFailed
-              ? "vault_creation_failed"
-              : "vault_creation_invalid",
-            error instanceof Error
-              ? error.message
-              : "The creation transaction could not be verified.",
-          );
-        }
+        if (!result.verified) return null;
+        return {
+          ...result.template,
+          factory: null,
+          factoryCodeSha256: null,
+          registrar: null,
+          ...result.verified,
+          owner: result.creation.owner,
+          asset: result.creation.mint,
+          deploymentTransaction: transactionId,
+        };
       }
-      const { template, config, creation } = result;
-      let vault: string | null;
-      try {
-        vault = await verifyEvmVaultCreation(config, creation, transactionId);
-      } catch (error) {
-        // The request can be valid while the chain is unreadable.
-        if (error instanceof EvmRpcUnavailable) networkUnavailable();
-        fail(
-          422,
-          error instanceof EvmVaultCreationFailed
-            ? "vault_creation_failed"
-            : "vault_creation_invalid",
-          error instanceof Error
-            ? error.message
-            : "The creation transaction could not be verified. Check again.",
-        );
-      }
+      const { template, creation, verified: vault } = result;
       if (!vault) return null;
       return {
         ...template,

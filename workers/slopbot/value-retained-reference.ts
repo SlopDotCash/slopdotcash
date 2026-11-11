@@ -1,7 +1,11 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { GitHubError } from "./github";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type {
+  EvidenceClient,
+  RetainedMergeReference,
+  ValueEvidence,
+} from "./value-evidence-types";
 
 type Source = Pick<
   ValueEvidence,
@@ -13,13 +17,6 @@ type Source = Pick<
 >;
 type Comment = ValueEvidence["comments"][number];
 type Pull = ValueEvidence["pull"];
-
-export interface RetainedMergeReference {
-  commentNodeId: string;
-  acknowledgementSha256: string;
-  abbreviation: string;
-  commitSha: string;
-}
 
 /** Bind the provider resolution to the original authenticated comment, not
  * just its text or a mutable repository name. Collection time is not evidence.

@@ -88,7 +88,7 @@ const TRACE_PRIVACY_CONTRACT = "https://slop.cash/protocol/private-trace-v1.md";
 const PRIVATE_REQUEST_INTAKE_STATUS = `${TRACE_AUTHORITY}/api/v1/private-request-intake`;
 // The Slop repository is the one trust root for the generic skill template
 // (PRD section 4, SKL-04). elizaOS/army and elizaOS/slopdotcash are earlier
-// names of the same repository (protocol/identity-v1.json sourceRepository),
+// names of the same repository (scripts/protocol-identity.mjs sourceRepository),
 // so a developer checkout whose remote still uses one is the same source.
 const SKILL_SOURCE_REPOSITORY = "SlopDotCash/slopdotcash";
 const SKILL_SOURCE_REPOSITORY_ALIASES = ["elizaOS/army", "elizaOS/slopdotcash"];
@@ -99,7 +99,7 @@ const SKILL_SOURCE_REMOTES = new Set(
 );
 // Every project emits the Slop attribution markers. A target repository whose
 // own PR validator predates Slop identity v1 accepts only its legacy markers
-// (protocol/identity-v1.json contributionMarker.legacy); it keeps them here,
+// (scripts/protocol-identity.mjs contributionMarker.legacy); it keeps them here,
 // keyed by its lowercase repository ID, until that validator accepts Slop's.
 const SLOP_ATTRIBUTION_MARKERS = Object.freeze({
   ordinary: "slop-contribution-attribution:v1",
@@ -2869,7 +2869,7 @@ function finishRun(options) {
     fail("run state does not match this project, repository, model, or lane");
   }
   const completedAt = canonicalIso();
-  if (Date.parse(completedAt) + CLOCK_SKEW_MS < Date.parse(state.startedAt)) {
+  if (Date.parse(completedAt) < Date.parse(state.startedAt)) {
     fail("system clock moved backward during the run");
   }
   const usage = options.usageUnavailable
@@ -2927,9 +2927,16 @@ function finishRun(options) {
     lane: options.lane,
     repositoryRootHash: state.repositoryRootHash,
   };
+  // A committed receipt is immutable. Refuse an invalid candidate before it
+  // can become the winner that every later finish must read and validate.
+  const validatedCandidate = validateCompletedState(
+    completed,
+    options,
+    repositoryRoot,
+  );
   const created = atomicJson(completedPath, completed, directories.pending);
   const winner = created
-    ? validateCompletedState(completed, options, repositoryRoot)
+    ? validatedCandidate
     : validateCompletedState(
         readStateFile(completedPath),
         options,

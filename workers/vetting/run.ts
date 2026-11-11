@@ -8,9 +8,13 @@
  * publishes the result once.
  *
  * A service failure (an unavailable queue, source or provider) publishes
- * nothing and leaves the assessment pending, so the next pass retries it.
+ * nothing and leaves the assessment pending, so the next pass retries it. An
+ * error that escapes one assessment is recorded against that assessment alone
+ * and the pass continues with the next pending assessment, so one repository
+ * cannot hold back every project queued behind it.
  * A bound acquisition-policy refusal publishes an incomplete result instead;
- * no source inspection or model review is claimed.
+ * no source inspection or model review is claimed. A review the provider
+ * declines also publishes an incomplete result, naming the failed review.
  * A clean result is never published without its retained evidence. An
  * incomplete result records quarantine even when evidence storage fails.
  * A published attempt is journaled and never sent again; an uncertain or
@@ -34,6 +38,7 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import type { QueuedAssessment } from "./assembly-manifest";
 import {
   composeAcquisitionRefusal,
   composeScanResult,
@@ -52,12 +57,12 @@ import {
   acquireQueuedAssessment,
   type QueueConnection,
   QueuedAcquisitionRefusal,
-  type QueuedAssessment,
   readPendingAssessments,
 } from "./queue";
 import { type ReviewCache, reviewInventory } from "./review-plan";
 import {
   PINNED_SCANNER_PROFILES,
+  reviewDeclined,
   type ScannerProfile,
   validateProfile,
 } from "./scanners";
@@ -80,11 +85,11 @@ const COVERED_BY_BOUNDED_SCAN = new Set([
 export { TEMPLATE_PREFIX } from "../../backend/vetting/scan-result";
 
 /**
- * Fails closed unless the primary is the pinned Surplus `claude-opus-5.5`
- * profile and the specialist the pinned Surplus `gpt-6.1-sol` profile, so
+ * Fails closed unless the primary is the pinned Surplus `claude-sonnet-5.5`
+ * profile and the specialist the pinned Surplus `gpt-6.1-terra` profile, so
  * `SURPLUS_API_KEY` reaches only the approved Surplus endpoints.
  */
-export function assertPinnedProfiles(
+function assertPinnedProfiles(
   primary: ScannerProfile,
   specialist: ScannerProfile,
 ) {
@@ -95,7 +100,7 @@ export function assertPinnedProfiles(
     specialist.model !== PINNED_SCANNER_PROFILES["openai-responses"].model
   )
     throw new Error(
-      "The primary review must be Surplus claude-opus-5.5 and the specialist Surplus gpt-6.1-sol",
+      "The primary review must be Surplus claude-sonnet-5.5 and the specialist Surplus gpt-6.1-terra",
     );
   validateProfile(primary);
   validateProfile(specialist);
@@ -105,9 +110,9 @@ export type ScanServiceConfig = {
   connection: QueueConnection;
   /** Read-only GitHub credential, used only while acquiring public source. */
   githubToken?: string;
-  /** Surplus `claude-opus-5.5`: every fresh scan (owner decision D16). */
+  /** Surplus `claude-sonnet-5.5`: every fresh scan (owner decision, 11 November 2026). */
   primary: ScannerProfile;
-  /** Surplus `gpt-6.1-sol`: only ambiguous or high-risk results. */
+  /** Surplus `gpt-6.1-terra`: only ambiguous or high-risk results. */
   specialist: ScannerProfile;
   policyVersion: string;
   /** Operator-private scratch space for acquired bytes. */
@@ -128,7 +133,7 @@ export type ScanServiceConfig = {
   };
 };
 
-export type AssessmentOutcome =
+type AssessmentOutcome =
   | {
       assessmentId: string;
       state: "published";
@@ -136,6 +141,11 @@ export type AssessmentOutcome =
       outcome: "accepted" | "rejected" | "unknown";
       specialist: boolean;
       evidence: "retained" | "failed";
+      /**
+       * Set only when a provider declined a review, which ends the scan
+       * incomplete: the declined review's fixed failure category.
+       */
+      reason?: string;
     }
   | {
       assessmentId: string;
@@ -148,7 +158,9 @@ export type AssessmentOutcome =
         | "primary-review"
         | "specialist-review"
         | "review-batches"
-        | "evidence";
+        | "evidence"
+        /** An error escaped the assessment as a whole. */
+        | "assessment";
       /**
        * The error name of a step that threw, never its message; for a failed
        * model review, its fixed failure category (`ReviewFailureCategory`).
@@ -161,7 +173,7 @@ export type AssessmentOutcome =
       state: "journaled";
     };
 
-export type ScanPassReport = {
+type ScanPassReport = {
   refreshed: boolean;
   assessments: AssessmentOutcome[];
 };
@@ -189,7 +201,7 @@ async function signedRequest(
  */
 function retry(
   assessmentId: string,
-  step: "acquire" | "isolated-execution" | "reuse",
+  step: "acquire" | "isolated-execution" | "reuse" | "assessment",
   error: unknown,
 ): AssessmentOutcome {
   return {
@@ -415,6 +427,22 @@ async function retainEvidence(
 }
 
 /** A policy refusal completes the assignment as incomplete and notifies its owner. */
+/** Signs and publishes one composed result through the operator journal. */
+async function publishComposed(config: ScanServiceConfig, result: unknown) {
+  const { connection } = config;
+  const body = JSON.stringify(result);
+  return publishResult({
+    origin: connection.origin,
+    body,
+    approvedSha256: await sha256Hex(encoder.encode(body)),
+    signer: connection,
+    journalDirectory: config.journalDirectory,
+    journal: config.journal,
+    at: connection.now?.(),
+    fetch: connection.fetch,
+  });
+}
+
 async function publishAcquisitionRefusal(
   config: ScanServiceConfig,
   refusal: QueuedAcquisitionRefusal,
@@ -446,17 +474,7 @@ async function publishAcquisitionRefusal(
       contentType: "application/json",
     },
   ]).catch(() => false);
-  const body = JSON.stringify(composed.result);
-  const receipt = await publishResult({
-    origin: connection.origin,
-    body,
-    approvedSha256: await sha256Hex(encoder.encode(body)),
-    signer: connection,
-    journalDirectory: config.journalDirectory,
-    journal: config.journal,
-    at: connection.now?.(),
-    fetch: connection.fetch,
-  });
+  const receipt = await publishComposed(config, composed.result);
   return {
     assessmentId,
     state: "published",
@@ -516,17 +534,7 @@ async function scanOne(
       return retry(assessmentId, "reuse", error);
     }
     if (reused) {
-      const body = JSON.stringify(reused);
-      const receipt = await publishResult({
-        origin: connection.origin,
-        body,
-        approvedSha256: await sha256Hex(encoder.encode(body)),
-        signer: connection,
-        journalDirectory: config.journalDirectory,
-        journal: config.journal,
-        at: connection.now?.(),
-        fetch: connection.fetch,
-      });
+      const receipt = await publishComposed(config, reused);
       return {
         assessmentId,
         state: "published",
@@ -562,13 +570,19 @@ async function scanOne(
           cache: config.review?.cache,
         })
       ).evidence;
-    // A failed review is a service failure, never an incomplete scan. A
+    // A failed review is a service failure and retries next pass, except a
+    // review the provider declined: the same pinned content is declined
+    // again, so the scan publishes as incomplete with the failed review. A
     // batched review that ran out of its per-pass budget resumes next pass.
     const primary = await review(config.primary);
     if (primary === null)
       return { assessmentId, state: "retry", step: "review-batches" };
-    if (primary.review.status !== "completed")
-      return reviewRetry(assessmentId, "primary-review", primary.failure);
+    let declined: string | undefined;
+    if (primary.review.status !== "completed") {
+      if (!reviewDeclined(primary.failure))
+        return reviewRetry(assessmentId, "primary-review", primary.failure);
+      declined = primary.failure;
+    }
     const runId = `scan_${(config.randomId ?? randomUUID)().replaceAll("-", "")}`;
     const queued = { ...assessment, repository: inputs.repository };
     const compose = (specialist: typeof primary | null) =>
@@ -587,12 +601,15 @@ async function scanOne(
       });
     let composed = compose(null);
     let specialist = false;
-    if (composed.needsSpecialist) {
+    if (declined === undefined && composed.needsSpecialist) {
       const second = await review(config.specialist);
       if (second === null)
         return { assessmentId, state: "retry", step: "review-batches" };
-      if (second.review.status !== "completed")
-        return reviewRetry(assessmentId, "specialist-review", second.failure);
+      if (second.review.status !== "completed") {
+        if (!reviewDeclined(second.failure))
+          return reviewRetry(assessmentId, "specialist-review", second.failure);
+        declined = second.failure;
+      }
       composed = compose(second);
       specialist = true;
     }
@@ -642,17 +659,7 @@ async function scanOne(
     // The intake refuses a clean result without its evidence; retry it.
     if (!retained && composed.result.disposition === "clean")
       return { assessmentId, state: "retry", step: "evidence" };
-    const body = JSON.stringify(composed.result);
-    const receipt = await publishResult({
-      origin: connection.origin,
-      body,
-      approvedSha256: await sha256Hex(encoder.encode(body)),
-      signer: connection,
-      journalDirectory: config.journalDirectory,
-      journal: config.journal,
-      at: connection.now?.(),
-      fetch: connection.fetch,
-    });
+    const receipt = await publishComposed(config, composed.result);
     return {
       assessmentId,
       state: "published",
@@ -660,6 +667,7 @@ async function scanOne(
       outcome: receipt.outcome,
       specialist,
       evidence: retained ? "retained" : "failed",
+      ...(declined === undefined ? {} : { reason: declined }),
     };
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -746,7 +754,14 @@ export async function runScanPass(
       });
       continue;
     }
-    assessments.push(await scanOne(config, assessment));
+    // An error that escapes the assessment leaves it pending for the next
+    // pass and is reported by step and error name only, never its message. The
+    // pass goes on to the next queued project instead of ending here.
+    assessments.push(
+      await scanOne(config, assessment).catch((error: unknown) =>
+        retry(assessment.assessmentId, "assessment", error),
+      ),
+    );
   }
   return { refreshed, assessments };
 }

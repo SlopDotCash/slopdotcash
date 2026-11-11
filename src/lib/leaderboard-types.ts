@@ -12,7 +12,7 @@ import type {
   LEADERBOARD_SCHEMA_VERSION,
   REVIEW_EXCLUSION_REASONS,
   SCORE_RULE_VERSION,
-} from "./leaderboard";
+} from "./leaderboard-constants";
 import type { RepositoryId, TargetRepository } from "./repositories.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 /**
@@ -560,6 +560,8 @@ export interface WorkItem {
   priority: (typeof WORK_ITEM_PRIORITIES)[number];
   actionability: (typeof WORK_ITEM_ACTIONABILITIES)[number];
   isDraft: boolean | null;
+  /** Open PR diff availability; absent on historical snapshots and issues. */
+  filesAvailable?: boolean;
   reviewDecision: string | null;
   activeReviewRequestCount: number | null;
   commentCount: number;

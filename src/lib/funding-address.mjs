@@ -4,6 +4,7 @@ import {
   readRecord as fundingRecord,
   timestamp as fundingTimestamp,
 } from "./record-validation.mjs";
+import { isEvmAccount } from "./verified-ids.ts";
 
 /** Validates canonical public receiving addresses for each funding network. */
 
@@ -94,11 +95,7 @@ export function isFundingAddress(network, value) {
   }
   if (network === "bitcoin") return validBitcoinAddress(value);
   if (network === "base" || network === "ethereum" || network === "robinhood") {
-    return (
-      typeof value === "string" &&
-      /^0x[0-9a-f]{40}$/u.test(value) &&
-      !/^0x0{40}$/u.test(value)
-    );
+    return typeof value === "string" && isEvmAccount(value);
   }
   return false;
 }

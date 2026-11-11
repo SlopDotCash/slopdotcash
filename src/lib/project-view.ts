@@ -1,5 +1,6 @@
 import { compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
+import { periodBounds } from "./payments/monthly-allocation";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. November 2026 and
@@ -41,6 +42,8 @@ import {
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
+import { sumAmounts } from "./verified-allocation";
+import { allocateWeightedRows } from "./weighted-allocation";
 
 const MAX_CREDITED_TOKENS_PER_OUTCOME = 1_000_000;
 const SHARE_PARTS_PER_MILLION = 1_000_000;
@@ -218,13 +221,7 @@ export function cycleBounds(cycleId: string): { from: number; to: number } {
   if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(cycleId)) {
     throw new TypeError(`Invalid reward cycle id: ${cycleId}`);
   }
-  const [yearText, monthText] = cycleId.split("-");
-  const year = Number(yearText);
-  const monthIndex = Number(monthText) - 1;
-  return {
-    from: Date.UTC(year, monthIndex, 1),
-    to: Date.UTC(year, monthIndex + 1, 1),
-  };
+  return periodBounds(cycleId);
 }
 
 function emptyUsage(): ProjectUsageSummary {
@@ -245,40 +242,18 @@ export function allocateIntegerTotal(
   contributors: readonly ProjectContributor[],
 ): Map<string, bigint> {
   const result = new Map(contributors.map((entry) => [entry.actor.id, 0n]));
-  const totalWeight = contributors.reduce(
-    (sum, entry) => sum + BigInt(entry.adjustedWeight),
-    0n,
+  const totalWeight = sumAmounts(
+    contributors.map((entry) => BigInt(entry.adjustedWeight)),
   );
   if (total <= 0n || totalWeight <= 0n) return result;
 
-  const remainders: Array<{
-    actor: GitHubActor;
-    remainder: bigint;
-  }> = [];
-  let allocated = 0n;
-  for (const contributor of contributors) {
-    const numerator = total * BigInt(contributor.adjustedWeight);
-    const amount = numerator / totalWeight;
-    allocated += amount;
-    result.set(contributor.actor.id, amount);
-    remainders.push({
-      actor: contributor.actor,
-      remainder: numerator % totalWeight,
-    });
-  }
-  remainders.sort(
-    (left, right) =>
-      (left.remainder === right.remainder
-        ? 0
-        : left.remainder > right.remainder
-          ? -1
-          : 1) || compareActors(left.actor, right.actor),
-  );
-  let remaining = total - allocated;
-  for (let index = 0; remaining > 0n; index += 1) {
-    const actor = remainders[index % remainders.length].actor;
-    result.set(actor.id, (result.get(actor.id) ?? 0n) + 1n);
-    remaining -= 1n;
+  for (const { row, amount } of allocateWeightedRows(
+    total,
+    contributors,
+    (entry) => BigInt(entry.adjustedWeight),
+    (left, right) => compareActors(left.actor, right.actor),
+  )) {
+    result.set(row.actor.id, amount);
   }
   return result;
 }

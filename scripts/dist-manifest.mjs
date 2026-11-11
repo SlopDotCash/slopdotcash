@@ -311,10 +311,26 @@ async function renderedRootBytes(root, manifest, origin) {
   );
 }
 
-/** Exact expected root response, still bound to the raw local manifest. */
-export async function expectedPublishedRoot(distRoot, origin) {
+/** Exact expected root response, optionally bound to an earlier raw capture. */
+export async function expectedPublishedRoot(
+  distRoot,
+  origin,
+  expectedRawIndexSha256,
+) {
+  if (
+    expectedRawIndexSha256 !== undefined &&
+    (typeof expectedRawIndexSha256 !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(expectedRawIndexSha256))
+  )
+    throw new TypeError("Expected raw index digest must be lowercase SHA-256");
   const root = resolve(distRoot);
   const { manifest } = await loadLocalManifest(root);
+  if (
+    expectedRawIndexSha256 !== undefined &&
+    manifest.files.find((file) => file.path === "index.html").sha256 !==
+      expectedRawIndexSha256
+  )
+    throw new Error("index.html changed after evidence artifact capture");
   return renderedRootBytes(root, manifest, origin);
 }
 

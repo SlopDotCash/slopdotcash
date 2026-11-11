@@ -1,10 +1,21 @@
 import { FileSearch, LockKeyhole } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { sha256Hex } from "./lib/async-sha256.mjs";
 import { fetchWithDeadline } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
-import { projectApiRequest, useProjectSession } from "./lib/project-api";
-import { useAction } from "./lib/use-action";
+import {
+  currentProjectSession,
+  ProjectApiError,
+  projectApiRequest,
+  useProjectSession,
+} from "./lib/project-api";
 import { CopyIdentifier } from "./Operations";
 import { RoutePageHeader, SignInPanel, StatusBadge } from "./Presentation";
 import "./operations-design.css";
@@ -49,37 +60,64 @@ export default function VettingEvidencePage() {
     initial.assessment && initial.runId ? initial : null,
   );
   const [lookupOpen, setLookupOpen] = useState(!lookup);
-  const [data, setData] = useState<Overview | null>(null);
+  const [loaded, setLoaded] = useState<
+    (Overview & { actorId: string; lookupKey: string }) | null
+  >(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const session = useProjectSession();
+  const [sessionRevision, setSessionRevision] = useState(0);
+  const session = useProjectSession(sessionRevision);
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  const lookupKey = lookup
+    ? JSON.stringify([lookup.assessment, lookup.runId])
+    : null;
+  const data =
+    loaded && loaded.actorId === actorId && loaded.lookupKey === lookupKey
+      ? loaded
+      : null;
+  const invalidateSession = useCallback(() => {
+    setLoaded(null);
+    setSelected(null);
+    setSessionRevision((value) => value + 1);
+  }, []);
   useEffect(() => {
-    if (!lookup || session.status !== "signed-in") return;
+    if (!lookup || actorId === null) return;
     let active = true;
-    setData(null);
+    setLoaded(null);
     setSelected(null);
     setBusy(true);
     setError(null);
-    void projectApiRequest<Overview>(
-      "GET",
-      `operator/vetting-evidence?assessmentId=${encodeURIComponent(lookup.assessment)}&runId=${encodeURIComponent(lookup.runId)}`,
-    ).then(
-      (value) => {
-        if (!active) return;
-        setData(value);
-        setBusy(false);
-      },
-      (cause) => {
-        if (!active) return;
-        setError(errorMessage(cause, "Evidence could not be loaded"));
-        setBusy(false);
-      },
-    );
+    const load = async () => {
+      const value = await projectApiRequest<Overview>(
+        "GET",
+        `operator/vetting-evidence?assessmentId=${encodeURIComponent(lookup.assessment)}&runId=${encodeURIComponent(lookup.runId)}`,
+        undefined,
+        { expectedActorGithubId: actorId },
+      );
+      const current = await currentProjectSession();
+      if (!active) return;
+      if (current?.githubId !== actorId) {
+        invalidateSession();
+        return;
+      }
+      setLoaded({
+        ...value,
+        actorId,
+        lookupKey: JSON.stringify([lookup.assessment, lookup.runId]),
+      });
+      setBusy(false);
+    };
+    void load().catch((cause) => {
+      if (!active) return;
+      setError(errorMessage(cause, "Evidence could not be loaded"));
+      setBusy(false);
+    });
     return () => {
       active = false;
     };
-  }, [lookup, session.status]);
+  }, [lookup, actorId, invalidateSession]);
   function load(event: FormEvent) {
     event.preventDefault();
     const next = { assessment: assessment.trim(), runId: runId.trim() };
@@ -274,7 +312,13 @@ export default function VettingEvidencePage() {
               {run.objects.map((object) => {
                 const key = `${run.assessmentId}/${run.runId}/${object.sha256}`;
                 return selected === key ? (
-                  <EvidenceItem key={key} run={run} object={object} />
+                  <EvidenceItem
+                    key={`${data.actorId}:${key}`}
+                    run={run}
+                    object={object}
+                    actorId={data.actorId}
+                    onIdentityChange={invalidateSession}
+                  />
                 ) : null;
               })}
             </section>
@@ -290,20 +334,93 @@ function evidenceState(state: string) {
     : state.replaceAll("-", " ");
 }
 
-function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
+function EvidenceItem({
+  run,
+  object,
+  actorId,
+  onIdentityChange,
+}: {
+  run: Run;
+  object: EvidenceObject;
+  actorId: string;
+  onIdentityChange: () => void;
+}) {
   const [reason, setReason] = useState(""),
     [content, setContent] = useState<string | null>(null),
     [status, setStatus] = useState("");
-  const { busy, error, run: act } = useAction();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  const attempt = useRef(0);
+  const inFlight = useRef<number | null>(null);
+  const bodyRead = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      attempt.current += 1;
+      inFlight.current = null;
+      bodyRead.current?.abort();
+    };
+  }, []);
   function inspect(event: FormEvent) {
     event.preventDefault();
+    if (!mounted.current || inFlight.current !== null) return;
+    const currentAttempt = ++attempt.current;
+    inFlight.current = currentAttempt;
+    bodyRead.current?.abort();
+    const controller = new AbortController();
+    bodyRead.current = controller;
+    const current = () =>
+      mounted.current &&
+      attempt.current === currentAttempt &&
+      inFlight.current === currentAttempt;
+    let invalidated = false;
+    const requireActor = async () => {
+      if (!current()) return false;
+      const session = await currentProjectSession().catch((cause) => {
+        if (current()) {
+          invalidated = true;
+          onIdentityChange();
+        }
+        throw cause;
+      });
+      if (!current()) return false;
+      if (session?.githubId !== actorId) {
+        invalidated = true;
+        onIdentityChange();
+        throw new Error("Your account changed. Reload the evidence inventory.");
+      }
+      return true;
+    };
     setContent(null);
     setStatus("");
-    void act(
-      async () => {
+    setBusy(true);
+    setError(null);
+    const perform = async (action: () => Promise<void>) => {
+      try {
+        await action();
+      } catch (cause) {
+        if (current()) setError(errorMessage(cause, "Evidence read failed"));
+      } finally {
+        if (current()) {
+          inFlight.current = null;
+          setBusy(false);
+        }
+      }
+    };
+    void perform(async () => {
+      try {
+        if (!(await requireActor()) || !current()) return;
         const base = `operator/vetting-evidence/${encodeURIComponent(run.assessmentId)}/${encodeURIComponent(run.runId)}/${object.sha256}`;
         if (object.streamed) {
-          await projectApiRequest("POST", `${base}/download-grant`, { reason });
+          await projectApiRequest(
+            "POST",
+            `${base}/download-grant`,
+            { reason },
+            { expectedActorGithubId: actorId },
+          );
+          if (!(await requireActor()) || !current()) return;
           const link = document.createElement("a");
           link.href = `/api/v1/${base}/download`;
           link.download = `${object.sha256}.bin`;
@@ -317,26 +434,38 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
           "POST",
           `${base}/grant`,
           { reason },
+          { expectedActorGithubId: actorId },
         );
+        if (!(await requireActor()) || !current()) return;
         const response = await fetchWithDeadline(`/api/v1/${base}/body`, {
           credentials: "same-origin",
           cache: "no-store",
-          headers: { "x-vetting-read-grant": granted.grant },
+          headers: {
+            "x-vetting-read-grant": granted.grant,
+            "x-slop-expected-github-id": actorId,
+          },
+          signal: controller.signal,
         });
+        if (!current()) return;
         if (!response.ok)
-          throw new Error(
+          throw new ProjectApiError(
+            response.status,
+            "evidence_read_failed",
             `Evidence read failed (${response.status}). Request a new grant.`,
           );
         const bytes = await response.arrayBuffer();
+        if (!current()) return;
         if (bytes.byteLength !== object.sizeBytes)
           throw new Error(
             "Evidence length differs from the immutable inventory.",
           );
         const digest = await sha256Hex(new Uint8Array(bytes));
+        if (!current()) return;
         if (digest !== object.sha256)
           throw new Error(
             "Evidence digest differs from the immutable inventory.",
           );
+        if (!(await requireActor()) || !current()) return;
         if (object.contentType !== "application/octet-stream")
           setContent(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
         else {
@@ -354,9 +483,23 @@ function EvidenceItem({ run, object }: { run: Run; object: EvidenceObject }) {
             ? "Exact bytes verified. Download requested; do not execute the file."
             : "Complete bytes verified. Text is displayed without execution.",
         );
-      },
-      (e) => errorMessage(e, "Evidence read failed"),
-    );
+      } catch (cause) {
+        if (!current()) return;
+        if (invalidated) throw cause;
+        if (
+          cause instanceof ProjectApiError &&
+          [401, 403, 404, 410].includes(cause.status)
+        ) {
+          invalidated = true;
+          onIdentityChange();
+          throw cause;
+        }
+        // A failure can also complete after the account silently changes.
+        // Keep its error only after another current-actor observation.
+        if (!(await requireActor()) || !current()) return;
+        throw cause;
+      }
+    });
   }
   return (
     <article className="evidence-object operations-detail-panel">

@@ -419,10 +419,12 @@ export function applyRetainedHistoryBatch(
     .filter((award) => {
       const revision = latest.get(award.key);
       return (
-        award.amount > 0 &&
+        revision !== undefined &&
+        // A supplied zero can explicitly adopt the unchanged historical
+        // incident zero. Keep that decision durable before recovery sees it.
+        (award.amount > 0 || priorIds.has(revision.id)) &&
         (award.category === "substantive-review" ||
           award.category === "evaluated-contribution") &&
-        revision !== undefined &&
         JSON.stringify(revision.award) === JSON.stringify(award) &&
         (coverageDigests.has(revision.sourceDigest) ||
           priorIds.has(revision.id))

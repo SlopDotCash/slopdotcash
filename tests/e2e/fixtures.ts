@@ -20,9 +20,11 @@ import {
   expect,
   type Page,
   type Request,
+  type Route,
 } from "@playwright/test";
 import type { CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
+import { enlargeText } from "../text-size";
 
 export { expect };
 
@@ -97,6 +99,65 @@ export async function serveProjectCycleIndex(
   );
 }
 
+/**
+ * Serves reporter 42's Inbox reads (session, empty registry, notifications,
+ * cases and the listed private report) and passes every other API path to
+ * `onRequest`.
+ */
+export async function routeReporterInbox(
+  page: Page,
+  {
+    submission,
+    automatic,
+    onRequest,
+  }: {
+    submission: () => unknown;
+    automatic: boolean;
+    onRequest: (route: Route, path: string) => Promise<void>;
+  },
+) {
+  await page.route("**/api/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.slice(
+      "/api/v1/".length,
+    );
+    if (path === "project-session")
+      return route.fulfill({
+        json: {
+          session: { githubId: "42", githubLogin: "fixture-reporter" },
+        },
+      });
+    if (path === "projects")
+      return route.fulfill({
+        json: { schemaVersion: "1", projects: [] },
+      });
+    if (path === "notifications")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          notifications: [],
+          unread: 0,
+        },
+      });
+    if (path === "security-cases")
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "fixture-reporter" },
+          cases: [],
+          programs: [],
+        },
+      });
+    if (path === "security-submissions")
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          automatic,
+          submissions: [submission()],
+        },
+      });
+    return onRequest(route, path);
+  });
+}
+
 /** Escapes a literal for a RegExp source. */
 export const escapeRegExp = (value: string) =>
   value.replaceAll(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
@@ -111,7 +172,21 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
       const failures: string[] = [];
       const allowed: RegExp[] = [];
       const failedResponses = new WeakSet<Request>();
+      const localBrowserFixture = new URL(origin).hostname === "127.0.0.1";
+      const imageRoutes: Promise<unknown>[] = [];
       const watch = (watched: BrowserContext) => {
+        // Avatar bytes are third-party presentation data, not the application
+        // under test. A stalled remote image otherwise blocks networkidle and
+        // turns local workflow checks into a GitHub image-service uptime test.
+        if (localBrowserFixture)
+          imageRoutes.push(
+            watched.route("https://avatars.githubusercontent.com/**", (route) =>
+              route.fulfill({
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" fill="#888"/></svg>',
+              }),
+            ),
+          );
         watched.on("console", (message) => {
           if (message.type() === "error")
             failures.push(
@@ -137,6 +212,7 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
         });
       };
       watch(context);
+      await Promise.all(imageRoutes);
       browser.on("context", watch);
       // Specs that serve the built bundle on the product origin have no
       // payments backend there. Money received is then a complete empty
@@ -199,6 +275,7 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
           failures.filter((failure) => pattern.test(failure)).length,
       });
       browser.off("context", watch);
+      await Promise.all(imageRoutes);
       const unexpected = failures.filter(
         (failure) => !allowed.some((pattern) => pattern.test(failure)),
       );
@@ -228,13 +305,42 @@ export async function expectAccessible(
   {
     include,
     everyRule = false,
-  }: { include?: string; everyRule?: boolean } = {},
+    attachmentName,
+  }: { include?: string; everyRule?: boolean; attachmentName?: string } = {},
 ) {
   const builder = new AxeBuilder({ page });
   if (!everyRule)
     builder.withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
   if (include) builder.include(include);
-  expect((await builder.analyze()).violations).toEqual([]);
+  const result = await builder.analyze();
+  if (attachmentName)
+    await test.info().attach(attachmentName, {
+      body: JSON.stringify(result),
+      contentType: "application/json",
+    });
+  expect(result.violations).toEqual([]);
+}
+
+/** Record the tested terminal state at normal and doubled text size. */
+export async function expectAccessibleReflow(page: Page, name: string) {
+  await expectAccessible(page, { attachmentName: `${name}-wcag-aa` });
+  const restore = await enlargeText(page.locator("body"));
+  try {
+    await page.screenshot({
+      path: test.info().outputPath(`${name}-200-percent.png`),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectAccessible(page, {
+      attachmentName: `${name}-200-percent-wcag-aa`,
+    });
+  } finally {
+    await restore();
+  }
 }
 
 /**

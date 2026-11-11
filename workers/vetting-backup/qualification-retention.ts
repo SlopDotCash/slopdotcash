@@ -190,6 +190,18 @@ export async function qualifyRetention(
   const firstBytes = target.data.slice(0, first.sizeBytes);
   let faults = false;
   let cleanupPages = 0;
+  let deletes = 0;
+  const heldSource = new Proxy(source, {
+    get(bucket, property) {
+      if (property === "delete")
+        return async () => {
+          deletes++;
+          throw new Error("Legacy evidence must remain physically held");
+        };
+      const value = Reflect.get(bucket, property);
+      return typeof value === "function" ? value.bind(bucket) : value;
+    },
+  });
   while (jobs.length) {
     check(cleanupPages < 20, "Unbounded fixture cleanup");
     const job = jobs.shift();
@@ -201,11 +213,19 @@ export async function qualifyRetention(
     cleanupPages++;
     if (!faults) {
       faults = true;
-      console.log("Qualification retention: snapshot complete");
+      // Legacy cleanup is held without reading or deleting physical bytes.
+      // Backup verification still refuses missing/corrupt copies on restore.
       await copies.delete(copyKey);
       await refuses(
-        () => cleanupEvidence(controlled, day),
-        "Missing backup allowed deletion",
+        () =>
+          restoreCheck(
+            copies,
+            env.RESTORED,
+            day,
+            target.keys[0],
+            "missing-legacy",
+          ),
+        "Missing backup passed restore",
       );
       check(await source.head(target.keys[0]), "Missing backup lost source");
       await copies.put(copyKey, new Uint8Array(firstBytes.length), {
@@ -214,60 +234,36 @@ export async function qualifyRetention(
         httpMetadata: { contentType: "application/octet-stream" },
       });
       await refuses(
-        () => cleanupEvidence(controlled, day),
-        "Corrupt backup allowed deletion",
+        () =>
+          restoreCheck(
+            copies,
+            env.RESTORED,
+            day,
+            target.keys[0],
+            "corrupt-legacy",
+          ),
+        "Corrupt backup passed restore",
       );
       check(await source.head(target.keys[0]), "Corrupt backup lost source");
       await copies.delete(copyKey);
       await put(copies, copyKey, firstBytes);
-      console.log("Qualification retention: backup fault controls refused");
-      let deletes = 0;
-      const interrupted = new Proxy(source, {
-        get(bucket, property) {
-          if (property === "delete")
-            return async (key: string) => {
-              if (++deletes === 2)
-                throw new Error("Controlled partial deletion");
-              await bucket.delete(key);
-            };
-          const value = Reflect.get(bucket, property);
-          return typeof value === "function" ? value.bind(bucket) : value;
-        },
-      });
-      await refuses(
-        () =>
-          cleanupEvidence({ ...controlled, EVIDENCE_SOURCE: interrupted }, day),
-        "Partial deletion control did not interrupt",
-      );
-      check(
-        !(await source.head(target.keys[0])) &&
-          (await source.head(target.keys[1])),
-        "Partial deletion state differs",
-      );
-      check(
-        !(await db
-          .prepare(
-            "SELECT sha256 FROM vetting_evidence_deletions WHERE assessment_id=?",
-          )
-          .bind(target.id)
-          .first()),
-        "Interrupted object received completion",
-      );
     }
-    await cleanupEvidence(controlled, job.day);
-    console.log("Qualification retention: cleanup page complete");
+    await cleanupEvidence(
+      { ...controlled, EVIDENCE_SOURCE: heldSource },
+      job.day,
+    );
   }
   check(faults && cleanupPages >= 3, "Retention pagination not exercised");
+  check(deletes === 0, "Legacy cleanup attempted physical deletion");
   for (const item of fixtures)
     for (const [index, key] of item.keys.entries()) {
+      const uploaded = !item.missing && !(item.partial && index === 1);
       check(
-        Boolean(await source.head(key)) ===
-          (item.age !== 91 || item.id.endsWith("permanent_admission")),
-        "Source retention differs",
+        Boolean(await source.head(key)) === uploaded,
+        "Legacy source retention differs",
       );
       check(
-        Boolean(await copies.head(`daily/${day}/objects/${key}`)) ===
-          (!item.missing && !(item.partial && index === 1)),
+        Boolean(await copies.head(`daily/${day}/objects/${key}`)) === uploaded,
         "Backup inventory differs",
       );
     }
@@ -281,7 +277,22 @@ export async function qualifyRetention(
         .first<{ n: number }>()
     )?.n;
   }
-  check((await deletionCount()) === 2, "Incomplete inventory became deleted");
+  const held = () =>
+    db
+      .prepare(
+        "SELECT id,reason FROM vetting_evidence_audit WHERE action='retention-held' AND assessment_id LIKE ? ORDER BY id",
+      )
+      .bind(`${prefix}%`)
+      .all<{ id: string; reason: string }>();
+  const heldBefore = (await held()).results ?? [];
+  check(
+    (await deletionCount()) === 0,
+    "Legacy evidence received deletion receipts",
+  );
+  check(
+    heldBefore.length === 21,
+    "Expired legacy references were not explicitly held",
+  );
   check(
     (
       await db
@@ -290,42 +301,32 @@ export async function qualifyRetention(
         )
         .bind(`${prefix}%`)
         .first<{ n: number }>()
-    )?.n === 19,
-    "Missing inventory audit differs",
+    )?.n === 0,
+    "Legacy hold fabricated a physical inventory result",
   );
-  const receipt = await db
-    .prepare("SELECT * FROM vetting_evidence_deletions WHERE assessment_id=?")
-    .bind(target.id)
-    .first();
   await cleanupEvidence(controlled, day);
   check(
-    JSON.stringify(
-      await db
-        .prepare(
-          "SELECT * FROM vetting_evidence_deletions WHERE assessment_id=?",
-        )
-        .bind(target.id)
-        .first(),
-    ) === JSON.stringify(receipt) && (await deletionCount()) === 2,
-    "Replay changed deletion receipt",
+    JSON.stringify((await held()).results ?? []) ===
+      JSON.stringify(heldBefore) && (await deletionCount()) === 0,
+    "Replay changed the legacy hold or deletion state",
   );
   await refuses(
     () =>
       db
-        .prepare("DELETE FROM vetting_evidence_deletions WHERE assessment_id=?")
-        .bind(target.id)
+        .prepare("DELETE FROM vetting_evidence_audit WHERE id=?")
+        .bind(heldBefore[0].id)
         .run(),
-    "Deletion receipt was removable",
+    "Legacy hold audit was removable",
   );
   await refuses(
     () =>
       db
         .prepare(
-          "UPDATE vetting_evidence_deletions SET deleted_at='changed' WHERE assessment_id=?",
+          "UPDATE vetting_evidence_audit SET reason='changed' WHERE id=?",
         )
-        .bind(target.id)
+        .bind(heldBefore[0].id)
         .run(),
-    "Deletion receipt was mutable",
+    "Legacy hold audit was mutable",
   );
   for (const key of target.keys)
     await restoreCheck(copies, env.RESTORED, day, key, "retention");
@@ -339,7 +340,7 @@ export async function qualifyRetention(
     await source.head("contributor-trace-outside-scope"),
     "Permanent trace sentinel deleted",
   );
-  console.log("Qualification retention: deletion and restoration verified");
+  console.log("Qualification retention: legacy hold and restoration verified");
   // Scheduled audit pruning uses D1's clock and the actual migration guards.
   for (const [id, date] of [
     ["old", new Date(now - 400 * 86400_000).toISOString()],
@@ -397,7 +398,7 @@ export async function qualifyRetention(
     "Audit mutated",
   );
   check(
-    (await auditCount()) === 2 && (await deletionCount()) === 2,
+    (await auditCount()) === 2 && (await deletionCount()) === 0,
     "Scheduled pruning changed protected records",
   );
   console.log("Qualification retention: scheduled audit verified");
@@ -408,17 +409,18 @@ export async function qualifyRetention(
     fixtureOnlyRetentionEnabled: true,
     fixtureCaseCount: fixtures.length,
     agedDays: [89, 91],
-    incompleteMissingAndCorruptBackupsRefused: true,
-    partialDeletionRecovered: true,
+    incompleteSnapshotAndMissingCorruptRestoresRefused: true,
+    legacyPhysicalDeletionRefused: true,
     cleanupPages,
-    deletedCompleteObjects: 2,
-    missingInventoryAudits: 19,
+    deletedCompleteObjects: 0,
+    heldLegacyReferences: 21,
+    missingInventoryAudits: 0,
     openRecentAndPermanentTraceRetained: true,
     permanentAdmissionEvidenceRetained: true,
-    immutableDeletionReceipts: true,
-    deletionReplayUnchanged: true,
-    restoredDeletedSha256: target.sha,
-    restoredDeletedBytes: target.data.length,
+    immutableHoldAudits: true,
+    holdReplayUnchanged: true,
+    restoredHeldSha256: target.sha,
+    restoredHeldBytes: target.data.length,
     scheduledOldAuditRemoved: true,
     disabledAndProtectedAuditRetained: true,
     elapsedRetentionObservation: false,

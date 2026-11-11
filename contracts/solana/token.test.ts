@@ -10,6 +10,7 @@ import {
   inspectTokenAccount,
   TOKEN_2022_PROGRAM,
 } from "./token";
+import { readTokenAccount, readTokenMint } from "./token-extensions";
 
 const mint = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
 const fixture = new Uint8Array(
@@ -74,11 +75,115 @@ test("ImmutableOwner token accounts preserve program identity and refuse unrelat
   ).toThrow();
 });
 
+test("Token-2022 metadata keeps full payload extents and admits large zero padding", () => {
+  const padded = new Uint8Array(fixture.length + 2 * 1024 * 1024);
+  padded.set(fixture);
+  const reading = readTokenMint(account(padded));
+  expect(reading.extensions).toEqual([18, 19]);
+  expect(reading.decimals).toBe(6);
+  expect(reading.raw).toEqual(padded);
+  // A byte after the zero padding is an extension attempt, not ignored data.
+  padded[padded.length - 1] = 1;
+  expect(() => readTokenMint(account(padded))).toThrow(
+    "Unsupported Token-2022 extension 0",
+  );
+});
+
+test("Token-2022 refuses the first invalid TLV with the original diagnostic priority", () => {
+  const bytes = new Uint8Array(170);
+  bytes[165] = 2;
+  const view = new DataView(bytes.buffer);
+  view.setUint16(166, 8, true);
+  view.setUint16(168, 65535, true);
+  // The unknown type wins even when its declared payload is truncated.
+  expect(() => readTokenAccount(account(bytes))).toThrow(
+    "Unsupported Token-2022 extension 8",
+  );
+  view.setUint16(166, 7, true);
+  expect(() => readTokenAccount(account(bytes))).toThrow(
+    "Truncated Token-2022 extension",
+  );
+  view.setUint16(168, 0, true);
+  const repeated = new Uint8Array(174);
+  repeated.set(bytes);
+  repeated[170] = 7;
+  repeated[172] = 255;
+  // The duplicate wins before the repeated record's invalid payload length.
+  expect(() => readTokenAccount(account(repeated))).toThrow(
+    "Duplicate Token-2022 extension 7",
+  );
+});
+
+test("TokenMetadata walks all string fields and key/value pairs without adding UTF-8 policy", () => {
+  const word = (value: number) => {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setUint32(0, value, true);
+    return bytes;
+  };
+  const field = (bytes: number[]) =>
+    Buffer.concat([word(bytes.length), Uint8Array.from(bytes)]);
+  const payload = Buffer.concat([
+    new Uint8Array(64),
+    field([255, 254]),
+    field([128]),
+    field([]),
+    word(2),
+    field([255]),
+    field([0]),
+    field([]),
+    field([254]),
+    new Uint8Array(5),
+  ]);
+  const bytes = new Uint8Array(170 + payload.length);
+  bytes[44] = 6;
+  bytes[45] = 1;
+  bytes[165] = 1;
+  new DataView(bytes.buffer).setUint16(166, 19, true);
+  new DataView(bytes.buffer).setUint16(168, payload.length, true);
+  bytes.set(payload, 170);
+  expect(readTokenMint(account(bytes)).extensions).toEqual([19]);
+  expect(readTokenMint(account(bytes)).decimals).toBe(6);
+});
+
+test("TokenMetadata refuses oversized u32 fields, incomplete pairs and nonzero suffixes", () => {
+  const payload = new Uint8Array(88); // Three empty strings and one empty pair.
+  new DataView(payload.buffer).setUint32(76, 1, true);
+  const read = (value: Uint8Array) => {
+    const bytes = new Uint8Array(170 + value.length);
+    bytes[45] = 1;
+    bytes[165] = 1;
+    new DataView(bytes.buffer).setUint16(166, 19, true);
+    new DataView(bytes.buffer).setUint16(168, value.length, true);
+    bytes.set(value, 170);
+    return readTokenMint(account(bytes));
+  };
+  expect(read(payload).extensions).toEqual([19]);
+  for (const offset of [64, 68, 72, 76, 80, 84]) {
+    const changed = payload.slice();
+    new DataView(changed.buffer).setUint32(offset, 0xffffffff, true);
+    expect(() => read(changed)).toThrow("Malformed token metadata");
+  }
+  for (const length of [72, 75, 79, 83, 87])
+    expect(() => read(payload.slice(0, length))).toThrow(
+      "Malformed token metadata",
+    );
+  const suffix = new Uint8Array(89);
+  suffix.set(payload);
+  suffix[88] = 1;
+  expect(() => read(suffix)).toThrow("Malformed token metadata");
+});
+
 test("maintainer token submission admits a synthetic mint from raw state but cannot hide a transfer hook in JSON parsing", async () => {
   let bytes = fixture;
   const reader = rpcTokenMetadataReader(
     (async (_url, init) => {
       const request = JSON.parse(String(init?.body));
+      if (request.method === "getGenesisHash")
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          result: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+        });
       expect(request.method).toBe("getAccountInfo");
       expect(request.params).toEqual([
         mint,

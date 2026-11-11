@@ -69,7 +69,13 @@ export async function consumeValueRequest(
   const finishBlocked = (reason: string | null) =>
     reason === "attempts"
       ? finish("attempts-exhausted", true)
-      : finish(reason === "budget" ? "budget" : "authority");
+      : finish(
+          reason === "attempts-pending"
+            ? "retry"
+            : reason === "budget"
+              ? "budget"
+              : "authority",
+        );
   try {
     const project = await registeredProject(db, job);
     // A paused, retired or unregistered project parks the request without a
@@ -83,7 +89,7 @@ export async function consumeValueRequest(
       !settings ||
       !revision ||
       !/^[a-f0-9]{40}$/.test(revision) ||
-      !env.SURPLUS_API_KEY
+      (!env.ORBIO_API_KEY && !env.SURPLUS_API_KEY)
     )
       return await finish("budget");
     const { monthly, maximum, start } = settings;
@@ -189,7 +195,17 @@ export async function consumeValueRequest(
         github,
         sources.map((s) => s.evidence),
       );
-      return true;
+      // A project restriction or installation suspension can commit while
+      // the remote membership response is pending. Re-read local authority
+      // before the final lease checks, just as before the remote request.
+      for (const { evidence: source } of sources)
+        if (!(await registeredSource(source))) return false;
+      await assertValueInstallation(db, job.installationId);
+      // The remote and local authority reads can also outlive both leases.
+      return (
+        (await ownsValueRequest(db, claim)) &&
+        (await ownsValueSources(db, claim, scopes))
+      );
     };
     const decisions = await Promise.all(
       sources.map((s) =>
@@ -277,6 +293,7 @@ export async function consumeValueRequest(
         supersedes.length || legacyPredecessors.length
           ? "Source group changed; automatic provisional reassessment"
           : null,
+        claim,
       );
       return await finish("published", true);
     }
@@ -303,6 +320,7 @@ export async function consumeValueRequest(
       current.latestDigest
         ? "Source changed; automatic provisional reassessment"
         : null,
+      claim,
     );
     return await finish("published", true);
   } catch (error) {

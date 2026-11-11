@@ -156,8 +156,8 @@ files. Never commit a value. Use test or staging credentials only.
 | --- | --- | --- |
 | `GITHUB_TOKEN` or `GH_TOKEN` | ingestion, leaderboard, live GitHub checks | Required for `leaderboard:generate` and live checks. Read-only public scope is sufficient. |
 | `SOLANA_RPC_URL` | `fee-converter:dry-run` | Optional. Defaults to public mainnet RPC; set a private RPC for heavy use. |
-| `OPENAI_API_KEY` | slopbot fallback model (`.dev.vars`) | Required to test the slopbot model route. |
-| `SURPLUS_API_KEY`, `SURPLUS_BASE_URL` | slopbot primary model (`.dev.vars`) | Required to test the primary slopbot model route. |
+| `ORBIO_API_KEY`, `ORBIO_BASE_URL` | slopbot primary models (`.dev.vars`) | Use a test key for real Orbio calls. The base URL is optional. |
+| `SURPLUS_API_KEY`, `SURPLUS_BASE_URL` | slopbot backup models (`.dev.vars`) | Use a test key for real Surplus calls. The base URL is optional. |
 | `SLOPBOT_WEBHOOK_SECRET`, `SLOPBOT_APP_ID`, `SLOPBOT_APP_USER_ID`, `SLOPBOT_APP_PRIVATE_KEY` | slopbot GitHub App (`.dev.vars`) | Only with your own test GitHub App. See `workers/slopbot/README.md`. |
 | `IDENTITY_STATE_KEY`, `IDENTITY_ASSERTION_KEY`, `TRACE_AUTH_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | identity Worker (`.dev.vars`) | Only for local identity and trace-upload tests. Generate your own random values and use your own OAuth app. |
 | `VITE_SLOP_ENVIRONMENT` | browser build | Optional. Point a local build at staging identity. |
@@ -351,16 +351,40 @@ retain required checks. Do not add artificial application tests for prose.
 
 ## Quality gate
 
+Follow [PRD section 12](docs/slop-product-requirements.md#12-state-correctness-and-quint-verification)
+for every explicit or implicit state change. Update its Quint model, source
+mapping, assumptions and reachable scenarios. Exercise the real affected
+success, refusal, failure, retry, expiry, cancellation, concurrent and recovery
+paths. Fix discrepancies between the model and code. Models supplement the
+required browser, database, provider and chain evidence; they do not replace it.
+Check composed parent/child and cross-subsystem flows, including identity
+changes and the lifetime of pending work.
+
+Run `bun run formal:check` and `bun run formal:verify`. Report the tool version,
+model-checker backend, finite bounds, actual results and remaining coverage gaps.
+Do not present a sampled or abstract check as proof that all application state
+errors are absent. The application-wide review remains open until all required
+source mappings and implementation evidence are complete.
+
 Install the pinned toolchain and run the complete repository check:
 
 ```bash
 bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run verify
 bun run format:check
 bun run test:e2e
 ```
+
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH` before running `verify`. `verify` checks the selected
+executable contracts as well as the application checks. For a contract change,
+follow the source, proof and inventory process in
+[the LemmaScript report](https://github.com/SlopDotCash/slopdotcash/blob/22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9/docs/lemmascript-research.md). These contracts do not
+replace the Quint or real workflow evidence above.
 
 The committed registry snapshot is empty. Award and skill validation need the
 synced project identities. Do not commit the generated snapshot.

@@ -12,7 +12,8 @@ import {
   readRecord,
   exactKeys as sharedExactKeys,
 } from "./record-validation.mjs";
-import { assertRewardAsset } from "./reward-asset.mjs";
+import { assertRewardAsset, formatAssetSymbol } from "./reward-asset.mjs";
+import { securityBountyShares } from "./verified-security-split.ts";
 
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
@@ -124,8 +125,14 @@ export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
   if (!isBaseUnits(grossMinor) || grossMinor === "0")
     throw new TypeError("gross amount must be positive integer minor units");
   const gross = BigInt(grossMinor);
-  if (isFullAwardSplit(split))
-    return { grossMinor, researcherMinor: grossMinor, slopMinor: "0" };
+  if (isFullAwardSplit(split)) {
+    const shares = securityBountyShares(gross, true);
+    return {
+      grossMinor,
+      researcherMinor: shares.researcher.toString(),
+      slopMinor: shares.slop.toString(),
+    };
+  }
   if (
     split?.researcherBasisPoints !== SECURITY_SPLIT.researcherBasisPoints ||
     split?.slopBasisPoints !== SECURITY_SPLIT.slopBasisPoints
@@ -135,10 +142,11 @@ export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
     throw new RangeError(
       "gross amount must be divisible by four minor units so the 75/25 split is exact",
     );
+  const shares = securityBountyShares(gross, false);
   return {
     grossMinor,
-    researcherMinor: ((gross * 3n) / 4n).toString(),
-    slopMinor: (gross / 4n).toString(),
+    researcherMinor: shares.researcher.toString(),
+    slopMinor: shares.slop.toString(),
   };
 }
 
@@ -147,7 +155,7 @@ export function formatSecurityAmount(minorUnits, amount) {
   const number = formatBaseUnits(minorUnits, amount.decimals);
   return amount.currency === "USD" && !amount.asset
     ? `$${number}`
-    : `${number} ${amount.asset?.symbol ?? amount.currency}`;
+    : `${number} ${formatAssetSymbol(amount.asset?.symbol ?? amount.currency, amount.asset?.kind)}`;
 }
 
 function validateApprovers(value) {

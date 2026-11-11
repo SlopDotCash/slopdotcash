@@ -17,11 +17,6 @@ const VETTING_RESULT_SCHEMA = "slop-vetting-result-v1";
 /** Results carry summaries and digests; the full trace stays with the VM operator. */
 export const MAX_VETTING_RESULT_BYTES = 256 * 1024;
 
-export {
-  VETTING_DISPOSITIONS,
-  type VettingDisposition,
-} from "../../src/lib/vetting-contracts";
-
 /** Telemetry channels VET-03 requires; each must be complete for "clean". */
 export const TELEMETRY_CHANNELS = [
   "process",
@@ -146,7 +141,7 @@ export type VettingResult = {
   } | null;
 };
 
-export class VettingResultError extends Error {
+class VettingResultError extends Error {
   readonly status = 422;
   readonly code = "invalid_vetting_result";
 }
@@ -234,6 +229,98 @@ export function count(value: unknown, name: string): number {
 export function timestamp(value: unknown, name: string): string {
   if (!validIsoTimestamp(value)) reject(`${name} must be an ISO UTC time`);
   return value as string;
+}
+
+type VettingConfirmation = NonNullable<VettingResult["confirmation"]>;
+
+/** The malicious-confirmation evidence shared by both result schemas. */
+export function parseConfirmation(value: unknown): VettingConfirmation | null {
+  if (value === null) return null;
+  const confirmation = object(value, "confirmation", [
+    "basis",
+    "rule",
+    "evidence",
+  ]);
+  const evidence = list(
+    confirmation.evidence,
+    "confirmation.evidence",
+    20,
+    (item, name) => text(item, name, 300),
+  );
+  if (evidence.length === 0)
+    reject("confirmation.evidence needs at least one reference");
+  return {
+    basis: oneOf(confirmation.basis, "confirmation.basis", CONFIRMATION_BASES),
+    rule: label(confirmation.rule, "confirmation.rule"),
+    evidence,
+  };
+}
+
+/** The assessed dependency lock digests shared by both result schemas. */
+export function parseDependencyLocks(
+  value: unknown,
+): { path: string; sha256: string }[] {
+  return list(value, "assessed.dependencyLocks", 200, (item, name) => {
+    const lock = object(item, name, ["path", "sha256"]);
+    return {
+      path: text(lock.path, `${name}.path`, 500),
+      sha256: digest(lock.sha256, `${name}.sha256`),
+    };
+  });
+}
+
+/** One quarantined or released artifact, shared by both result schemas. */
+export function parseArtifact(item: unknown, name: string): VettingArtifact {
+  const artifact = object(item, name, [
+    "sha256",
+    "parentSha256",
+    "origin",
+    "path",
+    "type",
+    "state",
+    "analysis",
+    "requestedExecution",
+  ]);
+  if (typeof artifact.requestedExecution !== "boolean")
+    reject(`${name}.requestedExecution must be a boolean`);
+  return {
+    sha256: digest(artifact.sha256, `${name}.sha256`),
+    parentSha256:
+      artifact.parentSha256 === null
+        ? null
+        : digest(artifact.parentSha256, `${name}.parentSha256`),
+    origin: text(artifact.origin, `${name}.origin`, 500),
+    path: text(artifact.path, `${name}.path`, 500),
+    type: oneOf(artifact.type, `${name}.type`, ARTIFACT_TYPES),
+    state: oneOf(artifact.state, `${name}.state`, ARTIFACT_STATES),
+    analysis: oneOf(artifact.analysis, `${name}.analysis`, ARTIFACT_ANALYSES),
+    requestedExecution: artifact.requestedExecution as boolean,
+  };
+}
+
+/** One finding; each schema supplies its own category reader. */
+export function parseFinding<Category extends string>(
+  item: unknown,
+  name: string,
+  category: (value: unknown, name: string) => Category,
+): {
+  severity: (typeof SEVERITIES)[number];
+  category: Category;
+  summary: string;
+  evidence: string;
+} {
+  const finding = object(item, name, [
+    "severity",
+    "category",
+    "summary",
+    "evidence",
+  ]);
+  return {
+    severity: oneOf(finding.severity, `${name}.severity`, SEVERITIES),
+    category: category(finding.category, `${name}.category`),
+    summary: text(finding.summary, `${name}.summary`, 500),
+    evidence: text(finding.evidence, `${name}.evidence`, 300),
+  };
 }
 
 /** Parses a result exactly; unknown, missing or malformed fields refuse it. */
@@ -345,29 +432,7 @@ export function parseVettingResult(value: unknown): VettingResult {
     reject("modelReviews must hold one astra and one opus review");
   if (reviews[0].runId === reviews[1].runId)
     reject("The two model reviews must be separate runs");
-  const confirmation =
-    body.confirmation === null
-      ? null
-      : (() => {
-          const value = object(body.confirmation, "confirmation", [
-            "basis",
-            "rule",
-            "evidence",
-          ]);
-          const evidence = list(
-            value.evidence,
-            "confirmation.evidence",
-            20,
-            (item, name) => text(item, name, 300),
-          );
-          if (evidence.length === 0)
-            reject("confirmation.evidence needs at least one reference");
-          return {
-            basis: oneOf(value.basis, "confirmation.basis", CONFIRMATION_BASES),
-            rule: label(value.rule, "confirmation.rule"),
-            evidence,
-          };
-        })();
+  const confirmation = parseConfirmation(body.confirmation);
   const result: VettingResult = {
     schemaVersion: VETTING_RESULT_SCHEMA,
     assessmentId: body.assessmentId as string,
@@ -387,18 +452,7 @@ export function parseVettingResult(value: unknown): VettingResult {
         assessed.inputManifestSha256,
         "assessed.inputManifestSha256",
       ),
-      dependencyLocks: list(
-        assessed.dependencyLocks,
-        "assessed.dependencyLocks",
-        200,
-        (item, name) => {
-          const lock = object(item, name, ["path", "sha256"]);
-          return {
-            path: text(lock.path, `${name}.path`, 500),
-            sha256: digest(lock.sha256, `${name}.sha256`),
-          };
-        },
-      ),
+      dependencyLocks: parseDependencyLocks(assessed.dependencyLocks),
     },
     environment: {
       vmProvider: label(environment.vmProvider, "environment.vmProvider"),
@@ -437,51 +491,10 @@ export function parseVettingResult(value: unknown): VettingResult {
     },
     traceSha256: digest(body.traceSha256, "traceSha256"),
     modelReviews: reviews,
-    artifacts: list(body.artifacts, "artifacts", 500, (item, name) => {
-      const artifact = object(item, name, [
-        "sha256",
-        "parentSha256",
-        "origin",
-        "path",
-        "type",
-        "state",
-        "analysis",
-        "requestedExecution",
-      ]);
-      if (typeof artifact.requestedExecution !== "boolean")
-        reject(`${name}.requestedExecution must be a boolean`);
-      return {
-        sha256: digest(artifact.sha256, `${name}.sha256`),
-        parentSha256:
-          artifact.parentSha256 === null
-            ? null
-            : digest(artifact.parentSha256, `${name}.parentSha256`),
-        origin: text(artifact.origin, `${name}.origin`, 500),
-        path: text(artifact.path, `${name}.path`, 500),
-        type: oneOf(artifact.type, `${name}.type`, ARTIFACT_TYPES),
-        state: oneOf(artifact.state, `${name}.state`, ARTIFACT_STATES),
-        analysis: oneOf(
-          artifact.analysis,
-          `${name}.analysis`,
-          ARTIFACT_ANALYSES,
-        ),
-        requestedExecution: artifact.requestedExecution as boolean,
-      };
-    }),
-    findings: list(body.findings, "findings", 200, (item, name) => {
-      const finding = object(item, name, [
-        "severity",
-        "category",
-        "summary",
-        "evidence",
-      ]);
-      return {
-        severity: oneOf(finding.severity, `${name}.severity`, SEVERITIES),
-        category: label(finding.category, `${name}.category`),
-        summary: text(finding.summary, `${name}.summary`, 500),
-        evidence: text(finding.evidence, `${name}.evidence`, 300),
-      };
-    }),
+    artifacts: list(body.artifacts, "artifacts", 500, parseArtifact),
+    findings: list(body.findings, "findings", 200, (item, name) =>
+      parseFinding(item, name, label),
+    ),
     confirmation,
   };
   if (

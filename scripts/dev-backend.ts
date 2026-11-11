@@ -28,6 +28,7 @@ import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
 import { localNotify } from "./dev-backend-notify";
 import { devIdentityBridge } from "./dev-identity-bridge";
 import { devMailCapture } from "./dev-mail-capture";
+import { applyDevMigrations } from "./dev-migrations";
 import { devDataDirectory } from "./dev-private-paths";
 import { devPrivateStorage } from "./dev-private-storage";
 import { syncDevProjectRegistry } from "./dev-project-registry";
@@ -89,20 +90,13 @@ for (const name of [
 
 const { db, sqlite } = sqliteD1([], resolve(dataDirectory, "slop.sqlite"));
 chmodSync(resolve(dataDirectory, "slop.sqlite"), 0o600);
-sqlite.exec(
-  "CREATE TABLE IF NOT EXISTS dev_migrations (name TEXT PRIMARY KEY) STRICT",
+applyDevMigrations(
+  sqlite,
+  MIGRATIONS.map((name) => ({
+    name,
+    sql: readFileSync(resolve("migrations", name), "utf8"),
+  })),
 );
-const applied = new Set(
-  (
-    sqlite.query("SELECT name FROM dev_migrations").all() as { name: string }[]
-  ).map((row) => row.name),
-);
-for (const name of MIGRATIONS) {
-  if (applied.has(name)) continue;
-  sqlite.exec(readFileSync(resolve("migrations", name), "utf8"));
-  sqlite.query("INSERT INTO dev_migrations (name) VALUES (?)").run(name);
-}
-sqlite.exec("PRAGMA foreign_keys = ON");
 syncDevProjectRegistry(
   sqlite,
   HISTORICAL_PROJECTS,

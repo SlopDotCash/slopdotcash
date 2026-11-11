@@ -51,3 +51,21 @@ details[open] > .private-report-summary::before {
 .private-report-next .security-next-step {
   margin-block: 0.5rem;
 }
+
+.security-page > label,
+.security-actions > details > label {
+  display: grid;
+  min-width: 0;
+  gap: 0.375rem;
+}
+.security-page > label > select,
+.security-actions > details > label > select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.security-report-text:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 3px;
+}

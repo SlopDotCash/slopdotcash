@@ -19,9 +19,13 @@ import { valueModelSource } from "../workers/slopbot/value-model-source";
 import { assessValue } from "../workers/slopbot/value-review";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { assessWorkUnits } from "../workers/slopbot/value-work-unit-review";
+import { protectedMainRelease } from "./protected-main-release";
 import { qualificationResponse } from "./qualification-response";
 
-const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
+const ENDPOINTS = {
+  orbio: "https://api.orbio.so/api/v1/messages",
+  surplus: "https://api.surplusintelligence.ai/anthropic/v1/messages",
+} as const;
 const PATH_BUDGET = 1_000_000;
 const OUTPUT_TOKENS = 2048;
 const REVIEW_MARKER = "Synthetic marker-file review qualification";
@@ -46,7 +50,10 @@ export function qualificationTransport(
       !uncertain && requests < maximumRequests && spent < PATH_BUDGET,
     fetch: (async (input, init) => {
       const request = new Request(input, init);
-      requireThat(request.url === ENDPOINT && request.method === "POST");
+      const provider = (
+        Object.keys(ENDPOINTS) as (keyof typeof ENDPOINTS)[]
+      ).find((name) => ENDPOINTS[name] === request.url);
+      requireThat(provider && request.method === "POST");
       const payload = await request.clone().text();
       requireThat(new TextEncoder().encode(payload).length <= 32_768);
       requireThat(!payload.includes("contentBase64"));
@@ -58,7 +65,9 @@ export function qualificationTransport(
         ),
       );
       const wire = JSON.parse(payload);
-      const step = TRIAGE_ROUTE.find((entry) => entry.model === wire.model);
+      const step = TRIAGE_ROUTE.find(
+        (entry) => entry.provider === provider && entry.model === wire.model,
+      );
       requireThat(step && !uncertain && requests < maximumRequests);
       wire.max_tokens = OUTPUT_TOKENS;
       const body = JSON.stringify(wire);
@@ -80,7 +89,7 @@ export function qualificationTransport(
         redirect: "error",
         signal: request.signal,
       });
-      const receipt = await qualificationResponse(response);
+      const receipt = await qualificationResponse(response, provider);
       requireThat(receipt.cost !== null);
       spent += receipt.cost;
       requireThat(spent <= PATH_BUDGET);
@@ -122,12 +131,17 @@ index 0000000..e69de29`,
     globalThis.fetch = transport.fetch;
     const result = await runRoute(
       env,
-      TRIAGE_ROUTE.slice(0, 1),
+      TRIAGE_ROUTE.filter(
+        (step) =>
+          dryRun ||
+          (step.provider === "orbio" ? env.ORBIO_API_KEY : env.SURPLUS_API_KEY),
+      ).slice(0, 1),
       buildPrompt(context, "pull_request"),
       "medium",
       dryRun ? async () => false : transport.mayCall,
     );
-    if (dryRun) requireThat(result.blocked && result.calls.length === 0);
+    if (dryRun)
+      requireThat(result.calls.length === 0 && result.servedBy === null);
     else {
       requireThat(!result.blocked && result.verdict && result.servedBy);
       requireThat(result.calls.length === 1 && transport.requestCount() === 1);
@@ -202,7 +216,8 @@ export async function qualifyValueModels(env: ModelEnv, dryRun = false) {
     assessments: ValueAssessment[],
     transport: ReturnType<typeof qualificationTransport>,
   ) => {
-    if (dryRun) requireThat(result.blocked && result.calls.length === 0);
+    if (dryRun)
+      requireThat(result.calls.length === 0 && result.servedBy === null);
     else {
       requireThat(
         !result.blocked && result.servedBy && result.calls.length > 0,
@@ -264,22 +279,17 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const dryRun = process.argv.slice(2).join() === "--dry-run";
-  const authorized =
-    process.argv.length === 2 &&
-    process.env.GITHUB_ACTIONS === "true" &&
-    process.env.GITHUB_REF === "refs/heads/main" &&
-    ["push", "workflow_dispatch"].includes(
-      process.env.GITHUB_EVENT_NAME ?? "",
-    ) &&
-    !!process.env.SURPLUS_API_KEY;
-  if (!dryRun && !authorized) {
+  const { dryRun, authorized } = protectedMainRelease();
+  if (!dryRun && (!authorized || !process.env.ORBIO_API_KEY?.trim())) {
     process.stderr.write(
-      "Slopbot model qualification requires the protected main release.\n",
+      "Slopbot model qualification requires the protected main release and both provider keys.\n",
     );
     process.exitCode = 1;
   } else {
-    const env = { SURPLUS_API_KEY: process.env.SURPLUS_API_KEY };
+    const env = {
+      ORBIO_API_KEY: process.env.ORBIO_API_KEY,
+      SURPLUS_API_KEY: process.env.SURPLUS_API_KEY,
+    };
     await (async () => [
       ...(await qualifyValueModels(env, dryRun)),
       await qualifyGeneralReview(env, dryRun),

@@ -12,6 +12,17 @@ import { parseVaultAmount } from "../../src/lib/payments/vault-amount";
 import { isWalletAddress } from "../../src/lib/wallets";
 import { json, readJsonObject } from "../http";
 
+/**
+ * The requested network or vault is not a served Solana vault of the project
+ * in the D1 registry. It is a request error (404), not an outage.
+ */
+export class FundingVaultNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FundingVaultNotFoundError";
+  }
+}
+
 /** The caller controls access and resolves only its own registry scope. */
 export async function handleSolanaFunding(
   request: Request,

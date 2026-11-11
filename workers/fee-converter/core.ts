@@ -12,8 +12,18 @@
 
 import { FeeCapTooLowError } from "viem";
 import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
+import type {
+  BuybackChainClient,
+  BuybackHook,
+  BuybackSummary,
+} from "./buyback";
 import type { Limits, Mode, Network, NetworkConfig } from "./config";
-import { LOCK_MS } from "./store";
+import {
+  acceptableMinimum,
+  remainingBudget,
+  rescaleInput,
+  spendableNative,
+} from "./verified-arithmetic";
 
 export type ConversionState =
   | "quoted"
@@ -28,8 +38,12 @@ export type ConversionState =
 
 export interface ConversionRow {
   id: string;
-  /** Existing rows are conversions. All send kinds share the pending-token guard. */
-  kind?: "conversion" | "claim" | "approval";
+  /**
+   * Existing rows are conversions. All send kinds share the pending-token
+   * guard. `bridge`, `buyback` and `burn` are the SLOP buyback legs
+   * (migration 0121).
+   */
+  kind?: "conversion" | "claim" | "approval" | "bridge" | "buyback" | "burn";
   runId: string;
   network: Network;
   mode: "dry_run" | "live";
@@ -37,7 +51,7 @@ export interface ConversionRow {
   token: string;
   targetToken: string;
   amountIn: string;
-  route: "kyberswap" | "jupiter" | null;
+  route: "kyberswap" | "jupiter" | "debridge" | null;
   quoteAmountOut: string | null;
   minAmountOut: string | null;
   quoteValueMicro: number | null;
@@ -116,8 +130,8 @@ export type QuoteResult = Quote | { noRoute: string };
 /** A signed send, recorded before it is broadcast. */
 export interface PreparedSend {
   nativeGasId?: string;
-  /** EVM approvals are separate immutable sends before a later swap. */
-  kind?: "conversion" | "approval";
+  /** EVM approvals are separate immutable sends before a later swap or bridge order. */
+  kind?: "conversion" | "approval" | "bridge" | "buyback" | "burn";
   txId: string;
   rawTx: string;
   evmNonce: number | null;
@@ -178,6 +192,8 @@ export interface ChainClient {
    * the wallet's balances.
    */
   vaultFees?: VaultFeeClient;
+  /** SLOP buyback legs of this network (buyback.ts); absent when it has none. */
+  buyback?: BuybackChainClient;
 }
 
 /**
@@ -283,6 +299,11 @@ export interface RunDependencies {
   projectVaults?: (config: NetworkConfig) => Promise<FeeVault[]>;
   client: (config: NetworkConfig, runId: string) => ChainClient;
   log: (event: Record<string, unknown>) => void;
+  /**
+   * SLOP buyback (PRD section 6). Absent or inactive leaves every existing
+   * behavior unchanged, including Robinhood's unconverted retention.
+   */
+  buyback?: BuybackHook;
 }
 
 export interface NetworkRunResult {
@@ -296,6 +317,8 @@ export interface NetworkRunResult {
   records: Record<ConversionState, number>;
   /** Vaults whose accrued fees this run moved into the fee wallet. */
   claimed: number;
+  /** Present only when the buyback is active on this network. */
+  buyback?: BuybackSummary;
 }
 
 const QUOTE_ABANDON_MS = 60 * 60 * 1000;
@@ -306,6 +329,12 @@ const QUOTE_ABANDON_MS = 60 * 60 * 1000;
  */
 export const REPLACEMENT_WAIT_MS = 3 * 60 * 1000;
 const RESCALE_ATTEMPTS = 3;
+/**
+ * One lease covers a whole run. The store holds it for this long, and the run
+ * sizes its own renewal interval from it so it never signs after the lease it
+ * holds has expired.
+ */
+export const LOCK_MS = 14 * 60 * 1000;
 /**
  * How long a run may go without renewing its lease. A run renews at a chunk
  * boundary once this much time has passed, so a chunk that starts always has
@@ -340,12 +369,10 @@ export function impactWithin(quote: Quote, limits: Limits): boolean {
 
 /** The aggregator minimum must stay within the configured slippage of its quote. */
 export function slippageWithin(quote: Quote, limits: Limits): boolean {
-  const floor =
-    (quote.amountOut * BigInt(10_000 - limits.maxSlippageBps)) / 10_000n;
-  return (
-    quote.amountOut > 0n &&
-    quote.minAmountOut >= floor &&
-    quote.minAmountOut <= quote.amountOut
+  return acceptableMinimum(
+    quote.amountOut,
+    quote.minAmountOut,
+    BigInt(limits.maxSlippageBps),
   );
 }
 
@@ -355,7 +382,7 @@ const MAX_SAFE_QUOTE_MICRO = BigInt(Number.MAX_SAFE_INTEGER);
  * `fee_conversions.quote_value_micro` is a STRICT SQLite INTEGER bound through
  * JavaScript numbers. Refuse lossy or non-integer float conversions.
  */
-function exactQuoteMicro(value: bigint): number | null {
+export function exactQuoteMicro(value: bigint): number | null {
   return value >= 0n && value <= MAX_SAFE_QUOTE_MICRO ? Number(value) : null;
 }
 
@@ -403,18 +430,23 @@ async function reconcile(
       return false;
     case "finalized": {
       // The verified receipt is the credit; this balance is extra evidence.
-      const after = await client
-        .balance(row.targetToken)
-        .then((value) => value.toString())
-        .catch((error: unknown) => {
-          deps.log({
-            event: "fee_balance_unavailable",
-            network: row.network,
-            token: row.targetToken,
-            error: message(error),
-          });
-          return null;
-        });
+      // A bridge order's target is an asset on another network: this
+      // network's client cannot read it, so no balance is recorded.
+      const after =
+        row.route === "debridge"
+          ? null
+          : await client
+              .balance(row.targetToken)
+              .then((value) => value.toString())
+              .catch((error: unknown) => {
+                deps.log({
+                  event: "fee_balance_unavailable",
+                  network: row.network,
+                  token: row.targetToken,
+                  error: message(error),
+                });
+                return null;
+              });
       const below =
         row.minAmountOut !== null &&
         status.amountOut < BigInt(row.minAmountOut);
@@ -433,7 +465,13 @@ async function reconcile(
             ? "fee_claim_finalized"
             : row.kind === "approval"
               ? "fee_approval_finalized"
-              : "fee_conversion_finalized",
+              : row.kind === "bridge"
+                ? "fee_bridge_deposited"
+                : row.kind === "buyback"
+                  ? "fee_buyback_finalized"
+                  : row.kind === "burn"
+                    ? "fee_burn_finalized"
+                    : "fee_conversion_finalized",
         network: row.network,
         token: row.token,
         txId: status.txId ?? row.txId,
@@ -581,7 +619,7 @@ async function replaceSend(
  * its nonce as free; a new send must not take it, or the two would outbid
  * each other through their fee replacements.
  */
-async function nonceFloor(
+export async function nonceFloor(
   network: Network,
   store: ConversionStore,
 ): Promise<number> {
@@ -660,6 +698,16 @@ export async function runNetwork(
     // signatures require live mode and a freshly checked network lease.
     for (const row of await deps.store.openRows(config.network)) {
       try {
+        // A wallet change is not authority to reinterpret a retained send's
+        // recipient or nonce. Keep its business record open for recovery
+        // under the original wallet; native liabilities remain independently
+        // accounted for before this loop.
+        const sameWallet =
+          config.definition.family === "evm"
+            ? row.feeWallet.toLowerCase() === config.feeWallet.toLowerCase()
+            : row.feeWallet === config.feeWallet;
+        if (!sameWallet)
+          throw new Error("Recorded fee wallet differs from configuration");
         if (await reconcile(row, client, deps, runId, assertLease))
           result.reconciled += 1;
         else blocked.add(row.token);
@@ -675,6 +723,16 @@ export async function runNetwork(
     }
 
     const usdc = config.definition.usdc;
+    const buyback = deps.buyback?.active(config) ? deps.buyback : undefined;
+    const buybackContext = {
+      config,
+      client,
+      deps,
+      runId,
+      blocked,
+      leased,
+      assertLease,
+    };
     if (usdc === null) {
       // No conversion target is configured: retain each received asset unchanged.
       deps.log({
@@ -683,6 +741,26 @@ export async function runNetwork(
         reason: "received assets retained without conversion",
       });
       result.status = "not_converted";
+      const reference = config.definition.stable;
+      if (!buyback || reference === null) return result;
+      // The buyback spends its share of fees received here, so a recovery
+      // scan first claims them. The claim signs only in the buyback's own
+      // mode; the retained share is still never converted.
+      if (client.vaultFees && deps.projectVaults && deps.trigger !== "receipts")
+        result.claimed = await claimVaultFees(
+          await deps.projectVaults(config),
+          reference,
+          config,
+          client,
+          client.vaultFees,
+          { ...deps, mode: buyback.mode },
+          leased,
+          blocked,
+          runId,
+          assertLease,
+        );
+      if (deps.trigger !== "receipts")
+        result.buyback = await buyback.run(buybackContext);
       return result;
     }
     const candidates = [
@@ -727,7 +805,7 @@ export async function runNetwork(
           // Pay the next send's worst-case cost from earned fees as well;
           // a wallet gas top-up never increases the amount sold.
           const reserve = BigInt(config.nativeBudget?.perTransaction ?? "0");
-          const available = received > reserve ? received - reserve : 0n;
+          const available = spendableNative(received, reserve);
           if (available < balance) balance = available;
         }
         if (balance === 0n) continue;
@@ -752,14 +830,16 @@ export async function runNetwork(
             runId,
             runValue,
             dayValue,
+            // Counted as soon as the value is journaled, so a later broadcast
+            // or update failure cannot leave the remaining tokens a stale cap.
+            commit: (micro) => {
+              runValue += micro;
+              dayValue += micro;
+            },
           },
           assertLease,
         );
-        result.records[outcome.state] += 1;
-        if (outcome.committedMicro > 0n) {
-          runValue += outcome.committedMicro;
-          dayValue += outcome.committedMicro;
-        }
+        result.records[outcome] += 1;
       } catch (error) {
         deps.log({
           event: "fee_conversion_error",
@@ -769,6 +849,10 @@ export async function runNetwork(
         });
       }
     }
+    // After conversions, a recovery scan bridges the buyback share of the
+    // USDC this network's fees became. A failure here never fails the run.
+    if (buyback && deps.trigger !== "receipts")
+      result.buyback = await buyback.run(buybackContext);
   } finally {
     await deps.store.releaseLock(config.network, runId, deps.now());
   }
@@ -912,6 +996,8 @@ interface Budget {
   runId: string;
   runValue: bigint;
   dayValue: bigint;
+  /** Adds journaled conversion value to the run and daily totals. */
+  commit(micro: bigint): void;
 }
 
 async function convert(
@@ -923,7 +1009,7 @@ async function convert(
   deps: RunDependencies,
   budget: Budget,
   assertLease: () => Promise<void>,
-): Promise<{ state: ConversionState; committedMicro: bigint }> {
+): Promise<ConversionState> {
   const { limits } = deps;
   const at = () => deps.now().toISOString();
   const unbalanced = (): ConversionRow => ({
@@ -958,9 +1044,7 @@ async function convert(
     finalizedAt: null,
   });
 
-  const record = async (
-    row: ConversionRow,
-  ): Promise<{ state: ConversionState; committedMicro: bigint }> => {
+  const record = async (row: ConversionRow): Promise<ConversionState> => {
     // A token stuck below the minimum would otherwise add the same row every
     // run; repeat only when the amount or the reason changes.
     if (
@@ -976,10 +1060,10 @@ async function convert(
         last.amountIn === row.amountIn &&
         last.mode === row.mode
       )
-        return { state: row.state, committedMicro: 0n };
+        return row.state;
     }
     await deps.store.insert(row);
-    return { state: row.state, committedMicro: 0n };
+    return row.state;
   };
 
   const targetBefore = (await client.balance(usdc)).toString();
@@ -993,11 +1077,12 @@ async function convert(
 
   // Fit the order inside the remaining run and day caps by scaling the input
   // once and quoting again; never exceed either cap.
-  const remaining = (() => {
-    const run = limits.runCapMicro - budget.runValue;
-    const day = limits.dailyCapMicro - budget.dayValue;
-    return run < day ? run : day;
-  })();
+  const remaining = remainingBudget(
+    limits.runCapMicro,
+    budget.runValue,
+    limits.dailyCapMicro,
+    budget.dayValue,
+  );
   let amount = balance;
   // Output is not linear in input for a large order, so rescale toward 98%
   // of the remaining cap a bounded number of times.
@@ -1008,7 +1093,7 @@ async function convert(
     remaining > 0n;
     attempt++
   ) {
-    const scaled = (amount * remaining * 98n) / (quoted.amountOut * 100n);
+    const scaled = rescaleInput(amount, remaining, quoted.amountOut);
     if (scaled <= 0n) break;
     amount = scaled;
     const requoted = await client.quote(token, amount);
@@ -1066,7 +1151,8 @@ async function convert(
     // Count dry-run quotes against the run cap so the record shows what a
     // live run would have sent.
     await record(row);
-    return { state: "quoted", committedMicro: quote.amountOut };
+    budget.commit(quote.amountOut);
+    return "quoted";
   }
 
   let prepared: PreparedSend;
@@ -1085,7 +1171,7 @@ async function convert(
       reason: `prepare: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "failed", committedMicro: 0n };
+    return "failed";
   }
   const approval = prepared.kind === "approval";
   // One row per signed intent; approval bytes are never overwritten by a swap.
@@ -1107,8 +1193,8 @@ async function convert(
     },
     { runId: budget.runId, now: deps.now() },
   );
+  if (!approval) budget.commit(quote.amountOut);
   await assertLease();
-  const committedMicro = approval ? 0n : quote.amountOut;
   try {
     await client.broadcast(prepared.rawTx);
   } catch (error) {
@@ -1117,7 +1203,7 @@ async function convert(
       reason: `broadcast: ${message(error)}`,
       updatedAt: at(),
     });
-    return { state: "unknown", committedMicro };
+    return "unknown";
   }
   deps.log({
     event: approval ? "fee_approval_submitted" : "fee_conversion_submitted",
@@ -1127,5 +1213,5 @@ async function convert(
     amountIn: amount.toString(),
     minAmountOut: prepared.minAmountOut.toString(),
   });
-  return { state: "submitted", committedMicro };
+  return "submitted";
 }

@@ -10,9 +10,11 @@
  * or recorded with the plan as sharing its reviewed bytes, and the review is
  * complete only when every call completed.
  */
+
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { boundedReviewTimeout } from "../verified-budget";
 import {
   DETERMINISTIC_COVERAGE_ID,
   INVENTORY_SCHEMA,
@@ -31,9 +33,13 @@ import {
   type ScannerProfile,
   SYNTHESIS_PROMPT_REVISION,
 } from "./scanners";
+import {
+  fittedAliasCount,
+  layoutReviewBatches,
+} from "./verified-review-batches";
 
 /** Default input budget of one batch call, in estimated tokens. */
-export const DEFAULT_BATCH_TOKENS = 150_000;
+const DEFAULT_BATCH_TOKENS = 150_000;
 /** Conservative estimate for source text; real tokenizers yield fewer tokens. */
 export const BYTES_PER_TOKEN = 3;
 /** Fixed per-item JSON framing, counted like the single-call envelope. */
@@ -50,7 +56,7 @@ type Inventory = {
   visibilityGaps: string[];
 };
 
-export type PlannedCall = {
+type PlannedCall = {
   evidence: string;
   inputSha256: string;
   items: number;
@@ -61,13 +67,13 @@ export type PlannedCall = {
  * batch. They share that item's reviewed bytes (the same SHA-256), so they are
  * covered by its review without another model call.
  */
-export type SameBytesOutsideBatches = {
+type SameBytesOutsideBatches = {
   sourcePath: string;
   sourceSha256: string;
   batch: string;
   paths: string[];
 }[];
-export type ReviewPlan =
+type ReviewPlan =
   | { mode: "single"; call: PlannedCall }
   | {
       mode: "batched";
@@ -87,8 +93,8 @@ const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
   itemBytes(item) + aliasBytes(item.id, aliases);
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
-export const callTimeoutMs = (estimatedTokens: number) =>
-  Math.min(600_000, 120_000 + estimatedTokens);
+const callTimeoutMs = (estimatedTokens: number) =>
+  boundedReviewTimeout(estimatedTokens);
 
 function planned(evidence: string, items: number): PlannedCall {
   return {
@@ -246,54 +252,37 @@ export function planReview(
    * widest index and count), plus each alias's JSON bytes and its comma.
    */
   const fittedAliases = (item: Item, aliases: string[]): string[] => {
-    let size = Buffer.byteLength(
+    const size = Buffer.byteLength(
       batchEvidence(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, [item], {
         [item.id]: [],
       }),
     );
-    let fitted = 0;
-    for (const alias of aliases) {
-      size += Buffer.byteLength(JSON.stringify(alias)) + (fitted > 0 ? 1 : 0);
-      if (size > limit) break;
-      fitted += 1;
-    }
-    return aliases.slice(0, fitted);
+    return aliases.slice(0, fittedAliasCount(size, aliases, limit));
   };
-  const groups: PlannedItem[][] = [];
-  const outside: { item: Item; group: number; paths: string[] }[] = [];
-  let current: PlannedItem[] = [];
-  let bytes = BATCH_OVERHEAD_BYTES;
-  const flush = () => {
-    if (current.length > 0) groups.push(current);
-    current = [];
-    bytes = BATCH_OVERHEAD_BYTES;
-  };
-  for (const item of ordered) {
+  const prepared = ordered.map((item) => {
     const aliases = sameBytes.get(item.id) ?? [];
     const fitted = aliases.length > 0 ? fittedAliases(item, aliases) : aliases;
-    if (fitted.length < aliases.length) {
-      // The reviewed copy fills its own batch; the remaining identical paths
-      // share its reviewed bytes and are recorded outside the model batches.
-      flush();
-      groups.push([{ item, aliases: fitted }]);
-      outside.push({
-        item,
-        group: groups.length,
-        paths: aliases.slice(fitted.length),
-      });
-      continue;
-    }
-    const plannedItem: PlannedItem = { item, aliases };
-    const size = plannedItemBytes(plannedItem);
-    if (
-      current.length > 0 &&
-      (bytes + size > limit || current.length >= MAX_INVENTORY_ITEMS)
-    )
-      flush();
-    current.push(plannedItem);
-    bytes += size;
-  }
-  flush();
+    const plannedItem: PlannedItem = { item, aliases: fitted };
+    return {
+      plannedItem,
+      paths: aliases.slice(fitted.length),
+      layout: {
+        bytes:
+          fitted.length < aliases.length ? 0 : plannedItemBytes(plannedItem),
+        aliases: aliases.length,
+        fitted: fitted.length,
+      },
+    };
+  });
+  const layout = layoutReviewBatches(
+    prepared.map((entry) => entry.layout),
+    BATCH_OVERHEAD_BYTES,
+    limit,
+    MAX_INVENTORY_ITEMS,
+  );
+  const groups = layout.spans.map(({ start, end }) =>
+    prepared.slice(start, end).map(({ plannedItem }) => plannedItem),
+  );
   const batches = groups.map((plannedItems, index) => {
     const items = plannedItems.map(({ item }) => item);
     const aliases = Object.fromEntries(
@@ -306,12 +295,18 @@ export function planReview(
       items.length,
     );
   });
-  const sameBytesOutsideBatches = outside.map(({ item, group, paths }) => ({
-    sourcePath: item.id,
-    sourceSha256: item.sha256,
-    batch: `batch-${group}`,
-    paths,
-  }));
+  const sameBytesOutsideBatches = prepared.flatMap((entry, index) =>
+    entry.paths.length > 0
+      ? [
+          {
+            sourcePath: entry.plannedItem.item.id,
+            sourceSha256: entry.plannedItem.item.sha256,
+            batch: `batch-${layout.groupOf[index] + 1}`,
+            paths: entry.paths,
+          },
+        ]
+      : [],
+  );
   return { mode: "batched", batches, batchTokens, sameBytesOutsideBatches };
 }
 
@@ -469,7 +464,7 @@ const retryable = (failure: string | undefined) =>
     failure === "response-unreadable" ||
     /^provider-http-(?:429|5\d\d)(?:-|$)/u.test(failure));
 
-/** The retried call's evidence, carrying the usage and cost of every attempt. */
+/** A completed call's total, or a failed call's observed accounting subtotal. */
 function withEarlierAttempts(
   last: ScannerEvidence,
   earlier: ScannerEvidence[],
@@ -482,7 +477,12 @@ function withEarlierAttempts(
   let output = 0;
   let costBasis: NonNullable<ScannerEvidence["cost"]> | null = null;
   let nanoUsd = 0n;
-  for (const attempt of [...earlier, last]) {
+  const attempts = [...earlier, last];
+  // A failed review exposes diagnostics only and is neither cached nor
+  // published. Keep its known subtotal even when another attempt was silent.
+  // A completed review can expose a total only when every attempt is known.
+  const failed = last.review.status === "failed";
+  for (const attempt of attempts) {
     if (attempt.usage) {
       hasUsage = true;
       uncachedInput += attempt.usage.uncachedInput;
@@ -497,10 +497,16 @@ function withEarlierAttempts(
   }
   return {
     ...last,
-    usage: hasUsage
-      ? { uncachedInput, cachedInput, cacheCreation, output }
-      : null,
-    cost: costBasis ? { ...costBasis, nanoUsd: nanoUsd.toString() } : null,
+    usage:
+      hasUsage &&
+      (failed || attempts.every((attempt) => attempt.usage !== null))
+        ? { uncachedInput, cachedInput, cacheCreation, output }
+        : null,
+    cost:
+      costBasis &&
+      (failed || attempts.every((attempt) => attempt.cost !== null))
+        ? { ...costBasis, nanoUsd: nanoUsd.toString() }
+        : null,
   };
 }
 
@@ -757,6 +763,23 @@ export async function reviewInventory(input: {
     attempts: outcome.attempts,
   });
   const done = outcomes.filter((outcome) => outcome !== null);
+  const batchPasses = () =>
+    outcomes.flatMap((outcome, index) =>
+      outcome ? [pass("batch", index + 1, plan.batches[index], outcome)] : [],
+    );
+  // A failed review of the whole inventory, like a completed one: it names
+  // the assessed inventory and every call that ran, never one batch's input.
+  const failedReview = (
+    evidence: ScannerEvidence,
+    passes: ReviewPass[],
+  ): ScannerEvidence => ({
+    ...evidence,
+    review: {
+      ...evidence.review,
+      inputManifestSha256: inspection.inventorySha256,
+    },
+    passes,
+  });
   if (failed) {
     const at = outcomes.findIndex(
       (o) => o !== null && o.evidence.review.status !== "completed",
@@ -765,9 +788,12 @@ export async function reviewInventory(input: {
     return {
       plan,
       evidence: first
-        ? labelFailure(
-            first.evidence,
-            `batch-${at + 1}-of-${plan.batches.length}`,
+        ? failedReview(
+            labelFailure(
+              first.evidence,
+              `batch-${at + 1}-of-${plan.batches.length}`,
+            ),
+            batchPasses(),
           )
         : null,
     };
@@ -785,7 +811,13 @@ export async function reviewInventory(input: {
   const final = await run(synthesis, "synthesis");
   if (!final) return { plan, evidence: null };
   if (final.evidence.review.status !== "completed")
-    return { plan, evidence: labelFailure(final.evidence, "synthesis") };
+    return {
+      plan,
+      evidence: failedReview(labelFailure(final.evidence, "synthesis"), [
+        ...batchPasses(),
+        pass("synthesis", plan.batches.length + 1, synthesis, final),
+      ]),
+    };
   return {
     plan,
     evidence: combine(

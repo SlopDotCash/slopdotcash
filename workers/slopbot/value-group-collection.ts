@@ -5,22 +5,17 @@ import {
   collectAcceptedCommitCensus,
 } from "./value-accepted-commit-census";
 import { collectValueContext } from "./value-context";
-import {
-  collectValueEvidence,
-  namesRepository,
-  type ValueEvidence,
-} from "./value-evidence";
+import { collectValueEvidence, namesRepository } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import { latestValueRecord } from "./value-journal";
 import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import { loadValuePolicy, type ValueClient } from "./value-publication";
-import {
-  acceptedWorkUnitCommits,
-  type WorkUnitSource,
-} from "./value-work-unit";
+import { acceptedWorkUnitCommits } from "./value-work-unit";
 import {
   currentWorkUnitRecord,
   type WorkUnitRecord,
 } from "./value-work-unit-journal";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 type Selection = { repository: string; number: number; nodeId: string };
 type Identity = {

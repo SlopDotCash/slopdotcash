@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { handleEmailPreferences } from "../../backend/notifications/email";
 import { notifyPointsDispute } from "../../backend/notifications/events";
 import type { NotificationsDependencies } from "../../backend/notifications/handler";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { type PointRevision, pointRevisionId } from "../../src/lib/points";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { escalateAppeal } from "../slopbot/appeals";

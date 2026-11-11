@@ -23,6 +23,7 @@ import {
   VETTING_EVIDENCE_OBJECTS,
   VETTING_TRACE_SHA,
   vettingResult,
+  vettingScanResult,
 } from "../vetting-fixtures";
 import {
   CANCELED,
@@ -71,6 +72,12 @@ async function postVettingResult(
   projectId: string,
   repository: string,
   disposition: "clean" | "incomplete" | "malicious",
+  options: {
+    /** A bounded scan result (v2) in place of the historical v1 fixture. */
+    result?: (
+      queued: Parameters<typeof vettingScanResult>[0],
+    ) => ReturnType<typeof vettingScanResult>;
+  } = {},
 ) {
   if (!VETTING_PUBLIC_KEY || !VETTING_PRIVATE_KEY)
     throw new Error("Missing E2E vetting key");
@@ -139,7 +146,9 @@ async function postVettingResult(
     expect(response.status()).toBeLessThan(300);
   }
   const body = JSON.stringify(
-    vettingResult({ ...queued, repository }, disposition),
+    options.result
+      ? options.result({ ...queued, repository })
+      : vettingResult({ ...queued, repository }, disposition),
   );
   const posted = await request.post("/api/v1/vetting/results", {
     data: body,
@@ -1299,12 +1308,10 @@ test("moderators restrict a project and refuse reinstatement without canonical s
     path: test.info().outputPath("operator-ban-notice.png"),
     fullPage: true,
   });
-  await moderator.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(moderator.locator("body"));
   await expectAccessible(moderator);
   await moderator.screenshot({
-    path: test.info().outputPath("operator-ban-notice-zoom200.png"),
+    path: test.info().outputPath("operator-ban-notice-text-200.png"),
     fullPage: true,
   });
   await banNotice.getByRole("link", { name: "Open admin" }).focus();
@@ -1444,12 +1451,10 @@ test("a moderator decides a confirmed malicious result and bans the project and 
     "Ban project and maintainer by @e2e-moderator (project-moderator, admin-panel)",
   );
   await expectAccessible(moderator);
-  await moderator.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(moderator.locator("body"));
   await expectAccessible(moderator);
   await moderator.screenshot({
-    path: test.info().outputPath("malicious-decision-zoom200.png"),
+    path: test.info().outputPath("malicious-decision-text-200.png"),
     fullPage: true,
   });
   await moderatorContext.close();
@@ -1733,9 +1738,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   );
   await locationNotice.locator(".inbox-title").focus();
   await expect(locationNotice.locator(".inbox-title")).toBeFocused();
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  const restoreEnlargedText3 = await enlargeText(page.locator("body"));
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -1745,14 +1748,86 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     path: test.info().outputPath("inbox-location-200.png"),
     fullPage: true,
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "1";
-  });
+  await restoreEnlargedText3();
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("scan-inbox.png"),
     fullPage: true,
   });
+
+  // A bounded scan that finished with every check passed and every surface
+  // complete, held only by model findings in Slop's skill template: the owner
+  // sees the generic reasons from the recorded result (PRD section 8,
+  // issue #1991), never a finding summary.
+  await postVettingResult(
+    request,
+    project.id,
+    project.repository,
+    "incomplete",
+    {
+      result: (queued) => {
+        const scan = vettingScanResult(queued, "incomplete", {
+          ambiguous: true,
+        });
+        return {
+          ...scan,
+          coverage: {
+            ...scan.coverage,
+            downloads: { state: "complete", items: 0 },
+          },
+          checks: { ...scan.checks, "credential-theft": "passed" },
+          visibilityGaps: ["specialist:agentInstructions:partial"],
+          specialistReview: {
+            ...scan.primaryReview,
+            provider: "openai",
+            model: "gpt-5.5",
+            runId: `specialist-scan-${queued.revision}`,
+          },
+          findings: [
+            {
+              severity: "medium",
+              category: "unsafe-execution",
+              summary: "The receipt script runs a package with bun x",
+              evidence: "slop-skill-template/scripts/run-receipt.mjs:12",
+            },
+          ],
+        };
+      },
+    },
+  );
+  await page.goto(`/projects/${project.id}/manage`, {
+    waitUntil: "networkidle",
+  });
+  const reviewed = page.locator(".project-setup-status");
+  await expect(reviewed.locator("h2")).toHaveText(
+    "Setup status: Action needed",
+  );
+  await expect(reviewed.getByRole("status")).toContainText(
+    "Findings in Slop's skill template block clearance. Check for an updated skill template before requesting a new scan.",
+  );
+  const reasons = reviewed.getByRole("region", {
+    name: "Why the scan did not clear",
+  });
+  await expect(reasons.locator(".route-badge")).toHaveText([
+    "No check flagged",
+    "Specialist: agent instructions partial",
+    "Primary: ambiguous",
+    "Specialist: ambiguous",
+    "Slop-side block",
+  ]);
+  await expect(reviewed).not.toContainText("receipt script");
+  await expectAccessible(page);
+  await page.screenshot({
+    path: test.info().outputPath("scan-reasons.png"),
+    fullPage: true,
+  });
+  await reviewed.getByRole("button", { name: "Request a new scan" }).click();
+  await expect(reviewed.locator("h2")).toHaveText(
+    "Setup status: Waiting for the security scan",
+  );
+  await expect(
+    reviewed.getByRole("list", { name: "Why the scan did not clear" }),
+  ).toHaveCount(0);
 
   // Owner edit: a text-only change publishes at once as revision 2.
   await page.goto(`/projects/${project.id}/manage`, {
@@ -2261,6 +2336,43 @@ test("an applicant publishes an application stored before self-service setup wit
   await page.goto("/projects/new", { waitUntil: "networkidle" });
   const entry = page.getByTestId(`pending-application-${applicationId}`);
   await expect(entry).toContainText(project.name);
+  // Hold the actual account inventory after D1 returned A's application.
+  // Changing the cookie alone does not deliver a focus/session event.
+  let releaseInventory = () => {};
+  let inventoryReceived = () => {};
+  const inventoryHeld = new Promise<void>((resolve) => {
+    releaseInventory = resolve;
+  });
+  const inventoryReady = new Promise<void>((resolve) => {
+    inventoryReceived = resolve;
+  });
+  const inventoryRoute = "**/api/v1/project-setup";
+  await page.route(inventoryRoute, async (route) => {
+    const response = await route.fetch();
+    inventoryReceived();
+    await inventoryHeld;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await inventoryReady;
+    await page.evaluate((token) => {
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+    }, APPLICANT_TOKEN);
+    releaseInventory();
+    await expect(entry).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Pending applications" }),
+    ).toContainText("Your account changed");
+  } finally {
+    releaseInventory();
+    await page.unroute(inventoryRoute);
+  }
+  await page.evaluate((token) => {
+    document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+  }, OWNER_TOKEN);
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(entry).toContainText(project.name);
   await expect(entry.locator("details")).toHaveCount(0);
   await expect(page.getByLabel("Project name")).toHaveValue("");
   await expectAccessible(page, { include: ".setup-pending-applications" });
@@ -2372,6 +2484,168 @@ test("an applicant publishes an application stored before self-service setup wit
   expect(again.status()).toBe(409);
   await expectAccessible(page);
   await context.close();
+});
+
+test("a maintainer removes a project in review and cancels its stale application through D1 @registry", async ({
+  browser,
+  diagnostics,
+}) => {
+  const suffix = projectSuffix();
+  const project = {
+    repository: `e2e-owner/remove-registry-${suffix}`,
+    id: `remove-registry-${suffix}`,
+    name: `Remove Registry ${suffix.replaceAll("-", " ")}`,
+  };
+  const persist = process.env.SLOP_E2E_PERSIST_TO;
+  if (!persist) throw new Error("Missing E2E registry database");
+  const context = await browser.newContext(walkthroughOptions());
+  const page = await context.newPage();
+  try {
+    await signIn(page, OWNER_TOKEN);
+    await setSlopbot(`${project.repository}/installed`);
+    await draftApplication(page, project);
+    await page
+      .getByRole("button", { name: "Create project", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Project created", exact: true }),
+    ).toBeVisible();
+    const current = await (
+      await page.request.get(`/api/v1/projects/${project.id}`)
+    ).json();
+    expect(current.revision).toBe(1);
+    expect(current.project.status).toBe("paused");
+
+    // A retained update becomes stale when the owner removes its project.
+    const applicationId = `app_cancel-${project.id}`;
+    const text = JSON.stringify(current.project);
+    const sql = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(
+      "node",
+      [
+        "node_modules/wrangler/bin/wrangler.js",
+        "d1",
+        "execute",
+        "slop-private",
+        "--local",
+        "--persist-to",
+        persist,
+        "--command",
+        `INSERT INTO project_applications(id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,expected_revision,change_reason) VALUES(${[
+          applicationId,
+          project.id,
+          project.repository.toLowerCase(),
+          text,
+          createHash("sha256").update(text).digest("hex"),
+          "Merged pull requests that the maintainers accept",
+          "900000003",
+          "e2e-owner",
+          "2026-10-01T00:00:00.000Z",
+          "pending",
+          "pending",
+        ]
+          .map(sql)
+          .join(",")},1,'Retained update before removal')`,
+      ],
+      { stdio: "pipe" },
+    );
+
+    await page.goto(`/projects/${project.id}/manage`, {
+      waitUntil: "networkidle",
+    });
+    const remove = page.getByRole("button", {
+      name: "Remove project",
+      exact: true,
+    });
+    await expect(remove).toBeEnabled();
+    page.once("dialog", (dialog) => dialog.accept());
+    await remove.click();
+    await expect(
+      page.getByRole("heading", { name: "Project removed", exact: true }),
+    ).toBeVisible();
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("native-project-removed.png"),
+      fullPage: true,
+    });
+    expect(
+      (await page.request.get(`/api/v1/projects/${project.id}`)).status(),
+    ).toBe(404);
+    expect(
+      (await page.request.get(`/projects/${project.id}/SKILL.md`)).status(),
+    ).toBe(404);
+    const history = await (
+      await page.request.get("/api/v1/project-revisions")
+    ).json();
+    const revisions = history.revisions.filter(
+      (entry: { projectId: string }) => entry.projectId === project.id,
+    );
+    expect(
+      revisions.map((entry: { revision: number }) => entry.revision),
+    ).toEqual([1, 2]);
+    expect(revisions[1].manifest).toEqual({
+      ...current.project,
+      status: "paused",
+      listingTier: "retired",
+    });
+
+    await page
+      .getByRole("link", { name: "Browse projects", exact: true })
+      .click();
+    await expect(page.locator(`a[href="/projects/${project.id}"]`)).toHaveCount(
+      0,
+    );
+    await page.goto("/projects/new", { waitUntil: "networkidle" });
+    const entry = page.getByTestId(`pending-application-${applicationId}`);
+    await expect(entry).toContainText(project.name);
+    await expect(
+      entry.getByRole("button", { name: "Publish this change", exact: true }),
+    ).toHaveCount(0);
+    page.once("dialog", (dialog) => dialog.accept());
+    await entry
+      .getByRole("button", { name: "Cancel application", exact: true })
+      .click();
+    await expect(entry.getByRole("status")).toHaveText(
+      "Application cancelled.",
+    );
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("native-application-cancelled.png"),
+      fullPage: true,
+    });
+    const applications = await (
+      await page.request.get("/api/v1/project-applications/mine", {
+        headers: { cookie: `__Host-slop_points=${OWNER_TOKEN}` },
+      })
+    ).json();
+    expect(
+      applications.applications.find(
+        (application: { id: string }) => application.id === applicationId,
+      ),
+    ).toMatchObject({
+      status: "cancelled",
+      decidedBy: { githubId: "900000003" },
+    });
+    diagnostics.allowResponse(
+      409,
+      "POST",
+      `/api/v1/project-applications/${applicationId}/publish`,
+    );
+    const publish = await page.request.post(
+      `/api/v1/project-applications/${applicationId}/publish`,
+      {
+        data: {},
+        headers: {
+          origin: new URL(page.url()).origin,
+          cookie: `__Host-slop_points=${OWNER_TOKEN}`,
+        },
+      },
+    );
+    expect(publish.status()).toBe(409);
+  } finally {
+    await context.close();
+  }
 });
 
 test.describe("private evidence console", () => {
@@ -2494,14 +2768,8 @@ test.describe("private evidence console", () => {
         name: "Harmless trace fixture verified content",
       }),
     ).toHaveValue(VETTING_EVIDENCE_OBJECTS[0].body);
-    // At 200% zoom, keep at least the supported 320 CSS-pixel reflow width.
-    // Zooming a 320px viewport directly would test an unsupported 160px layout.
-    const viewport = page.viewportSize();
-    if (viewport && viewport.width < 640)
-      await page.setViewportSize({ ...viewport, width: 640 });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    // Enlarge text at the current CSS viewport; this is not browser zoom.
+    const restoreEnlargedText4 = await enlargeText(page.locator("body"));
     await expect(
       trace.getByRole("textbox", {
         name: "Harmless trace fixture verified content",
@@ -2514,15 +2782,12 @@ test.describe("private evidence console", () => {
     ).toBe(true);
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("private-evidence-zoom.png"),
+      path: test.info().outputPath("private-evidence-text-200.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "1";
-    });
+    await restoreEnlargedText4();
     await expectAccessible(page);
     await page.evaluate(() => window.scrollTo(0, 0));
-    if (viewport) await page.setViewportSize(viewport);
     await page.screenshot({
       path: test.info().outputPath("private-evidence.png"),
       fullPage: true,
@@ -2567,8 +2832,8 @@ test("repository lookup failures explain the next action and preserve the draft 
       "Private upstream diagnostic",
     );
   }
-  // GitHub limits the shared anonymous Pages address. After Slopbot is
-  // installed, the repository's own installation reads its facts.
+  // Slopbot installation grants no fallback to its broader token. Public
+  // lookups recover only when the public-token provider recovers.
   const limited = `e2e-owner/slopbot-lookup-${projectSuffix()}`;
   expect(
     (
@@ -2583,12 +2848,38 @@ test("repository lookup failures explain the next action and preserve the draft 
     "GitHub limited lookups.",
   );
   await setSlopbot(`${limited}/installed`);
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  const [stillLimited] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(stillLimited.status()).toBe(503);
+  await stillLimited.finished();
+  await expect(page.locator("#field-repository-error")).toContainText(
+    "GitHub limited lookups.",
+  );
+  expect(
+    (
+      await fetch(
+        `${GITHUB_FIXTURE}/__fixture/public-repository/${limited}/ready`,
+        { method: "PUT" },
+      )
+    ).status,
+  ).toBe(204);
+  const [recoveredLookup] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/project-github/repositories/${limited}`),
+    ),
+    page.getByRole("button", { name: "Retry", exact: true }).click(),
+  ]);
+  expect(recoveredLookup.status()).toBe(200);
+  await recoveredLookup.finished();
   await expect(
     page.getByRole("combobox", { name: "Integration branch", exact: true }),
   ).toHaveValue("main");
   await page.screenshot({
-    path: test.info().outputPath("repository-lookup-through-slopbot.png"),
+    path: test.info().outputPath("repository-lookup-public-token-recovery.png"),
     fullPage: true,
   });
   await setRepository(page, fixtureProjects().owned.repository);
@@ -2820,7 +3111,7 @@ for (const assetCase of [
     slop: "25%",
   },
 ] as const) {
-  test(`an owner creates a private bounty in ${assetCase.id} and opens its generic private report form @registry`, async ({
+  test(`an owner creates a private bounty in ${assetCase.id} and opens its generic private report form @registry @private-intake`, async ({
     browser,
   }) => {
     test.skip(

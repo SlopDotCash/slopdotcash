@@ -233,7 +233,11 @@ beforeAll(async () => {
     fetch: ((request: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(request));
       expect(init?.method).toBe("GET");
-      expect(init?.redirect).toBe("error");
+      // Only the repository identity read asks for a redirect response, to
+      // refuse a moved repository; every other read refuses redirects outright.
+      expect(init?.redirect).toBe(
+        url.pathname === "/repos/example/fixture" ? "manual" : "error",
+      );
       return fetch(
         `http://localhost:${server.port}${url.pathname}${url.search}`,
         init,
@@ -410,7 +414,12 @@ test("a recorded repository rename acquires through the current GitHub name", as
       requested.push(path);
       // GitHub answers the former name with a redirect, which acquisition refuses.
       if (path.startsWith("/repos/example/fixture"))
-        throw new TypeError("fetch failed: unexpected redirect");
+        return new Response(null, {
+          status: 301,
+          headers: {
+            location: "https://api.github.com/repositories/123456789",
+          },
+        });
       if (path === "/repos/example/renamed")
         return Response.json({
           id: 123456789,
@@ -476,5 +485,33 @@ test("an unrecorded repository rename is still refused", async () => {
     root,
   ).catch((error: unknown) => error);
   expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect(await readdir(root)).toEqual(before);
+});
+
+test("a repository GitHub redirects is refused as moved, not retried", async () => {
+  mode = "normal";
+  const moved: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        return new Response(null, {
+          status: 301,
+          headers: {
+            location: "https://api.github.com/repositories/123456789",
+          },
+        });
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    moved,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect((failure as { reason?: string }).reason).toBe(
+    "Repository moved on GitHub",
+  );
   expect(await readdir(root)).toEqual(before);
 });

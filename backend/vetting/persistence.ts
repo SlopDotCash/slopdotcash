@@ -43,11 +43,14 @@ import {
   type RecordedVettingResult,
   resultReviewers,
 } from "./scan-result";
-import { findingsLocationOf, quarantinedScanMessage } from "./summary";
+import {
+  findingsLocationOf,
+  quarantinedScanMessage,
+  scanClearanceFactsOf,
+} from "./summary";
 
 export type {
   AssessmentState,
-  AssessmentSummary,
   VettingClearance,
   VettingPin,
 } from "../../src/lib/vetting-contracts";
@@ -74,7 +77,7 @@ export type VettingAssessment = {
 };
 
 /** Reads the live pin; throws when GitHub or the template cannot be read. */
-export type VettingPinReader = () => Promise<VettingPin>;
+type VettingPinReader = () => Promise<VettingPin>;
 
 type AssessmentRow = {
   id: string;
@@ -174,6 +177,9 @@ export function summarize(assessment: VettingAssessment): AssessmentSummary {
     artifacts: artifacts.length,
     heldArtifacts: held.length,
     ...(findingsLocation !== undefined ? { findingsLocation } : {}),
+    ...(result && isScanResult(result)
+      ? { scan: scanClearanceFactsOf(result) }
+      : {}),
   };
 }
 

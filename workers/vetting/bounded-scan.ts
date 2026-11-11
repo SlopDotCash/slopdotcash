@@ -31,13 +31,14 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
+import type { QueuedAssessment } from "./assembly-manifest";
 import { expandGzipInputs } from "./gzip-inputs";
-import type { QueuedAssessment } from "./queue";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
   type ScannerEvidence,
 } from "./scanners";
+import { textPartEnds } from "./verified-text-parts";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /**
@@ -925,7 +926,7 @@ const OBFUSCATION =
  * obfuscation signal in bulk content sends the model every match in context
  * (`signalExcerpt`).
  */
-export function bulkClass(
+function bulkClass(
   path: string,
   surfaces: ScanSurface[],
 ): "lockfile" | "data" | "generated" | "vendored" | null {
@@ -958,7 +959,7 @@ const SIGNAL_CONTEXT = 1536;
  * bulk file, with character offsets; null when there is none. The
  * deterministic checks still read the whole file.
  */
-export function signalExcerpt(
+function signalExcerpt(
   path: string,
   text: string,
   nonMatches?: ReadonlySet<RegExp>,
@@ -1003,14 +1004,7 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
   if (bytes.length <= size) return [text];
   const parts: string[] = [];
   let start = 0;
-  while (start < bytes.length) {
-    let end = Math.min(start + size, bytes.length);
-    if (end < bytes.length) {
-      const newline = bytes.lastIndexOf(10, end - 1);
-      if (newline > start) end = newline + 1;
-      // Never split inside a UTF-8 sequence.
-      while (end > start + 1 && (bytes[end] & 0xc0) === 0x80) end -= 1;
-    }
+  for (const end of textPartEnds(bytes, size)) {
     parts.push(bytes.subarray(start, end).toString("utf8"));
     start = end;
   }
@@ -1965,7 +1959,7 @@ export function executionInventory(inspection: RepositoryInspection) {
  * itself, with no score threshold: any suspected malice or high finding is
  * high risk, any other finding or incomplete coverage is ambiguous.
  */
-export function scanReview(evidence: ScannerEvidence): ScanReview {
+function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
   const risk = !completed
     ? null
@@ -2110,6 +2104,22 @@ export function composeScanResult(input: {
       scanner.review.inputManifestSha256 !== inspection.inventorySha256
     )
       throw new Error("A review read another inventory");
+  // The intake parser accepts at most 50 visibility gaps
+  // (parseVettingScanResult), so reserve room for the truncation notes
+  // before slicing: appending them after the slice emits 51-53 entries
+  // that no intake can record, and the assessment stays pending while
+  // every scan pass aborts on the same unpublishable result.
+  const truncationNotes = [
+    ...(inspection.dependencyLocks.length > 200
+      ? ["More than 200 dependency locks"]
+      : []),
+    ...(inspection.findings.length > 200
+      ? ["More than 200 scan findings"]
+      : []),
+    ...(inspection.artifacts.length > 500
+      ? ["More than 500 scan artifacts"]
+      : []),
+  ];
   const report = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: input.sourceInventorySha256
@@ -2155,12 +2165,15 @@ export function composeScanResult(input: {
     coverage: inspection.coverage,
     checks: inspection.checks,
     visibilityGaps: [
-      ...new Set([
-        ...inspection.visibilityGaps,
-        ...input.primary.visibilityGaps,
-        ...(input.specialist?.visibilityGaps ?? []),
-      ]),
-    ].slice(0, 50),
+      ...[
+        ...new Set([
+          ...inspection.visibilityGaps,
+          ...input.primary.visibilityGaps,
+          ...(input.specialist?.visibilityGaps ?? []),
+        ]),
+      ].slice(0, 50 - truncationNotes.length),
+      ...truncationNotes,
+    ],
     execution: input.execution ?? null,
     reusedAssessmentId: null,
     primaryReview: scanReview(input.primary),
@@ -2171,12 +2184,6 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
-  if (inspection.dependencyLocks.length > 200)
-    result.visibilityGaps.push("More than 200 dependency locks");
-  if (inspection.findings.length > 200)
-    result.visibilityGaps.push("More than 200 scan findings");
-  if (inspection.artifacts.length > 500)
-    result.visibilityGaps.push("More than 500 scan artifacts");
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {

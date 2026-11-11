@@ -66,7 +66,24 @@ alias only.
     awards or payments. Per-run and daily caps bound it. Owners authorize USDC
     sweeps to separate owner-controlled software wallets, with sweep keys held
     in their local `.env`, not by the Worker (PRD sections 6 and 11,
-    24 October 2026). `workers/fee-converter/wrangler.toml` sets the mode of
+    24 October 2026). Owner decision of 10 November 2026 (PRD section 6,
+    "SLOP buyback and burn"): half of all fee income funds a programmatic
+    buyback of SLOP (`0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood
+    Chain). For that share only, the same keys may also sign: an exact
+    approval and one deBridge DLN order that sends USDC from Base, Ethereum
+    or Solana to the Robinhood Chain fee wallet as USDG; on Robinhood Chain,
+    fee claims on reviewed vaults, an exact approval and a checked swap of the
+    buyback share into SLOP with output to the same wallet; and a transfer of
+    half of the acquired SLOP to the burn address
+    `0x000000000000000000000000000000000000dEaD`. Every order names that fee
+    wallet as receiver, order authority and refund beneficiary, checked before
+    signing. The other half of each fee keeps its earlier handling; on
+    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is off in the
+    checked-in configuration. Source approval does not activate the buyback:
+    activation needs its own reviewed change, the owner's confirmation of each
+    limit, and the readiness checks in `workers/fee-converter/README.md`. The
+    Worker never cancels an order; cancelling an unfilled order is an owner
+    action. `workers/fee-converter/wrangler.toml` sets the mode of
     each network. The Worker deploys only when the
     `SLOP_FEE_CONVERTER_RELEASE` repository variable is `enabled`. Fee handling starts only after the fee wallets are
     funded and the limits and readiness are verified (PRD section 11, #1285).
@@ -391,7 +408,7 @@ bodies remain unreadable. See PRD sections 8–10.
 ## Private traces
 
 Contributors may opt into the minimized contribution-specific trace defined by
-`protocol/private-trace-v1.md`. Declining or failing upload never blocks submission. The contributor inspects and
+`backend/trace/README.md#private-trace-privacy-contract`. Declining or failing upload never blocks submission. The contributor inspects and
 redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
@@ -429,7 +446,7 @@ automatic monthly distribution.
 ## Participation points
 
 Slop Points are the single contribution and participation unit governed by
-`protocol/points-v1.md`. From 24 October 2026, grant no welcome or
+`docs/slop-product-requirements.md` section 7. From 24 October 2026, grant no welcome or
 X-connection points (PRD section 11, Participation points). Keep every award
 recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection
@@ -517,6 +534,9 @@ the network fee wallet at payout. No contract converts it. A scheduled backend
 job converts fees already in the fee wallet to USDC (PRD section 6) inside
 that wallet (TOK-07, MVP-07c). Robinhood Chain retains the received asset and
 shows "not converted"; USDG stays USDG and project tokens stay unchanged.
+When the SLOP buyback is active (owner decision, 10 November 2026), its half
+of each fee is bridged or swapped into SLOP as PRD section 6 describes; the
+retained half is handled exactly as before.
 Other networks without a verified USDC route keep the fee token pending.
 Conversion never blocks or touches a contributor payment. The approved keeper and
 fee-converter EVM replacement changes only fee fields, with the same nonce and
@@ -612,6 +632,19 @@ credentials.
 
 ## Working rules
 
+Every explicit and implicit application state transition requires a reviewed
+Quint model under [PRD section 12](docs/slop-product-requirements.md#12-state-correctness-and-quint-verification).
+Maintain source mappings, assumptions, reachable scenarios and implementation
+conformance evidence in `formal/`. Cover UI/UX, APIs, workers, storage, queues,
+scheduled jobs, contributor tools, contracts and release workflows, including
+failure, retry, expiry, cancellation, concurrency, interruption and recovery.
+Review composed parent/child and cross-subsystem transitions, not only each
+component in isolation.
+Run `bun run formal:check` and `bun run formal:verify` with the existing required
+checks. Fix model/code discrepancies without weakening product policy. Report
+finite bounds and unresolved gaps; model simulation alone proves neither source
+refinement nor the absence of every application state error.
+
 - Preserve unrelated user changes and untracked files.
 - Use a scoped branch from current `origin/development`; rebase before final
   review.
@@ -635,9 +668,14 @@ credentials.
 - Do not leave TODOs, placeholders, dead controls, or silent fallback success.
 - Keep `AGENTS.md` and `CLAUDE.md` byte-identical.
 
-Run from the repository root:
+Install the lockfile and local prover before running the checks.
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH`. Run from the repository root:
 
 ```bash
+bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run projects:check
@@ -660,8 +698,8 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, sync the
-project registry with `bun run projects:sync`, and prepare the ledger with
+Rebase onto current `origin/development`, install the lockfile and local prover
+as above, sync the project registry with `bun run projects:sync`, and prepare the ledger with
 `bun run leaderboard:generate`. Do not commit the generated registry snapshot.
 Local pull-request checks may use the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks) instead of live ingestion.

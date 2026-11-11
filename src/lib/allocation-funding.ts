@@ -1,8 +1,6 @@
 import { isBaseUnits } from "./escrow-policy.mjs";
-/** Frozen monetary basis for new proposals; accepted score is independent. */
 
-import type { CycleIndexEntry } from "./cycle-index";
-import type { ProjectDefinition } from "./projects.mjs";
+/** Frozen monetary basis for new proposals; accepted score is independent. */
 
 export type { AllocationFundingBasis } from "./allocation-funding-basis.mjs";
 export {
@@ -52,43 +50,4 @@ function assertFundingAmounts(value: unknown): {
     committedMinor: basis.committedMinor,
     monthlyCapMinor: basis.monthlyCapMinor,
   };
-}
-
-export type PromotionCycle = Pick<
-  CycleIndexEntry,
-  "cycleId" | "projectId" | "kind"
->;
-
-/**
- * Missing history cannot authorize promotion. Two consecutive earlier monthly
- * cycles end it: no frozen funding basis backs a monthly pool (the vault
- * enforces funds), so no recorded cycle can resume it.
- */
-export function projectPromotionEligible(
-  project: ProjectDefinition,
-  cycles: readonly PromotionCycle[] | null,
-  displayCycleId: string | null,
-): boolean {
-  if (project.status !== "active") return false;
-  if (project.reward.kind !== "monthly-pool") return true;
-  if (cycles === null || displayCycleId === null) return false;
-  const history = cycles
-    .filter(
-      (cycle) =>
-        cycle.projectId === project.id &&
-        cycle.kind === "monthly-pool" &&
-        cycle.cycleId < displayCycleId,
-    )
-    .sort((left, right) => right.cycleId.localeCompare(left.cycleId));
-  let consecutive = 0;
-  let previousMonth: number | null = null;
-  for (const cycle of history) {
-    const [year, month] = cycle.cycleId.split("-").map(Number);
-    const monthOrdinal = year * 12 + month;
-    if (previousMonth !== null && monthOrdinal !== previousMonth - 1) break;
-    previousMonth = monthOrdinal;
-    consecutive += 1;
-    if (consecutive >= 2) return false;
-  }
-  return true;
 }
