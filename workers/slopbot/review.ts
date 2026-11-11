@@ -790,8 +790,10 @@ async function closureState(
   job: Job,
   context: Context,
   mayClose: boolean,
+  now = Date.now(),
 ) {
   const db = env.SLOPBOT_DB;
+  const at = new Date(now).toISOString();
   if (env.SLOPBOT_CLOSURE_ENABLED !== "true")
     return {
       allowed: false,
@@ -815,18 +817,19 @@ async function closureState(
   // author's reopen or appeal alone is a dispute, not a reversal: counting it
   // would let authors switch closure off for a repository.
   const breaker = await db
-    .prepare(`SELECT ${reopenBreakerSql("?1")} AS allowed`)
-    .bind(job.repositoryId)
+    .prepare(`SELECT ${reopenBreakerSql("?1", "?2")} AS allowed`)
+    .bind(job.repositoryId, at)
     .first<{ allowed: number }>();
   if (breaker?.allowed !== 1)
     return { allowed: false, why: "reopen-rate circuit breaker" };
   const closesToday = await store.count(
     db,
     `SELECT (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ?1 AND action = 'close'
-       AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+       AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ?2, '-1 day'))
      + (SELECT COUNT(*) FROM slopbot_close_attempts c WHERE c.repository_id = ?1 AND c.state = 'pending'
        AND NOT EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.review_key = c.review_key AND a.action = 'close')) AS n`,
     job.repositoryId,
+    at,
   );
   if (closesToday >= context.config.config.dailyCloseCap)
     return { allowed: false, why: "daily closure cap reached" };
@@ -1858,6 +1861,7 @@ async function runReview(
     await requireRegisteredRepository(db, job);
     if (finalClosure && closureRegistration) {
       closeAttemptId = await reserveClose(db, claim, {
+        at: new Date().toISOString(),
         repositoryId: job.repositoryId,
         projectId: context.registration.projectId,
         itemNodeId: issue.node_id,

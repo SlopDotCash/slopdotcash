@@ -13,11 +13,19 @@ export type CloseRecovery = {
   confirm: CallRecord | null;
 };
 
-/** Same seven-day reversal policy at advisory read and atomic reservation. */
-export function reopenBreakerSql(repository: "?1" | "?3"): string {
+/**
+ * Same seven-day reversal policy at advisory read and atomic reservation. The
+ * clock is a bound parameter, not the database clock: every row these windows
+ * read was stamped by the worker's clock, and the two can differ (a frozen
+ * clock in a test, a skewed host in production).
+ */
+export function reopenBreakerSql(
+  repository: "?1" | "?3",
+  clock: "?2" | "?11",
+): string {
   return `(SELECT closes = 0 OR reversed * 1.0 / closes <= ${REOPEN_BREAKER_RATIO} FROM (
     SELECT (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ${repository}
-      AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')) AS closes,
+      AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-7 days')) AS closes,
     (SELECT COUNT(DISTINCT reversal.item_node_id) FROM (
       SELECT r.item_node_id, r.created_at AS at FROM slopbot_actions r
         WHERE r.repository_id = ${repository} AND r.action = 'human_reopen'
@@ -25,7 +33,7 @@ export function reopenBreakerSql(repository: "?1" | "?3"): string {
       SELECT a.item_node_id, a.resolved_at AS at FROM slopbot_appeals a
         WHERE a.repository_id = ${repository} AND a.resolution = 'upheld'
           AND a.appeal_key NOT LIKE 'value-appeal:%'
-    ) reversal WHERE reversal.at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
+    ) reversal WHERE reversal.at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-7 days')
       AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = ${repository}
         AND c.item_node_id = reversal.item_node_id AND c.action = 'close'
         AND c.created_at <= reversal.at)) AS reversed
@@ -75,6 +83,8 @@ export async function reserveClose(
     penaltyEligible: boolean;
     recovery: CloseRecovery;
     fence: ValuePublicationFence;
+    /** The worker's clock, as the ISO instant both the lease and the windows use. */
+    at: string;
   },
 ): Promise<string | null> {
   const result = await db
@@ -83,13 +93,13 @@ export async function reserveClose(
      recovery_json, penalty_eligible, state, created_at)
     SELECT ?2, ?1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE EXISTS (SELECT 1 FROM slopbot_reviews WHERE review_key = ?1 AND claim_token = ?2
-      AND status = 'running' AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND status = 'running' AND lease_expires_at > ?11)
     AND NOT EXISTS (SELECT 1 FROM slopbot_actions WHERE review_key = ?1 AND action = 'close')
     AND (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ?3 AND action = 'close'
-      AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+      AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ?11, '-1 day'))
       + (SELECT COUNT(*) FROM slopbot_close_attempts c WHERE c.repository_id = ?3 AND c.state = 'pending'
         AND NOT EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.review_key = c.review_key AND a.action = 'close')) < ?10
-    AND ${reopenBreakerSql("?3")}
+    AND ${reopenBreakerSql("?3", "?11")}
     AND ${VALUE_PUBLICATION_FENCE_SQL}`)
     .bind(
       claim.reviewKey,
@@ -102,6 +112,8 @@ export async function reserveClose(
       JSON.stringify(input.recovery),
       input.penaltyEligible ? 1 : 0,
       input.dailyCap,
+      // ?11 first: the fence below uses bare placeholders, numbered after it.
+      input.at,
       ...valuePublicationFenceValues(input.fence),
     )
     .run();
