@@ -100,6 +100,7 @@
   "src/lib/vetting-contracts.ts": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O.",
   "src/lib/wallet-proof.ts": "Type declarations only for immutable wallet evidence; emitted JavaScript has no runtime state or transitions.",
   "src/lib/wallets.ts": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted.",
+  "src/lib/web-analytics.mjs": "Pure production-host predicate and deterministic HTML transform over supplied bytes. Owns no storage, clock, request or cross-call state. Its exact output and refusal behavior are exercised by the Function and release/evidence callers; raw-manifest binding and publication remain caller responsibilities.",
   "workers/fee-converter/d1.ts": "Type declarations of the minimal D1 statement surface; no runtime code or state transition.",
   "workers/fee-converter/solana-route-types.ts": "Type declarations of the route expectation and account observation records; no runtime code or state transition.",
   "workers/fee-converter/verified-arithmetic.ts": "Pure bigint rounding, slippage, remaining-cap, rescaling, spendable balance and gas/impact arithmetic. No quote fetch, signing, journal or payment state; those transitions remain fee conversion models.",
