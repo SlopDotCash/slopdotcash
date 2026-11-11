@@ -2536,7 +2536,7 @@ async function collectOpenReferences(
   }
   const deduped = dedupeByNodeId(references);
   if (deduped.length !== expectedCount) {
-    throw new Error(
+    throw new OpenSetChangedError(
       `Open ${field} changed during listing: expected ${expectedCount}, received ${deduped.length} unique references`,
     );
   }
