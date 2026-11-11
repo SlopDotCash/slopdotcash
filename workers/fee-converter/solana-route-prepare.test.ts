@@ -12,7 +12,7 @@ import {
 import { ata } from "../../contracts/solana/transactions";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { parseConfig } from "./config";
-import { type ConversionRow, runNetwork } from "./core";
+import { type ConversionRow, impactWithin, runNetwork } from "./core";
 import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient } from "./solana";
 import { LOOKUP_TABLE_PROGRAM } from "./solana-accounts";
@@ -64,6 +64,8 @@ async function fixture(
     holding?: bigint;
     /** Input held in another token account that the fee wallet owns. */
     otherHolding?: bigint;
+    /** Jupiter priceImpactPct string the quote mock returns. */
+    impactPct?: string;
   } = {},
 ) {
   const holding = options.holding ?? 20000000n;
@@ -216,7 +218,7 @@ async function fixture(
         ),
         swapMode: "ExactIn",
         slippageBps: bps,
-        priceImpactPct: "0",
+        priceImpactPct: options.impactPct ?? "0",
         platformFee: null,
         routePlan: [],
       });
@@ -547,6 +549,20 @@ test("a v0 Token-2022 swap signs only after account review and retains the revie
     expect(
       await restarted.status({ ...row, nativeGasId: null, expiresAt: 1 }),
     ).toEqual({ kind: "pending" });
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("a Jupiter quote with 0.5 percent price impact measures 50 basis points", async () => {
+  const f = await fixture({ impactPct: "0.5" });
+  try {
+    const quote = await f.client.quote(f.input, 10000000n);
+    if ("noRoute" in quote) throw new Error(quote.noRoute);
+    // Jupiter reports priceImpactPct as a percent string: "0.5" is 0.5%,
+    // which is 50 basis points and inside the 200-basis-point cap.
+    expect(quote.priceImpactBps).toBe(50);
+    expect(impactWithin(quote, f.config.limits)).toBe(true);
   } finally {
     f.sqlite.close();
   }

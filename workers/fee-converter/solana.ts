@@ -182,10 +182,12 @@ function decimalBps(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const match = /^(\d+)(?:\.(\d+))?$/u.exec(String(value));
   if (!match) return null;
-  // fraction * 10000, rounded up so a cap is never undercounted.
-  const fraction = (match[2] ?? "").padEnd(4, "0");
-  const whole = BigInt(match[1]) * 10_000n + BigInt(fraction.slice(0, 4));
-  const rest = /[1-9]/u.test(fraction.slice(4)) ? 1n : 0n;
+  // Jupiter returns priceImpactPct as a percentage string ("0.5" is 0.5%),
+  // so basis points are percent * 100, rounded up so a cap is never
+  // undercounted.
+  const fraction = (match[2] ?? "").padEnd(2, "0");
+  const whole = BigInt(match[1]) * 100n + BigInt(fraction.slice(0, 2));
+  const rest = /[1-9]/u.test(fraction.slice(2)) ? 1n : 0n;
   return Number(whole + rest);
 }
 
