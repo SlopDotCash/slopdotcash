@@ -35,7 +35,7 @@ module buyback_accounting {
   pure def least(a: int, b: int): int = if (a < b) a else b
   pure def open(send: Send): bool = Set("submitted", "unknown").contains(send.state)
   val due = if (half(s.income) > s.committed) half(s.income) - s.committed else 0
-  val canBridge = not(open(s.bridge)) and least(due, s.wallet) > 0
+  val canBridge = not(open(s.bridge)) and s.inTransit == 0 and least(due, s.wallet) > 0
 
   action init = s' = { income: 0, wallet: 0, committed: 0, bridge: None, inTransit: 0,
     deposited: 0, refunded: 0, bridgeFees: 0, credit: 0, swept: 0 }
@@ -83,6 +83,8 @@ module buyback_accounting {
     s.wallet + s.swept >= s.income - half(s.income),
     // An arrival is credited once and never exceeds what was deposited.
     s.credit + s.bridgeFees + s.inTransit + s.refunded == s.deposited,
+    // One DLN order at a time includes a finalized deposit awaiting its outcome.
+    s.inTransit > 0 implies not(open(s.bridge)),
     open(s.bridge) implies s.bridge.amount > 0 and s.bridge.amount <= s.committed,
     s.wallet >= 0, s.inTransit >= 0, s.committed >= 0
   }
@@ -107,4 +109,10 @@ module buyback_accounting {
     .then(deposit).then(arrive(1)).expect(s.credit == 1 and s.bridgeFees == 1 and invariant)
   run openBridgeBlocksSecondOrderTest = init.then(earn(2)).then(earn(2)).then(signBridge)
     .then(signBridge.fail())
+  run newIncomeWaitsForFinalizedOrderOutcomeTest = init.then(earn(2)).then(signBridge)
+    .then(deposit).then(earn(2)).expect(due == 1 and not(canBridge) and invariant)
+    .then(signBridge.fail())
+  run newIncomeResumesAfterArrivalTest = init.then(earn(2)).then(signBridge)
+    .then(deposit).then(earn(2)).then(arrive(0)).then(signBridge)
+    .expect(s.bridge.amount == 1 and s.committed == 2 and invariant)
 }

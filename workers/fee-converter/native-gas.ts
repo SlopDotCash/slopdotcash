@@ -99,6 +99,42 @@ export class NativeGasJournal {
     ).results;
   }
 
+  /**
+   * Bound the native cost of preparing the next DLN deposit, including its
+   * approvals and failed attempts since the last successful deposit. All
+   * same-nonce attempts have at most one winner; retain their largest bound
+   * until a finalized cost is known. Include the proposed send before signing.
+   */
+  async bridgePreparationNative(
+    token: string,
+    proposed: { nonce: number | null; maximum: bigint },
+  ): Promise<bigint> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT g.nonce, g.maximum_wei, g.actual_wei FROM fee_native_gas g
+         JOIN fee_conversions c ON c.id = g.conversion_id
+         WHERE c.network = ? AND ${this.network === "solana" ? "c.fee_wallet = ? AND c.token = ?" : "lower(c.fee_wallet) = lower(?) AND lower(c.token) = lower(?)"}
+           AND c.mode = 'live' AND c.route = 'debridge'
+           AND c.kind IN ('approval', 'bridge') AND g.state = 'signed'
+           AND c.rowid > COALESCE((
+             SELECT MAX(prior.rowid) FROM fee_conversions prior
+             WHERE prior.network = c.network AND ${this.network === "solana" ? "prior.fee_wallet = c.fee_wallet AND prior.token = c.token" : "lower(prior.fee_wallet) = lower(c.fee_wallet) AND lower(prior.token) = lower(c.token)"}
+               AND prior.kind = 'bridge'
+               AND prior.mode = 'live' AND prior.state = 'finalized'
+           ), 0)`,
+      )
+      .bind(this.network, this.feeWallet, token)
+      .all<{ nonce: number; maximum_wei: string; actual_wei: string | null }>();
+    const byNonce = new Map<number | null, bigint>();
+    for (const row of results) {
+      const cost = nativeInteger(row.actual_wei ?? row.maximum_wei);
+      if (cost > (byNonce.get(row.nonce) ?? 0n)) byNonce.set(row.nonce, cost);
+    }
+    if (proposed.maximum > (byNonce.get(proposed.nonce) ?? 0n))
+      byNonce.set(proposed.nonce, proposed.maximum);
+    return [...byNonce.values()].reduce((sum, cost) => sum + cost, 0n);
+  }
+
   /** True when every attempt belongs to a send row that closed as failed. */
   private async closedSends(attempts: readonly NativeAttempt[]) {
     const ids = [...new Set(attempts.map((r) => r.conversion_id))];

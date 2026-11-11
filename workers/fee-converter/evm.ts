@@ -90,6 +90,7 @@ import {
   roundedDivision,
   spendableNative,
 } from "./verified-arithmetic";
+import { bridgeFeeWithin } from "./verified-buyback";
 
 const KYBER_API = "https://aggregator-api.kyberswap.com";
 /** KyberSwap's address for the chain's native currency, used to price gas. */
@@ -252,6 +253,14 @@ interface EvmClientOptions {
 
 /** Conservative gas for one DLN order, used only to price its cost. */
 const DLN_ORDER_GAS = 700_000n;
+interface BridgeCost {
+  token: string;
+  amount: bigint;
+  takeAmount: bigint;
+  nativeFee: bigint;
+  /** An approval also leaves room for the following order's native ceiling. */
+  approval: boolean;
+}
 const PAUSED_ABI = [
   {
     type: "function",
@@ -541,6 +550,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
     replaces?: string,
+    bridge?: BridgeCost,
   ) {
     if (!account || !options.nativeGas || !config.nativeBudget)
       throw new Error("Fee signing needs the durable native budget");
@@ -566,6 +576,31 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     }
     const maximum =
       (input.gas as bigint) * (input.maxFeePerGas as bigint) + extra;
+    if (bridge) {
+      const buybackLimits = options.buyback?.limits;
+      if (!buybackLimits)
+        throw new Error("Bridge signing needs buyback limits");
+      const preparation = await options.nativeGas.bridgePreparationNative(
+        bridge.token,
+        { nonce: input.nonce as number, maximum },
+      );
+      const native =
+        preparation +
+        bridge.nativeFee +
+        (bridge.approval ? BigInt(config.nativeBudget.perTransaction) : 0n);
+      const priced = await self.quote(NATIVE, native);
+      if (
+        "noRoute" in priced ||
+        !bridgeFeeWithin(
+          bridge.amount,
+          bridge.takeAmount - priced.amountOut,
+          buybackLimits.maxBridgeCostBps,
+        )
+      )
+        throw new Error(
+          "Final prepared bridge cost exceeds the cap or cannot be priced",
+        );
+    }
     if ((input.value ?? 0n) > 0n) {
       const balance = await client.getBalance({ address: wallet });
       if (balance < (input.value ?? 0n) + maximum)
@@ -597,6 +632,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     valueMicro: bigint,
     assertLease?: () => Promise<void>,
     value = 0n,
+    bridge?: BridgeCost,
   ): Promise<{ raw: Hex; hash: Hex; nativeGasId: string }> {
     if (!account)
       throw new Error("Signing is disabled without a fee-wallet key");
@@ -621,6 +657,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       },
       valueMicro,
       assertLease,
+      undefined,
+      bridge,
     );
   }
 
@@ -1500,6 +1538,21 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       if (!next?.ok) return { wait: "fee replacement cap reached" };
       if (row.quoteValueMicro === null)
         return { wait: "the send has no recorded value to bound its fee" };
+      let bridge: BridgeCost | undefined;
+      if (row.route === "debridge") {
+        if (!options.buyback)
+          return { wait: "bridge replacement needs the active buyback limits" };
+        const terms = JSON.parse(row.quote as string) as { nativeFee?: string };
+        if (!terms.nativeFee || row.quoteAmountOut === null)
+          throw new Error("Bridge replacement lacks its recorded cost terms");
+        bridge = {
+          token: row.token,
+          amount: BigInt(row.amountIn),
+          takeAmount: BigInt(row.quoteAmountOut),
+          nativeFee: BigInt(terms.nativeFee),
+          approval: row.kind === "approval",
+        };
+      }
       await assertRecordedClaim(row);
       const signed = await signIntent(
         {
@@ -1517,6 +1570,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
         BigInt(row.quoteValueMicro),
         assertLease,
         row.txId as string,
+        bridge,
       );
       return {
         txId: signed.hash,
@@ -1720,6 +1774,14 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
             nonce,
             quote.amountIn,
             assertLease,
+            0n,
+            {
+              token: source,
+              amount: quote.amountIn,
+              takeAmount: quote.takeAmount,
+              nativeFee: quote.nativeFee,
+              approval: true,
+            },
           );
           return {
             kind: "approval",
@@ -1772,6 +1834,13 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
           quote.amountIn,
           assertLease,
           proposal.value,
+          {
+            token: source,
+            amount: quote.amountIn,
+            takeAmount: quote.takeAmount,
+            nativeFee: quote.nativeFee,
+            approval: false,
+          },
         );
         const terms: BridgeTerms = {
           provider: "debridge",

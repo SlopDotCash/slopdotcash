@@ -331,7 +331,8 @@ try {
         [...SOURCES, "robinhood"].map((chain) => [
           chain,
           {
-            perTransaction: "10000000000000000",
+            perTransaction:
+              chain === "robinhood" ? "10000000000000000" : "1000000000000000",
             perDay: "100000000000000000",
             additionalFeeReserve: chain === "base" ? "1000000000000" : "0",
           },

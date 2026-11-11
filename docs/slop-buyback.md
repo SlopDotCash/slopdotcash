@@ -89,6 +89,19 @@ the retained SLOP is never halved again. "Half of the SLOP in the fee wallet"
 is read as half of what the buyback acquired, not half of the balance on each
 run: the second reading would burn the retained half again every time.
 
+A source network waits for an order's proven arrival or refund before opening
+another order, including when new fees arrive after its deposit finalizes.
+Each bridge signature rechecks the cost against its final native reservation,
+the fixed protocol fee, and the spread. Prior approvals and failed sends since
+the previous successful deposit remain in this cost. Same-nonce EVM attempts
+count their greatest unresolved ceiling, then their finalized cost; Solana
+attempts have separate sequences and add their costs. Before an EVM approval,
+the check also leaves room for the following order's full native ceiling.
+This can make a small order wait until its income or gas price permits it.
+
+Purchase value consumes the run cap immediately after the signed journal row
+is stored, even if broadcasting or recording the broadcast result then fails.
+
 ## Contract review: no upgrade is needed
 
 | Contract                                          | Review                                                                                                                                                                                                                                                                                                                                 | Change         |
@@ -137,9 +150,9 @@ finite graph.
 
 | Model                     | What it covers                                                                                                                                                                   | Distinct states |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `buyback_accounting`      | Source-network money: income, the half share, one open order, lost responses, failure, deposit, arrival credit, refund, owner sweeps.                                            | 2,530           |
+| `buyback_accounting`      | Source-network money: income, the half share, one open order through arrival or refund, lost responses, failure, deposit, arrival credit, refund, owner sweeps.                                            | 2,096           |
 | `buyback_slop_accounting` | Robinhood money: arrivals in full, fees at half, purchases, the burn of half of everything acquired, failures, owner sweeps.                                                     | 126,533         |
-| `buyback_bridge_order`    | One order from proposal to outcome: bad proposals, the check bound to exact bytes, approval, uncertain sends, fill, owner cancellation, refund, leases, one outcome per deposit. | 1,314           |
+| `buyback_bridge_order`    | One order from proposal to outcome: bad proposals, exact-byte checks, changing total cost, approval and replacement, uncertain sends, fill, owner cancellation, refund, leases, one outcome per deposit. | 7,524           |
 | `buyback_market`          | The Robinhood run: mode combinations, key loading, the fee claim, approval and swap, a moving price, a paused token, reverted sends.                                             | 1,408           |
 
 The arithmetic in `verified-buyback.ts` is proved in Dafny through

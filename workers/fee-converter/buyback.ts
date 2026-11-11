@@ -344,6 +344,7 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       quote: string | null;
       minAmountOut: string | null;
     },
+    commit?: () => void,
   ): Promise<ConversionState> {
     const { deps, assertLease } = context;
     const at = () => deps.now().toISOString();
@@ -387,6 +388,9 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       },
       { runId: context.runId, now: deps.now() },
     );
+    // The signature is now durable even if the lease check, broadcast or
+    // following status write fails. Later tokens must see its value now.
+    if (!approval) commit?.();
     context.blocked.add(row.token);
     await assertLease();
     try {
@@ -458,6 +462,10 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       }
     }
     if (context.blocked.has(usdc) || !(await context.leased())) return;
+    // A finalized source transaction is still an open DLN order until its
+    // arrival or refund is proven. New fee income cannot open another order
+    // while that deposit remains in transit (PRD BUY-02).
+    if ((await store.inTransit(config.network)).length > 0) return;
     const income = await store.feeIncome(
       config.network,
       usdc,
@@ -761,7 +769,7 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       runValue.total += quote.valueMicro;
       return note(context, priced, "quoted", null);
     }
-    const state = await send(
+    return send(
       context,
       priced,
       (floor) => market.prepareBuy(token, quote, floor, context.assertLease),
@@ -769,10 +777,10 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
         quote: priced.quote,
         minAmountOut: prepared.minAmountOut.toString(),
       }),
+      () => {
+        runValue.total += quote.valueMicro;
+      },
     );
-    if (state === "submitted" || state === "unknown")
-      runValue.total += quote.valueMicro;
-    return state;
   }
 
   /** Robinhood Chain: burn the burn share of all SLOP acquired, once. */

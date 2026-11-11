@@ -106,6 +106,7 @@ import {
   type ParsedTransaction,
   parseTransaction,
 } from "./solana-transaction";
+import { bridgeFeeWithin } from "./verified-buyback";
 
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111";
 const ASSOCIATED_TOKEN = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
@@ -407,7 +408,12 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
      * native wallet debit (order-account rent and the fixed protocol fee) and
      * the network fee together must fit that ceiling.
      */
-    bridge?: { journal: NativeGasJournal; ceiling: bigint },
+    bridge?: {
+      journal: NativeGasJournal;
+      ceiling: bigint;
+      takeAmount: bigint;
+      maxCostBps: bigint;
+    },
   ) {
     const journal = bridge?.journal ?? options.nativeGas;
     if (!journal || !config.nativeBudget)
@@ -495,14 +501,31 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       throw new Error(
         "Solana native fee and account creation exceed the transaction budget",
       );
+    // Failed bridge orders can still spend SOL. A fresh Solana sequence has
+    // no nonce winner in common with them, so add their retained costs too.
+    const bridgeNative = bridge
+      ? await bridge.journal.bridgePreparationNative(usdc, {
+          nonce: null,
+          maximum,
+        })
+      : maximum;
     const priced = await fetchQuote(
       "So11111111111111111111111111111111111111112",
-      maximum,
+      bridgeNative,
       limits.maxSlippageBps,
     );
     const costValue = BigInt(priced.outAmount);
     if (costValue <= 0n)
       throw new Error("Final Solana native cost cannot be priced");
+    if (
+      bridge &&
+      !bridgeFeeWithin(
+        valueMicro,
+        bridge.takeAmount - costValue,
+        bridge.maxCostBps,
+      )
+    )
+      throw new Error("Final prepared bridge cost exceeds the cap");
     if (costValue * limits.gasMultiple > valueMicro)
       throw new Error("Final Solana native cost exceeds the gas-cost multiple");
     // Bind the signed blockhash to an actual retained slot, so a recovery
@@ -1652,6 +1675,8 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
           {
             journal: buyback.bridgeGas,
             ceiling: BigInt(buyback.bridgeGas.limits.perTransaction),
+            takeAmount: quote.takeAmount,
+            maxCostBps: buyback.limits.maxBridgeCostBps,
           },
         );
         const signature = ed25519.sign(

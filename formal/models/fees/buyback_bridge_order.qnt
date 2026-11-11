@@ -4,8 +4,11 @@
 // @source workers/fee-converter/debridge-solana.ts
 // @source workers/fee-converter/evm.ts
 // @source workers/fee-converter/solana.ts
+// @source workers/fee-converter/native-gas.ts
 // @source migrations/0121_fee_buyback.sql
 // @evidence workers/fee-converter/buyback.test.ts
+// @evidence workers/fee-converter/native-gas.test.ts
+// @evidence workers/fee-converter/buyback-solana-cost.test.ts
 // @evidence workers/fee-converter/buyback.integration.ts
 // @evidence workers/fee-converter/buyback-solana.integration.ts
 // One bridge order from its proposal to its proven outcome, across the
@@ -23,6 +26,13 @@
 //
 // A run keeps the mode it started with (`runMode`); a configuration change
 // applies to the next run.
+// The total cost can change after quoting. Each signature checks the final
+// native ceiling, fixed protocol fee and spread again. The EVM bound includes
+// prior approvals and failed attempts since the last deposit, grouping nonce
+// replacements by their maximum, and an approval leaves room for the order.
+// Solana adds failed attempts to its complete separate order ceiling, with
+// exact wallet/mint identity and a fresh nonce sequence. `costOk` abstracts this
+// checked integer inequality; a price change never reuses an earlier verdict.
 //
 // Journal row (fee_conversions, kind bridge): none, approval (EVM only: the
 // exact allowance is its own send), submitted, unknown, finalized (the
@@ -44,7 +54,8 @@ module buyback_bridge_order {
   type S = {
     mode: str, runMode: str, proposal: str, checked: bool, row: str, bytes: bool,
     approved: bool, attempts: int, src: str, dst: str, outcome: str, credited: int,
-    released: int, sourceLease: bool, robinhoodLease: bool, signedBad: bool, alert: bool
+    released: int, sourceLease: bool, robinhoodLease: bool, signedBad: bool, alert: bool,
+    costOk: bool, signedOverCost: bool, replacements: int
   }
   var s: S
   pure val Proposals = Set("honest", "wrongReceiver", "wrongAmount", "unknownTaker", "externalCall")
@@ -52,10 +63,11 @@ module buyback_bridge_order {
   action init = s' = { mode: "off", runMode: "none", proposal: "none", checked: false,
     row: "none", bytes: false, approved: false, attempts: 0, src: "none", dst: "none",
     outcome: "none", credited: 0, released: 0, sourceLease: false, robinhoodLease: false,
-    signedBad: false, alert: false }
+    signedBad: false, alert: false, costOk: true, signedOverCost: false, replacements: 0 }
 
   // Configuration and leases change independently of the order.
   action configure(mode: str): bool = s' = s.with("mode", mode)
+  action priceCost(ok: bool): bool = s' = s.with("costOk", ok)
   action takeSourceLease = all { not(s.sourceLease), s.mode != "off",
     s' = s.with("sourceLease", true).with("runMode", s.mode) }
   // A run that ends drops its unsigned proposal with it.
@@ -76,18 +88,24 @@ module buyback_bridge_order {
   action refuse = all { s.sourceLease, s.proposal != "none", s.proposal != "honest",
     s' = s.with("proposal", "none").with("checked", false) }
   // EVM: the exact approval is journaled and sent first.
-  action signApproval = all { s.sourceLease, s.runMode == "live", s.checked,
+  action signApproval = all { s.sourceLease, s.runMode == "live", s.checked, s.costOk,
     not(s.approved), Set("none", "failed").contains(s.row),
     s' = s.with("row", "approval").with("bytes", true).with("proposal", "none")
-      .with("checked", false) }
+      .with("checked", false).with("signedOverCost", s.signedOverCost or not(s.costOk)) }
   action approvalFinalized = all { s.sourceLease, s.row == "approval",
     s' = s.with("row", "none").with("bytes", false).with("approved", true) }
   // The order is journaled with its terms before it is broadcast.
-  action signOrder = all { s.sourceLease, s.runMode == "live", s.checked, s.approved,
+  action signOrder = all { s.sourceLease, s.runMode == "live", s.checked, s.approved, s.costOk,
     Set("none", "failed").contains(s.row),
     s' = s.with("row", "submitted").with("bytes", true).with("proposal", "none")
       .with("checked", false).with("attempts", s.attempts + 1)
-      .with("signedBad", s.signedBad or s.proposal != "honest") }
+      .with("signedBad", s.signedBad or s.proposal != "honest")
+      .with("signedOverCost", s.signedOverCost or not(s.costOk)) }
+  // Same-nonce replacements preserve the order and recheck the total cost.
+  action replace = all { s.sourceLease, s.runMode == "live", Open.contains(s.row),
+    s.costOk, s.replacements < 2,
+    s' = s.with("replacements", s.replacements + 1)
+      .with("signedOverCost", s.signedOverCost or not(s.costOk)) }
   action loseResponse = all { s.row == "submitted", s' = s.with("row", "unknown") }
   // The chain includes the journaled bytes, whatever the Worker knows.
   action included = all { Set("submitted", "unknown").contains(s.row), s.src == "none",
@@ -118,15 +136,16 @@ module buyback_bridge_order {
   action step = {
     nondet mode = Set("off", "dry_run", "live").oneOf()
     nondet kind = Proposals.oneOf()
+    nondet cost = Set(false, true).oneOf()
     any { configure(mode), takeSourceLease, dropSourceLease, takeRobinhoodLease, dropRobinhoodLease,
       propose(kind), check, recordDryRun, refuse, signApproval, approvalFinalized, signOrder, loseResponse,
       included, observeDeposit, observeFailure, fill, unlock, ownerCancels, refundClaimed,
-      creditArrival, recordRefund, reportUnfilled }
+      creditArrival, recordRefund, reportUnfilled, priceCost(cost), replace }
   }
 
   val invariant = all {
     // Only bytes checked against the Worker's own decision are ever signed.
-    not(s.signedBad), s.checked implies s.proposal == "honest",
+    not(s.signedBad), not(s.signedOverCost), s.checked implies s.proposal == "honest",
     // An open or deposited send always keeps its exact signed bytes.
     Open.contains(s.row) or s.row == "finalized" implies s.bytes,
     // The chain holds an order only for journaled bytes.
@@ -145,6 +164,18 @@ module buyback_bridge_order {
   }
 
   // Scenarios.
+  run changedCostRefusesApprovalTest = init.then(configure("live")).then(takeSourceLease)
+    .then(propose("honest")).then(check).then(priceCost(false)).expect(invariant).then(signApproval.fail())
+  run changedCostRefusesOrderTest = init.then(configure("live")).then(takeSourceLease)
+    .then(propose("honest")).then(check).then(signApproval).then(approvalFinalized)
+    .then(propose("honest")).then(check).then(priceCost(false)).expect(invariant).then(signOrder.fail())
+  run changedCostRefusesReplacementTest = init.then(configure("live")).then(takeSourceLease)
+    .then(propose("honest")).then(check).then(signApproval).then(approvalFinalized)
+    .then(propose("honest")).then(check).then(signOrder).then(priceCost(false)).expect(invariant).then(replace.fail())
+  run recoveredCostAllowsReplacementTest = init.then(configure("live")).then(takeSourceLease)
+    .then(propose("honest")).then(check).then(signApproval).then(approvalFinalized)
+    .then(propose("honest")).then(check).then(signOrder).then(priceCost(false)).then(priceCost(true)).then(replace)
+    .expect(s.replacements == 1 and invariant)
   run filledOrderCreditsOnceTest = init.then(configure("live")).then(takeSourceLease)
     .then(propose("honest")).then(check).then(signApproval).then(approvalFinalized).then(propose("honest"))
     .then(check).then(signOrder).then(included).then(observeDeposit).then(fill).then(takeRobinhoodLease)

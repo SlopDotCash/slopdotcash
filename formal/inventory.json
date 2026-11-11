@@ -6815,7 +6815,8 @@
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
         37, 51, 78, 110, 139, 144, 151, 155, 160, 171, 172, 178, 210
@@ -6824,17 +6825,18 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "2848cd5324a21b80ea81a78e59014ba99bb7d4166f6fabb774a9dd8edd294816",
+      "sha256": "cf8fd209d98387b1e38acdfd140c714f1298ab71a08be2f24167ebdce0f99ff5",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
         4, 16, 86, 93, 95, 96, 118, 200, 300, 316, 318, 325, 330, 331, 332, 337,
-        363, 365, 372, 376, 395, 396, 416, 461, 494, 590, 619, 624, 734, 738,
-        768, 777, 779, 824, 830, 832, 867, 868, 869
+        364, 366, 373, 377, 391, 392, 399, 400, 420, 465, 498, 594, 623, 628,
+        738, 742, 828, 834, 836, 871, 872, 873
       ],
       "review": "mapped-abstraction"
     },
@@ -6914,7 +6916,7 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "08d286b127824bc80c259a110848b27bf191a0ba4627299262a7d761b0088c50",
+      "sha256": "a4e7158307e071af6c66fd2a20a39d9414ee9f9f8e88adb344a734733cae013b",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
@@ -6925,12 +6927,12 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        312, 378, 382, 384, 385, 659, 852, 891, 925, 927, 1011, 1142, 1147,
-        1150, 1151, 1154, 1194, 1232, 1258, 1262, 1263, 1265, 1266, 1279, 1293,
-        1294, 1315, 1331, 1337, 1343, 1359, 1363, 1369, 1375, 1382, 1386, 1392,
-        1395, 1406, 1415, 1569, 1570, 1572, 1574, 1575, 1598, 1613, 1615, 1617,
-        1619, 1620, 1624, 1626, 1628, 1801, 1808, 1827, 1835, 1836, 1839, 1842,
-        1843, 1844
+        321, 387, 391, 393, 394, 697, 890, 929, 963, 965, 1049, 1180, 1185,
+        1188, 1189, 1192, 1232, 1270, 1296, 1300, 1301, 1303, 1304, 1317, 1331,
+        1332, 1353, 1369, 1375, 1381, 1397, 1401, 1407, 1413, 1420, 1424, 1430,
+        1433, 1444, 1453, 1623, 1624, 1626, 1628, 1629, 1652, 1667, 1669, 1671,
+        1673, 1674, 1678, 1680, 1682, 1870, 1877, 1896, 1904, 1905, 1908, 1911,
+        1912, 1913
       ],
       "review": "mapped-abstraction"
     },
@@ -6979,8 +6981,9 @@
     },
     {
       "path": "workers/fee-converter/native-gas.ts",
-      "sha256": "4be7bfe4c2337b7402fab6b81882470dcf8f6aea3cea66f86d977cf2cf776d5e",
+      "sha256": "34df0308e7dffe90434afcc1d01def70e93a0b2e1cd8b2388f0c0c2ce47c8cb3",
       "models": [
+        "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -6988,9 +6991,9 @@
         "formal/models/fees/solana_expiry.qnt"
       ],
       "candidateLines": [
-        50, 73, 89, 109, 122, 123, 124, 129, 172, 179, 187, 191, 202, 219, 229,
-        264, 265, 266, 284, 291, 328, 329, 330, 344, 348, 356, 376, 434, 460,
-        462, 464, 477, 482
+        50, 73, 89, 106, 118, 123, 145, 158, 159, 160, 165, 208, 215, 223, 227,
+        238, 255, 265, 300, 301, 302, 320, 327, 364, 365, 366, 380, 384, 392,
+        412, 470, 496, 498, 500, 513, 518
       ],
       "review": "mapped-abstraction"
     },
@@ -7055,7 +7058,7 @@
     },
     {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "c9d7fdf63a1951c9f05abb9651b3afa3c962c83d00eede2f92b49bc0a45fb008",
+      "sha256": "24ee168d946aca193eac58e1c134a905cb929acd064ce0b3c1ab03af74e06e9c",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/fee_conversion.qnt",
@@ -7063,11 +7066,11 @@
         "formal/models/fees/fee_wallet_handoff.qnt"
       ],
       "candidateLines": [
-        22, 143, 165, 351, 379, 381, 395, 614, 671, 679, 690, 700, 836, 839,
-        842, 843, 996, 998, 1007, 1010, 1079, 1080, 1082, 1083, 1086, 1088,
-        1126, 1143, 1171, 1172, 1369, 1382, 1383, 1384, 1385, 1386, 1392, 1400,
-        1406, 1412, 1426, 1431, 1433, 1450, 1456, 1459, 1469, 1472, 1478, 1480,
-        1708, 1718, 1719, 1724, 1728, 1733
+        22, 144, 166, 352, 380, 382, 396, 637, 694, 702, 713, 723, 859, 862,
+        865, 866, 1019, 1021, 1030, 1033, 1102, 1103, 1105, 1106, 1109, 1111,
+        1149, 1166, 1194, 1195, 1392, 1405, 1406, 1407, 1408, 1409, 1415, 1423,
+        1429, 1435, 1449, 1454, 1456, 1473, 1479, 1482, 1492, 1495, 1501, 1503,
+        1733, 1743, 1744, 1749, 1753, 1758
       ],
       "review": "mapped-abstraction"
     },
@@ -11595,7 +11598,7 @@
     },
     {
       "path": "formal/models/fees/buyback_accounting.qnt",
-      "sha256": "64fe3b91562639eb6c72af3bec6792f320c67ff4db33845054659683d9b10f9d",
+      "sha256": "5a5f4ae8e2c70c4fabecde59ee7846b8a945f0375484dd3e320a0eac4bea6b19",
       "sources": [
         "migrations/0121_fee_buyback.sql",
         "workers/fee-converter/buyback-store.ts",
@@ -11607,6 +11610,7 @@
         "failedBridgeReleasesShareTest",
         "halfOfFeesBridgesTest",
         "laterFeesOweOnlyTheirHalfTest",
+        "newIncomeResumesAfterArrivalTest",
         "newIncomeWaitsForFinalizedOrderOutcomeTest",
         "oddIncomeRoundsDownTest",
         "openBridgeBlocksSecondOrderTest",
@@ -11616,7 +11620,7 @@
     },
     {
       "path": "formal/models/fees/buyback_bridge_order.qnt",
-      "sha256": "ccfef973135d1d1319a31f97711c7fadcc6e047c9dc2630b45139377e8c72434",
+      "sha256": "768c1a62a59f73be438991b9c94cc5e5e80a48ec2ca6929a65cff98d8815aa9d",
       "sources": [
         "migrations/0121_fee_buyback.sql",
         "workers/fee-converter/buyback-store.ts",
@@ -11624,12 +11628,16 @@
         "workers/fee-converter/debridge-solana.ts",
         "workers/fee-converter/debridge.ts",
         "workers/fee-converter/evm.ts",
+        "workers/fee-converter/native-gas.ts",
         "workers/fee-converter/solana.ts"
       ],
       "scenarios": [
         "cancellationInFlightIsNotARefundTest",
         "cancelledOrderCannotArriveTest",
         "cancelledOrderReleasesOnceTest",
+        "changedCostRefusesApprovalTest",
+        "changedCostRefusesOrderTest",
+        "changedCostRefusesReplacementTest",
         "checkDoesNotOutliveItsBytesTest",
         "dryRunSignsNothingTest",
         "failedSendRetriesOnceTest",
@@ -11640,6 +11648,7 @@
         "orderNeedsFinalApprovalTest",
         "otherBadProposalsAreRefusedTest",
         "outcomeNeedsItsLeaseTest",
+        "recoveredCostAllowsReplacementTest",
         "runKeepsItsModeTest",
         "unfilledOrderWaitsAndAlertsTest"
       ]
@@ -11810,8 +11819,10 @@
     },
     {
       "path": "formal/models/fees/fee_value_caps.qnt",
-      "sha256": "92731e7bb1bb386a41a8e23c008d9d9fa633925183f95af0d439273402b41d61",
+      "sha256": "f35dfaf678c35c5f916047ffd2861dbe89f93922cf91d53126e5a1a180fbf150",
       "sources": [
+        "workers/fee-converter/buyback-store.ts",
+        "workers/fee-converter/buyback.ts",
         "workers/fee-converter/core.ts",
         "workers/fee-converter/store.ts",
         "workers/fee-converter/verified-arithmetic.ts"
@@ -11823,6 +11834,7 @@
         "failedSendFreesBudgetTest",
         "leaseLossCountedNextRunTest",
         "leaseLossEndsRunTest",
+        "lostBroadcastStillCountsForNextTokenTest",
         "runCapStopsTest"
       ]
     },

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "03bc895df1c0fef6b82143e08e275a82884c76dbbceae6016722082f3d71279e",
+  "inventorySha256": "13ec885c09e697ceef4213d294a3e4e888b9a99c03385790574b043f3f2437e9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3213,7 +3213,8 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3228,7 +3229,8 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3243,7 +3245,8 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3258,14 +3261,10 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
-        "formal/models/fees/buyback_slop_accounting.qnt"
+        "formal/models/fees/buyback_slop_accounting.qnt",
+        "formal/models/fees/fee_value_caps.qnt"
       ],
-      "lexicallyUnmentionedValues": [
-        "no_route",
-        "pending",
-        "quoted",
-        "skipped"
-      ],
+      "lexicallyUnmentionedValues": ["no_route", "pending"],
       "review": "candidate-only"
     },
     {
@@ -3355,6 +3354,7 @@
       "kind": "string-union",
       "values": ["abandoned", "reserved", "signed"],
       "models": [
+        "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { decodeFunctionData, encodeFunctionData, type Hex } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import orders from "../../tests/fixtures/dln-orders.json";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
@@ -13,6 +14,7 @@ import {
 } from "./buyback";
 import {
   type BuybackLimits,
+  DLN,
   parseBuybackConfig,
   ROBINHOOD_USDG,
   SLOP_TOKEN,
@@ -31,7 +33,9 @@ import {
 } from "./core";
 import { checkedDlnOrder, DLN_SOURCE_ABI } from "./debridge";
 import { checkedSolanaDlnOrder, dlnGiveOrderWallet } from "./debridge-solana";
+import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
+import { NativeGasJournal } from "./native-gas";
 import { parseTransaction } from "./solana-transaction";
 import { D1ConversionStore } from "./store";
 import {
@@ -389,6 +393,195 @@ describe("exact shares", () => {
 });
 
 describe("bridge on a source network", () => {
+  test.each(["approval", "order", "replacement", "allowed"])(
+    "the final bridge native ceiling rechecks total cost before signing: %s",
+    async (stage) => {
+      const { db, sqlite } = sqliteD1();
+      const key = generatePrivateKey();
+      const wallet = privateKeyToAccount(key).address.toLowerCase();
+      const config = parseConfig({
+        ...CONVERTER_ENV,
+        FEE_CONVERTER_NETWORKS: "ethereum",
+        FEE_WALLET_ETHEREUM: wallet,
+        FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({
+          ethereum: {
+            perTransaction: "1000000000000000",
+            perDay: "10000000000000000",
+            additionalFeeReserve: "0",
+          },
+        }),
+      });
+      const network = config.networks[0];
+      if (!network.nativeBudget)
+        throw new Error("fixture native budget is missing");
+      const store = new D1ConversionStore(db);
+      const now = () => new Date(NOW);
+      const runId = "bridge-cost-test-run";
+      await store.acquireLock("ethereum", runId, now());
+      const gas = new NativeGasJournal(
+        db,
+        "ethereum",
+        wallet,
+        runId,
+        network.nativeBudget,
+        now,
+      );
+      const decoded = decodeFunctionData({
+        abi: DLN_SOURCE_ABI,
+        data: orders.evm.data as Hex,
+      });
+      if (decoded.functionName !== "createSaltedOrder")
+        throw new Error("fixture differs");
+      const data = encodeFunctionData({
+        abi: DLN_SOURCE_ABI,
+        functionName: "createSaltedOrder",
+        args: [
+          {
+            ...decoded.args[0],
+            giveTokenAddress: network.definition.usdc as Hex,
+            givePatchAuthoritySrc: wallet as Hex,
+            allowedCancelBeneficiarySrc: wallet as Hex,
+          },
+          ...decoded.args.slice(1),
+        ] as never,
+      });
+      const word = (value: bigint) =>
+        `0x${value.toString(16).padStart(64, "0")}`;
+      let nativeQuotes = 0;
+      let replacing = false;
+      const doFetch = (async (url: unknown, init?: RequestInit) => {
+        if (String(url).startsWith(DLN.api))
+          return Response.json({
+            orderId: orders.evm.orderId,
+            tx: { to: DLN.source, data, value: orders.evm.value },
+            estimation: { dstChainTokenOut: { amount: orders.evm.takeAmount } },
+          });
+        if (String(url).startsWith("https://aggregator-api.kyberswap.com/")) {
+          nativeQuotes++;
+          const query = new URL(String(url)).searchParams;
+          return Response.json({
+            code: 0,
+            data: {
+              routerAddress: network.definition.router,
+              routeSummary: {
+                tokenIn: query.get("tokenIn"),
+                tokenOut: query.get("tokenOut"),
+                amountIn: query.get("amountIn"),
+                amountOut:
+                  replacing ||
+                  (nativeQuotes >= 3 &&
+                    stage !== "allowed" &&
+                    stage !== "replacement")
+                    ? "10000000"
+                    : "1000000",
+                amountInUsd: "1",
+                amountOutUsd: "1",
+                gasUsd: "0",
+                l1FeeUsd: "0",
+                route: [],
+              },
+            },
+          });
+        }
+        const request = JSON.parse(String(init?.body));
+        let result: unknown;
+        if (request.method === "eth_call") {
+          const calldata = request.params[0].data as string;
+          result = calldata.startsWith("0xdd62ed3e")
+            ? word(stage === "approval" ? 0n : 500_000_000n)
+            : calldata.startsWith("0xb9303701")
+              ? orders.evm.orderId
+              : word(BigInt(orders.evm.value));
+        } else if (request.method === "eth_getTransactionCount") result = "0x0";
+        else if (request.method === "eth_estimateGas") result = "0x5208";
+        else if (request.method === "eth_getBalance")
+          result = "0xde0b6b3a7640000";
+        else if (request.method === "eth_maxPriorityFeePerGas") result = "0x1";
+        else if (request.method === "eth_getBlockByNumber")
+          result = {
+            number: "0x10",
+            hash: word(1n),
+            baseFeePerGas: replacing ? "0x100" : "0x64",
+            timestamp: "0x1",
+            transactions: [],
+          };
+        else throw new Error(`Unexpected test RPC ${request.method}`);
+        return Response.json({ jsonrpc: "2.0", id: request.id, result });
+      }) as typeof fetch;
+      const client = createEvmClient({
+        config: network,
+        limits: config.limits,
+        kyberClientId: "test",
+        privateKey: key,
+        nativeGas: gas,
+        fetch: doFetch,
+        now,
+        buyback: {
+          limits: limits({ BUYBACK_MAX_BRIDGE_COST_BPS: "150" }),
+          receiver: WALLET,
+        },
+      });
+      const bridge = client.buyback?.bridge;
+      if (!bridge) throw new Error("fixture bridge is missing");
+      const quote = await bridge.quote(500_000_000n);
+      if ("noRoute" in quote) throw new Error(quote.noRoute);
+      // The quote passes (1.1 USDC spread plus 2 USDC native estimate).
+      expect(quote.costMicro).toBeLessThan(7_500_000n);
+      const prepared = bridge.prepare(quote, 0, async () => {});
+      if (stage === "replacement") {
+        const signed = await prepared;
+        const row: ConversionRow = {
+          id: "bridge-cost-original",
+          kind: "bridge",
+          runId,
+          network: "ethereum",
+          mode: "live",
+          feeWallet: wallet,
+          token: network.definition.usdc as string,
+          targetToken: ROBINHOOD_USDG,
+          amountIn: quote.amountIn.toString(),
+          route: "debridge",
+          quoteAmountOut: quote.takeAmount.toString(),
+          minAmountOut: quote.takeAmount.toString(),
+          quoteValueMicro: Number(quote.amountIn),
+          priceImpactBps: null,
+          quote: JSON.stringify(signed.terms),
+          approvalTxId: null,
+          txId: signed.txId,
+          rawTx: signed.rawTx,
+          evmNonce: signed.evmNonce,
+          expiresAt: null,
+          amountOut: null,
+          tokenBalanceBefore: null,
+          targetBalanceBefore: null,
+          targetBalanceAfter: null,
+          state: "submitted",
+          reason: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+          submittedAt: NOW,
+          finalizedAt: null,
+          nativeGasId: signed.nativeGasId,
+        };
+        await store.insert(row, { runId, now: now() });
+        replacing = true;
+        await expect(client.replace?.(row, [], async () => {})).rejects.toThrow(
+          "Final prepared bridge cost exceeds the cap",
+        );
+        expect(await gas.rows()).toHaveLength(1);
+      } else if (stage === "allowed") {
+        expect((await prepared).kind).toBe("bridge");
+        expect(await gas.rows()).toHaveLength(1);
+      } else {
+        await expect(prepared).rejects.toThrow(
+          "Final prepared bridge cost exceeds the cap",
+        );
+        expect(await gas.rows()).toHaveLength(0);
+      }
+      sqlite.close();
+    },
+  );
+
   test("half of the USDC fees became bridges once, to the Robinhood fee wallet", async () => {
     const h = harness();
     usdcFees(h, 600_000_000n);
@@ -416,8 +609,15 @@ describe("bridge on a source network", () => {
     expect(h.rows("kind = 'bridge'")).toHaveLength(1);
     expect(h.chain.signed).toEqual([{ kind: "bridge", amount: 500_500_000n }]);
 
-    // New fees owe only their own half.
+    // New income must wait for the previous order's proven outcome, even
+    // though its source transaction has finalized and its nonce is free.
     usdcFees(h, 400_000_000n);
+    await h.run();
+    expect(h.rows("kind = 'bridge'")).toHaveLength(1);
+    const terms = JSON.parse(order.quote as string) as BridgeTerms;
+    h.chain.fills.set(terms.orderId, arrived());
+    await h.run("robinhood");
+    // Once the arrival is proven, only the new income's half is owed.
     await h.run();
     expect(h.rows("kind = 'bridge'").map((row) => row.amount_in)).toEqual([
       "500500000",
@@ -651,6 +851,47 @@ const arrived = (block = 9): FillState => ({
 });
 
 describe("purchase and burn on Robinhood Chain", () => {
+  test("a journaled purchase consumes the run cap even if broadcast and its status write fail", async () => {
+    const h = harness({
+      env: {
+        BUYBACK_RUN_CAP_MICRO: "30000000",
+        BUYBACK_MIN_BUY_MICRO: "1000000",
+      },
+    });
+    for (const token of [ROBINHOOD_USDG, TOKEN]) {
+      h.earn({
+        network: "robinhood",
+        kind: "claim",
+        token,
+        target: token,
+        amountOut: 40_000_000n,
+      });
+      h.chain.balances.set(token, 40_000_000n);
+    }
+    h.chain.broadcast = async () => {
+      throw new Error("response lost");
+    };
+    const update = h.deps.store.update.bind(h.deps.store);
+    let writes = 0;
+    h.deps.store.update = async (id, fields) => {
+      if (++writes === 1) throw new Error("status write unavailable");
+      await update(id, fields);
+    };
+    await h.run("robinhood");
+    const rows = h.rows("kind = 'buyback'");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      state: "submitted",
+      quote_value_micro: 20_000_000,
+    });
+    const total = rows.reduce(
+      (sum, row) => sum + Number(row.quote_value_micro),
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(30_000_000);
+    expect(Number(rows[1].quote_value_micro)).toBeLessThanOrEqual(10_000_000);
+  });
+
   test("an arrival is credited once and spent in full on SLOP", async () => {
     const h = harness();
     const terms = await deposited(h, 1_000_000_000n);
