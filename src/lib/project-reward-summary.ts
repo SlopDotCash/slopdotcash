@@ -42,6 +42,22 @@ export function securityBountyAmountLabel(
   return `${amount} ${formatAssetSymbol(bounty.amount.asset.symbol, bounty.amount.asset.kind)}`;
 }
 
+/** Card copy may name a separate paid offer without changing ordinary work. */
+export function hasProjectCardBounty(project: {
+  reward: Pick<ProjectDefinition["reward"], "kind" | "monthlyCapMinor">;
+  securityBounty?: Pick<SecurityBountyTerms, "rewardMode" | "status">;
+}): boolean {
+  const bounty = project.securityBounty;
+  return (
+    bounty !== undefined &&
+    (bounty.rewardMode === "bounty-only" ||
+      (bounty.rewardMode === "separate" &&
+        bounty.status === "open" &&
+        project.reward.kind === "monthly-pool" &&
+        BigInt(project.reward.monthlyCapMinor) === 0n))
+  );
+}
+
 export function projectRewardSummaries(
   project: ProjectDefinition,
 ): ProjectRewardSummary[] {

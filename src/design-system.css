@@ -697,7 +697,7 @@ label {
 
 .project-card-heading h3 {
   flex: 1;
-  font-size: clamp(30px, 3vw, 40px);
+  font-size: clamp(22px, 2.4vw, 32px);
   letter-spacing: -0.02em;
   text-transform: uppercase;
 }
@@ -735,6 +735,7 @@ label {
 }
 
 .project-bounty {
+  flex-wrap: wrap;
   justify-content: flex-start;
   margin-top: auto;
   text-align: left;
@@ -1082,7 +1083,7 @@ label {
 
 .project-bounty strong {
   font-family: var(--brand-font-display);
-  font-size: clamp(40px, 4vw, 56px);
+  font-size: clamp(28px, 3vw, 40px);
   letter-spacing: -0.03em;
   line-height: 0.95;
 }

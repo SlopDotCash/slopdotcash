@@ -2839,14 +2839,22 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(row).toContainText("Pledged");
   await expect(row).not.toContainText("Points only");
 
-  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  // A separate open bounty names the existing offer while ordinary routing stays intact.
   shown = {
     ...project,
-    listingTier: "community",
+    listingTier: "featured",
     securityBounty: { ...project.securityBounty, rewardMode: "separate" },
   };
   await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("Points only");
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("/ Critical");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
+  shown = { ...shown, listingTier: "community" };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
