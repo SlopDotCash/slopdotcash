@@ -2,6 +2,15 @@ name: State model verification
 
 on:
   workflow_call:
+    inputs:
+      models:
+        # "all", "none", or space-separated model names selected by
+        # scripts/ci-scope.mjs for a pull request.
+        type: string
+        default: all
+      shards:
+        type: string
+        default: "[1, 2, 3, 4, 5, 6]"
   workflow_dispatch:
 
 permissions:
@@ -79,13 +88,15 @@ jobs:
 
   models:
     name: models ${{ matrix.shard }}
+    # A manual run has no inputs and checks every model.
+    if: ${{ (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
     # The slowest single model has a 30-minute verifier allowance.
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(inputs.shards || '[1, 2, 3, 4, 5, 6]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -138,6 +149,7 @@ jobs:
         env:
           SHARD_INDEX: ${{ strategy.job-index }}
           SHARD_TOTAL: ${{ strategy.job-total }}
+          SELECTED_MODELS: ${{ inputs.models || 'all' }}
         run: |
           set -euo pipefail
           java -version
@@ -146,9 +158,14 @@ jobs:
             const [index, total] = process.argv.slice(1).map(Number);
             if (!Number.isSafeInteger(total) || total < 1 || !(index >= 0 && index < total))
               throw new Error("Invalid model shard");
-            for (const [position, path] of listModels(process.cwd()).entries())
-              if (position % total === index)
-                console.log(path.slice(path.lastIndexOf("/") + 1, -".qnt".length));
+            const name = (path) => path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
+            const selected = process.env.SELECTED_MODELS;
+            const wanted = selected === "all" ? null : new Set(selected.split(" "));
+            const paths = listModels(process.cwd()).filter((path) => !wanted || wanted.has(name(path)));
+            if (wanted && paths.length !== wanted.size)
+              throw new Error("A selected model does not exist in this checkout");
+            for (const [position, path] of paths.entries())
+              if (position % total === index) console.log(name(path));
           ' "$SHARD_INDEX" "$SHARD_TOTAL")
           test "${#models[@]}" -gt 0
           echo "Shard $((SHARD_INDEX + 1))/$SHARD_TOTAL: ${#models[@]} models"
@@ -176,7 +193,7 @@ jobs:
 
   quint:
     needs: [inventory, models]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -195,9 +212,10 @@ jobs:
           pattern: quint-state-shard-${{ github.run_id }}-*
           path: ${{ runner.temp }}/quint-shards
           merge-multiple: true
-      - name: Require one passing check and verification for every model
+      - name: Require one passing check and verification for every selected model
         env:
           SHARD_REPORTS: ${{ runner.temp }}/quint-shards
+          SELECTED_MODELS: ${{ inputs.models || 'all' }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -210,12 +228,19 @@ jobs:
           const shards = process.env.SHARD_REPORTS;
           const digest = (path) =>
             createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+          const selected = process.env.SELECTED_MODELS;
+          const wanted = selected === "all" ? null : new Set(selected.split(" "));
+          const models = listModels(root).filter(
+            (path) => !wanted || wanted.has(path.slice(path.lastIndexOf("/") + 1, -".qnt".length)),
+          );
           const problems = [];
+          if (wanted && models.length !== wanted.size)
+            problems.push("A selected model does not exist in this checkout");
           const merged = {};
           for (const [prefix, stages] of [["checks", 3], ["verification", 1]]) {
             const results = [];
             let base = null;
-            for (const path of listModels(root)) {
+            for (const path of models) {
               const name = path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
               const file = join(shards, `${prefix}-${name}.json`);
               if (!existsSync(file)) {
@@ -270,7 +295,7 @@ jobs:
             process.exit(1);
           }
           console.log(
-            `${merged.checks.results.length} check stages and ${merged.verification.results.length} verifications passed for ${listModels(root).length} models.`,
+            `${merged.checks.results.length} check stages and ${merged.verification.results.length} verifications passed for ${models.length}${wanted ? " selected" : ""} models.`,
           );
           NODE
       - name: Retain verification commands and results
