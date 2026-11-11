@@ -228,6 +228,23 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "operator-keeper-continuation-safety-v1",
+    model: "formal/models/payments/operator_keeper_lifecycle.qnt",
+    module: "operator_keeper_lifecycle",
+    operator: "SlopOperatorKeeperContinuationViewV1",
+    hashMode: "keeper-exact-signing-journal-and-http-run-observations",
+    memoryCandidateMode:
+      "erase-write-only-and-phase-dead-terminal-run-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.indexed = FALSE, !.projects = 0, !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN [r EXCEPT !.instance = 0, !.result = "none", !.caller = IF r.caller = "cron" THEN "cron" ELSE "direct", !.http = IF r.http = 200 THEN 200 ELSE 0]], !.runs = [i \\in DOMAIN s.runs |-> LET r == s.runs[i] IN IF r.phase \\in {"unused", "lost"} THEN <<r.phase>> ELSE IF r.phase = "settled" THEN <<r.phase, IF r.outcome = "throw" THEN "throw" ELSE IF r.outcome = "partial" THEN "partial" ELSE "other">> ELSE [r EXCEPT !.projects = 0]]]',
+      },
+    ],
+    clauses: [],
+  },
 ];
 
 function reviewedDefinition(view) {

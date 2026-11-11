@@ -18,6 +18,8 @@ const verificationTools = [
 ];
 
 const verificationTimeouts = {
+  // Reviewed continuation VIEW completed its full hosted graph in 126s.
+  "formal/models/payments/operator_keeper_lifecycle.qnt": 600_000,
   // Hosted full graphs exceeded 180s with ongoing progress and states queued.
   // Keep every concrete transition and invariant; completion is still required.
   "formal/models/api/api_trace.qnt": 600_000,

@@ -511,6 +511,7 @@ test("the expected overlay matches the actual pinned official adapter and review
 
 // Preserve the additional current-root allowances while moving their table.
 for (const model of [
+  "formal/models/payments/operator_keeper_lifecycle.qnt",
   "formal/models/api/api_trace.qnt",
   "formal/models/ui/ui_private_intake.qnt",
   "formal/models/payments/solana_binding_completion.qnt",
