@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c431b25e6bf2a41e4155eb6fca356bb96618b3137e81fe9294346418be8d23f4",
+  "inventorySha256": "326c2cd68980392e65281015d0a23e4855204082742c65bf1d47a4bb80965115",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1949,7 +1949,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 217,
+      "line": 221,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -1965,7 +1965,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 352,
+      "line": 342,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -1991,7 +1991,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3205,
+      "line": 3195,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2007,7 +2007,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3809,
+      "line": 3799,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2046,7 +2046,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 422,
+      "line": 430,
       "name": "outcomes",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],

@@ -29,6 +29,7 @@
   "scripts/run-receipt-crypto.ts": "Pure schema, hash and Ed25519 verification of supplied receipt bytes. It has no keys, persistence or state transition; a valid signature establishes byte/key continuity only. Receipt completion and upload lifecycles are modeled separately.",
   "scripts/run-unit-shard.mjs": "Pure partition of the unit test files under fixed roots into named shards, followed by one synchronous bun test spawn whose exit status is returned unchanged. It holds no timer, retry, lease, cache or persisted state; scripts/unit-shards.test.ts proves the partition.",
   "scripts/sha256.mjs": "Pure content digest helper. It owns no durable, asynchronous or UI lifecycle state; callers model the trust placed in the digest.",
+  "scripts/source-availability.ts": "Error type and pure filter of the requested node ids that GitHub reported unavailable; no retained state, I/O or retry. Census recollection after an unavailable node is modeled in github_census.",
   "src/ChainIcon.tsx": "Pure rendering of network/icon props. No local state, lifecycle effect, storage, or request.",
   "src/FundingStatus.tsx": "Pure funding-status label from props. Domain funding transitions belong to backend/contract models.",
   "src/Logo.tsx": "Pure SVG and wordmark rendering. No application state or external side effect.",
