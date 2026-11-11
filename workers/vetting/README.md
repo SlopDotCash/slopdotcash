@@ -87,7 +87,14 @@ The flow for one queued assessment:
    carries acquisition gaps (submodules, links, LFS) into the scan.
 2. `inspectRepository` sorts files into surfaces and runs every deterministic
    check over the whole of every file, whatever its size. It is pure and
-   deterministic. A text file over 256 KiB is reviewed in consecutive parts.
+   deterministic. Complete gzip streams are decoded before classification;
+   every input byte, member and checksum must validate. Their payloads receive
+   the ordinary source checks, while unknown or native payloads remain held.
+   Every member's optional header text is also checked for instructions;
+   its original bytes and offsets remain in the inventory.
+   Retain the original compressed bytes and any named derived artifact with
+   their digest lineage; gzip header names never choose an extraction path.
+   A text file over 256 KiB is reviewed in consecutive parts.
    Content that does not decode or was not acquired is a visibility gap,
    never a silent skip. When the inventory exceeds one review call (1 MiB or
    1,024 items), bulk content (dependency locks, data JSON, generated
@@ -104,7 +111,9 @@ The flow for one queued assessment:
    risk-signal content first, then source grouped by directory, then tests,
    docs and locks. Identical bytes are reviewed once. One synthesis call
    (`slop-scan-synthesis-1`) then reads the deterministic pre-pass and every
-   batch result. The combined review is complete only if every call
+   batch result. Its pre-pass also maps byte-identical aliases to the source
+   digest and batch that reviewed them, including aliases supplied beside
+   that source. The combined review is complete only if every call
    completed; its coverage is the weakest of any call. Risk is read from the
    review itself: any suspected malice or high finding is `high`; any other
    finding or partial coverage is `ambiguous`; otherwise `low`. No score

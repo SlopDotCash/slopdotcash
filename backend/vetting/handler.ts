@@ -87,7 +87,11 @@ export type VettingApiDependencies = {
   sandbox?: { fetch(request: Request): Promise<Response> };
   projects: Pick<
     ProjectPersistence,
-    "getProject" | "listProjects" | "enforcementGeneration" | "listEnforcements"
+    | "getProject"
+    | "listProjects"
+    | "projectCreator"
+    | "enforcementGeneration"
+    | "listEnforcements"
   >;
   /** Contributor flags, shown to administrators beside each project. */
   flags?: Pick<ProjectFlagStore, "activeFlags">;
@@ -378,40 +382,64 @@ async function grantExemption(
     githubId: session.githubId,
     githubLogin: session.githubLogin,
   };
-  const checked = await readRepositoryAccess(
-    deps.repositoryAccess,
-    project.manifest,
-    actor,
-  );
-  const authority = setupAuthority(
-    checked,
-    actor,
-    project.manifest.repositories[0].id,
-  );
-  if (authority.state === "retry")
-    fail(503, "github_unavailable", authority.message);
-  if (authority.state !== "verified")
+  // The administrator approves admission; the registered maintainer's live
+  // repository authority is a separate fact. Never impersonate that maintainer
+  // as the approving actor (PRD section 8, owner decision 11 November 2026).
+  const creator = await deps.projects.projectCreator(project.id);
+  const maintainers: GithubActor[] = creator ? [creator] : [];
+  const steward = project.manifest.steward.github;
+  if (
+    steward.type === "User" &&
+    !maintainers.some(
+      (entry) =>
+        entry.githubId === steward.actorId &&
+        entry.githubLogin.toLowerCase() === steward.login.toLowerCase(),
+    )
+  )
+    maintainers.push({ githubId: steward.actorId, githubLogin: steward.login });
+  let verified = false;
+  let unavailable: string | undefined;
+  for (const maintainer of maintainers) {
+    const checked = await readRepositoryAccess(
+      deps.repositoryAccess,
+      project.manifest,
+      maintainer,
+    );
+    const authority = setupAuthority(
+      checked,
+      maintainer,
+      project.manifest.repositories[0].id,
+    );
+    if (authority.state === "retry") {
+      unavailable = authority.message;
+      continue;
+    }
+    if (authority.state !== "verified") continue;
+    if (
+      checked.state !== "read" ||
+      checked.access.installation !== "installed" ||
+      !checked.access.repository
+    ) {
+      unavailable = "Current immutable repository identity is unavailable.";
+      continue;
+    }
+    if (!manifestMatchesRepository(project.manifest, checked.access.repository))
+      fail(
+        409,
+        "repository_mismatch",
+        "The repository identity no longer matches the registered project.",
+      );
+    verified = true;
+    break;
+  }
+  if (!verified) {
+    if (unavailable) fail(503, "github_unavailable", unavailable);
     fail(
       403,
       "forbidden",
-      "The approving administrator needs current repository authority.",
+      "The registered project creator or individual steward needs current repository write or maintain authority.",
     );
-  if (
-    checked.state !== "read" ||
-    checked.access.installation !== "installed" ||
-    !checked.access.repository
-  )
-    fail(
-      503,
-      "github_unavailable",
-      "Current immutable repository identity is unavailable.",
-    );
-  if (!manifestMatchesRepository(project.manifest, checked.access.repository))
-    fail(
-      409,
-      "repository_mismatch",
-      "The repository identity no longer matches the registered project.",
-    );
+  }
   const generation = await deps.projects.enforcementGeneration();
   if (
     publicRestrictionOf(project, await deps.projects.listEnforcements())
