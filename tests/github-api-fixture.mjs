@@ -247,8 +247,8 @@ async function handlePrivateIntake(state, request, response, url) {
     if (request.headers.authorization !== "Bearer e2e-fixture-analysis-key")
       return send(401, { type: "error" });
     const body = await readBody(request);
-    // Owner decision: request Opus 5.5 through Surplus only.
-    if (JSON.parse(body).model !== "claude-opus-5.5")
+    // Owner decision: request Sonnet 5.5 through Surplus only.
+    if (JSON.parse(body).model !== "claude-sonnet-5.5")
       return send(400, { type: "error" });
     state.analysisRequests.push(body);
     // Exercise the screening transport before the separate case proposal.

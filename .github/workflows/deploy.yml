@@ -960,6 +960,7 @@ jobs:
         if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled'
         timeout-minutes: 11
         env:
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
         # This main-only environment supplies the key only to this step.
         # Synthetic source and local SQLite; no production bindings or output artifacts.
@@ -1313,9 +1314,10 @@ jobs:
             "SLOPBOT_APP_PRIVATE_KEY",
             "SLOPBOT_APP_USER_ID",
             "SLOPBOT_WEBHOOK_SECRET",
+            "ORBIO_API_KEY",
             "SURPLUS_API_KEY",
           ];
-          const allowed = new Set([...required, "SURPLUS_BASE_URL"]);
+          const allowed = new Set([...required, "ORBIO_BASE_URL", "SURPLUS_BASE_URL"]);
           if (!required.every((name) => names.includes(name)) || !names.every((name) => allowed.has(name))) {
             throw new TypeError("slopbot Worker secret inventory is incomplete or contains unexpected entries");
           }
