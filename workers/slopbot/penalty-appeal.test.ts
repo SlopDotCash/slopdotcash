@@ -3820,6 +3820,19 @@ test("an author's appeal before any finding keeps the advisory label when closur
   });
 });
 
+test("an author's reopen before any finding does not exempt the revision from review", async () => {
+  await closedItem(async (run) => {
+    // The author closes and reopens their own PR before Slopbot has reviewed
+    // the revision: there is no finding to appeal and no maintainer decision.
+    const reopened = await run.reopen(AUTHOR);
+    expect(await run.deliver(reopened)).toBe("appeal");
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
 test("a retired project reverses an existing debit through a maintainer reopen, with no review or GitHub write", async () => {
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
