@@ -101,6 +101,12 @@ test("a project a build imports under an arbitrary name is an install surface", 
     ["..\\..\\build\\evil.xml", "build/evil.xml"],
     ["../../build/payload", "build/payload"],
     ["$(MSBuildThisFileDirectory)evil.xml", "src/App/evil.xml"],
+    // MSBuild reads the Project attribute after XML decoding, so a
+    // character reference names the character the build sees.
+    ["..&#47;..&#47;build&#47;evil.xml", "build/evil.xml"],
+    ["..&#x2f;..&#x2f;build&#x2f;evil.xml", "build/evil.xml"],
+    ["..&#92;..&#92;build&#92;evil.xml", "build/evil.xml"],
+    ["..\\..\\build&amp;evil.xml", "build&evil.xml"],
   ] as const) {
     const inspection = inspected([
       { path: "src/App/App.csproj", text: csprojImporting(specifier) },
@@ -127,6 +133,31 @@ test("a project a build imports under an arbitrary name is an install surface", 
       ids: expect.arrayContaining([path]),
     });
   }
+});
+
+test("a mid-string $(MSBuildThisFileDirectory) still names the imported project", () => {
+  // MSBuild expands the property wherever it occurs, so a specifier that
+  // names the importing file's directory mid-string resolves under it —
+  // `sub\` plus `src/App/` plus `evil.xml`, resolved against `src/App/`.
+  const inspection = inspected([
+    {
+      path: "src/App/App.csproj",
+      text: csprojImporting("sub\\$(MSBuildThisFileDirectory)evil.xml"),
+    },
+    { path: "src/App/sub/src/App/evil.xml", text: PROJECT },
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "src/App/sub/src/App/evil.xml",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.downloads).toContain("https://evil.example/install.sh");
 });
 
 test("an import chain reaches a project two imports away", () => {

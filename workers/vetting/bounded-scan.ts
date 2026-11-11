@@ -1567,21 +1567,55 @@ function gypIncludedPaths(files: ScanInputFile[]): {
 }
 
 /**
+ * One XML attribute value with its character references decoded, using the
+ * same decoder as `xmlAttributeRuleText`. MSBuild reads the `Project`
+ * attribute after the XML reader decodes it, so `&#47;` is `/` and `&amp;`
+ * is `&` before any property expansion or path resolution. A reference
+ * that is not well-formed is left literal, exactly as the content reader
+ * leaves it.
+ */
+function decodeXmlAttributeValue(value: string): string {
+  let decoded = "";
+  let index = 0;
+  while (index < value.length) {
+    const reference = xmlCharacterReference(value, index, "");
+    if (reference === null) {
+      decoded += value[index] ?? "";
+      index += 1;
+      continue;
+    }
+    decoded += reference.value;
+    index += reference.length;
+  }
+  return decoded;
+}
+
+/**
  * Literal `Project` attributes of MSBuild `Import` elements. MSBuild
  * resolves a relative specifier against the directory of the file that
- * names it. `$(MSBuildThisFileDirectory)` is exactly that directory, so it
- * is dropped before resolution; any other property expression names a
- * path this reader cannot resolve and is not followed. SDK imports and
- * absolute paths resolve outside the acquired tree by construction.
+ * names it. The attribute is XML-decoded first, so a character reference
+ * names the character the build sees. `$(MSBuildThisFileDirectory)` is
+ * exactly that directory: a leading occurrence names an absolute path, so
+ * it is dropped before resolution, and any later occurrence expands to
+ * the importing file's directory wherever it occurs. Any other property
+ * expression names a path this reader cannot resolve and is not followed.
+ * SDK imports and absolute paths resolve outside the acquired tree by
+ * construction.
  */
-function msbuildImportSpecifiers(text: string): string[] {
+function msbuildImportSpecifiers(text: string, fromFile: string): string[] {
+  const directory = fromFile.includes("/")
+    ? fromFile.slice(0, fromFile.lastIndexOf("/") + 1)
+    : "";
   const specifiers: string[] = [];
   for (const match of text.matchAll(
     /<Import\b[^>]*?\bProject\s*=\s*(?:"([^"]*)"|'([^']*)')/giu,
   )) {
     const value = match[1] ?? match[2];
     if (value === undefined || value === "") continue;
-    const literal = value.replace(/^\$\(MSBuildThisFileDirectory\)/iu, "");
+    const decoded = decodeXmlAttributeValue(value);
+    const literal = decoded
+      .replace(/^\$\(MSBuildThisFileDirectory\)/iu, "")
+      .replace(/\$\(MSBuildThisFileDirectory\)/giu, directory);
     if (literal.includes("$")) continue;
     specifiers.push(literal);
   }
@@ -1611,7 +1645,7 @@ function msbuildImportedPaths(files: ScanInputFile[]): Set<string> {
     if (!file) continue;
     const text = decode(file.bytes);
     if (text === null) continue;
-    for (const specifier of msbuildImportSpecifiers(text)) {
+    for (const specifier of msbuildImportSpecifiers(text, path)) {
       const resolved = resolveBuildInclude(path, specifier);
       if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
         continue;
