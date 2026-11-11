@@ -519,11 +519,12 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       throw new Error("Final Solana native cost cannot be priced");
     if (
       bridge &&
-      !bridgeFeeWithin(
-        valueMicro,
-        bridge.takeAmount - costValue,
-        bridge.maxCostBps,
-      )
+      (costValue >= bridge.takeAmount ||
+        !bridgeFeeWithin(
+          valueMicro,
+          bridge.takeAmount - costValue,
+          bridge.maxCostBps,
+        ))
     )
       throw new Error("Final prepared bridge cost exceeds the cap");
     if (costValue * limits.gasMultiple > valueMicro)

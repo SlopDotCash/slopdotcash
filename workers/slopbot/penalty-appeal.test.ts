@@ -181,6 +181,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     readdirSync(new URL("../../migrations/", import.meta.url))
       .filter((p) => p.endsWith(".sql"))
       .sort(),
+    ":memory:",
+    () => new Date(),
   );
   let beforeAppealResolution: (() => void) | null = null;
   let beforePenaltyInsert: (() => Promise<void>) | null = null;
@@ -4327,6 +4329,40 @@ test("an unconfirmed close keeps its slot and cannot be resent while GitHub stil
     ).toEqual([{ n: 0 }]);
   });
 }, 30000);
+
+test("a close reservation whose review lease expires while paused cannot send a GitHub close", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextCloseReservation();
+    const reviewing = run.review().catch((error: unknown) => error);
+    try {
+      await Promise.race([
+        paused.entered,
+        reviewing.then((result) => {
+          throw new Error(`Reservation not reached: ${result}`);
+        }),
+      ]);
+      setSystemTime(new Date(Date.parse(CLOSED_AT) + 21 * 60_000));
+    } finally {
+      paused.release();
+    }
+    expect(await reviewing).toBeInstanceOf(Error);
+    expect(run.currentState()).toBe("open");
+    expect(
+      run.writes.filter(
+        (write) => write.startsWith("PATCH ") && write.includes("/pulls/"),
+      ),
+    ).toEqual([]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 0 }],
+    );
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 0 }]);
+  });
+});
 
 test("a delayed close reservation cannot win a slot another review already consumed", async () => {
   setSystemTime(new Date(CLOSED_AT));

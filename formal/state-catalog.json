@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "297675fd6b306d0ae366091457db8fb4e38df246d1ef32a412542fdcfdfd36d6",
+  "inventorySha256": "5e8919af611b68b5b810964774ce8139c47c9e2d27f7ce3b48821f59b02bf992",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2319,
+      "line": 2388,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -117,6 +117,7 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
@@ -137,7 +138,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2523,
+      "line": 2592,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -147,6 +148,7 @@
         "formal/models/api/api_project_enforcement.qnt",
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
@@ -2270,16 +2272,17 @@
     },
     {
       "path": "src/PendingProjectApplications.tsx",
-      "line": 15,
+      "line": 16,
       "name": "status",
       "kind": "string-union",
-      "values": ["idle", "submitting"],
+      "values": ["cancelled", "cancelling", "idle", "submitting"],
       "models": [
         "formal/models/ui/ui_pending_applications.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
-      "lexicallyUnmentionedValues": ["submitting"],
+      "lexicallyUnmentionedValues": ["cancelling", "submitting"],
       "review": "candidate-only"
     },
     {
@@ -2418,7 +2421,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 850,
+      "line": 851,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2432,6 +2435,7 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
@@ -2441,7 +2445,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1319,
+      "line": 1320,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2455,6 +2459,7 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
@@ -2464,7 +2469,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2105,
+      "line": 2106,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2478,11 +2483,36 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_draft.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2111,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "removed", "removing"],
+      "models": [
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["removing"],
       "review": "candidate-only"
     },
     {
@@ -2958,41 +2988,53 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 30,
+      "line": 31,
       "name": "ApplicationStatus",
       "kind": "string-union",
-      "values": ["approved", "pending", "rejected"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
-      "lexicallyUnmentionedValues": ["approved", "pending", "rejected"],
+      "values": ["approved", "cancelled", "pending", "rejected"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["rejected"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 94,
+      "line": 98,
       "name": "RestrictionState",
       "kind": "string-union",
       "values": ["banned", "clear", "quarantined"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": ["banned", "clear", "quarantined"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 95,
+      "line": 99,
       "name": "AppealState",
       "kind": "string-union",
       "values": ["denied", "granted", "none", "requested"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
-      "lexicallyUnmentionedValues": ["denied", "granted", "requested"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["granted", "requested"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 97,
+      "line": 101,
       "name": "EnforcementResult",
       "kind": "string-union",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "no_revision_needed",
         "revision_appended",
@@ -3002,7 +3044,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 133,
+      "line": 137,
       "name": "decisionSource",
       "kind": "string-union",
       "values": [
@@ -3011,7 +3053,10 @@
         "owner-request",
         "standing-rule"
       ],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "account-request",
         "admin-panel",
@@ -3022,11 +3067,14 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 173,
+      "line": 177,
       "name": "moderation",
       "kind": "string-union",
       "values": ["moderator", "not-moderator", "unconfigured"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "moderator",
         "not-moderator",
@@ -3036,11 +3084,14 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 323,
+      "line": 327,
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "action_required",
         "ready",
@@ -3052,21 +3103,27 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 328,
+      "line": 332,
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": ["retry"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 336,
+      "line": 340,
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "existing-project",
         "owner-approved-admission"
@@ -3075,22 +3132,28 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 347,
+      "line": 351,
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
-      "lexicallyUnmentionedValues": ["pledged", "verified"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["pledged"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 356,
+      "line": 360,
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],
-      "models": ["formal/models/slopbot/bot_repository_authority_scope.qnt"],
-      "lexicallyUnmentionedValues": ["committed", "pledged"],
+      "models": [
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["pledged"],
       "review": "candidate-only"
     },
     {

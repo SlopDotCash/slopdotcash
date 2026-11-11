@@ -591,6 +591,7 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       const priced = await self.quote(NATIVE, native);
       if (
         "noRoute" in priced ||
+        priced.amountOut >= bridge.takeAmount ||
         !bridgeFeeWithin(
           bridge.amount,
           bridge.takeAmount - priced.amountOut,

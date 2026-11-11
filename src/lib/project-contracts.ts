@@ -27,7 +27,11 @@ export type ProjectRevision = {
   createdAt: string;
 };
 
-export type ApplicationStatus = "pending" | "approved" | "rejected";
+export type ApplicationStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
 export type AdminNotification = "pending" | "sent" | "failed";
 
 export type ProjectApplication = {
@@ -154,7 +158,7 @@ export type ProjectEnforcement = {
 export type PublicProjectApplication = Omit<
   ProjectApplication,
   "repositoryKey"
-> & { repository: string | null };
+> & { repository: string | null; publishable?: boolean };
 
 export type AdminProject = ProjectRecord & {
   enforcement: ProjectEnforcementState;

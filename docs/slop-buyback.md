@@ -209,9 +209,7 @@ Still open, and needed before or at activation:
 
 1. The activation instant. Fees finalized before it never enter the buyback.
 2. A Robinhood Chain RPC that serves state at the finalized block.
-3. Whether SLOP received directly as a fee should have its half counted as
-   acquired, as implemented, or be left out of the burn.
-4. Whether the Worker should later be allowed to cancel unfilled orders. It is
+3. Whether the Worker should later be allowed to cancel unfilled orders. It is
    not, today.
 
 ## Accepted risks

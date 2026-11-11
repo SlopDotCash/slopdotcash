@@ -542,6 +542,7 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
     // one scale. An arrival above the input means a wrong asset or scale.
     if (
       quote.takeAmount > amount ||
+      quote.costMicro >= amount ||
       !bridgeFeeWithin(
         amount,
         amount - quote.costMicro,
