@@ -9002,8 +9002,8 @@
 {"name":"shareScoreThirds","kind":"FunctionDeclaration","line":17,"sha256":"fb0ebf1a8e06eed10d764665f9a4e34e3d513476bc857a7c90a8c3be47260153","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"mergedPullRequestCredit","kind":"FunctionDeclaration","line":50,"sha256":"d27dccda1859060fe70e7b9c99ba595bef496b97d3ef5f3d9f62eb3a041821b6","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/verified-security-split.ts","sha256":"b0fff2da3f8f3dd8799f9228342d2b23c093ba9c047a6c0da6e209953023674c","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"securityBountyShares","kind":"FunctionDeclaration","line":20,"sha256":"fde4096c753403f54f8ea5227f0832a90dab8fe0ac801f094aff7281a00aa07e","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
+{"path":"src/lib/verified-security-split.ts","sha256":"5b9e53c954fed4677c07c80c5bd614610420a14936390fc85112497f2e4f7fdd","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"securityBountyShares","kind":"FunctionDeclaration","line":20,"sha256":"2858caee7e2e80586c4a3ad3e1d96d059f040ce086edc8c717687aa416c616ae","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":["throw-unreachable-model"]}
 ]},
 {"path":"src/lib/verified-selection.ts","sha256":"7f35e914ddbcfdcc9ff77bd115e98af69dc19a16f036a1675ed7f66f76cbb2a9","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"cappedTotal","kind":"FunctionDeclaration","line":10,"sha256":"076d0575a745458391196276c557a34424fad356e71eb56a7648ebc6406312c8","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},

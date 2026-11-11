@@ -6696,7 +6696,7 @@
     },
     {
       "path": "src/lib/verified-security-split.ts",
-      "sha256": "b0fff2da3f8f3dd8799f9228342d2b23c093ba9c047a6c0da6e209953023674c",
+      "sha256": "5b9e53c954fed4677c07c80c5bd614610420a14936390fc85112497f2e4f7fdd",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
