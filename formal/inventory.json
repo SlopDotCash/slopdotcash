@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "23808eb8ba4081b45076d4e4884b04e9d24ce43e4d5aa7998f4cf3870bebbb9b",
+      "sha256": "00834cd9733fad306ae552f30ca2af7adf442d2630bec9e38cc91b18c61d7440",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,9 +24,9 @@
       ],
       "candidateLines": [
         27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
-        612, 678, 908, 936, 975, 991, 1001, 1002, 1091, 1191, 1193, 1194, 1359,
-        1442, 1595, 1597, 1627, 1735, 1757, 1828, 1839, 1864, 1933, 1946, 1959,
-        1968, 1969, 1970
+        612, 678, 908, 936, 975, 991, 1001, 1002, 1092, 1192, 1194, 1195, 1399,
+        1482, 1635, 1637, 1667, 1775, 1797, 1868, 1879, 1904, 1975, 1988, 2001,
+        2010, 2011, 2012
       ],
       "review": "mapped-abstraction"
     },
@@ -2002,9 +2002,9 @@
     },
     {
       "path": "functions/index.ts",
-      "sha256": "de19ac392687d32886727d3d637f575eac87ccecde415b17a18fe3a124adc043",
+      "sha256": "fd0e475b20201e174ba3228e2e1185f5cc26bf11df43c9a000db35eeda700ed3",
       "models": [],
-      "candidateLines": [80, 81, 88, 104, 131],
+      "candidateLines": [83, 84, 91, 116, 125, 152],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
     },
@@ -3549,10 +3549,13 @@
     },
     {
       "path": "scripts/dist-manifest.mjs",
-      "sha256": "b88e9cc35eef27388716ecbeb563ff13f186dc3d0f9383852902c76057b7d36e",
-      "models": ["formal/models/release/release_publication.qnt"],
+      "sha256": "77ba6b0982408688798691fa11e19525a8da63e64cdfaa0b0bc69608a2843b06",
+      "models": [
+        "formal/models/release/release_publication.qnt",
+        "formal/models/tooling/evidence_capture.qnt"
+      ],
       "candidateLines": [
-        9, 11, 127, 128, 133, 137, 148, 153, 168, 304, 362, 401, 402
+        10, 12, 129, 130, 135, 139, 150, 155, 170, 348, 406, 445, 446
       ],
       "review": "mapped-abstraction"
     },
@@ -4216,15 +4219,15 @@
     },
     {
       "path": "scripts/record-evidence.mjs",
-      "sha256": "9181c0fdc4349564ea6df78eb70e33cf17736c27e99c68a689dd1a0b56eae726",
+      "sha256": "889f4e43311de83e5fec48d26064120692e16f8113b97781e414392873f60762",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_process.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
       "candidateLines": [
-        4, 87, 124, 125, 127, 130, 160, 162, 175, 181, 230, 245, 266, 274, 278,
-        450, 472, 494, 497, 505, 533, 545, 552, 597
+        4, 88, 125, 126, 128, 131, 161, 163, 176, 182, 231, 246, 267, 275, 279,
+        464, 486, 508, 511, 519, 547, 559, 566, 611
       ],
       "review": "mapped-abstraction"
     },
@@ -6834,6 +6837,14 @@
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted."
+    },
+    {
+      "path": "src/lib/web-analytics.mjs",
+      "sha256": "71cd8044a1ef9f0cff93b6078b4f28e19949825e8cd77c71344553d2e600d297",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure production-host predicate and deterministic HTML transform over supplied bytes. Owns no storage, clock, request or cross-call state. Its exact output and refusal behavior are exercised by the Function and release/evidence callers; raw-manifest binding and publication remain caller responsibilities."
     },
     {
       "path": "src/lib/weighted-allocation.ts",
@@ -13502,7 +13513,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "879abded4c577b257786a0e6dad4e2c96504cb5b21e663d1b8c9dc063a59dba8",
+      "sha256": "5f863b5f0bfc1a60056c6523cbe4fcd6431cd3ad1cfd7c2618e62ff0e7d51bb1",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -13514,11 +13525,23 @@
         "src/lib/verified-selection.ts"
       ],
       "scenarios": [
+        "ambiguousUploadKeepsExternalWriteWithoutPromotionTest",
+        "cleanupFailureDoesNotValidateOrPromoteTest",
+        "deployErrorDoesNotInventRollbackOrConfirmationTest",
+        "disabledSlopbotDoesNotNeedOrMutateItsSecretTest",
+        "earlierWritesRemainPartialOnSecretRefusalTest",
+        "emptyKeyAllocationStillNeedsExitCleanupTest",
         "exactReleaseTest",
+        "metadataReadNeedsSecretFileCleanupTest",
+        "missingProtectedSecretNeverUploadsTest",
+        "missingVersionBindingCannotPromoteTest",
         "partialServicePublicationTest",
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
-        "supersededBeforeWriteTest"
+        "sourceAdvanceAfterUploadIsPartialTest",
+        "supersededBeforeWriteTest",
+        "wrongExistingInventoryNeverUploadsTest",
+        "wrongVersionOrShaCannotPromoteTest"
       ]
     },
     {
@@ -15017,8 +15040,9 @@
     },
     {
       "path": "formal/models/tooling/evidence_capture.qnt",
-      "sha256": "29de841b532b05a8322d7a03ae0139acc13bdd90f57352b29037a49dd9055624",
+      "sha256": "ec83e86446709e873f7a601497f472abb2c4239324be9d9d71f54bd9e9b34fd4",
       "sources": [
+        "scripts/dist-manifest.mjs",
         "scripts/evidence-bundle.mjs",
         "scripts/evidence-contract.mjs",
         "scripts/record-evidence.mjs",
@@ -15026,9 +15050,13 @@
         "scripts/run-e2e.mjs"
       ],
       "scenarios": [
+        "alreadyTaggedRawRootKeepsApprovedIdentityTransformTest",
+        "anotherArtifactStillRequiresRawEqualityTest",
+        "approvedRenderedRootRetainsRawCaptureTest",
         "browserCloseFailurePreventsPublicationTest",
         "captureAndBothFinalizersPreserveFirstErrorTest",
         "captureFailureSurvivesBrowserCloseFailureTest",
+        "changedIndexWithoutNewManifestRefusesBeforeFetchTest",
         "cleanCaptureTest",
         "committedCleanupFailureKeepsNewBundleTest",
         "concurrentWinnerIsNotOverwrittenTest",
@@ -15037,14 +15065,21 @@
         "failedPreviousMoveKeepsOldBundleTest",
         "failedRestorationPreservesBothInputsTest",
         "failedSwapRestoresTest",
+        "finalIndexRereadRefusesAfterManifestCheckTest",
         "firstBundleNeedsNoPreviousBackupTest",
         "interruptedSwapIsExplicitTest",
         "invalidBundleCannotPublishTest",
         "invalidBundleFinalizesFailureTest",
+        "invalidEarlierDigestRefusesBeforeFetchTest",
+        "malformedManifestRefusesBeforeFetchTest",
         "postCommitPreviewFailureCannotLogSuccessTest",
         "previewFailureStillAbortsStagingTest",
         "protectedAbortDoesNotDeletePublishedBundleTest",
-        "setupFailureUsesOwnedFinalizersTest"
+        "rawRootCannotSubstituteForRenderedRootTest",
+        "regeneratedManifestCannotReplaceEarlierCaptureTest",
+        "setupFailureUsesOwnedFinalizersTest",
+        "transformFailureCannotStartCaptureTest",
+        "unapprovedRemoteHtmlIsNotNormalizedTest"
       ]
     },
     {
@@ -15082,7 +15117,7 @@
     },
     {
       "path": "formal/models/tooling/evidence_transport.qnt",
-      "sha256": "47e1600be9edece0ebc1c09cfc5ad2e1569044f68a67aab8669b681ddff5ccf6",
+      "sha256": "94a96f950cd01175a98ec9bb2c9d0e048bb112dbfe59406a945142999fd1c518",
       "sources": [
         "scripts/evidence-bundle.mjs",
         "scripts/evidence-contract.mjs",
