@@ -65,6 +65,7 @@ test("every Markdown file is reviewed as agent instruction content", () => {
   }
   expect(surfacesOf("LICENSE")).toEqual([])
 })
+
 test("new instruction checks cannot reuse a clean assessment of the same source bytes", () => {
   const inspection = inspected(
     ".windsurf/settings.json",
