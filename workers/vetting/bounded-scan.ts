@@ -1631,6 +1631,82 @@ function cmakeIncludedPaths(files: ScanInputFile[]): Set<string> {
   return included;
 }
 
+/**
+ * A file read as makefile text: the entry names GNU make itself opens
+ * (`Makefile`, `makefile`, `GNUmakefile`) and the automake and autoconf
+ * forms whose text reaches the generated makefile (`Makefile.am`,
+ * `Makefile.in`, `Makefile.inc`, `GNUmakefile.in`). Each is already an
+ * install surface by name; this is the set whose `include` directives
+ * are followed.
+ */
+const MAKE_SOURCE = /(?:^|\/)(?:gnu)?makefile(?:\.(?:am|in|inc))?$/iu;
+
+/**
+ * Literal `include` arguments of one makefile. GNU make reads the named
+ * file as makefile text whatever its name. A `#` starts a comment, a
+ * tab-led line is a recipe rather than a directive, a first token that is
+ * an assignment operator makes the line a variable definition, and a
+ * specifier built from a variable (`$(...)`) names no literal path.
+ * Relative paths resolve against the including file, as the include
+ * followers above resolve theirs.
+ */
+function makeIncludeSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.startsWith("\t")) continue;
+    const code = line.replace(/#.*$/u, "");
+    const directive = /^[ ]*(?:-include|sinclude|include)[ \t]+(.+)$/u.exec(
+      code,
+    );
+    if (directive === null) continue;
+    const tokens = (directive[1] ?? "")
+      .split(/\s+/u)
+      .filter((token) => token !== "");
+    if (
+      tokens[0] === "=" ||
+      tokens[0] === ":=" ||
+      tokens[0] === "?=" ||
+      tokens[0] === "+="
+    )
+      continue;
+    for (const token of tokens)
+      if (!token.includes("$")) specifiers.push(token);
+  }
+  return specifiers;
+}
+
+/**
+ * Files a makefile pulls in with `include`, including nested ones. GNU
+ * make evaluates an included file as makefile text while reading the
+ * makefile, before any target runs, so a `$(shell ...)` there executes
+ * even when the file's name carries no makefile extension.
+ */
+function makeIncludedPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => MAKE_SOURCE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const specifier of makeIncludeSpecifiers(text)) {
+      const resolved = resolveBuildInclude(path, specifier);
+      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+        continue;
+      included.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
 export function inspectRepository(input: {
   files: ScanInputFile[];
   /** Source the acquisition could not read; each keeps the scan incomplete. */
@@ -1668,14 +1744,20 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const makeIncludes = makeIncludedPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
-    // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    // Each of these build systems executes included files while reading
+    // the build definition.
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      makeIncludes.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
