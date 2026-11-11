@@ -2,8 +2,8 @@
 
 This is a manual, source-bound symmetry argument for the finite safety model
 `models/slopbot/bot_inference_retention.qnt`. It is not implementation refinement
-or a proof of the production inference system. Native qualification is pending
-until its actual control and complete-graph receipts are recorded.
+or a proof of the production inference system. The exact finite qualification
+below does not establish a passing combined release or deployment.
 
 The hosted concrete graph exceeded its 180-second limit. It did not establish
 a pass. This change leaves the entire QNT file, all eight identities, all row
@@ -104,7 +104,7 @@ source hash and needs a new review. The bridge refuses temporal properties;
 fairness, identity-sensitive liveness and production provider billing truth
 are outside this safety authorization.
 
-## Qualification requirements
+## Qualification
 
 `scripts/bot-inference-symmetry.test.ts` must run with
 `SLOP_QUINT_TRANSLATOR_TEST=1` in the existing formal inventory job. All prior
@@ -116,6 +116,28 @@ state for genuine ID renamings, with all eight rows present.
 
 Those tiny native fixtures exercise the actual pinned runner and production
 VIEW. They are not a substitute for the unchanged QNT scenarios, seeded
-simulation and complete source-bound finite graph. No success is claimed
-until those finish with unchanged inputs, no cancellation, and zero queued
-states. A graph count will be labeled as symmetry classes, not raw states.
+simulation and complete source-bound finite graph.
+
+At frozen source `99e53954fb92a12584656e00fb14ec0849f7d4ab`, the focused native
+file passes all 21 tests and 130 assertions: 17 noninitial counterexample
+controls and two raw/viewed pairs run 21 actual TLC invocations, alongside two
+static source-binding tests. The original 12 named scenarios and 500 seeded
+traces of up to 60 steps pass. The source-bound graph completes in 39,141 ms
+under the unchanged 180,000 ms allowance: 530,326 generated states, 156,735
+distinct symmetry classes, zero queued states, depth 52, and no violation.
+These classes are not a count of all raw ID-labeled states.
+
+All 2,163 tracked file hashes and HEAD stay unchanged across the native,
+ordinary and full-graph checks; the tracked checkout is clean. Six runtime
+executable/artifact hashes also stay unchanged. The recorded versions are
+Node 24.15.0, Bun 1.3.14, Java 21.0.10 and Quint 0.33.1, with the approved
+Apalache 0.62.4 JAR. The wrapper reports unchanged inputs and no cancellation.
+Receipts are `test-results/bot-inference-view-evidence/qualification-attempt-2.json`
+and `evidence/formal/{checks,verification}-bot_inference_retention.json`.
+
+The first prototype's native and ordinary checks passed, but its full wrapper
+refused an incorrect viewed-TLA hash before exploration. The binding generator
+had sliced four characters from an 80-character module terminator. Correcting
+only that binding and its documentation produced the qualified source above;
+the QNT, VIEW expression and control file did not change. The failed first
+attempt is retained and is not a completed graph.
