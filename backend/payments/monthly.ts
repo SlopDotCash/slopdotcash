@@ -101,15 +101,6 @@ export async function verifyProjectAuthority(
   token?: string,
   level: MonthlyAuthority = "maintainer",
 ): Promise<boolean> {
-  if (
-    project.steward.github.type === "User" &&
-    actor.githubId !== project.steward.github.actorId
-  )
-    throw new MonthlyPaymentError(
-      403,
-      "owner_required",
-      "Only the current project steward can manage this project's awards.",
-    );
   async function github(path: string, label: string) {
     const response = await fetch(`https://api.github.com/${path}`, {
       headers: githubHeaders(token, "Slop-monthly-awards"),
