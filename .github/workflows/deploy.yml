@@ -1063,6 +1063,7 @@ jobs:
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
+          PAYMENT_RPC_URLS: ${{ secrets.PAYMENT_RPC_URLS }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_MAIL_PILOTS }}
           SLOP_NOTIFY_GENERAL_EMAIL: ${{ vars.SLOP_NOTIFY_GENERAL_EMAIL }}
@@ -1185,6 +1186,9 @@ jobs:
           ./node_modules/.bin/wrangler d1 migrations apply slop-private \
             --remote \
             --config workers/identity/wrangler.toml
+          # Seed missing observations without execution or signer keys.
+          # The canonical writer protects concurrent newer observations.
+          bun --no-env-file scripts/recover-vault-observations.ts
           bun scripts/prepare-points-import.ts dist "$RUNNER_TEMP/points-import.sql"
           # D1's import API can time out on upload (504) or apply every
           # statement and then answer the final poll with "Not currently
