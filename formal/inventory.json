@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "8d57b5309c644f1ab97ad10a4ae99a25cdbf932b76a681a5f854e2e9cae0db23",
+      "sha256": "4ec65699acbd40923493874c660e5cb18459194782a3b983d784fbd0e89a48d9",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 86, 104, 169, 208, 233, 251, 326],
+      "candidateLines": [1, 90, 108, 173, 212, 237, 255, 330],
       "review": "mapped-abstraction"
     },
     {
