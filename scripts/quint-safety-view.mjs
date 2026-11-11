@@ -35,7 +35,7 @@ const clauses = [
       "(s.touched > 0 => (\\A n \\in {1, 2} \\ {s.touched}: s.store[n] = s.before[n]))",
   },
 ];
-// These are four individually reviewed projections, not a manifest-selected
+// These are individually reviewed projections, not a manifest-selected
 // expression engine. Unknown models, fields, clauses or modes fail closed.
 const definitions = [
   {
@@ -49,34 +49,37 @@ const definitions = [
     clauses,
   },
   {
-    id: "owner-vault-terminal-safety-v3",
+    id: "owner-vault-terminal-stutter-safety-v7",
     model: "formal/models/api/api_owner_vault_lifecycle.qnt",
     module: "api_owner_vault_lifecycle",
-    operator: "SlopOwnerVaultTerminalViewV3",
-    hashMode: "terminal-invariant-observations",
-    memoryCandidateMode: "erase-terminal-payload-and-unused-operation-inputs",
+    operator: "SlopOwnerVaultTerminalStutterViewV7",
+    hashMode:
+      "terminal-stutter-local-and-monotone-global-invariant-observations",
+    memoryCandidateMode:
+      "erase-phase-dead-terminal-phase-and-monotone-true-terminal-indices",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.requests = [i \\in DOMAIN s.requests |-> IF s.requests[i].phase \\in {"response", "done"} THEN <<s.requests[i].phase, s.requests[i].committed, s.requests[i].purpose, (s.requests[i].status > 0 => s.requests[i].noStore), (s.requests[i].result = "existing" => (s.requests[i].captured.exists /\\ s.requests[i].captured.family = s.requests[i].family /\\ ~s.requests[i].chainCalled /\\ s.requests[i].committed = 0 /\\ s.requests[i].responseRevision = s.requests[i].current)), (s.requests[i].result = "registered" => (s.requests[i].committed > 0 /\\ s.requests[i].responseRevision = s.requests[i].committed)), (s.requests[i].result = "pending" => s.requests[i].committed = 0), (s.requests[i].result = "funds" => (s.requests[i].mode = "get" /\\ s.requests[i].purpose = 2))>> ELSE [s.requests[i] EXCEPT !.expected = IF s.requests[i].mode = "get" THEN 1 ELSE s.requests[i].expected, !.transaction = IF s.requests[i].mode \\in {"get", "review"} THEN 1 ELSE s.requests[i].transaction, !.family = IF s.requests[i].mode \\in {"get", "review"} THEN "evm" ELSE s.requests[i].family]]]',
+          '[s EXCEPT !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"response", "done"} THEN LET obligation == (r.committed > 0 => (policyAt(r.committed).exists /\\ deploymentAt(r.purpose).exists)) IN <<"terminal", obligation, IF obligation THEN <<0, 0>> ELSE <<r.committed, r.purpose>>, (r.status > 0 => r.noStore), (r.result = "existing" => (r.captured.exists /\\ r.captured.family = r.family /\\ ~r.chainCalled /\\ r.committed = 0 /\\ r.responseRevision = r.current)), (r.result = "registered" => (r.committed > 0 /\\ r.responseRevision = r.committed)), (r.result = "pending" => r.committed = 0), (r.result = "funds" => (r.mode = "get" /\\ r.purpose = 2))>> ELSE [r EXCEPT !.creationRevision = 0, !.creationCap = 0, !.canSetup = FALSE, !.received = FALSE, !.expected = IF r.mode = "get" \\/ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"} THEN 1 ELSE r.expected, !.transaction = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 1 ELSE r.transaction, !.family = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN "evm" ELSE r.family, !.current = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN 0 ELSE r.current, !.policy = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 0 ELSE r.policy, !.cap = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 0 ELSE r.cap, !.captured = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN [exists |-> FALSE, transaction |-> 0, family |-> "evm"] ELSE IF r.mode = "review" THEN [r.captured EXCEPT !.transaction = 0, !.family = "evm"] ELSE r.captured, !.appendGeneration = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN -1 ELSE r.appendGeneration, !.restricted = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.restricted, !.banned = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.banned]]]',
       },
     ],
     clauses: [],
   },
   {
-    id: "project-lookup-cache-observation-safety-v3",
+    id: "project-lookup-phase-liveness-safety-v6",
     model: "formal/models/api/api_project_lookup_routes.qnt",
     module: "api_project_lookup_routes",
-    operator: "SlopProjectLookupCacheViewV3",
-    hashMode: "data-cache-payload-zero-or-positive",
+    operator: "SlopProjectLookupPhaseViewV6",
+    hashMode:
+      "data-cache-payload-positivity-and-terminal-invariant-observations",
     memoryCandidateMode:
-      "erase-unused-login-legacy-terminal-and-refusal-inputs",
+      "erase-unused-login-legacy-terminal-handoff-refusal-and-phase-dead-inputs",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.legacyCache = [k \\in DOMAIN s.legacyCache |-> [version |-> 0, subject |-> 0]], !.loginVersion = [a \\in DOMAIN s.loginVersion |-> 0], !.dataVersion = IF s.dataVersion > 0 THEN 1 ELSE 0, !.cache = [k \\in DOMAIN s.cache |-> [s.cache[k] EXCEPT !.version = IF s.cache[k].version > 0 THEN 1 ELSE 0]], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"response", "done"} THEN [r EXCEPT !.method = "GET", !.transport = TRUE, !.expected = 0, !.loginValid = TRUE, !.repository = 1, !.cacheEnabled = TRUE, !.login = 0, !.selectedExpected = 0, !.delivered = FALSE, !.key = IF r.putPending THEN r.key ELSE 0, !.payload = IF r.putPending THEN (IF r.payload > 0 THEN 1 ELSE 0) ELSE 0, !.waitUntil = IF r.putPending THEN r.waitUntil ELSE FALSE] ELSE IF r.phase = "dispatch" /\\ ~r.putPending /\\ ((r.method # "GET" /\\ ~r.transport) \\/ ~(IF r.route = "actor-selection" THEN r.method = "POST" ELSE r.method = "GET" /\\ r.route # "unknown")) THEN [r EXCEPT !.expected = 0, !.repository = 1, !.cacheEnabled = TRUE, !.waitUntil = FALSE, !.loginValid = TRUE, !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0] ELSE [r EXCEPT !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0]]]',
+          '[s EXCEPT !.legacyCache = [k \\in DOMAIN s.legacyCache |-> [version |-> 0, subject |-> 0]], !.loginVersion = [a \\in DOMAIN s.loginVersion |-> 0], !.dataVersion = IF s.dataVersion > 0 THEN 1 ELSE 0, !.cache = [k \\in DOMAIN s.cache |-> [s.cache[k] EXCEPT !.version = IF s.cache[k].version > 0 THEN 1 ELSE 0]], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"response", "done", "enforcement-handoff"} THEN <<r.phase, r.attempt, r.putPending, IF r.putPending THEN <<r.key, r.subject, IF r.payload > 0 THEN 1 ELSE 0, r.waitUntil>> ELSE <<0, 0, 0, FALSE>>, <<r.attempt <= 2, (r.hit => (r.actor # 0 /\\ r.providerReads = 0 /\\ r.status = 200)), (r.route = "owned" /\\ r.status = 200 => (r.subject = r.actor /\\ r.actor # 0)), (r.putPending => (r.status = 200 /\\ r.payload > 0)), (r.status = 200 /\\ r.route \\in {"owned", "repository"} => r.policy = "private-300"), (r.phase = "enforcement-handoff" => (r.selected # 0 /\\ r.providerReads = 1)), (r.status \\in {400, 401, 403, 404, 422, 500, 502, 503} => ~r.putPending)>>>> ELSE IF r.phase = "dispatch" /\\ ~r.putPending /\\ ((r.method # "GET" /\\ ~r.transport) \\/ ~(IF r.route = "actor-selection" THEN r.method = "POST" ELSE r.method = "GET" /\\ r.route # "unknown")) THEN [r EXCEPT !.expected = 0, !.repository = 1, !.cacheEnabled = TRUE, !.waitUntil = FALSE, !.loginValid = TRUE, !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0] ELSE [r EXCEPT !.method = IF r.phase \\in {"session", "cache", "validate", "actor", "owned-list", "repository", "buffer", "selection-input", "selection-actor"} THEN "GET" ELSE r.method, !.transport = IF r.phase \\in {"session", "cache", "validate", "actor", "owned-list", "repository", "buffer", "selection-input", "selection-actor"} THEN TRUE ELSE r.transport, !.expected = IF r.phase \\in {"cache", "validate", "actor", "owned-list", "repository", "buffer", "selection-input", "selection-actor"} THEN 0 ELSE r.expected, !.repository = IF r.phase \\in {"actor", "owned-list", "repository", "buffer"} THEN 1 ELSE r.repository, !.loginValid = IF r.phase \\in {"actor", "owned-list", "repository", "buffer"} THEN TRUE ELSE r.loginValid, !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0]]]',
       },
     ],
     clauses: [],
@@ -101,6 +104,110 @@ const definitions = [
         expression: "(s.didClear => s.clearExpected = s.clearObserved)",
       },
     ],
+  },
+  {
+    id: "email-preference-request-observation-safety-v1",
+    model: "formal/models/ui/ui_email_preference_requests.qnt",
+    module: "ui_email_preference_requests",
+    operator: "SlopEmailPreferenceRequestViewV1",
+    hashMode: "request-auth-and-indexed-publication-observations",
+    memoryCandidateMode: "erase-output-closure-and-phase-dead-request-data",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.draft = 0, !.key = FALSE, !.enabled = FALSE, !.verificationPending = FALSE, !.error = "none", !.view = IF s.view = "ready" THEN "ready" ELSE "loading", !.publicationGeneration = IF s.publication = 0 THEN 0 ELSE s.publicationGeneration, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN <<r.phase, (r.accepted => r.cookie = r.actor), IF s.publication = id THEN <<r.generation, r.observedActor = r.actor, (r.kind = "read" \\/ r.accepted)>> ELSE <<0, TRUE, TRUE>>, IF r.phase \\in {"unused", "done"} THEN 0 ELSE [r EXCEPT !.target = FALSE, !.cookie = IF r.phase \\in {"pre", "pre-wait", "pre-observed", "pre-returned", "http"} THEN r.cookie ELSE 0, !.observedActor = IF r.phase \\in {"pre-observed", "pre-returned", "post-observed", "post-returned", "failure-observed", "failure-returned"} THEN r.observedActor ELSE 0, !.status = IF r.phase \\in {"body", "post", "post-wait", "post-observed", "post-returned"} THEN (IF r.kind = "save" /\\ r.status = 200 THEN 200 ELSE IF r.kind = "verify" /\\ r.status = 202 THEN 202 ELSE 0) ELSE 0]>>]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "ui-project-publication-continuation-safety-v1",
+    model: "formal/models/ui/ui_project_publication_lifetime.qnt",
+    module: "ui_project_publication_lifetime",
+    operator: "SlopPublicationContinuationViewV1",
+    hashMode: "publication-continuation-and-terminal-invariant-observations",
+    memoryCandidateMode:
+      "erase-write-only-referrer-and-inactive-request-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.serverDraft = 0, !.storageError = FALSE, !.error = "none", !.referrer = FALSE, !.storedReferrer = FALSE, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, r.accepted, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.referrer = FALSE, !.outcome = "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "ui-security-settings-lifetime-safety-v1",
+    model: "formal/models/ui/ui_security_settings_lifetime.qnt",
+    module: "ui_security_settings_lifetime",
+    operator: "SlopSecuritySettingsLifetimeViewV1",
+    hashMode: "exact-per-slot-publication-identity-observation",
+    memoryCandidateMode:
+      "erase-write-only-outputs-and-reset-or-absorbing-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = "none", !.success = 0, !.serverBody = 0, !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {"unused", "done"} THEN [phase |-> r.phase] ELSE r], !.publications = [i \\in DOMAIN s.publications |-> LET p == s.publications[i] IN IF p.phase \\in {"unused", "done"} THEN [phase |-> p.phase] ELSE [p EXCEPT !.body = 0]]]',
+      },
+    ],
+    clauses: [
+      {
+        name: "publicationIdentity",
+        expression:
+          "[i \\in DOMAIN s.publications |-> (s.publications[i].accepted => s.publications[i].cookie = s.publications[i].actor)]",
+      },
+    ],
+  },
+  {
+    id: "solana-binding-api-observation-safety-v1",
+    model: "formal/models/payments/solana_binding_api.qnt",
+    module: "solana_binding_api",
+    operator: "SlopSolanaBindingApiViewV1",
+    hashMode: "terminal-audit-dispatch-and-reply-invariant-observations",
+    memoryCandidateMode: "erase-unobserved-ledger-status-and-response-payload",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.ledger = [scope \\in DOMAIN s.ledger |-> IF s.ledger[scope] = "unavailable" THEN "unavailable" ELSE "prepared"], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "response", "done"} THEN <<r.phase, r.dispatched, <<r.audited = (id \\in s.audits), (r.audited => (r.owner /\\ s.auditStamps[id] = r.stamp)), (r.scope = 2 => (r.owner /\\ r.audited)), (r.dispatched => (r.admitted /\\ r.scope \\in {1, 2} /\\ r.dispatchScope = r.scope /\\ r.dispatchClaim = r.claim /\\ r.dispatchAttempt = r.attempt /\\ r.requestTransaction = (r.mode = "complete"))), ((id \\in s.effects) => r.dispatched), (r.context => (r.mode = "prepare" /\\ r.contextClaim = r.claim)), (r.replyTransaction => (r.mode = "prepare" /\\ r.desired = "200")), (r.replyContext => (r.context /\\ r.desired = "200")), (r.desired = "200" => r.dispatched)>>>> ELSE [r EXCEPT !.response = "none", !.emptyId = FALSE, !.desired = IF r.desired = "200" THEN "200" ELSE "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "solana-wallet-provider-observation-safety-v1",
+    model: "formal/models/ui/solana_wallet_provider.qnt",
+    module: "solana_wallet_provider",
+    operator: "SlopSolanaWalletProviderViewV1",
+    hashMode: "terminal-invocation-and-kind-independent-safety-observations",
+    memoryCandidateMode: "erase-unused-operation-object-and-result-diagnostics",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.operations = [id \\in DOMAIN s.operations |-> LET op == s.operations[id] IN IF op.phase \\in {"unused", "done"} THEN <<op.phase, op.invoked, op.method = "send", (op.invoked => (op.checked /\\ op.matched /\\ op.feature /\\ op.chainMatch /\\ op.legacyFormat)), (op.invoked => op.registered), (op.invoked => op.reconnected), ((op.invoked /\\ op.method = "send") => op.callback), (op.encoded => (op.method = "text" /\\ op.result = "ok")), ((id \\in s.effects) => (op.invoked /\\ op.method = "send"))>> ELSE [op EXCEPT !.usedObject = 0, !.result = IF op.result = "ok" THEN "ok" ELSE "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "ui-contributor-allocation-safety-v1",
+    model: "formal/models/ui/ui_contributor_allocation.qnt",
+    module: "ui_contributor_allocation",
+    operator: "SlopContributorAllocationViewV1",
+    hashMode: "exact-per-account-on-time-wallet-membership",
+    memoryCandidateMode: "erase-unused-and-absorbing-request-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.wallets = [i \\in DOMAIN s.wallets |-> IF "on-time" \\in s.wallets[i] THEN {"on-time"} ELSE {"none"}], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"unused", "done"} THEN [phase |-> r.phase] ELSE r]]',
+      },
+    ],
+    clauses: [],
   },
 ];
 

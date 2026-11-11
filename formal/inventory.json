@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "b88bd00fbf555aef39d2ba33a7ff1e5222edf2a5bad05bb6c2778609c1ba973d",
+      "sha256": "194a45daa399416adaafa572f8756db1f85e3005fd8c2ac993e312bf66f1b7f5",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 80, 84, 148, 187, 212, 230, 305],
+      "candidateLines": [1, 81, 99, 164, 203, 228, 246, 321],
       "review": "mapped-abstraction"
     },
     {
@@ -1974,9 +1974,11 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "8962e5fbe4f97e11cd6be3aad83201dabda00a58de15cbeb45404a7469cb9843",
+      "sha256": "2fbcff7973ba294f3c718ad7e116412e4f723e0f0f95a6a7a6bc3f257532d98c",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [57, 58, 75, 93],
+      "candidateLines": [
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -3328,13 +3330,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "61166b250a23d68fa301664b77aa98e7a5c85be8f246f57563ef25a1b744c09c",
+      "sha256": "d577c108c56227cde18aa96b6ecb8d18f6fd086e568c4e6dea10ce0d10a5d279",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [45, 48, 52, 60, 84, 181, 183, 185, 232, 239, 291],
+      "candidateLines": [48, 51, 55, 66, 91, 192, 194, 196, 243, 250, 303],
       "review": "mapped-abstraction"
     },
     {
@@ -4195,9 +4197,11 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "ffe23a5896540d4ae69b25371d991002b91ee5b618c557df495cb84c85be9120",
+      "sha256": "02a06bb3e4e0a3957f03102bb8f44703fc5629811f7616b5d6dd5c00cc76687f",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [7, 60, 62, 77, 93],
+      "candidateLines": [
+        7, 62, 64, 80, 82, 96, 117, 119, 134, 151, 170, 173, 189, 205
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -4206,6 +4210,14 @@
       "models": ["formal/models/tooling/formal_tla_lexing.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/quint-verification-step.mjs",
+      "sha256": "5a70825bef6bb148e408c9d39bf83566ce5e8e0a5b8b84b5d7ef76c0bb71b7b5",
+      "models": [],
+      "candidateLines": [10],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior."
     },
     {
       "path": "scripts/readme-proof-binding.ts",
@@ -9129,7 +9141,7 @@
     },
     {
       "path": "formal/models/api/api_owner_vault_lifecycle.qnt",
-      "sha256": "4621ef9fe9fc2aed949d85b0324d8d8730294461a67d28ba488094fb006a317e",
+      "sha256": "68da3beb9833d621fd150cba1642b0b82739bba614ca4a5132e953b629cea378",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/edge-cache.ts",
@@ -9460,7 +9472,7 @@
     },
     {
       "path": "formal/models/api/api_project_lookup_routes.qnt",
-      "sha256": "20909c2aeab10c1c16ea5eabb57e37873726f8420a84daae6b420c361a0a23f4",
+      "sha256": "e950f4836877a760e42061805675a6994dd49f42e0eb76018ee83f4ce20117db",
       "sources": [
         "backend/http.ts",
         "backend/projects/edge-cache.ts",

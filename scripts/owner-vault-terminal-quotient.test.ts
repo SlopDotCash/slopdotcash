@@ -23,6 +23,15 @@ const erased = [
 ];
 
 function checkReviewedBoundary(model: string) {
+  // Include scenarios/comments as well as the transition boundary. The loader
+  // independently pins these complete source bytes and the generated TLA.
+  if (
+    createHash("sha256").update(model).digest("hex") !==
+    "68da3beb9833d621fd150cba1642b0b82739bba614ca4a5132e953b629cea378"
+  )
+    throw new Error(
+      "Owner-vault terminal-field deadness and continuation need review",
+    );
   const start = model.indexOf("module api_owner_vault_lifecycle {");
   const end = model.indexOf("  action checked(", start);
   if (start < 0 || end < start)
@@ -36,7 +45,7 @@ function checkReviewedBoundary(model: string) {
     .digest("hex");
   if (
     digest !==
-    "8cd3e2867c8d4694e281e5d920568f789158f6e64dd523176290d652a701c50d"
+    "88c39b664e6e64ef1e9a6a9fb2d6e274e12bc5cc564deec2b6811594219221d3"
   )
     throw new Error(
       "Owner-vault terminal-field deadness and continuation need review",
@@ -70,6 +79,24 @@ test("future GET or Review input reads require a new phase-liveness review", () 
     ["get", "family", "service"],
     ["review", "transaction", "chain"],
     ["review", "family", "chain"],
+    ["get", "current", "service"],
+    ["get", "policy", "service"],
+    ["get", "cap", "service"],
+    ["get", "captured", "service"],
+    ["get", "appendGeneration", "service"],
+    ["review", "policy", "chain"],
+    ["review", "cap", "chain"],
+    ["review", "current", "chain"],
+    ["review", "expected", "chain"],
+    ["review", "captured", "chain"],
+    ["register", "expected", "chain"],
+    ["register", "restricted", "commit"],
+    ["register", "banned", "commit"],
+    ["register", "policy", "postcommit"],
+    ["register", "cap", "postcommit"],
+    ["register", "transaction", "postcommit"],
+    ["register", "family", "postcommit"],
+    ["register", "appendGeneration", "postcommit"],
   ]) {
     const changed = source.replace(
       `all { r.phase == "${phase}",`,
@@ -128,3 +155,84 @@ test("concrete GET and Review paths keep the original inputs and expected-revisi
     rmSync(directory, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("new existence regressions or terminal index writes require a new monotonicity review", () => {
+  for (const [before, after] of [
+    [
+      "val nextPolicy: Policy = { exists: true, kind:",
+      "val nextPolicy: Policy = { exists: false, kind:",
+    ],
+    [
+      "{ exists: true, transaction: 1, family: family }",
+      "{ exists: false, transaction: 1, family: family }",
+    ],
+    [
+      "{ exists: true, transaction: r.transaction, family: r.family }",
+      "{ exists: false, transaction: r.transaction, family: r.family }",
+    ],
+    [
+      's.requests.get(id).phase == "unused"',
+      'Set("unused", "done").contains(s.requests.get(id).phase)',
+    ],
+    [
+      'r.with("phase", "done").with("received", received)',
+      'r.with("phase", "done").with("received", received).with("committed", 0)',
+    ],
+  ]) {
+    const changed = source.replace(before, after);
+    expect(changed).not.toBe(source);
+    expect(() => checkReviewedBoundary(changed)).toThrow(
+      "deadness and continuation need review",
+    );
+  }
+});
+
+test("terminal phase collapse rejects reuse, backward continuations and cross-slot reads", () => {
+  for (const [before, after] of [
+    [
+      's.requests.get(id).phase == "unused"',
+      'Set("unused", "done").contains(s.requests.get(id).phase)',
+    ],
+    [
+      'r.with("phase", "done").with("received", received)',
+      'r.with("phase", "body").with("received", received)',
+    ],
+    [
+      'all { r.phase == "headers",',
+      'all { r.phase == "headers" and s.requests.get(2).phase != "response",',
+    ],
+    [
+      'all { r.phase == "response",',
+      'all { r.phase == "response" and not(r.received),',
+    ],
+    [
+      "all { r.status > 0 implies r.noStore,",
+      'all { r.phase != "done", r.status > 0 implies r.noStore,',
+    ],
+  ]) {
+    const changed = source.replace(before, after);
+    expect(changed).not.toBe(source);
+    expect(() => checkReviewedBoundary(changed)).toThrow(
+      "deadness and continuation need review",
+    );
+  }
+});
+
+test("both concrete and verification dispatchers retain unconditional stuttering", () => {
+  for (const name of ["step", "verificationStep"]) {
+    const start = source.indexOf(`  action ${name} = any {`);
+    const end = source.indexOf("\n  }", start);
+    const block = source.slice(start, end);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    expect(block.endsWith("    s' = s")).toBe(true);
+    const changed =
+      source.slice(0, start) +
+      block.replace("    s' = s", "    false") +
+      source.slice(end);
+    expect(changed).not.toBe(source);
+    expect(() => checkReviewedBoundary(changed)).toThrow(
+      "deadness and continuation need review",
+    );
+  }
+});

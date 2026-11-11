@@ -42,15 +42,16 @@
 // No in-flight lookup coalescing exists; a later completion may overwrite a
 // newer public cache snapshot. Failed cache reads fall back; failed puts do
 // not fail a response. waitUntil may let a put settle after response delivery.
-// No tests, parser, checker or provider request ran for these definitions.
-// A source-bound TLC safety VIEW retains version/payload positivity and exact
-// subjects, actors, keys, attempts and invariant observations. It erases unused
-// login/legacy-cache bytes and dead terminal or deterministically refused input
-// fields. Pending puts retain their destination, subject and payload positivity.
-// The concrete model, sampled traces, direct actions and named scenarios retain
-// all original bytes; exact freshness/login bytes are not safety-VIEW claims.
-// See formal/README.md for the quotient argument;
-// scripts/project-lookup-legacy-quotient.test.ts binds its audited boundary.
+// A source-bound TLC safety VIEW retains cache/data/payload positivity and
+// exact live subjects, actors, keys and attempts. Terminal response/done/handoff
+// tuples keep all seven invariant observations, pending key/subject/waitUntil
+// and payload positivity.
+// It erases unused login/legacy bytes, deterministically refused input fields,
+// and five phase-dead inputs only after their final read. Concrete actions,
+// scenarios and sampled traces retain all original bytes. Exact freshness/login
+// bytes and terminal payload bytes are not safety-VIEW claims.
+// See formal/README.md for the manual quotient argument and execution limits;
+// scripts/project-lookup-legacy-quotient.test.ts binds its audited source body.
 module api_project_lookup_routes {
   val ids = Set(1, 2)
   val keyIds = Set(1, 2, 3, 4)

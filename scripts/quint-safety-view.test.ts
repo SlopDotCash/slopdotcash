@@ -286,7 +286,7 @@ const ownerState = `[head |-> 1,
     expected |-> 2, transaction |-> 2, policy |-> 2, cap |-> 2, creationRevision |-> 2,
     creationCap |-> 2, restricted |-> TRUE, banned |-> TRUE, canSetup |-> TRUE,
     appendGeneration |-> 2, received |-> TRUE, result |-> "none", committed |-> 0,
-    purpose |-> 1, mode |-> "get", family |-> "evm", captured |-> [exists |-> FALSE, family |-> "evm"],
+    purpose |-> 1, mode |-> "get", family |-> "evm", captured |-> [exists |-> FALSE, transaction |-> 0, family |-> "evm"],
     current |-> 0, responseRevision |-> 0, chainCalled |-> FALSE]]]`;
 
 const lookupState = `[session |-> 1, loginVersion |-> [a \\in {1,2} |-> 1], dataVersion |-> 1,
@@ -299,183 +299,350 @@ const lookupState = `[session |-> 1, loginVersion |-> [a \\in {1,2} |-> 1], data
     selectedExpected |-> 2, delivered |-> TRUE, key |-> 1, payload |-> 1,
     subject |-> 1, waitUntil |-> TRUE, putPending |-> FALSE]]]`;
 
-for (const [id, observation, initial, update, invariant] of [
+const counterexampleControls = [
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "no-store",
     ownerState,
     "!.requests[1].noStore = FALSE",
     "(s.requests[1].status > 0 => s.requests[1].noStore)",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "existing-replay",
     ownerState,
     '!.requests[1].result = "existing"',
     '(s.requests[1].result = "existing" => (s.requests[1].captured.exists /\\ s.requests[1].captured.family = s.requests[1].family /\\ ~s.requests[1].chainCalled /\\ s.requests[1].committed = 0 /\\ s.requests[1].responseRevision = s.requests[1].current))',
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "registered-receipt",
     ownerState,
     '!.requests[1].result = "registered"',
     '(s.requests[1].result = "registered" => (s.requests[1].committed > 0 /\\ s.requests[1].responseRevision = s.requests[1].committed))',
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "pending-without-commit",
     `[${ownerState} EXCEPT !.requests[1].committed = 1]`,
     '!.requests[1].result = "pending"',
     '(s.requests[1].result = "pending" => s.requests[1].committed = 0)',
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "bounty-funds-authority",
     ownerState,
     '!.requests[1].result = "funds"',
     '(s.requests[1].result = "funds" => (s.requests[1].mode = "get" /\\ s.requests[1].purpose = 2))',
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "committed-history-index",
     ownerState,
     "!.requests[1].committed = 2",
     "(s.requests[1].committed > 0 => (s.history[s.requests[1].committed].exists /\\ s.deployments[s.requests[1].purpose].exists))",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "committed-purpose-index",
     `[${ownerState} EXCEPT !.requests[1].committed = 1]`,
     "!.requests[1].purpose = 2",
     "(s.requests[1].committed > 0 => (s.history[s.requests[1].committed].exists /\\ s.deployments[s.requests[1].purpose].exists))",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "active-review-expected",
     `[${ownerState} EXCEPT !.requests[1].phase = "expected", !.requests[1].mode = "review", !.requests[1].expected = 1, !.requests[1].current = 1]`,
     "!.requests[1].expected = 2",
     "s.requests[1].expected = s.requests[1].current",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "active-register-expected",
     `[${ownerState} EXCEPT !.requests[1].phase = "expected", !.requests[1].mode = "register", !.requests[1].expected = 1]`,
     "!.requests[1].expected = 2",
     "s.requests[1].expected = 1",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "active-register-transaction",
     `[${ownerState} EXCEPT !.requests[1].phase = "body", !.requests[1].mode = "register", !.requests[1].transaction = 1]`,
     "!.requests[1].transaction = 2",
     "s.requests[1].transaction = 1",
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "active-register-family",
     `[${ownerState} EXCEPT !.requests[1].phase = "body", !.requests[1].mode = "register", !.requests[1].family = "evm"]`,
     '!.requests[1].family = "solana"',
     's.requests[1].family = "evm"',
   ],
   [
-    "owner-vault-terminal-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
     "active-operation-mode",
     `[${ownerState} EXCEPT !.requests[1].phase = "headers", !.requests[1].mode = "get"]`,
     '!.requests[1].mode = "review"',
     's.requests[1].mode = "get"',
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-register-policy",
+    `[${ownerState} EXCEPT !.requests[1].phase = "commit", !.requests[1].mode = "register", !.requests[1].policy = 1]`,
+    "!.requests[1].policy = 2",
+    "s.requests[1].policy = 1",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-register-cap",
+    `[${ownerState} EXCEPT !.requests[1].phase = "commit", !.requests[1].mode = "register", !.requests[1].cap = 1]`,
+    "!.requests[1].cap = 2",
+    "s.requests[1].cap = 1",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-register-current-revision",
+    `[${ownerState} EXCEPT !.requests[1].phase = "commit", !.requests[1].mode = "register", !.requests[1].current = 1]`,
+    "!.requests[1].current = 2",
+    "s.requests[1].current = s.head",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-register-generation-fence",
+    `[${ownerState} EXCEPT !.requests[1].phase = "commit", !.requests[1].mode = "register", !.requests[1].appendGeneration = 1]`,
+    "!.requests[1].appendGeneration = 2",
+    "s.requests[1].appendGeneration = 1",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-authority-restriction",
+    `[${ownerState} EXCEPT !.requests[1].phase = "authority", !.requests[1].restricted = FALSE]`,
+    "!.requests[1].restricted = TRUE",
+    "~s.requests[1].restricted",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-authority-ban",
+    `[${ownerState} EXCEPT !.requests[1].phase = "authority", !.requests[1].banned = FALSE]`,
+    "!.requests[1].banned = TRUE",
+    "~s.requests[1].banned",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "active-review-captured-existence",
+    `[${ownerState} EXCEPT !.requests[1].phase = "expected", !.requests[1].mode = "review"]`,
+    "!.requests[1].captured.exists = TRUE",
+    "~s.requests[1].captured.exists",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "false-initial-global-observation",
+    `[${ownerState} EXCEPT !.requests[1].committed = 2]`,
+    "!.head = 2",
+    "(s.requests[1].committed > 0 => policyAt(s.requests[1].committed).exists /\\ deploymentAt(s.requests[1].purpose).exists)",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "false-history-observation-can-become-true",
+    `[${ownerState} EXCEPT !.requests[1].committed = 2]`,
+    "!.history[2].exists = TRUE",
+    "~(s.requests[1].committed > 0 => policyAt(s.requests[1].committed).exists /\\ deploymentAt(s.requests[1].purpose).exists)",
+  ],
+  [
+    "owner-vault-terminal-stutter-safety-v7",
+    "false-deployment-observation-can-become-true",
+    `[${ownerState} EXCEPT !.requests[1].committed = 1, !.requests[1].purpose = 2]`,
+    "!.deployments[2].exists = TRUE",
+    "~(s.requests[1].committed > 0 => policyAt(s.requests[1].committed).exists /\\ deploymentAt(s.requests[1].purpose).exists)",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
     "cache-hit-authority",
     `[${lookupState} EXCEPT !.requests[1].actor = 0]`,
     "!.requests[1].hit = TRUE",
     "(s.requests[1].hit => s.requests[1].actor # 0 /\\ s.requests[1].providerReads = 0 /\\ s.requests[1].status = 200)",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "wrong-owned-subject",
     lookupState,
     "!.requests[1].subject = 2",
     '(s.requests[1].route = "owned" /\\ s.requests[1].status = 200 => s.requests[1].subject = s.requests[1].actor /\\ s.requests[1].actor # 0)',
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "authenticated-actor",
     lookupState,
     "!.requests[1].actor = 0",
     '(s.requests[1].route = "owned" /\\ s.requests[1].status = 200 => s.requests[1].subject = s.requests[1].actor /\\ s.requests[1].actor # 0)',
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "pending-put-key",
     `[${lookupState} EXCEPT !.requests[1].putPending = TRUE]`,
     "!.requests[1].key = 2",
     "s.requests[1].key = 1",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "retry-attempt-bound",
     lookupState,
     "!.requests[1].attempt = 3",
     "s.requests[1].attempt <= 2",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "pending-payload-positivity",
     `[${lookupState} EXCEPT !.requests[1].putPending = TRUE]`,
     "!.requests[1].payload = 0",
     "(s.requests[1].putPending => s.requests[1].status = 200 /\\ s.requests[1].payload > 0)",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "cache-version-positivity",
     lookupState,
     "!.cache[1].version = 0",
     "s.cache[1].version > 0",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "cache-subject-partition",
     lookupState,
     "!.cache[1].subject = 2",
     "s.cache[1].subject = 1",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "data-version-positivity",
     lookupState,
     "!.dataVersion = 0",
     "s.dataVersion > 0",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "public-response-policy",
     lookupState,
     '!.requests[1].policy = "no-store"',
     '(s.requests[1].status = 200 /\\ s.requests[1].route \\in {"owned", "repository"} => s.requests[1].policy = "private-300")',
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "selected-actor-handoff",
     `[${lookupState} EXCEPT !.requests[1].phase = "enforcement-handoff", !.requests[1].selected = 1, !.requests[1].providerReads = 1]`,
     "!.requests[1].selected = 0",
     '(s.requests[1].phase = "enforcement-handoff" => s.requests[1].selected # 0 /\\ s.requests[1].providerReads = 1)',
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "active-selection-expected",
     `[${lookupState} EXCEPT !.requests[1].phase = "selection-actor", !.requests[1].selectedExpected = 1]`,
     "!.requests[1].selectedExpected = 2",
     "s.requests[1].selectedExpected = 1",
   ],
   [
-    "project-lookup-cache-observation-safety-v3",
+    "project-lookup-phase-liveness-safety-v6",
     "matched-dispatch-expected",
     `[${lookupState} EXCEPT !.requests[1].phase = "dispatch", !.requests[1].method = "GET", !.requests[1].transport = TRUE, !.requests[1].expected = 1]`,
     "!.requests[1].expected = 2",
     "s.requests[1].expected = 1",
   ],
-] as const) {
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "pending-put-wait-guard",
+    `[${lookupState} EXCEPT !.requests[1].putPending = TRUE]`,
+    "!.requests[1].waitUntil = FALSE",
+    "s.requests[1].waitUntil",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "error-cannot-keep-pending-put",
+    `[${lookupState} EXCEPT !.requests[1].status = 403]`,
+    "!.requests[1].putPending = TRUE",
+    "(s.requests[1].status \\in {400,401,403,404,422,500,502,503} => ~s.requests[1].putPending)",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "handoff-provider-read-count",
+    `[${lookupState} EXCEPT !.requests[1].phase = "enforcement-handoff", !.requests[1].selected = 1, !.requests[1].providerReads = 1]`,
+    "!.requests[1].providerReads = 0",
+    '(s.requests[1].phase = "enforcement-handoff" => s.requests[1].selected # 0 /\\ s.requests[1].providerReads = 1)',
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "handoff-pending-put-key",
+    `[${lookupState} EXCEPT !.requests[1].phase = "enforcement-handoff", !.requests[1].selected = 1, !.requests[1].providerReads = 1, !.requests[1].putPending = TRUE]`,
+    "!.requests[1].key = 2",
+    "s.requests[1].key = 1",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "live-dispatch-method",
+    `[${lookupState} EXCEPT !.requests[1].phase = "dispatch", !.requests[1].method = "GET", !.requests[1].transport = TRUE]`,
+    '!.requests[1].method = "HEAD"',
+    's.requests[1].method = "GET"',
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "live-dispatch-transport",
+    `[${lookupState} EXCEPT !.requests[1].phase = "dispatch", !.requests[1].route = "actor-selection", !.requests[1].method = "POST", !.requests[1].transport = TRUE]`,
+    "!.requests[1].transport = FALSE",
+    "s.requests[1].transport",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "live-session-expected",
+    `[${lookupState} EXCEPT !.requests[1].phase = "session", !.requests[1].expected = 0]`,
+    "!.requests[1].expected = 3",
+    "s.requests[1].expected = 0",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "live-validate-repository",
+    `[${lookupState} EXCEPT !.requests[1].phase = "validate", !.requests[1].route = "repository", !.requests[1].repository = 1]`,
+    "!.requests[1].repository = 0",
+    "s.requests[1].repository = 1",
+  ],
+  [
+    "project-lookup-phase-liveness-safety-v6",
+    "live-validate-login-valid",
+    `[${lookupState} EXCEPT !.requests[1].phase = "validate", !.requests[1].loginValid = TRUE]`,
+    "!.requests[1].loginValid = FALSE",
+    "s.requests[1].loginValid",
+  ],
+] as const;
+
+// Terminal phase erasure must retain false observations after send as well
+// as before it. Reuse the original seven invariant controls with only that
+// representative phase changed; no transition/invariant is weakened.
+const doneObservations = new Set([
+  "no-store",
+  "existing-replay",
+  "registered-receipt",
+  "pending-without-commit",
+  "bounty-funds-authority",
+  "committed-history-index",
+  "committed-purpose-index",
+]);
+const doneControls = counterexampleControls
+  .filter(
+    ([id, observation]) =>
+      id === "owner-vault-terminal-stutter-safety-v7" &&
+      doneObservations.has(observation),
+  )
+  .map(
+    ([id, observation, initial, update, invariant]) =>
+      [
+        id,
+        `done-${observation}`,
+        initial.replace('phase |-> "response"', 'phase |-> "done"'),
+        update,
+        invariant,
+      ] as const,
+  );
+
+for (const [id, observation, initial, update, invariant] of [
+  ...counterexampleControls,
+  ...doneControls,
+]) {
   test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     `the real ${id} runner retains the ${observation} counterexample`,
     async () => {
@@ -486,6 +653,14 @@ for (const [id, observation, initial, update, invariant] of [
       const tla = `---- MODULE ${selected.module} ----
 EXTENDS Integers, FiniteSets
 VARIABLE s
+${
+  selected.module === "api_owner_vault_lifecycle"
+    ? `
+policyAt(revision) == IF revision \\in {1,2,3} THEN s.history[revision] ELSE [exists |-> FALSE]
+deploymentAt(purpose) == IF purpose \\in {1,2} THEN s.deployments[purpose] ELSE [exists |-> FALSE]
+`
+    : ""
+}
 q_init == s = ${initial}
 q_step == s' = [s EXCEPT ${update}]
 q_inv == ${invariant}

@@ -85,3 +85,87 @@ test("exact diagnostic or refusal-input reads require a new observation proof", 
     );
   }
 });
+
+test("a new handoff continuation or reuse requires a new dead-phase review", () => {
+  for (const [before, after] of [
+    [
+      'all { request.phase == "response",',
+      'all { Set("response", "enforcement-handoff").contains(request.phase), request.selected == 1,',
+    ],
+    [
+      'Set("unused", "done").contains(previous.phase)',
+      'Set("unused", "done", "enforcement-handoff").contains(previous.phase)',
+    ],
+    [
+      "all { request.putPending, keyIds.contains(request.key),",
+      "all { request.putPending, request.selected == 1, keyIds.contains(request.key),",
+    ],
+  ]) {
+    const changed = source.replace(before, after);
+    expect(changed).not.toBe(source);
+    expect(() => checkReviewedBoundary(changed)).toThrow(
+      "observation quotient needs review",
+    );
+  }
+});
+
+test("V6 only clarifies model comments; the entire concrete module remains unchanged", () => {
+  expect(
+    createHash("sha256")
+      .update(
+        source.slice(source.indexOf("module api_project_lookup_routes {")),
+      )
+      .digest("hex"),
+  ).toBe("2e06ce785e1bd54bd86e7f4d33494ec3f844ab7cc38a8cc4cf44e1af6ac62565");
+  const invariant = source.slice(
+    source.indexOf("  val invariant ="),
+    source.indexOf("  action start("),
+  );
+  for (const field of [
+    "method",
+    "transport",
+    "expected",
+    "repository",
+    "loginValid",
+  ])
+    expect(new RegExp(`\\.${field}\\b`, "u").test(invariant)).toBe(false);
+});
+
+test("future phase-dead input reads, backwards phases or nonresetting reuse need a new proof", () => {
+  for (const [before, after] of [
+    [
+      'all { request.phase == "session",',
+      'all { request.phase == "session", request.method == "GET",',
+    ],
+    [
+      'all { request.phase == "cache",',
+      'all { request.phase == "cache", request.transport,',
+    ],
+    [
+      'all { request.phase == "validate",',
+      'all { request.phase == "validate", request.expected == 0,',
+    ],
+    [
+      'all { request.phase == "actor",',
+      'all { request.phase == "actor", request.repository != 0,',
+    ],
+    [
+      'all { request.phase == "buffer",',
+      'all { request.phase == "buffer", request.loginValid,',
+    ],
+    [
+      'request.with("phase", "owned-list")',
+      'request.with("phase", "dispatch")',
+    ],
+    [
+      'idle.with("phase", "dispatch").with("attempt", previous.attempt + 1)',
+      'previous.with("phase", "dispatch").with("attempt", previous.attempt + 1)',
+    ],
+  ]) {
+    const changed = source.replace(before, after);
+    expect(changed).not.toBe(source);
+    expect(() => checkReviewedBoundary(changed)).toThrow(
+      "observation quotient needs review",
+    );
+  }
+});
