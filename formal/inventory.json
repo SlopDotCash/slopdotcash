@@ -6324,7 +6324,7 @@
     },
     {
       "path": "src/lib/reward-amount.ts",
-      "sha256": "a3d34bd541ef9391ae5558dc91cd0b19dca6114a7bfbf1b8655f52b1e5453ad1",
+      "sha256": "32b1112829119d45499d178a9e8c28d0f159060dd708a74b1bffa85bca735cda",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",

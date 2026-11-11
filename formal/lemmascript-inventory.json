@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 733,
-    "functions": 10304,
+    "functions": 10305,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10116,
+    "unprovedFunctions": 10117,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -8584,12 +8584,13 @@
 {"name":"<ArrowFunction@48>","kind":"ArrowFunction","line":48,"sha256":"4492ecb07a8cb7d77f6c4bfe853fcc65f30db90b7b4005ffc5140b717fb44fba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@57>","kind":"ArrowFunction","line":57,"sha256":"45f8779168ef6c496ca466df04d2c7ed0b1a07e3769d34d0b18d7cec5855bb38","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/reward-amount.ts","sha256":"a3d34bd541ef9391ae5558dc91cd0b19dca6114a7bfbf1b8655f52b1e5453ad1","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/reward-amount.ts","sha256":"32b1112829119d45499d178a9e8c28d0f159060dd708a74b1bffa85bca735cda","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"formatMicroUsdc","kind":"FunctionDeclaration","line":6,"sha256":"5e4ccbe4c861e50956f36acfa5622dc479c28f59e2d587c943439e95f01cbb38","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"formatRewardMinor","kind":"FunctionDeclaration","line":30,"sha256":"17b148b23ade9a0988ec1f69df05cf943434405bc792f236a561cc037f8968fd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"monthlyPoolUnfunded","kind":"FunctionDeclaration","line":42,"sha256":"4fc30aa59de769ac36e415370fa8b9ee291db272804381db8466585c07d12d9b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"formatRewardCapDisplay","kind":"FunctionDeclaration","line":51,"sha256":"d3a251768dad032b56d9d4f0ea7c4404dcc6a6a12ce2217b307e2ab091ad0eb8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"monthlyPoolLabel","kind":"FunctionDeclaration","line":60,"sha256":"d8b7d075b81079c2af91e875c5438d2c270d14a1a2f85631bf3ce40a2145e816","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"formatRewardCapDisplay","kind":"FunctionDeclaration","line":51,"sha256":"cd479953b2c3f408d6d6f91d13e890894cc10e9e6eba88418eea053d77e2c86d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@56>","kind":"ArrowFunction","line":56,"sha256":"fad7cc88fadb65cceb2b1353b02ea059f60575a37d2d6baef326c781e9d55ae1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"monthlyPoolLabel","kind":"FunctionDeclaration","line":62,"sha256":"d8b7d075b81079c2af91e875c5438d2c270d14a1a2f85631bf3ce40a2145e816","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"src/lib/reward-asset.mjs","sha256":"1e785515beed74011a368e93597f8e45d74a1b35b2766efa435121b3b9130af7","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"rewardNetwork","kind":"FunctionDeclaration","line":30,"sha256":"28bed2895c88ccf69f57377a1250e8eb82c1c08626986a2548dfea90bc9956f7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},

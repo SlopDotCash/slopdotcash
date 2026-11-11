@@ -53,7 +53,9 @@ export function formatRewardCapDisplay(
   asset?: Pick<RewardAmountAsset, "kind" | "symbol">,
 ): string {
   return asset && asset.kind !== "stablecoin"
-    ? display.replace(/\S+$/u, formatAssetSymbol(asset.symbol, asset.kind))
+    ? display.replace(/\S+$/u, () =>
+        formatAssetSymbol(asset.symbol, asset.kind),
+      )
     : display;
 }
 
