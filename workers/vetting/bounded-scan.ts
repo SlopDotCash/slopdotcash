@@ -259,7 +259,7 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
 }
 
-/** The surfaces one path belongs to; empty for non-executable content. */
+/** The review surfaces assigned to a repository path. */
 export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
@@ -275,6 +275,7 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
     surfaces.add("manifests");
   if (
+    name.endsWith(".md") ||
     AGENT_INSTRUCTIONS.has(name) ||
     lower.startsWith(".cursor/") ||
     lower.startsWith(".claude/") ||
