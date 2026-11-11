@@ -5917,9 +5917,9 @@
     },
     {
       "path": "src/lib/payments/escrow-cycle.ts",
-      "sha256": "dbdf1ea009c92345c3c2aadaca24778d742827efc23761be39fbd56db48eedfc",
+      "sha256": "cd5be067c0317814ec19d314bac4ccaa58cc156d74ed1c784b1de2676dd8a7ea",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [173],
+      "candidateLines": [150, 187],
       "review": "mapped-abstraction"
     },
     {
