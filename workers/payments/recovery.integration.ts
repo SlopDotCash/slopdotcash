@@ -466,6 +466,7 @@ try {
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: JSON.stringify(["base-sepolia", "solana-devnet"]),
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     EVM_PAYMENT_EXECUTOR: service("base"),
     SOLANA_PAYMENT_EXECUTOR: service("solana"),

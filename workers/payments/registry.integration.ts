@@ -295,6 +295,7 @@ try {
     PAYMENTS_DB: paymentsDb,
     REGISTRY_DB: registryDb,
     PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcUrl }),
   };
   const snapshots = () =>
@@ -422,6 +423,7 @@ try {
       }),
       env: {
         SLOP_DB: registryDb,
+        SLOP_ENVIRONMENT: "staging",
         ...(paymentNetworks === undefined
           ? {}
           : { PAYMENT_NETWORKS: paymentNetworks }),

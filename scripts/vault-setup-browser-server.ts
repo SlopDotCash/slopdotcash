@@ -211,6 +211,7 @@ Bun.serve({
               PAYMENTS_DB: db,
               REGISTRY_DB: db,
               PAYMENT_NETWORKS: JSON.stringify([servedNetwork]),
+              SLOP_ENVIRONMENT: "staging",
               PAYMENT_RPC_URLS: JSON.stringify({ [servedNetwork]: rpcUrl }),
               // This zero-award fixture exercises the real scanner, not payouts.
               EVM_PAYMENT_EXECUTOR: {

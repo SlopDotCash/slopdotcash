@@ -1,4 +1,5 @@
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
+import { type DeploymentTier, deploymentTier } from "../../src/lib/deployment";
 import {
   assertEscrowPolicy,
   assertSecurityEscrowPolicy,
@@ -14,8 +15,16 @@ export type PaymentNetwork = EscrowDeployment["network"];
  * `PAYMENT_NETWORKS` selects the registry networks one payments Worker
  * serves: a JSON array of unique registry network names. A missing, empty,
  * unknown or repeated name stops the Worker; nothing defaults to a network.
+ * A production Worker never serves a testnet network: a misconfigured
+ * production `PAYMENT_NETWORKS` stops the Worker instead of indexing and
+ * settling testnet vaults in the production database. Staging serves the
+ * testnet networks its registry holds.
  */
-export function parsePaymentNetworks(value: unknown): PaymentNetwork[] {
+export function parsePaymentNetworks(
+  value: unknown,
+  tier: DeploymentTier,
+): PaymentNetwork[] {
+  const resolved = deploymentTier(tier);
   let names: unknown;
   try {
     names = typeof value === "string" ? JSON.parse(value) : undefined;
@@ -34,6 +43,12 @@ export function parsePaymentNetworks(value: unknown): PaymentNetwork[] {
     throw new Error(
       "PAYMENT_NETWORKS must be a JSON array of unique registry networks",
     );
+  if (resolved === "production")
+    for (const name of names as PaymentNetwork[])
+      if (ESCROW_NETWORKS[name]?.testnet)
+        throw new Error(
+          `PAYMENT_NETWORKS must not serve testnet network ${name} in production`,
+        );
   return names as PaymentNetwork[];
 }
 

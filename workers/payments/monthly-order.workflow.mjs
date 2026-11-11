@@ -69,7 +69,7 @@ if(new URL(request.url).pathname==='/cutoff') {
     return Response.json({sequence:view.proposal.allocationSequence});
   } catch(error) { return Response.json({code:error.code,diagnostic:error.message},{status:error.status??500}); }
 }
-await runMonthlyCommitments({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',PAYMENT_RPC_URLS:'{}',MONTHLY_PAYMENT_SCHEDULE:JSON.stringify({firstPeriod:'2026-11',cutoffSecondsAfterPeriodEnd:259200}),EVM_PAYMENT_EXECUTOR:env.EXECUTOR},new Date(${JSON.stringify(time)}));
+await runMonthlyCommitments({PAYMENTS_DB:env.DB,REGISTRY_DB:env.DB,PAYMENT_NETWORKS:'["base-sepolia"]',SLOP_ENVIRONMENT:'staging',PAYMENT_RPC_URLS:'{}',MONTHLY_PAYMENT_SCHEDULE:JSON.stringify({firstPeriod:'2026-11',cutoffSecondsAfterPeriodEnd:259200}),EVM_PAYMENT_EXECUTOR:env.EXECUTOR},new Date(${JSON.stringify(time)}));
 return new Response(null,{status:204});}catch{return new Response(null,{status:503});}}};`,
   });
   const { runtime, db } = worker;

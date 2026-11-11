@@ -252,6 +252,7 @@ async function stack() {
     PAYMENTS_DB: db as D1Database,
     REGISTRY_DB: db as D1Database,
     PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcUrl }),
     EVM_PAYMENT_EXECUTOR: {
       async fetch(request: Request) {

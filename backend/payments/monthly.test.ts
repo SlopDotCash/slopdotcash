@@ -194,6 +194,7 @@ for (const worker of [false, true]) {
               PAYMENTS_DB: isolated.db,
               REGISTRY_DB: db,
               PAYMENT_NETWORKS: JSON.stringify(["base-sepolia"]),
+              SLOP_ENVIRONMENT: "staging",
               PAYMENT_RPC_URLS: "{}",
               MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
             },
@@ -2488,6 +2489,7 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -2892,6 +2894,7 @@ test("V2 monthly signing publishes permanent source-bound attempts and resumes t
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -3150,6 +3153,7 @@ test("monthly dispatcher resumes an older Solana reservation after opt-out and r
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["solana-devnet"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     SOLANA_PAYMENT_EXECUTOR: {
@@ -3214,6 +3218,7 @@ test("monthly dispatcher sends a new EVM V2 reservation before an older month's 
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {
@@ -3273,6 +3278,7 @@ test("monthly dispatcher keeps a legacy EVM month open while its re-sent nonce i
     PAYMENTS_DB: db,
     REGISTRY_DB: db,
     PAYMENT_NETWORKS: '["base-sepolia"]',
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: "{}",
     MONTHLY_PAYMENT_SCHEDULE: JSON.stringify(schedule),
     EVM_PAYMENT_EXECUTOR: {

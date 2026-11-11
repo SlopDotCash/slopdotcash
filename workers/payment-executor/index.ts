@@ -634,6 +634,9 @@ export async function runMonthlyAttester(env: Environment) {
     REGISTRY_DB: env.REGISTRY_DB,
     PAYMENT_SCOPE: env.PAYMENT_SCOPE,
     PAYMENT_NETWORKS: JSON.stringify(networks),
+    // A test signer stack serves testnet networks only, so its Worker runs
+    // as staging; a production stack serves mainnets only.
+    SLOP_ENVIRONMENT: stack === "production" ? "production" : "staging",
     PAYMENT_RPC_URLS: env.PAYMENT_RPC_URLS,
     PAYMENT_SOLANA_GENESIS: JSON.stringify(
       Object.fromEntries(

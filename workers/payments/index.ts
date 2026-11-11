@@ -34,6 +34,7 @@ import {
   readVaultTotals as readSolanaVaultTotals,
   solanaPaymentAdapter,
 } from "../../contracts/solana/adapter";
+import { deploymentTier } from "../../src/lib/deployment";
 import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
   monthlyCutoff,
@@ -43,6 +44,7 @@ import {
 import type { DeploymentView, PaymentDeployment } from "./deployment-types";
 import {
   loadRegistryPaymentDeployments,
+  type PaymentNetwork,
   parsePaymentNetworks,
 } from "./deployments";
 import { reconcileFailedAttempts } from "./reconcile";
@@ -63,6 +65,13 @@ export interface PaymentsWorkerEnvironment {
    * Worker configuration.
    */
   PAYMENT_NETWORKS: string;
+  /**
+   * Deployment tier (`SLOP_ENVIRONMENT`): `"staging"` serves testnet
+   * networks; anything else, including unset, is production and never
+   * serves one. A production Worker with a testnet in `PAYMENT_NETWORKS`
+   * stops instead of indexing that vault.
+   */
+  SLOP_ENVIRONMENT?: string;
   /** Private JSON map of network name to a finalized-capable RPC endpoint. */
   PAYMENT_RPC_URLS: string;
   PAYMENT_SOLANA_GENESIS?: string;
@@ -75,11 +84,23 @@ export interface PaymentsWorkerEnvironment {
    */
   MONTHLY_PAYMENT_SCHEDULE?: string;
 }
+/**
+ * The networks this Worker serves under its deployment tier. A production
+ * Worker never serves a testnet network; an unset tier is production.
+ */
+export function servedPaymentNetworks(
+  env: PaymentsWorkerEnvironment,
+): PaymentNetwork[] {
+  return parsePaymentNetworks(
+    env.PAYMENT_NETWORKS,
+    deploymentTier(env.SLOP_ENVIRONMENT),
+  );
+}
 /** The served networks' reviewed vaults, read from the D1 project registry. */
 export function registryDeployments(env: PaymentsWorkerEnvironment) {
   return loadRegistryPaymentDeployments(
     env.REGISTRY_DB,
-    parsePaymentNetworks(env.PAYMENT_NETWORKS),
+    servedPaymentNetworks(env),
     env.PAYMENT_SCOPE,
   );
 }
@@ -92,7 +113,7 @@ export async function recoverUncertainAttempts(
   const row = await env.PAYMENTS_DB.prepare(
     "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
   )
-    .bind(env.PAYMENT_NETWORKS)
+    .bind(JSON.stringify(servedPaymentNetworks(env)))
     .first<{ items: string }>();
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
@@ -277,10 +298,7 @@ export async function runPaymentDispatch(
   const rows = await env.PAYMENTS_DB.prepare(
     "SELECT json_group_array(obligation_id) ids FROM (SELECT b.obligation_id FROM payment_outbox b JOIN payment_obligations o ON o.id=b.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND (b.state='ready' OR (b.state='processing' AND b.lease_until<?)) ORDER BY b.updated_at LIMIT 50)",
   )
-    .bind(
-      JSON.stringify(parsePaymentNetworks(env.PAYMENT_NETWORKS)),
-      now().toISOString(),
-    )
+    .bind(JSON.stringify(servedPaymentNetworks(env)), now().toISOString())
     .first<{ ids: string }>();
   const failures: unknown[] = [];
   for (const id of JSON.parse(rows?.ids ?? "[]") as string[]) {
@@ -324,7 +342,7 @@ export async function runMonthlyCoordinator(
         publicRestrictionOf(project, await registry.listEnforcements())
           .state !== "clear",
     },
-    networks: parsePaymentNetworks(env.PAYMENT_NETWORKS),
+    networks: servedPaymentNetworks(env),
     schedule: parseMonthlySchedule(env.MONTHLY_PAYMENT_SCHEDULE),
     now,
   });
@@ -374,7 +392,11 @@ export async function runMonthlyCommitments(
         ORDER BY p.last_attempt,p.period,p.project_id
      )`,
   )
-    .bind(activePeriod, env.PAYMENT_NETWORKS, activePeriod)
+    .bind(
+      activePeriod,
+      JSON.stringify(servedPaymentNetworks(env)),
+      activePeriod,
+    )
     .first<{ items: string }>();
   // Newest period first: only the newest month can be admitting, so its reservation is sent before
   // any older month's leaf in this pass. A leaf mined first would advance ordinarySourceSequence
