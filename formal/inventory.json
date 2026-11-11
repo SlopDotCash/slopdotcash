@@ -5089,7 +5089,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "056742fc4136b711b03708193e67c1647f3dc7e972adc01f2e7f30b484276aa8",
+      "sha256": "166130fedacf3fe344aa72e83c5139d6728b4be1573ce89135a2612d71be70ae",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5178,17 +5178,17 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
+      "sha256": "48468ca4dbe98623238c767e7e444e8586f76b18daa8b8afa41eece51e7aecf9",
       "models": [
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 69, 74, 81, 82, 85, 98, 99, 100,
-        105, 110, 122, 129, 136, 140, 145, 148, 155, 158, 168, 267, 269, 272,
-        291, 292, 295, 307, 328, 346, 347, 362, 364, 368, 371, 374, 387, 397,
-        418, 425, 434, 435, 441, 442, 443, 444
+        1, 36, 37, 40, 41, 47, 49, 51, 52, 58, 62, 67, 70, 72, 75, 81, 86, 93,
+        94, 98, 111, 112, 113, 118, 123, 135, 142, 149, 153, 158, 161, 168, 171,
+        181, 280, 282, 286, 289, 290, 293, 301, 324, 325, 340, 342, 346, 349,
+        352, 365, 375, 396, 403, 412, 413, 419, 420, 421, 422
       ],
       "review": "mapped-abstraction"
     },
@@ -6074,6 +6074,13 @@
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation."
+    },
+    {
+      "path": "src/lib/profile-actor.ts",
+      "sha256": "4451e9d2eda699b05b4fc4b560bdf32861b416327ff4c069397f757f92a740f1",
+      "models": [],
+      "candidateLines": [27, 70, 79],
+      "review": "pending"
     },
     {
       "path": "src/lib/profiles.ts",
