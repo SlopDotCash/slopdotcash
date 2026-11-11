@@ -1565,20 +1565,31 @@ test("only the applicant cancels, with no GitHub access, and the cancelled recor
 test("cancellation and stored project publication arbitrate at the database write", async () => {
   const t = registry();
   const id = storeCancellableApplication(t);
-  const publish = t.persistence.publishApplication.bind(t.persistence);
-  t.persistence.publishApplication = async (input, generation) => {
+  const batch = t.db.batch.bind(t.db);
+  let publicationBatchReached = false;
+  t.db.batch = async (statements) => {
+    // Publication has read the pending application and built its writes.
+    // Cancel now, so only the atomic batch's pending predicates can refuse it.
+    publicationBatchReached = true;
+    t.db.batch = batch;
+    expect(await t.persistence.getApplication(id)).toMatchObject({
+      status: "pending",
+    });
     expect(
       await t.persistence.cancelApplication({
-        ...input,
+        applicationId: id,
         actor: { githubId: OWNER, githubLogin: "owner" },
+        reason: null,
+        at: NOW,
       }),
     ).toBe("cancelled");
-    return publish(input, generation);
+    return batch(statements);
   };
   expect(
     (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
       .status,
   ).toBe(409);
+  expect(publicationBatchReached).toBe(true);
   expect(await t.persistence.getProject("cancel-project")).toBeNull();
   expect(await t.persistence.listRevisions()).toEqual([]);
   expect(await t.persistence.getApplication(id)).toMatchObject({
