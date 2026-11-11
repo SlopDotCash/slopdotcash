@@ -445,7 +445,7 @@ try {
   const orders: { chain: "base" | "ethereum"; orderId: Hex; take: bigint }[] =
     [];
   for (const chain of SOURCES) {
-    const [deposit] = rows(`network = '${chain}' AND kind = 'bridge'`);
+    const [deposit] = signed(`network = '${chain}' AND kind = 'bridge'`);
     assert.equal(deposit.state, "finalized", `${chain} deposit`);
     assert.equal(deposit.amount_in, (SOURCE_FEES / 2n).toString());
     assert.equal(deposit.amount_out, deposit.amount_in);
@@ -501,7 +501,7 @@ try {
 
   // 4. The deBridge taker fills each order through the real DlnDestination.
   for (const order of orders) {
-    const [deposit] = rows(`network = '${order.chain}' AND kind = 'bridge'`);
+    const [deposit] = signed(`network = '${order.chain}' AND kind = 'bridge'`);
     const receipt = await client(order.chain).getTransactionReceipt({
       hash: deposit.landed_tx_id as Hex,
     });
