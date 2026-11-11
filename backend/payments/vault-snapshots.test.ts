@@ -43,13 +43,68 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
 });
 const observed = "2026-10-18T10:05:00.000Z";
 
-test("rejects malformed observation timestamps at the snapshot storage boundary", async () => {
+test("rejects malformed and impossible observation timestamps at the snapshot storage boundary", async () => {
   const { db, sqlite } = sqliteD1();
   try {
-    for (const invalid of ["not-a-date", "", "2026-10-18T10:05:00Z trailing"])
+    for (const invalid of [
+      "not-a-date",
+      "",
+      "2026-10-18T10:05:00Z trailing",
+      "2026-02-30T10:05:00.000Z",
+    ])
       await expect(
         storeVaultSnapshot(db, deployment, totals(), invalid),
       ).rejects.toThrow("Invalid vault observation time");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("rejects timezone-less and localized observation timestamps", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    for (const invalid of [
+      "2026-10-18T10:05:00",
+      "2026-10-18T11:05:00+01:00",
+      "10/18/2026, 10:05:00 AM",
+    ])
+      await expect(
+        storeVaultSnapshot(db, deployment, totals(), invalid),
+      ).rejects.toThrow("Invalid vault observation time");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("canonicalizes accepted UTC observation timestamps before storage", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    await storeVaultSnapshot(db, deployment, totals(), "2026-10-18T10:05:00Z");
+    expect(
+      sqlite.query("SELECT observed_at FROM vault_snapshots").get(),
+    ).toEqual({
+      observed_at: observed,
+    });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("rejects observation timestamps beyond the allowed future clock skew", async () => {
+  const { db, sqlite } = sqliteD1();
+  const now = new Date("2026-10-18T10:05:00.000Z");
+  try {
+    await expect(
+      storeVaultSnapshot(
+        db,
+        deployment,
+        totals(),
+        "2026-10-18T10:10:00.001Z",
+        now,
+      ),
+    ).rejects.toThrow("Invalid vault observation time");
     expect(sqlite.query("SELECT * FROM vault_snapshots").all()).toEqual([]);
   } finally {
     sqlite.close();
@@ -202,13 +257,13 @@ test("block order takes precedence over observation time without relabeling bala
   try {
     await storeVaultSnapshot(db, deployment, totals(), observed);
     const initial = sqlite.query("SELECT * FROM vault_snapshots").get();
-    // Same block: compare instants rather than the lexical order of offsets.
+    // Same block: compare canonical UTC instants.
     expect(
       await storeVaultSnapshot(
         db,
         deployment,
         totals(),
-        "2026-10-18T11:04:59+01:00",
+        "2026-10-18T10:04:59.000Z",
       ),
     ).toBe("older");
     expect(sqlite.query("SELECT * FROM vault_snapshots").get()).toEqual(
@@ -219,7 +274,7 @@ test("block order takes precedence over observation time without relabeling bala
         db,
         deployment,
         totals(),
-        "2026-10-18T11:05:00+01:00",
+        "2026-10-18T10:05:00.000Z",
       ),
     ).toBe("stored");
     const advanced = totals({

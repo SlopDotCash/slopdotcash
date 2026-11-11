@@ -4,6 +4,7 @@ import {
   isAssetDecimals,
   isBaseUnits,
   type PaymentChain,
+  VAULT_SNAPSHOT_MAX_FUTURE_MS,
   type VaultSnapshot,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -58,6 +59,21 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
     : a === b;
 }
 
+function canonicalObservationTime(value: string, now: Date): string {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value))
+    throw new Error("Invalid vault observation time");
+  const milliseconds = Date.parse(value);
+  const canonical = value.includes(".") ? value : `${value.slice(0, -1)}.000Z`;
+  if (
+    !Number.isFinite(milliseconds) ||
+    !Number.isFinite(now.getTime()) ||
+    new Date(milliseconds).toISOString() !== canonical ||
+    milliseconds - now.getTime() > VAULT_SNAPSHOT_MAX_FUTURE_MS
+  )
+    throw new Error("Invalid vault observation time");
+  return canonical;
+}
+
 /**
  * Stores one finalized read for a reviewed deployment. The read must name the
  * reviewed vault and asset. Cumulative counters and the block never go back.
@@ -68,9 +84,9 @@ export async function storeVaultSnapshot(
   deployment: SnapshotDeployment,
   totals: VaultTotals,
   observedAt: string,
+  now = new Date(),
 ): Promise<"stored" | "older"> {
-  if (!Number.isFinite(Date.parse(observedAt)))
-    throw new Error("Invalid vault observation time");
+  observedAt = canonicalObservationTime(observedAt, now);
   if (
     totals.network !== deployment.network ||
     !sameAddress(
@@ -201,6 +217,7 @@ export async function refreshVaultSnapshots<D extends SnapshotDeployment>(
             deployment,
             await read(deployment, rpcUrl),
             now.toISOString(),
+            now,
           );
         } catch (error) {
           failures.push({ index, error });
