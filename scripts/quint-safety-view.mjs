@@ -179,17 +179,18 @@ const definitions = [
     clauses: [],
   },
   {
-    id: "solana-wallet-provider-observation-safety-v1",
+    id: "solana-wallet-provider-observation-safety-v3",
     model: "formal/models/ui/solana_wallet_provider.qnt",
     module: "solana_wallet_provider",
-    operator: "SlopSolanaWalletProviderViewV1",
-    hashMode: "terminal-invocation-and-kind-independent-safety-observations",
-    memoryCandidateMode: "erase-unused-operation-object-and-result-diagnostics",
+    operator: "SlopSolanaWalletProviderViewV3",
+    hashMode: "operation-phase-truth-and-closed-capability-cone",
+    memoryCandidateMode:
+      "erase-consumed-provider-wait-data-and-drained-capabilities",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.operations = [id \\in DOMAIN s.operations |-> LET op == s.operations[id] IN IF op.phase \\in {"unused", "done"} THEN <<op.phase, op.invoked, op.method = "send", (op.invoked => (op.checked /\\ op.matched /\\ op.feature /\\ op.chainMatch /\\ op.legacyFormat)), (op.invoked => op.registered), (op.invoked => op.reconnected), ((op.invoked /\\ op.method = "send") => op.callback), (op.encoded => (op.method = "text" /\\ op.result = "ok")), ((id \\in s.effects) => (op.invoked /\\ op.method = "send"))>> ELSE [op EXCEPT !.usedObject = 0, !.result = IF op.result = "ok" THEN "ok" ELSE "none"]]]',
+          'LET drained == (s.phase = "connected" /\\ (\\A id \\in DOMAIN s.operations: s.operations[id].phase \\in {"provider-wait", "done"})) IN [s EXCEPT !.exposedTransaction = IF drained THEN FALSE ELSE s.exposedTransaction, !.exposedSend = IF drained THEN FALSE ELSE s.exposedSend, !.messageFeature = IF drained THEN FALSE ELSE s.messageFeature, !.transactionFeature = IF drained THEN FALSE ELSE s.transactionFeature, !.sendFeature = IF drained THEN FALSE ELSE s.sendFeature, !.transactionLegacy = IF drained THEN FALSE ELSE s.transactionLegacy, !.sendLegacy = IF drained THEN FALSE ELSE s.sendLegacy, !.operations = [id \\in DOMAIN s.operations |-> LET op == s.operations[id] IN IF op.phase \\in {"unused", "done"} THEN <<op.phase, op.invoked, op.method = "send", (op.invoked => (op.checked /\\ op.matched /\\ op.feature /\\ op.chainMatch /\\ op.legacyFormat)), (op.invoked => op.registered), (op.invoked => op.reconnected), ((op.invoked /\\ op.method = "send") => op.callback), (op.encoded => (op.method = "text" /\\ op.result = "ok")), ((id \\in s.effects) => (op.invoked /\\ op.method = "send"))>> ELSE IF op.phase = "provider-wait" THEN <<op.phase, op.method, op.invoked, (op.invoked => (op.checked /\\ op.matched /\\ op.feature /\\ op.chainMatch /\\ op.legacyFormat)), (op.invoked => op.registered), (op.invoked => op.reconnected), ((op.invoked /\\ op.method = "send") => op.callback), (op.encoded => (op.method = "text" /\\ op.result = "ok")), ((id \\in s.effects) => (op.invoked /\\ op.method = "send"))>> ELSE [op EXCEPT !.usedObject = 0, !.result = IF op.result = "ok" THEN "ok" ELSE "none"]]]',
       },
     ],
     clauses: [],

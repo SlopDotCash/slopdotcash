@@ -150,9 +150,12 @@ module evm_binding_consent_api {
       { nondet seed = Set("none", "valid", "invalid").oneOf() configure(seed) },
       advance,
       replaceEffective,
-      { nondet id = ids.oneOf() nondet mode = Set("challenge", "authorize").oneOf()
-        nondet claim = Set(0, 1, 2).oneOf() nondet version = Set(-1, 0, 1).oneOf() nondet offset = offsets.oneOf()
-        begin(id, mode, claim, version, offset) },
+      all { s.configured,
+        { nondet id = ids.oneOf()
+          all { s.requests.get(id).phase == "unused",
+            { nondet mode = Set("challenge", "authorize").oneOf()
+              nondet claim = Set(0, 1, 2).oneOf() nondet version = Set(-1, 0, 1).oneOf() nondet offset = offsets.oneOf()
+              begin(id, mode, claim, version, offset) } } } },
       { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() body(id, yes) },
       { nondet id = ids.oneOf() nondet deployment = deploymentClasses.oneOf() deployments(id, deployment) },
       { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()

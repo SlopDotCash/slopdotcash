@@ -32,12 +32,12 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "47797401382a12bcaa0ca918027fd1bfaeb5b7489f4562fc1b7cdc30fe7e5f2c",
+      "sha256": "bde81a26b9dd4646dca435aa090581b00bd78c1e0cb1f5cd30c419bcda1af952",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [191],
+      "candidateLines": [194],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,7 +1981,7 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "c499f5e6d5e14a66b7f89d04609e78aa5750c3bc1d48792a8bf2286ca477504f",
+      "sha256": "76ad52578abf49393e7064548267f5e6477cbda961ab55c73aca6e5e8e6c7e96",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211
@@ -3337,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "1425bd93fdc9928d5b0dd926ee105dabdc5602d4ec86479cf1be0dfbbc93390d",
+      "sha256": "2392ac9f6887b15d17eb08d9bcc3560611e6bffad2eb98707d8bcd742b46043b",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [48, 51, 59, 70, 95, 196, 198, 200, 247, 254, 307],
+      "candidateLines": [48, 51, 59, 73, 98, 199, 201, 203, 250, 257, 310],
       "review": "mapped-abstraction"
     },
     {
@@ -3407,7 +3407,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "a3a9a96d85e0b0e8a7e9e072aeeec105f711f830c19dc3c2ff8f87e1c1de9e6f",
+      "sha256": "f2023e0f5e70eea87154569130a8e018c34c89454ad37f9a99096f98730d903f",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -4208,10 +4208,10 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "f22091dd491833208d5f55361c7daaec9b63933c9a81e15cd38f2f66dff4945d",
+      "sha256": "0415edb4eb67a3d27ad48fcb79da89351b44f6bb1bc2f9bab125878f5bc841ea",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 190, 206
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207
       ],
       "review": "mapped-abstraction"
     },
@@ -12349,7 +12349,7 @@
     },
     {
       "path": "formal/models/payments/evm_binding_consent_api.qnt",
-      "sha256": "8a014646a455555b26f415c10e5a008ba5f48802f470532c903de912b5e113be",
+      "sha256": "77a1f212e49842ff9698118bd7de9aff3434c30add74e1da73f0a605339bcd19",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/possession.ts",

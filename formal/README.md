@@ -62,7 +62,7 @@ normally has a 180-second limit. Explicit resource exceptions in
 
 - 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
   `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
-  `ui_vetting_reader`, and `fee_value_caps`.
+  `ui_vetting_reader`, `solana_wallet_provider`, and `fee_value_caps`.
 - 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
@@ -289,8 +289,10 @@ requires review for new reads, backward phases, reuse or invariant changes.
   separate request clauses. Ledger availability and success/non-success are
   the only normalized value classes.
 - The [wallet-provider audit](solana-wallet-provider-view-audit.md) preserves
-  late send effects and separate registration/reconnection observations,
-  including false observations exposed by a later provider configuration.
+  exact pre-provider dependencies, provider-wait method/invocation and six
+  independent safety observations, including dormant false registration and
+  reconnection facts. Seven capability values normalize only after their
+  consumers become permanently disabled; late send effects remain observable.
 - The [allocation audit](tlc-safety-view-audit.md#contributor-allocation-view)
   retains each account's eligibility, all global outputs and every future
   request dependency. Version 2 distinguishes permanently stale requests from
@@ -324,6 +326,12 @@ source/TLA pins. That separately frozen quotient completed 3,373,889 distinct
 states with an empty queue in 688.320 seconds under its explicit 1,200-second
 allowance. Earlier 180- and 600-second attempts remain incomplete. Ordinary
 scenario and sampling budgets stay unchanged.
+
+The separately frozen wallet-provider V3 quotient completed 2,526,432 distinct
+states with an empty queue in 516.944 seconds under its recorded 600-second
+allowance. Its concrete model and original invariant remain unchanged. Native
+qualification reused the unchanged fresh V3 controls across the resource-only
+follow-up; this does not claim a final combined-head graph or native execution.
 
 ### Other duplicate transition choices
 
