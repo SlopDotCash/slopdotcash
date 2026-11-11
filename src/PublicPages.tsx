@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  Ban,
   BookOpen,
   CalendarCheck,
+  CircleSlash,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -215,59 +217,62 @@ export function HowItWorksPage() {
           <article className="faq-answer">
             <h3>How do points work?</h3>
             <div>
-              <p>
-                Points record accepted work. Slopbot sizes each accepted pull
-                request with the tiers in the <a href="#points">Points</a>{" "}
-                table. {POINTS_NOTICE}
+              <p className="points-formula" aria-label="Monthly share formula">
+                <b>Your points</b>
+                <span aria-hidden="true">÷</span>
+                <b>Project points</b>
+                <span aria-hidden="true">×</span>
+                <b>Funded pool</b>
+                <span aria-hidden="true">=</span>
+                <b className="points-formula-result">Your share</b>
               </p>
-              <p>
-                Points count toward a payout only on a project with a funded
-                pool, and only for the UTC month they come from. Your projected
-                share is your points that month ÷ the project&apos;s points that
-                month × that month&apos;s funded pool. The owner may adjust
-                amounts before the month locks.
-              </p>
-              <p>
-                Points from a month without a funded pool stay on your record.
-                They do not count toward a later month&apos;s pool, even after
-                the project funds one. Your total carries over from month to
-                month and changes only through recorded corrections.
-              </p>
-              <p>
-                Each project&apos;s owner decides whether and when to fund a
-                pool. Check the project&apos;s page before relying on one, and
-                follow your points and any funded awards in{" "}
-                <Link href="/earnings">Payouts</Link>.
-              </p>
-            </div>
-          </article>
-          <article className="faq-answer">
-            <h3>When will a project be funded?</h3>
-            <div>
-              <p>
-                Each project&apos;s owner decides whether and when to fund its
-                pool and switch on monthly payment. Slop does not fund projects.
-                A project can be listed and record points before its pool is
-                funded, so check the project&apos;s page for its pool status
-                before you choose where to work.
-              </p>
+              <ul className="faq-facts">
+                <li>
+                  <CalendarCheck aria-hidden="true" />
+                  Counts in its own UTC month
+                </li>
+                <li>
+                  <Ban aria-hidden="true" />
+                  No carryover into a later pool
+                </li>
+                <li>
+                  <HandCoins aria-hidden="true" />
+                  <span>
+                    Owner decides funding ·{" "}
+                    <Link href="/earnings">Payouts</Link>
+                  </span>
+                </li>
+                <li>
+                  <CircleSlash aria-hidden="true" />
+                  {POINTS_NOTICE}
+                </li>
+              </ul>
             </div>
           </article>
           <article className="faq-answer">
             <h3>When are payouts sent?</h3>
             <div>
-              <p>
-                Monthly, for projects with monthly payment switched on. Each
-                month runs on UTC time. After a month closes, the owner has 72
-                hours to review amounts or lock the month early; at 72 hours it
-                locks automatically. Payment follows once the vault holds enough
-                for the whole month; an underfunded month waits for a deposit.
-              </p>
-              <p>
-                A payout counts as paid only after it is confirmed on chain.
-                Your profile then shows it with the project, the month and a
-                transaction link. A 2% fee is deducted from each award.
-              </p>
+              <ol
+                className="payment-stages faq-timeline"
+                aria-label="Monthly payout timeline"
+              >
+                <li>
+                  <strong>Month ends</strong>
+                  <span>UTC</span>
+                </li>
+                <li>
+                  <strong>72h review</strong>
+                  <span>Owner adjusts</span>
+                </li>
+                <li>
+                  <strong>Locks</strong>
+                  <span>Automatically</span>
+                </li>
+                <li>
+                  <strong>Paid</strong>
+                  <span>On chain · 2% fee</span>
+                </li>
+              </ol>
             </div>
           </article>
           <article className="faq-answer">

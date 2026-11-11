@@ -315,6 +315,58 @@ textarea:focus-visible {
   min-height: 24px;
 }
 
+.points-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.points-formula b {
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.points-formula .points-formula-result {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.faq-facts {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+
+.faq-facts li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.faq-facts svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--orange);
+}
+
+@media (min-width: 901px) {
+  .faq-timeline {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.faq-timeline {
+  margin: 12px 0 0;
+}
+
 @media (max-width: 700px) {
   .faq-answer {
     display: block;
