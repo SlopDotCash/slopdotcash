@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "8192d07f56f7d9223dea903d54444c7f44fc43c00bb42b4521b8c1904def787e",
+      "sha256": "bbdf1f8ccc025403cfd692658aa10c5f28482261301484f17da53448714ff9ec",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 365, 474, 540, 541, 555, 566, 631,
-        861, 889, 927, 943, 953, 954, 1043, 1143, 1145, 1146, 1310, 1393, 1546,
-        1548, 1578, 1674, 1696, 1767, 1778, 1803, 1872, 1885, 1898, 1907, 1908,
-        1909
+        27, 59, 154, 186, 191, 192, 240, 291, 365, 474, 542, 565, 566, 587, 599,
+        665, 895, 923, 961, 977, 987, 988, 1077, 1177, 1179, 1180, 1344, 1427,
+        1580, 1582, 1612, 1708, 1730, 1801, 1812, 1837, 1906, 1919, 1932, 1941,
+        1942, 1943
       ],
       "review": "mapped-abstraction"
     },
@@ -42,19 +42,20 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "fc2af16d984d5b5e5c9e719a2cb18c1b09618724cdfcbf53da5354058af015e3",
+      "sha256": "95742a4ab2896eeca92fc675595a45aa15871034c9950fbbe526b2fe562ff7d8",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 71, 75, 137, 170, 195, 212, 280],
+      "candidateLines": [1, 80, 84, 148, 187, 212, 230, 305],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "0040755793c31380f2c0c8e5e1ea6845d253c89ca3f1a8d08f0b3ebe93386267",
+      "sha256": "dfb9f6c24dcb5729a6ebc8ec93c9836772e6d26f599d9e92813ce91873dc2b7e",
       "models": [
+        "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
@@ -3355,12 +3356,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "8af46ca358fefc5fc52a930fdeafd4d0fce096c79d3b7678c61cbc150886473f",
+      "sha256": "a3a9a96d85e0b0e8a7e9e072aeeec105f711f830c19dc3c2ff8f87e1c1de9e6f",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [104, 153, 159, 160, 175],
       "review": "mapped-abstraction"
     },
     {
@@ -13094,17 +13095,19 @@
     },
     {
       "path": "formal/models/release/ci_coverage.qnt",
-      "sha256": "43f4fe76e43ebd146a72db638ffc73fc9a65bc23a3c8891097bee5a0a0b96f50",
+      "sha256": "69179871c0e91ee413be2ac33f3196ddbe267fcded19568ca2636a16ead1d412",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
         ".github/workflows/formal.yml",
+        ".github/workflows/lemmascript.yml",
         ".github/workflows/windows-installer.yml",
         "scripts/ci-scope.mjs"
       ],
       "scenarios": [
         "developmentCoverageTest",
         "fixtureSelectsChainCoverageTest",
+        "modelSourceSelectsAffectedModelsTest",
         "releaseCoverageTest"
       ]
     },
