@@ -3749,7 +3749,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "b5164179b1114c391258721b4d821bfc08919e3995fdd6ac827b22a4863ced97",
+      "sha256": "2a2b8751f493ee0f4b1f6b105fbdb6c04b3caa3b6af78429afcb9be166ad583d",
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
