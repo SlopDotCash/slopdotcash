@@ -6080,7 +6080,8 @@
       "sha256": "4451e9d2eda699b05b4fc4b560bdf32861b416327ff4c069397f757f92a740f1",
       "models": [],
       "candidateLines": [27, 70, 79],
-      "review": "pending"
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure resolution of the actor a profile URL names from already-loaded identity sources; no state, I/O, time or persistence."
     },
     {
       "path": "src/lib/profiles.ts",

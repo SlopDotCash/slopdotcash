@@ -69,6 +69,7 @@
   "src/lib/penalty-guide.ts": "Static guide rows derived from the canonical Slopbot penalty table. This projection has no state transition; penalty application, reversal and funded-award preservation remain modeled elsewhere.",
   "src/lib/points-summary.ts": "Pure structural and total/order validation of a supplied summary object; no publication or journal mutation. Points journal and source publication state remain separate models.",
   "src/lib/profile-activity.ts": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation.",
+  "src/lib/profile-actor.ts": "Pure resolution of the actor a profile URL names from already-loaded identity sources; no state, I/O, time or persistence.",
   "src/lib/project-capabilities.mjs": "Pure capability/reason projection from supplied registration, restriction, funding and retired facts. No authority-grant mutation; owning API gates are modeled separately.",
   "src/lib/project-contracts.ts": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions.",
   "src/lib/project-image.mjs": "Pure bounded data-URL and file-signature validation; no retained state, I/O or mutation.",
