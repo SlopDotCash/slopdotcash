@@ -174,7 +174,10 @@ test("all eligible suggestions stay reachable and long titles reflow", async ({
   const work = page.getByRole("region", { name: "Suggested work" });
   // Ten suggestions show first; expanding reveals every eligible item.
   await expect(work.getByRole("link")).toHaveCount(10);
-  await work.getByRole("button", { name: "Show all 13", exact: true }).click();
+  const expand = work.getByRole("button", { name: "Show all 13", exact: true });
+  await expand.focus();
+  await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(work.getByRole("link")).toHaveCount(13);
   await expect(work.getByRole("button", { name: /Show all/ })).toHaveCount(0);
   await expect(
