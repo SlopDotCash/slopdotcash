@@ -61,20 +61,45 @@ export async function reconcileFailedAttempts(
   // Only the networks this Worker serves are reconciled here. `deployments`
   // is exactly that set: the scheduled run builds it from PAYMENT_NETWORKS
   // (registryDeployments). An attempt on a network removed from service
-  // belongs to that network's Worker; selecting it would throw "Reviewed
-  // deployment missing" on every scheduled run. Dispatch and uncertain
+  // matches no reviewed deployment, so it cannot be reconciled by this
+  // Worker — but it must not vanish silently either: the single scheduled
+  // Worker at workers/payments/index.ts is the only production caller of
+  // this function, and no per-network Worker exists in this repo, so a
+  // skipped attempt would otherwise leave its obligation reserved and its
+  // outbox held forever with no error, no log and no counter. Skipped
+  // unserved-network attempts are therefore collected below and folded
+  // into this round's failures, non-blocking, the same way
+  // syncRegistryVaults collects registry failures for scheduled() to
+  // aggregate. Served attempts reconcile as before; dispatch and uncertain
   // recovery filter the same way (index.ts).
   const servedNetworks = [
     ...new Set(deployments.map((deployment) => deployment.network)),
   ];
+  // One attempt's failure must not stop reconciliation of the others (PAY-07).
+  const failures: unknown[] = [];
+  const unserved = await db
+    .prepare(
+      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved' AND o.network NOT IN (SELECT value FROM json_each(?))",
+    )
+    .bind(JSON.stringify(servedNetworks))
+    .first<{ items: string }>();
+  for (const attempt of JSON.parse(unserved?.items ?? "[]") as {
+    id: string;
+    obligationId: string;
+    network: string;
+  }[]) {
+    failures.push(
+      new Error(
+        `Unserved network attempt ${attempt.id} on network ${attempt.network}: no Worker serves this network, so obligation ${attempt.obligationId} stays reserved until the network is served again or the attempt is handled out of band`,
+      ),
+    );
+  }
   const result = await db
     .prepare(
       "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved' AND o.network IN (SELECT value FROM json_each(?))",
     )
     .bind(JSON.stringify(servedNetworks))
     .first<{ items: string }>();
-  // One attempt's failure must not stop reconciliation of the others (PAY-07).
-  const failures: unknown[] = [];
   for (const attempt of JSON.parse(result?.items ?? "[]") as {
     id: string;
     obligationId: string;

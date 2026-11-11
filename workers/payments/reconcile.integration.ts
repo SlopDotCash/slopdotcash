@@ -267,11 +267,14 @@ try {
   }
 
   // Phase 2: the first attempt is on a network this Worker no longer serves
-  // (removed from PAYMENT_NETWORKS, so it has no reviewed deployment). It is
-  // not this Worker's attempt — dispatch and uncertain recovery skip
-  // unserved networks the same way — so it is skipped silently instead of
-  // throwing on every scheduled run. The later Base attempt must still be
-  // reconciled from its revert proof.
+  // (removed from PAYMENT_NETWORKS, so it has no reviewed deployment). It
+  // is not reconciled here — dispatch and uncertain recovery skip
+  // unserved networks the same way — but it must not vanish silently: no
+  // per-network Worker exists in this repo, so a silent skip would leave
+  // its obligation reserved and its outbox held forever with no signal.
+  // The skipped attempt is therefore folded into this round's failures
+  // (non-blocking), on every run, while the later Base attempt still
+  // reconciles from its revert proof.
   {
     const { directory, sql, db } = makeDatabase();
     try {
@@ -293,16 +296,28 @@ try {
         transactionId: BASE_TX,
         seed: "1",
       });
-      const error = await captureError(() =>
-        reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
-      );
-      assert.equal(error, null);
+      for (const round of [1, 2]) {
+        const error = await captureError(() =>
+          reconcileFailedAttempts(db, deployments, rpcUrls, genesisHashes, now),
+        );
+        assert.ok(
+          error instanceof AggregateError,
+          `round ${round}: expected an AggregateError, got ${String(error)}`,
+        );
+        assert.equal(error.errors.length, 1);
+        assert.match(
+          String(error.errors[0]),
+          /Unserved network attempt attempt-ghost on network ghost-net/,
+        );
+      }
       assert.deepEqual(attemptState(sql, "attempt-base"), {
         attemptState: "failed",
         outboxState: "ready",
         failureCount: 1,
       });
-      // The unserved attempt is left untouched for its own network's Worker.
+      // The unserved attempt is left untouched — still submitted/held —
+      // but the signal survives: it is reported in every round's failures
+      // instead of being skipped silently.
       assert.deepEqual(attemptState(sql, "attempt-ghost"), {
         attemptState: "submitted",
         outboxState: "held",
@@ -313,7 +328,7 @@ try {
       rmSync(directory, { recursive: true, force: true });
     }
     console.log(
-      "phase 2 passed: unserved-network attempt skipped, served attempt reconciled",
+      "phase 2 passed: unserved-network attempt reported in failures, served attempt reconciled",
     );
   }
 
