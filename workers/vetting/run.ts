@@ -85,8 +85,8 @@ const COVERED_BY_BOUNDED_SCAN = new Set([
 export { TEMPLATE_PREFIX } from "../../backend/vetting/scan-result";
 
 /**
- * Fails closed unless the primary is the pinned Surplus `claude-opus-5.5`
- * profile and the specialist the pinned Surplus `gpt-6.1-sol` profile, so
+ * Fails closed unless the primary is the pinned Surplus `claude-sonnet-5.5`
+ * profile and the specialist the pinned Surplus `gpt-6.1-terra` profile, so
  * `SURPLUS_API_KEY` reaches only the approved Surplus endpoints.
  */
 function assertPinnedProfiles(
@@ -100,7 +100,7 @@ function assertPinnedProfiles(
     specialist.model !== PINNED_SCANNER_PROFILES["openai-responses"].model
   )
     throw new Error(
-      "The primary review must be Surplus claude-opus-5.5 and the specialist Surplus gpt-6.1-sol",
+      "The primary review must be Surplus claude-sonnet-5.5 and the specialist Surplus gpt-6.1-terra",
     );
   validateProfile(primary);
   validateProfile(specialist);
@@ -110,9 +110,9 @@ export type ScanServiceConfig = {
   connection: QueueConnection;
   /** Read-only GitHub credential, used only while acquiring public source. */
   githubToken?: string;
-  /** Surplus `claude-opus-5.5`: every fresh scan (owner decision D16). */
+  /** Surplus `claude-sonnet-5.5`: every fresh scan (owner decision, 11 November 2026). */
   primary: ScannerProfile;
-  /** Surplus `gpt-6.1-sol`: only ambiguous or high-risk results. */
+  /** Surplus `gpt-6.1-terra`: only ambiguous or high-risk results. */
   specialist: ScannerProfile;
   policyVersion: string;
   /** Operator-private scratch space for acquired bytes. */
@@ -517,6 +517,7 @@ async function scanOne(
       return retry(assessmentId, "acquire", error);
     }
     const inspection = inspectRepository(inputs);
+    inputs.files.push(...(inspection.derivedFiles ?? []));
     // Retain the exact deterministic input separately from the final inventory
     // that includes execution IDs, timestamps and output. Neither is normalized.
     const sourceInventory = inspection.inventory;

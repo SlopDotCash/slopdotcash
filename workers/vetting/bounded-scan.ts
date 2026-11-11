@@ -32,6 +32,7 @@ import {
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
 import type { QueuedAssessment } from "./assembly-manifest";
+import { expandGzipInputs } from "./gzip-inputs";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
@@ -53,6 +54,9 @@ export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 export type ScanInputFile = {
   path: string;
   bytes: Uint8Array;
+  /** Trusted derived inputs retain the decoded name and exact archive lineage. */
+  logicalPath?: string;
+  parentArtifactSha256?: string;
   symlink?: {
     gitSha: string;
     sha256: string;
@@ -540,6 +544,8 @@ const RULE_POLICY_SHA256 = sha256(
     xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
     xmlElementCharacterReferences:
       "msbuild-element-text-except-exec-comments-and-cdata",
+    compressedInputs:
+      "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -1025,6 +1031,8 @@ export type RepositoryInspection = {
   checks: VettingScanResult["checks"];
   findings: ScanFinding[];
   artifacts: VettingArtifact[];
+  /** Decoded artifact bytes that the controller must retain when named. */
+  derivedFiles?: ScanInputFile[];
   dependencyLocks: { path: string; sha256: string }[];
   visibilityGaps: string[];
   /** Download URLs install-time content references. */
@@ -1636,17 +1644,25 @@ export function inspectRepository(input: {
   /** Source the acquisition could not read; each keeps the scan incomplete. */
   acquisitionGaps?: string[];
 }): RepositoryInspection {
-  const files = [...input.files].sort((a, b) =>
+  const expanded = expandGzipInputs(
+    input.files,
+    (path) =>
+      surfacesOf(path).length > 0 ||
+      EXECUTABLE_BINARIES.test(path) ||
+      ARCHIVES.test(path),
+  );
+  const files = expanded.files.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
   const counts = Object.fromEntries(
     SCAN_SURFACES.map((surface) => [surface, 0]),
   ) as Record<ScanSurface, number>;
+  counts.downloads = expanded.archives.length;
   const partial = new Set<ScanSurface>();
-  const gaps: string[] = [...(input.acquisitionGaps ?? [])];
+  const gaps: string[] = [...(input.acquisitionGaps ?? []), ...expanded.gaps];
   if (gaps.length > 0) partial.add("source");
   const findings: ScanFinding[] = [];
-  const artifacts: VettingArtifact[] = [];
+  const artifacts: VettingArtifact[] = [...expanded.archives];
   const dependencyLocks: { path: string; sha256: string }[] = [];
   type Candidate = {
     path: string;
@@ -1669,7 +1685,7 @@ export function inspectRepository(input: {
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
   for (const file of files) {
-    const surfaces = surfacesOf(file.path);
+    const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
@@ -1691,8 +1707,8 @@ export function inspectRepository(input: {
       // quarantined until a specialist or isolated analysis releases it.
       artifacts.push({
         sha256: digest,
-        parentSha256: null,
-        origin: "repository",
+        parentSha256: file.parentArtifactSha256 ?? null,
+        origin: file.parentArtifactSha256 ? "archive" : "repository",
         path: file.path.slice(0, 500),
         type: ARCHIVES.test(file.path)
           ? "archive"
@@ -1780,7 +1796,7 @@ export function inspectRepository(input: {
   // Keep original link bytes and the resolved path in the reviewed/reused
   // identity, even when two targets happen to contain identical content.
   // The absolute ID namespace cannot collide with a repository path.
-  const links = files.flatMap((file) => {
+  const links = input.files.flatMap((file) => {
     if (!file.symlink) return [];
     return textParts(JSON.stringify({ path: file.path, ...file.symlink })).map(
       (text, index, parts) => ({
@@ -1898,6 +1914,7 @@ export function inspectRepository(input: {
     ) as VettingScanResult["checks"],
     findings,
     artifacts,
+    derivedFiles: expanded.derivedFiles,
     dependencyLocks,
     visibilityGaps: gaps,
     downloads: [...downloads].sort(),
