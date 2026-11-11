@@ -925,6 +925,14 @@ positions. Browser regression definitions cover these transitions but remain
 unexecuted. The separate risk-flag component is unmounted; its local model does
 not establish an available UI flow.
 
+The archive model preserves its pending boundary on same-route navigation.
+`useRoute` keeps the archive component mounted, and `useTimeBoundary` cleans up
+only when its timestamp changes or the component unmounts. The earlier model
+cleared the timer without a render on `openArchive`, an impossible source
+transition that violated `deadlineDeliveryProperty`. The two same-archive
+navigation scenarios retain the timer before and after its deadline. The
+temporal property, fairness assumption and concrete browser code are unchanged.
+
 Setup status preserves a successful installation observation when the
 repository or steward identity is known to mismatch. That result asks for
 maintainer action rather than reporting an installation outage. Write routes
