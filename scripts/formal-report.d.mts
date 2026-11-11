@@ -22,3 +22,5 @@ export function formalReportProblems(
   report: unknown,
   expected: FormalReportExpectation,
 ): string[];
+
+export function formalAdapterOverlaySha256(adapterSha256: string): string;

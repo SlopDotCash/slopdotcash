@@ -245,7 +245,7 @@ jobs:
           import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
           import { listModels, modelSources } from "./scripts/formal-models.mjs";
-          import { formalReportProblems, formalStageArguments, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
+          import { formalAdapterOverlaySha256, formalReportProblems, formalStageArguments, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
           import { readSafetyViews, bindSafetyView } from "./scripts/quint-safety-view.mjs";
           import { verificationTransition } from "./scripts/quint-verification-step.mjs";
 
@@ -285,7 +285,7 @@ jobs:
               if (view) {
                 bindSafetyView(safetyViews, view.id, path, source);
                 const { module, ...evidence } = view;
-                safetyView = { ...evidence, adapterSha256: safetyViews.quintAdapterSha256 };
+                safetyView = { ...evidence, adapterSha256: safetyViews.quintAdapterSha256, overlaySha256: formalAdapterOverlaySha256(safetyViews.quintAdapterSha256) };
               }
               const expected = {
                 model: path,

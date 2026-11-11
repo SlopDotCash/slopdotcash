@@ -24,8 +24,10 @@ Producer installation paths differ across runners. The validator checks
 absolute executable roles, the canonical Quint suffix and matching translator
 checkout, without equating the producer's Node installation path to the
 aggregation job's path. The workflow still pins Node24.15.0 and Bun1.3.14.
-The applied overlay digest must be present and well formed; its actual
-construction remains checked by the source-bound canonical producer.
+The applied overlay digest must match the closed reviewed adapter/overlay
+pair. A test computes the actual deterministic VIEW-only patch of the pinned
+official adapter; an unknown adapter requires renewed review. The aggregate
+job needs no dependency installation to check this pin.
 
 Tests mutate individual report obligations and execute the actual workflow
 heredoc with complete and malformed temporary receipts. A native-enabled

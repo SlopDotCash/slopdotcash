@@ -62,6 +62,17 @@ export function formalToolPaths(verify) {
   return [...commonTools, ...(verify ? verificationTools : [])];
 }
 
+// The aggregate job does not install dependencies. Pin the reviewed official
+// adapter's deterministic VIEW-only overlay instead of trusting its report.
+export function formalAdapterOverlaySha256(adapterSha256) {
+  if (
+    adapterSha256 !==
+    "30d69d445952c1ff928923155b2caf6a1955243efe21420c467a0fd5bb0179ec"
+  )
+    throw new Error("Unreviewed Quint adapter overlay");
+  return "18427ab99f12fd9e92f5e926f3ac870e3dee7fb7fa47a408d349d045ac6a46e9";
+}
+
 export function formalTimeoutMs(model, verify) {
   return verify ? (verificationTimeouts[model] ?? 180_000) : 90_000;
 }
@@ -231,18 +242,7 @@ export function formalReportProblems(report, expected) {
         problems.push(`${label}: unexpected safety view`);
     } else {
       const applied = result.safetyView;
-      if (
-        !record(applied) ||
-        !same(
-          Object.fromEntries(
-            Object.keys(view).map((key) => [key, applied?.[key]]),
-          ),
-          view,
-        ) ||
-        !/^[0-9a-f]{64}$/u.test(applied.overlaySha256 ?? "") ||
-        Object.keys(applied).sort().join(",") !==
-          [...Object.keys(view), "overlaySha256"].sort().join(",")
-      )
+      if (!same(applied, view))
         problems.push(`${label}: wrong applied safety view`);
     }
   }

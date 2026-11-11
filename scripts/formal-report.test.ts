@@ -9,15 +9,18 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   type FormalReportExpectation,
+  formalAdapterOverlaySha256,
   formalReportProblems,
   formalStageArguments,
   formalTimeoutMs,
   formalToolPaths,
 } from "./formal-report.mjs";
+import { patchTlcConfig } from "./quint-safety-view.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const hash = (text: string | Buffer) =>
@@ -450,6 +453,7 @@ test("reviewed safety metadata must be complete, exact and accompanied by its re
     clauses: [],
     viewTlaSha256: hash("viewed TLA"),
     adapterSha256: hash("adapter"),
+    overlaySha256: hash("overlay"),
   };
   report.results[0].requestedSafetyView = "reviewed-fixture";
   report.results[0].safetyView = {
@@ -486,6 +490,21 @@ test("reviewed safety metadata must be complete, exact and accompanied by its re
     mutate(changed.results[0]);
     expect(formalReportProblems(changed, expected).length).toBeGreaterThan(0);
   }
+});
+
+test("the expected overlay matches the actual pinned official adapter and reviewed VIEW-only patch", () => {
+  const require = createRequire(import.meta.url);
+  const source = readFileSync(
+    require.resolve("@informalsystems/quint/dist/src/tlc.js"),
+    "utf8",
+  );
+  const digest = hash(source);
+  expect(formalAdapterOverlaySha256(digest)).toBe(
+    hash(patchTlcConfig(source, digest)),
+  );
+  expect(() => formalAdapterOverlaySha256(hash("unreviewed adapter"))).toThrow(
+    "Unreviewed Quint adapter overlay",
+  );
 });
 
 function workflowProgram() {

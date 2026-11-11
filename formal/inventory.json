@@ -42,7 +42,7 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "a63dc7eb3d3b6a5124a6c87a5b8a8d712715bfd696e0d8cf0b842a16b6ce423c",
+      "sha256": "77991c3af692d34d7e4c28297bb12da9353e2eabb94f30e17feb527c3bb2bc70",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
@@ -3407,7 +3407,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "f2023e0f5e70eea87154569130a8e018c34c89454ad37f9a99096f98730d903f",
+      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3744,7 +3744,7 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "5f09d9d408475da6a40f3fe8399b878d2f1424270301566fe16876c57163fd5d",
+      "sha256": "bbcd749f87e9a2c103ab72f7a73be82e9e2e61a0b43f1295693b1c50f71d3fe3",
       "models": [],
       "candidateLines": [36, 39, 47],
       "review": "reviewed-no-independent-state",
