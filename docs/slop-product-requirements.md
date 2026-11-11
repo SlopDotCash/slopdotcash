@@ -233,7 +233,7 @@ Slopbot is required, always free, and limited to registered repositories. Never 
 
 Apply effective repository security, scope, ignore, and rejection rules before review. Review exact source against approved base-branch rules. Run untrusted code only in approved isolation without secrets or posting credentials.
 
-Use Surplus Opus 5.5, then GPT-6.1 Sol as fallback. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
+Owner decision, 11 November 2026: use Orbio first and Surplus Intelligence as backup. Start with Claude Sonnet 5.5 through Orbio. Any Orbio failure, including exhausted credits, goes directly to Surplus Claude Sonnet 5.5, then Surplus GPT-6.1 Terra. Do not retry another Orbio model before the backup. Use these lower-cost models for active API review, scoring, repository scanning, and private-report analysis. Preserve historical model attribution and billing records. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
 
 Slopbot assesses PR size and value and credits useful reviews under section 7. Maintainers decide merges. Preserve repository opt-outs and exemptions.
 
@@ -491,7 +491,7 @@ Run deterministic checks over every file. Review large content in token-budgeted
 
 There is no repository, entry-count, file, object, or run size refusal. Repeating the same scan cannot be the sole remedy for a large repository. Incomplete review never passes.
 
-Use Surplus Opus 5.5 first. Use GPT-6.1 Sol or specialist investigation only for ambiguous or high-risk findings. Use one disposable Cloudflare sandbox per risky artifact, with internet off and no secrets. Full runtime execution of every project is not required.
+Use Surplus Claude Sonnet 5.5 first. Use GPT-6.1 Terra or specialist investigation only for ambiguous or high-risk findings. Use one disposable Cloudflare sandbox per risky artifact, with internet off and no secrets. Full runtime execution of every project is not required.
 
 A passed scan means every defined check ran on the bound revision and found no malicious result. Record checks and coverage gaps. It is not a guarantee of safety. Uncovered executable content makes the scan incomplete unless a check, isolated execution, or specialist review covers it.
 
@@ -540,7 +540,7 @@ Retain the exact report in private object storage before optional forwarding. Bi
 
 ### Screening, human review, and forwarding
 
-Screen before notifying the project owner. Use the existing Surplus account and requested model `claude-opus-5.5`. The marketplace model identity is not independently verified. Use no provider fallback and execute no submitted code. Treat every report field as untrusted data.
+Screen before notifying the project owner. Use the existing Surplus account and requested model `claude-sonnet-5.5`. The marketplace model identity is not independently verified. Use no provider fallback and execute no submitted code. Treat every report field as untrusted data.
 
 Screen for plausibility, reproducibility, missing evidence, duplication, and spam. Screening is advisory and separate from severity, acceptance, award, payment, and disclosure. Missing evidence, suspected spam, uncertainty, or provider failure must remain recoverable. An authorized owner may review or override a held result. Notify owners only for plausible or owner-approved reports, through private Inbox and verified email notices.
 

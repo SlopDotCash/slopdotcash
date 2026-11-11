@@ -31,7 +31,7 @@ const profile: ScannerProfile = {
   reviewer: "opus",
   transport: "anthropic-messages",
   endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-  model: "claude-opus-5.5",
+  model: "claude-sonnet-5.5",
   apiKey: "fixture-surplus-key",
   maxOutputTokens: 1024,
   rateCard: {
@@ -291,7 +291,7 @@ function provider(answer: (input: string, index: number) => Response | null) {
     const items = JSON.parse(input).items as { id: string }[];
     return Response.json({
       id: `msg_${index}`,
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       stop_reason: "end_turn",
       content: [
         {
@@ -348,7 +348,7 @@ test("a batched review combines every call and fails when any batch fails", asyn
     index === 1
       ? Response.json({
           id: "msg_partial",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "end_turn",
           content: [
             {
@@ -629,7 +629,7 @@ test("a failed review names one fixed failure category and never provider text",
   const answer = (overrides: Record<string, unknown>, text?: string) =>
     Response.json({
       id: "msg_failure",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       stop_reason: "end_turn",
       content: [
         {
@@ -811,7 +811,7 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
       index === plan.batches.length
         ? Response.json({
             id: "msg_synthesis",
-            model: "claude-opus-5.5",
+            model: "claude-sonnet-5.5",
             stop_reason: "max_tokens",
             content: [{ type: "text", text: "{" }],
             usage: { input_tokens: 1, output_tokens: 1 },
@@ -826,7 +826,7 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
 const unreadableReview = () =>
   Response.json({
     id: "msg_unreadable",
-    model: "claude-opus-5.5",
+    model: "claude-sonnet-5.5",
     stop_reason: "end_turn",
     content: [{ type: "text", text: "not a review" }],
     usage: { input_tokens: 7, output_tokens: 3 },
@@ -902,7 +902,7 @@ test("a batch call that returns an unreadable review is retried before the revie
     input === first
       ? Response.json({
           id: "msg_stop",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "max_tokens",
           content: [{ type: "text", text: "{" }],
           usage: { input_tokens: 1, output_tokens: 1 },
