@@ -3,7 +3,10 @@ import type { ActorRef } from "./leaderboard-types";
 /**
  * Builds the cumulative cross-project leaderboard from accepted score events
  * and immutable closed-cycle records. A closed cycle replaces overlapping
- * rolling-window events so its complete score is counted exactly once.
+ * rolling-window events for the actors it lists, so each listed actor's
+ * complete score is counted exactly once. An actor the cycle does not list
+ * keeps counting through the rolling window: the cycle record carries no
+ * score for them, so suppressing their events would count them zero times.
  * Events before a project's reward start are outside every cycle of that
  * project: the cycle leaderboard and the closed record do not count them, so
  * this projection does not count them either.
@@ -57,9 +60,10 @@ function projectOf(repository: string) {
 }
 
 /**
- * Rolling-window events and debits of months without a closed cycle record.
- * A closed record already carries its month's score, so a later debit never
- * changes it.
+ * Rolling-window events and debits of months without a closed cycle record
+ * for that actor. A closed record already carries its listed actors' scores,
+ * so a later debit never changes them. An actor the cycle does not list has
+ * no score in that record, so their events and debits stay open.
  */
 export function openMonthScores(
   snapshot: LeaderboardSnapshot,
@@ -78,9 +82,18 @@ export function openMonthScores(
     archived.push(false);
     return index;
   };
+  const actorScope = (projectId: string, cycleId: string, actorId: string) =>
+    `${cycleKey(projectId, cycleId)}\0${actorId}`;
   for (const cycle of cycleIndex.cycles)
-    archived[scopeIndex(cycleKey(cycle.projectId, cycle.cycleId))] = true;
-  const select = <T extends { repository: string; occurredAt: string }>(
+    for (const contributor of cycle.contributors)
+      archived[
+        scopeIndex(
+          actorScope(cycle.projectId, cycle.cycleId, contributor.actor.id),
+        )
+      ] = true;
+  const select = <
+    T extends { repository: string; occurredAt: string; actor: { id: string } },
+  >(
     records: readonly T[],
   ): T[] => {
     const rows = records.map((record) => {
@@ -89,7 +102,13 @@ export function openMonthScores(
         afterStart:
           Date.parse(record.occurredAt) >=
           Date.parse(project.reward.rewardStartAt),
-        scope: scopeIndex(cycleKey(project.id, record.occurredAt.slice(0, 7))),
+        scope: scopeIndex(
+          actorScope(
+            project.id,
+            record.occurredAt.slice(0, 7),
+            record.actor.id,
+          ),
+        ),
       };
     });
     return openSourceIndices(rows, archived).map((index) => records[index]);
