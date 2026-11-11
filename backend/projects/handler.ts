@@ -1445,13 +1445,15 @@ async function ownerVault(
         d.network === input.network &&
         d.deploymentTransaction === transactionId,
     );
-    if (existing)
+    if (existing) {
+      await deps.vaultSetup.observe(current, existing, input.payoutPolicy);
       return json(200, {
         status: "registered",
         deployment: existing,
         project: current.manifest,
         revision: current.revision,
       });
+    }
   }
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -1550,6 +1552,7 @@ async function ownerVault(
     reason:
       "Owner registered a finalized vault verified against the reviewed factory and project policy.",
   });
+  await deps.vaultSetup.observe(updated, deployment, input.payoutPolicy);
   return json(200, {
     status: "registered",
     deployment,

@@ -312,7 +312,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   status = 200;
   await load.click();
   const awards = page.getByRole("region", { name: "Monthly awards" });
-  await expect(awards).toContainText("1.23456789 TEST");
+  await expect(awards).toContainText("1.23456789 $TEST");
   await expect(awards).not.toContainText("reason");
   const firstBreakdown = awards
     .getByRole("list", { name: "Allocations", exact: true })
@@ -323,8 +323,8 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
         exact: true,
       }),
     });
-  await expect(firstBreakdown).toContainText("1.209876532 TEST");
-  await expect(firstBreakdown).toContainText("0.024691358 TEST");
+  await expect(firstBreakdown).toContainText("1.209876532 $TEST");
+  await expect(firstBreakdown).toContainText("0.024691358 $TEST");
   const basis = firstBreakdown.locator("details");
   await expect(
     basis.getByText("Proposed gross", { exact: true }),
@@ -334,7 +334,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(
     basis.getByText("Proposed gross", { exact: true }),
   ).toBeVisible();
-  await expect(basis).toContainText("1.23456789 TEST");
+  await expect(basis).toContainText("1.23456789 $TEST");
   await basis.getByText("Allocation basis", { exact: true }).focus();
   await page.keyboard.press("Enter");
   const secondBreakdown = awards
@@ -346,16 +346,16 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
         exact: true,
       }),
     });
-  await expect(secondBreakdown).toContainText("1.96 TEST");
-  await expect(secondBreakdown).toContainText("0.04 TEST");
+  await expect(secondBreakdown).toContainText("1.96 $TEST");
+  await expect(secondBreakdown).toContainText("0.04 $TEST");
   await awards.getByLabel("Award for first-contributor").fill("1.8");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
   await awards
     .getByRole("button", { name: "Save second-contributor", exact: true })
     .click();
   await expect(page.getByText("Allocation saved privately.")).toBeVisible();
-  await expect(secondBreakdown).toContainText("1.47 TEST");
-  await expect(secondBreakdown).toContainText("0.03 TEST");
+  await expect(secondBreakdown).toContainText("1.47 $TEST");
+  await expect(secondBreakdown).toContainText("0.03 $TEST");
   expect(changes).toEqual([
     { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
   ]);
@@ -434,7 +434,7 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   // Keep aggregate and saved amounts together at enlarged text sizes; wrapping
   // the asset onto another line is fine, splitting the number is not.
   await expect(awards.locator(".route-metric--info > dd")).toHaveText(
-    "2.73456789 TEST",
+    "2.73456789 $TEST",
   );
   expect(
     await awards

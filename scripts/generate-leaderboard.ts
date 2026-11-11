@@ -1164,10 +1164,10 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
   const id = asString(node.id, `${path}.id`);
   const comments = parseComments(node.comments, `${path}.comments`, id);
   const reviews = parseReviews(node.reviews, `${path}.reviews`);
-  // GitHub can return null for an oversized draft diff, even with zero diff
-  // counters. Retain that draft, but never represent unavailable files as [].
+  // GitHub can return null for an oversized open diff, even with zero diff
+  // counters. Retain the source, but never represent unavailable files as [].
   const files =
-    node.files === null && node.state === "OPEN" && node.isDraft === true
+    node.files === null && node.state === "OPEN"
       ? null
       : parseFiles(node.files, `${path}.files`);
   const closingIssues = parseClosingIssueIds(
@@ -2757,9 +2757,7 @@ async function completePullRequestConnections(
     if (
       node.files === null &&
       parsed.state === "OPEN" &&
-      pullRequest.isDraft &&
       node.state === "OPEN" &&
-      node.isDraft === true &&
       node.headRefOid === pullRequest.headRefOid
     ) {
       // A later page can become unavailable too. Discard the partial diff.

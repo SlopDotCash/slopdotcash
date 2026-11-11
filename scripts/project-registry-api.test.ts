@@ -450,6 +450,7 @@ describe("project registry API", () => {
       upgradeAuthority: null,
     };
     deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["base-sepolia"],
       review: async () => {
         throw Error("unused");
@@ -1180,6 +1181,7 @@ describe("project registry API", () => {
     if (!current) throw new Error("Missing bounty project");
     let verificationReads = 0;
     deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["base-sepolia"],
       review: async () => {
         throw new Error("Not used in this API boundary case");

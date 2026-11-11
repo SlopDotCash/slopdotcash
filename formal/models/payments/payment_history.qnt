@@ -124,17 +124,27 @@ module payment_history {
         .with("cursor", if (bad) s.cursor else page.next).with("collected", if (bad) s.collected else collected) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
-    nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf()
-    nondet row = Set(0, 1, 2, 3, 4, 5).oneOf()
-    nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
-    nondet rail = Set("vault", "direct").oneOf()
-    nondet n = Set(2, 3, 5).oneOf()
-    nondet filterScope = scopes.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { configure(rail, n, yes, row, other), scope(filterScope, yes), appendRecord, appendPrivate,
-      visibility(id, yes), attachMonth(row), begin(id, after, through, yes), boundary(id), count(id), readPage(id), validate(id), queryFailure(id), accept(id), s' = s }
+    any {
+      { nondet row = Set(0, 1, 2, 3, 4, 5).oneOf() nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
+        nondet rail = Set("vault", "direct").oneOf() nondet n = Set(2, 3, 5).oneOf()
+        nondet yes = Set(false, true).oneOf()
+        configure(rail, n, yes, row, other) },
+      { nondet filterScope = scopes.oneOf() nondet yes = Set(false, true).oneOf() scope(filterScope, yes) },
+      appendRecord,
+      appendPrivate,
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() visibility(id, yes) },
+      { nondet row = Set(0, 1, 2, 3, 4, 5).oneOf() attachMonth(row) },
+      { nondet id = ids.oneOf() nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
+        nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf() nondet yes = Set(false, true).oneOf()
+        begin(id, after, through, yes) },
+      { nondet id = ids.oneOf() boundary(id) },
+      { nondet id = ids.oneOf() count(id) },
+      { nondet id = ids.oneOf() readPage(id) },
+      { nondet id = ids.oneOf() validate(id) },
+      { nondet id = ids.oneOf() queryFailure(id) },
+      { nondet id = ids.oneOf() accept(id) },
+      s' = s
+    }
   }
   val invariant = all {
     s.present.subseteq(ordinaryIds), not(s.collected.contains(6)),
@@ -145,7 +155,7 @@ module payment_history {
         page.selected.forall(row => row > page.after and row <= page.through),
         (page.result == "200" and s.rail == "vault") implies page.selected.intersect(s.invalid).size() == 0 }
     }), s.ready implies not(s.failed) and s.collected.size() == s.total and s.collected.forall(row => row <= s.through) }
-  action base = init.then(configure("vault", 2, false, 0, 0))
+  run base = init.then(configure("vault", 2, false, 0, 0))
   action queried(id: int): bool = boundary(id).then(count(id)).then(readPage(id)).then(validate(id))
   action firstPage = begin(1, 0, -1, true).then(queried(1))
   action nextPage = begin(2, s.cursor, s.through, true).then(queried(2))

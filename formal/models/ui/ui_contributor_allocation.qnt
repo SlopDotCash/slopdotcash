@@ -125,17 +125,25 @@ module ui_contributor_allocation {
       .with("publishedBy", 0).with("publishedLife", 0)
       .with("renderedExpired", s.nowExpired).with("boundaryInstalled", false) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = actors.oneOf()
-    nondet recipients = masks.oneOf()
-    nondet transfers = masks.oneOf()
-    nondet first = walletClasses.oneOf()
-    nondet second = walletClasses.oneOf()
-    nondet outcome = Set("valid", "absent", "invalid").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { beginRead(id), headers(id, yes), body(id, outcome, recipients, transfers, yes),
-      requestFails(id), publish(id), retry, accountChanges(actor), walletsChange(id, first, second),
-      deadline, installBoundary, fireBoundary, depart, remount(actor), s' = s }
+    any {
+      { nondet id = ids.oneOf() beginRead(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() headers(id, yes) },
+      { nondet id = ids.oneOf() nondet recipients = masks.oneOf() nondet transfers = masks.oneOf()
+        nondet outcome = Set("valid", "absent", "invalid").oneOf() nondet yes = Set(false, true).oneOf()
+        body(id, outcome, recipients, transfers, yes) },
+      { nondet id = ids.oneOf() requestFails(id) },
+      { nondet id = ids.oneOf() publish(id) },
+      retry,
+      { nondet actor = actors.oneOf() accountChanges(actor) },
+      { nondet id = ids.oneOf() nondet first = walletClasses.oneOf() nondet second = walletClasses.oneOf()
+        walletsChange(id, first, second) },
+      deadline,
+      installBoundary,
+      fireBoundary,
+      depart,
+      { nondet actor = actors.oneOf() remount(actor) },
+      s' = s
+    }
   }
   val invariant = all { s.life >= 1, s.life <= 2, actors.contains(s.actor),
     masks.contains(s.recipients), masks.contains(s.transfers), subset(s.transfers, s.recipients),
@@ -147,7 +155,7 @@ module ui_contributor_allocation {
     not(s.mounted) implies state == "hidden" }
   action loadPublished(id: int, recipients: int, transfers: int, closed: bool): bool =
     beginRead(id).then(headers(id, true)).then(body(id, "valid", recipients, transfers, closed)).then(publish(id))
-  action ready = init.then(loadPublished(1, 1, 0, false))
+  run ready = init.then(loadPublished(1, 1, 0, false))
 
   // Retain the original five disposition scenarios with explicit file reads.
   run deadlineTest = ready.then(installBoundary).then(deadline).then(fireBoundary)

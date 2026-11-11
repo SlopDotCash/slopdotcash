@@ -200,6 +200,14 @@ stored row stays. An older block never replaces a newer one. The ledger then
 takes each award's asset and decimals from that row, so an award is indexed
 only after its vault was read.
 
+Owner vault registration also saves the first finalized observation after its
+immutable registry revision. An unavailable read leaves that registration intact;
+the owner's authenticated registration retry can save the missing observation
+without another revision. This also works when payout execution is inactive.
+The protected main release repairs missing ordinary Solana observations through
+the same adapters and monotonic writer. It retains existing rows and never signs,
+submits a transaction, enables execution, or changes a scheduler.
+
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
 (`caches.default`, 60 seconds), never a chain RPC. The project page shows

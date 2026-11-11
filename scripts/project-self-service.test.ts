@@ -3172,6 +3172,7 @@ test.each(["vault verification", "owner update"])(
       finish = resolve;
     });
     t.deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["ethereum"],
       review: async () => {
         throw new Error("Not used");
@@ -3295,6 +3296,7 @@ test("only the steward or a repository admin can register the project vault", as
   ).toBe(200);
   const registered: string[] = [];
   t.deps.vaultSetup = {
+    observe: async () => {},
     networks: async () => ["ethereum"],
     review: async () => {
       throw new Error("Not used");
@@ -3374,6 +3376,7 @@ test("an EVM vault creation hash registers in any letter case", async () => {
   ).toBe(200);
   const verified: string[] = [];
   t.deps.vaultSetup = {
+    observe: async () => {},
     networks: async () => ["ethereum"],
     review: async () => {
       throw new Error("Not used");

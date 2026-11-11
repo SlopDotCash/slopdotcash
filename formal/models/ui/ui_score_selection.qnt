@@ -1,15 +1,19 @@
 // @source src/lib/leaderboard.ts
+// @source scripts/generate-leaderboard.ts
 // candidateExclusionReasons, workItemSelection, issueWorkItem, pullRequestWorkItem.
 // The census retains excluded rows; the advertisement is a derived projection.
 // One bounded issue/PR representative covers each blocking fact independently.
 // help wanted represents the existing ready-label class; mission-ready is the
 // upstream addition. Neither label may lift a security or blocking exclusion.
+// An open diff can be unavailable on its first page or on a later page at
+// the same head. Keep the census row and refuse its review advertisement.
+// Merged file recovery remains a separate native-Git evidence requirement.
 module ui_score_selection {
   var s: { kind: str, author: str, readyLabel: str, claim: bool, blocked: bool,
-    security: bool, draft: bool, decision: str, requested: bool, sourceRows: int,
+    security: bool, draft: bool, filesAvailable: bool, decision: str, requested: bool, sourceRows: int,
     advertisement: str }
   action init = s' = { kind: "issue", author: "human", readyLabel: "help wanted", claim: false,
-    blocked: false, security: false, draft: false, decision: "none", requested: false,
+    blocked: false, security: false, draft: false, filesAvailable: true, decision: "none", requested: false,
     sourceRows: 1, advertisement: "unchecked" }
   action pullRequest = s' = s.with("kind", "pull-request").with("advertisement", "unchecked")
   action unknownAuthor = s' = s.with("author", "unknown").with("advertisement", "unchecked")
@@ -20,16 +24,19 @@ module ui_score_selection {
   action blocked = s' = s.with("blocked", true).with("advertisement", "unchecked")
   action security = s' = s.with("security", true).with("advertisement", "unchecked")
   action draft = s' = s.with("draft", true).with("advertisement", "unchecked")
+  action unavailableFiles = all { s.kind == "pull-request",
+    s' = s.with("filesAvailable", false).with("advertisement", "unchecked") }
+  action recoveredFiles = s' = s.with("filesAvailable", true).with("advertisement", "unchecked")
   action approved = s' = s.with("decision", "approved").with("advertisement", "unchecked")
   action changesRequested = s' = s.with("decision", "changes-requested").with("advertisement", "unchecked")
   action reviewRequested = s' = s.with("requested", true).with("advertisement", "unchecked")
   val candidate = s.author == "human" and not(s.claim) and not(s.blocked)
     and not(s.security) and not(s.draft) and s.decision == "none"
     and (s.kind != "issue" or Set("help wanted", "mission-ready").contains(s.readyLabel))
-    and (s.kind != "pull-request" or not(s.requested))
+    and (s.kind != "pull-request" or (not(s.requested) and s.filesAvailable))
   action classify = s' = s.with("advertisement", if (candidate) "candidate" else "excluded")
   action step = any { pullRequest, unknownAuthor, botAuthor, untriaged, missionReady, claimed,
-    blocked, security, draft, approved, changesRequested, reviewRequested, classify }
+    blocked, security, draft, unavailableFiles, recoveredFiles, approved, changesRequested, reviewRequested, classify }
   val invariant = all { s.sourceRows == 1, s.advertisement == "candidate" implies candidate }
   run missionReadyTest = init.then(untriaged).then(missionReady).then(classify).expect(s.advertisement == "candidate")
   run missionReadySecurityTest = init.then(security).then(missionReady).then(classify).expect(s.advertisement == "excluded")
@@ -40,4 +47,8 @@ module ui_score_selection {
   run humanGateTest = init.then(blocked).then(classify).expect(s.advertisement == "excluded")
   run changesRequestedTest = init.then(pullRequest).then(changesRequested).then(classify).expect(s.advertisement == "excluded")
   run unknownAuthorTest = init.then(unknownAuthor).then(classify).expect(s.advertisement == "excluded")
+  run unavailableDiffRetainsCensusTest = init.then(pullRequest).then(unavailableFiles).then(classify)
+    .expect(s.advertisement == "excluded" and s.sourceRows == 1 and not(s.draft))
+  run recoveredDiffAllowsReviewTest = init.then(pullRequest).then(unavailableFiles).then(classify)
+    .then(recoveredFiles).then(classify).expect(s.advertisement == "candidate" and s.sourceRows == 1)
 }

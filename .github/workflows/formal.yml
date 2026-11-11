@@ -12,6 +12,15 @@ on:
         type: string
         default: "[1, 2, 3, 4, 5, 6]"
   workflow_dispatch:
+    inputs:
+      models:
+        description: "all, or space-separated model names for a focused diagnostic run"
+        type: string
+        default: all
+      shards:
+        description: "JSON shard array; use [1] for a small focused diagnostic run"
+        type: string
+        default: "[1, 2, 3, 4, 5, 6]"
 
 permissions:
   contents: read
@@ -28,7 +37,8 @@ env:
 jobs:
   inventory:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Retain every native counterexample/continuation control and cold setup.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -80,7 +90,22 @@ jobs:
       - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
-        run: bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts
+        run: >-
+          bun test
+          ./scripts/quint-local-translator.test.ts
+          ./scripts/quint-safety-view.test.ts
+          ./scripts/owner-vault-terminal-quotient.test.ts
+          ./scripts/project-lookup-legacy-quotient.test.ts
+          ./scripts/owner-vault-delayed-input.test.ts
+          ./scripts/admin-mutation-continuation-quotient.test.ts
+          ./scripts/email-preference-request-quotient.test.ts
+          ./scripts/publication-continuation-quotient.test.ts
+          ./scripts/security-settings-safety-view.test.ts
+          ./scripts/solana-binding-api-quotient.test.ts
+          ./scripts/solana-wallet-provider-quotient.test.ts
+          ./scripts/contributor-allocation-safety-view.test.ts
+          ./scripts/bot-inference-symmetry.test.ts
+          ./scripts/formal-source-binding.test.ts
       - name: Check source inventory and state catalog
         run: |
           bun run formal:coverage
@@ -88,11 +113,12 @@ jobs:
 
   models:
     name: models ${{ matrix.shard }}
-    # A manual run has no inputs and checks every model.
+    # Manual diagnostics may select models; trusted releases request all.
     if: ${{ (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
-    # The slowest single model has a 30-minute verifier allowance.
-    timeout-minutes: 75
+    # Each model keeps its explicit bound; leave time for the complete shard.
+    # The prior 75-minute budget canceled two shards before their later models.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

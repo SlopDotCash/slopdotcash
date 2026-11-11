@@ -199,16 +199,44 @@ module vetting_evidence_delivery {
         .with("phase", if (commits and reply and r.outcome == "finished" and not(r.cancelled)) "closed" else "done"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet grant = ids.oneOf()
-    nondet kind = kinds.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { tick, session(actor), closeCase, permanent, prepareGrant(id, kind, yes), grantWrite(id, yes), grantReply(id, yes), clearExpiredCookie,
-      begin(id, grant, kind, yes), authenticate(id), consumeWrite(id, yes), consumeReply(id, yes, other), attemptAudit(id, yes, other),
-      prepareRead(id, yes, other), bodyIo(id, yes), bodyAudit(id, yes, other), refresh(id, yes), bodyFinish(id), response(id, yes), nativeResponse(id),
-      pull(id), partIo(id, yes), startAudit(id, yes), enqueue(id), cancel(id), drainCancelledIo(id), terminalAudit(id, yes, other), s' = s }
+    any {
+      tick,
+      { nondet actor = Set(0, 1, 2).oneOf() session(actor) },
+      closeCase,
+      permanent,
+      { nondet id = ids.oneOf() nondet kind = kinds.oneOf() nondet yes = Set(false, true).oneOf()
+        prepareGrant(id, kind, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() grantWrite(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() grantReply(id, yes) },
+      clearExpiredCookie,
+      { nondet id = ids.oneOf() nondet grant = ids.oneOf() nondet kind = kinds.oneOf()
+        nondet yes = Set(false, true).oneOf()
+        begin(id, grant, kind, yes) },
+      { nondet id = ids.oneOf() authenticate(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() consumeWrite(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        consumeReply(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        attemptAudit(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        prepareRead(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() bodyIo(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        bodyAudit(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() refresh(id, yes) },
+      { nondet id = ids.oneOf() bodyFinish(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() response(id, yes) },
+      { nondet id = ids.oneOf() nativeResponse(id) },
+      { nondet id = ids.oneOf() pull(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() partIo(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() startAudit(id, yes) },
+      { nondet id = ids.oneOf() enqueue(id) },
+      { nondet id = ids.oneOf() cancel(id) },
+      { nondet id = ids.oneOf() drainCancelledIo(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        terminalAudit(id, yes, other) },
+      s' = s
+    }
   }
   val invariant = all {
     ids.forall(id => s.grants.get(id).stored == s.grants.get(id).audited),

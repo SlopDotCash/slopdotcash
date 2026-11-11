@@ -109,14 +109,24 @@ module identity_consumer_exchange {
       call.with("phase", "done").with("result", if (delivered) "token-returned" else "response-lost"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet caller = callers.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet kind = replyKinds.oneOf()
-    nondet body = bodyKinds.oneOf()
-    any { configure(caller), tick, begin(id, caller, yes, other), remoteClock(id), consume(id), serviceFailure(id),
-      reply(id, kind), readBody(id, body, yes), project(id), captureClaims(id), sign(id, yes), respond(id, yes), s' = s }
+    any {
+      { nondet caller = callers.oneOf() configure(caller) },
+      tick,
+      { nondet id = ids.oneOf() nondet caller = callers.oneOf() nondet yes = Set(false, true).oneOf()
+        nondet other = Set(false, true).oneOf()
+        begin(id, caller, yes, other) },
+      { nondet id = ids.oneOf() remoteClock(id) },
+      { nondet id = ids.oneOf() consume(id) },
+      { nondet id = ids.oneOf() serviceFailure(id) },
+      { nondet id = ids.oneOf() nondet kind = replyKinds.oneOf() reply(id, kind) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet body = bodyKinds.oneOf()
+        readBody(id, body, yes) },
+      { nondet id = ids.oneOf() project(id) },
+      { nondet id = ids.oneOf() captureClaims(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() sign(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() respond(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.commits >= 0, s.commits <= 1, s.spent == (s.commits == 1),
@@ -132,8 +142,8 @@ module identity_consumer_exchange {
         not(call.roles.contains("operator")), not(call.roles.contains("project_owner")) }
     }) }
 
-  action points = init.then(configure("points"))
-  action trace = init.then(configure("trace"))
+  run points = init.then(configure("points"))
+  run trace = init.then(configure("trace"))
   action consumed(id: int, caller: str): bool = begin(id, caller, true, true).then(remoteClock(id)).then(consume(id))
   action projected(id: int, caller: str, node: bool): bool = consumed(id, caller).then(reply(id, "ok"))
     .then(readBody(id, "valid", node)).then(project(id))
