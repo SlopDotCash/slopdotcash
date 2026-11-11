@@ -7737,11 +7737,11 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "ed1fede597a3dee0fa61c67510de560e034ca3a75593f88ae55762e6ae105a41",
+      "sha256": "313ab99541ce9c7ac4e58b3e8cd189aa56d960dbae9c288797a6d105f8783f3b",
       "models": ["formal/models/slopbot/bot_repository_access.qnt"],
       "candidateLines": [
-        43, 74, 85, 102, 111, 112, 113, 115, 119, 120, 123, 161, 164, 217, 218,
-        249
+        43, 85, 96, 113, 122, 123, 124, 126, 130, 131, 134, 174, 177, 230, 231,
+        262
       ],
       "review": "mapped-abstraction"
     },
@@ -8035,12 +8035,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "fb6e4c43050be8977206a962c3bac7489490508dc006b450df775ac59c8ca6b8",
+      "sha256": "451407b1124394a32218e4afb3adbeec12eafcc59095acd0595aa11452715c39",
       "models": [
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 521, 541, 584, 593, 612, 953, 972],
+      "candidateLines": [
+        62, 73, 82, 96, 383, 540, 560, 603, 612, 631, 972, 991
+      ],
       "review": "mapped-abstraction"
     },
     {
