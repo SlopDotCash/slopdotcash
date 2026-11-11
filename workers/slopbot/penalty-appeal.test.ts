@@ -187,7 +187,12 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
   let beforeCloseReservation: (() => Promise<void>) | null = null;
   const prepare = db.prepare.bind(db);
   db.prepare = (sql) => {
-    const statement = prepare(sql);
+    // SQLite reads the real clock, which setSystemTime does not move. Give
+    // every statement the test's clock, so a lease or cap written at
+    // CLOSED_AT is not compared with the day the suite happens to run.
+    const statement = prepare(
+      sql.replaceAll("'now'", `'${new Date().toISOString()}'`),
+    );
     if (sql.startsWith("INSERT OR IGNORE INTO slopbot_close_attempts")) {
       const wrap = (inner: typeof statement): typeof statement => ({
         ...inner,
