@@ -30,6 +30,8 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // Private experiment: retain the reviewed graph after its 180-second timeout.
+  "formal/models/vetting/vetting_backup_chain.qnt": 600_000,
   // These source-bound finite graphs still had millions of queued states
   // after the ordinary three-minute budget. Retain the complete domains,
   // transitions and reviewed views; grant time to finish the same graph.

@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "194a45daa399416adaafa572f8756db1f85e3005fd8c2ac993e312bf66f1b7f5",
+      "sha256": "40e84782b99113ee1c57061787e8a5ca9e7c91aa9883e8c9a5f3f429f8964e95",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 81, 99, 164, 203, 228, 246, 321],
+      "candidateLines": [1, 91, 110, 175, 214, 239, 257, 332],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,10 +1981,10 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "76ad52578abf49393e7064548267f5e6477cbda961ab55c73aca6e5e8e6c7e96",
+      "sha256": "f67f4ff7ffb99bea312cc1457c09ed213786717edb52d6293be54e7e8dab42b3",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 230
       ],
       "review": "mapped-abstraction"
     },
@@ -3337,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "2392ac9f6887b15d17eb08d9bcc3560611e6bffad2eb98707d8bcd742b46043b",
+      "sha256": "5b1073d8d7a3bbfbae71baff0102d451c37d3abe36b4f3798ac6400ada405038",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [48, 51, 59, 73, 98, 199, 201, 203, 250, 257, 310],
+      "candidateLines": [50, 53, 61, 75, 100, 201, 203, 205, 252, 259, 312],
       "review": "mapped-abstraction"
     },
     {
@@ -4208,10 +4208,10 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "0415edb4eb67a3d27ad48fcb79da89351b44f6bb1bc2f9bab125878f5bc841ea",
+      "sha256": "cd77ffb380d14d9921b49b2d58c88582ee21187101784b02282ea14679efb8cb",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 226
       ],
       "review": "mapped-abstraction"
     },

@@ -92,6 +92,19 @@ refuse initial-state violations or unrelated success. A separate positive
 paired raw-two/view-one diagnostic changes only the four erased observations
 while an acknowledgment invariant is already false; q_inv is TRUE alone.
 This checks intended coalescing, not original safety. Static/type checks and
-translation binding are separate from native/full qualification. Native JVM
-controls and a complete finite graph are held until root's actual-diff review
-and capacity authorization. No completed proof is claimed by this draft.
+translation binding are separate from native/full qualification.
+
+At frozen `c4530f531ae0cdfbaaa182b43e7656a438c71b90`, focused native controls
+passed 37 tests with 235 assertions and the unchanged ordinary 21 scenarios plus 500×60
+seeded traces passed. The canonical 180-second full graph remained incomplete:
+1,668,669 distinct states, 15,762,493 generated, 532,338 queued at depth 32. No full
+safety pass is claimed. Its cleanup EPERM status is retained; a later independent
+process check found known Java PID 30043 absent and no model/worktree/tempdir
+matching Node/Java process. No kill was performed.
+
+This private child changes only the time allowance to 600 seconds and adds the
+same reviewed manual model/shard selector interface used by the release
+investigation. All concrete QNT, VIEW, native-control and adapter bytes remain
+unchanged. The hosted 600-second experiment is PENDING: it is not release
+qualification until actual stable-source receipts report completion with zero
+queued states. Keep the earlier failed receipt; do not relabel it as passed.

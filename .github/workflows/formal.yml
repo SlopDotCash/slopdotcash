@@ -12,6 +12,15 @@ on:
         type: string
         default: "[1, 2, 3, 4, 5, 6]"
   workflow_dispatch:
+    inputs:
+      models:
+        description: "all, or space-separated model names for a focused diagnostic run"
+        type: string
+        default: all
+      shards:
+        description: "JSON shard array; use [1] for a small focused diagnostic run"
+        type: string
+        default: "[1, 2, 3, 4, 5, 6]"
 
 permissions:
   contents: read

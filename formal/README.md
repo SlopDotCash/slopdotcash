@@ -1269,3 +1269,7 @@ queues, counters and every original invariant operand stay exact. See the
 [four-field audit](vetting-backup-chain-view-audit.md). The original timeout
 remains incomplete; native controls and a complete frozen graph require their
 own qualification. No model action, domain, scenario or runtime changes.
+
+Private backup experiment: `vetting_backup_chain` receives 600 seconds after its
+reviewed V1 graph exhausted 180 seconds. Full-graph qualification remains pending;
+see `vetting-backup-chain-view-audit.md`. No domains or properties change.
