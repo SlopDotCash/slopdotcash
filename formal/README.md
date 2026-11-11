@@ -205,6 +205,7 @@ the reviewed PR; earlier per-branch results do not certify the combined source.
 | Payment preparation and recovery at commit | `payments/direct_preparation_completion.qnt`, `payments/direct_recovery_completion.qnt` | `backend/security/direct-payments.integration.ts` with migrated SQLite and local Anvil |
 | Monthly owner authority at commit | `rewards/monthly_owner_completion.qnt` | `backend/payments/monthly.test.ts` with actual SQLite writes |
 | Registry snapshot and browser evidence publication | `release/registry_snapshot_publication.qnt`, `release/ci_browser_evidence.qnt` | Registry sync checks; separate normal and private-intake browser reports |
+| Maintainer removal and applicant cancellation | `api/api_project_removal.qnt`, `ui/ui_project_removal.qnt` | `scripts/project-self-service.test.ts`, `backend/projects/cloudflare-persistence.test.ts`, `tests/e2e/project-removal.spec.ts` |
 | Cancellation, detached descendants and proof receipts | `tooling/formal_process.qnt`, `tooling/formal_toolchain.qnt`, `tooling/runner_cancellation.qnt` | `scripts/e2e-runner.test.ts`, `scripts/e2e-runner-io.test.ts`, `scripts/lemmascript-cancellation.test.ts` |
 
 Pending attempt mutations compare the last acknowledged stored record in one
@@ -247,6 +248,16 @@ Registry files are written sequentially, not atomically as a pair. An interrupte
 write may leave partial or mismatched bytes; later validation must refuse them.
 Normal registry and private-intake browser runs use distinct evidence folders;
 execution success does not prove that a report survived an overwrite.
+
+Project removal checks current GitHub authority against the stored repository,
+then appends a paused, retired revision through the revision and enforcement
+generation guards. It preserves historical Points, cases and funded obligations.
+Applicant cancellation is independent of GitHub availability and competes with
+publication through a conditional database write. Its retained cancellation
+marker projects a distinct terminal state and prevents later publication.
+Neither a lost response nor a departed UI callback reverses a committed write.
+These models cover one bounded application/project and request lifetime; they
+do not make GitHub and D1 a distributed transaction or prove payment behavior.
 
 The browser supervisor records numeric process ancestry before a parent exits
 and rechecks captured start identities before signaling detached groups. The
