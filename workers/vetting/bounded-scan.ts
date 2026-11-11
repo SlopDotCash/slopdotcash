@@ -145,6 +145,21 @@ const PACKAGE_MANAGER_CONFIGS = new Set([
   ".pnpmfile.cjs",
   "bunfig.toml",
 ]);
+/**
+ * JVM build configuration the wrappers read on every invocation: Maven takes
+ * `mvn.config` and `jvm.config` from the `.mvn` directory and loads every
+ * core extension `extensions.xml` names, and Gradle applies
+ * `org.gradle.jvmargs` from `gradle.properties`. A `-javaagent` (or an
+ * `-Dmaven.ext.class.path`) there runs a jar's code with the build, before
+ * any manifest is read, so these files are install surfaces too.
+ */
+const MAVEN_CONFIGS = new Set([
+  "jvm.config",
+  "maven.config",
+  "extensions.xml",
+  // The wrapper fetches and runs whatever distribution this names.
+  "maven-wrapper.properties",
+]);
 const INSTALL_FILES = new Set([
   "setup.py",
   "build.rs",
@@ -289,6 +304,9 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
+    (MAVEN_CONFIGS.has(name) && /(?:^|\/)\.mvn\//u.test(lower)) ||
+    name === "gradle.properties" ||
+    name === "gradle-wrapper.properties" ||
     BUILD_RECIPE.test(lower) ||
     lower.startsWith(".husky/") ||
     lower.startsWith(".devcontainer/") ||
@@ -406,6 +424,28 @@ const RULES: Rule[] = [
       "iu",
     ),
     summary: "Runs a remote download in a shell via process substitution",
+  },
+  {
+    threat: "unsafe-execution",
+    severity: "high",
+    // A JVM build wrapper loads these before any manifest is read: Maven
+    // applies `-javaagent` from `.mvn/jvm.config` and resolves every core
+    // extension `extensions.xml` names, and Gradle applies
+    // `org.gradle.jvmargs` from `gradle.properties`. The agent jar's
+    // `premain` runs with the build's privileges and needs no invocation
+    // beyond `mvn` or `gradle`, so a local jar path or an extra class path
+    // is an execution, not a dependency declaration.
+    //
+    // `-agentlib` and `-agentpath` are the same JVMTI load by library name
+    // and by path, and both reach `Agent_OnLoad`. A bootclasspath jar and a
+    // chosen system class loader also put repository code in the JVM before
+    // the build. `.properties` accepts `:` as a separator as well as `=`,
+    // so `:` is part of the leading context.
+    surfaces: ["installScripts"],
+    pattern:
+      /(?:^|[\s="':])-(?:javaagent|agentpath|agentlib):\s*\S+|(?:^|[\s="':])-Xbootclasspath\/[ap]:\s*\S+|(?:^|[\s="':])-D(?:maven\.ext\.class\.path|java\.system\.class\.loader)=\s*\S+/iu,
+    summary:
+      "Loads a JVM agent, boot class path or Maven extension before the build",
   },
 
   {
@@ -557,8 +597,15 @@ const RULE_POLICY_SHA256 = sha256(
 // only in a `/transfer` job: their other invocations read local files.
 // Upload-only BITS jobs do not retrieve an artifact. aria2c and axel
 // name downloads by their command alone, like curl and wget.
+// A `.properties` value escapes the colon (`https\://`), so the scheme takes
+// an optional backslash before it and the captured URL is unescaped.
 const DOWNLOAD =
-  /(?:\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm|aria2c|axel)\b|\bStart-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)|\bcertutil(?:\.exe)?\b[^\n]*?-urlcache\b|\bbitsadmin\b(?![^\n]*\/upload\b)[^\n]*?\/transfer\b)[^\n]*?(https?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https?:\/\/[^"'`]+)["'`]/giu;
+  /(?:\b(?:curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm|aria2c|axel)\b|\bStart-BitsTransfer\b(?![^\n]*-TransferType\s+["']?Upload\b)|\bcertutil(?:\.exe)?\b[^\n]*?-urlcache\b|\bbitsadmin\b(?![^\n]*\/upload\b)[^\n]*?\/transfer\b|\bdistributionUrl\b)[^\n]*?(https\\?:\/\/[^\s"'`)|]+)|\b(?:fetch|urlopen|requests\.get|https?\.get)\s*\(\s*["'`](https\\?:\/\/[^"'`]+)["'`]/giu;
+
+/** A URL from a `.properties` file escapes its colon; remove the escape. */
+function unescapeUrl(url: string): string {
+  return url.replace("\\:", ":");
+}
 
 function decode(bytes: Uint8Array): string | null {
   // NUL bytes mean binary content, not text to read.
@@ -1771,7 +1818,7 @@ export function inspectRepository(input: {
     }
     if (surfaces.includes("installScripts") || hooks.length > 0)
       for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))
-        downloads.add((match[1] ?? match[2]).slice(0, 500));
+        downloads.add(unescapeUrl(match[1] ?? match[2]).slice(0, 500));
     candidates.push({
       path: file.path,
       sha256: digest,
