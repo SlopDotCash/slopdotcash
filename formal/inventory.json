@@ -5352,7 +5352,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "6a186a6f5922ac218645a6ea719871073e6e6a2c98637242155f347401fa431d",
+      "sha256": "43ee64cf441d1946d8e2d452192e014bb5ed3caffd0c97468abe257fb63517eb",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -5364,6 +5364,7 @@
         "formal/models/ui/ui_private_report_scroll.qnt",
         "formal/models/ui/ui_record_deadlines.qnt",
         "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_solana_history_recovery.qnt",
         "formal/models/ui/ui_solana_payment_pending.qnt",
@@ -5390,9 +5391,9 @@
         3402, 3403, 3405, 3409, 3415, 3418, 3420, 3424, 3492, 3512, 3550, 3554,
         3556, 3559, 3633, 3635, 3667, 3689, 3713, 3849, 3981, 4120, 4123, 4132,
         4137, 4142, 4143, 4145, 4150, 4173, 4202, 4205, 4212, 4253, 4258, 4270,
-        4271, 4277, 4302, 4304, 4306, 4310, 4311, 4315, 4318, 4319, 4321, 4339,
-        4357, 4362, 4365, 4370, 4373, 4375, 4379, 4384, 4409, 4415, 4458, 4461,
-        4466, 4468, 4506, 4508, 4549, 4568
+        4271, 4277, 4302, 4304, 4306, 4310, 4311, 4315, 4318, 4319, 4321, 4338,
+        4340, 4358, 4363, 4366, 4371, 4374, 4376, 4380, 4385, 4410, 4416, 4459,
+        4462, 4467, 4469, 4541, 4560
       ],
       "review": "mapped-abstraction"
     },
@@ -6100,6 +6101,7 @@
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_security_case_selection.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_session.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
@@ -17265,6 +17267,24 @@
         "missionReadyTest",
         "readyIssueTest",
         "unknownAuthorTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_security_case_selection.qnt",
+      "sha256": "4bc778a21ffb01fe101aba201766e0358fd4cd7703017fc2d11d53316548995a",
+      "sources": ["src/SecurityBounty.tsx", "src/lib/project-api.ts"],
+      "scenarios": [
+        "changedActorNeverRestoresOldBodyTest",
+        "clearedFilterDoesNotReopenTest",
+        "creationCompletionStaysLocalTest",
+        "deepLinkStillNeedsVerifiedReadTest",
+        "identityOutageHidesPrivateBodyTest",
+        "oldLocalSelectionIsLostOnFocusTest",
+        "refusedCurrentTargetKeepsBodyHiddenTest",
+        "retiredCreationCannotChangeHistoryTest",
+        "selectedCaseReopensAfterSameActorFocusTest",
+        "signOutKeepsOnlyNavigationTargetTest",
+        "switchCaseDoesNotCarryOldBodyTest"
       ]
     },
     {
