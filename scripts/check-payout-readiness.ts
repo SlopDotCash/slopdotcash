@@ -27,6 +27,7 @@ import {
 } from "../src/lib/escrow-policy.mjs";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { HISTORICAL_PROJECTS } from "../src/lib/projects.mjs";
+import { deploymentTier } from "../src/lib/deployment";
 import { mainnetExecutionEnabled } from "../workers/payment-executor/mainnet-execution.mjs";
 import { parsePaymentNetworks } from "../workers/payments/deployments";
 import { readRegistryDatabase } from "../workers/payments/registry-database.mjs";
@@ -107,14 +108,26 @@ export function payoutReadiness(input: ReadinessInput): NetworkReadiness[] {
       config.vars.SIGNER_ROLE === undefined,
   );
   const servedBy = (network: string) =>
-    dispatchers.filter((config) =>
+    dispatchers.filter((config) => {
       // Readiness only reports which networks each dispatcher configuration
       // serves, across test and production stacks; it never serves one.
-      // The tier gate is enforced where a Worker starts, not in this report.
-      parsePaymentNetworks(config.vars?.PAYMENT_NETWORKS, "staging").includes(
-        network as Network,
-      ),
-    );
+      // The tier gate is enforced where a Worker starts, not in this report,
+      // but the report must still tell a production misconfiguration from a
+      // legitimate staging one: derive the tier from the config itself, so a
+      // production dispatcher (an unset tier is production) that names a
+      // testnet serves nothing, exactly as the real Worker refuses to start
+      // on it. Parsing with staging first keeps a malformed value loud.
+      const networks = parsePaymentNetworks(
+        config.vars?.PAYMENT_NETWORKS,
+        "staging",
+      );
+      if (
+        deploymentTier(config.vars?.SLOP_ENVIRONMENT) === "production" &&
+        networks.some((name) => ESCROW_NETWORKS[name]?.testnet)
+      )
+        return false;
+      return networks.includes(network as Network);
+    });
   // The dispatcher finds vaults only in REGISTRY_DB. Any other database
   // (for example the isolated payment database) has no registry rows.
   const readsRegistry = (config: StackConfig) => {

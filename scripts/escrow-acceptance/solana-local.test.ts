@@ -112,6 +112,51 @@ test("run and deployment declarations remain immutable across resumed local acce
   }
 });
 
+test("local tick reaches recovery for solana-localnet instead of failing the registry gate", async () => {
+  const db = new Database(":memory:");
+  const rpc = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      const { id } = await request.json();
+      return Response.json({ jsonrpc: "2.0", id, result: "local-genesis" });
+    },
+  });
+  try {
+    const facts = run(`http://127.0.0.1:${rpc.port}`);
+    const local = new LocalSolanaAcceptance(db, facts);
+    // No recorded deployments: the tick still runs recovery and
+    // reconciliation, so a registry gate applied to recovery shows up here
+    // as a spurious failure even though admission passed.
+    const bound: unknown[][] = [];
+    const env = {
+      PAYMENTS_DB: {
+        prepare(sql: string) {
+          return {
+            bind(...args: unknown[]) {
+              if (sql.includes("payment_attempts")) bound.push(args);
+              return { first: async () => ({ items: "[]" }) };
+            },
+            first: async () => ({ items: "[]" }),
+          };
+        },
+      },
+      PAYMENT_NETWORKS: JSON.stringify(["solana-localnet"]),
+      PAYMENT_RPC_URLS: JSON.stringify({
+        "solana-localnet": facts.rpcUrl,
+      }),
+      PAYMENT_SOLANA_GENESIS: JSON.stringify({
+        "solana-localnet": "local-genesis",
+      }),
+    } as unknown as PaymentsWorkerEnvironment;
+    expect(await local.tick(env)).toEqual([]);
+    expect(bound).toEqual([[JSON.stringify(["solana-localnet"])]]);
+  } finally {
+    await rpc.stop(true);
+    db.close();
+  }
+});
+
 test("changed live genesis refuses the tick before any ledger work or executor call", async () => {
   const db = new Database(":memory:");
   const methods: string[] = [];

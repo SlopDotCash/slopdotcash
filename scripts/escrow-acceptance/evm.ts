@@ -550,6 +550,9 @@ export function evmServices(
     PAYMENTS_DB: projection.db,
     REGISTRY_DB: registry.db,
     PAYMENT_NETWORKS: JSON.stringify([ctx.network]),
+    // Acceptance runs testnet networks only; without a tier the gate reads
+    // the Worker as production and the cron throws before any vault is read.
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: JSON.stringify({ [ctx.network]: rpcUrl }),
   };
   let pinnedDeployments = "[]";

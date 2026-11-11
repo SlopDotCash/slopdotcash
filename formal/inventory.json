@@ -1821,7 +1821,7 @@
     },
     {
       "path": "contracts/solana/scripts/acceptance.ts",
-      "sha256": "834335d65bda1193a8f26441db20fbd860b3a031cf535f9692d8788432b53960",
+      "sha256": "01404f2d7498b9e14ad7a073acfc2a1500a5b65b9723e10248fe7a211a893541",
       "models": [
         "formal/models/contracts/acceptance_run.qnt",
         "formal/models/contracts/local_solana_acceptance.qnt"
@@ -1829,8 +1829,8 @@
       "candidateLines": [
         79, 281, 504, 515, 560, 561, 566, 567, 572, 578, 596, 602, 603, 604,
         606, 607, 609, 611, 615, 629, 634, 637, 704, 710, 811, 823, 827, 831,
-        885, 1041, 1066, 1243, 1249, 1265, 1268, 1274, 1439, 1504, 1541, 1548,
-        1605, 1614, 1641, 1674, 1698, 1722, 1727, 1732, 1733, 1738, 1752
+        885, 1046, 1071, 1248, 1254, 1270, 1273, 1279, 1444, 1509, 1546, 1553,
+        1610, 1619, 1646, 1679, 1703, 1727, 1732, 1737, 1738, 1743, 1757
       ],
       "review": "mapped-abstraction"
     },
@@ -3307,9 +3307,9 @@
     },
     {
       "path": "scripts/check-payout-readiness.ts",
-      "sha256": "b17e1f0a9d3abe27cc3915d39f10f1cf4dca09ea21bf09014d45382b526d3815",
+      "sha256": "54f73b5868b359f0b994bbfd9d9a612e55ecb717df41623e895377050187e457",
       "models": ["formal/models/payments/payout_readiness.qnt"],
-      "candidateLines": [4, 45, 47, 49, 176, 256, 264, 265, 269, 271, 272],
+      "candidateLines": [4, 46, 48, 50, 189, 269, 277, 278, 282, 284, 285],
       "review": "mapped-abstraction"
     },
     {
@@ -3565,12 +3565,12 @@
     },
     {
       "path": "scripts/escrow-acceptance/evm.ts",
-      "sha256": "565b3ddc4e963e183e83293b6c8982c5c6e8faeb4b870194b84a54f0ef4dd531",
+      "sha256": "1163c315b877d45f7e114f0823bfb3abe92c095a69c9839a511bfabad3f7c287",
       "models": ["formal/models/contracts/acceptance_run.qnt"],
       "candidateLines": [
         140, 188, 191, 201, 205, 206, 217, 220, 224, 271, 325, 328, 329, 336,
-        505, 758, 764, 786, 790, 796, 832, 1079, 1082, 1083, 1085, 1120, 1160,
-        1161, 1176, 1187, 1215, 1224, 1230, 1242, 1300, 1350, 1357
+        505, 761, 767, 789, 793, 799, 835, 1082, 1085, 1086, 1088, 1123, 1163,
+        1164, 1179, 1190, 1218, 1227, 1233, 1245, 1303, 1353, 1360
       ],
       "review": "mapped-abstraction"
     },
@@ -7498,7 +7498,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "74023c8c34a5070114c7a7dfd95ccaf7aee30e9eda80d3130c043809f6a80dba",
+      "sha256": "27b845f3f31bb735e46f79d412073052b92f7893a6257af11fc353aa3d55673d",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -7506,9 +7506,9 @@
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        75, 114, 131, 134, 140, 141, 145, 172, 182, 186, 188, 192, 194, 205,
-        206, 208, 210, 212, 218, 221, 224, 228, 240, 241, 243, 244, 249, 299,
-        343, 354, 375, 383, 386, 421, 501, 601, 602, 661, 662
+        75, 121, 138, 141, 147, 148, 152, 179, 189, 193, 195, 199, 201, 212,
+        213, 215, 217, 219, 225, 228, 231, 235, 247, 248, 250, 251, 256, 306,
+        350, 361, 382, 390, 393, 428, 508, 608, 609, 668, 669
       ],
       "review": "mapped-abstraction"
     },

@@ -952,6 +952,11 @@ export function solanaServices(
     PAYMENTS_DB: projection.db,
     REGISTRY_DB: registry?.db ?? projection.db,
     PAYMENT_NETWORKS: JSON.stringify([network]),
+    // Acceptance runs solana-devnet through the registry cron; without a tier
+    // the gate reads the Worker as production and the tick throws. The
+    // solana-localnet path never reaches the registry gate: its tick calls
+    // recovery directly, and localnet is not a registry network.
+    SLOP_ENVIRONMENT: "staging",
     PAYMENT_RPC_URLS: JSON.stringify({ [network]: rpcUrl }),
     PAYMENT_SOLANA_GENESIS: JSON.stringify({ [network]: genesisHash }),
   };

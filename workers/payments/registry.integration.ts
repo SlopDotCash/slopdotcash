@@ -877,7 +877,12 @@ try {
     },
   });
   const dispatcherWith = (registryId: string) => ({
-    vars: { PAYMENT_NETWORKS: env.PAYMENT_NETWORKS },
+    vars: {
+      PAYMENT_NETWORKS: env.PAYMENT_NETWORKS,
+      // This dispatcher serves base-sepolia, so it declares staging; an
+      // unset tier is production and serves no testnet.
+      SLOP_ENVIRONMENT: "staging",
+    },
     services: [{ binding: "EVM_PAYMENT_EXECUTOR", service: "relayer" }],
     d1_databases: [
       {

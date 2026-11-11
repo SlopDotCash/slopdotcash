@@ -109,11 +109,18 @@ export async function recoverUncertainAttempts(
 ): Promise<void> {
   // Only this Worker's relayer journal can say whether one of its attempts was
   // signed; another network's attempt belongs to that network's Worker. The
-  // scheduled run has already checked PAYMENT_NETWORKS (registryDeployments).
+  // scheduled run has already checked PAYMENT_NETWORKS (registryDeployments),
+  // so the tier gate lives at the registry-serving entry points, not here:
+  // recovery also runs directly from local acceptance, where the network is
+  // solana-localnet, a local validator name that deliberately never enters
+  // the registry or its parser (LocalSolanaAcceptance admits it by loopback
+  // RPC and genesis instead). Recovery therefore binds the configured list
+  // as-is; a production cron still stops in syncRegistryVaults before this
+  // step ever runs.
   const row = await env.PAYMENTS_DB.prepare(
     "SELECT json_group_array(json_object('idempotencyKey',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'chain',o.chain)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND o.state='reserved' AND ((a.state IN ('unknown','prepared') AND a.transaction_id IS NULL) OR (o.chain='solana' AND a.state='submitted'))",
   )
-    .bind(JSON.stringify(servedPaymentNetworks(env)))
+    .bind(env.PAYMENT_NETWORKS)
     .first<{ items: string }>();
   const failures: unknown[] = [];
   for (const attempt of JSON.parse(row?.items ?? "[]") as {
