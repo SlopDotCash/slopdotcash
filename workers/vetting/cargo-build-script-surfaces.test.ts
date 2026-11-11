@@ -89,6 +89,122 @@ test("a build script named by the build key is scanned under its own name", () =
   expect(after.inventorySha256).not.toBe(before.inventorySha256);
 });
 
+test("legal TOML spellings of the build key are read", () => {
+  // The manifest is TOML, not one line shape: Cargo accepts a quoted key, a
+  // dotted key, a multiline string, and escapes in the value, and each still
+  // names the same build script. The scan must read the parsed value.
+  const cases: { manifest: string; script: string }[] = [
+    // Quoted key.
+    { manifest: MANIFEST(`'build' = "gen.dat"\n`), script: "gen.dat" },
+    // Dotted key, with the whole package table spelled the same way.
+    {
+      manifest:
+        'package.name = "demo"\npackage.version = "0.1.0"\npackage.build = "gen.dat"\n',
+      script: "gen.dat",
+    },
+    // Multiline basic string.
+    { manifest: MANIFEST('build = """gen.dat"""\n'), script: "gen.dat" },
+    // Unicode escape for the dot.
+    { manifest: MANIFEST('build = "gen\\u002edat"\n'), script: "gen.dat" },
+    // Escaped quote inside the value names a file with a quote in it.
+    { manifest: MANIFEST('build = "gen\\".dat"\n'), script: 'gen".dat' },
+  ];
+  for (const { manifest, script } of cases) {
+    const scan = inspected([
+      { path: "Cargo.toml", text: manifest },
+      { path: "src/lib.rs", text: "pub fn demo() {}\n" },
+      { path: script, text: RUST_PAYLOAD },
+    ]);
+    expect(classifications(scan).get(script)).toEqual([
+      "installScripts",
+      "source",
+    ]);
+    expect(scan.findings).toContainEqual(
+      expect.objectContaining({
+        path: script,
+        category: "unsafe-execution",
+        severity: "high",
+      }),
+    );
+    expect(scan.coverage.installScripts).toEqual({
+      state: "complete",
+      items: 1,
+    });
+  }
+});
+
+test("multiline strings neither hide nor decoy the build key", () => {
+  // A `[dependencies]` line inside a multiline string is string content, not
+  // a table header, so the real build key after it still counts. A decoy
+  // `build` line inside the string is likewise content, not the key.
+  const fakeHeader = inspected([
+    {
+      path: "Cargo.toml",
+      text: MANIFEST(
+        'description = """x\n[dependencies]\ny"""\nbuild = "gen.dat"\n',
+      ),
+    },
+    { path: "src/lib.rs", text: "pub fn demo() {}\n" },
+    { path: "gen.dat", text: RUST_PAYLOAD },
+  ]);
+  expect(classifications(fakeHeader).get("gen.dat")).toEqual([
+    "installScripts",
+    "source",
+  ]);
+  expect(fakeHeader.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+  const decoy = inspected([
+    {
+      path: "Cargo.toml",
+      text: MANIFEST(
+        'description = """x\nbuild = "decoy.dat"\ny"""\nbuild = "gen.dat"\n',
+      ),
+    },
+    { path: "src/lib.rs", text: "pub fn demo() {}\n" },
+    { path: "decoy.dat", text: RUST_BENIGN },
+    { path: "gen.dat", text: RUST_PAYLOAD },
+  ]);
+  expect(classifications(decoy).get("gen.dat")).toEqual([
+    "installScripts",
+    "source",
+  ]);
+  expect(classifications(decoy).get("decoy.dat")).toBeUndefined();
+  expect(decoy.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+});
+
+test("a backslash in the build path names the backslash file", () => {
+  // On Linux a backslash is a filename character, not a separator: Cargo
+  // runs `tools\gen.dat`, the one file, while `tools/gen.dat` is a different
+  // path that nothing executes.
+  const scan = inspected([
+    { path: "Cargo.toml", text: MANIFEST('build = "tools\\\\gen.dat"\n') },
+    { path: "src/lib.rs", text: "pub fn demo() {}\n" },
+    { path: "tools/gen.dat", text: RUST_PAYLOAD },
+    { path: "tools\\gen.dat", text: RUST_PAYLOAD },
+  ]);
+  expect(classifications(scan).get("tools\\gen.dat")).toEqual([
+    "installScripts",
+    "source",
+  ]);
+  expect(classifications(scan).get("tools/gen.dat")).toBeUndefined();
+  expect(scan.findings).toContainEqual(
+    expect.objectContaining({
+      path: "tools\\gen.dat",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(scan.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 1,
+  });
+});
+
 test("workspace members and path dependencies designate their own scripts", () => {
   const scan = inspected([
     {

@@ -1488,13 +1488,19 @@ function gypIncludeSpecifiers(text: string): {
 
 /**
  * A build include is relative to the file that names it. Absolute paths, URLs
- * and paths that leave the repository are not acquired files.
+ * and paths that leave the repository are not acquired files. Backslashes are
+ * separators in the build files this resolves for, except when a caller passes
+ * `preserveBackslash`: on Linux a backslash is a filename character, so a
+ * Cargo build path keeps it as-is instead of naming a different slash path.
  */
 function resolveBuildInclude(
   fromFile: string,
   specifier: string,
+  preserveBackslash = false,
 ): string | null {
-  const include = specifier.replaceAll("\\", "/").trim();
+  const include = (
+    preserveBackslash ? specifier : specifier.replaceAll("\\", "/")
+  ).trim();
   if (
     include === "" ||
     include.startsWith("/") ||
@@ -1639,25 +1645,24 @@ const CARGO_MANIFEST = /(?:^|\/)cargo\.toml$/iu;
  * `build` field specifies the package's build script file; `true` keeps the
  * default `build.rs` and `false` disables it, so only a string literal names
  * a file. The key is not inherited from `[workspace.package]`, so no other
- * table counts.
+ * table counts. The manifest is parsed as TOML rather than line-scanned:
+ * a quoted or dotted key, a multiline string, and escapes in the value all
+ * name the same file to Cargo, and a `build` line inside a multiline string
+ * is string content, not the key. A manifest that does not parse names no
+ * build script, because Cargo cannot build it either.
  */
 function cargoBuildSpecifier(text: string): string | null {
-  let inPackage = false;
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    const header = /^\[\[?\s*([^\]]*?)\s*\]?\]/u.exec(line);
-    if (header) {
-      inPackage = (header[1] ?? "").replace(/\s+/gu, "") === "package";
-      continue;
-    }
-    if (!inPackage) continue;
-    const entry = /^"?build"?\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/u.exec(
-      line,
-    );
-    const value = entry?.[1] ?? entry?.[2];
-    if (value !== undefined) return value;
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(text);
+  } catch {
+    return null;
   }
-  return null;
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const pkg = (parsed as Record<string, unknown>).package;
+  if (typeof pkg !== "object" || pkg === null) return null;
+  const build = (pkg as Record<string, unknown>).build;
+  return typeof build === "string" ? build : null;
 }
 
 /**
@@ -1680,7 +1685,7 @@ function cargoBuildScriptPaths(files: ScanInputFile[]): Set<string> {
     if (text === null) continue;
     const specifier = cargoBuildSpecifier(text);
     if (specifier === null) continue;
-    const resolved = resolveBuildInclude(file.path, specifier);
+    const resolved = resolveBuildInclude(file.path, specifier, true);
     if (resolved !== null && byPath.has(resolved)) designated.add(resolved);
   }
   return designated;
