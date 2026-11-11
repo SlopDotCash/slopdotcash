@@ -168,6 +168,22 @@ function projectAppealOpen(
   return openProjectAppeals(records, kept).length > 0;
 }
 
+/**
+ * The moderators the decision rule refuses for the project appeal: those who
+ * placed the restriction and the authors of its open appeals, including an
+ * appeal that confirmed malicious Bans kept (`projectModeratorConflict`).
+ */
+export function projectAppealConflicts(
+  restriction: ProjectRestriction,
+): Set<string> {
+  return new Set([
+    ...restriction.restrictedBy.map((placed) => placed.githubId),
+    ...openProjectAppeals(restriction.records, true).flatMap((appeal) =>
+      appeal.actor ? [appeal.actor.githubId] : [],
+    ),
+  ]);
+}
+
 /** A shared project appeal must not claim that another account filed evidence. */
 export function accountAppealState(
   restriction: ProjectRestriction,

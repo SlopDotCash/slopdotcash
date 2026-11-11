@@ -2491,6 +2491,44 @@ test("a newer project request does not let the author of the kept appeal decide 
   }
 });
 
+test("a new project request after a kept appeal asks only the moderators who may decide it", async () => {
+  const MOD_3 = "900000006";
+  const { t, decide, MOD_2 } = await keptAppealFlow();
+  t.deps.moderatorGithubIds = new Set([ADMIN, OWNER, MOD_2, MOD_3]);
+  t.deps.adminGithubIds = new Set([ADMIN, OWNER, MOD_2, MOD_3]);
+  // OWNER, who listed the project, files a new project request on the owner
+  // route while MOD_2's appeal is still kept open.
+  const request = await t.call("POST", "project-appeals", OWNER, {
+    projectId: "kept-appeal",
+    reason: "Review the project again after the malicious results",
+    evidenceReference: "private-owner-appeal-fixture",
+  });
+  expect(request.status).toBe(200);
+  expect(request.body.record).toMatchObject({
+    actorRole: "project-applicant",
+    sequence: 7,
+  });
+  // ADMIN placed the restriction and MOD_2 filed the kept appeal, so neither
+  // may decide the request; its review notice goes to MOD_3 alone.
+  for (const moderator of [ADMIN, MOD_2]) {
+    const refused = await decide("ban", moderator, 8, []);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toBe("independent_review_required");
+  }
+  expect(
+    t.sqlite
+      .query(
+        "SELECT recipient_github_id FROM notifications WHERE event_key = ? ORDER BY recipient_github_id",
+      )
+      .all(
+        `reinstatement-review:${(request.body.record as { id: string }).id}`,
+      ),
+  ).toEqual([{ recipient_github_id: MOD_3 }]);
+  const independent = await decide("ban", MOD_3, 8, []);
+  expect(independent.status).toBe(200);
+  expect(independent.body.record).toMatchObject({ appealAfter: "denied" });
+});
+
 test("an account release leaves the kept project appeal for an independent malicious decision", async () => {
   const { decide } = await keptAppealFlow();
   // OWNER did not ban OTHER, so OWNER can release OTHER. The release decides

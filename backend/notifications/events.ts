@@ -455,7 +455,7 @@ export function notifyVettingBanAudience<S>(
 
 /**
  * A reinstatement request reaches the moderators who may decide it: the
- * caller passes only those who did not place the restriction (ELG-02).
+ * caller passes only those the decision rule does not refuse (ELG-02).
  */
 export function notifyReinstatementReviewers<S>(
   db: Preparer<S>,

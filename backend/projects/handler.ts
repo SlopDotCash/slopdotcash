@@ -85,6 +85,7 @@ import {
   enforcementRevisionReason,
   type ProjectRestriction,
   planEnforcement,
+  projectAppealConflicts,
   projectAppealState,
   projectRestriction,
   publicRestrictionOf,
@@ -2710,7 +2711,9 @@ async function recordEnforcement(
           actor,
           at,
         },
-    // Only a moderator who did not place the restriction or account ban may decide it.
+    // Only a moderator who may decide the request is asked to review it: not
+    // one who placed the restriction or account ban, nor the author of an
+    // open project appeal, including one that a malicious result kept.
     action === "request_reinstatement"
       ? [...deps.moderatorGithubIds].filter((githubId) =>
           actorRole === "banned-account"
@@ -2719,9 +2722,7 @@ async function recordEnforcement(
                   account.githubId === actor.githubId &&
                   ban.actor?.githubId === githubId,
               )
-            : !restriction.restrictedBy.some(
-                (placed) => placed.githubId === githubId,
-              ),
+            : !projectAppealConflicts(restriction).has(githubId),
         )
       : [],
   );
