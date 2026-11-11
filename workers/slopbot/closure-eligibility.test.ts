@@ -187,7 +187,7 @@ test("matches a recorded Slop run across a repository rename or transfer", async
   ) as {
     repositoryId: string;
   };
-  expect(skillProject.repositoryId).toBe("example/alpha");
+  expect(skillProject.repositoryId).toBe("renamed-org/alpha-next");
 
   sqlite
     .query(

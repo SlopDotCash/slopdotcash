@@ -52,11 +52,15 @@ export function renderProjectSkill({
   const skill = role === "contributor" ? manifest.skill : manifest.reviewSkill;
   const template = PROJECT_SKILL_TEMPLATES[role];
   const repository = manifest.repositories?.[0];
+  // project.json consumers use repositoryId as the live clone, origin, PR and
+  // API target. Keep repository.id as registry history; the last alias is the
+  // current GitHub path after any rename or transfer.
+  const repositoryId = repository?.aliases?.at(-1) ?? repository?.id;
   const contribution = manifest.contribution;
   if (
     skill?.sourcePath !== template ||
     !PROJECT_ID.test(manifest.id) ||
-    !REPOSITORY.test(repository?.id ?? "") ||
+    !REPOSITORY.test(repositoryId ?? "") ||
     !validIntegrationBranch(repository?.integrationBranch) ||
     !contribution ||
     !Number.isSafeInteger(registry.revision) ||
@@ -71,7 +75,7 @@ export function renderProjectSkill({
   const values = {
     "{{SLOP_SKILL_NAME}}": skill.id,
     "{{SLOP_PROJECT_ID}}": manifest.id,
-    "{{SLOP_REPOSITORY}}": repository.id,
+    "{{SLOP_REPOSITORY}}": repositoryId,
     "{{SLOP_INTEGRATION_BRANCH}}": repository.integrationBranch,
   };
   let skillText = decoder.decode(bytes(templateFiles["SKILL.md"]));
@@ -89,7 +93,7 @@ export function renderProjectSkill({
   const project = {
     schemaVersion: "1",
     projectId: manifest.id,
-    repositoryId: repository.id,
+    repositoryId,
     skillName: skill.id,
     skillSourcePath: template,
     publicOrigin: `https://slop.cash/projects/${manifest.id}`,
