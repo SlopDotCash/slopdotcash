@@ -495,14 +495,14 @@
     },
     {
       "path": "backend/points/disputes.ts",
-      "sha256": "93280e129dd89424bcffcd2d0dbb7c7b4c2111655b8881fc79e6246a962be3b4",
+      "sha256": "1db2e431dfa14c0e107736434e4a6f1e180c1034a6438d821043ea8c574cbb6a",
       "models": [
         "formal/models/api/api_points_disputes.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt"
       ],
-      "candidateLines": [59, 141, 208, 228],
+      "candidateLines": [59, 141, 208, 232],
       "review": "mapped-abstraction"
     },
     {
