@@ -17,23 +17,20 @@ function JSTruncDiv(a: int, b: int): int
 
 datatype SecurityBountyShares = SecurityBountyShares(researcher: int, slop: int)
 
-function securityBountyShares(gross: int, fullAward: bool): SecurityBountyShares
+method securityBountyShares(gross: int, fullAward: bool) returns (res: SecurityBountyShares)
   requires (gross > 0)
   requires (!(fullAward) ==> (JSRem(gross, 4) == 0))
+  ensures ((res.researcher + res.slop) == gross)
+  ensures (fullAward ==> ((res.slop == 0) && (res.researcher == gross)))
+  ensures (!(fullAward) ==> (((res.slop * 4) == gross) && (res.researcher == (3 * res.slop))))
+  ensures (res.researcher > 0)
+  ensures (res.slop >= 0)
 {
-  if fullAward then
-    SecurityBountyShares(gross, 0)
-  else
-    SecurityBountyShares(JSTruncDiv((gross * 3), 4), JSTruncDiv(gross, 4))
-}
-
-lemma securityBountyShares_ensures(gross: int, fullAward: bool)
-  requires (gross > 0)
-  requires (!(fullAward) ==> (JSRem(gross, 4) == 0))
-  ensures ((securityBountyShares(gross, fullAward).researcher + securityBountyShares(gross, fullAward).slop) == gross)
-  ensures (fullAward ==> ((securityBountyShares(gross, fullAward).slop == 0) && (securityBountyShares(gross, fullAward).researcher == gross)))
-  ensures (!(fullAward) ==> (((securityBountyShares(gross, fullAward).slop * 4) == gross) && (securityBountyShares(gross, fullAward).researcher == (3 * securityBountyShares(gross, fullAward).slop))))
-  ensures (securityBountyShares(gross, fullAward).researcher > 0)
-  ensures (securityBountyShares(gross, fullAward).slop >= 0)
-{
+  if fullAward {
+    return SecurityBountyShares(gross, 0);
+  }
+  if (JSRem(gross, 4) != 0) {
+    assert false;
+  }
+  return SecurityBountyShares(JSTruncDiv((gross * 3), 4), JSTruncDiv(gross, 4));
 }

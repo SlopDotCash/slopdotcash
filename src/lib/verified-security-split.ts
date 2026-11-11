@@ -22,5 +22,9 @@ export function securityBountyShares(
   fullAward: boolean,
 ): SecurityBountyShares {
   if (fullAward) return { researcher: gross, slop: 0n };
+  if (gross % 4n !== 0n)
+    throw new RangeError(
+      "gross amount must be divisible by four minor units so the 75/25 split is exact",
+    );
   return { researcher: (gross * 3n) / 4n, slop: gross / 4n };
 }
