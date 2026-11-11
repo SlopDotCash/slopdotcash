@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "4ec65699acbd40923493874c660e5cb18459194782a3b983d784fbd0e89a48d9",
+      "sha256": "68850733bc7f60d90e24af3b8318911ebaf1150f7bce0d17efcc6fe480f14292",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 108, 173, 212, 237, 255, 330],
+      "candidateLines": [1, 90, 109, 174, 213, 238, 256, 331],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,10 +1981,10 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "76ad52578abf49393e7064548267f5e6477cbda961ab55c73aca6e5e8e6c7e96",
+      "sha256": "b08129b320ac229c713cdedf4ebb123eaea4cfef3f4cc24ae37985bd150706cd",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229
       ],
       "review": "mapped-abstraction"
     },
@@ -4208,10 +4208,10 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "0415edb4eb67a3d27ad48fcb79da89351b44f6bb1bc2f9bab125878f5bc841ea",
+      "sha256": "6ca95578bde65fa83375b73756009cacd37411c54b0fa57c75fd15610dc49b52",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224
       ],
       "review": "mapped-abstraction"
     },

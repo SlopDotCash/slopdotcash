@@ -216,6 +216,24 @@
       "sourceSha256": "767f463c4c1243d01ac4e0ca77316869af0c5e9441d1d96d911c27fdf077ad59",
       "translatedSha256": "c1dd49b06bbf150ee35e1b28fd796fc20d2568224454d46b5a24f937041080ed",
       "viewTlaSha256": "c3c7da3bd3645e1fd1fa872f42e6fd00dac225a11e00e5ef8337d998227a184a"
+    },
+    {
+      "id": "bot-inference-attempt-id-symmetry-v1",
+      "model": "formal/models/slopbot/bot_inference_retention.qnt",
+      "module": "bot_inference_retention",
+      "operator": "SlopBotInferenceAttemptIdViewV1",
+      "hashMode": "attempt-id-permutation-orbit",
+      "memoryCandidateMode": "retain-all-row-bits-current-retained-roles-and-multiplicity",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "LET rowIds == DOMAIN s.rows observation(id) == <<s.rows[id], id = s.current, id = s.retained>> classes == {observation(id) : id \\in rowIds} IN <<rowIds, {<<item, Cardinality({id \\in rowIds : observation(id) = item})>> : item \\in classes}, IF s.current \\in rowIds THEN \"active\" ELSE s.current, IF s.retained \\in rowIds THEN \"retained\" ELSE s.retained, s.published>>"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "01644b21ca4172dc45be3abb9585a55ce4cd1b2341d2e3328d01da2c5b5ce60f",
+      "translatedSha256": "2d5c042cd5bcd404884ceab0fd07cdfbe9ab66d7aa0c560e93a24e8cb797b507",
+      "viewTlaSha256": "6c6fa46fc03d86e165e040e46af5e9772f72700028ce57ccd994369ad9d54c60"
     }
   ]
 }
