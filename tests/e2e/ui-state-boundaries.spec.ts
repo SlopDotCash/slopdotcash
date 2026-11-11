@@ -208,8 +208,13 @@ test("automatic owner allocations stop accepting edits at the cutoff without ref
         },
       }),
   );
+  // Owner allocations are private, so the reviewing owner is signed in.
   await page.route("**/api/v1/project-session", (route) =>
-    route.fulfill({ json: { session: null } }),
+    route.fulfill({
+      json: {
+        session: { githubId: "900000201", githubLogin: "owner", admin: false },
+      },
+    }),
   );
   await page.route("**/api/v1/points/session", (route) =>
     route.fulfill({ json: { session: null } }),

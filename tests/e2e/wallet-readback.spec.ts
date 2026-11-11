@@ -3,7 +3,17 @@ import { join } from "node:path";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
-test.beforeEach(({ diagnostics }) => diagnostics.allowPreviewApiMisses());
+test.beforeEach(async ({ diagnostics, page }) => {
+  diagnostics.allowPreviewApiMisses();
+  // Settings rechecks the signed-in account after each payouts read.
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "123", githubLogin: "qa", admin: false },
+      },
+    }),
+  );
+});
 
 const wallets = [
   ["solana", "Solana", "11111111111111111111111111111111"],
