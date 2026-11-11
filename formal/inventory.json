@@ -996,7 +996,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "6a533ce358eadaaf8a6baaffe4f10a9a424d87a0c133436ec1dcf6a3d45a8332",
+      "sha256": "7871318f69664e5eaf76c7a0a607f853bf66fd4118dffe1f82c18260e9ce1c7c",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -1008,10 +1008,10 @@
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
-        65, 102, 129, 148, 153, 174, 181, 198, 205, 245, 354, 361, 442, 455,
-        497, 507, 522, 529, 547, 558, 571, 573, 599, 634, 644, 646, 826, 844,
-        855, 860, 865, 934, 1077, 1155, 1170, 1210, 1246, 1252, 1266, 1271,
-        1283, 1288, 1293
+        65, 102, 129, 148, 153, 174, 181, 198, 205, 246, 355, 362, 443, 456,
+        498, 508, 523, 530, 548, 559, 572, 574, 600, 635, 645, 647, 827, 845,
+        856, 861, 866, 935, 1078, 1156, 1171, 1211, 1247, 1253, 1267, 1272,
+        1284, 1289, 1294
       ],
       "review": "mapped-abstraction"
     },
@@ -2002,9 +2002,9 @@
     },
     {
       "path": "functions/index.ts",
-      "sha256": "de19ac392687d32886727d3d637f575eac87ccecde415b17a18fe3a124adc043",
+      "sha256": "01d22b2bcdb2848f92f22e3445fb64b06a0668d6cb23caf8fc69bbcd4e145341",
       "models": [],
-      "candidateLines": [80, 81, 88, 104, 131],
+      "candidateLines": [98, 99, 106, 130, 139, 166],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
     },
