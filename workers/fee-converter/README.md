@@ -846,7 +846,13 @@ bun run test:fee-converter:buyback:solana
 The first runs the whole cycle on Anvil forks of Base, Ethereum and Robinhood
 Chain against the deployed USDC, DlnSource, DlnDestination, KyberSwap router,
 Uniswap v4 SLOP pools and SLOP token: exact approvals, orders, a fill by the
-impersonated deBridge taker, purchases, and burns of exactly half. The second
+impersonated deBridge taker, purchases, and burns of exactly half. It then
+cancels a second Base order from the fee wallet through the real
+`DlnDestination`, has the real `DlnSource` pay the refund (a stub at
+deBridge's CallProxy address stands in for the cross-chain message; this part
+needs `forge`), and checks that the share is released once and bridged again.
+
+The second
 signs a Solana order against the cloned DLN program on the local validator.
 Both use throwaway keys, seed fee income, call the live deBridge and KyberSwap
 APIs read-only, and use harness gas budgets and slippage as their headers

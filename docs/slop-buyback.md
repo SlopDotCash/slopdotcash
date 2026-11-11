@@ -152,13 +152,13 @@ them, and they assume the bridge and token contracts behave as published.
 
 ## Local evidence
 
-| Check                                                         | Command                                                   | Result on 10 November 2026                                                                                                                                     |
-| ------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Policy, journal constraints, configuration, order validators  | `bun test ./workers/fee-converter/buyback.test.ts`        | 29 tests pass                                                                                                                                                  |
-| Whole cycle on forks of Base, Ethereum and Robinhood Chain    | `bun run test:fee-converter:buyback`                      | Pass: 1,000.000001 USDC of fee income per source gave one 500 USDC order each; both fills credited once; 1,097.75 USDG bought 52,590 SLOP; exactly half burned |
-| Solana order on a local validator with the cloned DLN program | `bun run test:fee-converter:buyback:solana`               | Pass: 500 USDC escrowed in the order's derived account; 0.0202 SOL native cost settled under purpose `bridge`                                                  |
-| State models                                                  | `node scripts/check-formal.mjs [--verify] --model=<name>` | Pass for all four                                                                                                                                              |
-| Arithmetic proofs                                             | `bun run lemmascript:check`                               | `verified-buyback`: 122 obligations verified                                                                                                                   |
+| Check                                                         | Command                                                   | Result on 10 November 2026                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy, journal constraints, configuration, order validators  | `bun test ./workers/fee-converter/buyback.test.ts`        | 29 tests pass                                                                                                                                                                                                                                                                         |
+| Whole cycle on forks of Base, Ethereum and Robinhood Chain    | `bun run test:fee-converter:buyback`                      | Pass: 1,000.000001 USDC of fee income per source gave one 500 USDC order each; both fills credited once; 1,097.75 USDG bought 52,590 SLOP; exactly half burned. A second Base order was cancelled by the fee wallet, refunded in full by `DlnSource`, released once and bridged again |
+| Solana order on a local validator with the cloned DLN program | `bun run test:fee-converter:buyback:solana`               | Pass: 500 USDC escrowed in the order's derived account; 0.0202 SOL native cost settled under purpose `bridge`                                                                                                                                                                         |
+| State models                                                  | `node scripts/check-formal.mjs [--verify] --model=<name>` | Pass for all four                                                                                                                                                                                                                                                                     |
+| Arithmetic proofs                                             | `bun run lemmascript:check`                               | `verified-buyback`: 122 obligations verified                                                                                                                                                                                                                                          |
 
 The fork and validator runs use throwaway keys and send nothing to a public
 network. They seed fee income, impersonate the deBridge taker for the fill,
@@ -168,9 +168,7 @@ and use harness gas budgets and slippage, as each file's header explains.
 
 - **A live fill.** A real taker must choose to fill a real order. The first
   live order should be small.
-- **Cancellation and refund.** A cancellation needs deBridge's cross-chain
-  message. The refund reader is tested against stand-ins and the published
-  status values, not against a real cancelled order.
+- **deBridge's cross-chain message.** The fork test cancels a real order through `DlnDestination` and the real `DlnSource` pays the refund, but the message between the two chains is delivered by a stub at deBridge's CallProxy address. A refund from Solana is tested only against stand-ins and the published status values.
 - **The hook on the main SLOP pool.** Its `beforeSwap` logic is unpublished.
   Every swap is simulated before signing, and the fork test executed real
   swaps through it.
