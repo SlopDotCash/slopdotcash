@@ -4697,7 +4697,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "0f18dfc94e4c90d4c1e5660b0458d737013978766a5f8afcade48d8e784764d8",
+      "sha256": "436c153d70ea1c07fdce5203bcf79ef692197b366213e0257ee08c35d6c74cc2",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -4715,13 +4715,13 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 284, 294, 304, 315, 324, 325, 326, 327, 328, 330, 331, 392, 447,
-        448, 449, 452, 475, 542, 573, 610, 650, 654, 656, 697, 754, 807, 1017,
-        1032, 1046, 1056, 1086, 1089, 1151, 1154, 1156, 1160, 1161, 1169, 1188,
-        1192, 1200, 1201, 1208, 1212, 1247, 1291, 1294, 1311, 1312, 1355, 1357,
-        1377, 1379, 1434, 1435, 1438, 1439, 1442, 1443, 1460, 1461, 1467, 1472,
-        1474, 1478, 1479, 1537, 1547, 1578, 1580, 1605, 1606, 1623, 1624, 1635,
-        1637, 1650, 1653, 1664
+        13, 15, 286, 296, 306, 317, 326, 327, 328, 329, 330, 332, 333, 394, 449,
+        450, 451, 454, 477, 543, 574, 611, 651, 655, 657, 698, 755, 808, 1018,
+        1033, 1047, 1057, 1087, 1090, 1152, 1155, 1157, 1161, 1162, 1170, 1189,
+        1193, 1201, 1202, 1209, 1213, 1248, 1292, 1295, 1312, 1313, 1356, 1358,
+        1378, 1380, 1435, 1436, 1439, 1440, 1443, 1444, 1461, 1462, 1468, 1473,
+        1475, 1479, 1480, 1538, 1548, 1579, 1581, 1606, 1607, 1624, 1625, 1636,
+        1638, 1651, 1654, 1665
       ],
       "review": "mapped-abstraction"
     },
@@ -4952,7 +4952,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "22dd6cb76ed1451d0dae35e0bb7a9cb6e55ad259b805bd13fc9d7deb50cfed0e",
+      "sha256": "3e62b652f1ac51297436959ebd6f28fa96466bbe598016672401aed9e681ae6e",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -4962,15 +4962,15 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        6, 9, 70, 103, 105, 108, 115, 116, 124, 125, 136, 139, 140, 141, 142,
-        143, 146, 147, 197, 257, 259, 267, 285, 286, 380, 405, 452, 475, 485,
-        541, 564, 599, 618, 739, 740, 769, 770, 774, 779, 785, 802
+        6, 9, 71, 104, 106, 109, 116, 117, 125, 126, 137, 140, 141, 142, 143,
+        144, 147, 148, 198, 258, 260, 268, 286, 287, 381, 406, 453, 476, 486,
+        542, 565, 600, 619, 740, 741, 770, 771, 775, 780, 786, 803
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/OwnerBountyVault.tsx",
-      "sha256": "8f80e5d53115f722206b67a7bd0d298bbfc74bbdaed6e117b0e34b2a256ce8bb",
+      "sha256": "a079bf8a3e0d8098e05095cfc1da6381416657067221f5c219eb08fcbdb6de3b",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_private_requests.qnt",
@@ -5013,30 +5013,30 @@
     },
     {
       "path": "src/OwnerReserveRelease.tsx",
-      "sha256": "81bb42b08a5c61b8c4b49008e6a426a0c3a309769affa32d814928de3f1e8e53",
+      "sha256": "f96d7ea16045154abe80911e0d1d308a7cb6ffcedd331690ce68adbcc041586c",
       "models": [
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 16, 19, 26, 48, 54, 57, 69, 70, 71, 73, 81, 90, 101, 115, 119, 141,
-        145, 146, 156, 157, 161, 170, 175, 194, 201, 240
+        1, 16, 20, 27, 49, 55, 58, 70, 71, 72, 74, 82, 91, 102, 116, 120, 142,
+        146, 147, 157, 158, 162, 171, 176, 195, 202, 241
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "829c46613d0a32b2e2b4be466266337d11a1447f7d63dd604590ec21dc58761c",
+      "sha256": "af5596aa78f40d876408dc94cb1f1a8d6363c8db6ad081a70483231684081198",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 15, 34, 57, 59, 65, 68, 100, 104, 106, 111, 118, 119, 121, 125, 126,
-        127, 128, 129, 130, 133, 134, 135, 136, 146, 147, 149, 151, 217, 219,
-        229, 239, 335, 388, 419, 427, 431, 433, 445, 456, 457, 461, 480, 501,
-        504, 704, 715, 737, 742, 757, 772
+        1, 15, 35, 58, 60, 66, 69, 101, 105, 107, 112, 119, 120, 122, 126, 127,
+        128, 129, 130, 131, 134, 135, 136, 137, 147, 148, 150, 152, 218, 220,
+        230, 240, 336, 389, 420, 428, 432, 434, 446, 457, 458, 462, 481, 502,
+        505, 709, 720, 742, 747, 762, 777
       ],
       "review": "mapped-abstraction"
     },
@@ -5065,9 +5065,9 @@
     },
     {
       "path": "src/PayoutRows.tsx",
-      "sha256": "5234ae8e4a47ae1f335462dbc7a7804e643f0b08cbdf2776abc0cd3b562c355a",
+      "sha256": "73e7423fbe475ab7c15f82666c36b42582fa60b49fd06a6496bd5815f991267c",
       "models": ["formal/models/ui/ui_record_display.qnt"],
-      "candidateLines": [52, 74, 81, 82, 94, 123, 125, 127],
+      "candidateLines": [53, 75, 82, 83, 95, 124, 126, 128],
       "review": "mapped-abstraction",
       "statelessReason": "Pure payment-row/amount rendering with actions delegated to stateful parent/consent components."
     },
@@ -5234,7 +5234,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "4f7b256d1648cb4f16329b1575043bb15de2136e295e23a6ca0e12ba4a8d9df1",
+      "sha256": "617b12327d6029ad0136ee3a7e866b62917bebbe4da679faf9400bcfc1d7a296",
       "models": [
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
@@ -5251,19 +5251,19 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        10, 128, 443, 446, 447, 448, 449, 450, 451, 452, 454, 457, 461, 466,
-        482, 493, 501, 502, 519, 535, 539, 557, 565, 573, 580, 583, 603, 618,
-        619, 794, 805, 806, 816, 827, 830, 835, 838, 847, 850, 851, 853, 854,
-        859, 887, 891, 894, 904, 905, 964, 966, 970, 975, 984, 994, 999, 1053,
-        1066, 1074, 1077, 1084, 1153, 1178, 1186, 1187, 1189, 1194, 1198, 1207,
-        1222, 1229, 1319, 1320, 1321, 1323, 1329, 1339, 1346, 1362, 1375, 1407,
-        1417, 1424, 1429, 1432, 1443, 1465, 1466, 1468, 1469, 1559, 1562, 1589,
-        1937, 1939, 2001, 2004, 2010, 2011, 2013, 2023, 2025, 2029, 2040, 2054,
-        2066, 2083, 2093, 2097, 2098, 2101, 2104, 2105, 2106, 2107, 2108, 2109,
-        2110, 2111, 2112, 2113, 2114, 2173, 2183, 2195, 2226, 2465, 2489, 2506,
-        2525, 2533, 2543, 2556, 2561, 2566, 2567, 2570, 2590, 2591, 2595, 2600,
-        2744, 2752, 2753, 2764, 2802, 2807, 2813, 2819, 2833, 2846, 2847, 2860,
-        2885, 2886, 2887
+        10, 129, 444, 447, 448, 449, 450, 451, 452, 453, 455, 458, 462, 467,
+        483, 494, 502, 503, 520, 536, 540, 558, 566, 574, 581, 584, 604, 619,
+        620, 795, 806, 807, 817, 828, 831, 836, 839, 848, 851, 852, 854, 855,
+        860, 888, 892, 895, 905, 906, 965, 967, 971, 976, 985, 995, 1000, 1054,
+        1067, 1075, 1078, 1085, 1154, 1179, 1187, 1188, 1190, 1195, 1199, 1208,
+        1223, 1230, 1320, 1321, 1322, 1324, 1330, 1340, 1347, 1363, 1376, 1408,
+        1418, 1425, 1430, 1433, 1444, 1466, 1467, 1469, 1470, 1560, 1563, 1590,
+        1938, 1940, 2002, 2005, 2011, 2012, 2014, 2024, 2026, 2030, 2041, 2055,
+        2067, 2084, 2094, 2098, 2099, 2102, 2105, 2106, 2107, 2108, 2109, 2110,
+        2111, 2112, 2113, 2114, 2115, 2174, 2184, 2196, 2227, 2469, 2493, 2510,
+        2529, 2537, 2547, 2560, 2565, 2570, 2571, 2574, 2594, 2595, 2599, 2604,
+        2748, 2756, 2757, 2768, 2806, 2811, 2817, 2823, 2837, 2850, 2851, 2864,
+        2889, 2890, 2891
       ],
       "review": "mapped-abstraction"
     },
@@ -5361,7 +5361,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "43ee64cf441d1946d8e2d452192e014bb5ed3caffd0c97468abe257fb63517eb",
+      "sha256": "5d1c7436f045c47feb243997892a8faa7c16a52d6fefb22bded89ebdb0186337",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -6186,13 +6186,13 @@
     },
     {
       "path": "src/lib/project-proposal.ts",
-      "sha256": "4ce010721eccf91f50da5c26e0ae5ec32c042088ce64bd5d08eb5c4b11dda923",
+      "sha256": "37376516879b71c3f17aaae32cdcd1efb5929f41c62f69021c510c9e182f45c9",
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
-      "candidateLines": [257],
+      "candidateLines": [261],
       "review": "mapped-abstraction"
     },
     {
@@ -6226,9 +6226,9 @@
     },
     {
       "path": "src/lib/project-reward-summary.ts",
-      "sha256": "eeee0c077ebf5897b048e4e5b3f5b667d7a895c06a2970b90f757238e3120d7b",
+      "sha256": "e1f21a12767d45c47a1f217c406dbc6ab758ee2bc112e93f59e1717f0181b1da",
       "models": [],
-      "candidateLines": [19, 89],
+      "candidateLines": [20, 49, 56, 106],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure presentation projection of supplied registry reward/bounty fields; no storage or asynchronous work. Project lifecycle and payment state are not established by this display helper."
     },
@@ -6324,7 +6324,7 @@
     },
     {
       "path": "src/lib/reward-amount.ts",
-      "sha256": "defb8a419fd7a455d189551346117b9e726fad6887a75ff94abac3d14b792d59",
+      "sha256": "32b1112829119d45499d178a9e8c28d0f159060dd708a74b1bffa85bca735cda",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6332,7 +6332,7 @@
     },
     {
       "path": "src/lib/reward-asset.mjs",
-      "sha256": "8c61a441cc24d53a7721ca3c4744ae437777e05050d539e9be0c443347d768d4",
+      "sha256": "1e785515beed74011a368e93597f8e45d74a1b35b2766efa435121b3b9130af7",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6415,15 +6415,15 @@
     },
     {
       "path": "src/lib/security-bounty-proposal.ts",
-      "sha256": "361c3c4050f5d7aacc14f05a427a2f2dd171ec670a84acc3a0952f75cf437988",
+      "sha256": "e51d0356617a132376e01e77af8d1fce85f716cf82fcdd7fb9b99b2336d7b599",
       "models": [],
-      "candidateLines": [87, 94],
+      "candidateLines": [88, 95],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure construction and preview of an unverified bounty proposal from form inputs. No submission, approval, funding or payment occurs in this module; those state transitions remain API and bounty model responsibilities."
     },
     {
       "path": "src/lib/security-bounty.mjs",
-      "sha256": "3055a00e9d85101ac268bb218fb384add7781a2b021e32440b6062f47824947b",
+      "sha256": "942cd0078c6e9a6d0e2528612a2854036c5feb19f8d1b5fc46fb588313c1c2fb",
       "models": [
         "formal/models/payments/bounty_terms.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"

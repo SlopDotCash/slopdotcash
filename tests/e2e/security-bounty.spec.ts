@@ -22,6 +22,7 @@ import {
   expectAccessible,
   openProjectSecuritySettings,
   projectSuffix,
+  serveProjectCycleIndex,
   test,
 } from "./fixtures";
 
@@ -3138,6 +3139,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
   let shown: Record<string, unknown> = project;
+  await serveProjectCycleIndex(page, [id]);
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
@@ -3154,6 +3156,14 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  // Discovery keeps current security offers before project lists and rankings.
+  expect(
+    await page
+      .locator(
+        "main > #security-bounties, main > #projects, main > #leaderboard",
+      )
+      .evaluateAll((sections) => sections.map((section) => section.id)),
+  ).toEqual(["security-bounties", "projects", "leaderboard"]);
   const featured = page.locator('[aria-labelledby="featured-projects"]');
   await expect(featured.locator(".project-card")).toHaveCount(1);
   await expect(featured).toContainText("$10k");
@@ -3241,14 +3251,22 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(row).toContainText("Pledged");
   await expect(row).not.toContainText("Points only");
 
-  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  // A separate open bounty names the existing offer while ordinary routing stays intact.
   shown = {
     ...project,
-    listingTier: "community",
+    listingTier: "featured",
     securityBounty: { ...project.securityBounty, rewardMode: "separate" },
   };
   await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("Points only");
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("/ Critical");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
+  shown = { ...shown, listingTier: "community" };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
