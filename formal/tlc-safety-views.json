@@ -80,6 +80,29 @@
       "sourceSha256": "20909c2aeab10c1c16ea5eabb57e37873726f8420a84daae6b420c361a0a23f4",
       "translatedSha256": "7fbaf1cd7a6a32bbe456cd26667aa1eacd49ec619b48875ba1cf6462e5032382",
       "viewTlaSha256": "52b190bf8b8647ef3b9cc09a2ff11cbb83348c84fd48303a84882a8f554f8d7d"
+    },
+    {
+      "id": "ui-admin-mutation-continuation-safety-v2",
+      "model": "formal/models/ui/ui_admin_mutation_identity.qnt",
+      "module": "ui_admin_mutation_identity",
+      "operator": "SlopAdminMutationContinuationViewV2",
+      "hashMode": "admin-continuation-and-terminal-admission-observations",
+      "memoryCandidateMode": "erase-phase-dead-and-terminal-invariant-only",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.error = IF s.error = \"request\" THEN \"request\" ELSE \"none\", !.didClear = FALSE, !.clearExpected = 0, !.clearObserved = 0, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase = \"done\" THEN <<r.phase, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.kind = IF r.phase = \"done\" THEN \"save\" ELSE r.kind, !.draft = IF r.phase = \"done\" \\/ r.kind = \"action\" THEN 0 ELSE r.draft, !.accepted = IF r.phase \\in {\"recheck\", \"recheck-observed\", \"recheck-returned\", \"done\"} THEN FALSE ELSE r.accepted, !.observedActor = IF r.phase \\in {\"preflight-observed\", \"preflight-returned\", \"recheck-observed\", \"recheck-returned\"} THEN r.observedActor ELSE 0, !.observedAdmin = IF r.phase \\in {\"preflight-observed\", \"preflight-returned\", \"recheck-observed\", \"recheck-returned\"} THEN r.observedAdmin ELSE FALSE]]]"
+        }
+      ],
+      "clauses": [
+        {
+          "name": "clear",
+          "expression": "(s.didClear => s.clearExpected = s.clearObserved)"
+        }
+      ],
+      "sourceSha256": "aa2359d42de5765cda3fec220fc6716ecba23ca809fe1ea838a55323049c59b8",
+      "translatedSha256": "98f72dd2479eaa50f25a134b765d802857143d8fb69f670dd4a5a2f063f5d5a3",
+      "viewTlaSha256": "20fe7c66f6d90f8c0f71f4b9b9005036d10c6f2dd999c6e6eec391bd5623ad9e"
     }
   ]
 }

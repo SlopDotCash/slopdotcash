@@ -80,7 +80,7 @@ jobs:
       - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
-        run: bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts
+        run: bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts ./scripts/admin-mutation-continuation-quotient.test.ts
       - name: Check source inventory and state catalog
         run: |
           bun run formal:coverage

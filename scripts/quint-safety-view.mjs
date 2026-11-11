@@ -35,7 +35,7 @@ const clauses = [
       "(s.touched > 0 => (\\A n \\in {1, 2} \\ {s.touched}: s.store[n] = s.before[n]))",
   },
 ];
-// These are three individually reviewed projections, not a manifest-selected
+// These are four individually reviewed projections, not a manifest-selected
 // expression engine. Unknown models, fields, clauses or modes fail closed.
 const definitions = [
   {
@@ -80,6 +80,27 @@ const definitions = [
       },
     ],
     clauses: [],
+  },
+  {
+    id: "ui-admin-mutation-continuation-safety-v2",
+    model: "formal/models/ui/ui_admin_mutation_identity.qnt",
+    module: "ui_admin_mutation_identity",
+    operator: "SlopAdminMutationContinuationViewV2",
+    hashMode: "admin-continuation-and-terminal-admission-observations",
+    memoryCandidateMode: "erase-phase-dead-and-terminal-invariant-only",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = IF s.error = "request" THEN "request" ELSE "none", !.didClear = FALSE, !.clearExpected = 0, !.clearObserved = 0, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase = "done" THEN <<r.phase, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.kind = IF r.phase = "done" THEN "save" ELSE r.kind, !.draft = IF r.phase = "done" \\/ r.kind = "action" THEN 0 ELSE r.draft, !.accepted = IF r.phase \\in {"recheck", "recheck-observed", "recheck-returned", "done"} THEN FALSE ELSE r.accepted, !.observedActor = IF r.phase \\in {"preflight-observed", "preflight-returned", "recheck-observed", "recheck-returned"} THEN r.observedActor ELSE 0, !.observedAdmin = IF r.phase \\in {"preflight-observed", "preflight-returned", "recheck-observed", "recheck-returned"} THEN r.observedAdmin ELSE FALSE]]]',
+      },
+    ],
+    clauses: [
+      {
+        name: "clear",
+        expression: "(s.didClear => s.clearExpected = s.clearObserved)",
+      },
+    ],
   },
 ];
 

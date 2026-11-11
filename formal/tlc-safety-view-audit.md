@@ -107,8 +107,8 @@ model path and source hash, module, operator, explicit hash-normalization mode, 
 two named clause expressions, original generated-TLA hash and final view-TLA hash. The helper
 checks that exact schema and projection. Unknown requests, operators, source,
 TLA, projection or temporal changes fail before TLC. There is no fallback
-after a rejected projection request. The separately audited owner-vault terminal
-and project-lookup legacy-cache views have their own hardcoded operators,
+after a rejected projection request. The separately audited owner-vault terminal, project-lookup legacy-cache and
+[admin mutation continuation](admin-mutation-continuation-view-audit.md) views have their own hardcoded operators,
 expressions, source and translation bindings; their arguments and limitations
 are documented in [the model guide](README.md#owner-vault-terminal-requests).
 No manifest entry can authorize another projection. Unselected models use the
