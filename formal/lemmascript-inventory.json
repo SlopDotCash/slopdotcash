@@ -9588,10 +9588,10 @@
 {"name":"stillProjectRecipient","kind":"FunctionDeclaration","line":85,"sha256":"460e2f0e559324ec4f1ad92b4b98b8ce22894ea7c96c441eb855dd36c1a90c3a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"dispatchActivityMail","kind":"FunctionDeclaration","line":145,"sha256":"30cfc8458f814debd131badac72730eadfc3274b1fa292fa57c66d8581e80bea","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
-{"path":"workers/notify/contracts.ts","sha256":"703d4ec552951b41e68471d22b252a88d82e137bbc2a47d92d2a71161169b05a","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/notify/contracts.ts","sha256":"9f442645691a0010cad362b270025ea9bef15cbbd6f716da50953e4f2659efa8","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"retryableEmailRejection","kind":"FunctionDeclaration","line":15,"sha256":"e75c1623740b74a29e8edfdfbac52f7c9f5f99e008a240b807ff03219ce7fcfd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"safeProviderFailure","kind":"FunctionDeclaration","line":40,"sha256":"11a2021ff0270b69a65c014c0dd45701cba9e7750ab47742a5c6bcd46ef04882","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"validFailureNotice","kind":"FunctionDeclaration","line":53,"sha256":"4a27b2368edc2059636ad2a426748ab9525f08b37c1738691070c5c45fc743b6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"validFailureNotice","kind":"FunctionDeclaration","line":53,"sha256":"143f0242027e086ea5d52b62a2b73ad6fe6a7c966b73ec59c90a01c70fb29cb2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"validSpendNotice","kind":"FunctionDeclaration","line":81,"sha256":"099d996c1989eb61b20a5ad1ba7efbbbb7cb15fffc199d0253ff33411349cce7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
 ]},
 {"path":"workers/notify/enrollment.ts","sha256":"2995f3889da8c6886d1704ac03a5a072b40737fe1a9fb1afd0996733879a60e8","language":"typescript","disposition":"callables-inventoried","functions":[

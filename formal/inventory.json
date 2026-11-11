@@ -7210,7 +7210,7 @@
     },
     {
       "path": "workers/notify/contracts.ts",
-      "sha256": "703d4ec552951b41e68471d22b252a88d82e137bbc2a47d92d2a71161169b05a",
+      "sha256": "9f442645691a0010cad362b270025ea9bef15cbbd6f716da50953e4f2659efa8",
       "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

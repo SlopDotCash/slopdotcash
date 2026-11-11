@@ -53,10 +53,11 @@ function harness(rejectMail = false) {
       .prepare(`
     INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
     input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,provider_cost_micro_usd,failure)
-    VALUES ('review',1,'triage',0,?,'model',?,0,0,0,0,'price',?,0,'estimated',?,?,?)
+    VALUES ('review',1,'triage',0,?,?,?,0,0,0,0,'price',?,0,'estimated',?,?,?)
   `)
       .run(
         gateway,
+        gateway === "orbio" ? "anthropic/claude-sonnet-5.5" : "model",
         outcome,
         estimated,
         `${month}-01T00:00:00.000Z`,
@@ -579,6 +580,7 @@ test("Orbio failure queues one private operator notice while success sends none"
     ]);
     expect(h.mail).toHaveLength(1);
     expect(h.mail[0]).toContain("provider returned HTTP 503");
+    expect(h.mail[0]).toContain("anthropic/claude-sonnet-5.5");
     await dispatchFailureAlert(h.db, h.notify);
     expect(h.mail).toHaveLength(1);
     expect(
