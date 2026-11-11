@@ -454,6 +454,59 @@ export function notifyVettingBanAudience<S>(
 }
 
 /**
+ * SQL predicate over an event key: the reinstatement request a
+ * `reinstatement-review:` key names is still undecided, so its review
+ * notice still asks something. This mirrors the appeal fold in
+ * backend/projects/verified-enforcement.ts. A project request
+ * (selectProjectAppeals, kept) is closed by the first later quarantine,
+ * reinstatement or denial, or by a later ban whose appeal state moved
+ * (a signed ban that keeps the appeal for the moderator decision does
+ * not close it). An account request (findAccountBoundary) is closed
+ * only by a decision on that exact account: a ban that names it, a
+ * release of it, or a denial recorded while no project request was
+ * open. Enforcement records are append-only, so readers fold them;
+ * nothing is written back to the request row.
+ */
+export const REINSTATEMENT_REQUEST_OPEN = (eventKey: string) => `EXISTS (
+  SELECT 1 FROM project_enforcements req
+   WHERE req.id = substr(${eventKey}, length('reinstatement-review:') + 1)
+     AND NOT EXISTS (
+       SELECT 1 FROM project_enforcements d
+        WHERE d.project_id = req.project_id AND d.sequence > req.sequence
+          AND (
+            (req.actor_role <> 'banned-account' AND (
+              d.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+              OR (d.action = 'ban' AND d.appeal_after <> 'requested')
+            ))
+            OR (req.actor_role = 'banned-account' AND (
+              (d.action = 'ban' AND EXISTS (
+                SELECT 1 FROM project_maintainer_bans b
+                 WHERE b.enforcement_id = d.id
+                   AND b.github_id = req.actor_github_id))
+              OR (d.action = 'reinstate_accounts' AND EXISTS (
+                SELECT 1 FROM project_account_reinstatements rel
+                 WHERE rel.enforcement_id = d.id
+                   AND rel.github_id = req.actor_github_id))
+              OR (d.action = 'deny_reinstatement' AND NOT EXISTS (
+                SELECT 1 FROM project_enforcements r2
+                 WHERE r2.project_id = req.project_id
+                   AND r2.action = 'request_reinstatement'
+                   AND r2.actor_role <> 'banned-account'
+                   AND r2.sequence < d.sequence
+                   AND r2.sequence > COALESCE((
+                     SELECT MAX(d2.sequence) FROM project_enforcements d2
+                      WHERE d2.project_id = req.project_id
+                        AND d2.sequence < d.sequence
+                        AND (d2.action IN ('quarantine', 'reinstate', 'deny_reinstatement')
+                             OR (d2.action = 'ban' AND (d2.actor_role = 'vetting-service' OR d2.appeal_after <> 'requested')))
+                   ), 0)
+              ))
+            ))
+          )
+     )
+)`;
+
+/**
  * A reinstatement request reaches the moderators who may decide it: the
  * caller passes only those who did not place the restriction (ELG-02).
  */
