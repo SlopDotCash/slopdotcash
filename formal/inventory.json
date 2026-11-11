@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "68850733bc7f60d90e24af3b8318911ebaf1150f7bce0d17efcc6fe480f14292",
+      "sha256": "1af044b736f645aa5feb27cbb282ce15291a67488363fe9415d655841f186630",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 109, 174, 213, 238, 256, 331],
+      "candidateLines": [1, 90, 110, 175, 214, 239, 260, 348],
       "review": "mapped-abstraction"
     },
     {
@@ -3337,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "856e3abcba9da1a9418c5337037dfccd0fb2515a50492eb2d859ab4ae35dc1a2",
+      "sha256": "0c1078dd2ccc94002fd646a381de538fc7ef5a055c8210e3f32b3288f6f7c1ae",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [69, 72, 80, 94, 119, 220, 222, 224, 271, 278, 331],
+      "candidateLines": [37, 50, 123, 125, 127, 174, 181, 234],
       "review": "mapped-abstraction"
     },
     {
@@ -3407,7 +3407,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "f2023e0f5e70eea87154569130a8e018c34c89454ad37f9a99096f98730d903f",
+      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3741,6 +3741,14 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure listing of Quint model paths with duplicate-name refusal; no stored state, writes or transition. Model-set and source stability during a run are owned by check-formal.mjs and its models."
+    },
+    {
+      "path": "scripts/formal-report.mjs",
+      "sha256": "3477d871ed93402805333eb3e0d4c3506078a088841ba5f409a538e771b48b07",
+      "models": [],
+      "candidateLines": [57, 60, 68],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
     {
       "path": "scripts/formal-state-catalog.mjs",

@@ -106,6 +106,7 @@ jobs:
           ./scripts/contributor-allocation-safety-view.test.ts
           ./scripts/bot-inference-symmetry.test.ts
           ./scripts/formal-source-binding.test.ts
+          ./scripts/formal-report.test.ts
       - name: Check source inventory and state catalog
         run: |
           bun run formal:coverage
@@ -249,11 +250,16 @@ jobs:
           import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
           import { listModels, modelSources } from "./scripts/formal-models.mjs";
+          import { formalAdapterOverlaySha256, formalReportProblems, formalStageArguments, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
+          import { readSafetyViews, bindSafetyView } from "./scripts/quint-safety-view.mjs";
+          import { verificationTransition } from "./scripts/quint-verification-step.mjs";
 
           const root = process.cwd();
           const shards = process.env.SHARD_REPORTS;
           const digest = (path) =>
             createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+          const safetyViews = readSafetyViews(root);
+          const quintVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies["@informalsystems/quint"];
           const selected = process.env.SELECTED_MODELS;
           const wanted = selected === "all" ? null : new Set(selected.split(" "));
           const models = listModels(root).filter(
@@ -274,25 +280,36 @@ jobs:
                 continue;
               }
               const report = JSON.parse(readFileSync(file, "utf8"));
-              const sources = modelSources(readFileSync(join(root, path), "utf8"));
-              const stale = Object.entries(report.toolHashes ?? {}).some(
-                ([tool, hash]) => digest(tool) !== hash,
-              );
-              const ok =
-                report.schemaVersion === 1 &&
-                report.canceled === false &&
-                report.inputsUnchanged === true &&
-                !stale &&
-                Array.isArray(report.results) &&
-                report.results.length === stages &&
-                report.results.every(
-                  (result) =>
-                    result.passed === true &&
-                    result.model === path &&
-                    result.sha256 === digest(path) &&
-                    sources.every((source) => result.sources?.[source] === digest(source)),
-                );
-              if (!ok) problems.push(`${prefix}: ${path} did not pass for this checkout`);
+              const source = readFileSync(join(root, path), "utf8");
+              const sources = modelSources(source);
+              const verify = prefix === "verification";
+              const transition = verify ? verificationTransition(path, source) : null;
+              const temporalProperties = [...source.matchAll(/^\s*temporal\s+(\w+Property)\s*=/gmu)].map((match) => match[1]);
+              const view = verify ? safetyViews.views.find((entry) => entry.model === path) : null;
+              let safetyView = null;
+              if (view) {
+                bindSafetyView(safetyViews, view.id, path, source);
+                const { module, ...evidence } = view;
+                safetyView = { ...evidence, adapterSha256: safetyViews.quintAdapterSha256, overlaySha256: formalAdapterOverlaySha256(safetyViews.quintAdapterSha256) };
+              }
+              const expected = {
+                checkoutRoot: root,
+                model: path,
+                sha256: digest(path),
+                sources: Object.fromEntries(sources.map((file) => [file, digest(file)])),
+                toolHashes: Object.fromEntries(formalToolPaths(verify).map((file) => [file, digest(file)])),
+                verify,
+                commands: formalStageArguments(path, verify, transition, temporalProperties),
+                finiteTransition: transition ?? { step: "step", kind: "concrete" },
+                safetyView,
+                quintVersion,
+                timeoutMs: formalTimeoutMs(path, verify),
+              };
+              const invalid = formalReportProblems(report, expected);
+              if (invalid.length) {
+                problems.push(...invalid.map((reason) => `${prefix}: ${path}: ${reason}`));
+                continue;
+              }
               base ??= report;
               if (JSON.stringify(report.toolHashes) !== JSON.stringify(base.toolHashes) ||
                   report.javaVersion !== base.javaVersion ||
