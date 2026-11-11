@@ -205,6 +205,7 @@ the reviewed PR; earlier per-branch results do not certify the combined source.
 | Payment preparation and recovery at commit | `payments/direct_preparation_completion.qnt`, `payments/direct_recovery_completion.qnt` | `backend/security/direct-payments.integration.ts` with migrated SQLite and local Anvil |
 | Monthly owner authority at commit | `rewards/monthly_owner_completion.qnt` | `backend/payments/monthly.test.ts` with actual SQLite writes |
 | Registry snapshot and browser evidence publication | `release/registry_snapshot_publication.qnt`, `release/ci_browser_evidence.qnt` | Registry sync checks; separate normal and private-intake browser reports |
+| Maintainer removal and applicant cancellation | `api/api_project_removal.qnt`, `ui/ui_project_removal.qnt` | `scripts/project-self-service.test.ts`, `backend/projects/cloudflare-persistence.test.ts`, `tests/e2e/project-removal.spec.ts` |
 | Cancellation, detached descendants and proof receipts | `tooling/formal_process.qnt`, `tooling/formal_toolchain.qnt`, `tooling/runner_cancellation.qnt` | `scripts/e2e-runner.test.ts`, `scripts/e2e-runner-io.test.ts`, `scripts/lemmascript-cancellation.test.ts` |
 
 Pending attempt mutations compare the last acknowledged stored record in one
@@ -247,6 +248,16 @@ Registry files are written sequentially, not atomically as a pair. An interrupte
 write may leave partial or mismatched bytes; later validation must refuse them.
 Normal registry and private-intake browser runs use distinct evidence folders;
 execution success does not prove that a report survived an overwrite.
+
+Project removal checks current GitHub authority against the stored repository,
+then appends a paused, retired revision through the revision and enforcement
+generation guards. It preserves historical Points, cases and funded obligations.
+Applicant cancellation is independent of GitHub availability and competes with
+publication through a conditional database write. Its retained cancellation
+marker projects a distinct terminal state and prevents later publication.
+Neither a lost response nor a departed UI callback reverses a committed write.
+These models cover one bounded application/project and request lifetime; they
+do not make GitHub and D1 a distributed transaction or prove payment behavior.
 
 The browser supervisor records numeric process ancestry before a parent exits
 and rechecks captured start identities before signaling detached groups. The
@@ -299,7 +310,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Generated project skill publication | `project_skill_publication` | `backend/projects/skill-publication.ts`, `src/lib/project-skill-publication.mjs`, `scripts/project-registry-api.test.ts` |
 | Retained value-dispute evidence and triage | `bot_value_dispute_binding`, `bot_value_dispute_read`, `bot_value_dispute_actor`, `bot_value_dispute_draft` | `workers/slopbot/value-disputes.ts`, `workers/slopbot/penalty-appeal.test.ts` |
 | Archive filters, clocks and historical detail | `ui_cycle_archive`, `ui_cycle_publication`, `ui_record_deadlines` | `src/CyclePages.tsx`, `src/App.tsx`, `tests/e2e/site.spec.ts`, `tests/e2e/ui-clock-transitions.spec.ts` |
-| Setup status and activation | `api_project_setup_check`, `ui_setup_check_lifetime` | `backend/projects/setup.ts`, `backend/projects/handler.ts`, `scripts/project-self-service.test.ts`, `tests/e2e/project-access-retry.spec.ts` |
+| Setup status and activation | `api_project_setup_check`, `ui_setup_check_lifetime` | `backend/projects/setup.ts`, `backend/projects/handler.ts`, `scripts/project-self-service.test.ts`, `tests/e2e/project-access-retry.spec.ts`, `tests/e2e/project-setup-resume.spec.ts` |
 | Private submission claim ownership | `api_submission_recovery`, `api_private_intake` | `backend/security/submissions.ts`, `backend/security/submissions.test.ts` |
 | Retained-copy binding and historical import | `retained_copy_bindings`, `historical_subscription_intake` | `workers/slopbot/value-retained-copy.ts`, `workers/slopbot/value-import.ts`, existing promotion and publication-fence workflows |
 | Owner vault infrastructure selection | `vault_setup_resolution`, `vault_creation` | `backend/projects/vault-setup.ts`, existing EVM/Solana vault setup workflows |
@@ -1003,3 +1014,9 @@ simulation, witnesses, invariants and model checking. The
 defines fairness and eventual progress. Models are finite, independently
 checkable families with explicit cross-family assumptions, followed by
 implementation conformance through actual workflow entry points.
+
+Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12 review requests, a ten-item initial view, explicit expansion, and retained expansion during stale refresh. `tests/e2e/project-work.spec.ts` exercises expansion by keyboard at desktop and mobile widths, including long-title reflow at 200% text size.
+
+`ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
+
+Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.

@@ -60,7 +60,7 @@ async function withPendingLock<T>(
 ) {
   if (!navigator.locks)
     throw new Error(
-      "This browser cannot coordinate claim requests. Use a browser with Web Locks.",
+      "This browser can't handle claims safely. Update it or use a different browser.",
     );
   return navigator.locks.request(
     `${pendingKey(data)}:mutation`,

@@ -20,7 +20,8 @@
 // `dry_run` loads no key: it reconciles and may rebroadcast exact journaled
 // bytes, but never signs a send or a fee replacement. `live` signs only when
 // the network has a verified USDC target; Robinhood Chain retains received
-// assets and never quotes or signs.
+// assets and never quotes or signs a conversion. Its SLOP buyback sends, when
+// that separate mode is active, are modeled in buyback_market.
 //
 // Row states (migration 0088): quoted, pending, skipped, no_route, submitted,
 // unknown, finalized, failed. Current code writes a live `quoted` row only in

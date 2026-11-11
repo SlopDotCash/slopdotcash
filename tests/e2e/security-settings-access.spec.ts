@@ -1,5 +1,10 @@
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  expectAccessibleReflow,
+  test,
+} from "./fixtures";
 
 /**
  * The owner security settings check current management access before they
@@ -95,10 +100,16 @@ test("security settings retry a failed management access check", async ({
 
   await retry.click();
   await expect(retry).toHaveCount(0);
-  await expect(
-    settings.getByRole("button", { name: "Review bounty terms", exact: true }),
-  ).toBeVisible();
+  const review = settings.getByRole("button", {
+    name: "Review bounty terms",
+    exact: true,
+  });
+  await expect(review).toBeVisible();
   expect(attempts).toEqual(["0", "1", "2"]);
   expect(revisionReads).toHaveLength(1);
-  await expectAccessible(page);
+  await review.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(review).toBeFocused();
+  await expectAccessibleReflow(page, "security-settings-restored");
 });

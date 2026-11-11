@@ -85,7 +85,7 @@ function primary(inventorySha256: string): ScannerEvidence {
     review: {
       reviewer: "opus",
       provider: "surplus",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       promptPolicyRevision: "test",
       inputManifestSha256: inventorySha256,
       runId: "run-test",

@@ -40,3 +40,4 @@ src/lib/verified-calendar.ts
 src/lib/verified-ids.ts
 src/lib/verified-scoring.ts
 src/lib/verified-base-units.ts
+workers/fee-converter/verified-buyback.ts

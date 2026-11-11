@@ -255,7 +255,7 @@ function analysisMessage(input: SecurityAnalysisInput): string {
  * The requested model is not proof of the model served by the marketplace.
  * There is no fallback provider or zero-retention guarantee.
  */
-const SECURITY_ANALYSIS_MODEL = "claude-opus-5.5";
+const SECURITY_ANALYSIS_MODEL = "claude-sonnet-5.5";
 const SURPLUS_MESSAGES = new URL(
   "https://api.surplusintelligence.ai/anthropic/v1/messages",
 );

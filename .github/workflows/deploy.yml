@@ -245,6 +245,9 @@ jobs:
             assertLeaderboardSnapshot(snapshot);
             console.log(`Using published leaderboard generated at ${snapshot.generatedAt}`);
           ' "$ledger_file"
+          # A project activated after the last full collection is added with
+          # zero counts until the next collection records it.
+          bun scripts/extend-published-profiles.ts "$profiles_file"
           bun scripts/generate-profiles.ts --input "$profiles_file" --current
           cp "$ledger_file" public/data/leaderboard.json
           bun --no-env-file -e '
@@ -463,13 +466,23 @@ jobs:
           path: dist
       - name: Install Playwright system dependencies
         run: |
+          set -euo pipefail
           # The Azure mirror stalled across release and PR runners. Use Ubuntu's
           # primary archive; the runner's URI normally points to apt-mirrors.txt.
           # Keep its suites, components and signing keys unchanged.
-          sudo sed -i 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu/|' \
-            /etc/apt/sources.list.d/ubuntu.sources
-          grep -Fx 'URIs: https://archive.ubuntu.com/ubuntu/' \
-            /etc/apt/sources.list.d/ubuntu.sources
+          # On 11 November 2026 the archive's host name stopped resolving on
+          # every runner. When the index cannot be read from the primary
+          # archive, use the kernel.org mirror of the same signed archive; apt
+          # still checks every index against Ubuntu's keys.
+          for uri in https://archive.ubuntu.com/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/; do
+            sudo sed -i "s|^URIs:.*|URIs: ${uri}|" /etc/apt/sources.list.d/ubuntu.sources
+            grep -Fx "URIs: ${uri}" /etc/apt/sources.list.d/ubuntu.sources
+            if sudo timeout --signal=TERM --kill-after=15s 5m \
+              apt-get update -o APT::Update::Error-Mode=any; then
+              break
+            fi
+            echo "::warning::The package index could not be read from ${uri}."
+          done
           # Run the timeout as root so it can terminate apt and its children.
           # Do not retry an interrupted package transaction on the same runner.
           # Hosted package downloads exceeded ten minutes in two release runs.
@@ -947,6 +960,7 @@ jobs:
         if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled'
         timeout-minutes: 11
         env:
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
         # This main-only environment supplies the key only to this step.
         # Synthetic source and local SQLite; no production bindings or output artifacts.
@@ -1300,9 +1314,10 @@ jobs:
             "SLOPBOT_APP_PRIVATE_KEY",
             "SLOPBOT_APP_USER_ID",
             "SLOPBOT_WEBHOOK_SECRET",
+            "ORBIO_API_KEY",
             "SURPLUS_API_KEY",
           ];
-          const allowed = new Set([...required, "SURPLUS_BASE_URL"]);
+          const allowed = new Set([...required, "ORBIO_BASE_URL", "SURPLUS_BASE_URL"]);
           if (!required.every((name) => names.includes(name)) || !names.every((name) => allowed.has(name))) {
             throw new TypeError("slopbot Worker secret inventory is incomplete or contains unexpected entries");
           }
@@ -1662,7 +1677,19 @@ jobs:
           // Use the Worker's actual parser: live signing on every converting
           // network requires that network's own approved native limits.
           const { parseConfig } = require("./workers/fee-converter/config.ts");
-          parseConfig(Bun.TOML.parse(toml).vars);
+          const converter = parseConfig(Bun.TOML.parse(toml).vars);
+          // The SLOP buyback uses the same parser as the Worker. A buyback
+          // that is not off needs Robinhood enabled, and a live one needs
+          // that network's own approved native limits before it can sign.
+          const { parseBuybackConfig } = require("./workers/fee-converter/buyback-config.ts");
+          const buyback = parseBuybackConfig(Bun.TOML.parse(toml).vars, mode);
+          if (buyback.mode !== "off") {
+            const robinhood = converter.networks.find((n) => n.network === "robinhood");
+            if (!robinhood) throw new TypeError("the buyback needs robinhood in FEE_CONVERTER_NETWORKS");
+            if (buyback.mode === "live" && !robinhood.nativeBudget) {
+              throw new TypeError("a live buyback lacks Robinhood native gas limits");
+            }
+          }
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);

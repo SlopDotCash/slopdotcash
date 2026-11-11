@@ -22,6 +22,7 @@ import {
   expectAccessible,
   openProjectSecuritySettings,
   projectSuffix,
+  serveProjectCycleIndex,
   test,
 } from "./fixtures";
 
@@ -298,7 +299,7 @@ async function listProject(
   if (program && !creatorRole) throw new Error("Unknown fixture creator");
   const creator = creatorRole ? account(creatorRole) : undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
-    manifest: program?.settlement
+    manifest: program
       ? {
           ...manifest,
           securityBounty: {
@@ -309,14 +310,17 @@ async function listProject(
               financial: [creator],
               dispute: [creator],
             },
-            settlement: { ...program.settlement, deployments: [] },
+            ...(program.settlement
+              ? { settlement: { ...program.settlement, deployments: [] } }
+              : {}),
           },
         }
       : manifest,
   });
   expect(applied.status, JSON.stringify(applied.body)).toBe(201);
-  if (program?.settlement) {
-    // Fixture trust root only. An owner cannot self-attest a deployed vault.
+  if (program) {
+    // Fixture trust root only. Creation names its creator; reviewed later
+    // revisions set the case roles and any synthetic verified vault.
     const registered = await revise(request, id, (current) => ({
       ...current,
       securityBounty: program,
@@ -2212,7 +2216,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     expect(triaged.appealTriage).toMatchObject({
       state: "complete",
       provider: "surplus",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       promptRevision: "slop-security-appeal-triage-1",
       proposedOutcome: "return",
       confidence: 0.72,
@@ -3135,6 +3139,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
   let shown: Record<string, unknown> = project;
+  await serveProjectCycleIndex(page, [id]);
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
@@ -3151,6 +3156,14 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  // Discovery keeps current security offers before project lists and rankings.
+  expect(
+    await page
+      .locator(
+        "main > #security-bounties, main > #projects, main > #leaderboard",
+      )
+      .evaluateAll((sections) => sections.map((section) => section.id)),
+  ).toEqual(["security-bounties", "projects", "leaderboard"]);
   const featured = page.locator('[aria-labelledby="featured-projects"]');
   await expect(featured.locator(".project-card")).toHaveCount(1);
   await expect(featured).toContainText("$10k");
@@ -3238,14 +3251,22 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(row).toContainText("Pledged");
   await expect(row).not.toContainText("Points only");
 
-  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  // A separate open bounty names the existing offer while ordinary routing stays intact.
   shown = {
     ...project,
-    listingTier: "community",
+    listingTier: "featured",
     securityBounty: { ...project.securityBounty, rewardMode: "separate" },
   };
   await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("Points only");
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("/ Critical");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
+  shown = { ...shown, listingTier: "community" };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
