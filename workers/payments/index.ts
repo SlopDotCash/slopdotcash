@@ -216,7 +216,10 @@ export async function recoverUncertainAttempts(
       }
       await env.PAYMENTS_DB.batch([
         env.PAYMENTS_DB.prepare(
-          "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared')",
+          // The selection above deliberately includes submitted Solana rows
+          // whose transaction the ledger never recorded; the write must
+          // match them too, or the journal transaction is silently dropped.
+          "UPDATE payment_attempts SET transaction_id=?,state='submitted' WHERE id=? AND transaction_id IS NULL AND state IN ('unknown','prepared','submitted')",
         ).bind(status.transactionId, attempt.idempotencyKey),
         env.PAYMENTS_DB.prepare(
           // A delayed status response must not undo finalized-failure recovery.

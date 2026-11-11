@@ -69,6 +69,9 @@ const leaseUntil = new Date(Date.now() + 60_000).toISOString();
 // retirement and signing, so a retired attempt is never signed and the
 // dispatcher's submit fails on the tombstone; these entries answer that pair.
 const retirements = new Map<string, string>();
+// Journal transactions recovery must adopt for submitted rows whose
+// transaction the ledger never recorded (attempt id -> journal tx).
+const recoveredTransactions = new Map<string, string>();
 type PaymentRow = {
   id: string;
   attemptState: string;
@@ -428,6 +431,12 @@ try {
             ? { retired: true, transactionId: null }
             : { transactionId: null },
         );
+      }
+      if (recoveredTransactions.has(body.idempotencyKey)) {
+        return Response.json({
+          transactionId: recoveredTransactions.get(body.idempotencyKey),
+          submitted: true,
+        });
       }
       assert.equal(route, "v1/attempt-status");
       assert.deepEqual(body, {
@@ -1172,8 +1181,98 @@ try {
       .get("attempt-solana-submitted")?.kind,
     "unsigned-attempt-retired",
   );
+  // A Solana row marked submitted whose journal holds a transaction the
+  // ledger never recorded: recovery must adopt the journal transaction
+  // instead of silently dropping it for the already-submitted row.
+  sql
+    .query(
+      "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "old-solana-nontx",
+      "303",
+      "fixture-solana-nontx",
+      "11111111111111111111111111111111",
+      "d1_registry",
+      "1".repeat(64),
+      timestamp,
+      "2".repeat(64),
+      timestamp,
+      "solana",
+    );
+  sql
+    .query(
+      "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'reserved',?)",
+    )
+    .run(
+      "obligation-solana-nontx",
+      "fixture-solana-nontx",
+      "303",
+      "solana-devnet",
+      "solana",
+      "vault-solana-nontx",
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      6,
+      "100000000",
+      "2000000",
+      "3".repeat(64),
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_attempts(id,obligation_id,claim_id,transaction_id,created_at,state) VALUES(?,?,?,?,?,'submitted')",
+    )
+    .run(
+      "attempt-solana-nontx",
+      "obligation-solana-nontx",
+      "old-solana-nontx",
+      null,
+      timestamp,
+    );
+  sql
+    .query(
+      "INSERT INTO payment_outbox(obligation_id,state,updated_at) VALUES(?,'submitted',?)",
+    )
+    .run("obligation-solana-nontx", timestamp);
+  recoveredTransactions.set(
+    "attempt-solana-nontx",
+    "recovered-solana-transaction",
+  );
+  // The replacement attempt from the retirement case above is still a
+  // reserved submitted Solana row, so recovery re-checks it too; answer
+  // with its own recorded transaction.
+  const replacement = sql
+    .query<{ id: string }, [string]>(
+      "SELECT id FROM payment_attempts WHERE obligation_id=? AND transaction_id='solana-submitted-retry'",
+    )
+    .get("obligation-solana-submitted");
+  assert(replacement);
+  recoveredTransactions.set(replacement.id, "solana-submitted-retry");
+  await recoverUncertainAttempts(env);
+  assert.deepEqual(
+    sql
+      .query<
+        {
+          attemptState: string;
+          transactionId: string | null;
+          outboxState: string;
+        },
+        [string]
+      >(
+        "SELECT a.state attemptState,a.transaction_id transactionId,b.state outboxState FROM payment_attempts a JOIN payment_outbox b ON b.obligation_id=a.obligation_id WHERE a.obligation_id=?",
+      )
+      .all("obligation-solana-nontx"),
+    [
+      {
+        attemptState: "submitted",
+        transactionId: "recovered-solana-transaction",
+        outboxState: "submitted",
+      },
+    ],
+    "A submitted Solana row without a recorded transaction must adopt the journal transaction",
+  );
   console.log(
-    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once; a live lease survives retirement and both dispatcher outcomes leave a dispatchable row; a submitted Solana row without a journal transaction retires and dispatches again. Local journal evidence only, no chain submission or finality.",
+    "Payment recovery integration passed: Base outage remains reported; held Solana attempt recovers durably; restored Base recovers once; a live lease survives retirement and both dispatcher outcomes leave a dispatchable row; a submitted Solana row without a journal transaction retires and dispatches again; a submitted Solana row without a recorded transaction adopts the journal transaction. Local journal evidence only, no chain submission or finality.",
   );
 } finally {
   server?.stop(true);
