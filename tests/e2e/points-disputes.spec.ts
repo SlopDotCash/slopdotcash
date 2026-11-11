@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import type { Response } from "@playwright/test";
 import { notifySlopbotAppeal } from "../../backend/notifications/events";
 import { pointRevisionId } from "../../src/lib/points";
 import { expect, expectAccessible, test } from "./fixtures";
@@ -113,6 +114,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
     .getByRole("button", { name: "Request review", exact: true })
     .click();
   await intakeWaiting;
+  let outsiderReports: Promise<Response> | undefined;
   try {
     await expect(page.getByLabel("Reason", { exact: true })).toBeDisabled();
     await page.keyboard.type(" late edit");
@@ -121,6 +123,11 @@ test("a manual Points award reaches private Inbox review and an independent mode
     );
     // Change the actual session without focus/navigation while A's committed
     // response is held. Its own completion must tear down A's private form.
+    outsiderReports = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === "/api/v1/security-cases",
+    );
     await page.evaluate((value) => {
       // biome-ignore lint/suspicious/noDocumentCookie: Replace only this isolated local session.
       document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -135,6 +142,10 @@ test("a manual Points award reaches private Inbox review and an independent mode
   await expect(page).not.toHaveURL(/points(?:Dispute)?=/u);
   if (!intakeKey)
     throw new Error("The committed Points receipt was not captured");
+  // Inbox lists private reports for the account it now sees. Let that read
+  // finish as the outsider: restoring the cookie under it is refused as a
+  // changed account, and navigating under it cancels it.
+  await (await outsiderReports)?.finished();
   await page.evaluate((value) => {
     // biome-ignore lint/suspicious/noDocumentCookie: Restore only this isolated local session.
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
