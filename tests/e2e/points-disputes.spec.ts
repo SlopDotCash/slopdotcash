@@ -67,7 +67,9 @@ test("a manual Points award reaches private Inbox review and an independent mode
   sql(`INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(${q(actorId)},${q(githubId)},${q(`points-${suffix}`)},${q(now)},1);
     INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(${q(createHash("sha256").update(session).digest("hex"))},${q(actorId)},'2099-01-01T00:00:00.000Z');
     INSERT INTO points_revisions(id,source_key,previous,recorded_at,payload) VALUES(${q(revision.id)},${q(record.award.key)},NULL,${q(now)},${q(JSON.stringify(revision))});`);
-  await page.goto("/how-it-works", { waitUntil: "load" });
+  // Firefox can render a new context without completing its load lifecycle.
+  // Every warmup below checks the visible page and loaded fonts explicitly.
+  await page.goto("/how-it-works", { waitUntil: "commit" });
   await expect(
     page.getByRole("heading", { name: "How Slop works", exact: true }),
   ).toBeVisible();
@@ -209,7 +211,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
   diagnostics.allowResponse(404, "GET", privatePath);
   try {
     await deniedPage.goto(new URL("/how-it-works", page.url()).href, {
-      waitUntil: "load",
+      waitUntil: "commit",
     });
     await expect(
       deniedPage.getByRole("heading", { name: "How Slop works", exact: true }),
@@ -244,7 +246,7 @@ test("a manual Points award reaches private Inbox review and an independent mode
   const moderator = await context.newPage();
   try {
     await moderator.goto(new URL("/how-it-works", page.url()).href, {
-      waitUntil: "load",
+      waitUntil: "commit",
     });
     await expect(
       moderator.getByRole("heading", { name: "How Slop works", exact: true }),
