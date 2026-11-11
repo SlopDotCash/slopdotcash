@@ -63,12 +63,24 @@ test("production accepts the provisioned Solana mint RPC and public GitHub read 
   ).toThrow("X OAuth credentials must be configured together");
 });
 
-const parsed = Bun.YAML.parse(workflow);
+const parsed = Bun.YAML.parse(workflow) as {
+  jobs: {
+    deploy: {
+      environment: { name: string };
+      steps: {
+        name?: string;
+        run?: string;
+        env?: Record<string, string>;
+      }[];
+    };
+  };
+};
 const production = parsed.jobs.deploy;
 const publication = production.steps.find(
-  (step: { name: string }) =>
-    step.name === "Deploy private identity and Cloudflare Pages",
+  (step) => step.name === "Deploy private identity and Cloudflare Pages",
 );
+if (!publication?.run)
+  throw new Error("Production publication shell step is missing");
 const secretStart = publication.run.indexOf('slopbot_secrets="');
 const secretEnd = publication.run.indexOf(
   "# Version deployments do not apply the scheduler or queue triggers.",
@@ -93,13 +105,13 @@ const allSecrets = [...appAndSurplus, "ORBIO_API_KEY"];
 const versionId = "12345678-1234-1234-1234-123456789abc";
 const sourceSha = "a".repeat(40);
 type Binding = { name: string; type: string };
-const secretBindings = (names: string[]): Binding[] =>
+const secretBindings = (names: readonly string[]): Binding[] =>
   names.map((name) => ({ name, type: "secret_text" }));
 
 function publishSlopbot(
   options: {
-    before?: string[];
-    bindings?: Binding[];
+    before?: readonly string[];
+    bindings?: readonly Binding[];
     key?: string | null;
     id?: string;
     sha?: string;
@@ -208,7 +220,7 @@ if (args[0] === "secret" && args[1] === "list") {
 
 test("the protected production step supplies Orbio to its own version upload", () => {
   expect(production.environment.name).toBe("slop-production");
-  expect(publication.env.ORBIO_API_KEY).toBe(
+  expect(publication.env?.ORBIO_API_KEY).toBe(
     "$" + "{{ secrets.ORBIO_API_KEY }}",
   );
 });
