@@ -10,10 +10,11 @@ const root = resolve(import.meta.dirname, "..");
 const model = "formal/models/slopbot/bot_inference_retention.qnt";
 const source = readFileSync(resolve(root, model), "utf8");
 const manifest = readSafetyViews(root);
-const selected = manifest.views.find(
+const view = manifest.views.find(
   (entry: { model: string }) => entry.model === model,
 );
-if (!selected) throw new Error("Missing reviewed inference ID symmetry");
+if (!view) throw new Error("Missing reviewed inference ID symmetry");
+const selected = view;
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 const enabled = process.env.SLOP_QUINT_TRANSLATOR_TEST === "1";
