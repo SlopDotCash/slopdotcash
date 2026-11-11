@@ -1631,6 +1631,61 @@ function cmakeIncludedPaths(files: ScanInputFile[]): Set<string> {
   return included;
 }
 
+/** A Cargo manifest, at the root of the package it describes. */
+const CARGO_MANIFEST = /(?:^|\/)cargo\.toml$/iu;
+
+/**
+ * The string value of one manifest's `[package]` `build` key, or null. The
+ * `build` field specifies the package's build script file; `true` keeps the
+ * default `build.rs` and `false` disables it, so only a string literal names
+ * a file. The key is not inherited from `[workspace.package]`, so no other
+ * table counts.
+ */
+function cargoBuildSpecifier(text: string): string | null {
+  let inPackage = false;
+  for (const rawLine of text.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    const header = /^\[\[?\s*([^\]]*?)\s*\]?\]/u.exec(line);
+    if (header) {
+      inPackage = (header[1] ?? "").replace(/\s+/gu, "") === "package";
+      continue;
+    }
+    if (!inPackage) continue;
+    const entry = /^"?build"?\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/u.exec(
+      line,
+    );
+    const value = entry?.[1] ?? entry?.[2];
+    if (value !== undefined) return value;
+  }
+  return null;
+}
+
+/**
+ * The file each manifest's `build` key designates as its build script.
+ * Cargo resolves the path against the package root — the manifest's own
+ * directory — compiles that file and executes it just before building the
+ * package, so it is an install script whatever its name. This holds for
+ * every package in the tree, including workspace members and path
+ * dependencies, whose build scripts run when the package that depends on
+ * them is built. A path that does not resolve inside the acquired tree
+ * names no acquired file and is skipped, as the CMake tracker skips its
+ * unresolvable includes.
+ */
+function cargoBuildScriptPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const designated = new Set<string>();
+  for (const file of files) {
+    if (!CARGO_MANIFEST.test(file.path)) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    const specifier = cargoBuildSpecifier(text);
+    if (specifier === null) continue;
+    const resolved = resolveBuildInclude(file.path, specifier);
+    if (resolved !== null && byPath.has(resolved)) designated.add(resolved);
+  }
+  return designated;
+}
+
 export function inspectRepository(input: {
   files: ScanInputFile[];
   /** Source the acquisition could not read; each keeps the scan incomplete. */
@@ -1668,14 +1723,20 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const cargoBuildScripts = cargoBuildScriptPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
-    // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    // Both build systems execute included files during configuration, and
+    // Cargo executes the build script its manifest's `build` key names.
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      cargoBuildScripts.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
