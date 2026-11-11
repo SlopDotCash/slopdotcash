@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "00834cd9733fad306ae552f30ca2af7adf442d2630bec9e38cc91b18c61d7440",
+      "sha256": "354c1b5853769976682b2a06609e77254e5a226e6a4c6167e679a6cf9aca44b4",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,9 +24,9 @@
       ],
       "candidateLines": [
         27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
-        612, 678, 908, 936, 975, 991, 1001, 1002, 1092, 1192, 1194, 1195, 1399,
-        1482, 1635, 1637, 1667, 1775, 1797, 1868, 1879, 1904, 1975, 1988, 2001,
-        2010, 2011, 2012
+        612, 678, 908, 936, 975, 991, 1001, 1002, 1093, 1196, 1198, 1199, 1403,
+        1486, 1639, 1641, 1671, 1779, 1801, 1872, 1883, 1908, 1979, 1992, 2005,
+        2014, 2015, 2016
       ],
       "review": "mapped-abstraction"
     },
@@ -456,6 +456,7 @@
       "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
       ],
       "candidateLines": [12, 62, 124, 136, 142],
@@ -620,7 +621,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "80bcecbaf997827fde3de3643e407155a49be740adf75ba595069f2a573a84c1",
+      "sha256": "61068a5b6e8c846d3b3b444364f9f3b53e63bf23c235a9239a9bb5f48ca3a550",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -631,6 +632,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -648,12 +650,12 @@
         444, 448, 449, 457, 523, 527, 858, 895, 911, 1007, 1021, 1026, 1033,
         1034, 1037, 1040, 1058, 1060, 1062, 1073, 1091, 1098, 1109, 1141, 1142,
         1153, 1155, 1160, 1161, 1162, 1163, 1175, 1176, 1177, 1179, 1184, 1222,
-        1281, 1331, 1365, 1383, 1450, 1531, 1542, 1551, 1554, 1574, 1616, 1622,
-        1626, 1632, 1638, 1674, 1682, 1685, 1686, 1731, 1732, 1733, 1750, 1795,
-        1796, 1804, 1824, 1826, 1830, 1841, 1851, 1866, 1872, 1882, 1919, 1938,
-        1942, 1995, 2140, 2144, 2171, 2192, 2193, 2204, 2208, 2243, 2257, 2275,
-        2292, 2324, 2333, 2477, 2503, 2652, 2709, 2749, 2760, 2761, 2874, 2882,
-        2900, 3097
+        1281, 1331, 1365, 1383, 1451, 1533, 1544, 1553, 1557, 1577, 1619, 1625,
+        1629, 1635, 1641, 1677, 1685, 1688, 1689, 1734, 1735, 1736, 1753, 1798,
+        1799, 1807, 1827, 1829, 1833, 1844, 1854, 1869, 1875, 1885, 1922, 1941,
+        1945, 1998, 2143, 2147, 2174, 2195, 2196, 2207, 2211, 2246, 2260, 2278,
+        2295, 2327, 2336, 2480, 2506, 2655, 2712, 2752, 2763, 2764, 2877, 2885,
+        2903, 3100
       ],
       "review": "mapped-abstraction"
     },
@@ -708,13 +710,14 @@
     },
     {
       "path": "backend/projects/vault-setup.ts",
-      "sha256": "b58d10f37395fb5ecaaa35e4c380b5912d953331bcd72f12a3d76d5ffa141059",
+      "sha256": "8feb7d085ff0a4ecadfe37cfd749ec8776a5910b10161dac903675d2f4a30053",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
-        "formal/models/contracts/vault_setup_resolution.qnt"
+        "formal/models/contracts/vault_setup_resolution.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt"
       ],
-      "candidateLines": [62, 327, 511],
+      "candidateLines": [107, 372, 511, 582],
       "review": "mapped-abstraction"
     },
     {
@@ -946,7 +949,8 @@
       "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
       "models": [
         "formal/models/api/api_award_recovery.qnt",
-        "formal/models/payments/payment_dispatch.qnt"
+        "formal/models/payments/payment_dispatch.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -1659,7 +1663,10 @@
     {
       "path": "contracts/solana/adapter.ts",
       "sha256": "949c1c0ef8d2d5baa93e9cf0a60a26b3274e6b446f26f86fcea0b27fc9fb7b48",
-      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "models": [
+        "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt"
+      ],
       "candidateLines": [
         47, 68, 73, 75, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
         375, 420, 427, 428, 431, 685, 691, 694, 696, 701, 725, 866, 867, 895,
@@ -3330,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "d577c108c56227cde18aa96b6ecb8d18f6fd086e568c4e6dea10ce0d10a5d279",
+      "sha256": "d99a99c296f0d86384fbde5fde5e5975b3a7d5351abf2089460f612c6cac7bdc",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [48, 51, 55, 66, 91, 192, 194, 196, 243, 250, 303],
+      "candidateLines": [48, 51, 59, 70, 95, 196, 198, 200, 247, 254, 307],
       "review": "mapped-abstraction"
     },
     {
@@ -4249,6 +4256,13 @@
       "sha256": "801071003746ab657f7217ca5f0bf50473f924bdabec36fab2b8447b93505477",
       "models": ["formal/models/slopbot/operator_appeal_recovery.qnt"],
       "candidateLines": [7, 36, 38, 48, 54, 56, 59, 60, 61, 64, 68, 89, 130],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/recover-vault-observations.ts",
+      "sha256": "727d79eba94520c48704f367c8c774752cf651be11efff21548d60589cd6bd2a",
+      "models": ["formal/models/payments/vault_initial_snapshot.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -6663,7 +6677,8 @@
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
-        "formal/models/contracts/vault_setup_resolution.qnt"
+        "formal/models/contracts/vault_setup_resolution.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7689,6 +7704,7 @@
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
@@ -13088,6 +13104,40 @@
         "reportAloneCannotHoldTest",
         "signedHoldClearsApprovalTest",
         "substitutedWalletRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/vault_initial_snapshot.qnt",
+      "sha256": "8234ea0fd2b4572f31970900d423a59385200f6e53e9eeea963941f213cb9c41",
+      "sources": [
+        "backend/payments/vault-snapshots.ts",
+        "backend/projects/handler.ts",
+        "backend/projects/vault-setup.ts",
+        "backend/security/payment-database.ts",
+        "contracts/solana/adapter.ts",
+        "scripts/recover-vault-observations.ts",
+        "src/lib/vault-setup.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "failedWriteRetainsRegistrationTest",
+        "identityRefusalNeverSeedsTest",
+        "lostWriteReplyDoesNotProveMissingSnapshotTest",
+        "missingSnapshotRecoveryNeverAppendsRevisionTest",
+        "priorReadFailureKeepsImmutableRegistrationTest",
+        "privateAndOrdinaryStoresRemainSeparateTest",
+        "racingLowerCounterRefusesTest",
+        "racingOlderBlockCannotReplaceNewerTest",
+        "racingRegistrationDoesNotAppendTwiceTest",
+        "racingSameBlockOlderTimeCannotReplaceTest",
+        "recoveryCannotSelectRetainedSnapshotTest",
+        "recoveryDoesNotSelectPrivateBountyTest",
+        "recoveryRefusesUnregisteredDeploymentTest",
+        "registrationRefusalCreatesNoSnapshotTest",
+        "registrationSeedsSnapshotTest",
+        "retrySeedsWithoutAnotherRevisionTest",
+        "unavailableReadRetainsRegistrationTest",
+        "untrustedRecoveryCannotWriteTest"
       ]
     },
     {
