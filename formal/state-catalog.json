@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c431b25e6bf2a41e4155eb6fca356bb96618b3137e81fe9294346418be8d23f4",
+  "inventorySha256": "183a76d3026566e2cb85e48dc169adc05456d769b74f5a036b4e29bccc1a766f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3097,6 +3097,26 @@
       "values": ["approved", "proposed"],
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/run-receipts.ts",
+      "line": 67,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["active", "paused"],
+      "models": ["formal/models/contributor/skill_run_local.qnt"],
+      "lexicallyUnmentionedValues": ["paused"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/run-receipts.ts",
+      "line": 194,
+      "name": "project_status",
+      "kind": "string-union",
+      "values": ["active", "paused"],
+      "models": ["formal/models/contributor/skill_run_local.qnt"],
+      "lexicallyUnmentionedValues": ["paused"],
       "review": "candidate-only"
     },
     {
