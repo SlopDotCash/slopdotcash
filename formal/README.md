@@ -75,7 +75,7 @@ normally has a 180-second limit. Explicit resource exceptions in
   `vetting_generation_retirement`, `submission_authorization_wrappers`,
   `api_submission_recovery`, `wallet_claim_publication`,
   `stored_binding_broadcast_authority`, `evm_binding_consent_api`, and
-  `trace_event_finalization`.
+  `trace_event_finalization` and `api_private_authorization`.
 - 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
