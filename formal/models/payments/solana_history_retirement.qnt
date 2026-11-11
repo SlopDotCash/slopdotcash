@@ -156,7 +156,7 @@ module solana_history_retirement {
   action expiredPlan = anchor(true).then(validity("false")).then(height(3))
   action expiredOne = genesis(true).then(expiredPlan).then(genesis(true)).then(expiredPlan)
   action expiredTwo = genesis(true).then(expiredPlan).then(expiredPlan).then(genesis(true)).then(expiredPlan).then(expiredPlan)
-  action historyReady = ready(2, planIds, "none").then(expiredTwo).then(signatures)
+  run historyReady = ready(2, planIds, "none").then(expiredTwo).then(signatures)
   action absent = historyStatus(true).then(observation("absent"))
   action failed(identity: int): bool = historyStatus(true).then(observation("candidate-failure")).then(failureProof(true, identity))
   action found = historyStatus(true).then(observation("found"))

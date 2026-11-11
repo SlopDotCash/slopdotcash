@@ -109,7 +109,7 @@ module evm_wallet_discovery {
     ids.forall(id => s.calls.get(id).phase == "pending" implies s.calls.get(id).trusted),
     ids.forall(id => s.calls.get(id).result == "returned" implies s.calls.get(id).trusted) }
   run selected = init.then(announce(1, 1, 1, true)).then(selectAnnounced(1))
-  action connected = selected.then(connect(false)).then(accountReply(true))
+  run connected = selected.then(connect(false)).then(accountReply(true))
 
   run discoveryNeverConnectsTest = init.then(announce(1, 1, 1, true)).then(legacy(Set(2)))
     .expect(s.permissionCalls == 0 and s.accountCalls == 0 and invariant)
