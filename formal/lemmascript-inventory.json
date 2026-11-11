@@ -10018,12 +10018,12 @@
 {"name":"<ArrowFunction@701>","kind":"ArrowFunction","line":701,"sha256":"fa0eef0afc487cee6fd12e91e159225d260849534606c6e006ee134bb94bba59","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@702>","kind":"ArrowFunction","line":702,"sha256":"d0f599f76236593b51b4b22a651463fd52b4e6aeb5b2dfc73ed20333ba948132","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/payments/reconcile.ts","sha256":"7d994bc20599451368e0ffdf6f4ebb6274c810ae42423aef9b996c02e54a754e","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/payments/reconcile.ts","sha256":"3078117a99695ef090266f7827842dd9e28d41e7c9d08636a4bedac3fe406fd8","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"finalizedEvmRevert","kind":"FunctionDeclaration","line":8,"sha256":"9b92f04fb02e76b822e023dbfac820391ad0d8ba339f882b9a59bd7a7fe2d8c4","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
 {"name":"rpc","kind":"ArrowFunction","line":14,"sha256":"a622f5b273b3ed04e19a321e10bf66a794a0de54cf21b29c43ebc49e814b1e88","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"reconcileFailedAttempts","kind":"FunctionDeclaration","line":54,"sha256":"61e6e627b12c7b534fd7380424cd4f4d22a19bdc09ee659a8444264907b66d22","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@68>","kind":"ArrowFunction","line":68,"sha256":"24f313082d7c0e06195f45f7cc02c13d564db53d6d139e69a4f55263749a8efe","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@87>","kind":"ArrowFunction","line":87,"sha256":"024c3d830a799ee79ec9e359adf0674dbbd689aea26bff8a75baef646251bab0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"reconcileFailedAttempts","kind":"FunctionDeclaration","line":54,"sha256":"423f2032a7efd10b37fccad10f04dd32324a4f0bd674a965829067b4c58c55a1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@76>","kind":"ArrowFunction","line":76,"sha256":"24f313082d7c0e06195f45f7cc02c13d564db53d6d139e69a4f55263749a8efe","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@112>","kind":"ArrowFunction","line":112,"sha256":"024c3d830a799ee79ec9e359adf0674dbbd689aea26bff8a75baef646251bab0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"workers/payments/registry-database.mjs","sha256":"3b78cec84306e6e6de8a6cffa09e88cee51def8c48f17e624ed8f2b6756764d0","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"parseRegistryDatabase","kind":"FunctionDeclaration","line":10,"sha256":"88a2107218ddd78464d2b0058dc4edbbb1ebed762d31679d9d631a3d5434ea5a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
