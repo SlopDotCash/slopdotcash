@@ -66,6 +66,9 @@ normally has a 180-second limit. Explicit resource exceptions in
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
   `ui_bounty_payment_parent`, and `direct_bounty_journal`.
+- 3,600 seconds: `ui_cycle_archive`. The corrected full concrete temporal graph
+  completed in 34 minutes 48 seconds with 3,929,088 distinct states, zero queued,
+  and no violation. Its domains, invariant and temporal property are unchanged.
 
 The admin graph still had 3.11 million states queued after 600 seconds; the
 publication graph had 2.18 million queued at that limit. The unchanged value-cap

@@ -51,10 +51,10 @@ const verificationTimeouts = {
   // This full-state UI graph exceeds the ordinary three-minute budget.
   // Keep its resource allowance explicit without reducing the model.
   "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
-  // The corrected archive timer graph retains its full temporal property and
-  // concrete domains. At eleven minutes TLC had reached 1,746,126 distinct
-  // states with 652,904 still queued; the ordinary 180s budget cannot finish it.
-  "formal/models/ui/ui_cycle_archive.qnt": 1_800_000,
+  // The corrected archive timer graph completed in 34m48s: 3,929,088 distinct
+  // states, zero queued and no temporal violation. Retain the full concrete
+  // domains and temporal property; allow this unchanged graph one hour.
+  "formal/models/ui/ui_cycle_archive.qnt": 3_600_000,
   // The unchanged payout-consent graph exceeded 180s while still exploring
   // roughly five million distinct states. Keep every concrete state and
   // transition; allow this model ten minutes to finish its finite graph.
