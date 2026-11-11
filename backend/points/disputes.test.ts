@@ -1085,3 +1085,39 @@ test("the dispute list finds awards recorded under the other node spelling of th
   };
   expect(other.awards).toEqual([]);
 });
+
+test("retry on a triage dispute still re-runs triage", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  expect(h.started).toEqual([created.id]);
+  const retry = await h.call(`/${created.id}`, { action: "retry" });
+  expect(retry.status).toBe(202);
+  expect(h.started).toEqual([created.id, created.id]);
+});
+
+test("retry on an escalated dispute without a draft returns the view without re-running triage", async () => {
+  const h = await fixture();
+  const created = await (
+    await h.call("", {
+      revisionId: h.revision.id,
+      reason: "The manual award needs review.",
+    })
+  ).json();
+  expect(h.started).toEqual([created.id]);
+  // Escalated by an early path that writes no draft, as triage failures do.
+  h.sqlite
+    .query("UPDATE points_disputes SET escalated_at=?,escalation=?")
+    .run(
+      "2026-10-30T15:00:00.000Z",
+      "Slopbot triage is unavailable; independent review is required",
+    );
+  const retry = await h.call(`/${created.id}`, { action: "retry" });
+  expect(retry.status).toBe(202);
+  expect(await retry.json()).toMatchObject({ state: "review" });
+  expect(h.started).toEqual([created.id]);
+});

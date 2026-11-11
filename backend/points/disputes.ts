@@ -208,6 +208,10 @@ export async function handlePointsDisputes(
   if (body?.action === "retry" && Object.keys(body).join() === "action") {
     if (appeal.resolved_at)
       fail(409, "already_resolved", "The dispute is resolved.");
+    // An escalated dispute is already with a moderator: re-running triage
+    // would repeat the repository and model calls for a dispute whose
+    // draft-less escalation has no work left to resume. Return the view.
+    if (appeal.escalated_at) return json(202, view(appeal));
     process(key);
     return json(202, view(appeal));
   }
