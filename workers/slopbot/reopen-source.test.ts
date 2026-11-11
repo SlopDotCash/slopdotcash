@@ -128,6 +128,38 @@ test("a lost queue response retains the signed source and changed redelivery can
   }
 });
 
+test("concurrent redelivery cannot enqueue while the first queue send is pending", async () => {
+  const f = fixture();
+  let entered!: () => void;
+  const sending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.env.SLOPBOT_QUEUE.send = async (job: Job) => {
+    f.sent.push(job);
+    if (f.sent.length === 1) {
+      entered();
+      await blocked;
+    }
+  };
+  const first = enqueueReopen(f.env, f.job, f.item);
+  try {
+    await sending;
+    const second = await enqueueReopen(f.env, f.job, f.item);
+    expect(await second.text()).toBe("duplicate delivery");
+    expect(f.sent).toHaveLength(1);
+    release();
+    expect(await (await first).text()).toBe("queued");
+  } finally {
+    release();
+    await first.catch(() => undefined);
+    f.sqlite.close();
+  }
+});
+
 test("only a confirmed bound receipt can supersede a hold on its exact revision", async () => {
   const f = fixture();
   try {

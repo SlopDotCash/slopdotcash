@@ -21,44 +21,62 @@ export type {
 
 const now = () => new Date().toISOString();
 
+export type DeliveryClaim = { deliveryId: string; token: string };
+const DELIVERY_CLAIM_SECONDS = 15 * 60;
+
 export async function recordDelivery(
   db: D1Database,
   deliveryId: string,
   event: string,
-): Promise<boolean> {
+): Promise<DeliveryClaim | null> {
   await db
     .prepare(
       "INSERT OR IGNORE INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (?, ?, ?)",
     )
     .bind(deliveryId, event, now())
     .run();
+  const claimedAt = now();
+  const token = crypto.randomUUID();
   const row = await db
     .prepare(
-      "SELECT processed_at FROM slopbot_deliveries WHERE delivery_id = ?",
+      `UPDATE slopbot_deliveries
+       SET dispatch_claim_token = ?, dispatch_claim_expires_at = ?
+       WHERE delivery_id = ? AND event = ? AND processed_at IS NULL
+         AND (dispatch_claim_token IS NULL OR dispatch_claim_expires_at <= ?)
+       RETURNING delivery_id`,
     )
-    .bind(deliveryId)
-    .first<{ processed_at: string | null }>();
-  if (!row) throw new Error("Webhook receipt was not stored");
-  return row.processed_at === null;
+    .bind(
+      token,
+      new Date(
+        Date.parse(claimedAt) + DELIVERY_CLAIM_SECONDS * 1000,
+      ).toISOString(),
+      deliveryId,
+      event,
+      claimedAt,
+    )
+    .first<{ delivery_id: string }>();
+  return row ? { deliveryId, token } : null;
 }
 
-export async function completeDelivery(db: D1Database, deliveryId: string) {
+export async function completeDelivery(db: D1Database, claim: DeliveryClaim) {
   await db
     .prepare(
-      "UPDATE slopbot_deliveries SET processed_at = ? WHERE delivery_id = ? AND processed_at IS NULL",
+      `UPDATE slopbot_deliveries
+       SET processed_at = ?, dispatch_claim_token = NULL, dispatch_claim_expires_at = NULL
+       WHERE delivery_id = ? AND dispatch_claim_token = ? AND processed_at IS NULL`,
     )
-    .bind(now(), deliveryId)
+    .bind(now(), claim.deliveryId, claim.token)
     .run();
 }
 
-export async function releaseDelivery(db: D1Database, deliveryId: string) {
+export async function releaseDelivery(db: D1Database, claim: DeliveryClaim) {
   await db
-    // A queue send may have succeeded before its response was lost. Preserve
-    // the original reopen source across redelivery and reject changed payloads.
     .prepare(
-      "DELETE FROM slopbot_deliveries WHERE delivery_id = ? AND reopen_source IS NULL",
+      `UPDATE slopbot_deliveries
+       SET dispatch_claim_token = NULL, dispatch_claim_expires_at = NULL
+       WHERE delivery_id = ? AND dispatch_claim_token = ? AND processed_at IS NULL`,
     )
-    .bind(deliveryId)
+    .bind(claim.deliveryId, claim.token)
     .run();
 }
 

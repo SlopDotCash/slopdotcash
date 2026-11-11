@@ -431,7 +431,12 @@ export default {
       await handleInstallation(env, payload, deliveryId);
       return new Response("ignored", { status: 202 });
     }
-    if (!(await store.recordDelivery(env.SLOPBOT_DB, deliveryId, event))) {
+    const deliveryClaim = await store.recordDelivery(
+      env.SLOPBOT_DB,
+      deliveryId,
+      event,
+    );
+    if (deliveryClaim === null) {
       return new Response("duplicate delivery", { status: 202 });
     }
     try {
@@ -479,7 +484,7 @@ export default {
             (await reversalOnlyRegistration(env.SLOPBOT_DB, job)) !== null
           )
         ) {
-          await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
+          await store.completeDelivery(env.SLOPBOT_DB, deliveryClaim);
           return new Response(
             "repository is not registered in the Slop registry",
             { status: 202 },
@@ -495,14 +500,14 @@ export default {
               : payload.issue,
           ))
         ) {
-          await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
+          await store.completeDelivery(env.SLOPBOT_DB, deliveryClaim);
           return new Response("reopen source unavailable; no decision", {
             status: 202,
           });
         }
         await env.SLOPBOT_QUEUE.send(job);
       }
-      await store.completeDelivery(env.SLOPBOT_DB, deliveryId);
+      await store.completeDelivery(env.SLOPBOT_DB, deliveryClaim);
       return new Response(
         job === null
           ? valuationPending
@@ -514,7 +519,7 @@ export default {
         },
       );
     } catch (error) {
-      await store.releaseDelivery(env.SLOPBOT_DB, deliveryId);
+      await store.releaseDelivery(env.SLOPBOT_DB, deliveryClaim);
       throw error;
     }
   },

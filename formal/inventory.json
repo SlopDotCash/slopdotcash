@@ -3217,6 +3217,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0121_slopbot_delivery_claim.sql",
+      "sha256": "2e727661d84ea99806515c992d074b09be3b881fa4bef13915dd3d486c281b13",
+      "models": ["formal/models/slopbot/bot_webhook_delivery.qnt"],
+      "candidateLines": [1],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "b2b526471d50e6efd3c300d717f3299e7e8f43a1b6b4a2f1dee02917b5b86340",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -7747,15 +7754,15 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "7d2ad887912bb99d65ea2971439e237b4988443fbd21c63a4f8f12354f4b1ea2",
+      "sha256": "b5504747eceb2e79e3e5054a60668c316b29070b45908aeb4731f00f8fe88911",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
         3, 223, 230, 231, 254, 260, 286, 315, 326, 365, 374, 386, 395, 400, 407,
-        417, 419, 429, 432, 435, 439, 485, 500, 509, 513, 538, 547, 571, 577,
-        587
+        417, 419, 429, 432, 440, 444, 490, 505, 514, 518, 543, 552, 576, 582,
+        592
       ],
       "review": "mapped-abstraction"
     },
@@ -7791,7 +7798,7 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "sha256": "c614fa593a195345e9711a134ff0f8065405ed487e858ec415d586c19eb0af90",
+      "sha256": "4015e18fd8abcaeaa01b0e7a2a48d117144785c1c386c888c382e01044f7212f",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -7804,11 +7811,11 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        31, 48, 59, 72, 98, 103, 110, 113, 117, 118, 126, 127, 128, 129, 131,
-        134, 135, 136, 138, 140, 146, 149, 159, 160, 161, 162, 164, 165, 166,
-        173, 177, 186, 211, 213, 235, 256, 265, 277, 294, 295, 297, 308, 314,
-        319, 322, 324, 335, 336, 339, 344, 347, 348, 371, 374, 375, 377, 396,
-        402, 405, 436, 494, 523, 524
+        34, 42, 64, 75, 90, 116, 121, 128, 131, 135, 136, 144, 145, 146, 147,
+        149, 152, 153, 154, 156, 158, 164, 167, 177, 178, 179, 180, 182, 183,
+        184, 191, 195, 204, 229, 231, 253, 274, 283, 295, 312, 313, 315, 326,
+        332, 337, 340, 342, 353, 354, 357, 362, 365, 366, 389, 392, 393, 395,
+        414, 420, 423, 454, 512, 541, 542
       ],
       "review": "mapped-abstraction"
     },
@@ -14355,13 +14362,16 @@
     },
     {
       "path": "formal/models/slopbot/bot_webhook_delivery.qnt",
-      "sha256": "fb6c91026e5d49dbbf6fc3131a4477f62146c86ad54a9258cfd11373501df82c",
+      "sha256": "0674b7f8e2ff693cb909e07992edcdf92d1e663175374043581207823dd6c2f1",
       "sources": [
+        "migrations/0121_slopbot_delivery_claim.sql",
         "workers/slopbot/index.ts",
         "workers/slopbot/persistence.ts",
         "workers/slopbot/value-requests.ts"
       ],
       "scenarios": [
+        "concurrentReceiveCannotClaimTest",
+        "failedSendCanRecoverTest",
         "lostAckMayRedeliverTest",
         "unauthenticatedCannotPersistTest"
       ]
