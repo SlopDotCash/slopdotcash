@@ -671,13 +671,204 @@ the Worker no sweep power.
    dashboard. Unresolved sends are reconciled again when the Worker runs in
    any mode other than `off`.
 
+## SLOP buyback
+
+Owner decision of 10 November 2026 (PRD section 6, "SLOP buyback and burn";
+[design and review](../../docs/slop-buyback.md)). Half of all fee income buys
+SLOP (`0xfeb4…67ae` on Robinhood Chain); half of the SLOP acquired is sent to
+the burn address and the rest stays in the Robinhood Chain fee wallet. The
+buyback is `off` in the checked-in configuration. Off reads no buyback value
+and leaves every network exactly as described above.
+
+The buyback runs inside each network's existing lease, after that network's
+reconciliation, claims and conversions, and only on a recovery scan. It uses
+the same journal, nonce floor, pending-token guard, native-gas budget and
+same-nonce replacement path. Its sends have three kinds (migration `0121`):
+
+| Kind      | Network                | Send                                                                                                                       |
+| --------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `bridge`  | Base, Ethereum, Solana | One deBridge DLN order: USDC in, Paxos USDG out to the Robinhood Chain fee wallet. On EVM, its exact approval comes first. |
+| `buyback` | Robinhood Chain        | The KyberSwap swap of one input asset into SLOP, output to the fee wallet. Its exact approval comes first.                 |
+| `burn`    | Robinhood Chain        | `transfer(0x…dEaD, amount)` on the SLOP token.                                                                             |
+
+### What one recovery scan adds
+
+Source network (Base, Ethereum, Solana), after its conversions:
+
+1. For each finalized deposit without an outcome, read the refund status. A
+   proven refund is recorded once in `fee_bridge_outcomes` and releases the
+   deposit's share.
+2. Compute the entitlement: the floor of `BUYBACK_SHARE_BPS` of cumulative
+   verified USDC fee income since `BUYBACK_START_AT`, less every bridge amount
+   already committed. Income is finalized conversions into USDC, finalized USDC
+   fee claims, and completed direct-award fees paid in USDC to this wallet.
+   Committed means signed and not proven failed or refunded.
+3. Bound the amount by the wallet's USDC balance and the bridge value caps.
+   Below `BUYBACK_MIN_BRIDGE_MICRO` the share waits (`pending`).
+4. Ask the DLN API for one order and check it (below). Refuse it when its
+   native cost is above `BUYBACK_MAX_BRIDGE_NATIVE_FEE` or its total cost is
+   above `BUYBACK_MAX_BRIDGE_COST_BPS` of the amount (`skipped`).
+5. `dry_run`: record the decision as `quoted`. `live`: sign, journal, then
+   broadcast the exact approval, or the order once the allowance is final.
+
+Robinhood Chain:
+
+1. Reconcile open sends as on every network. With the buyback active, claim
+   accrued vault fees (the existing claim path, valued in USDG). The claim
+   signs only in the buyback's own mode.
+2. For each finalized deposit without an outcome, on any network, read
+   `DlnDestination.takeOrders(orderId)` at the finalized block. `Fulfilled` or
+   `SentUnlock` records the arrival once and credits exactly the order's take
+   amount. `SentCancel` logs `fee_bridge_cancelling`. An order still open after
+   `BUYBACK_UNFILLED_ALERT_SECONDS` logs `fee_bridge_unfilled` on each scan.
+3. For USDG, each project asset and each allowlisted asset: the entitlement
+   is every proven arrival of that asset in full, plus the buyback share of
+   fee income received in it, less every purchase already committed. Quote the
+   swap into SLOP, scale it to the value caps, and apply the minimum value,
+   gas multiple, price-impact and slippage limits. The rest of a Robinhood fee
+   stays unconverted.
+4. Burn: `BUYBACK_BURN_BPS` of all SLOP acquired (finalized purchases, plus
+   the buyback share of fees received in SLOP), rounded down, less every burn
+   already committed, bounded by the wallet's SLOP balance. A paused token or
+   a failed transfer simulation waits (`pending`).
+
+### Checks before a bridge order is signed
+
+The DLN API only proposes an order. Nothing it returns is signed unless:
+
+- **EVM.** The target is the pinned `DlnSource` (`0xeF4f…EB66`). The calldata
+  decodes as `createSaltedOrder` with the exact USDC and amount, USDG and
+  chain 4663 as the take side, the Robinhood fee wallet as receiver and order
+  authority, the source fee wallet as patch authority and cancellation
+  beneficiary, an empty or pinned reserved taker, and no external call,
+  affiliate fee, referral or permit. The calldata re-encodes to the same
+  bytes. The value equals the contract's own `globalFixedNativeFee()`. An
+  `eth_call` of those bytes returns the proposed order id. The approval is for
+  the exact order amount to that contract.
+- **Solana.** The message is only Compute Budget instructions (bounded
+  priority fee) and one `create_order_with_nonce` call to the pinned DLN
+  program, with the fee wallet as the only signer and no lookup table. Its
+  arguments decode to the same intent, with nothing after them. Its twelve
+  accounts equal the addresses the Worker derives itself, including the order
+  state and escrow that are program addresses of the order id. A simulation
+  must debit exactly the order amount of USDC. The Worker stamps its own
+  recent blockhash, so the expiry height is recorded.
+
+A finalized deposit is accepted only when the receipt shows the journaled
+bytes created the recorded order and debited exactly the recorded amount.
+
+### Purchase and burn checks
+
+A purchase uses the swap path described under [Checks before an EVM swap is
+signed](#checks-before-an-evm-swap-is-signed), with SLOP as the output token:
+pinned router, exact input, fee wallet as receiver, no fee receivers, signed
+minimum at or above the recorded minimum, and a simulation at or above the
+signed minimum. A burn is the exact `transfer` calldata to the burn address;
+its receipt must show exactly that amount leaving the wallet for that address.
+
+### Buyback configuration
+
+Every value is required once `BUYBACK_MODE` is not `off`; the code has no
+fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD section 6);
+`BUYBACK_START_AT` is set at activation.
+
+| Var                              | Checked-in value               | Meaning                                                                                          |
+| -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `BUYBACK_MODE`                   | `off`                          | `off`, `dry_run` or `live`. Live needs `FEE_CONVERTER_MODE = "live"` and Robinhood enabled.      |
+| `BUYBACK_START_AT`               | empty                          | UTC instant from which fee income counts.                                                        |
+| `BUYBACK_SHARE_BPS`              | `5000`                         | Share of fee income that funds the buyback.                                                      |
+| `BUYBACK_BURN_BPS`               | `5000`                         | Share of acquired SLOP that is burned.                                                           |
+| `BUYBACK_MIN_BRIDGE_MICRO`       | `500000000`                    | Minimum order (500 USDC).                                                                        |
+| `BUYBACK_MAX_BRIDGE_COST_BPS`    | `150`                          | Spread, native cost and network fee as a share of the order.                                     |
+| `BUYBACK_MAX_BRIDGE_NATIVE_FEE`  | Base, Ethereum, Solana set     | EVM: the fixed protocol fee in wei. Solana: the order's whole SOL debit in lamports.             |
+| `BUYBACK_SOLANA_BRIDGE_NATIVE`   | `0.05` SOL / `0.1` SOL per day | Native limits of Solana orders, separate from `FEE_CONVERTER_NATIVE_BUDGETS` (purpose `bridge`). |
+| `BUYBACK_MIN_BUY_MICRO`          | `25000000`                     | Minimum purchase value.                                                                          |
+| `BUYBACK_MIN_BURN_MICRO`         | `5000000`                      | Minimum burn value.                                                                              |
+| `BUYBACK_MAX_SLIPPAGE_BPS`       | `100`                          | Purchase minimum within 1% of its quote.                                                         |
+| `BUYBACK_MAX_PRICE_IMPACT_BPS`   | `300`                          | Purchase price-impact cap. The SLOP pools charge about 1%.                                       |
+| `BUYBACK_RUN_CAP_MICRO`          | `1000000000`                   | Value per run, per network and leg.                                                              |
+| `BUYBACK_DAILY_CAP_MICRO`        | `5000000000`                   | Value per rolling 24 hours, per network and leg.                                                 |
+| `BUYBACK_UNFILLED_ALERT_SECONDS` | `3600`                         | Age at which an unfilled order is reported.                                                      |
+
+EVM bridge orders use the existing native-gas budget for their gas. Their
+fixed protocol fee is transaction value, bounded by
+`BUYBACK_MAX_BRIDGE_NATIVE_FEE` and counted in the cost limit. A Solana order
+pays order-account rent and the network fee from the wallet's SOL; the local
+validator run measured 0.0202 SOL for a first order. Those reservations carry
+purpose `bridge` and their own daily total, so a bridge neither borrows from
+nor exhausts the fee-conversion budget.
+
+### Turn on the buyback
+
+1. Confirm every limit above and the activation instant with the owner, and
+   record the confirmation in the activating pull request.
+2. Set `RPC_URL_ROBINHOOD` to an endpoint that serves contract state at the
+   finalized block. The public RPC answers
+   `historical state … is not available` for such reads; fill status, claim
+   and approval receipts then stay unverified and nothing is credited.
+3. Install `FEE_WALLET_KEY_ROBINHOOD` and fund gas on every enabled network.
+   On Base and Ethereum each order also pays the 0.001 ETH fixed fee.
+4. Land `BUYBACK_MODE = "dry_run"` with `BUYBACK_START_AT`. Watch the admin
+   report: `quoted` bridge, purchase and burn decisions, their amounts and
+   skip reasons.
+5. Land `BUYBACK_MODE = "live"` with a low `BUYBACK_RUN_CAP_MICRO` for the
+   first order. Verify on the explorers: the order's receiver and take amount,
+   the fill, the USDG credit, the SLOP credit, and the burn transfer.
+6. Raise the caps to the confirmed values by a reviewed change.
+7. To stop: land `BUYBACK_MODE = "off"`. Open sends are still reconciled while
+   the converter runs. A deposit in transit keeps its share committed.
+
+### An order nobody fills
+
+A deposited order stays in transit until it is filled or refunded. The Worker
+never cancels one. If `fee_bridge_unfilled` persists, the owner can cancel
+the order from the Robinhood Chain fee wallet through deBridge (the order
+authority is that wallet). The refund can only go to the source fee wallet,
+which the order pins as its cancellation beneficiary. The next source scan
+records the proven refund and bridges that share again.
+
+### Buyback tests
+
+```bash
+bun test ./workers/fee-converter/buyback.test.ts
+```
+
+Policy, journal constraints, configuration and both order validators, the
+latter against real captured deBridge proposals.
+
+```bash
+bun run test:fee-converter:buyback
+```
+
+```bash
+bun run test:fee-converter:buyback:solana
+```
+
+The first runs the whole cycle on Anvil forks of Base, Ethereum and Robinhood
+Chain against the deployed USDC, DlnSource, DlnDestination, KyberSwap router,
+Uniswap v4 SLOP pools and SLOP token: exact approvals, orders, a fill by the
+impersonated deBridge taker, purchases, and burns of exactly half. It then
+cancels a second Base order from the fee wallet through the real
+`DlnDestination`, has the real `DlnSource` pay the refund (a stub at
+deBridge's CallProxy address stands in for the cross-chain message; this part
+needs `forge`), and checks that the share is released once and bridged again.
+
+The second
+signs a Solana order against the cloned DLN program on the local validator.
+Both use throwaway keys, seed fee income, call the live deBridge and KyberSwap
+APIs read-only, and use harness gas budgets and slippage as their headers
+explain. Neither proves a live fill or qualifies a deployment.
+
 ## Admin view
 
 `GET /api/v1/admin/fee-conversions` (admin GitHub session) returns the 100 most
 recent records, exact per-token totals of finalized live conversions as
 decimal base-unit strings, state counts for the last 24 hours, and each
-network's target with status `usdc` or `not_converted`. It never
-returns signed transaction bytes. There is no public page.
+network's target with status `usdc` or `not_converted`. Its `buyback`
+object lists the latest bridge orders, purchases and burns with each deposit's
+outcome (`arrived`, `refunded`, or null while in transit) and exact live
+totals per network and leg. It never returns signed transaction bytes. There
+is no public page.
 
 ## Tests
 
