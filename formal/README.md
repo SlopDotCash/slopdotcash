@@ -88,6 +88,12 @@ reductions, `ui_solana_payment_pending` uses the ordinary limit. The runner
 records the effective limit and its own hash.
 A timeout is an incomplete check, never a pass.
 
+`bot_inference_retention` has a separately bound
+[attempt-ID symmetry argument](bot-inference-symmetry-audit.md). It retains all
+eight attempts, every row bit, multiplicities, and the current/retained roles.
+Only permutations of otherwise uninterpreted attempt IDs are identified. This
+does not authorize an ID-specific property or temporal verification.
+
 The journal uses the exact, hash-bound safety view described in
 [the projection argument](tlc-safety-view-audit.md). Its result is exhaustive
 only for that finite safety quotient. The submitted-payment model separately

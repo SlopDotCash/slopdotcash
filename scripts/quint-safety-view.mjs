@@ -211,6 +211,23 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "bot-inference-attempt-id-symmetry-v1",
+    model: "formal/models/slopbot/bot_inference_retention.qnt",
+    module: "bot_inference_retention",
+    operator: "SlopBotInferenceAttemptIdViewV1",
+    hashMode: "attempt-id-permutation-orbit",
+    memoryCandidateMode:
+      "retain-all-row-bits-current-retained-roles-and-multiplicity",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'LET rowIds == DOMAIN s.rows observation(id) == <<s.rows[id], id = s.current, id = s.retained>> classes == {observation(id) : id \\in rowIds} IN <<rowIds, {<<item, Cardinality({id \\in rowIds : observation(id) = item})>> : item \\in classes}, IF s.current \\in rowIds THEN "active" ELSE s.current, IF s.retained \\in rowIds THEN "retained" ELSE s.retained, s.published>>',
+      },
+    ],
+    clauses: [],
+  },
 ];
 
 function reviewedDefinition(view) {
