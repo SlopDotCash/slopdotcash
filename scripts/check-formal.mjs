@@ -30,6 +30,11 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // Isolated hosted qualification of reviewed, still-incomplete projections.
+  "formal/models/api/api_identity_admission.qnt": 600_000,
+  "formal/models/slopbot/historical_subscription_intake.qnt": 600_000,
+  "formal/models/payments/operator_keeper_lifecycle.qnt": 600_000,
+  "formal/models/ui/ui_owner_private_requests.qnt": 600_000,
   // Hosted full graphs exceeded 180s with ongoing progress and states queued.
   // Keep every concrete transition and invariant; completion is still required.
   "formal/models/api/api_trace.qnt": 600_000,

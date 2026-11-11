@@ -228,6 +228,111 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "identity-admission-terminal-observation-safety-v1",
+    model: "formal/models/api/api_identity_admission.qnt",
+    module: "api_identity_admission",
+    operator: "SlopIdentityAdmissionTerminalViewV1",
+    hashMode:
+      "exact-generation-quota-and-terminal-local-invariant-observations",
+    memoryCandidateMode: "erase-terminal-payload-after-final-read",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, r.generation, r.result = "allowed", (r.result = "allowed" => (r.count >= 1 /\\ r.count <= 2)), (r.result \\in {"allowed", "429"} => (r.expiry > r.stamp /\\ r.retryAfter = r.expiry - r.stamp /\\ r.retryAfter >= 1)), (r.result = "429" => r.count > 2), (r.result = "503" => r.retryAfter = 0)>> ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "historical-subscription-intake-terminal-safety-v1",
+    model: "formal/models/slopbot/historical_subscription_intake.qnt",
+    module: "historical_subscription_intake",
+    operator: "SlopHistoricalSubscriptionIntakeViewV1",
+    hashMode: "terminal-subset-no-store-and-dynamic-readback-observations",
+    memoryCandidateMode:
+      "erase-received-and-terminal-payload-with-retry-envelope",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "response", "done"} THEN <<r.phase, r.attempt, IF r.attempt > 0 /\\ r.attempt < 2 THEN <<r.mode, r.key, r.parent, r.payload, r.bundle>> ELSE <<>>, r.status = 200, r.returnedRow, r.returnedPayload, (r.status > 0 => r.noStore), (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE [r EXCEPT !.received = FALSE]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "operator-keeper-continuation-safety-v1",
+    model: "formal/models/payments/operator_keeper_lifecycle.qnt",
+    module: "operator_keeper_lifecycle",
+    operator: "SlopOperatorKeeperContinuationViewV1",
+    hashMode: "keeper-exact-signing-journal-and-http-run-observations",
+    memoryCandidateMode:
+      "erase-write-only-and-phase-dead-terminal-run-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.indexed = FALSE, !.projects = 0, !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN [r EXCEPT !.instance = 0, !.result = "none", !.caller = IF r.caller = "cron" THEN "cron" ELSE "direct", !.http = IF r.http = 200 THEN 200 ELSE 0]], !.runs = [i \\in DOMAIN s.runs |-> LET r == s.runs[i] IN IF r.phase \\in {"unused", "lost"} THEN <<r.phase>> ELSE IF r.phase = "settled" THEN <<r.phase, IF r.outcome = "throw" THEN "throw" ELSE IF r.outcome = "partial" THEN "partial" ELSE "other">> ELSE [r EXCEPT !.projects = 0]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "owner-private-terminal-safety-v1",
+    model: "formal/models/ui/ui_owner_private_requests.qnt",
+    module: "ui_owner_private_requests",
+    operator: "SlopOwnerPrivateRequestsViewV1",
+    hashMode: "exact-globals-live-requests-and-terminal-raw-invariant-bits",
+    memoryCandidateMode:
+      "erase-write-only-error-and-terminal-payload-after-full-reset-or-no-reuse",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = "none", !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, (r.actor >= 0), (r.actor <= 2), (r.admitted => r.cookie = r.actor)>> ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "api-private-authorization-continuation-safety-v2",
+    model: "formal/models/api/api_private_authorization.qnt",
+    module: "api_private_authorization",
+    operator: "SlopPrivateAuthorizationContinuationViewV2",
+    hashMode: "four-independent-used-observations-and-closed-expiry-cones",
+    memoryCandidateMode:
+      "erase-unconsumed-phase-and-permanently-retired-flow-deadlines",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.phase = "idle", !.flows = [i \\in DOMAIN s.flows |-> [s.flows[i] EXCEPT !.until = IF s.flows[i].exists /\\ s.flowCookie # i /\\ ~(\\E c \\in DOMAIN s.callbacks: s.callbacks[c].phase = "validate" /\\ s.callbacks[c].flow = i) THEN 0 ELSE s.flows[i].until]], !.flowUntil = 0, !.usedFlow = 0, !.usedSession = 0, !.usedActor = 0, !.usedSubmission = 0, !.usedAt = 0, !.usedUntil = 0, !.callbacks = [id \\in DOMAIN s.callbacks |-> LET c == s.callbacks[id] IN IF c.phase \\in {"unused", "done"} THEN <<c.phase>> ELSE IF c.phase = "response" THEN <<c.phase, c.result = "ok", IF c.result = "ok" THEN <<c.flow, c.at>> ELSE <<0, 0>>>> ELSE [c EXCEPT !.nonce = IF c.phase = "validate" THEN c.nonce ELSE 0, !.actor = IF c.phase \\in {"validate", "exchange", "identity"} THEN c.actor ELSE 0, !.result = "none"]]]',
+      },
+    ],
+    clauses: [
+      {
+        name: "usedSession",
+        expression:
+          '(s.phase = "used" => s.usedSession = flow(s.usedFlow).session)',
+      },
+      {
+        name: "usedActor",
+        expression:
+          '(s.phase = "used" => s.usedActor = flow(s.usedFlow).actor)',
+      },
+      {
+        name: "usedSubmission",
+        expression:
+          '(s.phase = "used" => s.usedSubmission = flow(s.usedFlow).submission)',
+      },
+      {
+        name: "usedDeadline",
+        expression: '(s.phase = "used" => s.usedAt < s.usedUntil)',
+      },
+    ],
+  },
 ];
 
 function reviewedDefinition(view) {

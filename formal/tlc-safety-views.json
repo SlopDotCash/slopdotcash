@@ -234,6 +234,113 @@
       "sourceSha256": "01644b21ca4172dc45be3abb9585a55ce4cd1b2341d2e3328d01da2c5b5ce60f",
       "translatedSha256": "2d5c042cd5bcd404884ceab0fd07cdfbe9ab66d7aa0c560e93a24e8cb797b507",
       "viewTlaSha256": "6c6fa46fc03d86e165e040e46af5e9772f72700028ce57ccd994369ad9d54c60"
+    },
+    {
+      "id": "identity-admission-terminal-observation-safety-v1",
+      "model": "formal/models/api/api_identity_admission.qnt",
+      "module": "api_identity_admission",
+      "operator": "SlopIdentityAdmissionTerminalViewV1",
+      "hashMode": "exact-generation-quota-and-terminal-local-invariant-observations",
+      "memoryCandidateMode": "erase-terminal-payload-after-final-read",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"done\"} THEN <<r.phase, r.generation, r.result = \"allowed\", (r.result = \"allowed\" => (r.count >= 1 /\\ r.count <= 2)), (r.result \\in {\"allowed\", \"429\"} => (r.expiry > r.stamp /\\ r.retryAfter = r.expiry - r.stamp /\\ r.retryAfter >= 1)), (r.result = \"429\" => r.count > 2), (r.result = \"503\" => r.retryAfter = 0)>> ELSE r]]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "e1c0aa22340edbcca2f64c27fba1336a4e24bc48bc5cfa67799a79827d1cbe4c",
+      "translatedSha256": "84223337fae384041a9ed6a1642bd9746e0efabf37f78220accc9b60786465c4",
+      "viewTlaSha256": "2a0fd46fca57a80f4eb1010e7c7065606baa4522720757acc1864408d959cee1"
+    },
+    {
+      "id": "historical-subscription-intake-terminal-safety-v1",
+      "model": "formal/models/slopbot/historical_subscription_intake.qnt",
+      "module": "historical_subscription_intake",
+      "operator": "SlopHistoricalSubscriptionIntakeViewV1",
+      "hashMode": "terminal-subset-no-store-and-dynamic-readback-observations",
+      "memoryCandidateMode": "erase-received-and-terminal-payload-with-retry-envelope",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"response\", \"done\"} THEN <<r.phase, r.attempt, IF r.attempt > 0 /\\ r.attempt < 2 THEN <<r.mode, r.key, r.parent, r.payload, r.bundle>> ELSE <<>>, r.status = 200, r.returnedRow, r.returnedPayload, (r.status > 0 => r.noStore), (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE [r EXCEPT !.received = FALSE]]]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "cbc8d18d11f2c13246d83dfb9c2d6aefc5345bfa20b248e82f172258b4ee6f22",
+      "translatedSha256": "10224d70eb2cdae0311f4a59a054299aa94675042c0e3ea7f7f58b020735f93c",
+      "viewTlaSha256": "3892a0a58951dbdcce177098fc4d562d3952f831d1ca7b6e909d596f4dcc6c2d"
+    },
+    {
+      "id": "operator-keeper-continuation-safety-v1",
+      "model": "formal/models/payments/operator_keeper_lifecycle.qnt",
+      "module": "operator_keeper_lifecycle",
+      "operator": "SlopOperatorKeeperContinuationViewV1",
+      "hashMode": "keeper-exact-signing-journal-and-http-run-observations",
+      "memoryCandidateMode": "erase-write-only-and-phase-dead-terminal-run-payloads",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.indexed = FALSE, !.projects = 0, !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN [r EXCEPT !.instance = 0, !.result = \"none\", !.caller = IF r.caller = \"cron\" THEN \"cron\" ELSE \"direct\", !.http = IF r.http = 200 THEN 200 ELSE 0]], !.runs = [i \\in DOMAIN s.runs |-> LET r == s.runs[i] IN IF r.phase \\in {\"unused\", \"lost\"} THEN <<r.phase>> ELSE IF r.phase = \"settled\" THEN <<r.phase, IF r.outcome = \"throw\" THEN \"throw\" ELSE IF r.outcome = \"partial\" THEN \"partial\" ELSE \"other\">> ELSE [r EXCEPT !.projects = 0]]]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "7377521ae45adfa5ad7469e8492170b3a87ef406d613fd22e9a83437e2f1d89d",
+      "translatedSha256": "56a36b8aa7f2ce2d9f63a5e4ab80f3de007e536362754ea8f2c893884b9dd1c8",
+      "viewTlaSha256": "af827574265ba6f9381dfa6adc0a990629300acfddc92bee0fa0eb52f0bc37b6"
+    },
+    {
+      "id": "owner-private-terminal-safety-v1",
+      "model": "formal/models/ui/ui_owner_private_requests.qnt",
+      "module": "ui_owner_private_requests",
+      "operator": "SlopOwnerPrivateRequestsViewV1",
+      "hashMode": "exact-globals-live-requests-and-terminal-raw-invariant-bits",
+      "memoryCandidateMode": "erase-write-only-error-and-terminal-payload-after-full-reset-or-no-reuse",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.error = \"none\", !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"done\"} THEN <<r.phase, (r.actor >= 0), (r.actor <= 2), (r.admitted => r.cookie = r.actor)>> ELSE r]]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "10f3857b1869eede164399bb95e8690243f18b83552fca833717ef8c37a85b6c",
+      "translatedSha256": "e790dc551ab11b1ce58682cfeef78750eec2bd8d33ab80dbdb147a7a1bcc5b4c",
+      "viewTlaSha256": "eeae6caf9dce45b40cebaada085dc4143cf5db382151af27b6fb5f5114e72b55"
+    },
+    {
+      "id": "api-private-authorization-continuation-safety-v2",
+      "model": "formal/models/api/api_private_authorization.qnt",
+      "module": "api_private_authorization",
+      "operator": "SlopPrivateAuthorizationContinuationViewV2",
+      "hashMode": "four-independent-used-observations-and-closed-expiry-cones",
+      "memoryCandidateMode": "erase-unconsumed-phase-and-permanently-retired-flow-deadlines",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.phase = \"idle\", !.flows = [i \\in DOMAIN s.flows |-> [s.flows[i] EXCEPT !.until = IF s.flows[i].exists /\\ s.flowCookie # i /\\ ~(\\E c \\in DOMAIN s.callbacks: s.callbacks[c].phase = \"validate\" /\\ s.callbacks[c].flow = i) THEN 0 ELSE s.flows[i].until]], !.flowUntil = 0, !.usedFlow = 0, !.usedSession = 0, !.usedActor = 0, !.usedSubmission = 0, !.usedAt = 0, !.usedUntil = 0, !.callbacks = [id \\in DOMAIN s.callbacks |-> LET c == s.callbacks[id] IN IF c.phase \\in {\"unused\", \"done\"} THEN <<c.phase>> ELSE IF c.phase = \"response\" THEN <<c.phase, c.result = \"ok\", IF c.result = \"ok\" THEN <<c.flow, c.at>> ELSE <<0, 0>>>> ELSE [c EXCEPT !.nonce = IF c.phase = \"validate\" THEN c.nonce ELSE 0, !.actor = IF c.phase \\in {\"validate\", \"exchange\", \"identity\"} THEN c.actor ELSE 0, !.result = \"none\"]]]"
+        }
+      ],
+      "clauses": [
+        {
+          "name": "usedSession",
+          "expression": "(s.phase = \"used\" => s.usedSession = flow(s.usedFlow).session)"
+        },
+        {
+          "name": "usedActor",
+          "expression": "(s.phase = \"used\" => s.usedActor = flow(s.usedFlow).actor)"
+        },
+        {
+          "name": "usedSubmission",
+          "expression": "(s.phase = \"used\" => s.usedSubmission = flow(s.usedFlow).submission)"
+        },
+        {
+          "name": "usedDeadline",
+          "expression": "(s.phase = \"used\" => s.usedAt < s.usedUntil)"
+        }
+      ],
+      "sourceSha256": "831c01a80956066e3dc1d3503f5ac6dcb8695c932db1e92d7f1340c4943f0fa2",
+      "translatedSha256": "fffdec0f372395d47ce7c9b06c2c542ba3c756238d7e3d6b083746450e54ea04",
+      "viewTlaSha256": "8f55261108b4af9b090c521fc5b0a25953985db23441ce79d782c506a65354a9"
     }
   ]
 }

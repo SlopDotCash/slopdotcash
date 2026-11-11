@@ -105,6 +105,11 @@ jobs:
           ./scripts/solana-wallet-provider-quotient.test.ts
           ./scripts/contributor-allocation-safety-view.test.ts
           ./scripts/bot-inference-symmetry.test.ts
+          ./scripts/identity-admission-safety-view.test.ts
+          ./scripts/historical-subscription-intake-safety-view.test.ts
+          ./scripts/operator-keeper-safety-view.test.ts
+          ./scripts/owner-private-requests-safety-view.test.ts
+          ./scripts/private-authorization-safety-view.test.ts
           ./scripts/formal-source-binding.test.ts
       - name: Check source inventory and state catalog
         run: |

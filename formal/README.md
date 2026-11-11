@@ -1279,3 +1279,18 @@ Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12
 `ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
 
 Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.
+
+## Isolated combined projection qualification
+
+This private diagnostic source preserves the existing eleven reviewed entries
+and appends five separately source-reviewed prototypes. Their prior native and
+ordinary checks are source-scoped; none of these five graphs is yet complete.
+This branch cannot publish the application. Every original raw QNT, domain,
+step, invariant and scenario remains unchanged, as do all earlier native files.
+The selected hosted graphs each have an explicit 600-second allowance.
+
+- `formal/models/api/api_identity_admission.qnt`: exact candidate `30d90059f288801484acf5e74a194d7b9142c507`; formal/identity-admission-view-audit.md.
+- `formal/models/slopbot/historical_subscription_intake.qnt`: exact candidate `a42d7c73546f8295e922ed4baa59c7155cbb8c06`; formal/historical-subscription-intake-view-audit.md.
+- `formal/models/payments/operator_keeper_lifecycle.qnt`: exact candidate `3e8b36a04e7650603e87fc4e3b573cd70a8af123`; formal/operator-keeper-safety-view-audit.md.
+- `formal/models/ui/ui_owner_private_requests.qnt`: exact candidate `999cdc9e171074a6f4f2d32a27348e7910ac4b55`; formal/owner-private-requests-view-audit.md.
+- `formal/models/api/api_private_authorization.qnt`: exact candidate `de85e72c5fb69898de5662aae1725585f60cc283`; formal/PRIVATE_AUTHORIZATION_SAFETY_VIEW.md.
