@@ -5319,11 +5319,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "307594044925bdc4e690b30e0e5f02cadfcf03e3dd478c9b30845e5bec2c9df8",
+      "sha256": "a54a93cbb83345a1db2775f0332598525590dc5cfbb796eb7acb8a78b3f74b97",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        209, 233, 244, 274, 275, 277, 278, 311, 313, 324, 473, 474, 476, 477,
-        518, 608
+        212, 297, 308, 338, 339, 341, 342, 375, 377, 388, 537, 538, 540, 541,
+        582, 672
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
