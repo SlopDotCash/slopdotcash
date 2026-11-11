@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 721,
-    "functions": 10139,
+    "files": 722,
+    "functions": 10142,
     "selectedContractTargets": 183,
-    "unprovedFunctions": 9956,
+    "unprovedFunctions": 9959,
     "nonTypeScriptFiles": 55
   },
   "limits": [
@@ -3218,6 +3218,11 @@
 {"name":"stopEvidencePreview","kind":"FunctionDeclaration","line":52,"sha256":"4f9ef3af1cc61358b8d25a9a7e63ab1aff24f52110eb3eafe64bbc253e2cc50d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"rememberObservedError","kind":"ArrowFunction","line":55,"sha256":"9894122aedcd135c20d65cf0799fb1761102847cbfb49b80f5c512fdb42c0e0f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"requestStop","kind":"ArrowFunction","line":60,"sha256":"f1a8bdce1a5fdac645ae5791cecc6c5d1ee69fad8227376d4e3c45d308cde3eb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+]},
+{"path":"scripts/extend-published-profiles.ts","sha256":"05f9537280e72ea8f4d5fce495110e2928beb3c0e57c1f445ff2d7b3a95138a0","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"<ArrowFunction@16>","kind":"ArrowFunction","line":16,"sha256":"a1112220273570aeb3e134e97feb8b50d2722a5cf6951d14c8a2604b4956648c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@18>","kind":"ArrowFunction","line":18,"sha256":"f5ac18a74dc85a1407f06bf9a57c31b392b9d38c19f939d1e94e5db13b2ff9b4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@28>","kind":"ArrowFunction","line":28,"sha256":"f5ac18a74dc85a1407f06bf9a57c31b392b9d38c19f939d1e94e5db13b2ff9b4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"scripts/formal-inventory.mjs","sha256":"1664b1d9b5058df6285d2bbdaa9beef8b3ead942dec4322581a1b1932d0abdb4","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"digest","kind":"ArrowFunction","line":16,"sha256":"0e2a8bf2e3b7ba84dd6d9e6162f6cce32f644d9a9333a833b0cc59b70c240f33","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
