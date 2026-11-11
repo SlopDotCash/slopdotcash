@@ -47,6 +47,10 @@ export declare const NETWORK_NAMES: Readonly<
   Record<RewardAssetNetwork, string>
 >;
 export declare const REWARD_ASSET_NETWORK_IDS: readonly RewardAssetNetwork[];
+export declare function formatAssetSymbol(
+  symbol: string,
+  kind?: RewardAssetKind,
+): string;
 export declare function rewardAssetChoice(
   network: string,
   kind: string,

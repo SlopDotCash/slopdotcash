@@ -281,6 +281,8 @@ The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadat
 
 Verify the asset identity, token program, decimals, behavior, and finality throughout each flow. Use integer base units and largest-remainder allocation. Never assume six decimals, add unlike assets, or present a token amount as dollars.
 
+Owner decision, 11 November 2026: display project-token tickers with exactly one leading dollar sign, such as `$CREDIT` and `$EPYH`. Native and approved stablecoin tickers, including SOL, ETH, USDC and USDG, remain unprefixed. This is ticker notation, not a USD valuation. Preserve canonical stored asset symbols, integer amounts, existing dollar-denominated amount formatting and reward terms.
+
 ### Monthly allocation
 
 Automatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.
