@@ -245,6 +245,9 @@ jobs:
             assertLeaderboardSnapshot(snapshot);
             console.log(`Using published leaderboard generated at ${snapshot.generatedAt}`);
           ' "$ledger_file"
+          # A project activated after the last full collection is added with
+          # zero counts until the next collection records it.
+          bun scripts/extend-published-profiles.ts "$profiles_file"
           bun scripts/generate-profiles.ts --input "$profiles_file" --current
           cp "$ledger_file" public/data/leaderboard.json
           bun --no-env-file -e '
