@@ -15540,7 +15540,7 @@
     },
     {
       "path": "formal/models/ui/solana_message_buffers.qnt",
-      "sha256": "12c0d3002c39b2375a983e7581f585a7237d5a78afab277028e42d012cb56e5c",
+      "sha256": "836996834205f8f2c461a89907b2081f4bfa3add386dfbc146d10c1af081397c",
       "sources": [
         "backend/security/direct-solana-recovery.ts",
         "src/SolanaBountyRecovery.tsx",
