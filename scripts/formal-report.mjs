@@ -1,5 +1,5 @@
 /** Pure canonical command and report validation; no filesystem or workflow IO. */
-import { basename, isAbsolute, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 
 const commonTools = [
   "scripts/check-formal.mjs",
@@ -158,23 +158,24 @@ function same(left, right) {
     keys.every((key) => same(left[key], right[key]))
   );
 }
-function producerCommand(command, expectedArguments, verify) {
+function producerCommand(command, expectedArguments, verify, checkoutRoot) {
   if (
     !Array.isArray(command) ||
-    command.some((part) => typeof part !== "string")
+    command.some((part) => typeof part !== "string") ||
+    typeof checkoutRoot !== "string" ||
+    !isAbsolute(checkoutRoot) ||
+    normalize(checkoutRoot) !== checkoutRoot
   )
     return false;
   const index = verify ? 3 : 0;
   const executable = command[index];
-  const suffix = "/node_modules/.bin/quint";
   if (
     typeof executable !== "string" ||
     !isAbsolute(executable) ||
     normalize(executable) !== executable ||
-    !executable.endsWith(suffix)
+    executable !== join(checkoutRoot, "node_modules/.bin/quint")
   )
     return false;
-  const producerRoot = executable.slice(0, -suffix.length);
   if (
     verify &&
     (typeof command[0] !== "string" ||
@@ -182,7 +183,7 @@ function producerCommand(command, expectedArguments, verify) {
       basename(command[0]) !== "node" ||
       normalize(command[0]) !== command[0] ||
       command[1] !== "--import" ||
-      command[2] !== `${producerRoot}/scripts/quint-local-translator.mjs`)
+      command[2] !== join(checkoutRoot, "scripts/quint-local-translator.mjs"))
   )
     return false;
   return same(command.slice(index + 1), expectedArguments);
@@ -210,7 +211,7 @@ export function formalReportProblems(report, expected) {
   if (
     expected.verify
       ? typeof report.javaVersion !== "string" ||
-        !/version "21[.]/u.test(report.javaVersion)
+        !/version "21[."]/u.test(report.javaVersion)
       : report.javaVersion !== null
   )
     problems.push("wrong Java metadata");
@@ -242,6 +243,7 @@ export function formalReportProblems(report, expected) {
         result.command,
         expected.commands[index],
         expected.verify,
+        expected.checkoutRoot,
       )
     )
       problems.push(

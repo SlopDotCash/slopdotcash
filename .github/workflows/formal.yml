@@ -288,6 +288,7 @@ jobs:
                 safetyView = { ...evidence, adapterSha256: safetyViews.quintAdapterSha256, overlaySha256: formalAdapterOverlaySha256(safetyViews.quintAdapterSha256) };
               }
               const expected = {
+                checkoutRoot: root,
                 model: path,
                 sha256: digest(path),
                 sources: Object.fromEntries(sources.map((file) => [file, digest(file)])),

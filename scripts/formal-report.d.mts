@@ -1,4 +1,5 @@
 export interface FormalReportExpectation {
+  checkoutRoot: string;
   model: string;
   sha256: string;
   sources: Record<string, string>;

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -56,6 +57,7 @@ type Report = {
 
 function fixture(verify = false) {
   const expected: FormalReportExpectation = {
+    checkoutRoot: producerRoot,
     model,
     sha256: hash("model"),
     sources: { "implementation.ts": hash("source") },
@@ -529,6 +531,36 @@ for (const model of [
     expect(formalTimeoutMs(model, true)).toBe(600000);
   });
 
+for (const javaVersion of [
+  'openjdk version "21" 2023-09-19',
+  'java version "21"',
+  'openjdk version "21.0.13"',
+])
+  test(`accepts producer-compatible Java metadata: ${javaVersion}`, () => {
+    const { report, expected } = fixture(true);
+    report.javaVersion = javaVersion;
+    expect(formalReportProblems(report, expected)).toEqual([]);
+  });
+for (const javaVersion of ['openjdk version "22"', 'openjdk version "22.0.1"'])
+  test(`rejects newer-major Java metadata: ${javaVersion}`, () => {
+    const { report, expected } = fixture(true);
+    report.javaVersion = javaVersion;
+    expect(formalReportProblems(report, expected).length).toBeGreaterThan(0);
+  });
+for (const verify of [false, true])
+  test(`rejects a consistent but wrong ${verify ? "verification" : "ordinary"} checkout`, () => {
+    const { report, expected } = fixture(verify);
+    for (const row of report.results)
+      row.command = row.command.map((argument) =>
+        argument.startsWith(`${producerRoot}/`)
+          ? argument.replace(producerRoot, "/other/checkout")
+          : argument,
+      );
+    expect(formalReportProblems(report, expected).length).toBeGreaterThan(0);
+    expected.checkoutRoot = "/other/checkout";
+    expect(formalReportProblems(report, expected)).toEqual([]);
+  });
+
 function workflowProgram() {
   const workflow = readFileSync(
     join(root, ".github/workflows/formal.yml"),
@@ -568,7 +600,7 @@ module report_fixture {
 `,
   );
   mkdirSync(join(directory, "reports"));
-  return directory;
+  return realpathSync(directory);
 }
 function writeSyntheticReports(directory: string) {
   for (const verify of [false, true]) {
@@ -579,6 +611,11 @@ function writeSyntheticReports(directory: string) {
     );
     for (const row of report.results) {
       row.sha256 = digest(model);
+      row.command = row.command.map((argument) =>
+        argument.startsWith(`${producerRoot}/`)
+          ? directory + argument.slice(producerRoot.length)
+          : argument,
+      );
       row.sources = { "implementation.ts": digest("implementation.ts") };
     }
     writeFileSync(

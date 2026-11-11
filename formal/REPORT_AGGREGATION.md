@@ -22,10 +22,11 @@ and applied safety metadata; and the current resource allowance. It retains
 the previous current-checkout, model census, all-shard and inventory checks.
 Unknown/missing/extra fields in bound key maps fail instead of passing vacuously.
 
-Producer installation paths differ across runners. The validator checks
-absolute executable roles, the canonical Quint suffix and matching translator
-checkout, without equating the producer's Node installation path to the
-aggregation job's path. The workflow still pins Node24.15.0 and Bun1.3.14.
+The trusted producer and aggregate jobs use the same checkout workspace.
+Quint and its loader must match that expected current checkout root exactly.
+Only the producer's absolute Node installation path may differ from the
+aggregation job's path. The workflow pins Node24.15.0 and Bun1.3.14. Java
+metadata accepts the same major-21 forms as the producer, including bare21.
 The applied overlay digest must match the closed reviewed adapter/overlay
 pair. A test computes the actual deterministic VIEW-only patch of the pinned
 official adapter; an unknown adapter requires renewed review. The aggregate
