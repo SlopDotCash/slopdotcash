@@ -5112,8 +5112,8 @@
 {"name":"<ArrowFunction@2819>","kind":"ArrowFunction","line":2819,"sha256":"c24093691be8552fcd4c637416d729f9e5deec7e388ef48d5acb5026d38884c8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"main","kind":"FunctionDeclaration","line":2963,"sha256":"812633e207964f1ed9caed8cc22923bf2590782cc369f37218f76652df97a79c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]}
 ]},
-{"path":"skills/project-contributor-template/scripts/skill-authority.mjs","sha256":"ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040","language":"javascript","disposition":"callables-inventoried","functions":[
-{"name":"pythonRuntimeProbe","kind":"FunctionDeclaration","line":547,"sha256":"1d56182e78ce596d99b8bb9d385e6a0c015f5f167605862fc8d1ebf67ab77ca8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"skills/project-contributor-template/scripts/skill-authority.mjs","sha256":"2b3b654c9323abad1943df1ad646702e38300f3f8ad0a61c34e21755276901f5","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"pythonRuntimeProbe","kind":"FunctionDeclaration","line":556,"sha256":"1d56182e78ce596d99b8bb9d385e6a0c015f5f167605862fc8d1ebf67ab77ca8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"skills/project-contributor-template/scripts/terms-preflight.mjs","sha256":"1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"fail","kind":"FunctionDeclaration","line":29,"sha256":"439b2b380bd043e5c9ce0c19f9bae013243d8f6f3380398baadc49b63c2d9927","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
