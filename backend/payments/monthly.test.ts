@@ -437,7 +437,7 @@ for (const [boundary, initiallyOff] of [
   });
 }
 for (const mutation of ["allocation", "enable", "disable"] as const) {
-  test(`a queued ${mutation} refuses a registry authority change before its INSERT`, async () => {
+  test(`a queued ${mutation} ${mutation === "disable" ? "survives" : "refuses"} a registry authority change before its INSERT`, async () => {
     clock = beforeCutoff;
     const persistence = new CloudflareProjectPersistence(db);
     const original = await persistence.getProject(project.id);
@@ -561,10 +561,20 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
         ),
       ).toBe("updated");
       releaseInsert();
-      await rejects(pending, "project_changed");
-      expect(held).toBe(true);
-      expect(count("monthly_payment_settings")).toBe(beforeSettings);
-      expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      if (mutation === "disable") {
+        // An opt-out always wins: the revision guard must not block turning
+        // automatic payment off, even when the registry revision changed
+        // while the write was queued.
+        expect(await pending).toEqual({ automatic: false });
+        expect(held).toBe(true);
+        expect(count("monthly_payment_settings")).toBe(beforeSettings + 1);
+        expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      } else {
+        await rejects(pending, "project_changed");
+        expect(held).toBe(true);
+        expect(count("monthly_payment_settings")).toBe(beforeSettings);
+        expect(count("monthly_allocation_changes")).toBe(beforeAllocations);
+      }
       expect(count("monthly_payment_runs")).toBe(0);
       const current = await persistence.getProject(project.id);
       expect(current?.revision).toBe(original.revision + 1);

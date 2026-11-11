@@ -39,10 +39,13 @@ module monthly_owner_completion {
   val allocationCurrent=not(s.frozen) and s.allocationSequence==s.seenAllocation
     and (not(s.automatic) or not(s.afterCutoff))
   val settingCurrent=s.kind=="disable" or s.settingSequence==s.seenSetting
-  val allowed=registryCurrent and not(s.banned)
+  // An opt-out always wins over a registry revision: turning automatic
+  // payment off only requires the registry row to exist. Allocations and
+  // enables keep the full revision guard.
+  val allowed=(if(s.kind=="disable")s.registry else registryCurrent) and not(s.banned)
     and (if(s.kind=="allocation")allocationCurrent else settingCurrent)
   val refusal=if(not(s.registry))"payment_registry_unavailable"
-    else if(not(registryCurrent))"project_changed"
+    else if(s.kind!="disable" and not(registryCurrent))"project_changed"
     else if(s.banned)"account_banned"
     // The WHERE gate runs before the allocation trigger and unique constraint.
     // A cutoff-suppressed row cannot reach either conflicting-write check.
@@ -60,7 +63,7 @@ module monthly_owner_completion {
   // The model ends at the mutation result. Later registry changes do not
   // retroactively invalidate an earlier correctly authorized durable write.
   val invariant=all{s.writes>=0,s.writes<=1,s.settingSequence<=3,s.allocationSequence<=3,
-    s.phase=="committed" implies(registryCurrent and not(s.banned) and s.writes==1),
+    s.phase=="committed" implies((if(s.kind=="disable")s.registry else registryCurrent) and not(s.banned) and s.writes==1),
     s.phase=="refused" implies s.writes==0,
     s.phase=="committed" and s.kind=="allocation" implies
       (not(s.frozen) and s.allocationSequence==s.seenAllocation+1
@@ -74,8 +77,8 @@ module monthly_owner_completion {
     .expect(s.error=="project_changed" and s.writes==0)
   run enableRefusesChangedAuthorityTest=init.then(begin("enable")).then(changeProject("active")).then(execute)
     .expect(s.error=="project_changed" and s.writes==0)
-  run disableRefusesChangedAuthorityTest=init.then(begin("disable")).then(changeProject("active")).then(execute)
-    .expect(s.error=="project_changed" and s.writes==0)
+  run disableCommitsDespiteChangedAuthorityTest=init.then(begin("disable")).then(changeProject("active")).then(execute)
+    .expect(s.phase=="committed" and not(s.automatic) and s.writes==1)
   run missingRegistryRefusesMutationTest=init.then(begin("disable")).then(loseRegistry).then(execute)
     .expect(s.error=="payment_registry_unavailable" and s.writes==0)
   run delayedEnableCannotOvertakeOptOutTest=init.then(begin("enable")).then(otherOptOut).then(execute)
