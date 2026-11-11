@@ -230,6 +230,40 @@ export function publishStoredApplication(
   );
 }
 
+/** Withdraws a pending application without publishing its project or update. */
+export function cancelProjectApplication(
+  applicationId: string,
+  expectedActorGithubId?: string,
+): Promise<{ application: ProjectApplication }> {
+  return projectApiRequest(
+    "POST",
+    `project-applications/${encodeURIComponent(applicationId)}/cancel`,
+    {},
+    { expectedActorGithubId },
+  );
+}
+
+/** Removes the current listing while preserving its immutable history. */
+export function removeProject(
+  projectId: string,
+  expectedRevision: number,
+  expectedActorGithubId?: string,
+): Promise<{
+  project: {
+    id: string;
+    revision: number;
+    status: string;
+    manifest: ProjectDefinition;
+  };
+}> {
+  return projectApiRequest(
+    "POST",
+    `projects/${encodeURIComponent(projectId)}/remove`,
+    { expectedRevision },
+    { expectedActorGithubId },
+  );
+}
+
 export type RevisionResult = {
   project: {
     id: string;

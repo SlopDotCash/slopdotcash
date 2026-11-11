@@ -180,6 +180,8 @@ Work may earn acceptance and Points without a funded award. A pause stops contri
 
 No routine administrator approval is required. A stored applicant may publish through the same current authority checks. Funding readiness remains separate from registration and admission.
 
+Maintainers may remove a registered project after a fresh check of their GitHub authority. Removal appends a paused, retired revision and hides the project from public discovery, work collection, and skill publication. Keep registry history, earned Points, private cases, and funded obligations. The applicant may cancel a pending application, including a pending update, without publishing it. Retain the cancelled record and prevent later publication. These maintainer controls are approved for the MVP (owner decision, 11 November 2026).
+
 ### Setup requirements
 
 Project contains the repository, integration branch, and contribution rules. Provide one picker for the user's public repositories and URL entry for other public repositories. Load repository facts after selection.
@@ -654,7 +656,7 @@ Cite the relevant section and observable acceptance result in each implementatio
 | --- | --- |
 | Accounts | GitHub identity survives renames. Consent, visibility, closure, wallet replacement, and recovery follow section 3 without cross-account leakage. |
 | Contributors | Complete discovery, verified installation when used, attributed submission, acceptance, and Points. For an eligible funded award, also complete payment. Optional evidence never blocks submission. |
-| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. |
+| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. Remove a project with current authority or cancel a pending application; preserve history and obligations and refuse stale or unauthorized writes. |
 | Slopbot | Review registered repositories for free. Preserve incomplete outcomes, qualified closure scope, consent, reopen protection, penalties, and appeal escalation. |
 | Points | Complete source coverage, correct work/review shares, single debits and reversals, preserved history, and no duplicate credit. |
 | Security admission | Prove complete scans, honest exemptions, eligible two-flag pause, skill refusal, fresh reinstatement, and human confirmed-malicious decisions. |

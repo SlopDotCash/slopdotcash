@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
+  cancelProjectApplication,
   currentProjectSession,
   listProjectSetup,
   ProjectApiError,
@@ -12,8 +13,13 @@ import { SLOPBOT_INSTALL_URL } from "./lib/project-contracts";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 type Publication =
-  | { status: "idle" | "submitting" }
-  | { status: "error"; message: string; install: boolean }
+  | { status: "idle" | "submitting" | "cancelling" | "cancelled" }
+  | {
+      status: "error";
+      action: "publish" | "cancel";
+      message: string;
+      install: boolean;
+    }
   | {
       status: "published";
       result: Awaited<ReturnType<typeof publishStoredApplication>>;
@@ -49,25 +55,41 @@ function PendingApplication({
   });
   const inFlight = useRef(false);
   const mounted = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
   const isRevision = application.expectedRevision !== undefined;
-  async function publish() {
+  async function act(action: "publish" | "cancel") {
     if (!mounted.current || inFlight.current) return;
+    if (
+      action === "cancel" &&
+      !window.confirm(
+        `Cancel the application for ${application.manifest.name}? It will not be published.`,
+      )
+    )
+      return;
     inFlight.current = true;
-    setPublication({ status: "submitting" });
+    setPublication({
+      status: action === "cancel" ? "cancelling" : "submitting",
+    });
     try {
       await requireApplicationActor(actorId);
       if (!mounted.current) return;
-      const result = await publishStoredApplication(application.id, actorId);
+      const result =
+        action === "cancel"
+          ? await cancelProjectApplication(application.id, actorId)
+          : await publishStoredApplication(application.id, actorId);
       if (!mounted.current) return;
       await requireApplicationActor(actorId);
       if (!mounted.current) return;
-      setPublication({ status: "published", result });
+      if ("application" in result) {
+        setPublication({ status: "cancelled" });
+      } else {
+        setPublication({ status: "published", result });
+      }
     } catch (cause) {
       if (!mounted.current) return;
       if (lostApplicationAccess(cause)) {
@@ -94,9 +116,12 @@ function PendingApplication({
       if (!mounted.current) return;
       setPublication({
         status: "error",
+        action,
         message: errorMessage(
           cause,
-          "The saved application could not be published.",
+          action === "cancel"
+            ? "Cancellation could not be confirmed. Try again."
+            : "The saved application could not be published.",
         ),
         install:
           cause instanceof ProjectApiError && cause.code === "slopbot_required",
@@ -119,25 +144,50 @@ function PendingApplication({
         ) : (
           <strong>{application.manifest.name}</strong>
         )}
-        {publication.status === "published" ? null : (
-          <button
-            className="button secondary-button"
-            type="button"
-            disabled={publication.status === "submitting"}
-            onClick={() => void publish()}
-          >
-            {publication.status === "submitting"
-              ? isRevision
-                ? "Publishing…"
-                : "Creating…"
-              : publication.status === "error"
-                ? "Retry"
-                : isRevision
-                  ? "Publish this change"
-                  : "Create this project"}
-          </button>
+        {publication.status === "published" ||
+        publication.status === "cancelled" ? null : (
+          <>
+            {application.publishable === false ? null : (
+              <button
+                className="button secondary-button"
+                type="button"
+                disabled={
+                  publication.status === "submitting" ||
+                  publication.status === "cancelling"
+                }
+                onClick={() => void act("publish")}
+              >
+                {publication.status === "submitting"
+                  ? isRevision
+                    ? "Publishing…"
+                    : "Creating…"
+                  : publication.status === "error" &&
+                      publication.action === "publish"
+                    ? "Retry"
+                    : isRevision
+                      ? "Publish this change"
+                      : "Create this project"}
+              </button>
+            )}
+            <button
+              className="button secondary-button"
+              type="button"
+              disabled={
+                publication.status === "submitting" ||
+                publication.status === "cancelling"
+              }
+              onClick={() => void act("cancel")}
+            >
+              {publication.status === "cancelling"
+                ? "Cancelling…"
+                : "Cancel application"}
+            </button>
+          </>
         )}
       </div>
+      {publication.status === "cancelled" ? (
+        <p role="status">Application cancelled.</p>
+      ) : null}
       {publication.status === "error" ? (
         <p role="alert" className="field-error">
           {publication.message}
