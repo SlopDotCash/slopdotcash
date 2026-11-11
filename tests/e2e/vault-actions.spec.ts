@@ -1765,7 +1765,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       await page.request.get(`${origin}/__fixture`)
     ).json();
     expect(afterEdit.project.revision).toBe(2);
-    await expect(setup.getByText("1,000 TEST", { exact: true })).toBeVisible();
+    await expect(setup.getByText("1,000 $TEST", { exact: true })).toBeVisible();
     expectedRecoveryRejection = true;
     await setup
       .getByLabel("Creation transaction hash")
@@ -1794,7 +1794,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
         .getByRole("status")
         .filter({ hasText: "Creation used a monthly cap" }),
     ).toHaveText(
-      "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
+      "Creation used a monthly cap of 1,000 $TEST. The project now uses 2,000 $TEST. Use the automatic payment controls below to apply the new cap.",
     );
     await recoveryPage
       .locator("summary")
