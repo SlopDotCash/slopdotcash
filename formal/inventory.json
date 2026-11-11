@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "71f92972902f8dfdf232726ef25cd3ba299b97d7dc91ff8c2091585f15356ec4",
+      "sha256": "44977d4d1313d443d082ed16b9bd01a656a699f4a15430e16c2c9e9e1d846857",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,9 +24,9 @@
       ],
       "candidateLines": [
         27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
-        612, 678, 908, 936, 974, 990, 1000, 1001, 1090, 1190, 1192, 1193, 1357,
-        1440, 1593, 1595, 1625, 1721, 1743, 1814, 1825, 1850, 1919, 1932, 1945,
-        1954, 1955, 1956
+        612, 678, 908, 936, 975, 991, 1001, 1002, 1091, 1191, 1193, 1194, 1359,
+        1442, 1595, 1597, 1627, 1723, 1745, 1816, 1827, 1852, 1921, 1934, 1947,
+        1956, 1957, 1958
       ],
       "review": "mapped-abstraction"
     },
@@ -772,7 +772,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "sha256": "1db9a9f29040dc9f7913c21a93dcd7bcc8b072ac16f11f7ff98a01a96c5cca09",
+      "sha256": "3b68a7c7469606826fb334d0215fdd5cd3ad5354b29653c5ae9bd1a01b8ebd0a",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -3218,6 +3218,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0122_orbio_provider_failure_notices.sql",
+      "sha256": "ee8b7db20e94144fbee23ee5bb6a9805d56eb86385705b391fb4321184c05da6",
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [4, 6],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "b2b526471d50e6efd3c300d717f3299e7e8f43a1b6b4a2f1dee02917b5b86340",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -4102,14 +4109,14 @@
     },
     {
       "path": "scripts/qualification-response.ts",
-      "sha256": "27fd154e7ef3172899c02ede03af56851c9c8da78a2951136ab8eaced52af2eb",
+      "sha256": "4da8c9fec0b754c09c75d4161df057b6c7436075d451291b210ced829e79a03a",
       "models": ["formal/models/vetting/qualification_response_body.qnt"],
-      "candidateLines": [28],
+      "candidateLines": [50],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/qualify-security-screening.ts",
-      "sha256": "02a15301a8cfe47803593553ba9e2e39a7557d999a983264c8e22bb1468aabf4",
+      "sha256": "43a2d06e6b892aa47ac6bdacdf23345813b322a8b8a86a79c8d5f78f7939e6bb",
       "models": ["formal/models/vetting/qualification_screening_budget.qnt"],
       "candidateLines": [
         27, 74, 75, 79, 157, 159, 162, 173, 188, 189, 191, 280, 295
@@ -4118,9 +4125,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "6e0e38062927f3d135d64b7c42b597eb592f67c81c5b09541a7d9a15b56559be",
+      "sha256": "9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [216],
+      "candidateLines": [230],
       "review": "mapped-abstraction"
     },
     {
@@ -4312,7 +4319,7 @@
     },
     {
       "path": "scripts/run-vetting-controller.ts",
-      "sha256": "3547befb770d5a369d8858c2397e8d1d8a21d3655b6c75a41e0f62f5198019ee",
+      "sha256": "accc465ec0ead5270ff90d1f4a45c5cdc058c706189063bd02838be027450dba",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [3, 53, 134, 135],
       "review": "mapped-abstraction"
@@ -7203,7 +7210,7 @@
     },
     {
       "path": "workers/notify/contracts.ts",
-      "sha256": "703d4ec552951b41e68471d22b252a88d82e137bbc2a47d92d2a71161169b05a",
+      "sha256": "9f442645691a0010cad362b270025ea9bef15cbbd6f716da50953e4f2659efa8",
       "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7706,13 +7713,13 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "e27306cb586fca28312b24495089be109bbe930e3e756a39dd7f2165925b3977",
+      "sha256": "b812ae43ab66bbe18269efb488c303216729e637b5b78eb3f253259107dff5e2",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_review_admission.qnt"
       ],
-      "candidateLines": [358],
+      "candidateLines": [388],
       "review": "mapped-abstraction"
     },
     {
@@ -7776,7 +7783,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "sha256": "1595aa393d13b76d286029c5a44a1abd482ae8e27187dd85ef113f50b3cee156",
+      "sha256": "6d4e3e5f22d28254ff71574d403992bff2a44625b9e570f7b354459e76e5504e",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
@@ -7784,7 +7791,7 @@
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [79, 83, 88, 173, 195, 196, 318, 320],
+      "candidateLines": [86, 90, 95, 184, 207, 208, 352, 354],
       "review": "mapped-abstraction"
     },
     {
@@ -7991,7 +7998,7 @@
     },
     {
       "path": "workers/slopbot/value-consumer.ts",
-      "sha256": "b415f58160944aea513fc6375f4b737fcc0aa5f06efcfb8c18d13c7448c95bfd",
+      "sha256": "ded02225fa4c6d658245a8fbbcd261a4fe60de1b0a7a67f8bf56a406d06f0753",
       "models": [
         "formal/models/slopbot/bot_value_attempt_recovery.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -8199,7 +8206,7 @@
     },
     {
       "path": "workers/slopbot/value-producer.ts",
-      "sha256": "3b47293b3066c1c83dcf0af5b4bce3c537f0ecd5a9f2412143465c29751e9afd",
+      "sha256": "dc6ab566c0047259d7353bf0a17617c7a101481a35e8257df203aa5910dac66d",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8704,7 +8711,7 @@
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "b3598a0b444287f1f4aed4a7d1cf88e58b4ef7fc016fa03842cda0ff9439c63d",
+      "sha256": "7c5339d0cff0ac62cf8728f6c825fb4901080625ce2841ce32bd02d00f263182",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
@@ -8725,12 +8732,12 @@
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "sha256": "685d17b263ea5fa51eb9ebd44e3563cfd43e1bd9133de3f2ac22364f23008d6d",
+      "sha256": "491d8d62e87df25c4d5c10a85b2f3132d174bcd2bb3d8a5a7423cae7e8386a6e",
       "models": [
         "formal/models/vetting/vetting_review_batches.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "candidateLines": [65, 106, 109, 305, 306, 335, 428, 537],
+      "candidateLines": [66, 107, 110, 306, 307, 336, 429, 538],
       "review": "mapped-abstraction"
     },
     {
@@ -13911,15 +13918,22 @@
     },
     {
       "path": "formal/models/slopbot/bot_notice_delivery.qnt",
-      "sha256": "1f1cab8a40084b58353472dee6c0241fcb5c40df1654d0406973f8e193c9b04d",
+      "sha256": "32f0574b7eb5f1227a9206281342287fb303bf4dbbb7edb751d8e2788416ae20",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
+        "migrations/0122_orbio_provider_failure_notices.sql",
         "workers/notify/contracts.ts",
         "workers/slopbot/failure-alerts.ts",
         "workers/slopbot/spend-alerts.ts"
       ],
-      "scenarios": ["ambiguousNeverResendsTest", "retainedMilestonesTest"]
+      "scenarios": [
+        "ambiguousNeverResendsTest",
+        "historicalCostsCreateNoBacklogTest",
+        "primaryAndBackupFailuresBothNotifyTest",
+        "retainedMilestonesTest",
+        "successfulAndOtherCallsNeverNotifyTest"
+      ]
     },
     {
       "path": "formal/models/slopbot/bot_patch_replay.qnt",
@@ -13958,7 +13972,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_producer_provenance.qnt",
-      "sha256": "a1b78f6afc7ec212c4e9b006c9f2c0ef25a312e53735aa1d390c73014723b623",
+      "sha256": "48513bcc7128bb8e5a32fbff0ad43a6938e7e4adf5148def047651c18af60bc5",
       "sources": [
         "src/lib/model-identity.ts",
         "workers/slopbot/models.ts",
@@ -13967,8 +13981,12 @@
         "workers/slopbot/value-review.ts"
       ],
       "scenarios": [
+        "allThreeFailuresExhaustRouteTest",
         "budgetDenialStopsRouteTest",
         "fallbackHasIndependentAdmissionTest",
+        "missingOrbioDoesNotCreateReceiptTest",
+        "orbioFailureImmediatelyReachesSurplusBackupTest",
+        "retiredProducerHistoryStillReadsTest",
         "subscriptionNeverClaimsApiReceiptTest"
       ]
     },
@@ -14198,7 +14216,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_dispute_draft.qnt",
-      "sha256": "8d9d1f0f86296e37c99961f5584ccfef80dbbcfae4195959401ba73ffd2efdcc",
+      "sha256": "d8de734fb1e88f8ec30dd95a5b34340207ec4a3caec1f817e650d6e87a306e6b",
       "sources": [
         "workers/slopbot/models.ts",
         "workers/slopbot/persistence.ts",
@@ -14207,19 +14225,23 @@
       ],
       "scenarios": [
         "authorityIsAnObservationNotContinuousLockTest",
+        "backupAuthorityRefusalRecordsOrbioFailureTest",
         "completeSourceKeepsHighConfidenceTest",
         "denyDraftCanBeReturnedTest",
-        "exhaustedRoutesRecordBothFailuresTest",
+        "exhaustedRoutesRecordAllFailuresTest",
         "fallbackAuthorityExceptionStillRecordsFirstCallTest",
         "fallbackDeniedAuthorityStillRecordsFirstCallTest",
         "initialDeniedAuthorityCallsNoProviderTest",
         "invalidOutputUsesSecondRouteTest",
         "lostFinalUsageReplyKeepsCommittedRowWithoutVerdictTest",
         "lowConfidenceIsNotRaisedTest",
+        "missingBothProvidersMakesNoCallTest",
+        "missingOrbioStartsSurplusWithoutReceiptTest",
         "multiSourceJointCapsConfidenceTest",
+        "orbioQuotaFailureImmediatelyUsesSurplusTest",
         "partialUsagePrefixSurvivesFailureTest",
-        "providerBudgetStopsFallbackTest",
         "sourceGapCapsConfidenceTest",
+        "surplusBudgetStopsFallbackTest",
         "usageCannotBeSkippedBeforeReturnTest",
         "usageFailurePreventsVerdictReturnTest",
         "wrongServedModelCannotSupplyVerdictTest"

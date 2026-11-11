@@ -106,12 +106,12 @@ async function attemptScreening(
       "request-bound",
     );
     const wire = JSON.parse(await request.text());
-    requireThat(wire.model === "claude-opus-5.5", "request-bound");
+    requireThat(wire.model === "claude-sonnet-5.5", "request-bound");
     wire.max_tokens = OUTPUT_TOKENS;
     const body = JSON.stringify(wire);
     const bytes = new TextEncoder().encode(body).length;
     requireThat(bytes <= 16_384, "request-bound", { bytes });
-    const bound = priceUsage("surplus/claude-opus-5.5", {
+    const bound = priceUsage("surplus/claude-sonnet-5.5", {
       input: bytes,
       cacheWrite: bytes,
       cacheRead: bytes,

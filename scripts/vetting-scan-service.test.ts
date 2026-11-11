@@ -586,8 +586,8 @@ beforeEach(async () => {
         );
       }) as typeof fetch,
     },
-    primary: profile("anthropic-messages", "opus", "claude-opus-5.5"),
-    specialist: profile("openai-responses", "astra", "gpt-6.1-sol"),
+    primary: profile("anthropic-messages", "opus", "claude-sonnet-5.5"),
+    specialist: profile("openai-responses", "astra", "gpt-6.1-terra"),
     policyVersion: "scan-policy-1",
     workDirectory: join(root, "work"),
     journalDirectory: join(root, "journal"),
@@ -1034,7 +1034,7 @@ test("a provider outage leaves the scan pending; the next pass clears the projec
   expect(provider.calls).toEqual([
     {
       path: "/anthropic/v1/messages",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       authorization: "Bearer fixture-surplus-key",
     },
   ]);
@@ -1115,8 +1115,8 @@ test("an ambiguous primary review runs the Surplus specialist once before public
     },
   ]);
   expect(provider.calls.map((call) => [call.path, call.model])).toEqual([
-    ["/anthropic/v1/messages", "claude-opus-5.5"],
-    ["/v1/responses", "gpt-6.1-sol"],
+    ["/anthropic/v1/messages", "claude-sonnet-5.5"],
+    ["/v1/responses", "gpt-6.1-terra"],
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   expect(assessment?.state).toBe("clean");
@@ -2160,8 +2160,8 @@ test("an incomplete result is published although the evidence store fails, so th
   ]);
   // A binary needs the specialist; each model runs once.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
   provider.calls = [];
@@ -2194,8 +2194,8 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   ]);
   // The specialist runs only because the primary review was high risk.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   const result = assessment?.result;
@@ -2205,7 +2205,7 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   expect(result.primaryReview.risk).toBe("high");
   expect(result.specialistReview).toMatchObject({
     provider: "surplus",
-    model: "gpt-6.1-sol",
+    model: "gpt-6.1-terra",
   });
   // A model label alone never bans: a moderator confirms malice.
   expect(result.confirmation).toBeNull();
@@ -2314,15 +2314,15 @@ test("an unpinned endpoint or model fails closed before the queue or any provide
       config.primary,
       { ...config.specialist, endpoint: "https://api.openai.com/v1/responses" },
     ],
-    [{ ...config.primary, model: "claude-opus-5" }, config.specialist],
-    [config.primary, { ...config.specialist, model: "gpt-6.1" }],
+    [{ ...config.primary, model: "claude-opus-5.5" }, config.specialist],
+    [config.primary, { ...config.specialist, model: "gpt-6.1-sol" }],
     // The specialist never stands in for the primary review.
     [config.specialist, config.primary],
   ] as [ScannerProfile, ScannerProfile][]) {
     await expect(
       runScanPass({ ...config, connection: counting, primary, specialist }),
     ).rejects.toThrow(
-      /Unapproved scanner profile|must be Surplus claude-opus-5\.5/,
+      /Unapproved scanner profile|must be Surplus claude-sonnet-5\.5/,
     );
   }
   expect(contacted).toEqual([]);
