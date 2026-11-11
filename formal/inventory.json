@@ -1974,9 +1974,9 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "63d136b66375f7274f19b6949a20168868b8757b4a743e4ddc9091b77e6aac46",
+      "sha256": "2505030c0b66bdf572614814012982571abf3a7bef643070bc1ecaadb777b0a4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [],
+      "candidateLines": [57, 58, 75],
       "review": "mapped-abstraction"
     },
     {
@@ -3328,13 +3328,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "f6646a1c7732c740f2a51a951e57618040aef11dbb67972ff154867e993ca13c",
+      "sha256": "61166b250a23d68fa301664b77aa98e7a5c85be8f246f57563ef25a1b744c09c",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [33, 41, 65, 162, 164, 166, 213, 220, 272],
+      "candidateLines": [45, 48, 52, 60, 84, 181, 183, 185, 232, 239, 291],
       "review": "mapped-abstraction"
     },
     {
@@ -4195,9 +4195,9 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "edb56fe365c853f30c70875d0b8957665bbad6b79bad3d59d4d717ad4dd484ec",
+      "sha256": "b41035b4c01c6cf11bffa6aa3a07a841652ca66738cc985934225affb7e33c48",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
-      "candidateLines": [7],
+      "candidateLines": [7, 60, 62, 77],
       "review": "mapped-abstraction"
     },
     {
@@ -9101,7 +9101,7 @@
     },
     {
       "path": "formal/models/api/api_owner_vault_lifecycle.qnt",
-      "sha256": "d144e770b6979242ecd47f66769f82d9adc13b8e1844a1d52b86d40f73dee1be",
+      "sha256": "4621ef9fe9fc2aed949d85b0324d8d8730294461a67d28ba488094fb006a317e",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/edge-cache.ts",
@@ -9432,7 +9432,7 @@
     },
     {
       "path": "formal/models/api/api_project_lookup_routes.qnt",
-      "sha256": "a91dcad97db9974c612b1c75e7aee80483ac90c572b534d674d72f87feb46511",
+      "sha256": "20909c2aeab10c1c16ea5eabb57e37873726f8420a84daae6b420c361a0a23f4",
       "sources": [
         "backend/http.ts",
         "backend/projects/edge-cache.ts",
@@ -9539,7 +9539,7 @@
     },
     {
       "path": "formal/models/api/api_project_setup_check.qnt",
-      "sha256": "5e3213d62610489d8bbfb11968f533eccd23812ff4447e9ad18040eadcebecc5",
+      "sha256": "81a222450f9222a2ea72de6e3dd04515c7ebff8864fa23dbed0243a6eda9f6e8",
       "sources": [
         "backend/projects/handler.ts",
         "backend/projects/setup.ts",
@@ -15518,7 +15518,7 @@
     },
     {
       "path": "formal/models/ui/ui_admin_mutation_identity.qnt",
-      "sha256": "7ce20cb86641dfab1de3b8cc8ad522e5844225228f913112118dac96dcc0b3aa",
+      "sha256": "aa2359d42de5765cda3fec220fc6716ecba23ca809fe1ea838a55323049c59b8",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -15935,7 +15935,7 @@
     },
     {
       "path": "formal/models/ui/ui_email_actions.qnt",
-      "sha256": "49c87cec8855abab691b369bfef3424876831ebde6cc33cd1c46b61f5ec258f3",
+      "sha256": "25c1c3d0f59066177b8aac797912fea84be0663efb5d29eab297ed9206b7ec48",
       "sources": [
         "src/InboxEmail.tsx",
         "src/lib/project-api.ts",
@@ -16010,7 +16010,7 @@
     },
     {
       "path": "formal/models/ui/ui_email_preference_requests.qnt",
-      "sha256": "ab01b26e0f8aafcd2970457e844e01e45907b1a7e978c6385cbd44c2418d24a7",
+      "sha256": "cfdcf19e3078862f822fd517b9e457916f6157fac9d3e5ef4583fc604d2dce03",
       "sources": ["src/InboxEmail.tsx", "src/lib/project-api.ts"],
       "scenarios": [
         "backgroundReadRetainsEditedDraftTest",
@@ -16592,7 +16592,7 @@
     },
     {
       "path": "formal/models/ui/ui_payout_consent_lifetime.qnt",
-      "sha256": "677719f7f972975a71f0e991878c95ccfb7a84c6adfe622cde2db43bbf11bb76",
+      "sha256": "ba647276403e1481e98fc925f959001ad193151d25c7f37497db823632f63cf4",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",
@@ -16838,7 +16838,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_authority.qnt",
-      "sha256": "922672f99fd55c73194ae8680738ddd68dd8b30d8ece3526ea4669d33ac06d9e",
+      "sha256": "7463ffa0eb313a7536800789f68995cead43fc36d4ce1f66acc3e9f85379e7c4",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -16918,7 +16918,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_publication_lifetime.qnt",
-      "sha256": "d8c6b0a5d2c76cde6b043da0cf950e089973155232f7496938e022606ef45c2e",
+      "sha256": "68360360fec1f0abd036e8b78046603c14f557831fa6da7bf3ec19774d196e03",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -17267,7 +17267,7 @@
     },
     {
       "path": "formal/models/ui/ui_security_settings_lifetime.qnt",
-      "sha256": "152fd8efc8d84441baa5b12d79d22996e4401a07740461abd6183c9b75471b29",
+      "sha256": "5dfb3b1c648c9792524106c6ff425bf869c7649356ce54b25b4449ee7c60cd10",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -17705,7 +17705,7 @@
     },
     {
       "path": "formal/models/ui/ui_vetting_reader.qnt",
-      "sha256": "25cdd212774b28c53db92f5fa28820e03dd44d5ad63a04341f3876e507510d63",
+      "sha256": "6ef3640651ef4c251a8fce59a313573f27f35718766bc024131dad93c4a03055",
       "sources": [
         "src/VettingEvidence.tsx",
         "src/lib/browser-json.ts",

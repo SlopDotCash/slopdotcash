@@ -29,10 +29,29 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // These source-bound finite graphs still had millions of queued states
+  // after the ordinary three-minute budget. Retain the complete domains,
+  // transitions and reviewed views; grant time to finish the same graph.
+  "formal/models/api/api_owner_vault_lifecycle.qnt": 1_800_000,
+  "formal/models/api/api_project_lookup_routes.qnt": 1_800_000,
+  "formal/models/ui/ui_admin_mutation_identity.qnt": 1_800_000,
+  "formal/models/ui/ui_email_actions.qnt": 600_000,
+  "formal/models/ui/ui_email_preference_requests.qnt": 600_000,
+  "formal/models/ui/ui_project_authority.qnt": 600_000,
+  "formal/models/ui/ui_project_publication_lifetime.qnt": 1_800_000,
+  "formal/models/ui/ui_security_settings_lifetime.qnt": 600_000,
+  "formal/models/ui/ui_vetting_reader.qnt": 600_000,
+  // The unchanged value-cap graph still had work queued at 962,410 states
+  // after 180s. Keep its full spend, failure and retry states.
+  "formal/models/fees/fee_value_caps.qnt": 600_000,
   "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
   // This full-state UI graph exceeds the ordinary three-minute budget.
   // Keep its resource allowance explicit without reducing the model.
   "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
+  // The unchanged payout-consent graph exceeded 180s while still exploring
+  // roughly five million distinct states. Keep every concrete state and
+  // transition; allow this model ten minutes to finish its finite graph.
+  "formal/models/ui/ui_payout_consent_lifetime.qnt": 600_000,
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
   "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,

@@ -102,13 +102,17 @@ fingerprints the configured view while retaining a full representative state.
 
 ## Strict version and tool binding
 
-`formal/tlc-safety-views.json` permits only the version-4 request ID, exact
+The journal entry in `formal/tlc-safety-views.json` permits only the version-4 request ID, exact
 model path and source hash, module, operator, explicit hash-normalization mode, the explicit memory-candidate policy, ordered field expressions,
 two named clause expressions, original generated-TLA hash and final view-TLA hash. The helper
 checks that exact schema and projection. Unknown requests, operators, source,
 TLA, projection or temporal changes fail before TLC. There is no fallback
-after a rejected projection request. Unselected models use the unchanged
-full-state official runner. The checker clears inherited view requests and
+after a rejected projection request. The separately audited owner-vault terminal
+and project-lookup legacy-cache views have their own hardcoded operators,
+expressions, source and translation bindings; their arguments and limitations
+are documented in [the model guide](README.md#owner-vault-terminal-requests).
+No manifest entry can authorize another projection. Unselected models use the
+unchanged full-state official runner. The checker clears inherited view requests and
 requires the exact view evidence it requested.
 
 The original generated TLA remains SHA-256

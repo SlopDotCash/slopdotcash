@@ -57,12 +57,23 @@ the checked-out model, source and tool bytes, and it publishes the merged
 per hosted-runner vCPU; the worker count changes no explored state space.
 
 Type, scenario and simulation stages have a 90-second limit. Finite verification
-normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds.
-The full-state `ui_bounty_payment_parent` graph and the `direct_bounty_journal`
-safety quotient have 1,800 seconds. After its reductions,
-`ui_solana_payment_pending` uses the ordinary limit. The runner
-records the effective limit and its own hash. These allowances change no model
-domain or invariant.
+normally has a 180-second limit. Explicit resource exceptions in
+`scripts/check-formal.mjs` retain all model domains and invariants:
+
+- 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
+  `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
+  `ui_security_settings_lifetime`, `ui_vetting_reader`, and `fee_value_caps`.
+- 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
+  `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
+  `ui_bounty_payment_parent`, and `direct_bounty_journal`.
+
+The admin graph still had 3.11 million states queued after 600 seconds; the
+publication graph had 2.18 million queued at that limit. The unchanged value-cap
+graph reached 962,410 distinct states before its 180-second timeout. Earlier
+owner/lookup VIEW measurements also exhausted 180 seconds; those incomplete
+receipts do not establish a pass for the final V3 projections. After its
+reductions, `ui_solana_payment_pending` uses the ordinary limit. The runner
+records the effective limit and its own hash.
 A timeout is an incomplete check, never a pass.
 
 The journal uses the exact, hash-bound safety view described in
@@ -103,6 +114,133 @@ completing. Scenarios fix the tracked key they assert on. This is reviewed
 reasoning, not a machine-checked equivalence theorem.
 
 ### Duplicate transition choices
+
+The project, owner-vault, email, payout-consent, security-settings, admin and
+vetting-reader models bind each `step` choice inside the branch that reads it.
+Their former outer choices ranged only over literal nonempty sets, inclusive
+constant integer ranges, or constant aliases for such sets (`ids`, `slots`,
+`actors`, `observedActors`, `kinds`, `routes`, `keyIds`, `outcomes` and
+`clearances`). None depends on the current state. For nonempty domains,
+existential choice distributes over disjunction: each old branch successor
+still has a local witness, and every local witness can be extended with any
+value of the unused outer choices. Thus the same calls, arguments, guards,
+initial states, invariants and full-state successor sets remain. No state field
+or transition is projected away. The change avoids repeated enumeration of
+identical branch successors and changes seeded sampling frequencies. This
+argument would not apply to a possibly empty state-dependent outer domain.
+Retain before/after model hashes and exact graph receipts in the ignored formal
+evidence directory; a timeout is still incomplete verification.
+
+### Owner-vault terminal requests
+
+`api_owner_vault_lifecycle` retains its complete concrete model, direct actions,
+scenarios and sampled traces. Its source-bound TLC safety VIEW keeps all globals
+exactly. On a nonterminal GET request it erases `expected`, `transaction` and
+`family`: authority leads only to funds/service reads and returns before body,
+history, chain or commit checks. For Review it erases only `transaction` and
+`family`; replay and transaction validation are Register-only, and a successful
+Review chain result returns before append. Review's expected/current revision
+comparison remains exact, and every Register field stays exact. These mode
+fields never change during a request. A `response` or `done` request is fingerprinted
+by its phase, committed revision, purpose and five separate local invariant
+truth values: the status/no-store rule, existing-deployment rule, registered
+receipt rule, pending rule and bounty-funds rule. Each is computed from the
+complete representative state, not supplied as a trusted flag. Keeping the
+committed revision and purpose also preserves the separate invariant's reads
+of current global policy and deployment existence; that truth is never frozen.
+
+The earlier eleven-field erasure was insufficient to finish its bounded run.
+Those fields were already dead at a terminal phase:
+
+| Fields | Last use before the terminal phase |
+| --- | --- |
+| `expected`, `transaction` | Expected-revision, replay and chain checks. |
+| `policy`, `cap` | Historical-policy comparison and the guarded commit. |
+| `creationRevision`, `creationCap` | Creation-policy selection; concrete scenarios still inspect these values. |
+| `restricted`, `banned`, `canSetup` | Captured authorization and setup eligibility. |
+| `appendGeneration` | The registry compare-and-set commit. |
+| `received` | Written by `send`; no transition or invariant reads it. |
+
+The invariant reads none of those eleven fields. The final view also collapses
+the other terminal payloads while retaining each local invariant clause as its
+own truth bit and the two global indices. Every slot action except `send`
+excludes both terminal phases. `send` reads the phase and writes `received`,
+which affects none of those observations. Cross-slot guards inspect request
+phases only; other requests obtain policy and deployment data from unchanged
+globals. Terminal slots are never reused.
+
+Relate states with equal globals, nonterminal requests equal after the approved
+GET/Review input normalization, and equal projected terminal tuples. Those
+mode-specific inputs are never read by a reachable later continuation; its
+guards and projected updates are independent of them. Initial states are
+unchanged. Invariant truth is constant within each equivalence class. Each
+concrete continuation from related states has the same enabledness and
+projected successor, including `send`; every
+projected step is the projection of an original continuation. This is a safety
+quotient, not the full concrete graph or a proof of terminal payload bytes,
+HTTP output equivalence, liveness or implementation refinement. The source-bound
+regression in `scripts/owner-vault-terminal-quotient.test.ts` requires renewed
+review when the request schema, domains, helpers, concrete transitions,
+projection or invariant changes, including a new indirect field read.
+
+### Legacy project-lookup cache
+
+`api_project_lookup_routes` erases `legacyCache` from the TLC fingerprint. No
+current transition or invariant reads it; initialization and the environmental
+`legacyPut` action only write it. It erases the diagnostic `loginVersion` map
+and request `login` field too: `rename` only changes its own map entry from one
+to two, `actorReply` only copies that value, and no later transition or invariant
+reads request `login`. Named concrete scenarios retain and inspect those bytes.
+The view also normalizes these terminal request fields after `response` or `done`:
+
+| Fields | Condition for erasure |
+| --- | --- |
+| `method`, `transport`, `expected`, `loginValid`, `repository`, `cacheEnabled`, `login`, `selectedExpected`, `delivered` | No terminal continuation or invariant reads these values. |
+| `key`, `payload`, `waitUntil` | Erase only when `putPending` is false. While pending, keep the key and wait flag exact and preserve payload positivity. |
+
+Version observations retain only positivity: global `dataVersion`, current
+cache-entry versions and live request payloads map to one when positive and zero
+otherwise. `cacheRead` tests positivity then copies the version; `dataReply`
+copies `dataVersion`; `putRecord` copies the payload. The normalization commutes
+with each copy, map replacement and cache expiry, and preserves the invariant's
+`payload > 0` test. `changeData` and `rename` map to stuttering; when their
+concrete guard is already disabled, the explicit step self-loop matches that
+projected successor. Exact freshness and login bytes are not VIEW guarantees.
+
+At `dispatch`, a request with no pending put whose method/origin/route will
+deterministically refuse also discards `expected`, `repository`, `cacheEnabled`,
+`waitUntil` and `loginValid`. It retains route, method and transport, so the
+403-versus-404 refusal remains exact. Those inputs cannot reach session, cache
+or selection checks; after completion `begin` resets them. No domain, input or
+concrete action is removed.
+
+All invariant observations stay exact, as do request phases and attempt counts.
+`respond` reads phase and `waitUntil or not(putPending)`; the view preserves that
+guard and ignores its write to `delivered`. `putRecord` retains the pending
+key, subject and payload positivity until the put settles. `begin` reads phase, attempt
+and `putPending`, then resets the remaining request fields. Every other request
+action excludes terminal phases. Related states therefore have the same
+invariant truth and projected successor classes, up to the `rename` and
+`changeData` stutters described above. `legacyPut`
+maps to stuttering; current cache keys, subjects and background-write effects
+remain, with version values observed by positivity.
+The legacy-only view's incomplete run remains a failed receipt. This quotient
+proves neither historical cache bytes, exact terminal payloads nor behavior of
+an older application version. The narrow source binding in
+`scripts/project-lookup-legacy-quotient.test.ts` rejects unreviewed future reads,
+including reads through helpers, new invariants and terminal continuations.
+
+Both VIEW definitions are explicit allowlisted operators with exact model,
+generated TLA and final VIEW hashes. They change fingerprints, never the model's
+state transitions or the official runner's result interpretation. Unsupported
+TLC action composition is not enabled. The existing journal VIEW keeps its
+separate projection and controls.
+
+Both models also check their existing `begin` phase prerequisites before
+enumerating its argument choices. These prerequisites remain in `begin` too;
+lifting the same conjunct preserves its enabled calls and successors.
+
+### Other duplicate transition choices
 
 The payment-parent model enumerates reply payloads only for the current,
 authenticated read. Every payload for another pending read produces the same

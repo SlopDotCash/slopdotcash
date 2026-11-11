@@ -35,6 +35,63 @@ const clauses = [
       "(s.touched > 0 => (\\A n \\in {1, 2} \\ {s.touched}: s.store[n] = s.before[n]))",
   },
 ];
+// These are three individually reviewed projections, not a manifest-selected
+// expression engine. Unknown models, fields, clauses or modes fail closed.
+const definitions = [
+  {
+    id: "direct-bounty-journal-safety-v4",
+    model: "formal/models/payments/direct_bounty_journal.qnt",
+    module: "direct_bounty_journal",
+    operator: "SlopJournalSafetyViewV4",
+    hashMode,
+    memoryCandidateMode,
+    fields,
+    clauses,
+  },
+  {
+    id: "owner-vault-terminal-safety-v3",
+    model: "formal/models/api/api_owner_vault_lifecycle.qnt",
+    module: "api_owner_vault_lifecycle",
+    operator: "SlopOwnerVaultTerminalViewV3",
+    hashMode: "terminal-invariant-observations",
+    memoryCandidateMode: "erase-terminal-payload-and-unused-operation-inputs",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [i \\in DOMAIN s.requests |-> IF s.requests[i].phase \\in {"response", "done"} THEN <<s.requests[i].phase, s.requests[i].committed, s.requests[i].purpose, (s.requests[i].status > 0 => s.requests[i].noStore), (s.requests[i].result = "existing" => (s.requests[i].captured.exists /\\ s.requests[i].captured.family = s.requests[i].family /\\ ~s.requests[i].chainCalled /\\ s.requests[i].committed = 0 /\\ s.requests[i].responseRevision = s.requests[i].current)), (s.requests[i].result = "registered" => (s.requests[i].committed > 0 /\\ s.requests[i].responseRevision = s.requests[i].committed)), (s.requests[i].result = "pending" => s.requests[i].committed = 0), (s.requests[i].result = "funds" => (s.requests[i].mode = "get" /\\ s.requests[i].purpose = 2))>> ELSE [s.requests[i] EXCEPT !.expected = IF s.requests[i].mode = "get" THEN 1 ELSE s.requests[i].expected, !.transaction = IF s.requests[i].mode \\in {"get", "review"} THEN 1 ELSE s.requests[i].transaction, !.family = IF s.requests[i].mode \\in {"get", "review"} THEN "evm" ELSE s.requests[i].family]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "project-lookup-cache-observation-safety-v3",
+    model: "formal/models/api/api_project_lookup_routes.qnt",
+    module: "api_project_lookup_routes",
+    operator: "SlopProjectLookupCacheViewV3",
+    hashMode: "data-cache-payload-zero-or-positive",
+    memoryCandidateMode:
+      "erase-unused-login-legacy-terminal-and-refusal-inputs",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.legacyCache = [k \\in DOMAIN s.legacyCache |-> [version |-> 0, subject |-> 0]], !.loginVersion = [a \\in DOMAIN s.loginVersion |-> 0], !.dataVersion = IF s.dataVersion > 0 THEN 1 ELSE 0, !.cache = [k \\in DOMAIN s.cache |-> [s.cache[k] EXCEPT !.version = IF s.cache[k].version > 0 THEN 1 ELSE 0]], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"response", "done"} THEN [r EXCEPT !.method = "GET", !.transport = TRUE, !.expected = 0, !.loginValid = TRUE, !.repository = 1, !.cacheEnabled = TRUE, !.login = 0, !.selectedExpected = 0, !.delivered = FALSE, !.key = IF r.putPending THEN r.key ELSE 0, !.payload = IF r.putPending THEN (IF r.payload > 0 THEN 1 ELSE 0) ELSE 0, !.waitUntil = IF r.putPending THEN r.waitUntil ELSE FALSE] ELSE IF r.phase = "dispatch" /\\ ~r.putPending /\\ ((r.method # "GET" /\\ ~r.transport) \\/ ~(IF r.route = "actor-selection" THEN r.method = "POST" ELSE r.method = "GET" /\\ r.route # "unknown")) THEN [r EXCEPT !.expected = 0, !.repository = 1, !.cacheEnabled = TRUE, !.waitUntil = FALSE, !.loginValid = TRUE, !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0] ELSE [r EXCEPT !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0]]]',
+      },
+    ],
+    clauses: [],
+  },
+];
+
+function reviewedDefinition(view) {
+  const definition = definitions.find((entry) => entry.id === view.id);
+  return (
+    definition !== undefined &&
+    Object.entries(definition).every(
+      ([name, value]) => JSON.stringify(view[name]) === JSON.stringify(value),
+    )
+  );
+}
 
 export function readSafetyViews(root) {
   const manifest = JSON.parse(
@@ -46,26 +103,20 @@ export function readSafetyViews(root) {
     manifest.schemaVersion !== 1 ||
     !digest.test(manifest.quintAdapterSha256) ||
     !Array.isArray(manifest.views) ||
-    manifest.views.length !== 1
+    manifest.views.length !== definitions.length
   )
     throw new Error("Unreviewed TLC safety-view manifest");
-  const view = manifest.views[0];
-  if (
-    Object.keys(view).sort().join(",") !==
-      "clauses,fields,hashMode,id,memoryCandidateMode,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
-    view.id !== "direct-bounty-journal-safety-v4" ||
-    view.model !== "formal/models/payments/direct_bounty_journal.qnt" ||
-    view.module !== "direct_bounty_journal" ||
-    view.operator !== "SlopJournalSafetyViewV4" ||
-    view.hashMode !== hashMode ||
-    view.memoryCandidateMode !== memoryCandidateMode ||
-    !digest.test(view.sourceSha256) ||
-    !digest.test(view.translatedSha256) ||
-    !digest.test(view.viewTlaSha256) ||
-    JSON.stringify(view.fields) !== JSON.stringify(fields) ||
-    JSON.stringify(view.clauses) !== JSON.stringify(clauses)
-  )
-    throw new Error("Unreviewed TLC safety-view definition");
+  for (const [index, view] of manifest.views.entries())
+    if (
+      Object.keys(view).sort().join(",") !==
+        "clauses,fields,hashMode,id,memoryCandidateMode,model,module,operator,sourceSha256,translatedSha256,viewTlaSha256" ||
+      view.id !== definitions[index].id ||
+      !reviewedDefinition(view) ||
+      !digest.test(view.sourceSha256) ||
+      !digest.test(view.translatedSha256) ||
+      !digest.test(view.viewTlaSha256)
+    )
+      throw new Error("Unreviewed TLC safety-view definition");
   return manifest;
 }
 
@@ -88,11 +139,7 @@ export function applySafetyView(view, config) {
     !config.hasInvariant ||
     config.hasTemporal ||
     !identifier.test(view.operator) ||
-    view.operator !== "SlopJournalSafetyViewV4" ||
-    view.hashMode !== hashMode ||
-    view.memoryCandidateMode !== memoryCandidateMode ||
-    JSON.stringify(view.fields) !== JSON.stringify(fields) ||
-    JSON.stringify(view.clauses) !== JSON.stringify(clauses)
+    !reviewedDefinition(view)
   )
     throw new Error("TLC safety-view module or property differs");
   if (hash(config.tlaCode) !== view.translatedSha256)

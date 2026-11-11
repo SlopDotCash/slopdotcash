@@ -44,6 +44,42 @@
       "viewTlaSha256": "b2e133f3c0a01c493a3050c5cf2a72142defa676c2fce198fc7f00d71799b553",
       "hashMode": "entry-hash-zero-or-positive",
       "memoryCandidateMode": "erase-unused-memory-candidate"
+    },
+    {
+      "id": "owner-vault-terminal-safety-v3",
+      "model": "formal/models/api/api_owner_vault_lifecycle.qnt",
+      "module": "api_owner_vault_lifecycle",
+      "sourceSha256": "4621ef9fe9fc2aed949d85b0324d8d8730294461a67d28ba488094fb006a317e",
+      "translatedSha256": "da160536b35d303e5809dca7f3e540c6ec093e0756ce2bcafbaeef7bdb685b41",
+      "operator": "SlopOwnerVaultTerminalViewV3",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.requests = [i \\in DOMAIN s.requests |-> IF s.requests[i].phase \\in {\"response\", \"done\"} THEN <<s.requests[i].phase, s.requests[i].committed, s.requests[i].purpose, (s.requests[i].status > 0 => s.requests[i].noStore), (s.requests[i].result = \"existing\" => (s.requests[i].captured.exists /\\ s.requests[i].captured.family = s.requests[i].family /\\ ~s.requests[i].chainCalled /\\ s.requests[i].committed = 0 /\\ s.requests[i].responseRevision = s.requests[i].current)), (s.requests[i].result = \"registered\" => (s.requests[i].committed > 0 /\\ s.requests[i].responseRevision = s.requests[i].committed)), (s.requests[i].result = \"pending\" => s.requests[i].committed = 0), (s.requests[i].result = \"funds\" => (s.requests[i].mode = \"get\" /\\ s.requests[i].purpose = 2))>> ELSE [s.requests[i] EXCEPT !.expected = IF s.requests[i].mode = \"get\" THEN 1 ELSE s.requests[i].expected, !.transaction = IF s.requests[i].mode \\in {\"get\", \"review\"} THEN 1 ELSE s.requests[i].transaction, !.family = IF s.requests[i].mode \\in {\"get\", \"review\"} THEN \"evm\" ELSE s.requests[i].family]]]"
+        }
+      ],
+      "clauses": [],
+      "viewTlaSha256": "5f7225a9a171bd48cc1db381caf7d873f06e0d4904d7dd1b592281cc85f0db1f",
+      "hashMode": "terminal-invariant-observations",
+      "memoryCandidateMode": "erase-terminal-payload-and-unused-operation-inputs"
+    },
+    {
+      "id": "project-lookup-cache-observation-safety-v3",
+      "model": "formal/models/api/api_project_lookup_routes.qnt",
+      "module": "api_project_lookup_routes",
+      "operator": "SlopProjectLookupCacheViewV3",
+      "hashMode": "data-cache-payload-zero-or-positive",
+      "memoryCandidateMode": "erase-unused-login-legacy-terminal-and-refusal-inputs",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.legacyCache = [k \\in DOMAIN s.legacyCache |-> [version |-> 0, subject |-> 0]], !.loginVersion = [a \\in DOMAIN s.loginVersion |-> 0], !.dataVersion = IF s.dataVersion > 0 THEN 1 ELSE 0, !.cache = [k \\in DOMAIN s.cache |-> [s.cache[k] EXCEPT !.version = IF s.cache[k].version > 0 THEN 1 ELSE 0]], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"response\", \"done\"} THEN [r EXCEPT !.method = \"GET\", !.transport = TRUE, !.expected = 0, !.loginValid = TRUE, !.repository = 1, !.cacheEnabled = TRUE, !.login = 0, !.selectedExpected = 0, !.delivered = FALSE, !.key = IF r.putPending THEN r.key ELSE 0, !.payload = IF r.putPending THEN (IF r.payload > 0 THEN 1 ELSE 0) ELSE 0, !.waitUntil = IF r.putPending THEN r.waitUntil ELSE FALSE] ELSE IF r.phase = \"dispatch\" /\\ ~r.putPending /\\ ((r.method # \"GET\" /\\ ~r.transport) \\/ ~(IF r.route = \"actor-selection\" THEN r.method = \"POST\" ELSE r.method = \"GET\" /\\ r.route # \"unknown\")) THEN [r EXCEPT !.expected = 0, !.repository = 1, !.cacheEnabled = TRUE, !.waitUntil = FALSE, !.loginValid = TRUE, !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0] ELSE [r EXCEPT !.login = 0, !.payload = IF r.payload > 0 THEN 1 ELSE 0]]]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "20909c2aeab10c1c16ea5eabb57e37873726f8420a84daae6b420c361a0a23f4",
+      "translatedSha256": "7fbaf1cd7a6a32bbe456cd26667aa1eacd49ec619b48875ba1cf6462e5032382",
+      "viewTlaSha256": "52b190bf8b8647ef3b9cc09a2ff11cbb83348c84fd48303a84882a8f554f8d7d"
     }
   ]
 }
