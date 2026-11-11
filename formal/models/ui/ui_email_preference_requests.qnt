@@ -180,15 +180,35 @@ module ui_email_preference_requests {
     s' = s.with("mounted", true).with("life", 2).with("view", "ready")
       .with("busy", false).with("checking", false).with("draft", 2).with("editing", true).with("key", false).with("error", "none") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet observed = observedActors.oneOf()
-    nondet status = Set(200, 202, 401, 403, 409, 429, 503).oneOf()
-    nondet valid = Set(false, true).oneOf()
-    any { cookieChanges(0), cookieChanges(1), cookieChanges(2), editDraft(id),
-      beginAction(id, "save"), beginAction(id, "verify"), beginRead(id, valid),
-      preflightStart(id), preflightObserve(id, observed), preflightReturn(id), preflightUse(id, observed), dispatch(id), accepted(id),
-      httpReply(id, status), bodyReply(id, valid), postflightStart(id), postflightObserve(id, observed), postflightReturn(id), postflightUse(id, observed),
-      requestFailure(id), failureCheckStart(id), failureCheckObserve(id, observed), failureCheckReturn(id), failureCheckUse(id, observed), depart, remount, s' = s }
+    any {
+      cookieChanges(0),
+      cookieChanges(1),
+      cookieChanges(2),
+      { nondet id = ids.oneOf() editDraft(id) },
+      { nondet id = ids.oneOf() beginAction(id, "save") },
+      { nondet id = ids.oneOf() beginAction(id, "verify") },
+      { nondet id = ids.oneOf() nondet valid = Set(false, true).oneOf() beginRead(id, valid) },
+      { nondet id = ids.oneOf() preflightStart(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() preflightObserve(id, observed) },
+      { nondet id = ids.oneOf() preflightReturn(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() preflightUse(id, observed) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() accepted(id) },
+      { nondet id = ids.oneOf() nondet status = Set(200, 202, 401, 403, 409, 429, 503).oneOf() httpReply(id, status) },
+      { nondet id = ids.oneOf() nondet valid = Set(false, true).oneOf() bodyReply(id, valid) },
+      { nondet id = ids.oneOf() postflightStart(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() postflightObserve(id, observed) },
+      { nondet id = ids.oneOf() postflightReturn(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() postflightUse(id, observed) },
+      { nondet id = ids.oneOf() requestFailure(id) },
+      { nondet id = ids.oneOf() failureCheckStart(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() failureCheckObserve(id, observed) },
+      { nondet id = ids.oneOf() failureCheckReturn(id) },
+      { nondet id = ids.oneOf() nondet observed = observedActors.oneOf() failureCheckUse(id, observed) },
+      depart,
+      remount,
+      s' = s
+    }
   }
   val invariant = all { s.generation >= 1, s.generation <= 6,
     s.posts <= 2, s.reads <= 2, s.reloads <= 2, s.sessionReads <= 6,

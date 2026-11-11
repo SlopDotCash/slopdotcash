@@ -150,16 +150,29 @@ module ui_security_settings_lifetime {
     s' = s.with("mounted", true).with("life", 2).with("actor", actor)
       .with("error", "none") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = actors.oneOf()
-    nondet kind = Set("permission", "revision").oneOf()
-    nondet outcome = Set("success", "temporary", "access", "identity").oneOf()
-    nondet allowed = Set(false, true).oneOf()
-    any { cookieChanges(actor), beginRead(id, kind), readPreflight(id, actor), readDispatch(id),
-      readReply(id, outcome), readPostflight(id, actor), wrongPermissionViewer(id), beginPublish(id, 1), beginPublish(id, 2),
-      publishPreflight(id, actor), publishDispatch(id), serverResult(id, allowed),
-      publishReply(id, outcome), publishPostflight(id, actor), unavailablePublicationIdentity(id),
-      parentIdentityReply(actor), depart, remount(actor), s' = s }
+    any {
+      { nondet actor = actors.oneOf() cookieChanges(actor) },
+      { nondet id = ids.oneOf() nondet kind = Set("permission", "revision").oneOf() beginRead(id, kind) },
+      { nondet id = ids.oneOf() nondet actor = actors.oneOf() readPreflight(id, actor) },
+      { nondet id = ids.oneOf() readDispatch(id) },
+      { nondet id = ids.oneOf() nondet outcome = Set("success", "temporary", "access", "identity").oneOf()
+        readReply(id, outcome) },
+      { nondet id = ids.oneOf() nondet actor = actors.oneOf() readPostflight(id, actor) },
+      { nondet id = ids.oneOf() wrongPermissionViewer(id) },
+      { nondet id = ids.oneOf() beginPublish(id, 1) },
+      { nondet id = ids.oneOf() beginPublish(id, 2) },
+      { nondet id = ids.oneOf() nondet actor = actors.oneOf() publishPreflight(id, actor) },
+      { nondet id = ids.oneOf() publishDispatch(id) },
+      { nondet id = ids.oneOf() nondet allowed = Set(false, true).oneOf() serverResult(id, allowed) },
+      { nondet id = ids.oneOf() nondet outcome = Set("success", "temporary", "access", "identity").oneOf()
+        publishReply(id, outcome) },
+      { nondet id = ids.oneOf() nondet actor = actors.oneOf() publishPostflight(id, actor) },
+      { nondet id = ids.oneOf() unavailablePublicationIdentity(id) },
+      { nondet actor = actors.oneOf() parentIdentityReply(actor) },
+      depart,
+      { nondet actor = actors.oneOf() remount(actor) },
+      s' = s
+    }
   }
   val invariant = all { s.server >= 1, s.server <= 3, s.parent <= s.server,
     s.editor implies (s.mounted and s.gate),

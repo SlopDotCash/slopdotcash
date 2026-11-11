@@ -194,16 +194,35 @@ module stored_binding_broadcast_authority {
       call.with("phase", "ready").with("budget", true))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet candidate = candidates.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    any { advance, replaceClaim, restrictRegistry, rotateSigner, payAward, changeVersion,
-      retainVariant(candidate), mine(candidate, a), begin(id, candidate, a),
-      receiptRead(id), budgetReply(id, a), intentReply(id, a), firstRegistryRead(id),
-      signerRead(id), unpaidRead(id), versionRead(id), policyReply(id, a), startConsentRead(id),
-      consentReply(id, a), finalRegistryRead(id), awaitFailure(id), transmit(id, a),
-      rpcReply(id, a), hashRead(id, a), respond(id, b), s' = s }
+    any {
+      advance,
+      replaceClaim,
+      restrictRegistry,
+      rotateSigner,
+      payAward,
+      changeVersion,
+      { nondet candidate = candidates.oneOf() retainVariant(candidate) },
+      { nondet candidate = candidates.oneOf() nondet a = Set(false, true).oneOf() mine(candidate, a) },
+      { nondet id = ids.oneOf() nondet candidate = candidates.oneOf() nondet a = Set(false, true).oneOf()
+        begin(id, candidate, a) },
+      { nondet id = ids.oneOf() receiptRead(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() budgetReply(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() intentReply(id, a) },
+      { nondet id = ids.oneOf() firstRegistryRead(id) },
+      { nondet id = ids.oneOf() signerRead(id) },
+      { nondet id = ids.oneOf() unpaidRead(id) },
+      { nondet id = ids.oneOf() versionRead(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() policyReply(id, a) },
+      { nondet id = ids.oneOf() startConsentRead(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() consentReply(id, a) },
+      { nondet id = ids.oneOf() finalRegistryRead(id) },
+      { nondet id = ids.oneOf() awaitFailure(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() transmit(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() rpcReply(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() hashRead(id, a) },
+      { nondet id = ids.oneOf() nondet b = Set(false, true).oneOf() respond(id, b) },
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.now), Set(1, 2).contains(s.claim), Set(0, 1).contains(s.version),

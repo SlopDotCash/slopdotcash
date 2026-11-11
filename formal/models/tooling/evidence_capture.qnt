@@ -84,12 +84,27 @@ module evidence_capture {
   action crashAfterPublication = all { s.phase == "backup-cleanup",
     s' = s.with("phase", "interrupted").with("result", "interrupted") }
   action step = {
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    any { noPrior, stage, setupFailure, capture(a, b), closeBrowser(a), validate(a),
-      movePrevious(a), concurrentWinner, publish(a), restoreOnError(a), cleanupBackup(a),
-      stopPreview(a), abort(a), retryAbort(a), protectedAbort, logSuccess,
-      crashBetweenRenames, crashAfterPublication, s' = s }
+    any {
+      noPrior,
+      stage,
+      setupFailure,
+      { nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() capture(a, b) },
+      { nondet a = Set(false, true).oneOf() closeBrowser(a) },
+      { nondet a = Set(false, true).oneOf() validate(a) },
+      { nondet a = Set(false, true).oneOf() movePrevious(a) },
+      concurrentWinner,
+      { nondet a = Set(false, true).oneOf() publish(a) },
+      { nondet a = Set(false, true).oneOf() restoreOnError(a) },
+      { nondet a = Set(false, true).oneOf() cleanupBackup(a) },
+      { nondet a = Set(false, true).oneOf() stopPreview(a) },
+      { nondet a = Set(false, true).oneOf() abort(a) },
+      { nondet a = Set(false, true).oneOf() retryAbort(a) },
+      protectedAbort,
+      logSuccess,
+      crashBetweenRenames,
+      crashAfterPublication,
+      s' = s
+    }
   }
   val invariant = all {
     s.current == 2 implies s.complete and s.buildBound and s.browserClean,
@@ -146,7 +161,7 @@ module evidence_capture {
   run failedPreviousMoveKeepsOldBundleTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(false)).then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and not(s.backup) and s.primary == "publication" and invariant)
-  action invalidBundle = init.then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
+  run invalidBundle = init.then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
   run invalidBundleCannotPublishTest = invalidBundle.then(movePrevious(true).fail())
   run invalidBundleFinalizesFailureTest = invalidBundle.then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and s.primary == "validation" and invariant)

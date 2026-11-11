@@ -153,13 +153,30 @@ module ui_payout_consent_lifetime {
   action oldParentRestore = all { s.loadSnapshot > 0, s.visibleActor == 0,
     s' = s.with("visibleActor", s.loadSnapshot).with("badRestore", true) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet family = Set("evm", "solana").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { cookie(actor), open, close, begin(id, family), contextChanges(actor), depart, explicitSignOut,
-      startSession(id), observeSession(id, yes), finishSession(id), connected(id, yes), request(id), admit(id, yes),
-      httpReply(id, yes), verify(id, yes), prompt(id), signed(id, yes), walletRejected(id), success(id), parentLoad, parentReply, s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2).oneOf() cookie(actor) },
+      open,
+      close,
+      { nondet id = ids.oneOf() nondet family = Set("evm", "solana").oneOf() begin(id, family) },
+      { nondet actor = Set(0, 1, 2).oneOf() contextChanges(actor) },
+      depart,
+      explicitSignOut,
+      { nondet id = ids.oneOf() startSession(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() observeSession(id, yes) },
+      { nondet id = ids.oneOf() finishSession(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() connected(id, yes) },
+      { nondet id = ids.oneOf() request(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() admit(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() httpReply(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() verify(id, yes) },
+      { nondet id = ids.oneOf() prompt(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() signed(id, yes) },
+      { nondet id = ids.oneOf() walletRejected(id) },
+      { nondet id = ids.oneOf() success(id) },
+      parentLoad,
+      parentReply,
+      s' = s
+    }
   }
   val invariant = all { not(s.badPrompt), not(s.badRestore), s.busy == s.active,
     s.active > 0 implies current(s.active),

@@ -283,21 +283,52 @@ module dev_identity_bridge {
         if (Set("unused", "done").contains(call.phase)) call
         else call.with("phase", "done").with("response", "process-lost") })) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet fourth = Set(false, true).oneOf()
-    nondet remoteReply = remoteReplies.oneOf()
-    nondet writeReply = writeReplies.oneOf()
-    any { tick, beginStart(yes, other), captureStartClock, createRemoteFlow, startHeaders(yes), startBody(yes),
-      validateStart(yes, other), startFailure, startReply(yes), authorize(yes, other), completeRemote, cleanupRemoteFlow,
-      beginPoll(id, yes), pollBody(id, yes, other, third), lookupFlow(id), readRemote(id), remoteClock(id),
-      claimRemote(id), remoteWriteReply(id, remoteReply), remoteFailure(id), loseRemoteCaller(id), remoteResponse(id),
-      pollResponseBody(id, yes, other), deleteFlow(id), mintAssertion(id, yes), assertionHash(id, yes),
-      storeAssertion(id), localFailure(id), storeReply(id, writeReply), readLocalAssertion(id, yes), pollReply(id, yes),
-      beginConsume(id), consumeBody(id, yes, other, third, fourth), consumeHash(id, yes), consumeWrite(id),
-      consumeFailure(id), consumeReply(id, yes), restart, s' = s }
+    any {
+      tick,
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() beginStart(yes, other) },
+      captureStartClock,
+      createRemoteFlow,
+      { nondet yes = Set(false, true).oneOf() startHeaders(yes) },
+      { nondet yes = Set(false, true).oneOf() startBody(yes) },
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() validateStart(yes, other) },
+      startFailure,
+      { nondet yes = Set(false, true).oneOf() startReply(yes) },
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() authorize(yes, other) },
+      completeRemote,
+      cleanupRemoteFlow,
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() beginPoll(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        nondet third = Set(false, true).oneOf()
+        pollBody(id, yes, other, third) },
+      { nondet id = ids.oneOf() lookupFlow(id) },
+      { nondet id = ids.oneOf() readRemote(id) },
+      { nondet id = ids.oneOf() remoteClock(id) },
+      { nondet id = ids.oneOf() claimRemote(id) },
+      { nondet id = ids.oneOf() nondet remoteReply = remoteReplies.oneOf() remoteWriteReply(id, remoteReply) },
+      { nondet id = ids.oneOf() remoteFailure(id) },
+      { nondet id = ids.oneOf() loseRemoteCaller(id) },
+      { nondet id = ids.oneOf() remoteResponse(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        pollResponseBody(id, yes, other) },
+      { nondet id = ids.oneOf() deleteFlow(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() mintAssertion(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() assertionHash(id, yes) },
+      { nondet id = ids.oneOf() storeAssertion(id) },
+      { nondet id = ids.oneOf() localFailure(id) },
+      { nondet id = ids.oneOf() nondet writeReply = writeReplies.oneOf() storeReply(id, writeReply) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() readLocalAssertion(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() pollReply(id, yes) },
+      { nondet id = ids.oneOf() beginConsume(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        nondet third = Set(false, true).oneOf() nondet fourth = Set(false, true).oneOf()
+        consumeBody(id, yes, other, third, fourth) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() consumeHash(id, yes) },
+      { nondet id = ids.oneOf() consumeWrite(id) },
+      { nondet id = ids.oneOf() consumeFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() consumeReply(id, yes) },
+      restart,
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.remoteClaims <= 1, s.localWrites <= 1, s.consumeCommits <= 1,

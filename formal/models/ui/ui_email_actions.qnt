@@ -136,15 +136,32 @@ module ui_email_actions {
   action depart = all { s.present, s.generation < 4, s' = s.with("present", false).with("generation", s.generation + 1) }
   action retainFromOtherView = all { not(s.present), s' = s.with("stored", 2).with("storedActor", 0) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet kind = kinds.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
-    any { capture(kind, a, b), restore(kind, a, actor, b, c), startCheck(id), observeCheck(id, a), useCheck(id, a),
-      sessionChanges(actor), sessionEvent, submit, observePreflight(a), usePreflight, serverEffect(a), response(a), body(a, b),
-      observePostflight(a), usePostflight(a), handleCaught, releaseBusy, discard(a), depart, retainFromOtherView, s' = s }
+    any {
+      { nondet kind = kinds.oneOf() nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf()
+        capture(kind, a, b) },
+      { nondet kind = kinds.oneOf() nondet actor = Set(0, 1, 2).oneOf() nondet a = Set(false, true).oneOf()
+        nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
+        restore(kind, a, actor, b, c) },
+      { nondet id = ids.oneOf() startCheck(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() observeCheck(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() useCheck(id, a) },
+      { nondet actor = Set(0, 1, 2).oneOf() sessionChanges(actor) },
+      sessionEvent,
+      submit,
+      { nondet a = Set(false, true).oneOf() observePreflight(a) },
+      usePreflight,
+      { nondet a = Set(false, true).oneOf() serverEffect(a) },
+      { nondet a = Set(false, true).oneOf() response(a) },
+      { nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() body(a, b) },
+      { nondet a = Set(false, true).oneOf() observePostflight(a) },
+      { nondet a = Set(false, true).oneOf() usePostflight(a) },
+      handleCaught,
+      releaseBusy,
+      { nondet a = Set(false, true).oneOf() discard(a) },
+      depart,
+      retainFromOtherView,
+      s' = s
+    }
   }
   val invariant = all { s.generation >= 1 and s.generation <= 4, s.captures <= 2, s.request.attempt <= 2,
     s.stored >= 0 and s.stored <= 2, s.storedActor >= 0 and s.storedActor <= 2, s.effects.subseteq(Set(1, 2)),

@@ -205,22 +205,40 @@ module api_owner_vault_lifecycle {
       s' = s.with("requests", s.requests.set(id, respond(r, 500, "dependency"))) }
   }
   action step = {
-    nondet id = slots.oneOf()
-    nondet purpose = Set(0, 1, 2).oneOf()
-    nondet mode = Set("get", "review", "register").oneOf()
-    nondet family = Set("evm", "solana").oneOf()
-    nondet revision = 0.to(3).oneOf()
-    nondet tx = Set("exact", "case", "other", "malformed").oneOf()
-    nondet role = Set("owner", "writer", "none", "retry", "missing-app").oneOf()
-    nondet editKind = Set("cap", "policy", "other").oneOf()
-    nondet outcome = Set("valid", "pending", "invalid", "unavailable", "wallet-missing").oneOf()
-    nondet reply = Set("ok", "lost", "bad-metadata").oneOf()
-    nondet post = Set("ok", "cache-delete-failed", "generation-read-failed").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { omitProject, seedDeployment(purpose, family), changeAuthority(role), restrict, ban, edit(editKind),
-      begin(id, mode, purpose, family, revision, tx), headers(id, yes), session(id, yes), project(id), enforcements(id), authority(id),
-      funds(id, yes), service(id, yes), body(id, yes), expected(id), history(id), chain(id, outcome), appendGeneration(id), appendValidation(id, yes),
-      commit(id, reply), postcommit(id, post), send(id, yes), dependencyFailure(id), s' = s }
+    any {
+      omitProject,
+      { nondet purpose = Set(0, 1, 2).oneOf() nondet family = Set("evm", "solana").oneOf()
+        seedDeployment(purpose, family) },
+      { nondet role = Set("owner", "writer", "none", "retry", "missing-app").oneOf() changeAuthority(role) },
+      restrict,
+      ban,
+      { nondet editKind = Set("cap", "policy", "other").oneOf() edit(editKind) },
+      { nondet id = slots.oneOf() nondet purpose = Set(0, 1, 2).oneOf()
+        nondet mode = Set("get", "review", "register").oneOf() nondet family = Set("evm", "solana").oneOf()
+        nondet revision = 0.to(3).oneOf() nondet tx = Set("exact", "case", "other", "malformed").oneOf()
+        begin(id, mode, purpose, family, revision, tx) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() headers(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() session(id, yes) },
+      { nondet id = slots.oneOf() project(id) },
+      { nondet id = slots.oneOf() enforcements(id) },
+      { nondet id = slots.oneOf() authority(id) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() funds(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() service(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() body(id, yes) },
+      { nondet id = slots.oneOf() expected(id) },
+      { nondet id = slots.oneOf() history(id) },
+      { nondet id = slots.oneOf()
+        nondet outcome = Set("valid", "pending", "invalid", "unavailable", "wallet-missing").oneOf()
+        chain(id, outcome) },
+      { nondet id = slots.oneOf() appendGeneration(id) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() appendValidation(id, yes) },
+      { nondet id = slots.oneOf() nondet reply = Set("ok", "lost", "bad-metadata").oneOf() commit(id, reply) },
+      { nondet id = slots.oneOf() nondet post = Set("ok", "cache-delete-failed", "generation-read-failed").oneOf()
+        postcommit(id, post) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() send(id, yes) },
+      { nondet id = slots.oneOf() dependencyFailure(id) },
+      s' = s
+    }
   }
   val invariant = all { revisions.contains(s.head), policyAt(s.head).exists,
     slots.forall(id => {

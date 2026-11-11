@@ -115,14 +115,25 @@ module ui_owner_private_requests {
     s' = clearPrivate(s).with("present", true).with("mounted", true).with("lifetime", 2).with("active", 0)
       .with("error", "none") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet kind = Set("read", "mutation").oneOf()
-    nondet outcome = Set("success", "temporary", "refused", "invalid").oneOf()
-    nondet available = Set(false, true).oneOf()
-    nondet setup = Set(false, true).oneOf()
-    any { fundsMode, sessionChanges(actor), begin(id, kind), observePreflight(id, available), returnPreflight(id), usePreflight(id), dispatch(id), admit(id),
-      response(id, outcome, setup), observeRecheck(id, available), returnRecheck(id), useRecheck(id), depart, remount, s' = s }
+    any {
+      fundsMode,
+      { nondet actor = Set(0, 1, 2).oneOf() sessionChanges(actor) },
+      { nondet id = ids.oneOf() nondet kind = Set("read", "mutation").oneOf() begin(id, kind) },
+      { nondet id = ids.oneOf() nondet available = Set(false, true).oneOf() observePreflight(id, available) },
+      { nondet id = ids.oneOf() returnPreflight(id) },
+      { nondet id = ids.oneOf() usePreflight(id) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() admit(id) },
+      { nondet id = ids.oneOf() nondet outcome = Set("success", "temporary", "refused", "invalid").oneOf()
+        nondet setup = Set(false, true).oneOf()
+        response(id, outcome, setup) },
+      { nondet id = ids.oneOf() nondet available = Set(false, true).oneOf() observeRecheck(id, available) },
+      { nondet id = ids.oneOf() returnRecheck(id) },
+      { nondet id = ids.oneOf() useRecheck(id) },
+      depart,
+      remount,
+      s' = s
+    }
   }
   val invariant = all { not(s.present) implies not(s.mounted), s.data implies s.knownActor > 0,
     s.stale implies (s.mode == "funds" and s.data and not(s.canSetup)),

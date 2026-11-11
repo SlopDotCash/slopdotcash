@@ -178,20 +178,31 @@ module api_project_lookup_routes {
       s' = s.with("requests", s.requests.set(id, request.with("phase", "done").with("delivered", delivered))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet route = routes.oneOf()
-    nondet method = Set("GET", "POST", "HEAD").oneOf()
-    nondet expected = Set(0, 1, 2, 3).oneOf()
-    nondet repository = Set(0, 1, 2).oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet key = keyIds.oneOf()
-    nondet result = Set("hit", "miss", "error").oneOf()
-    nondet outcome = outcomes.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { switchSession(actor), rename(id), changeData, revokeModerator(id), expire(key), legacyPut(id, repository),
-      begin(id, route, method, expected, repository, yes, yes, yes), dispatch(id), session(id, yes, yes), cacheRead(id, result),
-      validate(id), actorReply(id, outcome), dataReply(id, outcome), buffer(id, yes), putRecord(id, yes), selectionInput(id, repository, yes),
-      selectionReply(id, outcome, id), respond(id, yes), s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2).oneOf() switchSession(actor) },
+      { nondet id = ids.oneOf() rename(id) },
+      changeData,
+      { nondet id = ids.oneOf() revokeModerator(id) },
+      { nondet key = keyIds.oneOf() expire(key) },
+      { nondet id = ids.oneOf() nondet repository = Set(0, 1, 2).oneOf() legacyPut(id, repository) },
+      { nondet id = ids.oneOf() nondet route = routes.oneOf() nondet method = Set("GET", "POST", "HEAD").oneOf()
+        nondet expected = Set(0, 1, 2, 3).oneOf() nondet repository = Set(0, 1, 2).oneOf()
+        nondet yes = Set(false, true).oneOf()
+        begin(id, route, method, expected, repository, yes, yes, yes) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() session(id, yes, yes) },
+      { nondet id = ids.oneOf() nondet result = Set("hit", "miss", "error").oneOf() cacheRead(id, result) },
+      { nondet id = ids.oneOf() validate(id) },
+      { nondet id = ids.oneOf() nondet outcome = outcomes.oneOf() actorReply(id, outcome) },
+      { nondet id = ids.oneOf() nondet outcome = outcomes.oneOf() dataReply(id, outcome) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() buffer(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() putRecord(id, yes) },
+      { nondet id = ids.oneOf() nondet repository = Set(0, 1, 2).oneOf() nondet yes = Set(false, true).oneOf()
+        selectionInput(id, repository, yes) },
+      { nondet id = ids.oneOf() nondet outcome = outcomes.oneOf() selectionReply(id, outcome, id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() respond(id, yes) },
+      s' = s
+    }
   }
   val invariant = ids.forall(id => {
     val request = s.requests.get(id)

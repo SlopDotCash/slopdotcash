@@ -106,16 +106,26 @@ module ui_admin_mutation_identity {
     s' = s.with("present", true).with("mounted", true).with("lifetime", 2).with("actor", actor)
       .with("data", true).with("draft", s.stored).with("error", "none") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet draft = Set(1, 2, 3).oneOf()
-    nondet flag = Set(false, true).oneOf()
-    nondet kind = Set("save", "action").oneOf()
-    nondet outcome = Set("success", "temporary", "refused").oneOf()
-    any { sessionChanges(actor, flag), edit(draft), begin(id, kind),
-      observePreflight(id, flag), returnPreflight(id), usePreflight(id), dispatch(id),
-      admit(id, flag), commit(id), response(id, outcome, flag),
-      observeRecheck(id, flag), returnRecheck(id), useRecheck(id), depart, remount(actor), s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2).oneOf() nondet flag = Set(false, true).oneOf() sessionChanges(actor, flag) },
+      { nondet draft = Set(1, 2, 3).oneOf() edit(draft) },
+      { nondet id = ids.oneOf() nondet kind = Set("save", "action").oneOf() begin(id, kind) },
+      { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() observePreflight(id, flag) },
+      { nondet id = ids.oneOf() returnPreflight(id) },
+      { nondet id = ids.oneOf() usePreflight(id) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() admit(id, flag) },
+      { nondet id = ids.oneOf() commit(id) },
+      { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf()
+        nondet outcome = Set("success", "temporary", "refused").oneOf()
+        response(id, outcome, flag) },
+      { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() observeRecheck(id, flag) },
+      { nondet id = ids.oneOf() returnRecheck(id) },
+      { nondet id = ids.oneOf() useRecheck(id) },
+      depart,
+      { nondet actor = Set(0, 1, 2).oneOf() remount(actor) },
+      s' = s
+    }
   }
   val invariant = all { not(s.present) implies not(s.mounted),
     s.callbacks.subseteq(s.accepted), s.didClear implies s.clearExpected == s.clearObserved,

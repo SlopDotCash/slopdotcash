@@ -175,17 +175,29 @@ module ui_project_publication_lifetime {
       .with("draft", s.stored).with("draftBase", s.storedBase).with("referrer", s.storedReferrer)
       .with("base", s.serverRevision).with("view", "editor").with("error", "none") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet draft = Set(1, 2, 3).oneOf()
-    nondet works = Set(false, true).oneOf()
-    nondet outcome = Set("success", "temporary", "access").oneOf()
-    any { createMode, cookieChanges(actor), edit(draft), persist(works), begin(id),
-      observePreflight(id, works), returnPreflight(id), consumePreflight(id),
-      dispatch(id), admit(id), serverResult(id, works), response(id, outcome),
-      observeSuccess(id, works), returnSuccess(id), consumeSuccess(id),
-      observeFailure(id, works), returnFailure(id), consumeFailure(id),
-      depart, remount(actor), s' = s }
+    any {
+      createMode,
+      { nondet actor = Set(0, 1, 2).oneOf() cookieChanges(actor) },
+      { nondet draft = Set(1, 2, 3).oneOf() edit(draft) },
+      { nondet works = Set(false, true).oneOf() persist(works) },
+      { nondet id = ids.oneOf() begin(id) },
+      { nondet id = ids.oneOf() nondet works = Set(false, true).oneOf() observePreflight(id, works) },
+      { nondet id = ids.oneOf() returnPreflight(id) },
+      { nondet id = ids.oneOf() consumePreflight(id) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() admit(id) },
+      { nondet id = ids.oneOf() nondet works = Set(false, true).oneOf() serverResult(id, works) },
+      { nondet id = ids.oneOf() nondet outcome = Set("success", "temporary", "access").oneOf() response(id, outcome) },
+      { nondet id = ids.oneOf() nondet works = Set(false, true).oneOf() observeSuccess(id, works) },
+      { nondet id = ids.oneOf() returnSuccess(id) },
+      { nondet id = ids.oneOf() consumeSuccess(id) },
+      { nondet id = ids.oneOf() nondet works = Set(false, true).oneOf() observeFailure(id, works) },
+      { nondet id = ids.oneOf() returnFailure(id) },
+      { nondet id = ids.oneOf() consumeFailure(id) },
+      depart,
+      { nondet actor = Set(0, 1, 2).oneOf() remount(actor) },
+      s' = s
+    }
   }
   val invariant = all { s.accepted.subseteq(ids), s.serverRevision >= 0, s.serverRevision <= 3,
     not(s.present) implies not(s.mounted),

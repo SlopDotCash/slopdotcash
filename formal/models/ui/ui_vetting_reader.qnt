@@ -112,12 +112,26 @@ module ui_vetting_reader {
       else completed.with("text",0).with("error",true).with("refreshes",s.refreshes+1)
         .with("active",0).with("busy",0).with("mounted",false).with("present",false).with("aborted",s.aborted.union(Set(id)))}
   }
-  action step={nondet id=ids.oneOf() nondet actor=Set(0,1,2).oneOf()
-    nondet object=Set(1,2).oneOf() nondet mode=Set(0,1,2).oneOf() nondet ok=Set(false,true).oneOf()
-    nondet gate=Set("grant","use","publish","failure").oneOf()
-    any{cookieChanges(actor),depart,remount(1,object),remount(2,object),start(id,mode),observeCheck(id,gate,ok),
-      returnCheck(id),consumeCheck(id),grantReply(id,ok),consume(id,ok),bodyReply(id,ok),hashReply(id,ok),
-      authorityRefusal(id),s'=s}}
+  action step={
+    any {
+      { nondet actor = Set(0,1,2).oneOf() cookieChanges(actor) },
+      depart,
+      { nondet object = Set(1,2).oneOf() remount(1,object) },
+      { nondet object = Set(1,2).oneOf() remount(2,object) },
+      { nondet id = ids.oneOf() nondet mode = Set(0,1,2).oneOf() start(id,mode) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf()
+        nondet gate = Set("grant","use","publish","failure").oneOf()
+        observeCheck(id,gate,ok) },
+      { nondet id = ids.oneOf() returnCheck(id) },
+      { nondet id = ids.oneOf() consumeCheck(id) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() grantReply(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() consume(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() bodyReply(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() hashReply(id,ok) },
+      { nondet id = ids.oneOf() authorityRefusal(id) },
+      s'=s
+    }
+  }
   val invariant=all{s.epoch>=1,s.epoch<=2,s.refreshes<=2,s.consumed.subseteq(s.granted),not(s.badEffect),
     not(s.present) implies not(s.mounted),s.busy>0 implies owns(s.busy),
     s.text>0 implies(owns(s.text) and s.hashed.contains(s.text) and s.requests.get(s.text).mode==0),

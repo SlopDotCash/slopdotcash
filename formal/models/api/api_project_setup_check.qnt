@@ -132,19 +132,28 @@ module api_project_setup_check {
   action defaultDecision = if (s.phase == "activation-clearance") defaultActivation else s' = s
   action decide = prepareDecision.then(defaultDecision)
   action step = {
-    nondet allow = Set(false, true).oneOf()
-    nondet request = Set(false, true).oneOf()
-    nondet access = Set("installed", "missing", "suspended", "retry").oneOf()
-    nondet permission = Set("write", "read").oneOf()
-    nondet identity = Set("matched", "mismatch", "unavailable").oneOf()
-    nondet clearance = clearances.oneOf()
-    nondet outcome = Set("queued", "unavailable").oneOf()
-    nondet second = Set("cleared", "refused", "throw").oneOf()
-    nondet response = Set("ok", "error").oneOf()
-    any { initialActive, retire, omitSkills, fund, restrict, begin(allow, request),
-      accessReply(access, permission), identityReply(identity), attemptOrdinaryWrite,
-      scanReply(clearance), queueReply(outcome), concurrentRevision, prepareDecision,
-      recheckClearance(second), commitActivation, activationWriteFailure, finishActivation(response), s' = s }
+    any {
+      initialActive,
+      retire,
+      omitSkills,
+      fund,
+      restrict,
+      { nondet allow = Set(false, true).oneOf() nondet request = Set(false, true).oneOf() begin(allow, request) },
+      { nondet access = Set("installed", "missing", "suspended", "retry").oneOf()
+        nondet permission = Set("write", "read").oneOf()
+        accessReply(access, permission) },
+      { nondet identity = Set("matched", "mismatch", "unavailable").oneOf() identityReply(identity) },
+      attemptOrdinaryWrite,
+      { nondet clearance = clearances.oneOf() scanReply(clearance) },
+      { nondet outcome = Set("queued", "unavailable").oneOf() queueReply(outcome) },
+      concurrentRevision,
+      prepareDecision,
+      { nondet second = Set("cleared", "refused", "throw").oneOf() recheckClearance(second) },
+      commitActivation,
+      activationWriteFailure,
+      { nondet response = Set("ok", "error").oneOf() finishActivation(response) },
+      s' = s
+    }
   }
   val invariant = all {
     s.head >= 1, s.head <= 2, s.writes >= 0, s.writes <= 1,

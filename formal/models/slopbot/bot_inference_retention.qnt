@@ -72,9 +72,22 @@ module bot_inference_retention {
   action finish = all { s.current > 0, s' = s.with("current", 0) }
   action publish = all { s.retained > 0, s' = s.with("published", true) }
   action step = {
-    nondet id = ids.oneOf()
-    any { admit(id), reserve, budgetRefused, call, freeDenial, mixedDenial,
-      recordUsage, validate, retain, complete, reconcileZeroCall, finish, publish, s' = s }
+    any {
+      { nondet id = ids.oneOf() admit(id) },
+      reserve,
+      budgetRefused,
+      call,
+      freeDenial,
+      mixedDenial,
+      recordUsage,
+      validate,
+      retain,
+      complete,
+      reconcileZeroCall,
+      finish,
+      publish,
+      s' = s
+    }
   }
   val invariant = all { counted <= 3,
     ids.forall(id => s.rows.get(id).called implies s.rows.get(id).reserved),
