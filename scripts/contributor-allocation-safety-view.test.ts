@@ -16,7 +16,7 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 const root = resolve(import.meta.dirname, "..");
 const manifest = readSafetyViews(root);
 const view = manifest.views.find(
-  (entry) => entry.id === "ui-contributor-allocation-safety-v1",
+  (entry) => entry.id === "ui-contributor-allocation-safety-v2",
 );
 if (!view)
   throw new Error("Missing reviewed contributor-allocation safety VIEW");
@@ -77,6 +77,26 @@ for (const [name, before, after] of [
     "a cross-slot consumed snapshot read",
     "s.mounted, actors.contains(actor),",
     "s.mounted, actors.contains(actor), s.requests.get(1).recipients == 0,",
+  ],
+  [
+    "future active restoration of a stale request",
+    's.with("actor", actor).with("renderedExpired", s.nowExpired)',
+    's.with("actor", actor).with("active", 1).with("renderedExpired", s.nowExpired)',
+  ],
+  [
+    "a predecoded payload read",
+    's.requests.get(id).phase == "http",',
+    's.requests.get(id).phase == "http", s.requests.get(id).closed,',
+  ],
+  [
+    "an absent recipient snapshot consumer",
+    'if (request.outcome == "valid") request.recipients else 0',
+    'if (Set("valid", "absent").contains(request.outcome)) request.recipients else 0',
+  ],
+  [
+    "a distinct error-class branch",
+    'else if (not(Set("valid", "absent").contains(request.outcome)))',
+    'else if (request.outcome == "invalid")',
   ],
   [
     "a new wallet-class invariant",
@@ -148,9 +168,7 @@ test("temporal, property and projection changes cannot reuse the contributor VIE
 let translated: string | undefined;
 function actualTranslatedModel() {
   if (translated !== undefined) return translated;
-  const directory = mkdtempSync(
-    join(tmpdir(), "slop-contributor-view-native-"),
-  );
+  const directory = mkdtempSync(join(tmpdir(), "slop-contributor-v2-native-"));
   const output = join(directory, "production.tla");
   try {
     // Derive the complete real verify input under the native flag. This
@@ -362,13 +380,12 @@ const cases: NativeCase[] = [
     witness: 'rowActor = 2 /\\ state = "scheduled"',
   },
   {
-    name: "the concrete unused-request full reset",
+    name: "the concrete unused-request lifetime reset",
     initial: state(
       '!.requests[1] = [phase |-> "unused", life |-> 2, outcome |-> "invalid", recipients |-> 3, transfers |-> 3, closed |-> TRUE]',
     ),
     step: "beginRead(1)",
-    witness:
-      's.requests[1].phase = "http" /\\ s.requests[1].life = 1 /\\ s.requests[1].outcome = "none" /\\ s.requests[1].recipients = 0 /\\ s.requests[1].transfers = 0 /\\ ~s.requests[1].closed',
+    witness: 's.requests[1].phase = "http" /\\ s.requests[1].life = 1',
   },
   {
     name: "a live decoded recipient snapshot before publication",
@@ -401,10 +418,11 @@ const cases: NativeCase[] = [
     witness: 's.document = "published" /\\ s.publishedLife = 1',
   },
   {
-    name: "the active owner pointer before admission",
-    initial: state(decoded + ", !.active = 0"),
-    step: "IF s.active = 0 THEN s' = [s EXCEPT !.active = 1] ELSE publish(1)",
-    witness: 's.document = "published" /\\ s.publishedBy = 1',
+    name: "the active owner pointer through concrete request replacement",
+    initial: state(decoded + ", !.loadScheduled = TRUE"),
+    step: "beginRead(2) \\/ publish(1)",
+    witness:
+      's.active = 2 /\\ s.requests[1].phase = "done" /\\ s.document = "loading"',
   },
   {
     name: "a stale live snapshot refusing remounted publication",
@@ -458,6 +476,48 @@ const cases: NativeCase[] = [
     witness: "s.error /\\ s.loadScheduled",
   },
 ];
+
+cases.push(
+  {
+    name: "current lifetime and valid snapshot through hypothetical remount recovery",
+    initial: state(decoded + ", !.mounted = FALSE"),
+    step: "IF s.requests[1].life = 1 THEN s' = [s EXCEPT !.requests[1].life = 2, !.requests[1].recipients = 2] ELSE IF ~s.mounted THEN remount(2) ELSE publish(1)",
+    witness:
+      's.document = "published" /\\ s.publishedLife = 2 /\\ rowActor = 2',
+  },
+  {
+    name: "an absent file's closed flag before concrete publication",
+    initial: state(decoded + ', !.requests[1].outcome = "absent"'),
+    step: "IF ~s.requests[1].closed THEN s' = [s EXCEPT !.requests[1].closed = TRUE] ELSE publish(1)",
+    witness: 's.document = "none" /\\ s.closed',
+  },
+  {
+    name: "the decoded error class without copying its payload",
+    initial: state(
+      decoded +
+        ', !.requests[1].outcome = "http-error", !.requests[1].recipients = 3, !.requests[1].transfers = 3, !.requests[1].closed = TRUE',
+    ),
+    step: "publish(1)",
+    witness:
+      's.error /\\ s.active = 0 /\\ s.requests[1].phase = "done" /\\ s.recipients = 0 /\\ s.transfers = 0 /\\ ~s.closed',
+  },
+  {
+    name: "every stale live phase until it is consumed",
+    initial: state(decoded + ', !.active = 2, !.requests[1].phase = "http"'),
+    step: 'IF s.requests[1].phase = "http" THEN headers(1, TRUE) ELSE IF s.requests[1].phase = "body" THEN body(1, "valid", 1, 1, TRUE) ELSE publish(1)',
+    witness:
+      's.active = 2 /\\ s.requests[1].phase = "done" /\\ s.document = "loading" /\\ ~s.error',
+  },
+  {
+    name: "stale ownership across a hypothetical remount",
+    initial: state(
+      decoded + ", !.mounted = FALSE, !.active = 2, !.requests[1].life = 2",
+    ),
+    step: "IF ~s.mounted THEN remount(2) ELSE publish(1)",
+    witness:
+      's.mounted /\\ s.life = 2 /\\ s.active = 2 /\\ s.requests[1].phase = "done" /\\ s.document = "loading"',
+  },
+);
 for (const control of cases) {
   test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     `native contributor VIEW retains ${control.name}`,
@@ -520,6 +580,68 @@ test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain("CONTRIBUTOR_VIEW_NAMED_WITNESS_FOUND");
+  },
+  120_000,
+);
+
+const coalescingCases = [
+  {
+    name: "stale decoded payloads while retaining their phase",
+    initial: state(decoded + ", !.active = 2"),
+    step: 's\' = [s EXCEPT !.requests[1].life = 2, !.requests[1].outcome = "invalid", !.requests[1].recipients = 3, !.requests[1].transfers = 3, !.requests[1].closed = TRUE]',
+  },
+  {
+    name: "current HTTP payloads before overwrite",
+    initial: state(decoded + ', !.requests[1].phase = "http"'),
+    step: 's\' = [s EXCEPT !.requests[1].outcome = "absent", !.requests[1].recipients = 3, !.requests[1].transfers = 3, !.requests[1].closed = TRUE]',
+  },
+  {
+    name: "current body payloads before overwrite",
+    initial: state(decoded + ', !.requests[1].phase = "body"'),
+    step: 's\' = [s EXCEPT !.requests[1].outcome = "invalid", !.requests[1].recipients = 3, !.requests[1].transfers = 3, !.requests[1].closed = TRUE]',
+  },
+  {
+    name: "current absent masks while preserving closed",
+    initial: state(decoded + ', !.requests[1].outcome = "absent"'),
+    step: "s' = [s EXCEPT !.requests[1].recipients = 3, !.requests[1].transfers = 3]",
+  },
+  {
+    name: "current decoded error classes and ignored payloads",
+    initial: state(decoded + ', !.requests[1].outcome = "invalid"'),
+    step: 's\' = [s EXCEPT !.requests[1].outcome = "request-error", !.requests[1].recipients = 3, !.requests[1].transfers = 3, !.requests[1].closed = TRUE]',
+  },
+];
+for (const control of coalescingCases)
+  test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+    `native contributor V2 coalesces only ${control.name}`,
+    async () => {
+      const result = await runNative(
+        nativeFixture({ ...control, witness: "FALSE" }),
+      );
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain("CONTRIBUTOR_VIEW_NATIVE_COMPLETE");
+      expect(result.output).toMatch(/1 distinct states? found/u);
+      expect(result.output).toMatch(/0 states? left on queue/u);
+    },
+    120_000,
+  );
+test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+  "native no-VIEW witness requires review of future active restoration",
+  async () => {
+    // This new test-only writer invalidates the V2 permanence argument.
+    // The source binding refuses it; no VIEW authorizes its exploration.
+    const result = await runNative(
+      nativeFixture({
+        name: "future active restoration",
+        initial: state(decoded + ", !.active = 2"),
+        step: "IF s.active = 2 THEN s' = [s EXCEPT !.active = 1] ELSE publish(1)",
+        witness: 's.document = "published" /\\ s.recipients = 1',
+      }),
+      false,
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("CONTRIBUTOR_VIEW_NAMED_WITNESS_FOUND");
+    expect(result.output).not.toContain("No error has been found");
   },
   120_000,
 );

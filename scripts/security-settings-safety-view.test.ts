@@ -16,7 +16,7 @@ import { runE2ePhase } from "./run-e2e-phase.mjs";
 const root = resolve(import.meta.dirname, "..");
 const manifest = readSafetyViews(root);
 const view = manifest.views.find(
-  (entry) => entry.id === "ui-security-settings-lifetime-safety-v1",
+  (entry) => entry.id === "ui-security-settings-lifetime-safety-v2",
 );
 if (!view) throw new Error("Missing reviewed security-settings safety VIEW");
 const selected: SafetyViewDefinition = view;
@@ -92,6 +92,31 @@ for (const [name, before, after] of [
     'actors.contains(actor), ids.forall(i => s.reads.get(i).revision == 0), s\' = s.with("cookie", actor)',
   ],
   [
+    "future restoration of a stale read pointer",
+    'actors.contains(actor), s\' = s.with("cookie", actor)',
+    'actors.contains(actor), s\' = s.with("cookie", actor).with("read", 1)',
+  ],
+  [
+    "a post-phase cookie consumer",
+    'all { r.phase == "post", actors.contains(observed),',
+    'all { r.phase == "post", actors.contains(observed), r.cookie == r.actor,',
+  ],
+  [
+    "a pre-phase success consumer",
+    'all { r.phase == "pre", actors.contains(observed),',
+    'all { r.phase == "pre", actors.contains(observed), r.ok,',
+  ],
+  [
+    "a pre-phase revision consumer",
+    'all { r.phase == "pre", actors.contains(observed),',
+    'all { r.phase == "pre", actors.contains(observed), r.revision == s.server,',
+  ],
+  [
+    "an extra stale HTTP success condition",
+    'outcome != "success" or admitted,',
+    'outcome != "success" or (admitted and r.ok),',
+  ],
+  [
     "an invariant observation of an erased output",
     "val invariant = all { s.server >= 1,",
     "val invariant = all { s.serverBody == 0, s.server >= 1,",
@@ -159,7 +184,7 @@ test("temporal, property and projection changes cannot reuse the security VIEW",
 let translated: string | undefined;
 function actualTranslatedModel() {
   if (translated !== undefined) return translated;
-  const directory = mkdtempSync(join(tmpdir(), "slop-security-view-native-"));
+  const directory = mkdtempSync(join(tmpdir(), "slop-security-v2-native-"));
   const output = join(directory, "production.tla");
   try {
     // Derive the complete real verify input under the native flag. This
@@ -331,13 +356,13 @@ const cases: NativeCase[] = [
       "s.publications[1].cookie = s.publications[1].actor /\\ s.publications[2].accepted /\\ s.publications[2].cookie # s.publications[2].actor",
   },
   {
-    name: "the concrete reusable-read reset",
+    name: "the concrete reusable-read identity reset",
     initial: state(
       '!.gate = TRUE, !.reads[1] = [kind |-> "revision", phase |-> "done", actor |-> 2, cookie |-> 2, life |-> 2, ok |-> TRUE, revision |-> 3]',
     ),
     step: 'beginRead(1, "permission")',
     witness:
-      's.reads[1].phase = "pre" /\\ s.reads[1].actor = 1 /\\ s.reads[1].life = 1 /\\ s.reads[1].cookie = 0 /\\ ~s.reads[1].ok /\\ s.reads[1].revision = 0',
+      's.reads[1].phase = "pre" /\\ s.reads[1].kind = "permission" /\\ s.reads[1].actor = 1 /\\ s.reads[1].life = 1',
   },
   {
     name: "the concrete unused-publication reset with a false old observation",
@@ -397,6 +422,83 @@ const cases: NativeCase[] = [
   },
 ];
 
+cases.push(
+  {
+    name: "a stale HTTP admission changing from false to true",
+    initial: state(
+      '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 2, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: 'IF s.reads[1].cookie = 2 THEN s\' = [s EXCEPT !.reads[1].cookie = 1] ELSE readReply(1, "success")',
+    witness: 's.reads[1].phase = "done" /\\ s.read = 2',
+  },
+  {
+    name: "the false stale HTTP admission observation",
+    initial: state(
+      '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: "s' = [s EXCEPT !.reads[1].cookie = 2]",
+    witness:
+      's.reads[1].phase = "http" /\\ ~(s.reads[1].kind = "revision" \\/ s.reads[1].cookie = s.reads[1].actor)',
+  },
+  {
+    name: "one false stale admission healing while another stays false",
+    initial: state(
+      '!.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 2, life |-> 1, ok |-> FALSE, revision |-> 0], !.reads[2] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 2, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: "s' = [s EXCEPT !.reads[1].cookie = 1]",
+    witness:
+      '(s.reads[1].kind = "revision" \\/ s.reads[1].cookie = s.reads[1].actor) /\\ ~(s.reads[2].kind = "revision" \\/ s.reads[2].cookie = s.reads[2].actor)',
+  },
+  {
+    name: "the stale HTTP revision-kind admission bypass",
+    initial: state(
+      '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 2, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: 'IF s.reads[1].kind = "permission" THEN s\' = [s EXCEPT !.reads[1].kind = "revision"] ELSE readReply(1, "success")',
+    witness: 's.reads[1].phase = "done" /\\ s.read = 2',
+  },
+  {
+    name: "current HTTP cookie before concrete permission admission",
+    initial: state(
+      '!.read = 1, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 2, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: 'IF s.reads[1].phase = "http" THEN IF s.reads[1].cookie = 2 THEN s\' = [s EXCEPT !.reads[1].cookie = 1] ELSE readReply(1, "success") ELSE readPostflight(1, 1)',
+    witness: 's.gate /\\ s.reads[1].phase = "done"',
+  },
+  {
+    name: "current post success before concrete permission publication",
+    initial: state(
+      '!.read = 1, !.reads[1] = [kind |-> "permission", phase |-> "post", actor |-> 1, cookie |-> 0, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: "IF ~s.reads[1].ok THEN s' = [s EXCEPT !.reads[1].ok = TRUE] ELSE readPostflight(1, 1)",
+    witness: 's.gate /\\ s.reads[1].phase = "done"',
+  },
+  {
+    name: "current identity and post payload through hypothetical remount recovery",
+    initial: state(
+      '!.mounted = FALSE, !.read = 1, !.gate = TRUE, !.server = 2, !.reads[1] = [kind |-> "revision", phase |-> "post", actor |-> 1, cookie |-> 0, life |-> 1, ok |-> TRUE, revision |-> 2]',
+    ),
+    step: "IF s.reads[1].life = 1 THEN s' = [s EXCEPT !.reads[1].life = 2, !.reads[1].actor = 2] ELSE IF ~s.mounted THEN remount(2) ELSE readPostflight(1, 2)",
+    witness: "s.editor /\\ s.parent = 2 /\\ s.base = 2 /\\ s.actor = 2",
+  },
+  {
+    name: "a stale preflight consuming only its own phase",
+    initial: state(
+      '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "pre", actor |-> 2, cookie |-> 2, life |-> 2, ok |-> TRUE, revision |-> 3]',
+    ),
+    step: "readPreflight(1, 1)",
+    witness: 's.reads[1].phase = "done" /\\ s.read = 2 /\\ ~s.gate',
+  },
+  {
+    name: "a stale postflight preserving current globals and pointer",
+    initial: state(
+      '!.read = 2, !.gate = TRUE, !.reads[1] = [kind |-> "revision", phase |-> "post", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> TRUE, revision |-> 3]',
+    ),
+    step: "readPostflight(1, 1)",
+    witness:
+      's.reads[1].phase = "done" /\\ s.read = 2 /\\ s.parent = 1 /\\ s.base = 1 /\\ s.gate',
+  },
+);
 for (const control of cases) {
   test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     "native security VIEW retains " + control.name,
@@ -467,6 +569,117 @@ test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
     );
     expect(result.status, result.output).toBe(1);
     expect(result.output).toContain("SECURITY_VIEW_NAMED_WITNESS_FOUND");
+  },
+  120_000,
+);
+
+const readCoalescingCases = [
+  ...["pre", "dispatch"].map((phase) => ({
+    name: `current ${phase} fields before their overwrite`,
+    initial: state(
+      `!.read = 1, !.reads[1] = [kind |-> "permission", phase |-> "${phase}", actor |-> 1, cookie |-> 0, life |-> 1, ok |-> FALSE, revision |-> 0]`,
+    ),
+    step: "s' = [s EXCEPT !.reads[1].cookie = 2, !.reads[1].ok = TRUE, !.reads[1].revision = 3]",
+  })),
+  {
+    name: "current HTTP result fields before reply overwrite",
+    initial: state(
+      '!.read = 1, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: "s' = [s EXCEPT !.reads[1].ok = TRUE, !.reads[1].revision = 3]",
+  },
+  {
+    name: "current post cookie after its last use",
+    initial: state(
+      '!.read = 1, !.reads[1] = [kind |-> "revision", phase |-> "post", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> TRUE, revision |-> 1]',
+    ),
+    step: "s' = [s EXCEPT !.reads[1].cookie = 2]",
+  },
+  {
+    name: "stale HTTP raw fields with unchanged admission truth",
+    initial: state(
+      '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "http", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> FALSE, revision |-> 0]',
+    ),
+    step: 's\' = [s EXCEPT !.reads[1].kind = "revision", !.reads[1].actor = 2, !.reads[1].cookie = 1, !.reads[1].life = 2, !.reads[1].ok = TRUE, !.reads[1].revision = 3]',
+  },
+  ...["pre", "dispatch", "post"].map((phase) => ({
+    name: `stale ${phase} payloads while retaining phase`,
+    initial: state(
+      `!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "${phase}", actor |-> 1, cookie |-> 1, life |-> 1, ok |-> FALSE, revision |-> 0]`,
+    ),
+    step: 's\' = [s EXCEPT !.reads[1].kind = "revision", !.reads[1].actor = 2, !.reads[1].cookie = 2, !.reads[1].life = 2, !.reads[1].ok = TRUE, !.reads[1].revision = 3]',
+  })),
+];
+for (const control of readCoalescingCases)
+  test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+    `native security V2 coalesces only ${control.name}`,
+    async () => {
+      const result = await runNative(
+        nativeFixture({ ...control, witness: "FALSE" }),
+      );
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain("SECURITY_VIEW_NATIVE_COMPLETE");
+      expect(result.output).toMatch(/1 distinct states? found/u);
+      expect(result.output).toMatch(/0 states? left on queue/u);
+    },
+    120_000,
+  );
+test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+  "native done-read reuse resets identity before fresh HTTP admission",
+  async () => {
+    const result = await runNative(
+      nativeFixture({
+        name: "done read reset then fresh admission",
+        initial: state(
+          '!.cookie = 2, !.reads[1] = [kind |-> "revision", phase |-> "done", actor |-> 2, cookie |-> 2, life |-> 2, ok |-> TRUE, revision |-> 3]',
+        ),
+        step: 'IF s.reads[1].phase = "done" THEN beginRead(1, "permission") ELSE IF s.reads[1].phase = "pre" THEN readPreflight(1, 1) ELSE IF s.reads[1].phase = "dispatch" THEN readDispatch(1) ELSE readReply(1, "success")',
+        witness: 's.reads[1].phase = "post"',
+      }),
+    );
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain("SECURITY_VIEW_NATIVE_COMPLETE");
+    expect(result.output).toMatch(/4 distinct states? found/u);
+    expect(result.output).toMatch(/0 states? left on queue/u);
+  },
+  120_000,
+);
+test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+  "native stale dispatch remains disabled without pointer restoration",
+  async () => {
+    const result = await runNative(
+      nativeFixture({
+        name: "stale dispatch absorption",
+        initial: state(
+          '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "dispatch", actor |-> 1, cookie |-> 0, life |-> 1, ok |-> FALSE, revision |-> 0]',
+        ),
+        step: "readDispatch(1) \\/ s' = s",
+        witness: 's.reads[1].phase # "dispatch"',
+      }),
+    );
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain("SECURITY_VIEW_NATIVE_COMPLETE");
+    expect(result.output).toMatch(/1 distinct states? found/u);
+  },
+  120_000,
+);
+test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
+  "native no-VIEW witness exposes a future stale read-pointer restoration",
+  async () => {
+    const result = await runNative(
+      nativeFixture({
+        name: "future read-pointer restoration",
+        initial: state(
+          '!.read = 2, !.reads[1] = [kind |-> "permission", phase |-> "post", actor |-> 1, cookie |-> 0, life |-> 1, ok |-> TRUE, revision |-> 0]',
+        ),
+        step: "IF s.read = 2 THEN s' = [s EXCEPT !.read = 1] ELSE readPostflight(1, 1)",
+        witness: "s.gate",
+      }),
+      false,
+    );
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain("SECURITY_VIEW_NAMED_WITNESS_FOUND");
+    expect(result.output).not.toContain("No error has been found");
   },
   120_000,
 );

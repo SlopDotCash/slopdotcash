@@ -1,16 +1,20 @@
 # Solana binding API safety VIEW
 
-This isolated PRD section 12, STATE-05 experiment starts at
-`212e225444073b60e023d97bc5d7ca272cd31517`. The repaired scenario initializer
-qualifiers let `solana_binding_api` translate; the original finite graph then
+This isolated PRD section 12, STATE-05 follow-up starts from the frozen VIEW
+experiment `b3b96e98b8564df89cbec8f125a43930af91440a`. The earlier experiment
+started at `212e225444073b60e023d97bc5d7ca272cd31517`. Repaired scenario
+initializer qualifiers let `solana_binding_api` translate; the original finite graph then
 exceeded 180 seconds with 3,683,833 distinct states and 2,039,426 queued. That
 incomplete result is not a passing safety check.
 
-`solana-binding-api-observation-safety-v1` changes TLC fingerprints only. The
-concrete model, actions, domains, dispatcher, invariants, named scenarios and
-runtime sources remain byte-identical. It adds no constraint, narrowed input,
-retry, payment transition, signer power or activation. Its completed count, if
-obtained, is a quotient count rather than the number of full model records.
+The `solana-binding-api-observation-safety-v1` expression is unchanged and
+changes TLC fingerprints only. Separately, this follow-up lifts one existing
+configure guard before its local argument choices, as proved below. Direct
+actions, input domains, invariants, named scenarios and runtime sources remain
+byte-identical; the dispatcher has the same full concrete successors. It adds
+no constraint, narrowed input, retry, payment transition, signer power or
+activation. Its completed count, if obtained, is a quotient count rather than
+the number of full model records.
 
 ## Dependency projection
 
@@ -93,15 +97,45 @@ safety exploration while preserving the original invariant counterexamples.
 It proves no temporal progress, exact output values, SQL/cryptographic
 conformance, unbounded safety or application refinement.
 
+## Dispatch-equivalent configure guard
+
+The only model-source edit duplicates `not(s.configured)` before the configure
+branch's five nondeterministic argument choices. The existing configure action
+already has that exact guard, independent of every argument. All five domains
+remain the original constant, nonempty sets: six profiles, four ordinary rows,
+four private rows, and two Booleans twice (384 combinations). Their definitions,
+choice order, action call and arguments are unchanged. No other branch changes.
+
+For each source state, write G for `not(s.configured)` and A(x) for the rest of
+configure's original action at argument tuple x. The original branch is
+`exists x: G and A(x)`; the optimized branch is `G and exists x: A(x)`. Since G
+is independent of x and every domain is unchanged, the same tuples produce
+the same updates when G is true, and both branches have no successors when G
+is false. Duplicating the guard does not add a predicate or constrain a state
+that could previously take configure. It only avoids enumerating 384 already
+disabled calls after configuration. Every other step branch, including the
+explicit stutter, is byte-identical.
+
+Therefore full concrete enabledness and successor sets are unchanged. The
+original direct-action scenarios still call the unchanged configure action.
+Seeded simulation may consume a different internal sequence of random choices,
+but keeps its original seed, 500 samples and 60 steps; no trace identity is
+claimed. This is a dispatch evaluation optimization, separate from the approved
+safety projection, not an additional predicate abstraction. The same nine-bit
+VIEW and all live-state dependencies above remain exactly as previously
+reviewed. Source, concrete TLA and final VIEW hashes are renewed for the edited
+dispatcher, with complete production TLA checked by the actual loader.
+
 ## Binding and evidence
 
-The hardcoded helper/manifest entry pins the complete original model, concrete
+The hardcoded helper/manifest entry pins the complete reviewed model, concrete
 translated TLA, actual loader-produced final VIEW TLA and official adapter.
 Temporal properties, unknown definitions and changed source/TLA/expression
 fail closed. The captured complete production TLA is passed through actual
 bindSafetyView/applySafetyView before freezing, with its full 80-character
-module terminator intact. The original translated body and official runner
-are unchanged.
+module terminator intact. VIEW insertion preserves the reviewed translated
+body. The official runner still changes only its existing VIEW configuration
+emission line.
 
 `solana-binding-api-quotient.test.ts` binds the complete concrete model,
 including helpers, domains, dispatcher, invariant and named scenarios. New
@@ -115,7 +149,7 @@ terminal effect enabledness, dirty unused resets, and live audit/selection/
 context/dispatch fields. They test observation distinguishability and adapter
 behavior, not the manual successor theorem or application behavior.
 
-Run the unchanged concrete checks and focused controls with Node 24.15.0,
+Run the original concrete checks and focused controls with Node 24.15.0,
 Bun 1.3.14 and Java 21:
 
 ```sh
@@ -124,9 +158,25 @@ SLOP_QUINT_TRANSLATOR_TEST=1 bun test scripts/solana-binding-api-quotient.test.t
 bun test scripts/quint-safety-view.test.ts
 ```
 
-The original 180-second quotient attempt also remained incomplete. The
-explicit model-only verifier allowance is now 600 seconds; the model, VIEW,
-scenario set and 90-second ordinary sampling limit are unchanged. Completion requires unchanged model, mapped sources and tools plus
-an empty queue. Keep timeout, canceled, source-drift and pre-graph failures as
-incomplete receipts. No sampling result or native fixture substitutes for a
-completed frozen graph; the larger allowance alone is not a passing result.
+The original VIEW experiment timed out at 180 seconds; its last progress
+reported 1,076,625 distinct states and 171,571 queued. Its resource-only
+600-second follow-up also timed out: last reported 2,612,327 distinct states,
+174,470 queued and depth 26. Both incomplete receipts and their frozen source
+bindings remain in the original worktree; neither is relabeled as a pass.
+The qualified dispatch-equivalent revision
+`b181601171c1de2b817ef2464e9fd3e610bfa24d` also timed out at 600 seconds:
+last reported 2,943,585 distinct states, 143,371 queued and depth 28. Its
+ordinary checks and 39 native controls passed; its graph remains incomplete.
+This resource-only continuation grants an explicit 1,200-second verifier
+allowance. The model, actions, domains, invariant, helper, VIEW expression,
+native cases and ordinary 90-second stage limits are unchanged. Native
+qualification is reused through that exact source/helper/test lineage, not
+represented as a fresh run. The frozen `028cb23ca4d319b87fff32436b6527be95cfb8c4`
+graph completed in 688.320 seconds: 30,210,282 generated states, 3,373,889
+distinct states, zero queued and depth 40. Its 20 source/tool hashes stayed
+unchanged and the run was not canceled. This is a completed finite quotient at
+those recorded inputs, not a later combined-head or application-refinement
+claim.
+Keep timeout, canceled, source-drift and pre-graph failures as incomplete
+receipts. No sampling result, native fixture or queue estimate substitutes
+for that completed graph.

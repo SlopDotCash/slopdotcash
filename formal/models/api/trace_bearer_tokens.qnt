@@ -78,9 +78,11 @@ module trace_bearer_tokens {
   }
   action step = {
     any {
-      { nondet mode = Set("sign", "verify").oneOf() nondet roles = roleSets.oneOf() nondet time = times.oneOf()
+      all { s.phase == "setup", {
+        nondet mode = Set("sign", "verify").oneOf() nondet roles = roleSets.oneOf() nondet time = times.oneOf()
         nondet yes = Set(false, true).oneOf()
-        configure(mode, roles, time, yes) },
+        configure(mode, roles, time, yes)
+      } },
       advanceNow,
       { nondet yes = Set(false, true).oneOf() secret(yes) },
       { nondet kind = headers.oneOf() header(kind) },

@@ -75,6 +75,38 @@ test("new readers, changed invariant observations and slot reuse require review"
       "  def owns(id: int): bool =",
       "  def futureRead(id: int): bool = s.requests.get(id).draft == s.stored\n  def owns(id: int): bool =",
     ],
+    [
+      'all { r.phase == "http",',
+      'all { r.phase == "http" and r.expected == s.base,',
+    ],
+    [
+      'all { r.phase == "http",',
+      'all { r.phase == "http" and r.observedActor == r.actor,',
+    ],
+    [
+      'r.phase == "failure-returned",',
+      'r.phase == "failure-returned" and r.draft == s.draft,',
+    ],
+    [
+      'r.phase == "failure-returned",',
+      'r.phase == "failure-returned" and r.draftEpoch == s.draftEpoch,',
+    ],
+    [
+      'r.phase == "failure-returned",',
+      'r.phase == "failure-returned" and r.resultRevision == s.base,',
+    ],
+    [
+      'all { r.phase == "server",',
+      'all { r.phase == "server" and (s.mode != "create" or r.draft == s.draft),',
+    ],
+    [
+      'all { r.phase == "server",',
+      'all { r.phase == "server" and (s.mode != "create" or r.draftEpoch == s.draftEpoch),',
+    ],
+    [
+      'r.phase == "success-returned",',
+      'r.phase == "success-returned" and (s.mode != "create" or r.resultRevision == s.base),',
+    ],
   ]) {
     const changed = source.replace(before, after);
     expect(changed).not.toBe(source);
@@ -256,6 +288,88 @@ const controls: readonly (readonly [string, string, string, string])[] = [
     '!.view = "access-check"',
     's.view = "editor"',
   ],
+  [
+    "false-done-publication-repair",
+    patched(
+      '!.requests[1].phase = "done", !.requests[1].accepted = FALSE, !.publication = 1',
+    ),
+    "!.requests[1].accepted = TRUE",
+    `~(${publicationClause})`,
+  ],
+  [
+    "false-unused-publication-repair",
+    patched(
+      '!.requests[1].phase = "unused", !.requests[1].accepted = FALSE, !.publication = 1',
+    ),
+    "!.requests[1].accepted = TRUE",
+    `~(${publicationClause})`,
+  ],
+  [
+    "false-done-admission-repair",
+    patched('!.requests[1].phase = "done", !.requests[1].cookie = 2'),
+    "!.requests[1].cookie = 1",
+    `~${admissionClause}`,
+  ],
+  [
+    "false-unused-admission-repair",
+    patched('!.requests[1].phase = "unused", !.requests[1].cookie = 2'),
+    "!.requests[1].cookie = 1",
+    `~${admissionClause}`,
+  ],
+  [
+    "preflight-observed-snapshot",
+    patched('!.requests[1].phase = "preflight-observed"'),
+    "!.requests[1].observedActor = 2",
+    "s.requests[1].observedActor = s.requests[1].actor",
+  ],
+  [
+    "success-observed-snapshot",
+    patched('!.requests[1].phase = "success-observed"'),
+    "!.requests[1].observedActor = 2",
+    "s.requests[1].observedActor = s.requests[1].actor",
+  ],
+  [
+    "failure-observed-snapshot",
+    patched('!.requests[1].phase = "failure-observed"'),
+    "!.requests[1].observedActor = 2",
+    "s.requests[1].observedActor = s.requests[1].actor",
+  ],
+  [
+    "pre-server-expected-capture",
+    patched('!.requests[1].phase = "admission"'),
+    "!.requests[1].expected = 2",
+    "s.requests[1].expected = 1",
+  ],
+  [
+    "create-current-draft",
+    patched('!.mode = "create"'),
+    "!.draft = 2",
+    "s.draft = 1",
+  ],
+  [
+    "create-current-epoch",
+    patched('!.mode = "create"'),
+    "!.draftEpoch = 1",
+    "s.draftEpoch = 0",
+  ],
+  [
+    "create-current-base",
+    patched('!.mode = "create"'),
+    "!.base = 2",
+    "s.base = 1",
+  ],
+  [
+    "failure-indexed-acceptance",
+    patched('!.requests[1].phase = "failure-returned", !.publication = 1'),
+    "!.requests[1].accepted = FALSE",
+    publicationClause,
+  ],
+  [
+    "failure-admission-identity",
+    patched('!.requests[1].phase = "failure-returned"'),
+    "!.requests[1].cookie = 2",
+    admissionClause,
+  ],
 ];
 
 for (const [name, state, update, invariant] of controls) {
@@ -318,6 +432,8 @@ q_inv == ${invariant}
       expect(status).toBe(1);
       expect(output).toContain("Invariant q_inv is violated");
       expect(output).toContain("PUBLICATION_VIEW_COUNTEREXAMPLE_CONFIRMED");
+      expect(output).toContain("State 2:");
+      expect(output).not.toContain("violated by the initial state");
       expect(output).not.toContain("No error has been found");
     },
     180_000,

@@ -62,7 +62,8 @@ normally has a 180-second limit. Explicit resource exceptions in
 
 - 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
   `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
-  `ui_security_settings_lifetime`, `ui_vetting_reader`, and `fee_value_caps`.
+  `ui_vetting_reader`, and `fee_value_caps`.
+- 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
   `ui_bounty_payment_parent`, and `direct_bounty_journal`.
@@ -276,12 +277,13 @@ requires review for new reads, backward phases, reuse or invariant changes.
   early cookie and returned-observation dependencies, separate authentication
   truth and indexed publication witnesses. Counters and generations stay live.
 - The [publication continuation audit](publication-continuation-view-audit.md)
-  retains live drafts, epochs, bases, identity and acceptance observations;
-  only closed referrer carriers, write-only outputs and audited dead payloads
-  are erased.
+  retains every future identity, ownership, server-admission and publication
+  dependency. Version 2 erases additional phase-dead payloads after their last
+  consumer, while preserving independent false admission observations.
 - The [security-settings audit](tlc-safety-view-audit.md#security-settings-lifetime-view)
-  preserves per-publication admission truth independently while erasing only
-  write-only outputs and reset or absorbing slot payloads.
+  preserves per-publication admission truth independently. Version 2 also
+  retains each stale HTTP read's exact admission predicate and current read
+  identity, while erasing only phase-dead or permanently stale payloads.
 - The [Solana binding audit](solana-binding-api-view-audit.md) keeps exact global
   audit/effect membership and timestamps, terminal dispatch enabledness and nine
   separate request clauses. Ledger availability and success/non-success are
@@ -290,8 +292,10 @@ requires review for new reads, backward phases, reuse or invariant changes.
   late send effects and separate registration/reconnection observations,
   including false observations exposed by a later provider configuration.
 - The [allocation audit](tlc-safety-view-audit.md#contributor-allocation-view)
-  retains each account's eligibility and every live HTTP/body/decoded record.
-  Only unused or absorbing done payloads are erased.
+  retains each account's eligibility, all global outputs and every future
+  request dependency. Version 2 distinguishes permanently stale requests from
+  current requests, preserves valid snapshots and absent-file closed state,
+  and erases payloads that are overwritten or ignored before consumption.
 - The existing [journal audit](tlc-safety-view-audit.md) retains its separate
   projection and controls.
 
@@ -305,6 +309,21 @@ Keep original receipts unchanged. A quotient state count is not a full-record
 count, and the owner forward simulation is named separately in its receipt.
 Implementation conformance, provider calls, chains and deployment need their
 own evidence.
+
+The separately frozen version-2 publication, security-settings and allocation
+quotients completed with 6,051,015, 798,102 and 57,276 distinct states,
+respectively, each with an empty queue under its recorded budget. Those
+receipts belong to their recorded prototype inputs; they are not a claim that
+a later combined revision ran those graphs. Earlier version-1 timeouts remain
+incomplete. Native controls, final source bindings and implementation evidence
+remain separate qualification requirements.
+
+The Solana binding API's identical configure guard now runs before its 384
+unchanged input tuples. Its existing VIEW expression is unchanged, with renewed
+source/TLA pins. That separately frozen quotient completed 3,373,889 distinct
+states with an empty queue in 688.320 seconds under its explicit 1,200-second
+allowance. Earlier 180- and 600-second attempts remain incomplete. Ordinary
+scenario and sampling budgets stay unchanged.
 
 ### Other duplicate transition choices
 

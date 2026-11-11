@@ -1981,7 +1981,7 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "2fbcff7973ba294f3c718ad7e116412e4f723e0f0f95a6a7a6bc3f257532d98c",
+      "sha256": "c499f5e6d5e14a66b7f89d04609e78aa5750c3bc1d48792a8bf2286ca477504f",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211
@@ -3337,7 +3337,7 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "b006088941f0c17ab829e48edbad4449a49c9930e7a0c31561dc85f6dbe04c85",
+      "sha256": "1425bd93fdc9928d5b0dd926ee105dabdc5602d4ec86479cf1be0dfbbc93390d",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
@@ -4208,10 +4208,10 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "02a06bb3e4e0a3957f03102bb8f44703fc5629811f7616b5d6dd5c00cc76687f",
+      "sha256": "f22091dd491833208d5f55361c7daaec9b63933c9a81e15cd38f2f66dff4945d",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 134, 151, 170, 173, 189, 205
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 190, 206
       ],
       "review": "mapped-abstraction"
     },
@@ -9243,7 +9243,7 @@
     },
     {
       "path": "formal/models/api/api_points_dispute_lease.qnt",
-      "sha256": "cb4d457fb1ec76dac0f16707d1822070965d6e9654ed716cb0731f8b895f2ec2",
+      "sha256": "bb7d949510d2c38fdef7e272fed932368146816b2e889e7a53ea5b1cfcdd97f0",
       "sources": [
         "migrations/0114_points_dispute_intake.sql",
         "workers/slopbot/appeals.ts",
@@ -10680,7 +10680,7 @@
     },
     {
       "path": "formal/models/api/trace_bearer_tokens.qnt",
-      "sha256": "94dba31e2eb8613eea61ad4510474ccc02a25857f3b571c3bc139ddedab3cf01",
+      "sha256": "f73bc179637c6b917664e704174e66a550adedad68c6f7c480a73a7cc933c476",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/contracts.ts",
@@ -10842,7 +10842,7 @@
     },
     {
       "path": "formal/models/api/wallet_claim_publication.qnt",
-      "sha256": "4c77a115920922c67d596969554e8468d662937ea6f59673d4f387d26fc1ba9a",
+      "sha256": "2f2532269fc71a1e85482284bfe132ea278c1fc89254d1462d2cb7b7bb5b3151",
       "sources": [
         "backend/notifications/events.ts",
         "backend/payments/wallet-registration.ts",
@@ -10892,7 +10892,7 @@
     },
     {
       "path": "formal/models/api/wallet_possession_completion.qnt",
-      "sha256": "3b6f0e5d83dbe1ae5692c1a17108d1664b04d6f552964bf1e79e822fe1d58636",
+      "sha256": "2519a26652bd9f9100415f5f10a5a8b7c10b25ccb3a341eb2e56092c91fa8b0b",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/handler.ts",
@@ -12834,7 +12834,7 @@
     },
     {
       "path": "formal/models/payments/solana_binding_api.qnt",
-      "sha256": "0a7eb589797eedf3bfb3cd67b7c1c274d8d77f324adef57dc78a6c21de0ebc60",
+      "sha256": "c9fb501258ad70a6269f234c53617cf2d7fbdc154cbe47355a82d433a87fd28d",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",

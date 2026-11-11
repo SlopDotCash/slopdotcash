@@ -122,35 +122,36 @@ const definitions = [
     clauses: [],
   },
   {
-    id: "ui-project-publication-continuation-safety-v1",
+    id: "ui-project-publication-continuation-safety-v2",
     model: "formal/models/ui/ui_project_publication_lifetime.qnt",
     module: "ui_project_publication_lifetime",
-    operator: "SlopPublicationContinuationViewV1",
-    hashMode: "publication-continuation-and-terminal-invariant-observations",
+    operator: "SlopPublicationContinuationViewV2",
+    hashMode:
+      "publication-phase-continuation-and-terminal-invariant-observations",
     memoryCandidateMode:
-      "erase-write-only-referrer-and-inactive-request-payloads",
+      "erase-write-only-referrer-and-phase-dead-request-payloads",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.serverDraft = 0, !.storageError = FALSE, !.error = "none", !.referrer = FALSE, !.storedReferrer = FALSE, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, r.accepted, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.referrer = FALSE, !.outcome = "none"]]]',
+          '[s EXCEPT !.serverDraft = 0, !.storageError = FALSE, !.error = "none", !.referrer = FALSE, !.storedReferrer = FALSE, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, r.accepted, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.referrer = FALSE, !.outcome = "none", !.observedActor = IF r.phase \\in {"preflight-observed", "preflight-returned", "success-observed", "success-returned", "failure-observed", "failure-returned"} THEN r.observedActor ELSE -1, !.expected = IF r.phase \\in {"http", "success-check", "success-observed", "success-returned", "failure-check", "failure-observed", "failure-returned"} THEN 0 ELSE r.expected, !.draft = IF s.mode = "create" \\/ r.phase \\in {"failure-check", "failure-observed", "failure-returned"} THEN 0 ELSE r.draft, !.draftEpoch = IF s.mode = "create" \\/ r.phase \\in {"failure-check", "failure-observed", "failure-returned"} THEN 0 ELSE r.draftEpoch, !.resultRevision = IF s.mode = "create" \\/ r.phase \\in {"failure-check", "failure-observed", "failure-returned"} THEN 0 ELSE r.resultRevision]]]',
       },
     ],
     clauses: [],
   },
   {
-    id: "ui-security-settings-lifetime-safety-v1",
+    id: "ui-security-settings-lifetime-safety-v2",
     model: "formal/models/ui/ui_security_settings_lifetime.qnt",
     module: "ui_security_settings_lifetime",
-    operator: "SlopSecuritySettingsLifetimeViewV1",
-    hashMode: "exact-per-slot-publication-identity-observation",
+    operator: "SlopSecuritySettingsLifetimeViewV2",
+    hashMode: "exact-publication-identity-and-stale-read-admission",
     memoryCandidateMode:
-      "erase-write-only-outputs-and-reset-or-absorbing-payloads",
+      "erase-write-only-reset-absorbing-and-stale-read-payloads",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.error = "none", !.success = 0, !.serverBody = 0, !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {"unused", "done"} THEN [phase |-> r.phase] ELSE r], !.publications = [i \\in DOMAIN s.publications |-> LET p == s.publications[i] IN IF p.phase \\in {"unused", "done"} THEN [phase |-> p.phase] ELSE [p EXCEPT !.body = 0]]]',
+          '[s EXCEPT !.error = "none", !.success = 0, !.serverBody = 0, !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {"unused", "done"} THEN [phase |-> r.phase] ELSE IF s.read # i THEN IF r.phase = "http" THEN [phase |-> r.phase, admitted |-> (r.kind = "revision" \\/ r.cookie = r.actor)] ELSE [phase |-> r.phase] ELSE IF r.phase \\in {"pre", "dispatch"} THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life] ELSE IF r.phase = "http" THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life, cookie |-> r.cookie] ELSE IF r.phase = "post" THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life, ok |-> r.ok, revision |-> r.revision] ELSE r], !.publications = [i \\in DOMAIN s.publications |-> LET p == s.publications[i] IN IF p.phase \\in {"unused", "done"} THEN [phase |-> p.phase] ELSE [p EXCEPT !.body = 0]]]',
       },
     ],
     clauses: [
@@ -194,17 +195,17 @@ const definitions = [
     clauses: [],
   },
   {
-    id: "ui-contributor-allocation-safety-v1",
+    id: "ui-contributor-allocation-safety-v2",
     model: "formal/models/ui/ui_contributor_allocation.qnt",
     module: "ui_contributor_allocation",
-    operator: "SlopContributorAllocationViewV1",
+    operator: "SlopContributorAllocationViewV2",
     hashMode: "exact-per-account-on-time-wallet-membership",
-    memoryCandidateMode: "erase-unused-and-absorbing-request-payloads",
+    memoryCandidateMode: "erase-permanently-stale-and-unconsumed-payloads",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.wallets = [i \\in DOMAIN s.wallets |-> IF "on-time" \\in s.wallets[i] THEN {"on-time"} ELSE {"none"}], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"unused", "done"} THEN [phase |-> r.phase] ELSE r]]',
+          '[s EXCEPT !.wallets = [i \\in DOMAIN s.wallets |-> IF "on-time" \\in s.wallets[i] THEN {"on-time"} ELSE {"none"}], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"unused", "done"} \\/ s.active # i THEN [phase |-> r.phase] ELSE IF r.phase \\in {"http", "body"} THEN [phase |-> r.phase, life |-> r.life] ELSE IF r.phase = "decoded" THEN [phase |-> r.phase, life |-> r.life, outcome |-> IF r.outcome \\in {"valid", "absent"} THEN r.outcome ELSE "invalid", recipients |-> IF r.outcome = "valid" THEN r.recipients ELSE 0, transfers |-> IF r.outcome = "valid" THEN r.transfers ELSE 0, closed |-> IF r.outcome \\in {"valid", "absent"} THEN r.closed ELSE FALSE] ELSE r]]',
       },
     ],
     clauses: [],
