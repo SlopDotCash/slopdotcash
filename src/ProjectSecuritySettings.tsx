@@ -83,10 +83,7 @@ export function ProjectSecuritySettings({
           await requireSecuritySettingsActor(actorId);
           if (!owns()) return;
           if (result.viewer.githubId !== actorId) {
-            onAccessLost(
-              "Your account changed. Retry management access.",
-              true,
-            );
+            onAccessLost("Your account changed.", true);
             return;
           }
           if (result.canManageBounty) setPermitted(`${project.id}:${actorId}`);

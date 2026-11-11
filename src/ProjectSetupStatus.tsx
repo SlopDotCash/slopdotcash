@@ -127,14 +127,6 @@ function ProjectSetupStatusForActor({
   const mounted = useRef(true);
   const generation = useRef(0);
   const inFlight = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      generation.current += 1;
-      inFlight.current = null;
-    };
-  }, []);
   const check = useCallback(
     (requestScan = false) => {
       if (!mounted.current || inFlight.current !== null) return;
@@ -215,8 +207,16 @@ function ProjectSetupStatusForActor({
     },
     [actorId, projectId],
   );
-  useEffect(() => {
+  // Suspense preserves state but retires layout effects while vault controls
+  // load. Restart an empty status check on reveal as well as the first mount.
+  useLayoutEffect(() => {
+    mounted.current = true;
     if (initial === undefined) check();
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      inFlight.current = null;
+    };
   }, [check, initial]);
   useEffect(() => {
     if (!setup || setup.state === "ready" || setup.state === "restricted")

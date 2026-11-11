@@ -4643,7 +4643,7 @@
     },
     {
       "path": "src/Admin.tsx",
-      "sha256": "5935a015f6b9a859a9b59357a7bb015efd744be207765e9c6e5c389ad4504188",
+      "sha256": "56d2fc64e3ae3523a7c1fd0f58f06a0288e49b649643e41af9ded99c3a01f991",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -4710,6 +4710,7 @@
         "formal/models/ui/ui_project_images.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
+        "formal/models/ui/ui_setup_check_suspense.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
@@ -5157,11 +5158,11 @@
     },
     {
       "path": "src/PrivateReportForm.tsx",
-      "sha256": "9fa38fb69ee807743fe6bfef304c6da9f63e106827a09b9e6b165a64901b5bf7",
+      "sha256": "3719118f199738d1fc0f7250518d7eb823915e8eedbcfcd79fc21f95df3786fb",
       "models": ["formal/models/ui/ui_private_intake.qnt"],
       "candidateLines": [
         4, 7, 32, 33, 34, 42, 92, 93, 94, 95, 96, 97, 98, 99, 108, 113, 161,
-        177, 257, 296, 342, 348, 379, 524, 547
+        177, 257, 296, 340, 346, 377, 522, 545
       ],
       "review": "mapped-abstraction"
     },
@@ -5278,40 +5279,40 @@
     },
     {
       "path": "src/ProjectSecuritySettings.tsx",
-      "sha256": "18a61275da2703a85d687098252de896ee3ee7df624383022060278151a7044b",
+      "sha256": "9e336438e35193c941b4324534d243d2e0ed010f8dd2ce4ee43abe3a8808de6d",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt"
       ],
       "candidateLines": [
-        3, 6, 36, 39, 40, 41, 42, 44, 46, 62, 87, 115, 136, 140, 170, 171, 172,
-        173, 174, 175, 185, 191, 205, 226, 235, 236, 237, 240, 250, 251, 253,
-        264
+        3, 6, 36, 39, 40, 41, 42, 44, 46, 62, 112, 133, 137, 167, 168, 169, 170,
+        171, 172, 182, 188, 202, 223, 232, 233, 234, 237, 247, 248, 250, 261
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/ProjectSetupStatus.tsx",
-      "sha256": "afb10cfa20124c063459378947e23deb2a0cf12a3470c1ab28ff538792681bdf",
+      "sha256": "bf244af6bb7217a27d3f88f22218f01717b2ba20237b87ad1fa29f62f05236a6",
       "models": [
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/ui/ui_project_setup.qnt",
-        "formal/models/ui/ui_setup_check_lifetime.qnt"
+        "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_setup_check_suspense.qnt"
       ],
       "candidateLines": [
         12, 15, 30, 34, 39, 44, 47, 53, 55, 71, 74, 78, 88, 119, 122, 125, 126,
-        183, 218, 221, 222, 247, 250, 251, 255, 259, 260, 307, 309, 323, 325,
-        342, 346, 349, 351, 393
+        175, 210, 211, 221, 222, 247, 250, 251, 255, 259, 260, 307, 309, 323,
+        325, 342, 346, 349, 351, 393
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "src/ProjectWork.tsx",
-      "sha256": "8188fb0aff8979d3aed236141d20101e9aff81730bb2e88c1a7495ec7c2cc433",
+      "sha256": "a70227208f152a93eb2bc2249ec5e3aa19f544e95ff946a058021062cd23d031",
       "models": ["formal/models/ui/ui_project_work.qnt"],
       "candidateLines": [
-        9, 10, 14, 15, 19, 24, 26, 27, 32, 41, 42, 43, 46, 47, 52
+        2, 13, 14, 18, 19, 23, 24, 29, 31, 32, 37, 46, 47, 48, 51, 52, 57
       ],
       "review": "mapped-abstraction"
     },
@@ -5328,17 +5329,17 @@
     },
     {
       "path": "src/ReferralClaims.tsx",
-      "sha256": "adf2e638e82ad8cb945a484d9e565f88426214b6aedeb56c79018c46f78ca592",
+      "sha256": "df150b0ebc54dfb92b06d54f5f77e36b5da8bdf5f14921d3cf3de35aebd8fd43",
       "models": [
         "formal/models/ui/ui_referral_claim_lifetime.qnt",
         "formal/models/ui/ui_referral_read_ownership.qnt",
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        1, 12, 24, 32, 34, 42, 79, 80, 81, 82, 83, 84, 88, 102, 103, 107, 110,
-        113, 120, 133, 197, 222, 232, 238, 282, 289, 299, 323, 362, 398, 421,
-        429, 430, 439, 440, 442, 443, 450, 451, 453, 454, 470, 471, 472, 474,
-        565
+        1, 12, 24, 32, 34, 42, 63, 79, 80, 81, 82, 83, 84, 88, 102, 103, 107,
+        110, 113, 120, 133, 197, 222, 232, 238, 282, 289, 299, 323, 362, 398,
+        421, 429, 430, 439, 440, 442, 443, 450, 451, 453, 454, 470, 471, 472,
+        474, 565
       ],
       "review": "mapped-abstraction"
     },
@@ -5406,15 +5407,15 @@
     },
     {
       "path": "src/SecurityProgramEditor.tsx",
-      "sha256": "c86a2d05f41d36fac1e029692d6f56108b0f2da173e149dcc2e39214e9813c1e",
+      "sha256": "1ce740842431d8aaac54d97f6dac6cb700ce75f5a17fc7cf637ed67eb0530a99",
       "models": [
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt"
       ],
       "candidateLines": [
-        1, 55, 79, 87, 101, 106, 155, 156, 157, 159, 166, 176, 177, 182, 187,
-        194, 206, 244, 255, 256, 304, 331, 368, 433, 435, 436, 439, 443, 446,
-        447, 609, 644, 650
+        1, 55, 79, 87, 150, 151, 153, 160, 170, 171, 176, 181, 188, 200, 238,
+        249, 250, 298, 325, 362, 410, 412, 413, 415, 418, 421, 422, 577, 612,
+        617
       ],
       "review": "mapped-abstraction"
     },
@@ -17336,6 +17337,19 @@
         "swappedDispatchIsRefusedTest",
         "unavailableFinalIdentityClearsTest",
         "unknownPreflightClearsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_setup_check_suspense.qnt",
+      "sha256": "adeb13f0bcb33469cbbf4d8ec1d6d7b1ea4ecbd5e539e4446eb740de59c66409",
+      "sources": ["src/App.tsx", "src/ProjectSetupStatus.tsx"],
+      "scenarios": [
+        "hiddenResponseCannotPublishTest",
+        "initialProjectionSurvivesRevealTest",
+        "oldResponseAfterRevealCannotReplaceNewRequestTest",
+        "restartFailureCanRetryTest",
+        "restartedCheckPublishesTest",
+        "revealRestartsEmptyCheckTest"
       ]
     },
     {
