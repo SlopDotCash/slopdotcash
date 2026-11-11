@@ -5,6 +5,7 @@
 // @source migrations/0121_project_application_cancellation.sql
 // @evidence scripts/project-self-service.test.ts
 // @evidence backend/projects/cloudflare-persistence.test.ts
+// @evidence tests/e2e/registry.spec.ts
 // One registered project, one pending application (new or update), one
 // removal, and one competing revision/activation. Revision 0..3 and a single
 // enforcement-generation change bound the finite graph. A cancelled record is
