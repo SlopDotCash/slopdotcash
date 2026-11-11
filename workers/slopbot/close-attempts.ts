@@ -1,6 +1,11 @@
 import { REOPEN_BREAKER_RATIO, type Verdict } from "./contracts";
 import type { CallRecord } from "./models";
-import type { D1TransactionalDatabase, ReviewClaim } from "./persistence";
+import {
+  type D1TransactionalDatabase,
+  ownsReviewClaim,
+  type ReviewClaim,
+  ReviewLeaseLostError,
+} from "./persistence";
 import {
   VALUE_PUBLICATION_FENCE_SQL,
   type ValuePublicationFence,
@@ -13,11 +18,19 @@ export type CloseRecovery = {
   confirm: CallRecord | null;
 };
 
-/** Same seven-day reversal policy at advisory read and atomic reservation. */
-export function reopenBreakerSql(repository: "?1" | "?3"): string {
+/**
+ * Same seven-day reversal policy at advisory read and atomic reservation. The
+ * clock is a bound parameter, not the database clock: every row these windows
+ * read was stamped by the worker's clock, and the two can differ (a frozen
+ * clock in a test, a skewed host in production).
+ */
+export function reopenBreakerSql(
+  repository: "?1" | "?3",
+  clock: "?2" | "?11",
+): string {
   return `(SELECT closes = 0 OR reversed * 1.0 / closes <= ${REOPEN_BREAKER_RATIO} FROM (
     SELECT (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ${repository}
-      AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')) AS closes,
+      AND action = 'close' AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-7 days')) AS closes,
     (SELECT COUNT(DISTINCT reversal.item_node_id) FROM (
       SELECT r.item_node_id, r.created_at AS at FROM slopbot_actions r
         WHERE r.repository_id = ${repository} AND r.action = 'human_reopen'
@@ -25,7 +38,7 @@ export function reopenBreakerSql(repository: "?1" | "?3"): string {
       SELECT a.item_node_id, a.resolved_at AS at FROM slopbot_appeals a
         WHERE a.repository_id = ${repository} AND a.resolution = 'upheld'
           AND a.appeal_key NOT LIKE 'value-appeal:%'
-    ) reversal WHERE reversal.at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
+    ) reversal WHERE reversal.at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-7 days')
       AND EXISTS (SELECT 1 FROM slopbot_actions c WHERE c.repository_id = ${repository}
         AND c.item_node_id = reversal.item_node_id AND c.action = 'close'
         AND c.created_at <= reversal.at)) AS reversed
@@ -77,19 +90,24 @@ export async function reserveClose(
     fence: ValuePublicationFence;
   },
 ): Promise<string | null> {
+  // The windows are days wide, so the instant they are read from is coarse.
+  // The lease is not: it can expire while this reservation waits on the
+  // network in front of it, so it is checked again at the current instant
+  // after the row lands (see below).
+  const at = new Date().toISOString();
   const result = await db
     .prepare(`INSERT OR IGNORE INTO slopbot_close_attempts
     (attempt_id, review_key, repository_id, project_id, item_node_id, author_id, revision,
      recovery_json, penalty_eligible, state, created_at)
     SELECT ?2, ?1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE EXISTS (SELECT 1 FROM slopbot_reviews WHERE review_key = ?1 AND claim_token = ?2
-      AND status = 'running' AND lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND status = 'running' AND lease_expires_at > ?11)
     AND NOT EXISTS (SELECT 1 FROM slopbot_actions WHERE review_key = ?1 AND action = 'close')
     AND (SELECT COUNT(*) FROM slopbot_actions WHERE repository_id = ?3 AND action = 'close'
-      AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+      AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', ?11, '-1 day'))
       + (SELECT COUNT(*) FROM slopbot_close_attempts c WHERE c.repository_id = ?3 AND c.state = 'pending'
         AND NOT EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.review_key = c.review_key AND a.action = 'close')) < ?10
-    AND ${reopenBreakerSql("?3")}
+    AND ${reopenBreakerSql("?3", "?11")}
     AND ${VALUE_PUBLICATION_FENCE_SQL}`)
     .bind(
       claim.reviewKey,
@@ -102,10 +120,20 @@ export async function reserveClose(
       JSON.stringify(input.recovery),
       input.penaltyEligible ? 1 : 0,
       input.dailyCap,
+      // ?11 first: the fence below uses bare placeholders, numbered after it.
+      at,
       ...valuePublicationFenceValues(input.fence),
     )
     .run();
-  return result.meta?.changes === 1 ? claim.token : null;
+  if (result.meta?.changes !== 1) return null;
+  // A lease that died while the reservation waited cannot send a close.
+  if (!(await ownsReviewClaim(db, claim))) {
+    // The table is append-only, so the refused attempt stays as history in
+    // its terminal state; a rejected row no longer holds capacity.
+    await rejectClose(db, claim.token);
+    throw new ReviewLeaseLostError();
+  }
+  return claim.token;
 }
 
 /** The fact and reservation settle together; capacity never has an empty gap. */

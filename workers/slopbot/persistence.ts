@@ -267,7 +267,7 @@ export class ReviewLeaseLostError extends Error {
 }
 export type ReviewClaim = { reviewKey: string; token: string };
 
-async function ownsReviewClaim(
+export async function ownsReviewClaim(
   db: D1Database,
   claim: ReviewClaim,
 ): Promise<boolean> {
@@ -288,13 +288,16 @@ export async function assertReviewClaim(db: D1Database, claim: ReviewClaim) {
 // external close also owns it after a review fails; elapsed time alone does
 // not prove that GitHub cannot still apply that close.
 function authorCapacity(repository: string, author: string, key: string) {
+  // The clock is one bound value read through a CTE, so the statement keeps a
+  // single placeholder for it however many times the guard compares.
+  const clock = "(SELECT at FROM capacity_clock)";
   return `(SELECT COUNT(*) FROM slopbot_reviews capacity
     WHERE capacity.repository_id = ${repository} AND capacity.author_id = ${author}
       AND capacity.review_key != ${key} AND (
-        (capacity.status = 'running' AND capacity.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-        OR (capacity.status = 'completed' AND capacity.completed_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+        (capacity.status = 'running' AND capacity.lease_expires_at > ${clock})
+        OR (capacity.status = 'completed' AND capacity.completed_at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-1 day'))
         OR EXISTS (SELECT 1 FROM slopbot_close_attempts c WHERE c.review_key = capacity.review_key
-          AND (c.state = 'pending' OR c.closed_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day')))
+          AND (c.state = 'pending' OR c.closed_at > strftime('%Y-%m-%dT%H:%M:%fZ', ${clock}, '-1 day')))
       )) < ${AUTHOR_DAILY_CAP}`;
 }
 
@@ -316,14 +319,16 @@ export async function startReview(
   // original timestamp and identify retries. All new calls are free.
   const resumed = await db
     .prepare(
-      `UPDATE slopbot_reviews SET status = 'running', content_digest = ?,
-        created_at = CASE WHEN EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?)
-          THEN created_at ELSE ? END, skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ?
-       WHERE review_key = ? AND status = 'skipped'
+      `WITH capacity_clock(at) AS (VALUES (?1))
+       UPDATE slopbot_reviews SET status = 'running', content_digest = ?2,
+        created_at = CASE WHEN EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?3)
+          THEN created_at ELSE ?4 END, skip_reason = NULL, completed_at = NULL, claim_token = ?5, lease_expires_at = ?6
+       WHERE review_key = ?7 AND status = 'skipped'
        ${limitNewAuthor ? `AND ${authorCapacity("slopbot_reviews.repository_id", "slopbot_reviews.author_id", "slopbot_reviews.review_key")}` : ""}
-       RETURNING EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?) AS retry`,
+       RETURNING EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?8) AS retry`,
     )
     .bind(
+      at,
       row.contentDigest,
       row.reviewKey,
       at,
@@ -336,15 +341,17 @@ export async function startReview(
   if (resumed !== null) return resumed.retry === 1 ? "retry" : "new";
   const retried = await db
     .prepare(
-      `UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ? WHERE review_key = ? AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= ?))
+      `WITH capacity_clock(at) AS (VALUES (?1))
+       UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ?2, lease_expires_at = ?3 WHERE review_key = ?4 AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= ?5))
        ${limitNewAuthor ? `AND ${authorCapacity("slopbot_reviews.repository_id", "slopbot_reviews.author_id", "slopbot_reviews.review_key")}` : ""}`,
     )
-    .bind(token, expires, row.reviewKey, at)
+    .bind(at, token, expires, row.reviewKey, at)
     .run();
   if ((retried.meta?.changes ?? 0) === 1) return "retry";
   const result = await db
     .prepare(
-      `INSERT OR IGNORE INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number,
+      `WITH capacity_clock(at) AS (VALUES (?14))
+     INSERT OR IGNORE INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number,
       item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at)
      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'running', ?11, ?12, ?13
      ${limitNewAuthor ? `WHERE ${authorCapacity("?3", "?7", "?1")}` : ""}`,
@@ -363,6 +370,7 @@ export async function startReview(
       at,
       token,
       expires,
+      at,
     )
     .run();
   if ((result.meta?.changes ?? 0) === 1) return "new";

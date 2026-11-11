@@ -4404,9 +4404,11 @@ test("a close reservation whose review lease expires while paused cannot send a 
         (write) => write.startsWith("PATCH ") && write.includes("/pulls/"),
       ),
     ).toEqual([]);
-    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
-      [{ n: 0 }],
-    );
+    // The reservation is append-only history: the refused attempt stays, in
+    // its terminal state, and no longer holds the item or the capacity.
+    expect(run.sql("SELECT state FROM slopbot_close_attempts")).toEqual([
+      { state: "rejected" },
+    ]);
     expect(
       run.sql(
         "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
