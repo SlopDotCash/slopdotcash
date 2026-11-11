@@ -610,7 +610,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "b71be73c7f51c155d19745ef83dfea9762f9146413124d69735bea705a57962d",
+      "sha256": "049dce38ad2443b706dbb55565d0ae65a8ca597e2ed44d5e4433c66b800c9365",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -635,13 +635,13 @@
       "candidateLines": [
         159, 164, 174, 178, 236, 261, 266, 293, 294, 296, 298, 347, 431, 438,
         444, 448, 449, 457, 523, 527, 858, 895, 911, 1007, 1021, 1026, 1033,
-        1034, 1037, 1040, 1058, 1060, 1062, 1073, 1091, 1098, 1109, 1141, 1142,
-        1153, 1155, 1160, 1161, 1162, 1163, 1175, 1176, 1177, 1179, 1184, 1222,
-        1281, 1331, 1365, 1383, 1450, 1531, 1542, 1551, 1554, 1574, 1616, 1622,
-        1626, 1632, 1638, 1674, 1682, 1685, 1686, 1731, 1732, 1733, 1750, 1794,
-        1801, 1813, 1850, 1869, 1873, 1926, 2071, 2075, 2102, 2123, 2124, 2135,
-        2139, 2174, 2188, 2206, 2223, 2255, 2264, 2408, 2434, 2583, 2640, 2680,
-        2691, 2692, 2805, 2813, 2831, 3027
+        1034, 1037, 1040, 1058, 1060, 1062, 1073, 1091, 1098, 1109, 1110, 1143,
+        1144, 1155, 1157, 1162, 1163, 1164, 1165, 1177, 1178, 1179, 1181, 1191,
+        1229, 1288, 1338, 1372, 1390, 1457, 1538, 1549, 1558, 1561, 1582, 1624,
+        1630, 1634, 1640, 1646, 1682, 1690, 1693, 1694, 1739, 1740, 1741, 1758,
+        1802, 1809, 1821, 1858, 1877, 1881, 1934, 2079, 2083, 2110, 2131, 2132,
+        2143, 2147, 2182, 2196, 2214, 2231, 2263, 2272, 2416, 2442, 2591, 2648,
+        2688, 2699, 2700, 2813, 2821, 2839, 3035
       ],
       "review": "mapped-abstraction"
     },
@@ -5238,16 +5238,16 @@
     },
     {
       "path": "src/ProjectSetupStatus.tsx",
-      "sha256": "afb10cfa20124c063459378947e23deb2a0cf12a3470c1ab28ff538792681bdf",
+      "sha256": "06fce41f81f5203bbb85993e37005a92a8bb6b4523ff52cd1dcf008af7dde792",
       "models": [
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        12, 15, 30, 34, 39, 44, 47, 53, 55, 71, 74, 78, 88, 119, 122, 125, 126,
-        183, 218, 221, 222, 247, 250, 251, 255, 259, 260, 307, 309, 323, 325,
-        342, 346, 349, 351, 393
+        12, 15, 30, 34, 39, 44, 47, 53, 55, 71, 74, 78, 88, 120, 123, 126, 127,
+        184, 219, 222, 223, 248, 251, 252, 256, 260, 261, 308, 310, 324, 326,
+        343, 347, 350, 352, 394
       ],
       "review": "mapped-abstraction"
     },
@@ -6028,7 +6028,7 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "f65cf5bfb3d596097b48877ebbfae30b0e09264b1a641f67e821193895706c78",
+      "sha256": "70e16887af82a42c6697c21b9542cf01fe45e66755f1584218bb259121581723",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -9366,7 +9366,7 @@
     },
     {
       "path": "formal/models/api/api_project_setup_check.qnt",
-      "sha256": "5e3213d62610489d8bbfb11968f533eccd23812ff4447e9ad18040eadcebecc5",
+      "sha256": "e42d12f4627f21b643a3dc029f343f3174d08b01e853aaa1b3b2032fc4000ced",
       "sources": [
         "backend/projects/handler.ts",
         "backend/projects/setup.ts",
@@ -9406,7 +9406,8 @@
         "suspendedInstallationTest",
         "unavailableInstallationTest",
         "unfundedActivationTest",
-        "unscannedQueuesTest"
+        "unscannedQueuesTest",
+        "writerWithoutResumeAuthorityDoesNotActivateTest"
       ]
     },
     {
