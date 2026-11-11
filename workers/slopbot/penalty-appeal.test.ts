@@ -3797,6 +3797,27 @@ test("an author's own reopen after a push is still not a maintainer decision", a
   });
 });
 
+test("an author's appeal before any finding does not exempt the revision from review", async () => {
+  await closedItem(async (run) => {
+    // The author comments `/slopbot appeal` before Slopbot has reviewed the
+    // revision: there is no finding to appeal and no maintainer decision.
+    await run.deliver(run.job("appeal", { senderId: AUTHOR }));
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
+test("an author's appeal before any finding keeps the advisory label when closure is off", async () => {
+  await closedItem(async (run) => {
+    run.closureEnabled(false);
+    await run.deliver(run.job("appeal", { senderId: AUTHOR }));
+    expect(await run.review()).toBe("labeled (spam)");
+    expect(run.sql(PENALTY)).toEqual([]);
+  });
+});
+
 test("a retired project reverses an existing debit through a maintainer reopen, with no review or GitHub write", async () => {
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
