@@ -22,6 +22,7 @@ import {
   expectAccessible,
   openProjectSecuritySettings,
   projectSuffix,
+  serveProjectCycleIndex,
   test,
 } from "./fixtures";
 
@@ -3138,6 +3139,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
   let shown: Record<string, unknown> = project;
+  await serveProjectCycleIndex(page, [id]);
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
