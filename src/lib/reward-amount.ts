@@ -1,5 +1,6 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
+import { formatAssetSymbol } from "./reward-asset.mjs";
 import { roundedUsdcCents } from "./verified-frontend";
 
 export function formatMicroUsdc(value: string): string {
@@ -31,7 +32,7 @@ export function formatRewardMinor(
   asset?: RewardAmountAsset,
 ): string {
   if (!asset || asset.kind === "stablecoin") return formatMicroUsdc(minor);
-  return `${formatBaseUnits(minor, asset.decimals)} ${asset.symbol}`;
+  return `${formatBaseUnits(minor, asset.decimals)} ${formatAssetSymbol(asset.symbol, asset.kind)}`;
 }
 
 /**
@@ -46,6 +47,16 @@ export function monthlyPoolUnfunded(
   );
 }
 
+/** Formats the unit of a schema-validated cap without changing its amount. */
+export function formatRewardCapDisplay(
+  display: string,
+  asset?: Pick<RewardAmountAsset, "kind" | "symbol">,
+): string {
+  return asset && asset.kind !== "stablecoin"
+    ? display.replace(/\S+$/u, formatAssetSymbol(asset.symbol, asset.kind))
+    : display;
+}
+
 export function monthlyPoolLabel(
   reward: Pick<
     ProjectDefinition["reward"],
@@ -53,7 +64,8 @@ export function monthlyPoolLabel(
   >,
   asset?: RewardAmountAsset,
 ): string {
+  const cap = formatRewardCapDisplay(reward.monthlyCapDisplay, asset);
   return monthlyPoolUnfunded(reward)
-    ? `${reward.monthlyCapDisplay} monthly · not funded`
-    : `${formatRewardMinor(reward.committedMinor, asset)} funded · ${reward.monthlyCapDisplay} monthly`;
+    ? `${cap} monthly · not funded`
+    : `${formatRewardMinor(reward.committedMinor, asset)} funded · ${cap} monthly`;
 }

@@ -3154,6 +3154,14 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  // Discovery keeps current security offers before project lists and rankings.
+  expect(
+    await page
+      .locator(
+        "main > #security-bounties, main > #projects, main > #leaderboard",
+      )
+      .evaluateAll((sections) => sections.map((section) => section.id)),
+  ).toEqual(["security-bounties", "projects", "leaderboard"]);
   const featured = page.locator('[aria-labelledby="featured-projects"]');
   await expect(featured.locator(".project-card")).toHaveCount(1);
   await expect(featured).toContainText("$10k");
