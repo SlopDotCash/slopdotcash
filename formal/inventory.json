@@ -243,7 +243,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
+      "sha256": "fa72085f34dbc80b583cff72ed51b3190767c4d115bc1e7f9faf1c097a4bee8b",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -254,14 +254,14 @@
       ],
       "candidateLines": [
         15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
-        290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 467, 483, 498, 530,
-        556, 585, 649, 666
+        290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 462, 520, 536, 551,
+        583, 609, 638, 702, 719
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/notifications/handler.ts",
-      "sha256": "bfaede28a5ec282915971f8e4df15d48c6051300cb40f52103ab962e0a71aa4b",
+      "sha256": "b90f2c777b23c14c9f26d298348f134170e1c19d05890816988c6f9e3ec5c56e",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -269,7 +269,7 @@
         "formal/models/api/inbox_queries.qnt",
         "formal/models/api/incomplete_assessment_queries.qnt"
       ],
-      "candidateLines": [61, 68, 69, 140, 173, 207, 211, 274, 307, 327, 328],
+      "candidateLines": [65, 72, 73, 144, 177, 211, 215, 280, 313, 334, 335],
       "review": "mapped-abstraction"
     },
     {
@@ -7184,13 +7184,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "58e062d7cfe9a2019956e4c8f6ef2fce041e4d3ad1edbfc40dc54e7f6bc65512",
+      "sha256": "2ca1da1320b32f3842e351e1fd5fb58dc2fdf30e4d1e1caccabf352a7d167651",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [303, 305, 324, 330, 344],
+      "candidateLines": [313, 315, 334, 340, 354],
       "review": "mapped-abstraction"
     },
     {

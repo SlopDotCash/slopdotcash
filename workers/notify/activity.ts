@@ -7,6 +7,7 @@ import {
 import {
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
+  REINSTATEMENT_REQUEST_OPEN,
 } from "../../backend/notifications/events";
 import type { SecurityD1Database } from "../../backend/security/case-store";
 import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
@@ -231,13 +232,22 @@ export async function dispatchActivityMail(
         }
       }
       // A reinstatement review (ELG-02) asks the moderators who may decide the
-      // request. A removed moderator no longer belongs to that audience.
-      if (
-        row.event_key.startsWith("reinstatement-review:") &&
-        !deps.moderatorGithubIds?.has(row.recipient_github_id)
-      ) {
-        await recordDelivery(deps, row, "suppressed", null, "activity");
-        continue;
+      // request. A removed moderator no longer belongs to that audience, and
+      // a request another moderator already decided asks nothing, exactly as
+      // a resolved appeal above no longer mails its reviewers.
+      if (row.event_key.startsWith("reinstatement-review:")) {
+        const open = deps.moderatorGithubIds?.has(row.recipient_github_id)
+          ? await deps.db
+              .prepare(
+                `SELECT 1 AS open WHERE ${REINSTATEMENT_REQUEST_OPEN("?")}`,
+              )
+              .bind(row.event_key)
+              .first<{ open: number }>()
+          : null;
+        if (!open) {
+          await recordDelivery(deps, row, "suppressed", null, "activity");
+          continue;
+        }
       }
       if (
         !(await stillProjectRecipient(
