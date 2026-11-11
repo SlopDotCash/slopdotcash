@@ -41,12 +41,30 @@ test("an agent instruction file of a recognized agent tool is an agent surface",
   }
 });
 
-test("a document outside the agent surfaces keeps no agent surface", () => {
-  expect(surfacesOf("docs/guide.md")).toEqual([]);
-  expect(surfacesOf("LICENSE")).toEqual([]);
-  expect(inspected("docs/guide.md", PAYLOAD).findings).toEqual([]);
-});
-
+// biome-ignore format: preserve the required semicolon-free test statements
+test("every Markdown file is reviewed as agent instruction content", () => {
+  for (const path of [
+    "docs/guide.md",
+    "docs/agents/reviewer.md",
+    "prompts/build-prompt.md",
+    "skills/example/references/review.md",
+  ]) {
+    const inspection = inspected(path, `${PAYLOAD}\n`)
+    expect(surfacesOf(path)).toContain("agentInstructions")
+    expect({
+      path,
+      coverage: inspection.coverage.agentInstructions,
+      findings: inspection.findings.map(
+        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+      ),
+    }).toEqual({
+      path,
+      coverage: { state: "complete", items: 1 },
+      findings: [`${path}:unsafe-execution:high`],
+    })
+  }
+  expect(surfacesOf("LICENSE")).toEqual([])
+})
 test("new instruction checks cannot reuse a clean assessment of the same source bytes", () => {
   const inspection = inspected(
     ".windsurf/settings.json",
