@@ -63,6 +63,9 @@ for (const ref of ["refs/heads/main", "refs/heads/development"]) {
       expect(values.sandbox).toBe("true");
       expect(values.evm).toBe("true");
       expect(values.solana).toBe("true");
+      expect(values.formal_models).toBe("all");
+      expect(JSON.parse(values.formal_shards)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(values.lemmascript).toBe("true");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -152,14 +155,24 @@ function git(cwd: string, ...args: string[]) {
   ).trim();
 }
 
-/** Runs the real selector for a contributor PR that changes `files`. */
-function scopeFor(files: Record<string, string>) {
+/**
+ * Runs the real selector for a contributor PR that changes `files` on a base
+ * that already holds `baseFiles`.
+ */
+function scopeFor(
+  files: Record<string, string>,
+  baseFiles: Record<string, string> = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), "slop-ci-scope-"));
   const repository = join(directory, "repository");
   try {
     mkdirSync(repository);
     git(repository, "init", "--quiet");
     writeFileSync(join(repository, "README.md"), "base\n");
+    for (const [path, content] of Object.entries(baseFiles)) {
+      mkdirSync(dirname(join(repository, path)), { recursive: true });
+      writeFileSync(join(repository, path), content);
+    }
     git(repository, "add", "-A");
     git(repository, "commit", "--quiet", "-m", "base");
     const base = git(repository, "rev-parse", "HEAD");
@@ -352,3 +365,67 @@ test("every smoke lane grep alternative names an existing browser test", () => {
       titles.filter((title) => title.includes(alternative)).length,
     ).toBeGreaterThan(0);
 });
+
+const proofBase = {
+  "formal/models/release/demo_gate.qnt":
+    "// @source src/lib/gate.ts\nmodule demo_gate {}\n",
+  "formal/models/ui/demo_page.qnt":
+    "// @source src/Page.tsx\nmodule demo_page {}\n",
+  "LemmaScript-files.txt": "# Proof sources\nsrc/lib/verified-sum.ts\n",
+  "src/lib/verified-sum.ts":
+    'import { limit } from "./sum-limit.js";\nexport const sum = limit;\n',
+  "src/lib/sum-limit.ts": "export const limit = 1;\n",
+  "src/lib/gate.ts": "export const gate = 1;\n",
+  "src/Page.tsx": "export const page = 1;\n",
+  "src/other.ts": "export const other = 1;\n",
+};
+
+test("a pull request checks only the models whose sources it changes", () => {
+  const values = scopeFor(
+    { "src/lib/gate.ts": "export const gate = 2;\n" },
+    proofBase,
+  );
+  expect(values.formal_models).toBe("demo_gate");
+  expect(JSON.parse(values.formal_shards)).toEqual([1]);
+  expect(values.lemmascript).toBe("false");
+});
+
+test("a changed model file selects that model", () => {
+  expect(
+    scopeFor(
+      {
+        "formal/models/ui/demo_page.qnt":
+          "// @source src/Page.tsx\nmodule demo_page { }\n",
+      },
+      proofBase,
+    ).formal_models,
+  ).toBe("demo_page");
+});
+
+test("a pull request that touches no model input or proof checks neither", () => {
+  const values = scopeFor(
+    { "src/other.ts": "export const other = 2;\n" },
+    proofBase,
+  );
+  expect(values.formal_models).toBe("none");
+  expect(JSON.parse(values.formal_shards)).toEqual([1]);
+  expect(values.lemmascript).toBe("false");
+});
+
+for (const path of ["formal/tlc.json", "scripts/check-formal.mjs", "bun.lock"])
+  test(`a verifier tool change (${path}) checks every model`, () => {
+    expect(scopeFor({ [path]: "{}\n" }, proofBase).formal_models).toBe("all");
+  });
+
+for (const path of [
+  "src/lib/verified-sum.ts",
+  "src/lib/sum-limit.ts",
+  "formal/lemmascript/src/lib/verified-sum.dfy",
+  "LemmaScript-files.txt",
+])
+  test(`LemmaScript proofs follow ${path}`, () => {
+    expect(
+      scopeFor({ [path]: "export const changed = 1;\n" }, proofBase)
+        .lemmascript,
+    ).toBe("true");
+  });
