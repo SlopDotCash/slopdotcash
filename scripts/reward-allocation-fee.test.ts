@@ -4,17 +4,19 @@
  */
 
 /**
- * The 2% award fee rounds up, ceil(gross / 50), on both chains (PRD section 6,
- * owner decision of 25 October 2026; #1189). The live settlement paths charge
- * that rounded-up fee per recipient: the escrow proposal (ordinaryFee per
- * award) and the monthly execution snapshot (feeBase per award). The approved
- * reward-allocation manifest must publish the same total fee, so its
- * totals.feeMinor is the sum of the per-recipient rounded-up fees.
+ * The manifest fee rounds up per award at the project rate,
+ * ceil(gross * bp / 10_000). The live settlement paths charge their own
+ * rounded-up fee per recipient: the escrow proposal (ordinaryFee per award)
+ * and the monthly execution snapshot (feeBase per award). Settlement charges
+ * a flat 2%, ceil(gross / 50), independent of the project rate (PRD
+ * section 6, owner decision of 25 October 2026; #1189), so the manifest fee
+ * equals the settlement fee only at 200bps.
  *
  * feeForPrincipal floored the fee on the aggregate approved total instead:
  * a single approved award of 399 minor at 200bps published a 7-minor fee
  * while settlement deducted 8, and two approved awards of 2,000,001 minor
- * at 100bps published 40,000 while settlement deducted 40,002.
+ * at 100bps published 40,000 instead of the rounded-up per-recipient
+ * 40,002.
  */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -81,7 +83,7 @@ function approvedProposal(
   return proposal;
 }
 
-test("feeForPrincipal rounds the 2% fee up like the settlement fee", () => {
+test("feeForPrincipal rounds the fee up per award at the project rate", () => {
   expect(feeForPrincipal("399", 200)).toBe(ordinaryFee(399n).toString());
   expect(feeForPrincipal("399", 200)).toBe("8");
   expect(feeForPrincipal("2000399", 100)).toBe("20004");
@@ -111,8 +113,8 @@ test("a finalized two-recipient cycle sums the per-recipient fees", () => {
     Date.parse(approvedAt),
   );
   expect(finalized.totals.approvedMinor).toBe("4000002");
-  // Each recipient pays ceil(2,000,001 / 100) = 20,001; the aggregate
-  // ceiling of 40,001 would still understate what settlement deducts.
+  // Each recipient pays ceil(2,000,001 / 100) = 20,001; ceiling the
+  // aggregate first would give 40,001 instead of the per-recipient 40,002.
   expect(finalized.totals.feeMinor).toBe("40002");
 });
 
