@@ -3856,6 +3856,26 @@ test("an author's appeal after a push does not exempt the new head from review",
   });
 });
 
+test("an author's self-reopen after a push does not exempt the new head from review", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The author pushes head d and then reopens their own item. The only
+    // finding is head b's, so the self-reopen is an appeal of a revision no
+    // finding covers: it decides nothing about head d.
+    run.head("d".repeat(40));
+    run.model("spam", 0.97);
+    expect(await run.deliver(await run.reopen(AUTHOR))).toBe(
+      "appeal drafted (deny)",
+    );
+    // Head d still gets its own review and its own close and debit.
+    run.model("spam", 0.97);
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
 test("a retired project reverses an existing debit through a maintainer reopen, with no review or GitHub write", async () => {
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
