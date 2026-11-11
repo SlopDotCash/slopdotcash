@@ -3337,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "05875fae4e6c9786ea1db5cd63d53808e227d8078d19f39838d94dbc9d222e3f",
+      "sha256": "dc8e9d229a2493da9762c79558443bdc3ccc5b4319bf76e45426e50b51b3ba5b",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [52, 55, 63, 77, 102, 203, 205, 207, 254, 261, 314],
+      "candidateLines": [56, 59, 67, 81, 106, 207, 209, 211, 258, 265, 318],
       "review": "mapped-abstraction"
     },
     {

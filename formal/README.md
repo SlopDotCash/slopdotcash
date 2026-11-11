@@ -70,7 +70,7 @@ normally has a 180-second limit. Explicit resource exceptions in
 - 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
   `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
   `ui_vetting_reader`, `solana_wallet_provider`, `api_trace`, `ui_private_intake`,
-  and `fee_value_caps`.
+  `solana_binding_completion`, `evm_wallet_discovery`, and `fee_value_caps`.
 - 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,

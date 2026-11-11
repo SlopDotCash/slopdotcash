@@ -34,6 +34,10 @@ const verificationTimeouts = {
   // Keep every concrete transition and invariant; completion is still required.
   "formal/models/api/api_trace.qnt": 600_000,
   "formal/models/ui/ui_private_intake.qnt": 600_000,
+  // Completion retained 769,166 queued states on the hosted runner; discovery
+  // compiled after its scenario repair but retained 760,778 at the same limit.
+  "formal/models/payments/solana_binding_completion.qnt": 600_000,
+  "formal/models/ui/evm_wallet_discovery.qnt": 600_000,
   // These source-bound finite graphs still had millions of queued states
   // after the ordinary three-minute budget. Retain the complete domains,
   // transitions and reviewed views; grant time to finish the same graph.
