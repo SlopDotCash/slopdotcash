@@ -4569,12 +4569,12 @@
     },
     {
       "path": "skills/project-contributor-template/scripts/skill-authority.mjs",
-      "sha256": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
+      "sha256": "2b3b654c9323abad1943df1ad646702e38300f3f8ad0a61c34e21755276901f5",
       "models": [
         "formal/models/contributor/skill_install_process.qnt",
         "formal/models/contributor/skill_source_authority.qnt"
       ],
-      "candidateLines": [73, 97, 116, 247, 249, 250, 277, 503, 519, 524, 546],
+      "candidateLines": [73, 97, 116, 256, 258, 259, 286, 512, 528, 533, 555],
       "review": "mapped-abstraction"
     },
     {
