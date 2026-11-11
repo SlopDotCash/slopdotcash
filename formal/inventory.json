@@ -3699,7 +3699,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "b5164179b1114c391258721b4d821bfc08919e3995fdd6ac827b22a4863ced97",
+      "sha256": "87110321141bd980ab47b1b54a0055c1b9b2becea3fee5d2c9a60b069cb2c0db",
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
@@ -3708,15 +3708,15 @@
         "formal/models/slopbot/value_feed_deadline.qnt"
       ],
       "candidateLines": [
-        23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
-        653, 685, 881, 1108, 1170, 1178, 1236, 1289, 1292, 1485, 1494, 1499,
-        1506, 1589, 1590, 1737, 1738, 1795, 1821, 1839, 1841, 1845, 1879, 1882,
-        1883, 1886, 1888, 1899, 1922, 2129, 2132, 2440, 2459, 2557, 2570, 2581,
-        2582, 2759, 2761, 2953, 2969, 2981, 2988, 3014, 3024, 3028, 3032, 3036,
-        3091, 3110, 3137, 3154, 3188, 3189, 3191, 3207, 3224, 3225, 3226, 3235,
-        3240, 3420, 3778, 3800, 3809, 3859, 3894, 3900, 3907, 3976, 4061, 4213,
-        4428, 4438, 4440, 4453, 4482, 4484, 4485, 4489, 4493, 4548, 4602, 4653,
-        4656
+        27, 182, 193, 202, 255, 267, 269, 272, 371, 459, 480, 516, 547, 611,
+        643, 675, 871, 1098, 1160, 1168, 1226, 1279, 1282, 1475, 1484, 1489,
+        1496, 1579, 1580, 1727, 1728, 1785, 1811, 1829, 1831, 1835, 1869, 1872,
+        1873, 1876, 1878, 1889, 1912, 2119, 2122, 2430, 2449, 2547, 2560, 2571,
+        2572, 2749, 2751, 2943, 2959, 2971, 2978, 3004, 3014, 3018, 3022, 3026,
+        3081, 3100, 3127, 3144, 3178, 3179, 3181, 3197, 3214, 3215, 3216, 3225,
+        3230, 3410, 3768, 3790, 3799, 3849, 3884, 3890, 3897, 3966, 4051, 4203,
+        4423, 4433, 4435, 4448, 4477, 4479, 4480, 4484, 4488, 4543, 4597, 4648,
+        4651
       ],
       "review": "mapped-abstraction"
     },
@@ -4370,6 +4370,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/source-availability.ts",
+      "sha256": "22bbf66893a5484749b4fde34493e392fe044facf2cb0eb376d52ddb4fcea4cd",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Error type and pure filter of the requested node ids that GitHub reported unavailable; no retained state, I/O or retry. Census recollection after an unavailable node is modeled in github_census."
+    },
+    {
       "path": "scripts/source-correction.ts",
       "sha256": "8f2b004814c7f304ba72daa34ced1fed6670e12b8da0628966352e918bef3117",
       "models": ["formal/models/points/source_correction_preview.qnt"],
@@ -4441,14 +4449,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "2540b17918f66827d83a7b585360e4ecd5acbdcd59afe4d3d272193dad45f641",
+      "sha256": "b967014e440d000a8ed5f4f969f1abddf3b957ca25d60609901b4f65217310f6",
       "models": [
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 650, 686,
-        719, 743
+        49, 60, 114, 115, 116, 117, 119, 120, 188, 189, 190, 192, 193, 629, 665,
+        688, 714, 738, 747
       ],
       "review": "mapped-abstraction"
     },
