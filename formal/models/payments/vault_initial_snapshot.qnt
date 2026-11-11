@@ -3,6 +3,8 @@
 // @source backend/payments/vault-snapshots.ts
 // @source backend/security/payment-database.ts
 // @source workers/payments/index.ts
+// @source contracts/solana/adapter.ts
+// @source src/lib/vault-setup.ts
 // @source scripts/recover-vault-observations.ts
 // @evidence scripts/vault-setup-network-failure.test.ts
 // @evidence scripts/solana-vault-setup-network-failure.test.ts
@@ -12,8 +14,10 @@
 // and one representative cumulative counter in 0..1. These are finite bounds,
 // not product limits. Each cumulative counter uses the same independent guard.
 // Current balances may decrease and are outside the monotonic-counter claim.
-// Factory/finality/asset/vault/decimal validation is an external predicate; this
-// model does not prove RPC truth, SQL execution, authorization or chain finality.
+// The combined identity predicate includes factory/finality/asset/vault/decimal
+// checks and Solana genesis/reviewed-program/config/project-digest/purpose.
+// Native RPC cases exercise each refusal; this model does not prove RPC truth,
+// SQL execution, authorization or chain finality.
 // Successful append is atomic and immutable. Snapshot prior reads and guarded
 // writes are separate; an unavailable or lost reply never rolls append back.
 // Scope 1 is ordinary; scope 2 is the private security-payment database adapter.
