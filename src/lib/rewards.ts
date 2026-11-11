@@ -224,6 +224,12 @@ function sumMinor(values: readonly string[]): string {
   return values.reduce((total, value) => total + BigInt(value), 0n).toString();
 }
 
+/**
+ * The platform fee for one award principal, rounded up like the settlement
+ * fee: ceil(principal * basisPoints / 10_000), so splitting an award never
+ * lowers the fee (PRD section 6; #1189). Callers sum this per recipient:
+ * settlement charges the fee per award, not once on the approved total.
+ */
 export function feeForPrincipal(
   principalMinor: string,
   basisPoints: number,
@@ -240,7 +246,10 @@ export function feeForPrincipal(
       "basis points must be an integer from 0 through 10,000",
     );
   }
-  return ((BigInt(principalMinor) * BigInt(basisPoints)) / 10_000n).toString();
+  return (
+    (BigInt(principalMinor) * BigInt(basisPoints) + 9_999n) /
+    10_000n
+  ).toString();
 }
 
 function assertActor(value: unknown, path: string): ActorRef {
@@ -1274,10 +1283,22 @@ export function assertRewardAllocationManifest(
     ["approvedMinor", "feeMinor", "suggestedMinor"],
     "allocation manifest.totals",
   );
-  const feeMinor = feeForPrincipal(
-    approvedMinor,
-    project.reward.feeBasisPoints,
-  );
+  // The manifest fee is the sum of the per-recipient fees settlement
+  // charges, not the fee on the approved total: a rounded-up fee per award
+  // can exceed the rounded-up fee on the aggregate.
+  const feeMinor = allocations
+    .reduce(
+      (total, allocation) =>
+        total +
+        BigInt(
+          feeForPrincipal(
+            allocation.approvedMinor,
+            project.reward.feeBasisPoints,
+          ),
+        ),
+      0n,
+    )
+    .toString();
   if (
     minor(totals.suggestedMinor, "allocation totals.suggestedMinor") !==
       suggestedMinor ||

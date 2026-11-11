@@ -139,10 +139,16 @@ async function applyUnsafeDestinationHold(input: {
   proposal.totals.approvedMinor = proposal.allocations
     .reduce((sum, candidate) => sum + BigInt(candidate.approvedMinor), 0n)
     .toString();
-  proposal.totals.feeMinor = feeForPrincipal(
-    proposal.totals.approvedMinor,
-    proposal.feeBasisPoints,
-  );
+  proposal.totals.feeMinor = proposal.allocations
+    .reduce(
+      (sum, candidate) =>
+        sum +
+        BigInt(
+          feeForPrincipal(candidate.approvedMinor, proposal.feeBasisPoints),
+        ),
+      0n,
+    )
+    .toString();
   if (proposal.rewardLines) {
     for (const line of ["sharedPool", "reviewBudget"] as const) {
       proposal.rewardLines[line].approvedMinor = proposal.allocations

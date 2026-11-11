@@ -1037,7 +1037,8 @@ test("a stale public cycle does not lock the review month or discard its draft",
   september.reward.carriedMinor = september.reward.approvedMinor;
   september.reward.feeMinor = (
     (BigInt(september.reward.approvedMinor) *
-      BigInt(policy.reward.feeBasisPoints)) /
+      BigInt(policy.reward.feeBasisPoints) +
+      9_999n) /
     10_000n
   ).toString();
   await serveDecemberReview(page, published);

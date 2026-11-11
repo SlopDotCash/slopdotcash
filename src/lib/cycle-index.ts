@@ -1,5 +1,5 @@
 import type { ActorRef } from "./leaderboard-types";
-import { ALLOCATION_STATES } from "./rewards";
+import { ALLOCATION_STATES, feeForPrincipal } from "./rewards";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
 export type { CycleWalletProof };
@@ -736,9 +736,17 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
           : project.reward.monthlyCapMinor) ||
     normalizedReward.sharePartsPerMillion !== null ||
     BigInt(normalizedReward.feeMinor) !==
-      (BigInt(normalizedReward.approvedMinor) *
-        BigInt(project.reward.feeBasisPoints)) /
-        10_000n;
+      contributors.reduce(
+        (total, contributor) =>
+          total +
+          BigInt(
+            feeForPrincipal(
+              contributor.approvedMinor,
+              project.reward.feeBasisPoints,
+            ),
+          ),
+        0n,
+      );
   if (
     (isExternal &&
       (hasExternalMoney ||

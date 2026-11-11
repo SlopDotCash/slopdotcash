@@ -66,7 +66,20 @@ export function finalizeRewardAllocation(
     totals: {
       ...proposal.totals,
       approvedMinor,
-      feeMinor: feeForPrincipal(approvedMinor, proposal.feeBasisPoints),
+      // The manifest fee sums the per-recipient fees settlement charges.
+      feeMinor: proposal.allocations
+        .reduce(
+          (total, allocation) =>
+            total +
+            BigInt(
+              feeForPrincipal(
+                allocation.approvedMinor,
+                proposal.feeBasisPoints,
+              ),
+            ),
+          0n,
+        )
+        .toString(),
     },
   });
 }
