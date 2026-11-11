@@ -4,6 +4,7 @@ import {
   monthlyPoolValue,
 } from "../src/lib/project-proposal";
 import {
+  hasProjectCardBounty,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "../src/lib/project-reward-summary";
@@ -28,6 +29,63 @@ const oneEth = "1000000000000000000";
 const eth = { kind: "native" as const, decimals: 18, symbol: "ETH" };
 const token = { kind: "token" as const, decimals: 18, symbol: "OPEN" };
 const usdc = { kind: "stablecoin" as const, decimals: 6, symbol: "USDC" };
+
+test("a points-only ordinary project names its existing open critical bounty without changing terms", () => {
+  const project = {
+    reward: { kind: "monthly-pool" as const, monthlyCapMinor: "0" },
+    securityBounty: {
+      rewardMode: "separate" as const,
+      status: "open" as const,
+      eligibility: "critical-loss-of-funds" as const,
+      amount: {
+        currency: "USDC",
+        decimals: 6,
+        network: "base" as const,
+        grossMinor: "10000000000",
+      },
+      funding: { state: "pledged" as const },
+    },
+  };
+  const original = structuredClone(project);
+  expect(hasProjectCardBounty(project)).toBe(true);
+  expect(securityBountyAmountLabel(project.securityBounty)).toBe("$10k");
+  expect(project).toEqual(original);
+  for (const status of [
+    "draft",
+    "pending-approval",
+    "paused",
+    "closed",
+  ] as const)
+    expect(
+      hasProjectCardBounty({
+        ...project,
+        securityBounty: { ...project.securityBounty, status },
+      }),
+    ).toBe(false);
+  expect(
+    hasProjectCardBounty({
+      ...project,
+      reward: { ...project.reward, monthlyCapMinor: "1000000000" },
+    }),
+  ).toBe(false);
+  expect(
+    hasProjectCardBounty({
+      ...project,
+      reward: { ...project.reward, kind: "external-prize-share" },
+    }),
+  ).toBe(false);
+  expect(hasProjectCardBounty({ reward: project.reward })).toBe(false);
+  expect(
+    hasProjectCardBounty({
+      ...project,
+      securityBounty: {
+        ...project.securityBounty,
+        rewardMode: "bounty-only",
+        status: "closed",
+      },
+    }),
+  ).toBe(true);
+});
 
 describe("formatRewardMinor", () => {
   test("shows a native amount in that coin", () => {

@@ -18,6 +18,7 @@ import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
+  hasProjectCardBounty,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
@@ -611,7 +612,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
 }
 
 function ProjectCard({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
@@ -666,7 +667,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
 }
 
 function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
