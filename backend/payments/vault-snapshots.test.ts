@@ -43,6 +43,19 @@ const totals = (overrides: Partial<VaultTotals> = {}): VaultTotals => ({
 });
 const observed = "2026-10-18T10:05:00.000Z";
 
+test("rejects malformed observation timestamps at the snapshot storage boundary", async () => {
+  const { db, sqlite } = sqliteD1();
+  try {
+    for (const invalid of ["not-a-date", "", "2026-10-18T10:05:00Z trailing"])
+      await expect(
+        storeVaultSnapshot(db, deployment, totals(), invalid),
+      ).rejects.toThrow("Invalid vault observation time");
+    expect(sqlite.query("SELECT * FROM vault_snapshots").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test("chronological and duplicate observations preserve the complete finalized row", async () => {
   const { db, sqlite } = sqliteD1();
   try {

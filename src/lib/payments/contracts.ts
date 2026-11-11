@@ -263,6 +263,8 @@ export function reservedGross(snapshot: {
 }
 /** A snapshot older than this is shown with a stale warning. Cron runs every 5 minutes. */
 export const VAULT_SNAPSHOT_STALE_MS = 30 * 60 * 1000;
+/** Allow one refresh interval of clock skew, but never let a far-future read look fresh. */
+export const VAULT_SNAPSHOT_MAX_FUTURE_MS = 5 * 60 * 1000;
 
 /** Mainnet block-explorer origins of the EVM networks. */
 const EVM_EXPLORER_ORIGIN = {

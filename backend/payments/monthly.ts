@@ -22,6 +22,7 @@ import {
 import {
   type MonthlyAwardState,
   type PaymentAsset,
+  VAULT_SNAPSHOT_MAX_FUTURE_MS,
   VAULT_SNAPSHOT_STALE_MS,
 } from "../../src/lib/payments/contracts";
 import { assertEscrowFinancialPolicy } from "../../src/lib/payments/escrow-review";
@@ -601,10 +602,13 @@ async function createMonthlyObligations(
         free_balance: string | null;
         observed_at: string;
       }>();
+    const observedAt = Date.parse(vault?.observed_at ?? "");
     if (
       !vault ||
       vault.asset_address.toLowerCase() !== run.snapshot.asset.toLowerCase() ||
-      now.getTime() - Date.parse(vault.observed_at) > VAULT_SNAPSHOT_STALE_MS
+      !Number.isFinite(observedAt) ||
+      now.getTime() - observedAt > VAULT_SNAPSHOT_STALE_MS ||
+      observedAt - now.getTime() > VAULT_SNAPSHOT_MAX_FUTURE_MS
     )
       return "stale-funding";
     if (vault.free_balance === null || BigInt(vault.free_balance) < needed) {

@@ -1771,7 +1771,20 @@ describe("monthly coordinator", () => {
     expect((await coordinate(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2082-11`, reason: "stale-funding" },
     ]);
-    vault("5000");
+    // A malformed or implausibly future observation must not authorize funds.
+    vault("5000", "not-a-date");
+    expect((await coordinate(afterCutoff)).waiting).toEqual([
+      { key: `${project.id}/2082-11`, reason: "stale-funding" },
+    ]);
+    vault(
+      "5000",
+      new Date(afterCutoff.getTime() + 5 * 60_000 + 1).toISOString(),
+    );
+    expect((await coordinate(afterCutoff)).waiting).toEqual([
+      { key: `${project.id}/2082-11`, reason: "stale-funding" },
+    ]);
+    // Match the repository's five-minute external-event clock-skew allowance.
+    vault("5000", new Date(afterCutoff.getTime() + 5 * 60_000).toISOString());
     expect((await coordinate(afterCutoff)).created).toEqual([
       `${project.id}/2082-11`,
     ]);
@@ -2029,7 +2042,7 @@ describe("monthly coordinator", () => {
         ).proposal?.allocations.map((row) => row.grossBase),
       ).toEqual(["500", "300"]);
 
-      vault("1000");
+      vault("1000", clock.toISOString());
       beforeAllocationWrite(() =>
         service.finalize(project.id, "2082-11", actor, 2),
       );

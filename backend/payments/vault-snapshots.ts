@@ -69,6 +69,8 @@ export async function storeVaultSnapshot(
   totals: VaultTotals,
   observedAt: string,
 ): Promise<"stored" | "older"> {
+  if (!Number.isFinite(Date.parse(observedAt)))
+    throw new Error("Invalid vault observation time");
   if (
     totals.network !== deployment.network ||
     !sameAddress(
