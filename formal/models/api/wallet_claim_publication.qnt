@@ -198,23 +198,35 @@ module wallet_claim_publication {
   action readCurrent(actor: int, chain: int): bool = all { s.configured, actors.contains(actor), chains.contains(chain), s.reads < 2,
     s' = s.with("reads", s.reads + 1).with("observedCurrent", s.heads.get(lineage(actor, chain))) }
   action step = {
-    nondet slot = slots.oneOf()
-    nondet mode = Set("contributor", "operator").oneOf()
-    nondet actor = actors.oneOf()
-    nondet chain = chains.oneOf()
-    nondet address = Set(1, 2).oneOf()
-    nondet login = Set(1, 2, 3).oneOf()
-    nondet predecessor = 0.to(6).oneOf()
-    nondet source = sources.oneOf()
-    nondet observed = 0.to(2).oneOf()
-    nondet material = Set(1, 2).oneOf()
-    nondet seedKind = Set("none", "legacy", "registry", "two-chains", "two-actors").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { configure(seedKind), tick, begin(slot, mode, actor, chain, address, login, predecessor, source, observed, material),
-      authority(slot, yes), body(slot, yes), readTip(slot, yes), capture(slot), prepare(slot, yes), readDigest(slot, yes),
-      readPredecessor(slot, yes), batch(slot, yes), batchResult(slot, yes, other), recoverDigest(slot, yes), readCompeting(slot, yes),
-      respond(slot, yes), readCurrent(actor, chain), s' = s }
+    any {
+      { nondet seedKind = Set("none", "legacy", "registry", "two-chains", "two-actors").oneOf() configure(seedKind) },
+      tick,
+      // begin's own state guards, repeated so that an unconfigured state or a
+      // busy slot refuses this branch before its choices are enumerated.
+      all { s.configured,
+        { nondet slot = slots.oneOf()
+          all { Set("unused", "done").contains(s.requests.get(slot).phase), s.requests.get(slot).attempt < 2,
+            { nondet mode = Set("contributor", "operator").oneOf() nondet actor = actors.oneOf()
+              nondet chain = chains.oneOf() nondet address = Set(1, 2).oneOf() nondet login = Set(1, 2, 3).oneOf()
+              nondet predecessor = 0.to(6).oneOf() nondet source = sources.oneOf() nondet observed = 0.to(2).oneOf()
+              nondet material = Set(1, 2).oneOf()
+              begin(slot, mode, actor, chain, address, login, predecessor, source, observed, material) } } } },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() authority(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() body(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readTip(slot, yes) },
+      { nondet slot = slots.oneOf() capture(slot) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() prepare(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readDigest(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readPredecessor(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() batch(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        batchResult(slot, yes, other) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() recoverDigest(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readCompeting(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() respond(slot, yes) },
+      { nondet actor = actors.oneOf() nondet chain = chains.oneOf() readCurrent(actor, chain) },
+      s' = s
+    }
   }
   val newRows = rows.filter(id => id > 2 and s.history.get(id).exists)
   val invariant = all {

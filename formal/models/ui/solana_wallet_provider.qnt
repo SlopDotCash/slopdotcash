@@ -149,18 +149,28 @@ module solana_wallet_provider {
       s' = s.with("operations", s.operations.set(id, op.with("phase", "provider-wait").with("invoked", true))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet method = methods.oneOf()
-    nondet chain = addresses.oneOf()
-    nondet address = Set(0, 1, 2).oneOf()
-    nondet account = addresses.oneOf()
-    nondet caps = capabilities.oneOf()
-    nondet kind = Set("standard", "legacy").oneOf()
-    nondet outcome = Set("exact", "short", "changed-message", "changed-transaction", "empty-transaction", "missing", "throw").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { configure(kind), connect, connectReply(account, caps, yes), unregister, setAddress(address), replaceAccountObject,
-      withdrawFeature(method), removeChain(chain), removeLegacyFormat(method), begin(id, method, chain),
-      standardInvoke(id, yes), reconnect(id), reconnectReply(id, yes), providerReply(id, outcome), sendEffect(id), s' = s }
+    any {
+      { nondet kind = Set("standard", "legacy").oneOf() configure(kind) },
+      connect,
+      { nondet account = addresses.oneOf() nondet caps = capabilities.oneOf() nondet yes = Set(false, true).oneOf()
+        connectReply(account, caps, yes) },
+      unregister,
+      { nondet address = Set(0, 1, 2).oneOf() setAddress(address) },
+      replaceAccountObject,
+      { nondet method = methods.oneOf() withdrawFeature(method) },
+      { nondet chain = addresses.oneOf() removeChain(chain) },
+      { nondet method = methods.oneOf() removeLegacyFormat(method) },
+      { nondet id = ids.oneOf() nondet method = methods.oneOf() nondet chain = addresses.oneOf()
+        begin(id, method, chain) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() standardInvoke(id, yes) },
+      { nondet id = ids.oneOf() reconnect(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() reconnectReply(id, yes) },
+      { nondet id = ids.oneOf()
+        nondet outcome = Set("exact", "short", "changed-message", "changed-transaction", "empty-transaction", "missing", "throw").oneOf()
+        providerReply(id, outcome) },
+      { nondet id = ids.oneOf() sendEffect(id) },
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.address), Set(0, 1, 2).contains(s.capturedAddress), s.effects.subseteq(ids),
@@ -174,7 +184,7 @@ module solana_wallet_provider {
         op.encoded implies op.method == "text" and op.result == "ok",
         s.effects.contains(id) implies op.invoked and op.method == "send" }
     }) }
-  action connected(kind: str, caps: str): bool = init.then(configure(kind)).then(connect).then(connectReply(1, caps, true))
+  run connected(kind: str, caps: str): bool = init.then(configure(kind)).then(connect).then(connectReply(1, caps, true))
   action standardCall(id: int, method: str): bool = begin(id, method, 1).then(standardInvoke(id, true))
   action legacyCall(id: int, method: str): bool = begin(id, method, 1).then(reconnect(id)).then(reconnectReply(id, true))
 

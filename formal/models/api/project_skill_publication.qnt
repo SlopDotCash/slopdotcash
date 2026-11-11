@@ -161,17 +161,35 @@ module project_skill_publication {
       request.with("phase", "done").with("delivered", received))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet project = ids.oneOf()
-    nondet method = Set("GET", "HEAD", "POST").oneOf()
-    nondet route = Set("artifact", "terms", "discovery", "unmatched").oneOf()
-    nondet file = files.oneOf()
-    nondet kind = Set("cleared", "unverified", "other").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { omit(project), unpublish(project), pause(project), retire(project), restrict(project), revise(project),
-      evidence(project, kind), changeLivePin, publishTemplate, mismatchedAsset(file), begin(id, method, route, project, yes),
-      readProjects(id), readRestrictions(id), joined(id), templateReply(id, yes), clearanceReply(id, project), discovered(id),
-      fileReply(id, yes), render(id, yes), selectRequest(id), dependencyFailure(id), deliver(id, yes), s' = s }
+    any {
+      { nondet project = ids.oneOf() omit(project) },
+      { nondet project = ids.oneOf() unpublish(project) },
+      { nondet project = ids.oneOf() pause(project) },
+      { nondet project = ids.oneOf() retire(project) },
+      { nondet project = ids.oneOf() restrict(project) },
+      { nondet project = ids.oneOf() revise(project) },
+      { nondet project = ids.oneOf() nondet kind = Set("cleared", "unverified", "other").oneOf()
+        evidence(project, kind) },
+      changeLivePin,
+      publishTemplate,
+      { nondet file = files.oneOf() mismatchedAsset(file) },
+      { nondet id = ids.oneOf() nondet project = ids.oneOf() nondet method = Set("GET", "HEAD", "POST").oneOf()
+        nondet route = Set("artifact", "terms", "discovery", "unmatched").oneOf()
+        nondet yes = Set(false, true).oneOf()
+        begin(id, method, route, project, yes) },
+      { nondet id = ids.oneOf() readProjects(id) },
+      { nondet id = ids.oneOf() readRestrictions(id) },
+      { nondet id = ids.oneOf() joined(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() templateReply(id, yes) },
+      { nondet id = ids.oneOf() nondet project = ids.oneOf() clearanceReply(id, project) },
+      { nondet id = ids.oneOf() discovered(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() fileReply(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() render(id, yes) },
+      { nondet id = ids.oneOf() selectRequest(id) },
+      { nondet id = ids.oneOf() dependencyFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() deliver(id, yes) },
+      s' = s
+    }
   }
   val invariant = all { ids.forall(id => {
     val request = s.requests.get(id)

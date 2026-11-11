@@ -94,16 +94,27 @@ module ui_cycle_archive {
   action snapshotFailure = all { needsSnapshot, s' = s.with("snapshot", "error") }
   action depart = s' = s.with("mounted", false).with("scheduled", 0)
   action step = {
-    nondet id = ids.oneOf()
-    nondet projectFilter = Set(0, 1, 2, 3).oneOf()
-    nondet monthFilter = Set(0, 1, 2, 3).oneOf()
-    nondet stateFilter = Set(0, 1, 2, 3).oneOf()
-    nondet target = Set(1, 2, 3).oneOf()
-    nondet records = Set(Set(), Set(1), Set(2), ids).oneOf()
-    any { indexReady(s.generation, records), indexFailure(s.generation), refresh,
-      requestFilters(projectFilter, monthFilter, stateFilter), synchronizeFilters, renderArchive,
-      advanceClock, deliverTimer, retire(id), openDetail(target), openProject(id),
-      openArchive, snapshotReady, publishedDuringSnapshot, snapshotFailure, depart, s' = s }
+    any {
+      { nondet records = Set(Set(), Set(1), Set(2), ids).oneOf() indexReady(s.generation, records) },
+      indexFailure(s.generation),
+      refresh,
+      { nondet projectFilter = Set(0, 1, 2, 3).oneOf() nondet monthFilter = Set(0, 1, 2, 3).oneOf()
+        nondet stateFilter = Set(0, 1, 2, 3).oneOf()
+        requestFilters(projectFilter, monthFilter, stateFilter) },
+      synchronizeFilters,
+      renderArchive,
+      advanceClock,
+      deliverTimer,
+      { nondet id = ids.oneOf() retire(id) },
+      { nondet target = Set(1, 2, 3).oneOf() openDetail(target) },
+      { nondet id = ids.oneOf() openProject(id) },
+      openArchive,
+      snapshotReady,
+      publishedDuringSnapshot,
+      snapshotFailure,
+      depart,
+      s' = s
+    }
   }
   val invariant = all {
     s.records.subseteq(ids), s.generation >= 1, s.generation <= 2,

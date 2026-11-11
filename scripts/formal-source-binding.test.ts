@@ -29,6 +29,7 @@ it("refuses a successful model run when its mapped implementation changes during
     for (const script of [
       "formal-models.mjs",
       "quint-safety-view.mjs",
+      "quint-verification-step.mjs",
       "run-e2e-phase.mjs",
     ])
       writeFileSync(

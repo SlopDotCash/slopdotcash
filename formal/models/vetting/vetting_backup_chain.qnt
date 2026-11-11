@@ -149,18 +149,42 @@ module vetting_backup_chain {
     not(s.destinations.contains(object)),
     s' = s.with("destinations", s.destinations.union(Set(object))) }
   action step = {
-    nondet page = jobs.oneOf()
-    nondet object = objects.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
-    any { start, putStart(a), readStart, resume, deliver(page), loadStart, loadPage,
-      copy(a), verifyCopy, recordPage(a), readPage, sendNext(a), receipt(a), readReceipt,
-      finishBackup, sendCleanup(a), finishCleanup, ack, loseReply, retry, replay(page),
-      loseCopy(object), corruptCopy(object), losePage(object), loseCompletion,
-      beginRestore(object), restore(a, b, c),
-      readRestoreSource, putRestore(a), readRestore, loseRestoreReply,
-      conflictingDestination(object), s' = s }
+    any {
+      start,
+      { nondet a = Set(false, true).oneOf() putStart(a) },
+      readStart,
+      resume,
+      { nondet page = jobs.oneOf() deliver(page) },
+      loadStart,
+      loadPage,
+      { nondet a = Set(false, true).oneOf() copy(a) },
+      verifyCopy,
+      { nondet a = Set(false, true).oneOf() recordPage(a) },
+      readPage,
+      { nondet a = Set(false, true).oneOf() sendNext(a) },
+      { nondet a = Set(false, true).oneOf() receipt(a) },
+      readReceipt,
+      finishBackup,
+      { nondet a = Set(false, true).oneOf() sendCleanup(a) },
+      finishCleanup,
+      ack,
+      loseReply,
+      retry,
+      { nondet page = jobs.oneOf() replay(page) },
+      { nondet object = objects.oneOf() loseCopy(object) },
+      { nondet object = objects.oneOf() corruptCopy(object) },
+      { nondet object = objects.oneOf() losePage(object) },
+      loseCompletion,
+      { nondet object = objects.oneOf() beginRestore(object) },
+      { nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
+        restore(a, b, c) },
+      readRestoreSource,
+      { nondet a = Set(false, true).oneOf() putRestore(a) },
+      readRestore,
+      loseRestoreReply,
+      { nondet object = objects.oneOf() conflictingDestination(object) },
+      s' = s
+    }
   }
   val invariant = all {
     s.pages.subseteq(s.pageHistory), s.pageHistory.subseteq(s.copied),

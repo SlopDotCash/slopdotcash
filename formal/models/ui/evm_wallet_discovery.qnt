@@ -82,17 +82,23 @@ module evm_wallet_discovery {
   action oldAccountReply = all { s.phase == "accounts-pending",
     s' = s.with("phase", "connected").with("addressReady", true) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet provider = providers.oneOf()
-    nondet metadata = Set(1, 2).oneOf()
-    nondet kind = Set("rpc", "sign").oneOf()
-    nondet outcome = Set("ok", "unsupported", "rejected", "other-error").oneOf()
-    nondet globals = Set(Set(), Set(1), Set(2), Set(1, 2, 3)).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { announce(id, provider, metadata, yes), legacy(globals), cleanup,
-      selectAnnounced(id), selectLegacy(provider), connect(yes), permissionReply(outcome),
-      accountReply(yes), accountError, invoke(id, kind), reply(id, yes, other), s' = s }
+    any {
+      { nondet id = ids.oneOf() nondet provider = providers.oneOf() nondet metadata = Set(1, 2).oneOf()
+        nondet yes = Set(false, true).oneOf()
+        announce(id, provider, metadata, yes) },
+      { nondet globals = Set(Set(), Set(1), Set(2), Set(1, 2, 3)).oneOf() legacy(globals) },
+      cleanup,
+      { nondet id = ids.oneOf() selectAnnounced(id) },
+      { nondet provider = providers.oneOf() selectLegacy(provider) },
+      { nondet yes = Set(false, true).oneOf() connect(yes) },
+      { nondet outcome = Set("ok", "unsupported", "rejected", "other-error").oneOf() permissionReply(outcome) },
+      { nondet yes = Set(false, true).oneOf() accountReply(yes) },
+      accountError,
+      { nondet id = ids.oneOf() nondet kind = Set("rpc", "sign").oneOf() invoke(id, kind) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        reply(id, yes, other) },
+      s' = s
+    }
   }
   val invariant = all {
     s.blockedIds.subseteq(ids), s.blockedProviders.subseteq(providers),
@@ -102,7 +108,7 @@ module evm_wallet_discovery {
     s.addressReady implies s.checkedAccountReply,
     ids.forall(id => s.calls.get(id).phase == "pending" implies s.calls.get(id).trusted),
     ids.forall(id => s.calls.get(id).result == "returned" implies s.calls.get(id).trusted) }
-  action selected = init.then(announce(1, 1, 1, true)).then(selectAnnounced(1))
+  run selected = init.then(announce(1, 1, 1, true)).then(selectAnnounced(1))
   action connected = selected.then(connect(false)).then(accountReply(true))
 
   run discoveryNeverConnectsTest = init.then(announce(1, 1, 1, true)).then(legacy(Set(2)))

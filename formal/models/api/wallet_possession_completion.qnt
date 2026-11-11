@@ -180,19 +180,38 @@ module wallet_possession_completion {
       request.with("phase", "done").with("response", if (received) request.desired else "lost"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet claim = ids.oneOf()
-    nondet actor = ids.oneOf()
-    nondet ch = challengeIds.oneOf()
-    nondet kind = Set("solana", "off-curve", "evm").oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
-    nondet d = Set(false, true).oneOf()
-    any { configure(kind), tick, successor, beginIssue(id, claim, actor), issueOwner(id), issueExisting(id), prepareIssue(id, a),
-      issueWrite(id), issueReply(id, a), issueFailure(id), respondIssue(id), beginProof(id, claim, actor, ch, a, b, c, d),
-      proofOwner(id), proofExisting(id), proofBody(id), consume(id), consumedReply(id, a), verify(id), hashProof(id, a),
-      prewrite(id), commit(id), batchReply(id, a), batchFailure(id), catchRead(id, a), proofFailure(id), respondProof(id, a), s' = s }
+    any {
+      { nondet kind = Set("solana", "off-curve", "evm").oneOf() configure(kind) },
+      tick,
+      successor,
+      { nondet id = ids.oneOf() nondet claim = ids.oneOf() nondet actor = ids.oneOf() beginIssue(id, claim, actor) },
+      { nondet id = ids.oneOf() issueOwner(id) },
+      { nondet id = ids.oneOf() issueExisting(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() prepareIssue(id, a) },
+      { nondet id = ids.oneOf() issueWrite(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() issueReply(id, a) },
+      { nondet id = ids.oneOf() issueFailure(id) },
+      { nondet id = ids.oneOf() respondIssue(id) },
+      { nondet id = ids.oneOf() nondet claim = ids.oneOf() nondet actor = ids.oneOf() nondet ch = challengeIds.oneOf()
+        nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
+        nondet d = Set(false, true).oneOf()
+        beginProof(id, claim, actor, ch, a, b, c, d) },
+      { nondet id = ids.oneOf() proofOwner(id) },
+      { nondet id = ids.oneOf() proofExisting(id) },
+      { nondet id = ids.oneOf() proofBody(id) },
+      { nondet id = ids.oneOf() consume(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() consumedReply(id, a) },
+      { nondet id = ids.oneOf() verify(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() hashProof(id, a) },
+      { nondet id = ids.oneOf() prewrite(id) },
+      { nondet id = ids.oneOf() commit(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() batchReply(id, a) },
+      { nondet id = ids.oneOf() batchFailure(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() catchRead(id, a) },
+      { nondet id = ids.oneOf() proofFailure(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() respondProof(id, a) },
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 5, s.current == 2 implies s.secondExists,
@@ -208,7 +227,7 @@ module wallet_possession_completion {
         Set("200", "201").contains(request.response) implies s.attestations.get(request.claim) != 0,
         request.committed implies s.witnesses.get(request.claim) == id }
     }) }
-  action ready = init.then(configure("solana"))
+  run ready = init.then(configure("solana"))
   action issued(id: int, claim: int): bool = beginIssue(id, claim, 1).then(issueOwner(id)).then(issueExisting(id))
     .then(prepareIssue(id, true)).then(issueWrite(id)).then(issueReply(id, true))
   action submitted(id: int, claim: int, ch: int, fieldValues: bool, signature: bool, window: bool): bool =

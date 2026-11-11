@@ -15,6 +15,7 @@ import {
   modelSources as sourcesOf,
 } from "./formal-models.mjs";
 import { readSafetyViews } from "./quint-safety-view.mjs";
+import { verificationTransition } from "./quint-verification-step.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -29,13 +30,37 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // These source-bound finite graphs still had millions of queued states
+  // after the ordinary three-minute budget. Retain the complete domains,
+  // transitions and reviewed views; grant time to finish the same graph.
+  "formal/models/api/api_owner_vault_lifecycle.qnt": 1_800_000,
+  "formal/models/api/api_project_lookup_routes.qnt": 1_800_000,
+  "formal/models/ui/ui_admin_mutation_identity.qnt": 1_800_000,
+  "formal/models/ui/ui_email_actions.qnt": 600_000,
+  "formal/models/ui/ui_email_preference_requests.qnt": 600_000,
+  "formal/models/ui/ui_project_authority.qnt": 600_000,
+  "formal/models/ui/ui_project_publication_lifetime.qnt": 1_800_000,
+  // The unchanged quotient exhausted 600s with 542,301 states still queued.
+  // Increase only its resource allowance; retain the complete safety graph.
+  "formal/models/ui/ui_security_settings_lifetime.qnt": 1_200_000,
+  "formal/models/ui/ui_vetting_reader.qnt": 600_000,
+  // The unchanged value-cap graph still had work queued at 962,410 states
+  // after 180s. Keep its full spend, failure and retry states.
+  "formal/models/fees/fee_value_caps.qnt": 600_000,
   "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
   // This full-state UI graph exceeds the ordinary three-minute budget.
   // Keep its resource allowance explicit without reducing the model.
   "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
+  // The unchanged payout-consent graph exceeded 180s while still exploring
+  // roughly five million distinct states. Keep every concrete state and
+  // transition; allow this model ten minutes to finish its finite graph.
+  "formal/models/ui/ui_payout_consent_lifetime.qnt": 600_000,
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
   "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
+  // The 180s Solana binding run last reported 1,076,625 distinct states and
+  // 171,571 queued. Preserve its complete model and reviewed safety VIEW.
+  "formal/models/payments/solana_binding_api.qnt": 600_000,
 };
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -50,6 +75,7 @@ const toolHashes = Object.fromEntries(
           "scripts/quint-local-translator.mjs",
           "scripts/quint-tla-normalization.mjs",
           "scripts/quint-safety-view.mjs",
+          "scripts/quint-verification-step.mjs",
           "formal/tlc.json",
           "formal/tlc-safety-views.json",
         ]
@@ -95,6 +121,9 @@ models: for (const file of files) {
   if (modelScenarios(modelText).length === 0) {
     throw new Error(`${input} has no named reachability scenario`);
   }
+  const finiteTransition = verify
+    ? verificationTransition(input, modelText)
+    : null;
   const temporalProperties = [
     ...modelText.matchAll(/^\s*temporal\s+(\w+Property)\s*=/gmu),
   ].map((match) => match[1]);
@@ -107,6 +136,7 @@ models: for (const file of files) {
           "--verbosity=3",
           "--tlc-config=formal/tlc.json",
           "--invariant=invariant",
+          ...(finiteTransition ? [`--step=${finiteTransition.step}`] : []),
           ...(temporalProperties.length
             ? [`--temporal=${temporalProperties.join(",")}`]
             : []),
@@ -222,6 +252,7 @@ models: for (const file of files) {
       durationMs: Date.now() - started,
       output,
       requestedSafetyView: safetyView?.id ?? null,
+      finiteTransition: finiteTransition ?? { step: "step", kind: "concrete" },
       safetyView: appliedView,
       error: !stable
         ? "Model or mapped source changed while its check was running; repeat against stable bytes."
@@ -271,6 +302,7 @@ const report = {
     "Finite bounds and abstractions are defined in each model.",
     "The Quint TLC backend disables deadlock checking; terminal-state progress requires explicit scenarios.",
     "A safetyView identifies a reviewed quotient; its graph count is not the count of all full model states.",
+    "A forward-safety finiteTransition checks its named abstract entry point; its manual relation is not full concrete successor equivalence or a mechanical refinement proof.",
   ],
   results,
 };
