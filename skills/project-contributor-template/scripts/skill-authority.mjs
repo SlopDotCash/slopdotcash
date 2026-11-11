@@ -141,6 +141,7 @@ def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
             elif origin_identity(final_url) != origin_identity(expected_origin):
                 raise ValueError("authenticated request redirected to another authority")
             content_length = response.headers.get("Content-Length")
+            declared_length = None
             if content_length is not None:
                 try:
                     declared_length = int(content_length)
@@ -149,6 +150,13 @@ def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
                 if declared_length < 0 or declared_length > limit:
                     raise ValueError("remote response exceeds its declared size limit")
             contents = response.read(limit + 1)
+            if declared_length is not None and len(contents) < declared_length:
+                # A clean close mid-body short-reads silently with an amt
+                # read, so a body shorter than its declared length is a
+                # transient transport failure, not a complete response.
+                raise RetryableDownloadError(
+                    f"truncated response: received {len(contents)} of {declared_length} bytes"
+                )
     except urllib.error.HTTPError as error:
         if error.code >= 500:
             raise RetryableDownloadError(f"HTTP {error.code}") from error
@@ -188,7 +196,8 @@ def fetch_bytes_once(url, limit, expected_origin, authenticated=False):
 
 def fetch_bytes(url, limit, expected_origin, authenticated=False):
     # Integrity, authority, and size violations above raise ValueError and are
-    # never retried; only timeouts, resets, TLS EOF and HTTP 5xx repeat, bounded.
+    # never retried; only timeouts, resets, TLS EOF, HTTP 5xx and truncated
+    # bodies repeat, bounded.
     last_reason = None
     for attempt in range(1, download_attempts + 1):
         try:

@@ -1416,6 +1416,15 @@ time.sleep(60)
           request.socket.destroy();
           return;
         }
+        if (failureMode === "truncate" && request.url in responses) {
+          const body = JSON.stringify(responses[request.url]);
+          response.writeHead(200, {
+            "content-type": "application/json",
+            "content-length": String(Buffer.byteLength(body)),
+          });
+          response.write(body.slice(0, 10), () => request.socket.end());
+          return;
+        }
         setTimeout(respond, stallMs);
       } else {
         respond();
@@ -1432,7 +1441,7 @@ time.sleep(60)
     stallPattern: string;
     stallMs: number;
     stallCount: number;
-    failureMode?: "stall" | "disconnect";
+    failureMode?: "stall" | "disconnect" | "truncate";
   }): Promise<{ port: number; kill: () => void }> {
     const child = spawn(
       process.execPath,
@@ -1686,6 +1695,81 @@ urllib.request.OpenerDirector.open = interrupted
       stallMs: 0,
       stallCount: 99,
       failureMode: "disconnect",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status).not.toBe(0);
+      expect(update.stderr).toContain(
+        "authenticated download failed after 3 attempts",
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes("/contents/")),
+      ).toHaveLength(3);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionA}`,
+      );
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("recovers a verified update after a truncated response body", async () => {
+    const root = freshRoot("truncate-recover");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/git/commits/",
+      stallMs: 0,
+      stallCount: 1,
+      failureMode: "truncate",
+    });
+    try {
+      const update = run(
+        loopbackCommand(artifactB, server.port, updateAuthority.rawOrigin),
+        installRoot,
+      );
+      expect(update.status, update.stderr).toBe(0);
+      expect(currentLink(installRoot)).toBe(
+        `.contribute-to-eliza-versions/${revisionB}`,
+      );
+      expect(
+        readFileSync(requestLog, "utf8")
+          .split("\n")
+          .filter((line) => line.includes(`/git/commits/${revisionB}`)),
+      ).toHaveLength(2);
+    } finally {
+      server.kill();
+    }
+  });
+
+  it("keeps the verified version when truncated responses exhaust retries", async () => {
+    const root = freshRoot("truncate-exhaust");
+    const { artifactB, installRoot, updateAuthority } =
+      timeoutUpdateFixture(root);
+    const requestLog = join(root, "requests.log");
+    writeFileSync(requestLog, "");
+    const server = await startStallServer({
+      responsesPath: join(
+        fileURLToPath(updateAuthority.apiOrigin),
+        "responses.json",
+      ),
+      requestLog,
+      stallPattern: "/contents/",
+      stallMs: 0,
+      stallCount: 99,
+      failureMode: "truncate",
     });
     try {
       const update = run(
