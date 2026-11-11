@@ -288,6 +288,8 @@ Reuse existing payment rails, wallet authorization, recovery, and finality check
 
 Public pages use cached D1 data or published snapshots. On refresh failure, retain the last good value with a stale label. Sensitive actions recheck current authority.
 
+Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
+
 ### Notifications
 
 Use one Inbox for wallet changes, payout exceptions, project decisions, appeals, and case notices. Save each notice with the source change; replay must not duplicate it. Keep private notices generic. Read, acknowledged, provider-accepted, delivered, failed, and uncertain are different states.
