@@ -430,13 +430,23 @@ jobs:
           path: dist
       - name: Install Playwright system dependencies
         run: |
+          set -euo pipefail
           # The Azure mirror stalled across release and PR runners. Use Ubuntu's
           # primary archive; the runner's URI normally points to apt-mirrors.txt.
           # Keep its suites, components and signing keys unchanged.
-          sudo sed -i 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu/|' \
-            /etc/apt/sources.list.d/ubuntu.sources
-          grep -Fx 'URIs: https://archive.ubuntu.com/ubuntu/' \
-            /etc/apt/sources.list.d/ubuntu.sources
+          # On 11 November 2026 the archive's host name stopped resolving on
+          # every runner. When the index cannot be read from the primary
+          # archive, use the kernel.org mirror of the same signed archive; apt
+          # still checks every index against Ubuntu's keys.
+          for uri in https://archive.ubuntu.com/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/; do
+            sudo sed -i "s|^URIs:.*|URIs: ${uri}|" /etc/apt/sources.list.d/ubuntu.sources
+            grep -Fx "URIs: ${uri}" /etc/apt/sources.list.d/ubuntu.sources
+            if sudo timeout --signal=TERM --kill-after=15s 5m \
+              apt-get update -o APT::Update::Error-Mode=any; then
+              break
+            fi
+            echo "::warning::The package index could not be read from ${uri}."
+          done
           # Run the timeout as root so it can terminate apt and its children.
           # Do not retry an interrupted package transaction on the same runner.
           # Hosted package downloads exceeded ten minutes in two release runs.
