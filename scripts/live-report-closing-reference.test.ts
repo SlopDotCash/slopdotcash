@@ -58,7 +58,7 @@ function pull(number: number, body: string) {
   };
 }
 
-test("an open pull request that uses GitHub's colon closing keyword is not free work", async () => {
+test("an open pull request that uses GitHub's colon or URL closing keyword is not free work", async () => {
   const root = mkdtempSync(join(tmpdir(), "slop-closing-"));
   try {
     const scripts = join(root, "scripts");
@@ -85,11 +85,29 @@ test("an open pull request that uses GitHub's colon closing keyword is not free 
     expect(
       reportModule.closingIssueNumbers("Fixes: other/repo#12", repo),
     ).toEqual([]);
+    expect(
+      reportModule.closingIssueNumbers(
+        "Closes https://github.com/Example/repo/issues/14",
+        repo,
+      ),
+    ).toEqual([14]);
+    expect(
+      reportModule.closingIssueNumbers(
+        "Fixes: https://github.com/Example/repo/issues/15",
+        repo,
+      ),
+    ).toEqual([15]);
+    expect(
+      reportModule.closingIssueNumbers(
+        "Fixes: https://github.com/other/repo/issues/16",
+        repo,
+      ),
+    ).toEqual([]);
 
     const pages = new Map<string, unknown[]>([
       [
         `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc`,
-        [issue(10), issue(11), issue(12)],
+        [issue(10), issue(11), issue(12), issue(14)],
       ],
       [
         `repos/${repo}/pulls?state=open&per_page=100&sort=created&direction=asc`,
@@ -97,6 +115,7 @@ test("an open pull request that uses GitHub's colon closing keyword is not free 
           pull(20, "Closes: #10"),
           pull(21, "Closes #11"),
           pull(22, "Fixes: other/repo#12"),
+          pull(23, `Closes https://github.com/${repo}/issues/14`),
         ],
       ],
     ]);
@@ -119,6 +138,10 @@ test("an open pull request that uses GitHub's colon closing keyword is not free 
       expect.objectContaining({
         number: 11,
         closingPullRequests: [21],
+      }),
+      expect.objectContaining({
+        number: 14,
+        closingPullRequests: [23],
       }),
     ]);
   } finally {

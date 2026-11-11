@@ -2409,10 +2409,11 @@ export async function recordHumanSignal(
   // The maintainer decision binds the reopened revision, even after a push.
   const decided =
     kind === "human_reopen" && source ? source.revision : revision;
-  // An author's `/slopbot appeal` before any Slopbot finding decides nothing.
-  // Keep it out of the reopen key, which exempts the revision from review.
+  // An author's appeal — by command, or by reopening their own item —
+  // before any Slopbot finding decides nothing. Keep it out of the reopen
+  // key, which exempts the revision from review.
   const beforeFinding =
-    job.kind === "appeal" && (await latestFinding(db, issue.node_id)) === null;
+    kind === "appeal" && (await latestFinding(db, issue.node_id)) === null;
   const signalKey = `${beforeFinding ? "appeal-before-finding" : "reopen"}:${issue.node_id}:${decided}`;
   await store.recordAction(
     db,
