@@ -14362,7 +14362,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_webhook_delivery.qnt",
-      "sha256": "0674b7f8e2ff693cb909e07992edcdf92d1e663175374043581207823dd6c2f1",
+      "sha256": "b76cfe6f545bd6ebecde0fe9223c51b9a03b519036b0cd06d4c5e57a3a9e33d0",
       "sources": [
         "migrations/0121_slopbot_delivery_claim.sql",
         "workers/slopbot/index.ts",
@@ -14370,9 +14370,16 @@
         "workers/slopbot/value-requests.ts"
       ],
       "scenarios": [
+        "completedDeliveryCannotBeReclaimedTest",
+        "completedDeliveryCannotBeReleasedTest",
         "concurrentReceiveCannotClaimTest",
+        "expiredClaimCanBeReclaimedTest",
         "failedSendCanRecoverTest",
         "lostAckMayRedeliverTest",
+        "replacementClaimCanCompleteTest",
+        "replacementClaimCanReleaseTest",
+        "staleClaimCannotCompleteReplacementTest",
+        "staleClaimCannotReleaseReplacementTest",
         "unauthenticatedCannotPersistTest"
       ]
     },
