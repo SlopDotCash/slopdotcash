@@ -2520,4 +2520,167 @@ describe("batch after-statements", () => {
       env.sqlite.close();
     }
   });
+
+  test("a same-key retry after a failed after-statement replays the 409", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect((await env.decide(id, "vault-drain")).status).toBe(200);
+      expect((await env.award(id, "1000000")).status).toBe(200);
+      expect(
+        (
+          await env.act(REPORTER, id, {
+            action: "consent-payment",
+            network: "base-sepolia",
+            confirmation: true,
+          })
+        ).status,
+      ).toBe(200);
+      // Same concurrent withdrawal as the guard test above, but the
+      // prepare-payment call reuses one idempotency key for the retry, as
+      // a standard idempotent client does.
+      const key = env.key();
+      const revision = (
+        await env.call(MAINTAINER, "GET", `security-cases/${id}`)
+      ).body.case.revision;
+      env.setBeforeBatch(() => {
+        env.sqlite
+          .query(
+            "UPDATE security_cases SET award_state = 'pending', payment_state = 'not-applicable' WHERE id = ?",
+          )
+          .run(id);
+      });
+      const prepared = await env.call(
+        MAINTAINER,
+        "POST",
+        `security-cases/${id}/actions`,
+        {
+          action: "prepare-payment",
+          network: "base-sepolia",
+          confirmation: true,
+          expectedRevision: revision,
+          idempotencyKey: key,
+        },
+      );
+      expect(prepared.status).toBe(409);
+      expect(prepared.body.error).toBe("stale_revision");
+      // The failed attempt left a success-shaped event row behind, so a
+      // same-key retry must replay the original 409, never 200
+      // {replayed: true} with no settlement.
+      const retried = await env.call(
+        MAINTAINER,
+        "POST",
+        `security-cases/${id}/actions`,
+        {
+          action: "prepare-payment",
+          network: "base-sepolia",
+          confirmation: true,
+          expectedRevision: revision,
+          idempotencyKey: key,
+        },
+      );
+      expect(retried.status).toBe(409);
+      expect(retried.body.error).toBe("stale_revision");
+      expect(retried.body.replayed).toBeUndefined();
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT COUNT(*) AS n FROM security_settlements WHERE case_id = ?",
+            )
+            .get(id) as { n: number }
+        ).n,
+      ).toBe(0);
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT error FROM security_case_action_failures WHERE case_id = ? AND idempotency_key = ?",
+            )
+            .get(id, key) as { error: string } | null
+        )?.error,
+      ).toBe("stale_revision");
+    } finally {
+      env.sqlite.close();
+    }
+  });
+
+  test("a same-key retry after a failed revoke-triager replays the 409", async () => {
+    const env = open();
+    try {
+      const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
+      expect(
+        (
+          await env.act(MAINTAINER, id, {
+            action: "assign-triager",
+            ...TRIAGER,
+          })
+        ).status,
+      ).toBe(200);
+      // A concurrent writer revokes the triager between the plan read and
+      // the batch, so the revoke UPDATE's revoked_at IS NULL fence no
+      // longer matches and its after-statement changes zero rows.
+      const key = env.key();
+      const revision = (
+        await env.call(MAINTAINER, "GET", `security-cases/${id}`)
+      ).body.case.revision;
+      env.setBeforeBatch(() => {
+        env.sqlite
+          .query(
+            "UPDATE security_case_members SET revoked_at = ?, revoked_by_github_id = ? WHERE case_id = ? AND github_id = ?",
+          )
+          .run(REVISION_AT, MAINTAINER.githubId, id, TRIAGER.githubId);
+      });
+      const revoked = await env.call(
+        MAINTAINER,
+        "POST",
+        `security-cases/${id}/actions`,
+        {
+          action: "revoke-triager",
+          githubId: TRIAGER.githubId,
+          expectedRevision: revision,
+          idempotencyKey: key,
+        },
+      );
+      expect(revoked.status).toBe(409);
+      expect(revoked.body.error).toBe("stale_revision");
+      // The batch committed, so the revoke event row landed even though
+      // the membership change never happened; the retry must still
+      // replay the 409.
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT kind FROM security_case_events WHERE case_id = ? AND idempotency_key = ?",
+            )
+            .get(id, key) as { kind: string } | null
+        )?.kind,
+      ).toBe("revoke-triager");
+      const retried = await env.call(
+        MAINTAINER,
+        "POST",
+        `security-cases/${id}/actions`,
+        {
+          action: "revoke-triager",
+          githubId: TRIAGER.githubId,
+          expectedRevision: revision,
+          idempotencyKey: key,
+        },
+      );
+      expect(retried.status).toBe(409);
+      expect(retried.body.error).toBe("stale_revision");
+      expect(retried.body.replayed).toBeUndefined();
+      expect(
+        (
+          env.sqlite
+            .query(
+              "SELECT error FROM security_case_action_failures WHERE case_id = ? AND idempotency_key = ?",
+            )
+            .get(id, key) as { error: string } | null
+        )?.error,
+      ).toBe("stale_revision");
+    } finally {
+      env.sqlite.close();
+    }
+  });
 });

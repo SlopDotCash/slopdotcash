@@ -3193,6 +3193,26 @@ async function actOnCase(
     .bind(row.id, idempotencyKey)
     .first<{ kind: string; actor_github_id: string }>();
   if (replay !== null) {
+    // A failed after-statement commits its event row before the 409, so
+    // the event alone cannot prove the action completed. A recorded
+    // failure for this key replays the original 409 instead of a false
+    // 200 {replayed: true} with no side effect (PRD §9).
+    const failed = await deps.db
+      .prepare(
+        "SELECT kind, actor_github_id, error, message FROM security_case_action_failures WHERE case_id = ? AND idempotency_key = ?",
+      )
+      .bind(row.id, idempotencyKey)
+      .first<{
+        kind: string;
+        actor_github_id: string;
+        error: string;
+        message: string;
+      }>();
+    if (failed !== null) {
+      if (failed.kind !== action || failed.actor_github_id !== actor.githubId)
+        fail(409, "idempotency_conflict", "That request key was already used");
+      fail(409, failed.error, failed.message);
+    }
     if (replay.kind !== action || replay.actor_github_id !== actor.githubId)
       fail(409, "idempotency_conflict", "That request key was already used");
     // A replay discloses the full case, so it records a read.
@@ -3329,8 +3349,35 @@ async function actOnCase(
   for (let index = 0; index < after.length; index++) {
     const afterResult = results[(change.before ?? []).length + 2 + index];
     if ((afterResult?.meta?.changes ?? 0) < 1) {
-      if (change.unmet) fail(409, change.unmet.code, change.unmet.message);
-      fail(409, "stale_revision", "The case changed since you loaded it");
+      // The batch already committed: the revision advanced and the audit
+      // event landed, but the action's side effect never happened. Record
+      // the failure before answering, so a same-key retry replays this
+      // 409 instead of the event row replaying as success (PRD §9).
+      // Best-effort: the 409 below still reports the failure, and a
+      // bookkeeping failure must not turn it into a 500.
+      const failure = change.unmet ?? {
+        code: "stale_revision",
+        message: "The case changed since you loaded it",
+      };
+      try {
+        await deps.db
+          .prepare(
+            "INSERT INTO security_case_action_failures (case_id, idempotency_key, kind, actor_github_id, error, message, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(
+            row.id,
+            idempotencyKey,
+            change.kind,
+            actor.githubId,
+            failure.code,
+            failure.message,
+            at,
+          )
+          .run();
+      } catch {
+        // The 409 below is the loud outcome; only the replay anchor is lost.
+      }
+      fail(409, failure.code, failure.message);
     }
   }
   // Slopbot triages every appeal first; a moderator still decides it.

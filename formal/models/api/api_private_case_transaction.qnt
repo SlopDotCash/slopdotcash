@@ -4,6 +4,7 @@
 // @source backend/security/analysis.ts
 // @source migrations/0026_private_security_cases.sql
 // @source migrations/0101_durable_security_intake.sql
+// @source migrations/0121_security_case_action_failures.sql
 // @source backend/security/case-store.ts
 // Case + intake CAS composition, with report-version, analysis, assigned role,
 // human decision, refusal appeal and later funded obligation. Three report

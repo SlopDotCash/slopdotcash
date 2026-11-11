@@ -891,7 +891,7 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "c09a16f95ad97c3f3720b8138b75f46256fed7958b1fb6ae94340ddfb3174882",
+      "sha256": "e42cfd5f7172a598d0ec7f7e204865cec8f2aaa95d6f8ccdd81225be213ee274",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
@@ -913,8 +913,8 @@
         1320, 1322, 1342, 1444, 1467, 1486, 1583, 1584, 1599, 1612, 1637, 1708,
         1712, 1757, 1782, 1981, 2106, 2466, 2492, 2517, 2570, 2737, 2740, 2741,
         2780, 2789, 2809, 2855, 2906, 2907, 2909, 2952, 3014, 3043, 3049, 3055,
-        3085, 3122, 3133, 3151, 3157, 3238, 3246, 3248, 3263, 3321, 3325, 3371,
-        3380, 3386, 3398, 3401, 3402, 3430, 3434, 3437
+        3085, 3122, 3133, 3151, 3157, 3258, 3266, 3268, 3283, 3341, 3345, 3354,
+        3365, 3418, 3427, 3433, 3445, 3448, 3449, 3477, 3481, 3484
       ],
       "review": "mapped-abstraction"
     },
@@ -3214,6 +3214,13 @@
         "formal/models/slopbot/bot_value_attempt_recovery.qnt"
       ],
       "candidateLines": [1, 8, 9, 11, 12, 14, 15],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0121_security_case_action_failures.sql",
+      "sha256": "b850a8b296456ac7d96b893705e15bcb5f4f8cec856654acc72f25e2cf657187",
+      "models": ["formal/models/api/api_private_case_transaction.qnt"],
+      "candidateLines": [4, 18, 19, 21, 22, 24, 25],
       "review": "mapped-abstraction"
     },
     {
@@ -9176,7 +9183,7 @@
     },
     {
       "path": "formal/models/api/api_private_case_transaction.qnt",
-      "sha256": "c40e1cf219e255de7fe4e7cda5fca455c4de43d48ccf8f9ef6a13b24519f5cd2",
+      "sha256": "7154faf665c86f57e0ea88577b530dc1d96e11f0b77fb7b6117845dbce8c4d21",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/case-store.ts",
@@ -9184,7 +9191,8 @@
         "backend/security/report-intake.ts",
         "backend/security/verified-intake.ts",
         "migrations/0026_private_security_cases.sql",
-        "migrations/0101_durable_security_intake.sql"
+        "migrations/0101_durable_security_intake.sql",
+        "migrations/0121_security_case_action_failures.sql"
       ],
       "scenarios": [
         "approvedAwardNotAppealableTest",
