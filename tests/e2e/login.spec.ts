@@ -511,7 +511,8 @@ test("committed sign-in departure cannot exchange a resolved identity assertion"
         },
       });
     }
-    if (path === "/api/v1/points/me") return route.fulfill({ json: null });
+    if (path === "/api/v1/points/me" || path === "/api/v1/points/member")
+      return route.fulfill({ json: null });
     if (path === "/api/v1/project-session")
       return route.fulfill({ json: { session: null } });
     if (path.startsWith("/api/"))

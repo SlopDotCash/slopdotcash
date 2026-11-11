@@ -5,12 +5,13 @@ import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 export async function serveProjectMaintainer(
   page: Page,
   currentProject: () => ProjectDefinition,
+  githubId = "1",
 ) {
   const { id } = currentProject();
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
       json: {
-        session: { githubId: "1", githubLogin: "local-owner", admin: false },
+        session: { githubId, githubLogin: "local-owner", admin: false },
       },
     }),
   );
@@ -20,7 +21,7 @@ export async function serveProjectMaintainer(
       const project = currentProject();
       return route.fulfill({
         json: {
-          viewer: { githubId: "1" },
+          viewer: { githubId },
           setup: {
             projectId: id,
             name: project.name,

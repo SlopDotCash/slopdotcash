@@ -298,7 +298,7 @@ async function listProject(
   if (program && !creatorRole) throw new Error("Unknown fixture creator");
   const creator = creatorRole ? account(creatorRole) : undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
-    manifest: program?.settlement
+    manifest: program
       ? {
           ...manifest,
           securityBounty: {
@@ -309,14 +309,17 @@ async function listProject(
               financial: [creator],
               dispute: [creator],
             },
-            settlement: { ...program.settlement, deployments: [] },
+            ...(program.settlement
+              ? { settlement: { ...program.settlement, deployments: [] } }
+              : {}),
           },
         }
       : manifest,
   });
   expect(applied.status, JSON.stringify(applied.body)).toBe(201);
-  if (program?.settlement) {
-    // Fixture trust root only. An owner cannot self-attest a deployed vault.
+  if (program) {
+    // Fixture trust root only. Creation names its creator; reviewed later
+    // revisions set the case roles and any synthetic verified vault.
     const registered = await revise(request, id, (current) => ({
       ...current,
       securityBounty: program,

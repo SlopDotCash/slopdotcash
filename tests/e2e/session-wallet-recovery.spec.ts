@@ -78,7 +78,7 @@ test("vault setup removes owner controls after the session ends", async ({
       deployments: [],
     },
   } as typeof template;
-  await serveProjectMaintainer(page, () => project);
+  await serveProjectMaintainer(page, () => project, "123");
   let signedIn = true;
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
