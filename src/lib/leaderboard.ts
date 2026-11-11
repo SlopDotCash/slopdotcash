@@ -3837,9 +3837,15 @@ function createSnapshotWithReviewCutoff(
     }
     const source = evaluatedTextSources.get(event.source.id);
     if (event.source.kind === "comment" || event.source.kind === "review") {
+      // The census keeps a formal review's inline comments with the pull
+      // request's comments; an award names one (#discussion_r) as a review.
+      const sourceKind =
+        source?.kind === "comment" && /#discussion_r[0-9]+$/iu.test(source.url)
+          ? "review"
+          : source?.kind;
       if (
         (source !== undefined &&
-          (source.kind !== event.source.kind ||
+          (sourceKind !== event.source.kind ||
             source.url !== event.source.url ||
             source.author?.id !== event.actor.id ||
             parseIsoTime(source.createdAt) !== occurredAt)) ||
