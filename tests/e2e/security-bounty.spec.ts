@@ -537,7 +537,9 @@ async function settingsSession(page: Page, role: Role) {
 
 /** Existing real Pages/D1/GitHub fixture, with no vault or provider needed. */
 async function settingsProject(request: APIRequestContext) {
-  const id = `settings-life-${projectSuffix()}`;
+  // Each test creates its own project: the registry refuses a second
+  // project with the same id.
+  const id = `settings-life-${projectSuffix()}-${test.info().testId.slice(-8)}`;
   const repository = `e2e-security/${id}`;
   await listProject(request, TOKENS.security, repository, id, {
     securityBounty: bountyTerms(repository, {
