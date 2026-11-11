@@ -36,13 +36,18 @@ test("package-manager configuration is scanned as an install script", () => {
         path,
         coverage: { state: "complete", items: 1 },
       });
+      // The remote payload is the same everywhere; `preload` adds its own
+      // local-loader pointer.
+      const expected = [`${path}:unsafe-execution:high`];
+      if (file === "bunfig.toml")
+        expected.push(`${path}:unsafe-execution:medium`);
       expect({
         path,
         findings: inspection.findings.map(
           (finding) =>
             `${finding.path}:${finding.category}:${finding.severity}`,
         ),
-      }).toEqual({ path, findings: [`${path}:unsafe-execution:high`] });
+      }).toEqual({ path, findings: expected });
     }
 });
 

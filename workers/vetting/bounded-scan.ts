@@ -406,6 +406,19 @@ const RULES: Rule[] = [
 
   {
     threat: "unsafe-execution",
+    severity: "medium",
+    // A loader names a local file that the tool runs on every invocation:
+    // `preload` in `bunfig.toml` runs before the entrypoint, and
+    // `rustc-wrapper` or a target `runner` in `.cargo/config.toml` replaces
+    // the compiler or the test runner. The file itself is repository source
+    // and reviewed, so this rule points at which file to read rather than at
+    // a remote download.
+    pattern:
+      /(?<![^\n])[ \t]*(?:preload\s*=\s*(?:\[\s*)?["'][^"'\n]+["']|rustc-wrapper\s*=\s*["'][^"'\n]+["']|runner\s*=\s*["'][^"'\n]+["'])/iu,
+    summary: "Loads a local program at run time",
+  },
+  {
+    threat: "unsafe-execution",
     severity: "high",
     pattern:
       /\beval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|\bexec\s*\(\s*(?:base64\.b64decode|zlib\.decompress|marshal\.loads)|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(/iu,
