@@ -72,6 +72,8 @@ function migratedCopy(migrations: string[]): Database {
 export function sqliteD1(
   migrations: string[] = MIGRATIONS,
   file = ":memory:",
+  /** Align SQL clock reads with a test's simulated JavaScript clock. */
+  clock?: () => Date,
 ): {
   db: ProjectD1Database;
   sqlite: Database;
@@ -85,7 +87,16 @@ export function sqliteD1(
   // then refuses to delete the file. query() does not prevent this: Bun
   // caches only 20 statements and leaves later ones unfinalized.
   const once = <R>(sql: string, use: (prepared: SQLiteStatement) => R): R => {
-    const prepared = sqlite.prepare(sql);
+    // Read at execution, after any caller's delayed-write hook. Preserve
+    // SQLite's strftime implementation, modifiers and guarded writes; only
+    // its 'now' input follows the explicitly selected test clock.
+    const executionSql = clock
+      ? sql.replaceAll(
+          /(strftime\('[^']*',\s*)'now'/gu,
+          `$1'${clock().toISOString()}'`,
+        )
+      : sql;
+    const prepared = sqlite.prepare(executionSql);
     try {
       return use(prepared);
     } finally {
