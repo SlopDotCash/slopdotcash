@@ -123,34 +123,34 @@
       "viewTlaSha256": "22d3eedab3a832e9d4cf69a62565fb6a17f3cfeb41173f8d0d1747260173324a"
     },
     {
-      "id": "ui-project-publication-continuation-safety-v1",
+      "id": "ui-project-publication-continuation-safety-v2",
       "model": "formal/models/ui/ui_project_publication_lifetime.qnt",
       "module": "ui_project_publication_lifetime",
-      "operator": "SlopPublicationContinuationViewV1",
-      "hashMode": "publication-continuation-and-terminal-invariant-observations",
-      "memoryCandidateMode": "erase-write-only-referrer-and-inactive-request-payloads",
+      "operator": "SlopPublicationContinuationViewV2",
+      "hashMode": "publication-phase-continuation-and-terminal-invariant-observations",
+      "memoryCandidateMode": "erase-write-only-referrer-and-phase-dead-request-payloads",
       "fields": [
         {
           "name": "state",
-          "expression": "[s EXCEPT !.serverDraft = 0, !.storageError = FALSE, !.error = \"none\", !.referrer = FALSE, !.storedReferrer = FALSE, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"done\"} THEN <<r.phase, r.accepted, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.referrer = FALSE, !.outcome = \"none\"]]]"
+          "expression": "[s EXCEPT !.serverDraft = 0, !.storageError = FALSE, !.error = \"none\", !.referrer = FALSE, !.storedReferrer = FALSE, !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"done\"} THEN <<r.phase, r.accepted, (r.admitted => r.cookie = r.actor)>> ELSE [r EXCEPT !.referrer = FALSE, !.outcome = \"none\", !.observedActor = IF r.phase \\in {\"preflight-observed\", \"preflight-returned\", \"success-observed\", \"success-returned\", \"failure-observed\", \"failure-returned\"} THEN r.observedActor ELSE -1, !.expected = IF r.phase \\in {\"http\", \"success-check\", \"success-observed\", \"success-returned\", \"failure-check\", \"failure-observed\", \"failure-returned\"} THEN 0 ELSE r.expected, !.draft = IF s.mode = \"create\" \\/ r.phase \\in {\"failure-check\", \"failure-observed\", \"failure-returned\"} THEN 0 ELSE r.draft, !.draftEpoch = IF s.mode = \"create\" \\/ r.phase \\in {\"failure-check\", \"failure-observed\", \"failure-returned\"} THEN 0 ELSE r.draftEpoch, !.resultRevision = IF s.mode = \"create\" \\/ r.phase \\in {\"failure-check\", \"failure-observed\", \"failure-returned\"} THEN 0 ELSE r.resultRevision]]]"
         }
       ],
       "clauses": [],
       "sourceSha256": "68360360fec1f0abd036e8b78046603c14f557831fa6da7bf3ec19774d196e03",
       "translatedSha256": "9ff70e351c9135dd54067dca64b355c9d42a1bf2defc831895c8799905c6dd83",
-      "viewTlaSha256": "c1b9a3ba53241572f531d4c09d3412e9cc649bcc74a3d0657956d437d5ffe864"
+      "viewTlaSha256": "f70a506ca768d59c3cc07cf5a337bd994718e69b1f58a3400e4731849995b66e"
     },
     {
-      "id": "ui-security-settings-lifetime-safety-v1",
+      "id": "ui-security-settings-lifetime-safety-v2",
       "model": "formal/models/ui/ui_security_settings_lifetime.qnt",
       "module": "ui_security_settings_lifetime",
-      "operator": "SlopSecuritySettingsLifetimeViewV1",
-      "hashMode": "exact-per-slot-publication-identity-observation",
-      "memoryCandidateMode": "erase-write-only-outputs-and-reset-or-absorbing-payloads",
+      "operator": "SlopSecuritySettingsLifetimeViewV2",
+      "hashMode": "exact-publication-identity-and-stale-read-admission",
+      "memoryCandidateMode": "erase-write-only-reset-absorbing-and-stale-read-payloads",
       "fields": [
         {
           "name": "state",
-          "expression": "[s EXCEPT !.error = \"none\", !.success = 0, !.serverBody = 0, !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {\"unused\", \"done\"} THEN [phase |-> r.phase] ELSE r], !.publications = [i \\in DOMAIN s.publications |-> LET p == s.publications[i] IN IF p.phase \\in {\"unused\", \"done\"} THEN [phase |-> p.phase] ELSE [p EXCEPT !.body = 0]]]"
+          "expression": "[s EXCEPT !.error = \"none\", !.success = 0, !.serverBody = 0, !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {\"unused\", \"done\"} THEN [phase |-> r.phase] ELSE IF s.read # i THEN IF r.phase = \"http\" THEN [phase |-> r.phase, admitted |-> (r.kind = \"revision\" \\/ r.cookie = r.actor)] ELSE [phase |-> r.phase] ELSE IF r.phase \\in {\"pre\", \"dispatch\"} THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life] ELSE IF r.phase = \"http\" THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life, cookie |-> r.cookie] ELSE IF r.phase = \"post\" THEN [phase |-> r.phase, kind |-> r.kind, actor |-> r.actor, life |-> r.life, ok |-> r.ok, revision |-> r.revision] ELSE r], !.publications = [i \\in DOMAIN s.publications |-> LET p == s.publications[i] IN IF p.phase \\in {\"unused\", \"done\"} THEN [phase |-> p.phase] ELSE [p EXCEPT !.body = 0]]]"
         }
       ],
       "clauses": [
@@ -161,7 +161,7 @@
       ],
       "sourceSha256": "5dfb3b1c648c9792524106c6ff425bf869c7649356ce54b25b4449ee7c60cd10",
       "translatedSha256": "1f03e2459080252441a5f0720ee3bad56e8901a21b9d554056a4e20f5090fb5d",
-      "viewTlaSha256": "75770a9a85fb5f7363e189022ee82cecc6ec17566625c4ab6dbc85e7b39ed2e0"
+      "viewTlaSha256": "aeb4fe4113d16530466ad71fa56c9be1286bc0301ffdc479eb2985106a7678d0"
     },
     {
       "id": "solana-binding-api-observation-safety-v1",
@@ -200,22 +200,22 @@
       "viewTlaSha256": "518f4b3daa4f8e020b39a2db50e2f7a87036cc98a2678bfa16e511927ccf31ca"
     },
     {
-      "id": "ui-contributor-allocation-safety-v1",
+      "id": "ui-contributor-allocation-safety-v2",
       "model": "formal/models/ui/ui_contributor_allocation.qnt",
       "module": "ui_contributor_allocation",
-      "operator": "SlopContributorAllocationViewV1",
+      "operator": "SlopContributorAllocationViewV2",
       "hashMode": "exact-per-account-on-time-wallet-membership",
-      "memoryCandidateMode": "erase-unused-and-absorbing-request-payloads",
+      "memoryCandidateMode": "erase-permanently-stale-and-unconsumed-payloads",
       "fields": [
         {
           "name": "state",
-          "expression": "[s EXCEPT !.wallets = [i \\in DOMAIN s.wallets |-> IF \"on-time\" \\in s.wallets[i] THEN {\"on-time\"} ELSE {\"none\"}], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {\"unused\", \"done\"} THEN [phase |-> r.phase] ELSE r]]"
+          "expression": "[s EXCEPT !.wallets = [i \\in DOMAIN s.wallets |-> IF \"on-time\" \\in s.wallets[i] THEN {\"on-time\"} ELSE {\"none\"}], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {\"unused\", \"done\"} \\/ s.active # i THEN [phase |-> r.phase] ELSE IF r.phase \\in {\"http\", \"body\"} THEN [phase |-> r.phase, life |-> r.life] ELSE IF r.phase = \"decoded\" THEN [phase |-> r.phase, life |-> r.life, outcome |-> IF r.outcome \\in {\"valid\", \"absent\"} THEN r.outcome ELSE \"invalid\", recipients |-> IF r.outcome = \"valid\" THEN r.recipients ELSE 0, transfers |-> IF r.outcome = \"valid\" THEN r.transfers ELSE 0, closed |-> IF r.outcome \\in {\"valid\", \"absent\"} THEN r.closed ELSE FALSE] ELSE r]]"
         }
       ],
       "clauses": [],
       "sourceSha256": "767f463c4c1243d01ac4e0ca77316869af0c5e9441d1d96d911c27fdf077ad59",
       "translatedSha256": "c1dd49b06bbf150ee35e1b28fd796fc20d2568224454d46b5a24f937041080ed",
-      "viewTlaSha256": "1d357be0a171c3779cdb40a6bdd111039ff7a5f2e3d744d62c68b2ad13514fe2"
+      "viewTlaSha256": "c3c7da3bd3645e1fd1fa872f42e6fd00dac225a11e00e5ef8337d998227a184a"
     }
   ]
 }

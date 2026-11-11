@@ -192,10 +192,14 @@ module wallet_possession_completion {
       { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() issueReply(id, a) },
       { nondet id = ids.oneOf() issueFailure(id) },
       { nondet id = ids.oneOf() respondIssue(id) },
-      { nondet id = ids.oneOf() nondet claim = ids.oneOf() nondet actor = ids.oneOf() nondet ch = challengeIds.oneOf()
-        nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
-        nondet d = Set(false, true).oneOf()
-        beginProof(id, claim, actor, ch, a, b, c, d) },
+      all { s.configured,
+        { nondet id = ids.oneOf()
+          all { s.requests.get(id).phase == "unused",
+            { nondet claim = ids.oneOf() nondet actor = ids.oneOf() nondet ch = challengeIds.oneOf()
+              all { ch == 0 or s.challenges.get(ch).known,
+                { nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
+                  nondet d = Set(false, true).oneOf()
+                  beginProof(id, claim, actor, ch, a, b, c, d) } } } } } },
       { nondet id = ids.oneOf() proofOwner(id) },
       { nondet id = ids.oneOf() proofExisting(id) },
       { nondet id = ids.oneOf() proofBody(id) },

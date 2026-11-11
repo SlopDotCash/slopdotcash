@@ -207,10 +207,14 @@ module wallet_claim_publication {
         { nondet slot = slots.oneOf()
           all { Set("unused", "done").contains(s.requests.get(slot).phase), s.requests.get(slot).attempt < 2,
             { nondet mode = Set("contributor", "operator").oneOf() nondet actor = actors.oneOf()
-              nondet chain = chains.oneOf() nondet address = Set(1, 2).oneOf() nondet login = Set(1, 2, 3).oneOf()
-              nondet predecessor = 0.to(6).oneOf() nondet source = sources.oneOf() nondet observed = 0.to(2).oneOf()
-              nondet material = Set(1, 2).oneOf()
-              begin(slot, mode, actor, chain, address, login, predecessor, source, observed, material) } } } },
+              nondet chain = chains.oneOf()
+              all { s.requests.get(slot).attempt > 0 implies mode == s.requests.get(slot).mode
+                  and actor == s.requests.get(slot).claim.actor
+                  and (if (mode == "operator") 1 else chain) == s.requests.get(slot).claim.chain,
+                { nondet address = Set(1, 2).oneOf() nondet login = Set(1, 2, 3).oneOf()
+                  nondet predecessor = 0.to(6).oneOf() nondet source = sources.oneOf() nondet observed = 0.to(2).oneOf()
+                  nondet material = Set(1, 2).oneOf()
+                  begin(slot, mode, actor, chain, address, login, predecessor, source, observed, material) } } } } } },
       { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() authority(slot, yes) },
       { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() body(slot, yes) },
       { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readTip(slot, yes) },

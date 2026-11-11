@@ -1,5 +1,8 @@
 # Publication continuation safety VIEW
 
+The original sections retain the V1 argument. The separately versioned V2
+projection and its additional phase-liveness proof are recorded below.
+
 This experiment starts from `53c1727cebe45a2790f97d1fa5e99e29a20b03e2`.
 `ui-project-publication-continuation-safety-v1` applies only to the unchanged
 `models/ui/ui_project_publication_lifetime.qnt`, SHA-256
@@ -144,3 +147,64 @@ Until a frozen run completes with unchanged model/source/tools and zero queued
 states, graph completion remains unverified. Retain this experiment's exact
 commit, bindings, control output and complete graph receipt separately from
 the earlier timeout. A timeout, cancellation or changed input is incomplete.
+
+## V2 phase-liveness experiment
+
+V1 is retained at `2f1d0ac3f9235e4ee009a19b2846731041b4fad8`. Its unchanged
+1,800-second run timed out: the last progress reported 152,646,944 generated,
+19,733,829 distinct and 1,459,824 queued states at depth 29. Inputs were unchanged
+and no counterexample was reported before timeout. That result remains
+incomplete; V2 does not relabel it as a pass. The original worktree retains
+its exact native controls, source/TLA/VIEW hashes and timeout receipt.
+
+`ui-project-publication-continuation-safety-v2` starts from that frozen V1
+commit in a new isolated worktree. The concrete model and original translated
+TLA are unchanged. It retains V1's complete projection and adds only the
+following nonterminal request normalizations. Each phase set is explicit in
+the hardcoded operator and manifest.
+
+| Field | V2 normalization | Last consumer or overwrite argument |
+| --- | --- | --- |
+| observedActor | Keep exact in preflight-observed, preflight-returned, success-observed, success-returned, failure-observed and failure-returned; otherwise -1. | Return carries the observed snapshot; the corresponding consume uses it. In every other phase the next observation overwrites it before any next use, or the slot completes. |
+| expected | Zero only in http, success-check, success-observed, success-returned, failure-check, failure-observed and failure-returned. | serverResult is the only consumer and is guarded by server. These later/failure phases cannot return to server. |
+| draft, draftEpoch, resultRevision | Zero in create mode or in failure-check, failure-observed and failure-returned. | Create captured draft feeds only erased serverDraft and sameDraft's erased referrer output; creation never reads captured epoch/resultRevision. Failure phases never return to server or success. |
+
+Every global draft, epoch, base, draftBase, stored value, storedBase, mode and
+view remains exact. Every live actor, cookie, lifetime, admitted and accepted
+field remains exact, including during failure. The unused/done tuple is
+unchanged: exact phase and accepted plus raw admission implication truth.
+Thus the dynamically indexed publication clause and every false original
+invariant class remain reconstructible without assuming an invariant holds.
+
+The additional request payload cannot become live under another mode. The
+only mode writer is createMode, which sets create and requires every slot to
+be unused; begin then fully replaces a slot. There is no return from create
+to revision. In revision mode, live draft and object epoch stay exact through
+http and success consumption, preserving retyped-object comparisons and
+rebase/clear behavior. ResultRevision stays exact wherever revision success
+can use it to advance base/draftBase. Current global epochs remain exact even
+in creation because they bound future edit calls.
+
+For related V2 states, action enabledness is unchanged: none of the additional
+erasures is a guard input where erased. Observer actions write the same fresh
+snapshot; returned phases retain it exactly until consumption. serverResult
+reads the unchanged expected capture, updates the same server revision and
+acceptance, then makes expected dead. Success consumption in revision reads
+unchanged draft/epoch/resultRevision; creation differs only within V1's
+erased output cone. Failure consumption reads exact ownership and actor
+observation, then finishes; it cannot recover a server/success consumer. All
+other updates copy the extra erased values or overwrite them before use.
+Therefore the same original parameters still yield equal projected
+successors, including old-lifetime replies, concurrent edits and the next
+request. No transition, input, bound or property is removed.
+
+The V2 operator has a new ID/operator/final-TLA binding and independently
+validated complete production TLA. Full-file drift guards add future reads
+of each newly dead capture, wrong-phase observations and create/failure
+consumers. Native controls retain every V1 false/live observation, add
+false-to-true publication/admission repairs, protect observed snapshots before
+return, and retain pre-server/current-global/failure-identity fields. Each
+probe isolates its named property and requires a second-state violation with
+no initial-state failure. These fixtures do not replace the manual argument
+or a complete finite graph. Native/full exploration is scheduled separately;
+no completion is claimed until a frozen receipt completes with zero queue.
