@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1432d28b529f1fd2299e54b592ed2908988f55e4f2abf643eca50e72e66ee0ef",
+  "inventorySha256": "ff625544b34a1df7211057a2e37310ed083e4c158eed3d2a6ccf04161531eba3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -169,7 +169,7 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 49,
+      "line": 50,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
@@ -455,7 +455,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "line": 576,
+      "line": 583,
       "name": "recordResult",
       "kind": "string-union",
       "values": ["conflict", "recorded"],
@@ -2990,7 +2990,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 31,
+      "line": 32,
       "name": "ApplicationStatus",
       "kind": "string-union",
       "values": ["approved", "cancelled", "pending", "rejected"],
@@ -3003,7 +3003,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 98,
+      "line": 99,
       "name": "RestrictionState",
       "kind": "string-union",
       "values": ["banned", "clear", "quarantined"],
@@ -3016,7 +3016,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 99,
+      "line": 100,
       "name": "AppealState",
       "kind": "string-union",
       "values": ["denied", "granted", "none", "requested"],
@@ -3029,7 +3029,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 101,
+      "line": 102,
       "name": "EnforcementResult",
       "kind": "string-union",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
@@ -3046,7 +3046,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 137,
+      "line": 138,
       "name": "decisionSource",
       "kind": "string-union",
       "values": [
@@ -3069,7 +3069,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 177,
+      "line": 178,
       "name": "moderation",
       "kind": "string-union",
       "values": ["moderator", "not-moderator", "unconfigured"],
@@ -3086,7 +3086,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 327,
+      "line": 328,
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
@@ -3105,7 +3105,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 332,
+      "line": 333,
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
@@ -3118,7 +3118,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 340,
+      "line": 346,
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
@@ -3134,7 +3134,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 351,
+      "line": 357,
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
@@ -3147,7 +3147,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 360,
+      "line": 366,
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],
@@ -3234,7 +3234,46 @@
     },
     {
       "path": "src/lib/vetting-contracts.ts",
-      "line": 110,
+      "line": 59,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["completed", "failed", "not-started", "unavailable"],
+      "models": [],
+      "lexicallyUnmentionedValues": [
+        "completed",
+        "failed",
+        "not-started",
+        "unavailable"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/vetting-contracts.ts",
+      "line": 60,
+      "name": "verdict",
+      "kind": "string-union",
+      "values": ["findings", "malicious-suspected", "no-findings"],
+      "models": [],
+      "lexicallyUnmentionedValues": [
+        "findings",
+        "malicious-suspected",
+        "no-findings"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/vetting-contracts.ts",
+      "line": 76,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["partial", "unsupported"],
+      "models": [],
+      "lexicallyUnmentionedValues": ["partial", "unsupported"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/vetting-contracts.ts",
+      "line": 144,
       "name": "exemption",
       "kind": "string-union",
       "values": [

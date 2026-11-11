@@ -669,7 +669,7 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "sha256": "f016055ed484e670715c8d7739b516bd780944c4d57a506d94c7231958ac53de",
+      "sha256": "389348a855720a5b9c2da7daba2a670f41ca11306198311b03689607b81d695e",
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
@@ -677,12 +677,12 @@
         "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
       ],
       "candidateLines": [
-        7, 49, 50, 60, 61, 112, 120, 126, 130, 139, 147, 148, 218, 230, 238,
-        240, 244, 256, 264, 269, 274, 280, 285, 289, 291, 296, 304, 313, 314,
-        317, 322, 326, 331, 332, 333, 335, 338, 339, 345, 348, 349, 352, 355,
-        356, 359, 360, 362, 363, 369, 370, 372, 373, 375, 376, 381, 382, 385,
-        393, 395, 396, 398, 399, 401, 412, 415, 425, 426, 471, 515, 522, 529,
-        553, 564, 572, 577
+        7, 50, 51, 61, 62, 113, 121, 127, 131, 140, 148, 149, 219, 231, 239,
+        241, 245, 257, 265, 270, 275, 284, 291, 295, 297, 302, 310, 319, 320,
+        323, 328, 332, 337, 338, 339, 341, 344, 345, 351, 354, 355, 358, 361,
+        362, 365, 366, 368, 369, 375, 376, 378, 379, 381, 382, 387, 388, 391,
+        399, 401, 402, 404, 405, 407, 418, 421, 431, 432, 477, 521, 528, 535,
+        559, 570, 578, 583
       ],
       "review": "mapped-abstraction"
     },
@@ -1296,7 +1296,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "sha256": "9f368aafe14bfe735f761961a392d767a138568187d49928ef6d8b003cb88d7e",
+      "sha256": "0a8fb5436adc860b0cf70156a390ed8934742d9d482fc014d4d5d31aa00f3a10",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
@@ -1307,10 +1307,10 @@
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
-        67, 90, 99, 116, 160, 166, 226, 301, 345, 382, 422, 448, 499, 511, 523,
-        524, 525, 528, 563, 564, 648, 649, 687, 698, 776, 857, 861, 869, 909,
-        921, 956, 964, 976, 978, 979, 982, 991, 998, 1000, 1005, 1010, 1023,
-        1026, 1028, 1030, 1031
+        71, 94, 103, 120, 164, 170, 233, 308, 352, 389, 429, 455, 506, 518, 530,
+        531, 532, 535, 570, 571, 655, 656, 694, 705, 783, 864, 868, 876, 916,
+        928, 963, 971, 983, 985, 986, 989, 998, 1005, 1007, 1012, 1017, 1030,
+        1033, 1035, 1037, 1038
       ],
       "review": "mapped-abstraction"
     },
@@ -1348,9 +1348,9 @@
     },
     {
       "path": "backend/vetting/summary.ts",
-      "sha256": "c9eb8d9b736bebbf81f0301bfafe43c629d9eb2824f43299dd0332c191161ba9",
+      "sha256": "995a22d379f662d560bd4668767e4373a655feab2d043549068a0d0e1d7f4963",
       "models": [],
-      "candidateLines": [27, 50],
+      "candidateLines": [39, 61, 86, 87, 88, 106],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure mapping from supplied assessment artifacts/findings to safe location and fixed user-facing text; no state, I/O, current time, authority or persistence. Disposition and admission gates remain in separate models."
     },
@@ -4680,17 +4680,18 @@
     },
     {
       "path": "src/AdminVetting.tsx",
-      "sha256": "5375241b66c9564f116877b1df1b25fee2824a6d4f6440f85318311cdcfe59c7",
+      "sha256": "49bd586d844cb284bfccbf0b5531e894f18293711036507a7f44f9b3386b1378",
       "models": [
         "formal/models/ui/ui_admin_review.qnt",
         "formal/models/ui/ui_admin_vetting_requests.qnt"
       ],
       "candidateLines": [
-        26, 29, 55, 62, 72, 73, 78, 96, 108, 112, 114, 123, 156, 157, 203, 204,
-        205, 394, 479, 482, 484, 489, 577, 578, 586, 591, 697, 724, 725, 726,
-        727, 728, 729, 736, 746, 750, 758, 766, 773, 777, 778, 781, 783, 785,
-        790, 793, 796, 797, 799, 803, 806, 809, 811, 828, 835, 837, 838, 851,
-        857, 859, 865, 867, 881, 887, 895, 901, 926, 994, 997, 999, 1006, 1040
+        26, 29, 57, 64, 74, 75, 80, 98, 110, 114, 116, 125, 158, 159, 205, 206,
+        207, 396, 481, 484, 486, 491, 579, 580, 588, 593, 699, 726, 727, 728,
+        729, 730, 731, 738, 748, 752, 760, 768, 775, 779, 780, 783, 785, 787,
+        792, 795, 798, 799, 801, 805, 808, 811, 813, 830, 837, 839, 840, 853,
+        859, 861, 867, 869, 882, 894, 900, 908, 914, 939, 1007, 1010, 1012,
+        1019, 1053
       ],
       "review": "mapped-abstraction"
     },
@@ -5089,7 +5090,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "056742fc4136b711b03708193e67c1647f3dc7e972adc01f2e7f30b484276aa8",
+      "sha256": "166130fedacf3fe344aa72e83c5139d6728b4be1573ce89135a2612d71be70ae",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5178,17 +5179,17 @@
     },
     {
       "path": "src/ProfilePage.tsx",
-      "sha256": "5bf0875fb615cf1c3f32f83ce5d34460613a3b1eb11cb6cb4cd0e35878eaac67",
+      "sha256": "48468ca4dbe98623238c767e7e444e8586f76b18daa8b8afa41eece51e7aecf9",
       "models": [
         "formal/models/ui/ui_profile_identity.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        1, 35, 36, 39, 40, 44, 48, 52, 57, 61, 69, 74, 81, 82, 85, 98, 99, 100,
-        105, 110, 122, 129, 136, 140, 145, 148, 155, 158, 168, 267, 269, 272,
-        291, 292, 295, 307, 328, 346, 347, 362, 364, 368, 371, 374, 387, 397,
-        418, 425, 434, 435, 441, 442, 443, 444
+        1, 36, 37, 40, 41, 47, 49, 51, 52, 58, 62, 67, 70, 72, 75, 81, 86, 93,
+        94, 98, 111, 112, 113, 118, 123, 135, 142, 149, 153, 158, 161, 168, 171,
+        181, 280, 282, 286, 289, 290, 293, 301, 324, 325, 340, 342, 346, 349,
+        352, 365, 375, 396, 403, 412, 413, 419, 420, 421, 422
       ],
       "review": "mapped-abstraction"
     },
@@ -5293,7 +5294,7 @@
     },
     {
       "path": "src/ProjectSetupStatus.tsx",
-      "sha256": "bf244af6bb7217a27d3f88f22218f01717b2ba20237b87ad1fa29f62f05236a6",
+      "sha256": "cfd783405489d0f54176070ecc37c3d0558d96ce8af3ef7e191bf13e03d03ed9",
       "models": [
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/ui/ui_project_setup.qnt",
@@ -5301,9 +5302,9 @@
         "formal/models/ui/ui_setup_check_suspense.qnt"
       ],
       "candidateLines": [
-        12, 15, 30, 34, 39, 44, 47, 53, 55, 71, 74, 78, 88, 119, 122, 125, 126,
-        175, 210, 211, 221, 222, 247, 250, 251, 255, 259, 260, 307, 309, 323,
-        325, 342, 346, 349, 351, 393
+        12, 15, 31, 35, 40, 45, 48, 54, 56, 72, 75, 79, 89, 120, 123, 126, 127,
+        176, 211, 212, 222, 223, 248, 251, 252, 256, 260, 262, 313, 315, 329,
+        331, 348, 352, 355, 357, 399
       ],
       "review": "mapped-abstraction"
     },
@@ -5350,6 +5351,14 @@
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Controlled network/asset fields; chosen values are owned by parent forms, with no independent persistence or request."
+    },
+    {
+      "path": "src/ScanClearanceBadges.tsx",
+      "sha256": "edcc018378777cd2f93e54a9766fcb1ce6fdea2f350a20cba49014a167b7161d",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure rendering of a ScanClearanceView as status badges; no state, effects, I/O or time."
     },
     {
       "path": "src/SecurityBounty.tsx",
@@ -6076,6 +6085,14 @@
       "statelessReason": "Pure UTC-day bucketing and summed Point amounts from arguments; no retained state, I/O, lifecycle or mutation."
     },
     {
+      "path": "src/lib/profile-actor.ts",
+      "sha256": "4451e9d2eda699b05b4fc4b560bdf32861b416327ff4c069397f757f92a740f1",
+      "models": [],
+      "candidateLines": [27, 70, 79],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure resolution of the actor a profile URL names from already-loaded identity sources; no state, I/O, time or persistence."
+    },
+    {
       "path": "src/lib/profiles.ts",
       "sha256": "3cc4ed403b2baf0c3d55f015cd46887aa8d1f82bfd2f0874987d9cbf63f55230",
       "models": ["formal/models/ui/ui_profile_history.qnt"],
@@ -6127,14 +6144,14 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "c209c1b2cf976e6c5690c70128dfc9cc697627501d9bd0ca7477aee60067f695",
+      "sha256": "5587b7fa7c484705831a9a7dff60008b65dfea512efbc69ad97c47d62f1e3743",
       "models": [
         "formal/models/api/api_project_removal.qnt",
         "formal/models/slopbot/bot_repository_authority_scope.qnt"
       ],
       "candidateLines": [
-        10, 31, 35, 48, 168, 194, 195, 206, 207, 299, 300, 301, 317, 326, 327,
-        332, 336, 351, 360, 400, 401
+        11, 32, 36, 49, 169, 195, 196, 207, 208, 300, 301, 302, 318, 327, 328,
+        333, 337, 357, 366, 406, 407
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -6359,6 +6376,14 @@
       "models": ["formal/models/contributor/skill_run_local.qnt"],
       "candidateLines": [88, 93, 125, 135],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/scan-clearance.ts",
+      "sha256": "363ec8e8e38e7d21a3796ec4c104a25eb8e74cb39f3925ff43e9622edf381f7d",
+      "models": [],
+      "candidateLines": [2, 6, 18, 55, 59, 88, 94, 98, 154, 156],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure derivation of owner-facing scan badges from a recorded assessment summary; no state, I/O, time or persistence. Setup status and the admin vetting view call it with the same summary."
     },
     {
       "path": "src/lib/score-penalties.ts",
@@ -6776,9 +6801,11 @@
     },
     {
       "path": "src/lib/vetting-contracts.ts",
-      "sha256": "18da5806d1c0ff55829cc0519861c2bb3419ba3f7d64752173451225f280f545",
+      "sha256": "c17e54b106f72b0ad4d5971162cd82eef030086432e58e61f47b23f067e01452",
       "models": [],
-      "candidateLines": [37, 43, 92, 93, 94, 95, 96, 98, 104, 106, 118],
+      "candidateLines": [
+        37, 43, 59, 67, 76, 126, 127, 128, 129, 130, 132, 138, 140, 152
+      ],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O."
     },
