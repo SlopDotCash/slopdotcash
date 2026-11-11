@@ -120,3 +120,105 @@ test("a resumed setup check restarts after vault setup suspends and reveals the 
     reveal();
   }
 });
+
+test("removing the parent retires an unfinished setup check before its response arrives", async ({
+  page,
+}, info) => {
+  const project = PROJECTS.find((candidate) => candidate.id === "eliza");
+  if (!project) throw new Error("Missing project fixture");
+  await serveProjectMaintainer(page, () => project);
+  let sessionReads = 0;
+  await page.route("**/api/v1/project-session", (route) => {
+    sessionReads += 1;
+    return route.fulfill({
+      json: {
+        session: { githubId: "1", githubLogin: "local-owner", admin: false },
+      },
+    });
+  });
+  let started: () => void = () => {};
+  const checkStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finish: () => void = () => {};
+  const finishCheck = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/api/v1/project-setup/eliza/check", async (route) => {
+    started();
+    await finishCheck;
+    await route.fulfill({
+      json: {
+        setup: {
+          projectId: project.id,
+          name: project.name,
+          slug: project.slug,
+          revision: 1,
+          status: "active",
+          state: "ready",
+          nextAction: { kind: "none", message: "Project active.", href: null },
+          checks: {
+            authority: { state: "verified", message: "Verified." },
+            installation: { state: "installed", message: "Installed." },
+            scan: { state: "cleared", message: "Cleared." },
+          },
+          funding: { mode: "none" },
+          activatedRevision: null,
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    });
+  });
+  await page.route("**/api/v1/projects/eliza/remove", (route) =>
+    route.fulfill({
+      json: {
+        project: {
+          id: project.id,
+          revision: 2,
+          status: "paused",
+          manifest: { ...project, status: "paused", listingTier: "retired" },
+        },
+      },
+    }),
+  );
+  try {
+    await page.goto("/projects/eliza/manage", {
+      waitUntil: "domcontentloaded",
+    });
+    await checkStarted;
+    const remove = page.getByRole("button", {
+      name: "Remove project",
+      exact: true,
+    });
+    await expect(remove).toBeEnabled();
+    page.once("dialog", (dialog) => dialog.accept());
+    await remove.click();
+    await expect(
+      page.getByRole("heading", { name: "Project removed", exact: true }),
+    ).toBeVisible();
+    const readsAfterRemoval = sessionReads;
+    const response = page.waitForResponse((value) =>
+      value.url().includes("project-setup/eliza/check"),
+    );
+    finish();
+    await (await response).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(page.locator(".project-setup-status")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Project removed", exact: true }),
+    ).toBeVisible();
+    expect(sessionReads).toBe(readsAfterRemoval);
+    await expectAccessibleReflow(page, "removed-parent-retires-setup");
+    await page.screenshot({
+      path: info.outputPath("setup-removed-after-late-response.png"),
+      fullPage: true,
+    });
+  } finally {
+    finish();
+  }
+});

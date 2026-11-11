@@ -310,7 +310,7 @@ alignment. Regenerated inventories and source comparisons are not acceptance.
 | Generated project skill publication | `project_skill_publication` | `backend/projects/skill-publication.ts`, `src/lib/project-skill-publication.mjs`, `scripts/project-registry-api.test.ts` |
 | Retained value-dispute evidence and triage | `bot_value_dispute_binding`, `bot_value_dispute_read`, `bot_value_dispute_actor`, `bot_value_dispute_draft` | `workers/slopbot/value-disputes.ts`, `workers/slopbot/penalty-appeal.test.ts` |
 | Archive filters, clocks and historical detail | `ui_cycle_archive`, `ui_cycle_publication`, `ui_record_deadlines` | `src/CyclePages.tsx`, `src/App.tsx`, `tests/e2e/site.spec.ts`, `tests/e2e/ui-clock-transitions.spec.ts` |
-| Setup status and activation | `api_project_setup_check`, `ui_setup_check_lifetime` | `backend/projects/setup.ts`, `backend/projects/handler.ts`, `scripts/project-self-service.test.ts`, `tests/e2e/project-access-retry.spec.ts` |
+| Setup status and activation | `api_project_setup_check`, `ui_setup_check_lifetime` | `backend/projects/setup.ts`, `backend/projects/handler.ts`, `scripts/project-self-service.test.ts`, `tests/e2e/project-access-retry.spec.ts`, `tests/e2e/project-setup-resume.spec.ts` |
 | Private submission claim ownership | `api_submission_recovery`, `api_private_intake` | `backend/security/submissions.ts`, `backend/security/submissions.test.ts` |
 | Retained-copy binding and historical import | `retained_copy_bindings`, `historical_subscription_intake` | `workers/slopbot/value-retained-copy.ts`, `workers/slopbot/value-import.ts`, existing promotion and publication-fence workflows |
 | Owner vault infrastructure selection | `vault_setup_resolution`, `vault_creation` | `backend/projects/vault-setup.ts`, existing EVM/Solana vault setup workflows |
@@ -1014,3 +1014,7 @@ simulation, witnesses, invariants and model checking. The
 defines fairness and eventual progress. Models are finite, independently
 checkable families with explicit cross-family assumptions, followed by
 implementation conformance through actual workflow entry points.
+
+Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12 review requests, a ten-item initial view, explicit expansion, and retained expansion during stale refresh. `tests/e2e/project-work.spec.ts` exercises expansion by keyboard at desktop and mobile widths, including long-title reflow at 200% text size.
+
+`ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.

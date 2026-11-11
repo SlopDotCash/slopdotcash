@@ -4692,7 +4692,6 @@
         "formal/models/ui/ui_project_images.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
-        "formal/models/ui/ui_setup_check_suspense.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
@@ -5279,8 +5278,7 @@
       "models": [
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/ui/ui_project_setup.qnt",
-        "formal/models/ui/ui_setup_check_lifetime.qnt",
-        "formal/models/ui/ui_setup_check_suspense.qnt"
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
         12, 15, 30, 34, 39, 44, 47, 53, 55, 71, 74, 78, 88, 119, 122, 125, 126,
@@ -9405,7 +9403,7 @@
     },
     {
       "path": "formal/models/api/api_project_removal.qnt",
-      "sha256": "d8cb72aa3371dc97c501df87c0ec4d85f4695bfb847193a87e2dea49d073c802",
+      "sha256": "a034e2d1692d2fd57844f53e811717c832bdc32dcaf6a65e1d1df5961e215415",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/contracts.ts",
@@ -16756,7 +16754,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_removal.qnt",
-      "sha256": "78db3904d3eca63c708d263b5d3c38beae50dcfee94d523bfc49f294e52de7aa",
+      "sha256": "e76a3610d7b5b30e2df61214e4c96e64c67b5d661b1c17b47534481d162fa975",
       "sources": [
         "src/PendingProjectApplications.tsx",
         "src/ProjectProposalPage.tsx",
@@ -16793,10 +16791,13 @@
     },
     {
       "path": "formal/models/ui/ui_project_work.qnt",
-      "sha256": "1e47c841771d97d0fc13e0c50ffb07bf05e9efe8ae0da7ca0e7bdb02d349d15e",
+      "sha256": "3756ed00981db0e203c36f740af187c1fadefdb76c7da1b019b9b960599ed537",
       "sources": ["src/App.tsx", "src/ProjectWork.tsx"],
       "scenarios": [
+        "collapsedTest",
         "emptyTest",
+        "expandedRefreshTest",
+        "expansionTest",
         "failureTest",
         "loadTest",
         "pausedTest",
@@ -17116,7 +17117,7 @@
     },
     {
       "path": "formal/models/ui/ui_setup_check_lifetime.qnt",
-      "sha256": "758d739d416342a1f8d67370751bda876ea09bf4138cdee5205ea8e97258dd8a",
+      "sha256": "4bac02e9b3074bbddacabf6b5d93431217bc1e4e2d621d4f4a87452491f28b1c",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -17133,26 +17134,20 @@
         "departedAcceptedCheckCannotPublishTest",
         "departedPreflightStartsNoPostTest",
         "differentProjectBodyClearsTest",
+        "hiddenCompletionIsReplacedOnRevealTest",
+        "hiddenLateReplyCannotRetireReplacementTest",
+        "hiddenPreflightCannotDispatchAfterRevealTest",
+        "hiddenSuppliedInitialIsPreservedWithoutCheckTest",
         "initialResultIsPreservedTest",
+        "oldRevealLeavesCheckingWithoutRequestTest",
         "outageChangedActorClearsSetupTest",
+        "parentRemovalRetiresAcceptedSetupCheckTest",
         "retryAfterRefusalCanRecoverTest",
+        "revealedSetupIsRetiredByParentRemovalTest",
         "sameActorOutageKeepsSetupTest",
         "swappedDispatchIsRefusedTest",
         "unavailableFinalIdentityClearsTest",
         "unknownPreflightClearsTest"
-      ]
-    },
-    {
-      "path": "formal/models/ui/ui_setup_check_suspense.qnt",
-      "sha256": "adeb13f0bcb33469cbbf4d8ec1d6d7b1ea4ecbd5e539e4446eb740de59c66409",
-      "sources": ["src/App.tsx", "src/ProjectSetupStatus.tsx"],
-      "scenarios": [
-        "hiddenResponseCannotPublishTest",
-        "initialProjectionSurvivesRevealTest",
-        "oldResponseAfterRevealCannotReplaceNewRequestTest",
-        "restartFailureCanRetryTest",
-        "restartedCheckPublishesTest",
-        "revealRestartsEmptyCheckTest"
       ]
     },
     {
