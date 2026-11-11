@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  Ban,
   BookOpen,
   CalendarCheck,
+  CircleSlash,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -15,6 +17,7 @@ import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
+import { POINTS_NOTICE } from "./lib/points";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
@@ -209,6 +212,67 @@ export function HowItWorksPage() {
                 next site update. There is no waiting period or minimum account
                 age.
               </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>How do points work?</h3>
+            <div>
+              <p className="points-formula">
+                <b>Your points</b>
+                <span>÷</span>
+                <b>Project points</b>
+                <span>×</span>
+                <b>Funded pool</b>
+                <span>=</span>
+                <b className="points-formula-result">Your share</b>
+              </p>
+              <ul className="faq-facts">
+                <li>
+                  <CalendarCheck aria-hidden="true" />
+                  Counts in its own UTC month
+                </li>
+                <li>
+                  <Ban aria-hidden="true" />
+                  No carryover into a later pool
+                </li>
+                <li>
+                  <HandCoins aria-hidden="true" />
+                  <span>
+                    Owner decides funding ·{" "}
+                    <Link href="/earnings">Payouts</Link>
+                  </span>
+                </li>
+                <li>
+                  <CircleSlash aria-hidden="true" />
+                  {POINTS_NOTICE}
+                </li>
+              </ul>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>When are payouts sent?</h3>
+            <div>
+              <ol
+                className="payment-stages faq-timeline"
+                aria-label="Monthly payout timeline"
+              >
+                <li>
+                  <strong>Month ends</strong>
+                  <span>UTC</span>
+                </li>
+                <li>
+                  <strong>72h review</strong>
+                  <span>Owner adjusts</span>
+                </li>
+                <li>
+                  <strong>Locks</strong>
+                  <span>Automatically</span>
+                </li>
+                <li>
+                  <strong>Paid</strong>
+                  <span>On chain · 2% fee</span>
+                </li>
+              </ol>
             </div>
           </article>
           <article className="faq-answer">
