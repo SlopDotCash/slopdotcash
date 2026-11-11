@@ -329,6 +329,46 @@ export function synthesisCall(
   const inventory = JSON.parse(
     new TextDecoder().decode(inspection.inventory),
   ) as Inventory;
+  const batchInputs = batches.map(
+    (batch) =>
+      JSON.parse(batch.evidence) as Inventory & {
+        sameBytesAs?: Record<string, string[]>;
+      },
+  );
+  // A model read these aliases beside their byte-identical source item.
+  // The synthesis also needs that mapping: otherwise a flagged alias path
+  // appears in the pre-pass but nowhere in its list of reviewed content.
+  const sameBytesInBatches = batchInputs.flatMap((batch, index) =>
+    batch.items.flatMap((item) => {
+      const paths = batch.sameBytesAs?.[item.id] ?? [];
+      return paths.length === 0
+        ? []
+        : [
+            {
+              sourcePath: item.id,
+              sourceSha256: item.sha256,
+              batch: `batch-${index + 1}`,
+              paths,
+            },
+          ];
+    }),
+  );
+  const risky = new Set(inspection.riskSignals);
+  const summarizedAliases = (entries: SameBytesOutsideBatches) => {
+    // Keep exact mappings for risk signals even when ordinary path lists
+    // need a compact representation. Those paths also appear in findings.
+    const flaggedAliases = entries.flatMap((entry) => {
+      const paths = entry.paths.filter((path) =>
+        risky.has(path.replace(/(?:#(?:part-\d+-of-\d+|signals))+$/u, "")),
+      );
+      return paths.length === 0 ? [] : [{ ...entry, paths }];
+    });
+    return {
+      sources: entries.length,
+      paths: entries.reduce((sum, entry) => sum + entry.paths.length, 0),
+      ...(flaggedAliases.length > 0 ? { flaggedAliases } : {}),
+    };
+  };
   const listing = (full: boolean) => ({
     inventorySha256: inspection.inventorySha256,
     coverage: inspection.coverage,
@@ -345,9 +385,19 @@ export function synthesisCall(
     batches: batches.map((batch, index) => ({
       id: `batch-${index + 1}`,
       items: full
-        ? (JSON.parse(batch.evidence) as Inventory).items.map((item) => item.id)
+        ? batchInputs[index].items.map((item) => item.id)
         : batch.items,
     })),
+    ...(sameBytesInBatches.length > 0
+      ? {
+          sameBytesAs: full
+            ? sameBytesInBatches
+            : {
+                ...summarizedAliases(sameBytesInBatches),
+                note: "Paths byte-identical to a reviewed item, supplied beside that item in the retained batch inventories",
+              },
+        }
+      : {}),
     // Identical paths that did not fit beside their reviewed copy; each one
     // shares the bytes reviewed in the named batch.
     ...(sameBytesOutsideBatches.length > 0
@@ -355,11 +405,7 @@ export function synthesisCall(
           sameBytesOutsideBatches: full
             ? sameBytesOutsideBatches
             : {
-                sources: sameBytesOutsideBatches.length,
-                paths: sameBytesOutsideBatches.reduce(
-                  (sum, entry) => sum + entry.paths.length,
-                  0,
-                ),
+                ...summarizedAliases(sameBytesOutsideBatches),
                 note: "Paths byte-identical to a reviewed item, listed in the retained inventory",
               },
         }
