@@ -202,9 +202,10 @@ module solana_binding_api {
   }
   action step = {
     any {
-      { nondet profile = profiles.oneOf() nondet first = rows.oneOf() nondet second = rows.oneOf()
-        nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf()
-        configure(profile, first, second, a, b) },
+      { all { not(s.configured), {
+          nondet profile = profiles.oneOf() nondet first = rows.oneOf() nondet second = rows.oneOf()
+          nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf()
+          configure(profile, first, second, a, b) } } },
       advance,
       replaceClaim,
       { nondet scope = scopes.oneOf() closeAttempt(scope) },

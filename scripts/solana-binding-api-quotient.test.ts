@@ -19,11 +19,11 @@ if (!selected)
 function checkReviewedSource(text: string) {
   if (
     sha256(text) !==
-    "0a7eb589797eedf3bfb3cd67b7c1c274d8d77f324adef57dc78a6c21de0ebc60"
+    "c9fb501258ad70a6269f234c53617cf2d7fbdc154cbe47355a82d433a87fd28d"
   )
     throw new Error("Solana binding observation quotient needs review");
 }
-test("Solana VIEW binds the complete unchanged concrete model", () => {
+test("Solana VIEW binds the complete reviewed concrete model", () => {
   checkReviewedSource(source);
   expect(sha256(source)).toBe(selected.sourceSha256);
 });

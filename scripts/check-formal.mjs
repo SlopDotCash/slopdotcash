@@ -58,9 +58,9 @@ const verificationTimeouts = {
   // The journal's unchanged finite domain exceeds the ordinary three-minute
   // budget. Keep a bounded, model-specific allowance for its reviewed view.
   "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
-  // The 180s Solana binding run last reported 1,076,625 distinct states and
-  // 171,571 queued. Preserve its complete model and reviewed safety VIEW.
-  "formal/models/payments/solana_binding_api.qnt": 600_000,
+  // The equivalent configure-guard revision still had 143,371 states queued
+  // after 600s. Preserve its complete model and reviewed safety VIEW.
+  "formal/models/payments/solana_binding_api.qnt": 1_200_000,
 };
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");

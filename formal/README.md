@@ -62,7 +62,8 @@ normally has a 180-second limit. Explicit resource exceptions in
 
 - 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
   `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
-  `ui_security_settings_lifetime`, `ui_vetting_reader`, and `fee_value_caps`.
+  `ui_vetting_reader`, and `fee_value_caps`.
+- 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
 - 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
   `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
   `ui_bounty_payment_parent`, and `direct_bounty_journal`.
@@ -313,6 +314,13 @@ receipts belong to their recorded prototype inputs; they are not a claim that
 a later combined revision ran those graphs. Earlier version-1 timeouts remain
 incomplete. Native controls, final source bindings and implementation evidence
 remain separate qualification requirements.
+
+The Solana binding API's identical configure guard now runs before its 384
+unchanged input tuples. Its existing VIEW expression is unchanged, with renewed
+source/TLA pins. That separately frozen quotient completed 3,373,889 distinct
+states with an empty queue in 688.320 seconds under its explicit 1,200-second
+allowance. Earlier 180- and 600-second attempts remain incomplete. Ordinary
+scenario and sampling budgets stay unchanged.
 
 ### Other duplicate transition choices
 
