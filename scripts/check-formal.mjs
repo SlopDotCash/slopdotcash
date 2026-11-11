@@ -30,6 +30,10 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // Hosted full graphs exceeded 180s with ongoing progress and states queued.
+  // Keep every concrete transition and invariant; completion is still required.
+  "formal/models/api/api_trace.qnt": 600_000,
+  "formal/models/ui/ui_private_intake.qnt": 600_000,
   // These source-bound finite graphs still had millions of queued states
   // after the ordinary three-minute budget. Retain the complete domains,
   // transitions and reviewed views; grant time to finish the same graph.
