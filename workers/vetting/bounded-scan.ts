@@ -305,6 +305,11 @@ type Rule = {
   summary: string;
   /** Applies only to these surfaces; every surface when absent. */
   surfaces?: ScanSurface[];
+  /**
+   * Applies only to text a check derived from the file, such as the loader
+   * lines whose section decides their meaning, never to the raw file.
+   */
+  onlyDerived?: boolean;
 };
 
 /** A command token cannot continue into another command or a filename suffix. */
@@ -413,8 +418,14 @@ const RULES: Rule[] = [
     // the compiler or the test runner. The file itself is repository source
     // and reviewed, so this rule points at which file to read rather than at
     // a remote download.
+    //
+    // Only the lines `localLoaderLines` returns reach this rule, so the
+    // section that decides the meaning is already applied and the rule stays
+    // case-sensitive, as TOML keys are.
+    surfaces: ["installScripts"],
+    onlyDerived: true,
     pattern:
-      /(?<![^\n])[ \t]*(?:preload\s*=\s*(?:\[\s*)?["'][^"'\n]+["']|rustc-wrapper\s*=\s*["'][^"'\n]+["']|runner\s*=\s*["'][^"'\n]+["'])/iu,
+      /^[ \t]*["']?(?:preload|rustc-wrapper|runner)["']?[ \t]*=[ \t]*(?:["']|\[)/u,
     summary: "Loads a local program at run time",
   },
   {
@@ -863,9 +874,11 @@ function checkText(
   evidenceText = text,
   origin?: (index: number) => number,
   nonMatches?: Set<RegExp>,
+  derived = false,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
+    if (rule.onlyDerived && !derived) continue;
     if (rule.surfaces && !rule.surfaces.some((s) => surfaces.includes(s)))
       continue;
     const match = rule.pattern.exec(text);
@@ -913,6 +926,71 @@ function installHookCommands(path: string, text: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The loader lines of the two configuration files whose section decides the
+ * meaning: `preload` only at the top level of `bunfig.toml`, `rustc-wrapper`
+ * only under `[build]` and `runner` only under `[target.*]` in
+ * `.cargo/config.toml`. A quoted key is legal TOML, and a `preload` array may
+ * hold comment lines. Each returned entry carries its source line, so the
+ * finding points at the file line and not at a derived offset.
+ */
+function localLoaderLines(
+  path: string,
+  text: string,
+): { text: string; line: number; offset: number }[] {
+  const name = basename(path);
+  const lower = path.toLowerCase();
+  const bunfig = name === "bunfig.toml";
+  const cargo = name === "config.toml" && /(?:^|\/)\.cargo\//u.test(lower);
+  if (!bunfig && !cargo) return [];
+  const lines = text.split(/\r?\n/u);
+  // Where each line begins in the source, for the evidence offset.
+  const starts: number[] = [];
+  let cursor = 0;
+  for (const line of lines) {
+    starts.push(cursor);
+    cursor += line.length + 1;
+  }
+  // An empty value loads nothing: `preload = []` and `runner = ""` stay clean.
+  const hasValue = (rest: string, index: number): boolean => {
+    if (/^["'][^"']+["']/u.test(rest)) return true;
+    if (!rest.startsWith("[")) return false;
+    for (
+      let ahead = index;
+      ahead < Math.min(index + 40, lines.length);
+      ahead++
+    ) {
+      const next = lines[ahead].replace(/#.*$/u, "");
+      if (ahead > index && next.includes("]")) return false;
+      if (/["'][^"']+["']/u.test(ahead === index ? next.slice(1) : next))
+        return true;
+    }
+    return false;
+  };
+  const found: { text: string; line: number; offset: number }[] = [];
+  let section = "";
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const header = /^[ \t]*\[([^\]]+)\]/u.exec(line);
+    if (header) {
+      section = header[1].trim().toLowerCase();
+      continue;
+    }
+    const key = /^[ \t]*(["']?)([A-Za-z][\w-]*)\1[ \t]*=[ \t]*(.*)$/u.exec(
+      line,
+    );
+    if (!key || !hasValue(key[3], index)) continue;
+    const name = key[2];
+    if (bunfig && section === "" && name === "preload")
+      found.push({ text: line, line: index + 1, offset: starts[index] });
+    else if (cargo && section === "build" && name === "rustc-wrapper")
+      found.push({ text: line, line: index + 1, offset: starts[index] });
+    else if (cargo && section.startsWith("target.") && name === "runner")
+      found.push({ text: line, line: index + 1, offset: starts[index] });
+  }
+  return found;
 }
 
 /** JSON that configures tools rather than holding data; always reviewed. */
@@ -1765,6 +1843,37 @@ export function inspectRepository(input: {
         findings.push(
           ...checkText(`${file.path}#scripts`, command, ["installScripts"]),
         );
+    }
+    // Loader lines keep their source position, so the derived text maps back
+    // to the file line for the evidence.
+    const loaders = localLoaderLines(file.path, text);
+    if (loaders.length > 0) {
+      const joined = loaders.map((entry) => entry.text).join("\n");
+      const starts: number[] = [];
+      let offset = 0;
+      for (const entry of loaders) {
+        starts.push(offset);
+        offset += entry.text.length + 1;
+      }
+      // The derived text is the loader lines in order; map a match back to
+      // the offset of its source line.
+      const origin = (index: number) => {
+        let segment = 0;
+        while (segment + 1 < starts.length && starts[segment + 1] <= index)
+          segment += 1;
+        return loaders[segment].offset;
+      };
+      findings.push(
+        ...checkText(
+          file.path,
+          joined,
+          ["installScripts"],
+          text,
+          origin,
+          undefined,
+          true,
+        ),
+      );
     }
     if (surfaces.includes("installScripts") || hooks.length > 0)
       for (const match of [ruleText, ...hooks].join("\n").matchAll(DOWNLOAD))

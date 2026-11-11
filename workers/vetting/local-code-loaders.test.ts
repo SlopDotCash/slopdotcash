@@ -7,56 +7,85 @@ function inspected(path: string, text: string) {
   });
 }
 
+function found(path: string, text: string) {
+  return inspected(path, text).findings.map(
+    (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
+  );
+}
+
 /**
- * Three configuration keys name a local file that the tool runs on every
- * invocation: `preload` in `bunfig.toml` runs before the entrypoint, and
- * `rustc-wrapper` or a target `runner` in `.cargo/config.toml` replaces the
- * compiler or the test runner. The named file is repository source, so the
- * rule points at which file to read; it is not a remote download.
+ * Three keys name a local file that the tool runs on every invocation:
+ * `preload` in `bunfig.toml` runs before the entrypoint, and `rustc-wrapper`
+ * or a target `runner` in `.cargo/config.toml` replaces the compiler or the
+ * test runner. The named file is repository source, so the rule points at
+ * which file to read; it is not a remote download.
+ *
+ * The section decides the meaning, and TOML keys are case-sensitive, so only
+ * the lines the extractor returns reach the rule.
  */
-const LOADERS: [string, string][] = [
-  ["bunfig.toml", `preload = ["./tools/setup.ts"]\n`],
-  ["bunfig.toml", `preload = "./tools/setup.ts"\n`],
-  [".cargo/config.toml", `[build]\nrustc-wrapper = "tools/rustc-wrap.sh"\n`],
+const LOADERS: [string, string, string][] = [
+  ["bunfig.toml", 'preload = "./tools/setup.ts"\n', ":1"],
+  ["bunfig.toml", 'preload = ["./tools/setup.ts"]\n', ":1"],
+  ["bunfig.toml", '"preload" = "./tools/setup.ts"\n', ":1"],
+  ["bunfig.toml", 'preload = [\n  # the entry\n  "./a.ts",\n]\n', ":1"],
   [
     ".cargo/config.toml",
-    `[target.x86_64-unknown-linux-gnu]\nrunner = "tools/run-tests.sh"\n`,
+    '[build]\nrustc-wrapper = "tools/rustc-wrap.sh"\n',
+    ":2",
+  ],
+  [
+    ".cargo/config.toml",
+    '[target.x86_64-unknown-linux-gnu]\nrunner = "tools/run-tests.sh"\n',
+    ":2",
   ],
   [
     "crates/core/.cargo/config.toml",
-    `[target.wasm32-unknown-unknown]\nrunner = "wasmtime --dir ."\n`,
+    '[target.wasm32-unknown-unknown]\nrunner = "wasmtime --dir ."\n',
+    ":2",
   ],
 ];
 
-test("a local code loader is flagged as execution", () => {
-  for (const [path, text] of LOADERS) {
+test("a local code loader is flagged at its own line", () => {
+  for (const [path, text, line] of LOADERS) {
     const inspection = inspected(path, text);
-    expect({
+    expect({ path, text, findings: inspection.findings }).toMatchObject({
       path,
       text,
-      findings: inspection.findings.map(
-        (finding) => `${finding.path}:${finding.category}:${finding.severity}`,
-      ),
-    }).toEqual({ path, text, findings: [`${path}:unsafe-execution:medium`] });
+      findings: [{ path, category: "unsafe-execution", severity: "medium" }],
+    });
+    // The evidence names the source line, not the derived offset.
+    expect(inspection.findings[0]?.evidence).toBe(`${path}${line}`);
   }
 });
 
-test("a loader keeps its context line in the evidence", () => {
-  const path = ".cargo/config.toml";
-  const inspection = inspected(path, `[build]\nrustc-wrapper = "tools/w.sh"\n`);
-  expect(inspection.findings[0]?.evidence).toBe(`${path}:2`);
-});
-
-test("ordinary assignment and prose stay unflagged", () => {
+test("the same assignment outside the deciding file or section stays clean", () => {
   const cases: [string, string][] = [
-    ["bunfig.toml", `[install]\nregistry = "https://example.test"\n`],
-    [".cargo/config.toml", `[net]\nretry = 3\n`],
-    ["docs/build.md", `The runner is documented elsewhere.\n`],
-    [".cargo/config.toml", `runner = 3\n`],
+    // A make variable and ordinary assignments.
+    ["Makefile", 'runner = "pytest"\n'],
+    ["scripts/run.py", 'runner = "pytest"\n'],
+    ["tools/setup.js", 'preload = "./polyfill.js"\n'],
+    // A section that does not read the key.
+    ["pyproject.toml", '[tool.pytest.ini_options]\nrunner = "x"\n'],
+    ["Cargo.toml", '[target.x86_64-unknown-linux-gnu]\nrunner = "x"\n'],
+    ["bunfig.toml", '[install]\npreload = "./x"\n'],
+    [".cargo/config.toml", '[net]\nrunner = "x"\n'],
+    // TOML keys are case-sensitive.
+    ["bunfig.toml", 'Preload = "./x"\n'],
+    // An empty value loads nothing.
+    ["bunfig.toml", "preload = []\n"],
+    ["bunfig.toml", 'preload = ""\n'],
+    [".cargo/config.toml", "[net]\nretry = 3\n"],
   ];
   for (const [path, text] of cases)
-    expect({ path, findings: inspected(path, text).findings }).toEqual({
+    expect({ path, text, findings: found(path, text) }).toEqual({
       path,
+      text,
       findings: [],
     });
+});
+
+test("a comment line is not a loader", () => {
+  expect(
+    found(".cargo/config.toml", '# runner = "x"\n[net]\nretry = 3\n'),
+  ).toEqual([]);
 });
