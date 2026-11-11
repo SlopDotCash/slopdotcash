@@ -4,7 +4,7 @@
  * gross amount must divide by four in asset base units. An authorized
  * full-award exception pays 100% to the researcher and needs no such
  * divisibility rule.").
- * Model: formal/models/ui/ui_owner_vault_setup_storage.qnt.
+ * Model: formal/lemmascript/src/lib/verified-security-split.dfy.
  */
 import { expect, test } from "bun:test";
 import { securityBountyShares } from "../src/lib/verified-security-split";
