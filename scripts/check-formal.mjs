@@ -50,6 +50,7 @@ const verificationTimeouts = {
   "formal/models/payments/evm_binding_consent_api.qnt": 600_000,
   "formal/models/api/trace_event_finalization.qnt": 600_000,
   "formal/models/api/api_private_authorization.qnt": 600_000,
+  "formal/models/api/wallet_possession_completion.qnt": 600_000,
   // These source-bound finite graphs still had millions of queued states
   // after the ordinary three-minute budget. Retain the complete domains,
   // transitions and reviewed views; grant time to finish the same graph.
