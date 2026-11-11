@@ -5357,7 +5357,8 @@
       "sha256": "edcc018378777cd2f93e54a9766fcb1ce6fdea2f350a20cba49014a167b7161d",
       "models": [],
       "candidateLines": [],
-      "review": "pending"
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure rendering of a ScanClearanceView as status badges; no state, effects, I/O or time."
     },
     {
       "path": "src/SecurityBounty.tsx",
@@ -6381,7 +6382,8 @@
       "sha256": "363ec8e8e38e7d21a3796ec4c104a25eb8e74cb39f3925ff43e9622edf381f7d",
       "models": [],
       "candidateLines": [2, 6, 18, 55, 59, 88, 94, 98, 154, 156],
-      "review": "pending"
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure derivation of owner-facing scan badges from a recorded assessment summary; no state, I/O, time or persistence. Setup status and the admin vetting view call it with the same summary."
     },
     {
       "path": "src/lib/score-penalties.ts",
