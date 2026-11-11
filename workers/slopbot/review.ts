@@ -58,6 +58,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { literalFacts } from "./literal-facts";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -868,6 +869,33 @@ function disclosure(call: CallRecord | null): string {
   return `${call.provider} / ${call.requestedModel} (route step ${call.routeStep}, served model unverified)`;
 }
 
+// Issue #1930: the model has called a well-formed digest "not a sha256 hex
+// value" and a hex literal "an undefined name". A finding keeps its verdict
+// and wording; the published comment additionally states what can be decided
+// without a model about each hex token the finding cites from the item.
+function citedLiteralFacts(input: {
+  verdict: Verdict;
+  action: "label" | "close" | "hold" | "comment";
+  context: Pick<Context, "itemText">;
+}): string[] {
+  if (input.action === "comment") return [];
+  const facts = literalFacts(
+    [
+      input.verdict.summary,
+      ...input.verdict.evidence,
+      ...input.verdict.limitations,
+    ],
+    input.context.itemText ?? "",
+  );
+  if (facts.length === 0) return [];
+  return [
+    "",
+    "Deterministic checks of hex tokens this review cites (computed from the item text, not model statements; the finding above is unchanged):",
+    ...facts.map((fact) => `- ${fact}`),
+    "",
+  ];
+}
+
 export function commentBody(input: {
   verdict: Verdict;
   action: "label" | "close" | "hold" | "comment";
@@ -912,6 +940,7 @@ export function commentBody(input: {
         : input.blockedClose === null
           ? ""
           : `_This item was not closed: ${input.blockedClose}._`,
+    ...citedLiteralFacts(input),
     penalty
       ? `_Under the published penalty table, this close removes ${penalty.debit_thirds * POINTS_PER_THIRD} points from the author's ${penalty.period} Slop Score. A month never goes below zero, and approved, scheduled or paid awards do not change.${penalty.moderator_review === 1 ? " A Slop moderator also reviews the account." : ""}_`
       : "",
