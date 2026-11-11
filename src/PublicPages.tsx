@@ -217,13 +217,13 @@ export function HowItWorksPage() {
           <article className="faq-answer">
             <h3>How do points work?</h3>
             <div>
-              <p className="points-formula" aria-label="Monthly share formula">
+              <p className="points-formula">
                 <b>Your points</b>
-                <span aria-hidden="true">÷</span>
+                <span>÷</span>
                 <b>Project points</b>
-                <span aria-hidden="true">×</span>
+                <span>×</span>
                 <b>Funded pool</b>
-                <span aria-hidden="true">=</span>
+                <span>=</span>
                 <b className="points-formula-result">Your share</b>
               </p>
               <ul className="faq-facts">
