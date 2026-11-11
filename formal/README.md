@@ -1279,3 +1279,13 @@ Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12
 `ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
 
 Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.
+
+## Additional raw timeout diagnostics
+
+This private diagnostic source grants 600 seconds only to the following
+unchanged models after their recorded hosted 180-second failures. Completion
+remains required; no result is inferred from the new allowance, and no VIEW
+is introduced. The existing owner-vault 1,800-second and email-action
+600-second failures are excluded from this repeat.
+
+`identity_assertion_lifecycle`, `received_totals`, `dev_identity_bridge`, `ui_owner_vault_setup`, `ui_points_disputes`, `ui_solana_history_recovery`, `vetting_evidence_delivery`, `incomplete_assessment_queries`, `project_skill_publication`, `trace_run_creation`, `payment_wallet_registration`, `ui_admin_vetting_requests`, `vetting_flag_reinstatement`.

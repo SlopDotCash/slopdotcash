@@ -30,6 +30,21 @@ const files = listModels(root, selected);
 // This finite graph completed in 219s with unchanged inputs. Keep the
 // exception explicit; ordinary stages retain their limits.
 const verificationTimeouts = {
+  // Isolated diagnostic: unchanged concrete graphs exceeded 180s in the full
+  // hosted run. Retain every domain, guard and invariant; require completion.
+  "formal/models/api/identity_assertion_lifecycle.qnt": 600_000,
+  "formal/models/payments/received_totals.qnt": 600_000,
+  "formal/models/tooling/dev_identity_bridge.qnt": 600_000,
+  "formal/models/ui/ui_owner_vault_setup.qnt": 600_000,
+  "formal/models/ui/ui_points_disputes.qnt": 600_000,
+  "formal/models/ui/ui_solana_history_recovery.qnt": 600_000,
+  "formal/models/vetting/vetting_evidence_delivery.qnt": 600_000,
+  "formal/models/api/incomplete_assessment_queries.qnt": 600_000,
+  "formal/models/api/project_skill_publication.qnt": 600_000,
+  "formal/models/api/trace_run_creation.qnt": 600_000,
+  "formal/models/payments/payment_wallet_registration.qnt": 600_000,
+  "formal/models/ui/ui_admin_vetting_requests.qnt": 600_000,
+  "formal/models/vetting/vetting_flag_reinstatement.qnt": 600_000,
   // Hosted full graphs exceeded 180s with ongoing progress and states queued.
   // Keep every concrete transition and invariant; completion is still required.
   "formal/models/api/api_trace.qnt": 600_000,
