@@ -21,6 +21,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
@@ -715,6 +716,52 @@ test("evidence beyond the former 64 MiB run cap is retained in bounded parts", a
   expect(stored.storage).toBe("content");
   expect(JSON.parse(stored.chunks)).toHaveLength(9);
 }, 180_000);
+
+test("gzip source passes the normal scan with its complete compressed evidence retained", async () => {
+  const source = '{"frozenHistory":[1,2,3]}';
+  const compressed = new Uint8Array(gzipSync(source));
+  await commit({ "fixtures/history.json.gz": compressed }, "Add gzip source");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const result = (await vetting.getAssessment(pass.assessments[0].assessmentId))
+    ?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing gzip result");
+  expect(result.artifacts).toMatchObject([
+    { sha256: digest(compressed), state: "released", analysis: "static-clean" },
+  ]);
+  expect(reviewedItems.some((item) => item.text === source)).toBe(true);
+  expect(await retained.evidence.retained(result)).toBe(true);
+});
+
+test("gzip native payload retains both exact objects and cannot clear admission", async () => {
+  const native = new Uint8Array([0x4d, 0x5a, 0, 0, 1, 2, 3, 4]);
+  const compressed = new Uint8Array(gzipSync(native));
+  await commit({ "artifacts/native.exe.gz": compressed }, "Add gzip native");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "incomplete",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const result = (await vetting.getAssessment(pass.assessments[0].assessmentId))
+    ?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing gzip result");
+  expect(result.artifacts).toMatchObject([
+    { sha256: digest(compressed), state: "released" },
+    {
+      sha256: digest(native),
+      parentSha256: digest(compressed),
+      state: "quarantined",
+    },
+  ]);
+  expect(await retained.evidence.retained(result)).toBe(true);
+});
 
 test("a repository beyond the former acquisition limits gets a complete batched review and clears", async () => {
   await commit(
