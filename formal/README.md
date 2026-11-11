@@ -1289,3 +1289,8 @@ is introduced. The existing owner-vault 1,800-second and email-action
 600-second failures are excluded from this repeat.
 
 `identity_assertion_lifecycle`, `received_totals`, `dev_identity_bridge`, `ui_owner_vault_setup`, `ui_points_disputes`, `ui_solana_history_recovery`, `vetting_evidence_delivery`, `incomplete_assessment_queries`, `project_skill_publication`, `trace_run_creation`, `payment_wallet_registration`, `ui_admin_vetting_requests`, `vetting_flag_reinstatement`.
+
+The same isolated diagnostic also probes the unchanged raw
+`stored_binding_broadcast_authority` graph at 1,200 seconds after its 600-second
+frontier peaked at 3.14 million queued states and fell to 2.76 million. This
+is one bounded continuation, not a completed result or a production change.

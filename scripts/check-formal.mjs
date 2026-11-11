@@ -61,7 +61,9 @@ const verificationTimeouts = {
   "formal/models/api/submission_authorization_wrappers.qnt": 600_000,
   "formal/models/api/api_submission_recovery.qnt": 600_000,
   "formal/models/api/wallet_claim_publication.qnt": 600_000,
-  "formal/models/payments/stored_binding_broadcast_authority.qnt": 600_000,
+  // The raw frontier fell from 3.14m to 2.76m queued near the 600s deadline.
+  // One isolated continuation retains the complete concrete graph.
+  "formal/models/payments/stored_binding_broadcast_authority.qnt": 1_200_000,
   "formal/models/payments/evm_binding_consent_api.qnt": 600_000,
   "formal/models/api/trace_event_finalization.qnt": 600_000,
   "formal/models/api/api_private_authorization.qnt": 600_000,
