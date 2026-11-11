@@ -61,17 +61,17 @@ const literalFinding = {
 test("a finding that disputes a cited digest carries the deterministic fact", () => {
   const text = body("hold", digestFinding, DIGEST_ITEM);
   expect(text).toContain(
-    `- \`${DIGEST}\` is a well-formed 64-character lowercase hex string, the form of a SHA-256 digest. Whether it is the digest of a particular file was not checked.`,
+    `- \`${DIGEST}\` is a well-formed 64-character hex string, the form of a SHA-256 digest. Whether it is the digest of a particular file was not checked.`,
   );
 });
 
 test("a finding that calls hex literals undefined names carries the facts", () => {
   const text = body("hold", literalFinding, LITERAL_ITEM);
   expect(text).toContain(
-    "- `0x57738c8` is written as a hex integer literal (`0x` followed by 7 hex digits), not as a name.",
+    "- `0x57738c8` has the form of a hex integer literal (`0x` followed by 7 hex digits). Whether it is used as a literal where it appears (and not inside a string, comment or URL) was not checked.",
   );
   expect(text).toContain(
-    "- `0xF4` is written as a hex integer literal (`0x` followed by 2 hex digits), not as a name.",
+    "- `0xF4` has the form of a hex integer literal (`0x` followed by 2 hex digits). Whether it is used as a literal where it appears (and not inside a string, comment or URL) was not checked.",
   );
 });
 
@@ -103,8 +103,6 @@ test("a real finding about a malformed digest or a real name gets no fact line",
       `+ pinned = "${short}"\n`,
     ),
   ).toEqual([]);
-  const upper = DIGEST.toUpperCase();
-  expect(literalFacts([upper], `+ pinned = "${upper}"\n`)).toEqual([]);
   expect(literalFacts([`${DIGEST}ab`], `+ pinned = "${DIGEST}ab"\n`)).toEqual(
     [],
   );
@@ -145,4 +143,39 @@ test("each token is reported once and the list is bounded", () => {
   expect(
     literalFacts([many.join(" ")], many.map((t) => `+ v = ${t}`).join("\n")),
   ).toHaveLength(LITERAL_FACT_LIMIT);
+});
+
+test("digests match in upper, mixed and crossed letter case", () => {
+  const upper = DIGEST.toUpperCase();
+  const mixed = `${DIGEST.slice(0, 32).toUpperCase()}${DIGEST.slice(32)}`;
+  for (const [cited, inItem] of [
+    [upper, upper],
+    [mixed, mixed],
+    [DIGEST, upper],
+    [upper, DIGEST],
+  ]) {
+    expect(
+      literalFacts([`${cited} is wrong`], `+ pin = "${inItem}"\n`),
+    ).toEqual([
+      `\`${cited}\` is a well-formed 64-character hex string, the form of a SHA-256 digest. Whether it is the digest of a particular file was not checked.`,
+    ]);
+  }
+  expect(
+    literalFacts([`${DIGEST} and ${upper}`], `+ pin = "${DIGEST}"\n`),
+  ).toHaveLength(1);
+});
+
+test("a 0x token in a string, comment or URL gets only the hedged form line", () => {
+  for (const item of [
+    '+ label = "see 0xF4 below"\n',
+    "+ # offset 0xF4 is reserved\n",
+    "+ url = https://example.test/tx/0xF4\n",
+  ]) {
+    const facts = literalFacts(["0xF4 is an undefined name"], item);
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toContain("has the form of a hex integer literal");
+    expect(facts[0]).toContain("was not checked");
+    expect(facts[0]).not.toContain("is written as");
+    expect(facts[0]).not.toContain("not as a name");
+  }
 });

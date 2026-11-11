@@ -10,9 +10,15 @@
 // limitations AND, with the same boundaries, in the reviewed item text. A
 // token the model invented, or one that sits inside a longer identifier or a
 // longer hex run in the item, yields no line.
+//
+// Each line states the token's form only. A pattern cannot tell whether a
+// 0x token sits in code, a string, a comment or a URL, or whether a digest
+// belongs to any file, so every line says what was not checked. Digests match
+// in either letter case, and a digest the review cites in one case matches
+// the same digest written in the other case in the item.
 
 const WORD = "[0-9A-Za-z_]";
-const DIGEST = new RegExp(`(?<!${WORD})[0-9a-f]{64}(?!${WORD})`, "g");
+const DIGEST = new RegExp(`(?<!${WORD})[0-9A-Fa-f]{64}(?!${WORD})`, "g");
 const LITERAL = new RegExp(`(?<!${WORD})0[xX][0-9A-Fa-f]+(?!${WORD})`, "g");
 
 /** At most this many fact lines are published for one review. */
@@ -29,21 +35,31 @@ export function literalFacts(
 ): string[] {
   const cited = reviewText.join("\n");
   const facts: string[] = [];
-  const add = (pattern: RegExp, describe: (token: string) => string) => {
-    const inItem = new Set(tokens(pattern, itemText));
-    for (const token of new Set(tokens(pattern, cited))) {
-      if (inItem.has(token)) facts.push(describe(token));
+  const add = (
+    pattern: RegExp,
+    key: (token: string) => string,
+    describe: (token: string) => string,
+  ) => {
+    const inItem = new Set(tokens(pattern, itemText).map(key));
+    const seen = new Set<string>();
+    for (const token of tokens(pattern, cited)) {
+      const k = key(token);
+      if (seen.has(k) || !inItem.has(k)) continue;
+      seen.add(k);
+      facts.push(describe(token));
     }
   };
   add(
     DIGEST,
+    (token) => token.toLowerCase(),
     (token) =>
-      `\`${token}\` is a well-formed 64-character lowercase hex string, the form of a SHA-256 digest. Whether it is the digest of a particular file was not checked.`,
+      `\`${token}\` is a well-formed 64-character hex string, the form of a SHA-256 digest. Whether it is the digest of a particular file was not checked.`,
   );
   add(
     LITERAL,
+    (token) => token,
     (token) =>
-      `\`${token}\` is written as a hex integer literal (\`0x\` followed by ${token.length - 2} hex digit${token.length === 3 ? "" : "s"}), not as a name.`,
+      `\`${token}\` has the form of a hex integer literal (\`0x\` followed by ${token.length - 2} hex digit${token.length === 3 ? "" : "s"}). Whether it is used as a literal where it appears (and not inside a string, comment or URL) was not checked.`,
   );
   return facts.slice(0, LITERAL_FACT_LIMIT);
 }
