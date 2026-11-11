@@ -192,21 +192,28 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     // SQLite reads the real clock, which setSystemTime does not move. Give
     // every statement the test's clock, so a lease or cap written at
     // CLOSED_AT is not compared with the day the suite happens to run.
-    const statement = prepare(
-      sql.replaceAll("'now'", `'${new Date().toISOString()}'`),
-    );
+    const atTestClock = () =>
+      prepare(sql.replaceAll("'now'", `'${new Date().toISOString()}'`));
+    const statement = atTestClock();
     if (sql.startsWith("INSERT OR IGNORE INTO slopbot_close_attempts")) {
-      const wrap = (inner: typeof statement): typeof statement => ({
+      // A test may move the clock while this reservation is paused, so the
+      // statement reads the clock when it runs, not when it was prepared.
+      const wrap = (
+        inner: typeof statement,
+        bound: unknown[],
+      ): typeof statement => ({
         ...inner,
-        bind: (...values) => wrap(inner.bind(...values)),
+        bind: (...values) => wrap(inner.bind(...values), values),
         run: async () => {
           const callback = beforeCloseReservation;
           beforeCloseReservation = null;
           await callback?.();
-          return inner.run();
+          return atTestClock()
+            .bind(...bound)
+            .run();
         },
       });
-      return wrap(statement);
+      return wrap(statement, []);
     }
     if (sql.startsWith("UPDATE slopbot_appeals SET resolved_at")) {
       const wrapResolution = (inner: typeof statement): typeof statement => ({
