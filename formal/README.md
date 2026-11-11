@@ -56,6 +56,12 @@ the checked-out model, source and tool bytes, and it publishes the merged
 `checks.json` and `verification.json`. `tlc.json` runs four TLC workers, one
 per hosted-runner vCPU; the worker count changes no explored state space.
 
+Manual diagnostics may select space-separated model names with
+`gh workflow run formal.yml --ref BRANCH -f models="MODEL_NAME OTHER_MODEL"`.
+The default is `all`. A focused result covers only the selected models; trusted
+branch releases still require every model and retain the same native controls,
+source bindings and report checks.
+
 Type, scenario and simulation stages have a 90-second limit. Finite verification
 normally has a 180-second limit. Explicit resource exceptions in
 `scripts/check-formal.mjs` retain all model domains and invariants:

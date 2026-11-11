@@ -12,6 +12,11 @@ on:
         type: string
         default: "[1, 2, 3, 4, 5, 6]"
   workflow_dispatch:
+    inputs:
+      models:
+        description: "all, or space-separated model names for a focused diagnostic run"
+        type: string
+        default: all
 
 permissions:
   contents: read
@@ -103,7 +108,7 @@ jobs:
 
   models:
     name: models ${{ matrix.shard }}
-    # A manual run has no inputs and checks every model.
+    # Manual diagnostics may select models; trusted releases request all.
     if: ${{ (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
     # Each model keeps its explicit bound; leave time for the complete shard.
