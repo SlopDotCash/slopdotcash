@@ -96,12 +96,19 @@ module solana_binding_wire {
     s' = s.with("phase", "wallet").with("walletCalled", true)
       .with("inputPrivate", true).with("outputPrivate", false) }
   action step = {
-    nondet input = inputClasses.oneOf()
-    nondet version = Set(0, 1).oneOf()
-    nondet expiry = Set(0, 1).oneOf()
-    nondet wallet = walletClasses.oneOf()
-    any { configure(input, version, expiry), checkPrepared, advance, handoff, walletReply(wallet), walletRejected,
-      checkSigned, mutateProviderOutput, post, s' = s }
+    any {
+      { nondet input = inputClasses.oneOf() nondet version = Set(0, 1).oneOf() nondet expiry = Set(0, 1).oneOf()
+        configure(input, version, expiry) },
+      checkPrepared,
+      advance,
+      handoff,
+      { nondet wallet = walletClasses.oneOf() walletReply(wallet) },
+      walletRejected,
+      checkSigned,
+      mutateProviderOutput,
+      post,
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.now), Set(0, 1).contains(s.version), Set(0, 1).contains(s.expiry),
@@ -109,7 +116,7 @@ module solana_binding_wire {
     s.signedAccepted implies s.prepareAccepted and s.output == s.reviewed,
     s.posted implies s.signedAccepted and s.postedIdentity == s.reviewed,
     s.prepareAccepted implies Set("valid", "other-attester", "vault-only").contains(s.input) }
-  action prepared(kind: str): bool = init.then(configure(kind, 0, 1)).then(checkPrepared)
+  run prepared(kind: str): bool = init.then(configure(kind, 0, 1)).then(checkPrepared)
   action offered = prepared("valid").then(handoff)
   action signed(kind: str): bool = offered.then(walletReply(kind)).then(checkSigned)
 

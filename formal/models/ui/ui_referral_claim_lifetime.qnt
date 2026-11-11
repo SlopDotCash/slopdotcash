@@ -105,14 +105,31 @@ module ui_referral_claim_lifetime {
   action externalReplacement(record: int): bool = all {
     Set(1, 3, 5, 6).contains(record), s' = s.with("record", record) }
   action step = {
-    nondet id = views.oneOf()
-    nondet total = Set(0, 1, 2).oneOf()
-    nondet record = Set(1, 3, 5, 6).oneOf()
-    any { unavailableLocks, storageFails, storageRecovers, restoreLegacy,
-      restoreUnreadable, observe(id), requestLock(id), grantLock(id), observePreflight(id), returnPreflight(id), dispatchWallet(id), preflightRefuses(id),
-      depart(id), walletHash(id), walletDeclines(id), walletUnknown(id), terminate(id),
-      reset(id), refuseBusyOrUnsupported(id), observeClaimed(total), clearVerified(id),
-      externalReplacement(record), s' = s }
+    any {
+      unavailableLocks,
+      storageFails,
+      storageRecovers,
+      restoreLegacy,
+      restoreUnreadable,
+      { nondet id = views.oneOf() observe(id) },
+      { nondet id = views.oneOf() requestLock(id) },
+      { nondet id = views.oneOf() grantLock(id) },
+      { nondet id = views.oneOf() observePreflight(id) },
+      { nondet id = views.oneOf() returnPreflight(id) },
+      { nondet id = views.oneOf() dispatchWallet(id) },
+      { nondet id = views.oneOf() preflightRefuses(id) },
+      { nondet id = views.oneOf() depart(id) },
+      { nondet id = views.oneOf() walletHash(id) },
+      { nondet id = views.oneOf() walletDeclines(id) },
+      { nondet id = views.oneOf() walletUnknown(id) },
+      { nondet id = views.oneOf() terminate(id) },
+      { nondet id = views.oneOf() reset(id) },
+      { nondet id = views.oneOf() refuseBusyOrUnsupported(id) },
+      { nondet total = Set(0, 1, 2).oneOf() observeClaimed(total) },
+      { nondet id = views.oneOf() clearVerified(id) },
+      { nondet record = Set(1, 3, 5, 6).oneOf() externalReplacement(record) },
+      s' = s
+    }
   }
   val invariant = all {
     s.mounted.subseteq(s.present),

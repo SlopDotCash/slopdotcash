@@ -9003,7 +9003,7 @@
     },
     {
       "path": "formal/models/api/api_identity_admission.qnt",
-      "sha256": "c2bb70ea8f7a44f3e5b4b195c36db652c6208709fb243690fc73e340bbee8660",
+      "sha256": "e1c0aa22340edbcca2f64c27fba1336a4e24bc48bc5cfa67799a79827d1cbe4c",
       "sources": [
         "migrations/0004_identity_rate_limits.sql",
         "workers/identity/index.ts",
@@ -9212,7 +9212,7 @@
     },
     {
       "path": "formal/models/api/api_private_authorization.qnt",
-      "sha256": "fc5a04e82727303f81544ed9ce7b672a257ab82e8a43547e5cafcda4d8e0063f",
+      "sha256": "831c01a80956066e3dc1d3503f5ac6dcb8695c932db1e92d7f1340c4943f0fa2",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/intake-grant.ts",
@@ -9650,7 +9650,7 @@
     },
     {
       "path": "formal/models/api/api_submission_recovery.qnt",
-      "sha256": "1071f57714c4580e05121cb5a61680fd0c2deb18a417597a5fa2db9d549e4deb",
+      "sha256": "8b39e8302787904f8979c4175aac8263a5068e3e60ca9471f7ad3099e44ea95f",
       "sources": [
         "backend/security/report-intake.ts",
         "backend/security/submission-store.ts",
@@ -9690,7 +9690,7 @@
     },
     {
       "path": "formal/models/api/api_trace.qnt",
-      "sha256": "7d8a676efb1587ab2d8aa6a33e788f0c4e4611002dad9dcdbc8a8a86bb5efb1f",
+      "sha256": "a8c77c255b2f7e04f78dae533a320a8baf324ab3cdb84e9347961133be51f078",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/cloudflare-persistence.ts",
@@ -9942,7 +9942,7 @@
     },
     {
       "path": "formal/models/api/github_lookup_repository.qnt",
-      "sha256": "3510c4122ec967125a2beac688a0cf07dd70666f4b123155c64dbbe85e1ab75d",
+      "sha256": "ea1b2d8dc68ea4a454be2e86a9aea0caf374e285954b6dbeb264eebb333064c6",
       "sources": ["backend/github.ts", "backend/projects/github-lookup.ts"],
       "scenarios": [
         "absentBranchTargetCannotReuseEarlierCommitTest",
@@ -9984,7 +9984,7 @@
     },
     {
       "path": "formal/models/api/identity_assertion_lifecycle.qnt",
-      "sha256": "26599aa5264231f2af01efd87eb0e514fbb0b35b206b1af8c515b793a74216d8",
+      "sha256": "084e2a403ad49b3ea694703985927ca6fa0e0542a3efc8fa967848a5bc9bfc4b",
       "sources": [
         "workers/identity/contracts.ts",
         "workers/identity/crypto.ts",
@@ -10027,7 +10027,7 @@
     },
     {
       "path": "formal/models/api/identity_callback_completion.qnt",
-      "sha256": "ce64d2c0e5fea1535521edaabe9b9b3f956ba31e45699f3b69d7897f32c56de6",
+      "sha256": "e5e95eeafac3d49371d6e7b2b3d32274a8ed21e01f5a3bdeb16de98c2d71372d",
       "sources": [
         "migrations/0108_identity_failed_callback.sql",
         "workers/identity/contracts.ts",
@@ -10069,7 +10069,7 @@
     },
     {
       "path": "formal/models/api/identity_consumer_exchange.qnt",
-      "sha256": "0873d8a1fdde472a511e058e9b74f4428e0cf26ad9cc2036873d4ad467bc903b",
+      "sha256": "d755b5268605d8f0e1e2fc3936c9e7592233a8a03ca759169edadb428d910de3",
       "sources": [
         "backend/identity-assertion.ts",
         "backend/points/handler.ts",
@@ -10222,7 +10222,7 @@
     },
     {
       "path": "formal/models/api/inbox_queries.qnt",
-      "sha256": "3994c09fc1cb5c0a26d614572c310b148501113b693e6f0a93270bbb1ecf96bb",
+      "sha256": "0909a6f7b7a7b972ac9a44c8631264b5bf0ca7919ee4fe3fd01ddab40520b2e1",
       "sources": [
         "backend/notifications/handler.ts",
         "src/lib/notifications.ts"
@@ -10250,7 +10250,7 @@
     },
     {
       "path": "formal/models/api/incomplete_assessment_queries.qnt",
-      "sha256": "39652147e2706cda5d18a4216c1bdf34bd72ade88ed019c59b65f5b760a062e8",
+      "sha256": "2cd566d8f8830d594550ff9991486042a4bd79895aaa5396550bac8db25b5ca7",
       "sources": [
         "backend/notifications/handler.ts",
         "backend/notifications/incomplete-assessments.ts",
@@ -10499,7 +10499,7 @@
     },
     {
       "path": "formal/models/api/project_skill_publication.qnt",
-      "sha256": "97a03d415386aabfb096ee49199413e7b22a6ea10e8c8dc429d003104e0938b8",
+      "sha256": "8e77f39ef6ffac1e1dfb4ffb7d866877141edb691d28a3f88eac09b67bcd984d",
       "sources": [
         "backend/pages.ts",
         "backend/projects/skill-publication.ts",
@@ -10546,7 +10546,7 @@
     },
     {
       "path": "formal/models/api/submission_authorization_wrappers.qnt",
-      "sha256": "0df6863c746d08c56047a06f7d213b4e5cfa8e6e3a65aee83f10e8c6f6310730",
+      "sha256": "814c1f9e34c87f70dddaf2bb56af876b0d759efb31047298b6e3f60a1b41ee47",
       "sources": [
         "backend/security/report-intake.ts",
         "backend/security/submissions.ts",
@@ -10577,7 +10577,7 @@
     },
     {
       "path": "formal/models/api/submission_receipt_verification.qnt",
-      "sha256": "4438d6c551f11770c3dfe5bece42f99bc97a8593b5b52b8d5c93a2de3b0b8576",
+      "sha256": "fbdbafcaab15eb73e05be34a12946ca6b430fa5ac5d5615375888a47a19f2c83",
       "sources": [
         "backend/security/github-advisories.ts",
         "backend/security/handler.ts",
@@ -10609,7 +10609,7 @@
     },
     {
       "path": "formal/models/api/trace_bearer_tokens.qnt",
-      "sha256": "1c73ce136a5be42bc6963f5ef657332f3b1c055eb8d3e4eba077c1230f3e661f",
+      "sha256": "94dba31e2eb8613eea61ad4510474ccc02a25857f3b571c3bc139ddedab3cf01",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/contracts.ts",
@@ -10646,7 +10646,7 @@
     },
     {
       "path": "formal/models/api/trace_event_finalization.qnt",
-      "sha256": "a56e313d7a81b6ef3a8430018ed14e314808ce66fe659268b5ec252cb02deeea",
+      "sha256": "ee970fa7185ba8aac284fd9bdaf702ffa47b034fecb2fe7b214439318afeb648",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/contracts.ts",
@@ -10682,7 +10682,7 @@
     },
     {
       "path": "formal/models/api/trace_route_authorization.qnt",
-      "sha256": "e7b4b5c8196bc4906d5b33ca3e032312329b84ad3ed59fe79e8c7984ff029002",
+      "sha256": "6bee60ab8c0bb0ec3d8d756f46b995c6ea6b41d25c45b70c13cea80be385712f",
       "sources": [
         "backend/trace/auth.ts",
         "backend/trace/handler.ts",
@@ -10728,7 +10728,7 @@
     },
     {
       "path": "formal/models/api/trace_run_creation.qnt",
-      "sha256": "a0243ca9640ce137e1d7d7fdcdd1194ac5165a3300cba0a62becc6c925967849",
+      "sha256": "de3cd439eff487813f76d3d56eabde649bb0917b6037fa9d0fd756c61bd20cfa",
       "sources": [
         "backend/d1.ts",
         "backend/projects/account-bans.ts",
@@ -10771,7 +10771,7 @@
     },
     {
       "path": "formal/models/api/wallet_claim_publication.qnt",
-      "sha256": "a3812927332c9d5af7331bab359f1db0a7aede12c857058db14f87c2080b2623",
+      "sha256": "4c77a115920922c67d596969554e8468d662937ea6f59673d4f387d26fc1ba9a",
       "sources": [
         "backend/notifications/events.ts",
         "backend/payments/wallet-registration.ts",
@@ -10821,7 +10821,7 @@
     },
     {
       "path": "formal/models/api/wallet_possession_completion.qnt",
-      "sha256": "59d6d126d073af6bbf175ecc63d1e7de40750a5d22fa88e7a21318ee309e04a1",
+      "sha256": "3b6f0e5d83dbe1ae5692c1a17108d1664b04d6f552964bf1e79e822fe1d58636",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/trace/handler.ts",
@@ -11457,7 +11457,7 @@
     },
     {
       "path": "formal/models/contributor/contributor_lock_publication.qnt",
-      "sha256": "82bc2f7875cc05faddb0f50d148b9e8bd94bf4ff63ac3f2945b75308c0866db4",
+      "sha256": "1b3913d678d16c592f579ca72ce09fdf58513614c84ab2e0f1573ac5895b9287",
       "sources": [
         "skills/project-contributor-template/scripts/live-report.mjs"
       ],
@@ -12278,7 +12278,7 @@
     },
     {
       "path": "formal/models/payments/evm_binding_consent_api.qnt",
-      "sha256": "84ec721b199dd75f79c136e63c951df45b65dd95261f36a4f174a9788e98f82e",
+      "sha256": "8a014646a455555b26f415c10e5a008ba5f48802f470532c903de912b5e113be",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/possession.ts",
@@ -12405,7 +12405,7 @@
     },
     {
       "path": "formal/models/payments/operator_keeper_lifecycle.qnt",
-      "sha256": "d3fe8c45e8ba0d8b3a1ecfcf9720f46a666f69c9e73a9f176d2fc84794fb277d",
+      "sha256": "7377521ae45adfa5ad7469e8492170b3a87ef406d613fd22e9a83437e2f1d89d",
       "sources": [
         "scripts/payment-keeper/budget.ts",
         "scripts/payment-keeper/keeper.ts",
@@ -12493,7 +12493,7 @@
     },
     {
       "path": "formal/models/payments/payment_history.qnt",
-      "sha256": "92cd0250eaf23395a4e4ac5058bb001cab62742933db48181e4c4831babd8ada",
+      "sha256": "1f39992de916c278e325dd03c31d71475a04e805229356730e591381142813ab",
       "sources": [
         "backend/payments/direct-history.ts",
         "backend/payments/handler.ts",
@@ -12568,7 +12568,7 @@
     },
     {
       "path": "formal/models/payments/payment_wallet_activation.qnt",
-      "sha256": "970a9aa5ed44510771af0de650672e0d7181654230a3f2cd6a3084d223330aca",
+      "sha256": "7589505eb0f12a9652560b85c21709d5f029af7de9d8934692358934a4e7891f",
       "sources": [
         "backend/payments/handler.ts",
         "migrations/0011_payments.sql",
@@ -12594,7 +12594,7 @@
     },
     {
       "path": "formal/models/payments/payment_wallet_registration.qnt",
-      "sha256": "ebf42cbacedc7a0bd80325757d2677bd14d7682aa13787613a4314c24ea7dab1",
+      "sha256": "d5023fc793181ed1a348c7d636806f89f5870971e790c25c188bd6648c3fec01",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/wallet-registration.ts",
@@ -12659,7 +12659,7 @@
     },
     {
       "path": "formal/models/payments/received_totals.qnt",
-      "sha256": "ff6ed5d807657c3edbc761967cd0c6e993b1984ef71f913666eee162434ca065",
+      "sha256": "5c57609a8a60beef42107a0f8f1184ef132ede85666af07301bf6dd1b94f3a76",
       "sources": [
         "backend/payments/handler.ts",
         "backend/payments/public-records.ts",
@@ -12763,7 +12763,7 @@
     },
     {
       "path": "formal/models/payments/solana_binding_api.qnt",
-      "sha256": "1357251c3243cb533beb12b3d8f9e6718bfa0befe4ce76d786001d092cb02d38",
+      "sha256": "0a7eb589797eedf3bfb3cd67b7c1c274d8d77f324adef57dc78a6c21de0ebc60",
       "sources": [
         "backend/http.ts",
         "backend/payments/handler.ts",
@@ -12811,7 +12811,7 @@
     },
     {
       "path": "formal/models/payments/solana_binding_completion.qnt",
-      "sha256": "c252954040cf1c11bcd9cb455f96e6e88847873bf2470d226bf98ce855adff98",
+      "sha256": "8648dfc3195d943a73863994fd088f3ef2d0226dccf129ada161f7738e02b0ff",
       "sources": [
         "backend/payments/handler.ts",
         "contracts/solana/programs/slop-escrow/src/lib.rs",
@@ -12855,7 +12855,7 @@
     },
     {
       "path": "formal/models/payments/solana_executor_journal.qnt",
-      "sha256": "08fa0849fa0f15a9ddfb595191af6a789e8c3cfc87aaf537b0cdc0307b6f4ccd",
+      "sha256": "213baba64c72d08fc53bc10297e1fa8d860b07a8f8fe57f0d5a41aef720022b8",
       "sources": [
         "contracts/solana/transactions.ts",
         "workers/payment-executor/solana.ts"
@@ -12889,7 +12889,7 @@
     },
     {
       "path": "formal/models/payments/solana_history_retirement.qnt",
-      "sha256": "8fc7433053aea137ede00bfc85aa6bdd9be43dccb0eeec004478464aae7c6c4a",
+      "sha256": "41794eb0ff7c3f09eb1d88c06438a9ac004729e90144ef4396e15f44e73883ee",
       "sources": [
         "backend/security/direct-payments.ts",
         "backend/security/direct-solana-recovery.ts",
@@ -12958,7 +12958,7 @@
     },
     {
       "path": "formal/models/payments/stored_binding_broadcast_authority.qnt",
-      "sha256": "c9b32a46f8ccb50512c3ac1d91b7438245d2089192ff95958cce0cae004763c6",
+      "sha256": "aca34aa4c2c22d7ab390b036c4c2168513ca7a206d50a3e80cb4daddb409a171",
       "sources": [
         "migrations/0016_binding_authorizations.sql",
         "scripts/payment-keeper/keeper.ts",
@@ -14112,7 +14112,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_inference_retention.qnt",
-      "sha256": "ad85eaa67a2ff4df4887be8b5f0f45734457bfbbd11d2a36847bb96b0140e806",
+      "sha256": "01644b21ca4172dc45be3abb9585a55ce4cd1b2341d2e3328d01da2c5b5ce60f",
       "sources": [
         "migrations/0054_slopbot_value_inference_results.sql",
         "migrations/0104_slopbot_value_inference_attempts.sql",
@@ -14690,7 +14690,7 @@
     },
     {
       "path": "formal/models/slopbot/historical_subscription_intake.qnt",
-      "sha256": "40927ba6b7ff2424b31c48368f4dae8150eb5ac86d8dde95749d4a8b13501d43",
+      "sha256": "cbc8d18d11f2c13246d83dfb9c2d6aefc5345bfa20b248e82f172258b4ee6f22",
       "sources": [
         "backend/slopbot/value-import.ts",
         "migrations/0038_slopbot_value_journal.sql",
@@ -14882,7 +14882,7 @@
     },
     {
       "path": "formal/models/tooling/dev_identity_bridge.qnt",
-      "sha256": "6b49d13b1e1aebe8e05788ea1f575f9d967f6b31acd9314ad9e731246756631c",
+      "sha256": "0af658165eef1d45cdae934d4daa730832822d28b5c279769498926c81e984af",
       "sources": [
         "scripts/dev-backend.ts",
         "scripts/dev-identity-bridge.ts",
@@ -15311,7 +15311,7 @@
     },
     {
       "path": "formal/models/ui/evm_wallet_discovery.qnt",
-      "sha256": "2c5a2cc8d35a4242c65425ae6b546219b53f58e688e1725836f3ae280302bd28",
+      "sha256": "d22cd5d017bc156d96fc7a95157f78ce893c08875981b486daa52d69a0c6b5d0",
       "sources": ["src/lib/use-payout-wallets.ts"],
       "scenarios": [
         "changedMetadataBlocksSameProviderTest",
@@ -15345,7 +15345,7 @@
     },
     {
       "path": "formal/models/ui/solana_binding_wire.qnt",
-      "sha256": "ce4fcc90c2bab5d56ecf6d02b3aaf7ffd4af2af3dfcd6f2440ecf54522a7bc16",
+      "sha256": "daa78a198b630ab2634c6a345d8bdf7e9fdddde7a14620abdb46c4638ac4974b",
       "sources": [
         "contracts/solana/transactions.ts",
         "src/PayoutConsent.tsx",
@@ -15396,7 +15396,7 @@
     },
     {
       "path": "formal/models/ui/solana_message_buffers.qnt",
-      "sha256": "3f99e86ad6aefada5ce60d3dd229c8bbb695ad954d4545b6c73189d03a6f1bac",
+      "sha256": "12c0d3002c39b2375a983e7581f585a7237d5a78afab277028e42d012cb56e5c",
       "sources": [
         "backend/security/direct-solana-recovery.ts",
         "src/SolanaBountyRecovery.tsx",
@@ -15427,7 +15427,7 @@
     },
     {
       "path": "formal/models/ui/solana_wallet_provider.qnt",
-      "sha256": "d53f4b00c425926d0e8257ca47f750f891e0142861980d143ca38fcdf24b7fcf",
+      "sha256": "5256522b9bcddb34689d809d593abbddc172aa4a211349029dda65dbc4da9c48",
       "sources": [
         "src/Earnings.tsx",
         "src/PayoutConsent.tsx",
@@ -15587,7 +15587,7 @@
     },
     {
       "path": "formal/models/ui/ui_admin_vetting_requests.qnt",
-      "sha256": "89875db677c47f8bd762b35388e22a16c158dc525d92be93b21a18d9e5f3c3ac",
+      "sha256": "681a1d0913f4ab5e4ab6d80c8879d96b47def92cfd8785d08e561f64e3fd7778",
       "sources": [
         "backend/vetting/handler.ts",
         "src/Admin.tsx",
@@ -15732,7 +15732,7 @@
     },
     {
       "path": "formal/models/ui/ui_contributor_allocation.qnt",
-      "sha256": "0e0a3b32ee3482532ee395c17bc9f10593511fa0df0a2545387ff24cb2a3de6a",
+      "sha256": "767f463c4c1243d01ac4e0ca77316869af0c5e9441d1d96d911c27fdf077ad59",
       "sources": [
         "src/ContributorAllocation.tsx",
         "src/Earnings.tsx",
@@ -15773,7 +15773,7 @@
     },
     {
       "path": "formal/models/ui/ui_cycle_archive.qnt",
-      "sha256": "32c836414be57af07ebebcb97d18f99bd0f361d75baf9466f9426d0cccdbb8a7",
+      "sha256": "78e92ffa9f1e3b102a1e618cf751de01cd48cc0fd1fa59c943f3221240e2eda7",
       "sources": [
         "src/App.tsx",
         "src/CyclePages.tsx",
@@ -16132,7 +16132,7 @@
     },
     {
       "path": "formal/models/ui/ui_identity_poll_protocol.qnt",
-      "sha256": "510d009745668ed4ce5fb0afa8d34a497504d0c359909282acfe9313187152a9",
+      "sha256": "50e8f1078b2e84d39539888712a7b4b8bb3909a5cad088694933690d841cf4e9",
       "sources": [
         "src/Points.tsx",
         "src/lib/identity-flow.ts",
@@ -16274,7 +16274,7 @@
     },
     {
       "path": "formal/models/ui/ui_incomplete_assessments.qnt",
-      "sha256": "cabeceeb7dbb7f40ecca281efebec9513f33cf753ede7bc25c7ef76527899db1",
+      "sha256": "e67796d5197fb763c8c9e23c0827bcad02136fa0e59e7ab16fd3c4f85c390eee",
       "sources": [
         "src/Inbox.tsx",
         "src/IncompleteAssessments.tsx",
@@ -16430,7 +16430,7 @@
     },
     {
       "path": "formal/models/ui/ui_owner_private_requests.qnt",
-      "sha256": "415c9b6ada4670c86ce5ffd878a6ec0d7e454e2545553b33465a7d569cb9aa8b",
+      "sha256": "10f3857b1869eede164399bb95e8690243f18b83552fca833717ef8c37a85b6c",
       "sources": [
         "backend/http.ts",
         "src/OwnerAwards.tsx",
@@ -16502,7 +16502,7 @@
     },
     {
       "path": "formal/models/ui/ui_owner_vault_setup.qnt",
-      "sha256": "c3f4eaf453bc62e0a13b27c15da4d725faa04c75c0dccf056d9ae5f74873d84c",
+      "sha256": "acdadb1e73e178d01c9ac4e3328c0228ff6950a47d0d232def590d96315993d0",
       "sources": [
         "src/OwnerVaultSetup.tsx",
         "src/lib/pending-attempt.ts",
@@ -16551,7 +16551,7 @@
     },
     {
       "path": "formal/models/ui/ui_payment_page_assembly.qnt",
-      "sha256": "7dbef21fbc5cdd9fb43ba70ee2076c127a2fe91381c62d0fc53e1d20682b9179",
+      "sha256": "e5ca51afd82eddd626d5b860160eb0fe86b7f22d792c4e464ad56a8a20134689",
       "sources": [
         "src/lib/payments/contracts.ts",
         "src/lib/use-direct-transfers.ts",
@@ -16665,7 +16665,7 @@
     },
     {
       "path": "formal/models/ui/ui_points_disputes.qnt",
-      "sha256": "6398e3cf6298146340b47ae0ba3d414ca8456cc54532c51d002f6a45eb7b5b55",
+      "sha256": "315fb521122256a03108c3d87da4382f613080a78fadba32c1626bbaffd96a93",
       "sources": [
         "src/App.tsx",
         "src/Inbox.tsx",
@@ -16731,7 +16731,7 @@
     },
     {
       "path": "formal/models/ui/ui_private_intake.qnt",
-      "sha256": "efc5e724121e6d62882a88641624e6d4d1c20acb240e3a628ac7da9fabc49b7a",
+      "sha256": "d6b7e8515a5178109c942eb4741b0797567bebb6b6c169b7b979cb1034923e06",
       "sources": [
         "backend/security/report-intake.ts",
         "src/PrivateReportForm.tsx",
@@ -17003,7 +17003,7 @@
     },
     {
       "path": "formal/models/ui/ui_public_x_profile.qnt",
-      "sha256": "dc26f417e3633e32383781ad443c7146b8b13ca1989a91e89c2109d042a82d41",
+      "sha256": "48314c8359c51440260daedebd9acd47cddad595ccdb1967279df63702603805",
       "sources": [
         "backend/points/x.ts",
         "src/App.tsx",
@@ -17070,7 +17070,7 @@
     },
     {
       "path": "formal/models/ui/ui_referral_claim_lifetime.qnt",
-      "sha256": "1b83a07c18f915cfa1ec19742b4040a6827fc781d485dd171b654a01ab29d316",
+      "sha256": "70081265867241f032745d08c60a31ca7f35cd26f66e5330323052547160bb41",
       "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
       "scenarios": [
         "activeWalletBlocksResetTest",
@@ -17380,7 +17380,7 @@
     },
     {
       "path": "formal/models/ui/ui_solana_history_recovery.qnt",
-      "sha256": "c619c6fa6a26f5b30382ff087de096eb9e231ef14cd8ae9789a34455c6d71a1f",
+      "sha256": "4dfd003b560905492820e104f07f6091e10de2144dbc360a925cdad41538f590",
       "sources": [
         "backend/security/handler.ts",
         "src/SecurityBounty.tsx",
@@ -17519,7 +17519,7 @@
     },
     {
       "path": "formal/models/ui/ui_submitted_payment_lifetime.qnt",
-      "sha256": "d27a0607471a38b0202f2e24a246674129b18ce408bbf603ef8007ca757e4aab",
+      "sha256": "e15bf49448dde9bd5bd57e3b34a152dec2176999538a954fed26a68485d4e488",
       "sources": ["src/BountySubmittedPayments.tsx", "src/SecurityBounty.tsx"],
       "scenarios": [
         "actorChangeAfterPostObservationIsServerFencedTest",
@@ -17930,7 +17930,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_backup_chain.qnt",
-      "sha256": "831d90c5abaa0f2ef2373af594f1f72b2bd67b14457fe4b2bbc11446341ff9c0",
+      "sha256": "61ecf280693c06a4d3d717fcf5786fc9ba39172e543f62a60fd4559a475482ef",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "migrations/0068_vetting_storage_cycles.sql",
@@ -18014,7 +18014,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_evidence_delivery.qnt",
-      "sha256": "7e21e433d1ecd5b163edcf21998b94c55f4d8a96bd769dcf3b6c56a6abbc2f85",
+      "sha256": "1ddb77effeae2b06361fbf09992406384124203f9ecbe7740ffd80d00b839da3",
       "sources": [
         "backend/http.ts",
         "backend/vetting/evidence-retention.ts",
@@ -18053,7 +18053,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_evidence_inventory.qnt",
-      "sha256": "0a348d56d4e0dd84b0558091397af1ec26ca6dae44e5c610f31d6ab7414210cf",
+      "sha256": "262d3a79fe32f65ad638c0af905d5dace717fec14aaed44a449352bc31ebb0f6",
       "sources": [
         "backend/http.ts",
         "backend/vetting/evidence-retention.ts",
@@ -18084,7 +18084,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_evidence_registration.qnt",
-      "sha256": "e6a92bda919ab163fe1b6600e862b2c19ed996130831fd47859bdcf841d4047a",
+      "sha256": "351ba8aa9a95eacd15a068743ed99a5a75f35b4d5581446b10fa84dcdcc9f00c",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence-storage.ts",
@@ -18228,7 +18228,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_flag_reinstatement.qnt",
-      "sha256": "e65f983870517166f2d01b54a42188c26e0ef3b612f13ea5dff2551c74210e24",
+      "sha256": "42c229db05048f379dd73050c543e90381a19be633e0c489708bb115a3bd841b",
       "sources": [
         "backend/projects/enforcement.ts",
         "backend/projects/verified-enforcement.ts",
@@ -18256,7 +18256,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_generation_retirement.qnt",
-      "sha256": "8768138a72391b38e96b1b85dac6d63cbc46e5c0ed1db2d2fd5eefaa8b0f0ff2",
+      "sha256": "c5ff266cd4ec2344d2df1cf98dfa671f79769d1bc2aac0171807e4c733d83caa",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence-storage.ts",
@@ -18296,7 +18296,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_generation_storage.qnt",
-      "sha256": "6736c7665d0ec7e415f9319f97bc9cfd81b13a8975a0a5de57c5c114f3be27b4",
+      "sha256": "1beb326e7630b58014e64b30cce756404d334917d07b37abb5a85c88d735dd80",
       "sources": [
         "backend/vetting/evidence-chunks.ts",
         "backend/vetting/evidence-storage.ts",
@@ -18586,7 +18586,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_upload_completion.qnt",
-      "sha256": "3efa21dd56eacea13c98837e6a58512bda34e5c5cd4ae66129ecda9f46f5f881",
+      "sha256": "4748c22d9e094953e14bc4e83c739b69360f54391c0401bd414de32bf03f88dc",
       "sources": [
         "backend/trace/cloudflare-persistence.ts",
         "backend/vetting/evidence-chunks.ts",

@@ -147,16 +147,29 @@ module operator_keeper_lifecycle {
           request.with("phase", "done").with("result", "interrupted") else request
       })) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet activeRun = runIds.oneOf()
-    nondet caller = Set("public", "wrong-route", "direct", "cron").oneOf()
-    nondet mode = modes.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet registry = Set(1, 2).oneOf()
-    nondet projects = Set(1, 2).oneOf()
-    any { configure(mode, yes, registry), request(id, caller), dispatch(id), selectMode(activeRun), identity(activeRun, yes), indexReads(activeRun),
-      stageAttempt(activeRun), commitAttempt(activeRun, yes), broadcast(activeRun), gasEvidence(activeRun, yes), itemFailure(activeRun), finish(activeRun), fatal(activeRun),
-      deliver(id, yes), inspectScheduled(id, yes), restart(mode, yes, registry, projects), s' = s }
+    any {
+      { nondet mode = modes.oneOf() nondet yes = Set(false, true).oneOf() nondet registry = Set(1, 2).oneOf()
+        configure(mode, yes, registry) },
+      { nondet id = ids.oneOf() nondet caller = Set("public", "wrong-route", "direct", "cron").oneOf()
+        request(id, caller) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet activeRun = runIds.oneOf() selectMode(activeRun) },
+      { nondet activeRun = runIds.oneOf() nondet yes = Set(false, true).oneOf() identity(activeRun, yes) },
+      { nondet activeRun = runIds.oneOf() indexReads(activeRun) },
+      { nondet activeRun = runIds.oneOf() stageAttempt(activeRun) },
+      { nondet activeRun = runIds.oneOf() nondet yes = Set(false, true).oneOf() commitAttempt(activeRun, yes) },
+      { nondet activeRun = runIds.oneOf() broadcast(activeRun) },
+      { nondet activeRun = runIds.oneOf() nondet yes = Set(false, true).oneOf() gasEvidence(activeRun, yes) },
+      { nondet activeRun = runIds.oneOf() itemFailure(activeRun) },
+      { nondet activeRun = runIds.oneOf() finish(activeRun) },
+      { nondet activeRun = runIds.oneOf() fatal(activeRun) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() deliver(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() inspectScheduled(id, yes) },
+      { nondet mode = modes.oneOf() nondet yes = Set(false, true).oneOf() nondet registry = Set(1, 2).oneOf()
+        nondet projects = Set(1, 2).oneOf()
+        restart(mode, yes, registry, projects) },
+      s' = s
+    }
   }
   val invariant = all { s.count <= 2, s.instance <= 2, s.safeSigning,
     s.signed == s.nonce, s.liability implies s.signed, s.settledGas implies s.signed and not(s.liability),

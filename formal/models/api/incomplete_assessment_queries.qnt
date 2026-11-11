@@ -135,16 +135,26 @@ module incomplete_assessment_queries {
   // A mark-read write affects ordinary notices, not live assessment rows.
   action markOrdinaryRead = s' = s.with("ordinaryRead", true)
   action step = {
-    nondet id = deliveries.oneOf()
-    nondet actor = Set(0, 1, 2, 3).oneOf()
-    nondet expected = Set(0, 1, 2, 3).oneOf()
-    nondet cursor = Set(0, 1, 2, 3).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet access = Set("allowed", "denied", "private", "unavailable", "missing", "replaced").oneOf()
-    any { tick, recordGap(id), recordRunning(id), recordCompletion(id, yes),
-      changeManifest(yes), permission(access), begin(actor, expected, yes, cursor),
-      validateCursor(yes), observeContexts, observeAccess, observeRows, publish,
-      readFailure, markOrdinaryRead, s' = s }
+    any {
+      tick,
+      { nondet id = deliveries.oneOf() recordGap(id) },
+      { nondet id = deliveries.oneOf() recordRunning(id) },
+      { nondet id = deliveries.oneOf() nondet yes = Set(false, true).oneOf() recordCompletion(id, yes) },
+      { nondet yes = Set(false, true).oneOf() changeManifest(yes) },
+      { nondet access = Set("allowed", "denied", "private", "unavailable", "missing", "replaced").oneOf()
+        permission(access) },
+      { nondet actor = Set(0, 1, 2, 3).oneOf() nondet expected = Set(0, 1, 2, 3).oneOf()
+        nondet cursor = Set(0, 1, 2, 3).oneOf() nondet yes = Set(false, true).oneOf()
+        begin(actor, expected, yes, cursor) },
+      { nondet yes = Set(false, true).oneOf() validateCursor(yes) },
+      observeContexts,
+      observeAccess,
+      observeRows,
+      publish,
+      readFailure,
+      markOrdinaryRead,
+      s' = s
+    }
   }
   val invariant = all {
     s.requestCount <= 2, s.items.size() <= 2, s.items.subseteq(s.eligibleSnapshot),
