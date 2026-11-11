@@ -1283,9 +1283,14 @@ test("a stored update whose base revision moved on is not offered for publicatio
     expectedRevision: base.revision,
   });
   expect(moved.status).toBe(200);
-  // The stale update is no longer offered as publishable...
+  // The stale update remains cancellable but cannot be published...
   expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
-    [],
+    [
+      expect.objectContaining({
+        id: "app_storedupdate00001",
+        publishable: false,
+      }),
+    ],
   );
   // ...and a direct publication explains that it must be made again.
   const refused = await call(
@@ -1300,6 +1305,361 @@ test("a stored update whose base revision moved on is not offered for publicatio
   expect(
     (await persistence.getProject("open-registry"))?.manifest.headline,
   ).toBe("A newer published headline.");
+  expect(
+    (
+      await call(
+        "POST",
+        "project-applications/app_storedupdate00001/cancel",
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(200);
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+});
+
+test("a current maintainer removes a project with one retained revision and setup cannot reactivate it", async () => {
+  const t = registry();
+  await t.create("remove-project", "example/remove-project");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-project/check", OWNER, {});
+  const before = await t.persistence.getProject("remove-project");
+  if (!before) throw new Error("Project missing");
+  expect(before.status).toBe("active");
+  const removed = await t.call(
+    "POST",
+    "projects/remove-project/remove",
+    OTHER,
+    {
+      expectedRevision: before.revision,
+    },
+  );
+  expect(removed.status).toBe(200);
+  const after = await t.persistence.getProject("remove-project");
+  expect(after).toMatchObject({
+    revision: before.revision + 1,
+    status: "paused",
+  });
+  expect(after?.manifest).toEqual({
+    ...before.manifest,
+    status: "paused",
+    listingTier: "retired",
+  });
+  expect(
+    await t.persistence.getRevisionText(before.id, before.revision),
+  ).toMatchObject({
+    manifestSha256: before.manifestSha256,
+  });
+  expect((await t.call("GET", "projects/remove-project", "")).status).toBe(404);
+  expect(
+    (await t.call("POST", "project-setup/remove-project/check", OWNER, {}))
+      .status,
+  ).toBe(200);
+  expect((await t.persistence.getProject(before.id))?.revision).toBe(
+    after?.revision,
+  );
+  // A lost response can be retried without appending another revision.
+  expect(
+    (
+      await t.call("POST", "projects/remove-project/remove", OTHER, {
+        expectedRevision: before.revision,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await t.persistence.getProject(before.id))?.revision).toBe(
+    after?.revision,
+  );
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  expect(
+    (
+      await t.call("POST", "projects/remove-project/remove", OTHER, {
+        expectedRevision: before.revision,
+      })
+    ).status,
+  ).toBe(403);
+});
+
+test("removal refuses stale revisions, missing authority, unavailable proof and cross-origin writes", async () => {
+  const t = registry();
+  await t.create("remove-project", "example/remove-project");
+  const path = "projects/remove-project/remove";
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 2 })).status,
+  ).toBe(409);
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 1 })).status,
+  ).toBe(403);
+  t.deps.repositoryAccess = async () => {
+    throw new Error("GitHub unavailable");
+  };
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 1 })).status,
+  ).toBe(503);
+  const crossOrigin = await handleProjectApi(
+    new Request(`https://slop.cash/api/v1/${path}`, {
+      method: "POST",
+      headers: {
+        origin: "https://other.example",
+        "content-type": "application/json",
+        "x-test-actor": OWNER,
+      },
+      body: JSON.stringify({ expectedRevision: 1 }),
+    }),
+    t.deps,
+  );
+  expect(crossOrigin?.status).toBe(403);
+  expect(
+    (await t.persistence.getProject("remove-project"))?.manifest.listingTier,
+  ).toBe("community");
+  expect(await t.persistence.listRevisions()).toHaveLength(1);
+});
+
+test("removing a registered project in setup stops later clearance from activating it", async () => {
+  const t = registry();
+  await t.create("remove-review", "example/remove-review");
+  const before = await t.persistence.getProject("remove-review");
+  expect(before?.status).toBe("paused");
+  expect(
+    (
+      await t.call("POST", "projects/remove-review/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = CLEARED;
+  expect(
+    (await t.call("POST", "project-setup/remove-review/check", OWNER, {}))
+      .status,
+  ).toBe(200);
+  expect(await t.persistence.getProject("remove-review")).toMatchObject({
+    revision: 2,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect(t.state.scans).toHaveLength(1);
+});
+
+test("an intervening revision refuses removal without overwriting the newer project", async () => {
+  const t = registry();
+  await t.create("remove-race", "example/remove-race");
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    const manifest = {
+      ...input.manifest,
+      listingTier: "community" as const,
+      headline: "Newer maintainer edit.",
+    };
+    const manifestText = JSON.stringify(manifest);
+    expect(
+      await append(
+        {
+          ...input,
+          manifest,
+          manifestText,
+          manifestSha256: await sha256Hex(
+            new TextEncoder().encode(manifestText),
+          ),
+        },
+        generation,
+      ),
+    ).toBe("updated");
+    return append(input, generation);
+  };
+  expect(
+    (
+      await t.call("POST", "projects/remove-race/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(409);
+  expect(await t.persistence.getProject("remove-race")).toMatchObject({
+    revision: 2,
+    manifest: { listingTier: "community", headline: "Newer maintainer edit." },
+  });
+  expect(await t.persistence.listRevisions()).toHaveLength(2);
+});
+
+function storeCancellableApplication(
+  t: ReturnType<typeof registry>,
+  id = "app_cancellation00001",
+) {
+  const manifest = applicationManifest(
+    "cancel-project",
+    "example/cancel-project",
+    {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: NOW,
+      },
+    },
+  );
+  t.sqlite
+    .query(`INSERT INTO project_applications
+    (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria,
+     applicant_github_id, applicant_github_login, submitted_at, status, admin_notification)
+    VALUES (?, 'cancel-project', 'example/cancel-project', ?, ?, 'Merged pull requests', ?, 'owner', ?, 'pending', 'pending')`)
+    .run(id, JSON.stringify(manifest), "a".repeat(64), OWNER, NOW);
+  return id;
+}
+
+test("only the applicant cancels, with no GitHub access, and the cancelled record remains immutable", async () => {
+  const t = registry();
+  const id = storeCancellableApplication(t);
+  const path = `project-applications/${id}/cancel`;
+  expect((await t.call("POST", path, OTHER, {})).status).toBe(404);
+  expect((await t.call("POST", path, "", {})).status).toBe(401);
+  t.deps.repositoryAccess = async () => {
+    throw new Error("No GitHub access");
+  };
+  expect(await t.call("POST", path, OWNER, {})).toMatchObject({
+    status: 200,
+    body: {
+      application: { id, status: "cancelled", decidedBy: { githubId: OWNER } },
+    },
+  });
+  expect((await t.call("POST", path, OWNER, {})).status).toBe(200);
+  expect(
+    (await t.call("GET", "project-setup", OWNER)).body.applications,
+  ).toEqual([]);
+  expect(
+    (await t.call("GET", "project-applications/mine", OWNER)).body.applications,
+  ).toEqual([
+    expect.objectContaining({ id, status: "cancelled", decidedAt: NOW }),
+  ]);
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(await t.persistence.getProject("cancel-project")).toBeNull();
+  expect(() =>
+    t.sqlite
+      .query("UPDATE project_applications SET status = 'approved' WHERE id = ?")
+      .run(id),
+  ).toThrow(/immutable/);
+  expect(() =>
+    t.sqlite.query("DELETE FROM project_applications WHERE id = ?").run(id),
+  ).toThrow(/permanent/);
+  // Cancellation also releases the pending-only uniqueness slots.
+  storeCancellableApplication(t, "app_cancellation00002");
+});
+
+test("cancellation and stored project publication arbitrate at the database write", async () => {
+  const t = registry();
+  const id = storeCancellableApplication(t);
+  const publish = t.persistence.publishApplication.bind(t.persistence);
+  t.persistence.publishApplication = async (input, generation) => {
+    expect(
+      await t.persistence.cancelApplication({
+        ...input,
+        actor: { githubId: OWNER, githubLogin: "owner" },
+      }),
+    ).toBe("cancelled");
+    return publish(input, generation);
+  };
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(await t.persistence.getProject("cancel-project")).toBeNull();
+  expect(await t.persistence.listRevisions()).toEqual([]);
+  expect(await t.persistence.getApplication(id)).toMatchObject({
+    status: "cancelled",
+  });
+  expect(
+    t.sqlite.query("SELECT COUNT(*) AS n FROM project_repositories").get(),
+  ).toEqual({ n: 0 });
+
+  const publishedFirst = registry();
+  const otherId = storeCancellableApplication(publishedFirst);
+  expect(
+    (
+      await publishedFirst.call(
+        "POST",
+        `project-applications/${otherId}/publish`,
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await publishedFirst.call(
+        "POST",
+        `project-applications/${otherId}/cancel`,
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(409);
+  expect(
+    await publishedFirst.persistence.getApplication(otherId),
+  ).toMatchObject({ status: "approved" });
+  expect(
+    await publishedFirst.persistence.getProject("cancel-project"),
+  ).not.toBeNull();
+});
+
+test("cancellation during a stored update prevents its revision from landing", async () => {
+  const t = registry();
+  await t.create("cancel-project", "example/cancel-project");
+  const before = await t.persistence.getProject("cancel-project");
+  if (!before) throw new Error("Project missing");
+  const id = storeCancellableApplication(t);
+  const manifestText = JSON.stringify({
+    ...before.manifest,
+    headline: "A stored update.",
+  });
+  t.sqlite
+    .query(
+      "UPDATE project_applications SET expected_revision = ?, change_reason = 'Stored update', manifest = ?, manifest_sha256 = ? WHERE id = ?",
+    )
+    .run(
+      before.revision,
+      manifestText,
+      await sha256Hex(new TextEncoder().encode(manifestText)),
+      id,
+    );
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    expect(input.applicationId).toBe(id);
+    expect(
+      await t.persistence.cancelApplication({
+        applicationId: id,
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        reason: null,
+        at: NOW,
+      }),
+    ).toBe("cancelled");
+    return append(input, generation);
+  };
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(await t.persistence.getApplication(id)).toMatchObject({
+    status: "cancelled",
+  });
+  expect(await t.persistence.getProject("cancel-project")).toEqual(before);
+  expect(await t.persistence.listRevisions()).toHaveLength(1);
 });
 
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
