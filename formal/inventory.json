@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "8d57b5309c644f1ab97ad10a4ae99a25cdbf932b76a681a5f854e2e9cae0db23",
+      "sha256": "a63dc7eb3d3b6a5124a6c87a5b8a8d712715bfd696e0d8cf0b842a16b6ce423c",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 86, 104, 169, 208, 233, 251, 326],
+      "candidateLines": [1, 86, 105, 170, 209, 234, 255, 342],
       "review": "mapped-abstraction"
     },
     {
@@ -3337,13 +3337,13 @@
     },
     {
       "path": "scripts/check-formal.mjs",
-      "sha256": "2392ac9f6887b15d17eb08d9bcc3560611e6bffad2eb98707d8bcd742b46043b",
+      "sha256": "0c1078dd2ccc94002fd646a381de538fc7ef5a055c8210e3f32b3288f6f7c1ae",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
         "formal/models/tooling/formal_translation.qnt"
       ],
-      "candidateLines": [48, 51, 59, 73, 98, 199, 201, 203, 250, 257, 310],
+      "candidateLines": [37, 50, 123, 125, 127, 174, 181, 234],
       "review": "mapped-abstraction"
     },
     {
@@ -3741,6 +3741,14 @@
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure listing of Quint model paths with duplicate-name refusal; no stored state, writes or transition. Model-set and source stability during a run are owned by check-formal.mjs and its models."
+    },
+    {
+      "path": "scripts/formal-report.mjs",
+      "sha256": "5f09d9d408475da6a40f3fe8399b878d2f1424270301566fe16876c57163fd5d",
+      "models": [],
+      "candidateLines": [36, 39, 47],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
     {
       "path": "scripts/formal-state-catalog.mjs",

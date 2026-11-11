@@ -14,6 +14,11 @@ import {
   modelScenarios,
   modelSources as sourcesOf,
 } from "./formal-models.mjs";
+import {
+  formalStageArguments,
+  formalTimeoutMs,
+  formalToolPaths,
+} from "./formal-report.mjs";
 import { readSafetyViews } from "./quint-safety-view.mjs";
 import { verificationTransition } from "./quint-verification-step.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
@@ -27,67 +32,14 @@ const quint = join(root, "node_modules/.bin/quint");
 const localTranslator = join(root, "scripts/quint-local-translator.mjs");
 const safetyViews = verify ? readSafetyViews(root) : null;
 const files = listModels(root, selected);
-// This finite graph completed in 219s with unchanged inputs. Keep the
-// exception explicit; ordinary stages retain their limits.
-const verificationTimeouts = {
-  // These source-bound finite graphs still had millions of queued states
-  // after the ordinary three-minute budget. Retain the complete domains,
-  // transitions and reviewed views; grant time to finish the same graph.
-  "formal/models/api/api_owner_vault_lifecycle.qnt": 1_800_000,
-  "formal/models/api/api_project_lookup_routes.qnt": 1_800_000,
-  "formal/models/ui/ui_admin_mutation_identity.qnt": 1_800_000,
-  "formal/models/ui/ui_email_actions.qnt": 600_000,
-  "formal/models/ui/ui_email_preference_requests.qnt": 600_000,
-  "formal/models/ui/ui_project_authority.qnt": 600_000,
-  "formal/models/ui/ui_project_publication_lifetime.qnt": 1_800_000,
-  // The unchanged quotient exhausted 600s with 542,301 states still queued.
-  // Increase only its resource allowance; retain the complete safety graph.
-  "formal/models/ui/ui_security_settings_lifetime.qnt": 1_200_000,
-  "formal/models/ui/ui_vetting_reader.qnt": 600_000,
-  // The unchanged value-cap graph still had work queued at 962,410 states
-  // after 180s. Keep its full spend, failure and retry states.
-  "formal/models/fees/fee_value_caps.qnt": 600_000,
-  "formal/models/ui/ui_submitted_payment_recovery.qnt": 600_000,
-  // This full-state UI graph exceeds the ordinary three-minute budget.
-  // Keep its resource allowance explicit without reducing the model.
-  "formal/models/ui/ui_bounty_payment_parent.qnt": 1_800_000,
-  // The corrected archive timer graph completed in 34m48s: 3,929,088 distinct
-  // states, zero queued and no temporal violation. Retain the full concrete
-  // domains and temporal property; allow this unchanged graph one hour.
-  "formal/models/ui/ui_cycle_archive.qnt": 3_600_000,
-  // The unchanged payout-consent graph exceeded 180s while still exploring
-  // roughly five million distinct states. Keep every concrete state and
-  // transition; allow this model ten minutes to finish its finite graph.
-  "formal/models/ui/ui_payout_consent_lifetime.qnt": 600_000,
-  // The journal's unchanged finite domain exceeds the ordinary three-minute
-  // budget. Keep a bounded, model-specific allowance for its reviewed view.
-  "formal/models/payments/direct_bounty_journal.qnt": 1_800_000,
-  // The qualified provider-wait quotient exceeded 180s with 1,471,827
-  // distinct states and 446,535 queued. Keep its entire model and safety VIEW.
-  "formal/models/ui/solana_wallet_provider.qnt": 600_000,
-  // The equivalent configure-guard revision still had 143,371 states queued
-  // after 600s. Preserve its complete model and reviewed safety VIEW.
-  "formal/models/payments/solana_binding_api.qnt": 1_200_000,
-};
+
 if (files.length === 0) throw new Error("No matching Quint models");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const toolHashes = Object.fromEntries(
-  [
-    "scripts/check-formal.mjs",
-    "scripts/formal-models.mjs",
-    "scripts/run-e2e-phase.mjs",
-    "bun.lock",
-    ...(verify
-      ? [
-          "scripts/quint-local-translator.mjs",
-          "scripts/quint-tla-normalization.mjs",
-          "scripts/quint-safety-view.mjs",
-          "scripts/quint-verification-step.mjs",
-          "formal/tlc.json",
-          "formal/tlc-safety-views.json",
-        ]
-      : []),
-  ].map((path) => [path, digest(readFileSync(join(root, path)))]),
+  formalToolPaths(verify).map((path) => [
+    path,
+    digest(readFileSync(join(root, path))),
+  ]),
 );
 const java = verify
   ? spawnSync("java", ["-version"], { encoding: "utf8", timeout: 10_000 })
@@ -134,43 +86,15 @@ models: for (const file of files) {
   const temporalProperties = [
     ...modelText.matchAll(/^\s*temporal\s+(\w+Property)\s*=/gmu),
   ].map((match) => match[1]);
-  const stages = verify
-    ? [
-        [
-          "verify",
-          input,
-          "--backend=tlc",
-          "--verbosity=3",
-          "--tlc-config=formal/tlc.json",
-          "--invariant=invariant",
-          ...(finiteTransition ? [`--step=${finiteTransition.step}`] : []),
-          ...(temporalProperties.length
-            ? [`--temporal=${temporalProperties.join(",")}`]
-            : []),
-        ],
-      ]
-    : [
-        ["typecheck", input],
-        [
-          "test",
-          input,
-          "--backend=typescript",
-          "--seed=20261107",
-          "--max-samples=100",
-        ],
-        [
-          "run",
-          input,
-          "--backend=typescript",
-          "--seed=20261107",
-          "--max-samples=500",
-          "--max-steps=60",
-          "--invariant=invariant",
-        ],
-      ];
+  const stages = formalStageArguments(
+    input,
+    verify,
+    finiteTransition,
+    temporalProperties,
+  );
   for (const args of stages) {
     const safetyView = safetyViews?.views.find((view) => view.model === input);
-    const timeoutMs = verify ? (verificationTimeouts[file] ?? 180_000) : 90_000;
+    const timeoutMs = formalTimeoutMs(file, verify);
     const testedSha256 = digest(readFileSync(join(root, input)));
     const testedSources = Object.fromEntries(
       modelSources
