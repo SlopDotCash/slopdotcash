@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1b4ceae17381d544fb1134112810ff24e147c2842a3e66caaba18f1cfd4fbb5b",
+  "inventorySha256": "e2bd11981bd370b604a78bf61a5bef7d892cc68a8c27cec2c9e7c4507bcfebc3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2130,6 +2130,7 @@
         "formal/models/ui/ui_project_images.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
+        "formal/models/ui/ui_setup_check_suspense.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "lexicallyUnmentionedValues": [],
@@ -2154,6 +2155,7 @@
         "formal/models/ui/ui_project_images.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
+        "formal/models/ui/ui_setup_check_suspense.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "lexicallyUnmentionedValues": [],
