@@ -275,8 +275,7 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
     surfaces.add("manifests");
   if (
-    name.endsWith(".md") ||
-    AGENT_INSTRUCTIONS.has(name) ||
+    AGENT_INSTRUCTIONS.has(name) || name.endsWith(".md") ||
     lower.startsWith(".cursor/") ||
     lower.startsWith(".claude/") ||
     lower.startsWith(".github/instructions/") ||
