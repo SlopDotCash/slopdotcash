@@ -1,0 +1,42 @@
+name: Refresh vetting inventories
+
+on:
+  push:
+    branches:
+      - codex/vetting-markdown-coverage-20261112
+    paths:
+      - workers/vetting/bounded-scan.ts
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.15.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Remove this one-off updater
+        run: git rm .github/workflows/refresh-inventories.yml
+      - run: bun run formal:inventory:update
+      - run: bun run lemmascript:inventory:update
+      - name: Commit generated inventories
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .github/workflows/refresh-inventories.yml formal/inventory.json formal/lemmascript-inventory.json
+          if git diff --cached --quiet; then
+            echo "Inventories already current"
+            exit 0
+          fi
+          git commit -m "chore(vetting): refresh source inventories"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
