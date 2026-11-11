@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "2f56427dba0ff660f87fd17167cea060742e5b60ff36f6bfa6981102995710e5",
+      "sha256": "3d67d89287759cb799dd69d2b802d746760d3d7bd0ad27b0a1772d9f91ca54c2",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 291, 365, 474, 542, 565, 566, 587, 599,
-        665, 895, 923, 961, 977, 987, 988, 1077, 1177, 1179, 1180, 1344, 1427,
-        1580, 1582, 1612, 1720, 1742, 1813, 1824, 1849, 1918, 1931, 1944, 1953,
-        1954, 1955
+        27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
+        612, 678, 908, 936, 974, 990, 1000, 1001, 1090, 1190, 1192, 1193, 1357,
+        1440, 1593, 1595, 1625, 1733, 1755, 1826, 1837, 1862, 1931, 1944, 1957,
+        1966, 1967, 1968
       ],
       "review": "mapped-abstraction"
     },
@@ -3685,6 +3685,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/extend-published-profiles.ts",
+      "sha256": "05f9537280e72ea8f4d5fce495110e2928beb3c0e57c1f445ff2d7b3a95138a0",
+      "models": ["formal/models/release/published_census_extension.qnt"],
+      "candidateLines": [10, 34],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/formal-inventory.mjs",
       "sha256": "1664b1d9b5058df6285d2bbdaa9beef8b3ead942dec4322581a1b1932d0abdb4",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -6817,7 +6824,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "63c7b8b25b682c7a5e7978b0a51816200d573c9423f2094957440b5140ea19c5",
+      "sha256": "2848cd5324a21b80ea81a78e59014ba99bb7d4166f6fabb774a9dd8edd294816",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
@@ -6826,8 +6833,8 @@
       ],
       "candidateLines": [
         4, 16, 86, 93, 95, 96, 118, 200, 300, 316, 318, 325, 330, 331, 332, 337,
-        363, 365, 372, 376, 395, 396, 416, 490, 586, 615, 620, 730, 734, 764,
-        773, 775, 820, 826, 828, 863, 864, 865
+        363, 365, 372, 376, 395, 396, 416, 461, 494, 590, 619, 624, 734, 738,
+        768, 777, 779, 824, 830, 832, 867, 868, 869
       ],
       "review": "mapped-abstraction"
     },
@@ -11588,7 +11595,7 @@
     },
     {
       "path": "formal/models/fees/buyback_accounting.qnt",
-      "sha256": "1b1fd6e5c192f72ef4810f9e1f8c640dfb2dd166e4d1784c47dcf2e5ea384ca4",
+      "sha256": "64fe3b91562639eb6c72af3bec6792f320c67ff4db33845054659683d9b10f9d",
       "sources": [
         "migrations/0121_fee_buyback.sql",
         "workers/fee-converter/buyback-store.ts",
@@ -11600,6 +11607,7 @@
         "failedBridgeReleasesShareTest",
         "halfOfFeesBridgesTest",
         "laterFeesOweOnlyTheirHalfTest",
+        "newIncomeWaitsForFinalizedOrderOutcomeTest",
         "oddIncomeRoundsDownTest",
         "openBridgeBlocksSecondOrderTest",
         "refundReturnsAndReleasesTest",
@@ -13311,6 +13319,16 @@
         "productionDoesNotRetryTest",
         "sixthRootAttemptTest",
         "wrongIdentityRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/published_census_extension.qnt",
+      "sha256": "4fb3c212b717f47ec3d79b222919135ba286737b68f4f64fb3909ac8bd3ae0b4",
+      "sources": ["scripts/extend-published-profiles.ts"],
+      "scenarios": [
+        "coveredCensusUnchangedTest",
+        "extendOnceTest",
+        "newProjectAddedWithZeroTest"
       ]
     },
     {
