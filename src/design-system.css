@@ -1301,6 +1301,19 @@ main h2 {
   margin: 0;
 }
 
+.email-link-action {
+  position: relative;
+  padding-right: 52px;
+}
+
+.email-link-dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 44px;
+  border-bottom: 0;
+}
+
 .email-card h2 {
   color: var(--muted);
   font-family: inherit;

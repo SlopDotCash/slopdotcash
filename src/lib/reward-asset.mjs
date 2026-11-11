@@ -120,7 +120,7 @@ export function rewardAssetChoice(network, kind, address, symbol) {
   if (canonical === null)
     throw new TypeError(
       definition.family === "evm"
-        ? "Enter a 0x token contract address with 40 hexadecimal characters"
+        ? "Enter a 0x address with 40 hex characters"
         : "Enter a base58 SPL mint address",
     );
   if (isNativeAssetAddress(network, canonical))
@@ -132,7 +132,7 @@ export function rewardAssetChoice(network, kind, address, symbol) {
       `That address is the network stablecoin; choose ${definition.stablecoin.symbol}`,
     );
   if (typeof symbol !== "string" || !SYMBOL.test(symbol.trim()))
-    throw new TypeError("Enter a token symbol of 1 to 16 letters or digits");
+    throw new TypeError("Enter a symbol of 1-16 letters or digits");
   return { network, kind, address: canonical, symbol: symbol.trim() };
 }
 

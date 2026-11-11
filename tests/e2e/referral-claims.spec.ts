@@ -1,5 +1,5 @@
 /** Real page/wallet interaction; backend SQLite and local-chain proof live in the referral suites. */
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
   decodeFunctionData,
   encodeFunctionResult,
@@ -17,6 +17,19 @@ import {
   leaveWithVaultPreflight,
   releaseVaultPreflight,
 } from "./vault-request-fixture";
+
+/** The claimable tile shows a number beside the program-token icon. */
+const claimable = (section: Locator) =>
+  section.locator(".route-metric").filter({ hasText: "Claimable" });
+async function expectClaimable(section: Locator, tokens: string) {
+  await expect(claimable(section).locator("dd")).toHaveText(tokens);
+  await expect(
+    claimable(section).getByRole("img", { name: "program tokens" }),
+  ).toBeVisible();
+}
+/** The verified outcome is a badge; "Claimed" also labels a detail row. */
+const verified = (section: Locator) =>
+  section.getByRole("status").getByText("Claimed", { exact: true });
 
 const unit = 10n ** 18n;
 const wallet = "0x1111111111111111111111111111111111111111";
@@ -216,9 +229,12 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
   await expect(section).toBeVisible();
-  await expect(section).toContainText("80 program tokens");
+  await expectClaimable(section, "80");
   expect(h.calls).toEqual([]);
-  const review = page.getByRole("button", { name: "Review with MetaMask" });
+  const review = page.getByRole("button", {
+    name: "Claim with MetaMask",
+    exact: true,
+  });
   await review.focus();
   await page.keyboard.press("Enter");
   await expect(
@@ -230,13 +246,16 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
     path: info.outputPath("referral-review.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
-  await expect(section).toContainText("Claim submitted");
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
+  await expect(section.getByText("Submitted", { exact: true })).toBeVisible();
   expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
   await page.reload({ waitUntil: "networkidle" });
-  await expect(section).toContainText("not yet verified");
+  await expect(section).toContainText("Submitted · unverified");
   await expect(
-    section.getByRole("button", { name: "Review with MetaMask" }),
+    section.getByRole("button", { name: "Claim with MetaMask", exact: true }),
   ).toHaveCount(0);
   const settled = record();
   settled.claimedBase = (100n * unit).toString();
@@ -244,7 +263,7 @@ test("referrer reviews, signs once, and waits for verified claim status", async 
   settled.claim = null;
   h.set(settled);
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("Your claim is verified");
+  await expect(verified(section)).toBeVisible();
   await expect(section).toContainText("100 program tokens");
   await page.screenshot({
     path: info.outputPath("referral-verified.png"),
@@ -266,7 +285,9 @@ test("a referral identity reply at committed removal cannot prompt the wallet", 
 }) => {
   const h = await setup(page);
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
   await expect(
     page.getByRole("region", { name: "Review referral claim" }),
   ).toBeVisible();
@@ -276,7 +297,10 @@ test("a referral identity reply at committed removal cannot prompt the wallet", 
     window.history.replaceState(window.history.state, "", "/how-it-works");
     window.history.pushState({}, "", current);
   });
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   try {
     await leaveWithVaultPreflight(page);
     expect(h.calls).not.toContain("eth_sendTransaction");
@@ -390,7 +414,9 @@ test("a departed preflight cannot prompt and another view cannot overlap it", as
 }) => {
   const h = await setup(page);
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
   await expect(
     page.getByRole("region", { name: "Review referral claim" }),
   ).toBeVisible();
@@ -400,18 +426,24 @@ test("a departed preflight cannot prompt and another view cannot overlap it", as
     entered.release();
     await held.promise;
   });
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   await entered.promise;
   const other = await page.context().newPage();
   try {
     const second = await setup(other);
     await other.goto("/earnings", { waitUntil: "networkidle" });
-    await other.getByRole("button", { name: "Review with MetaMask" }).click();
     await other
-      .getByRole("button", { name: "Confirm claim in wallet" })
+      .getByRole("button", { name: "Claim with MetaMask", exact: true })
+      .click();
+    await other
+      .getByRole("region", { name: "Review referral claim" })
+      .getByRole("button", { name: "Claim", exact: true })
       .click();
     await expect(other.getByRole("alert")).toContainText(
-      "active in another view",
+      "Claim open in another tab.",
     );
     expect(second.calls).not.toContain("eth_sendTransaction");
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -450,8 +482,13 @@ test("an active wallet request blocks cross-view reset and later permits recover
     return `0x${"f".repeat(64)}`;
   });
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   await entered.promise;
   const before = await page.evaluate(
     (key) => localStorage.getItem(key),
@@ -464,10 +501,10 @@ test("an active wallet request blocks cross-view reset and later permits recover
     await setup(other);
     await other.goto("/earnings", { waitUntil: "networkidle" });
     await other
-      .getByRole("button", { name: "I checked wallet activity. Review again" })
+      .getByRole("button", { name: "Review again", exact: true })
       .click();
     await expect(other.getByRole("alert")).toContainText(
-      "active in another view",
+      "Claim open in another tab.",
     );
     expect(
       await other.evaluate((key) => localStorage.getItem(key), claimKey),
@@ -486,10 +523,10 @@ test("an active wallet request blocks cross-view reset and later permits recover
       other.getByRole("link", { name: "View transaction" }),
     ).toHaveAttribute("href", new RegExp(`0x${"f".repeat(64)}$`));
     await other
-      .getByRole("button", { name: "I checked wallet activity. Review again" })
+      .getByRole("button", { name: "Review again", exact: true })
       .click();
     await expect(
-      other.getByRole("button", { name: "Review with MetaMask" }),
+      other.getByRole("button", { name: "Claim with MetaMask", exact: true }),
     ).toBeVisible();
     expect(
       await other.evaluate((key) => localStorage.getItem(key), claimKey),
@@ -511,11 +548,14 @@ test("a browser without Web Locks cannot send or reset a claim", async ({
     }),
   );
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "can't handle claims safely",
-  );
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("Unsupported browser.");
   expect(h.calls).not.toContain("eth_sendTransaction");
   await page.evaluate(
     (key) =>
@@ -526,12 +566,8 @@ test("a browser without Web Locks cannot send or reset a claim", async ({
     claimKey,
   );
   await page.getByRole("button", { name: "Refresh record" }).click();
-  await page
-    .getByRole("button", { name: "I checked wallet activity. Review again" })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "can't handle claims safely",
-  );
+  await page.getByRole("button", { name: "Review again", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Unsupported browser.");
   expect(
     await page.evaluate((key) => localStorage.getItem(key), claimKey),
   ).not.toBeNull();
@@ -549,8 +585,13 @@ test("a departed declined request clears only its own locked marker", async ({
     throw Object.assign(new Error("Wallet request declined"), { code: 4001 });
   });
   await page.goto("/earnings", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   await entered.promise;
   await page.getByRole("link", { name: "Slop home", exact: true }).click();
   const other = await page.context().newPage();
@@ -558,10 +599,10 @@ test("a departed declined request clears only its own locked marker", async ({
     await setup(other);
     await other.goto("/earnings", { waitUntil: "networkidle" });
     await other
-      .getByRole("button", { name: "I checked wallet activity. Review again" })
+      .getByRole("button", { name: "Review again", exact: true })
       .click();
     await expect(other.getByRole("alert")).toContainText(
-      "active in another view",
+      "Claim open in another tab.",
     );
     held.release();
     await expect
@@ -569,7 +610,7 @@ test("a departed declined request clears only its own locked marker", async ({
       .toBeNull();
     await other.getByRole("button", { name: "Refresh record" }).click();
     await expect(
-      other.getByRole("button", { name: "Review with MetaMask" }),
+      other.getByRole("button", { name: "Claim with MetaMask", exact: true }),
     ).toBeVisible();
     expect(
       h.calls.filter((method) => method === "eth_sendTransaction"),
@@ -596,10 +637,15 @@ test("a failed hash write retains its transaction and clears only its stored att
       return write.call(this, key, value);
     };
   });
-  await page.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await page
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   await expect(page.getByRole("alert")).toContainText(
-    "could not save the claim status",
+    "Status not saved. Check wallet.",
   );
   await expect(
     page.getByRole("link", { name: "View transaction" }),
@@ -616,8 +662,8 @@ test("a failed hash write retains its transaction and clears only its stored att
   h.set(settled);
   await page.getByRole("button", { name: "Refresh record" }).click();
   await expect(
-    page.getByRole("region", { name: "Referral rewards" }),
-  ).toContainText("Your claim is verified");
+    verified(page.getByRole("region", { name: "Referral rewards" })),
+  ).toBeVisible();
   expect(
     await page.evaluate((key) => localStorage.getItem(key), claimKey),
   ).toBeNull();
@@ -637,16 +683,16 @@ test("unactivated referrals stay hidden; stale, paused and unknown claims cannot
   h.set(stale);
   await page.reload({ waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
-  await expect(section).toContainText("record is stale");
-  await expect(section).toContainText("80 program tokens");
+  await expect(section.getByText("Stale", { exact: true })).toBeVisible();
+  await expectClaimable(section, "80");
   await expect(
-    page.getByRole("button", { name: "Review with MetaMask" }),
+    page.getByRole("button", { name: "Claim with MetaMask", exact: true }),
   ).toHaveCount(0);
   const paused = record();
   paused.paused = true;
   h.set(paused);
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("Claims are paused");
+  await expect(section.getByText("Paused", { exact: true })).toBeVisible();
   const unknown = record();
   unknown.status = "unknown";
   unknown.program = null;
@@ -656,10 +702,10 @@ test("unactivated referrals stay hidden; stale, paused and unknown claims cannot
   unknown.pendingBase = null;
   h.set(unknown);
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("The claim record is not available yet.");
+  await expect(section.getByText("Unavailable", { exact: true })).toBeVisible();
   await section.getByText("Reward details", { exact: true }).click();
   await expect(section.getByText("Unknown", { exact: true })).toHaveCount(4);
-  await expect(section).toContainText("Unknown claimable");
+  await expect(claimable(section).locator("dd")).toHaveText("Unknown");
   expect(h.calls).toEqual([]);
 });
 
@@ -677,15 +723,20 @@ test("blocked claim storage keeps amounts visible and refuses a wallet send", as
     };
   });
   const section = page.getByRole("region", { name: "Referral rewards" });
-  await expect(section).toContainText("80 program tokens");
-  await section.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
+  await expectClaimable(section, "80");
+  await section
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
   await expect(section.getByRole("alert")).toContainText(
-    "save the claim status",
+    "Enable site storage. Nothing sent.",
   );
   expect(h.calls).not.toContain("eth_sendTransaction");
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("80 program tokens");
+  await expectClaimable(section, "80");
   expect(h.calls).not.toContain("eth_sendTransaction");
 });
 
@@ -695,9 +746,14 @@ test("refresh retains an unverified claim when storage becomes unreadable", asyn
   const h = await setup(page);
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
-  await section.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
-  await expect(section).toContainText("Claim submitted");
+  await section
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
+  await expect(section.getByText("Submitted", { exact: true })).toBeVisible();
   await page.evaluate(() => {
     const read = Storage.prototype.getItem;
     Storage.prototype.getItem = function (key) {
@@ -709,12 +765,12 @@ test("refresh retains an unverified claim when storage becomes unreadable", asyn
   const refreshed = page.waitForResponse("**/api/v1/referrals/me");
   await section.getByRole("button", { name: "Refresh record" }).click();
   await refreshed;
-  await expect(section).toContainText("not yet verified");
+  await expect(section).toContainText("Submitted · unverified");
   await expect(
     section.getByRole("link", { name: "View transaction" }),
   ).toBeVisible();
   await expect(
-    section.getByRole("button", { name: "Review with MetaMask" }),
+    section.getByRole("button", { name: "Claim with MetaMask", exact: true }),
   ).toHaveCount(0);
   expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
   const settled = record();
@@ -723,7 +779,7 @@ test("refresh retains an unverified claim when storage becomes unreadable", asyn
   settled.claim = null;
   h.set(settled);
   await section.getByRole("button", { name: "Refresh record" }).click();
-  await expect(section).toContainText("Your claim is verified");
+  await expect(verified(section)).toBeVisible();
 });
 
 test("an unreadable pending marker does not hide amounts or permit an unchecked retry", async ({
@@ -741,17 +797,22 @@ test("an unreadable pending marker does not hide amounts or permit an unchecked 
   );
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
-  await expect(section).toContainText("80 program tokens");
-  await expect(section).toContainText("Check wallet activity");
+  await expectClaimable(section, "80");
+  await expect(section).toContainText("Possibly sent · check wallet");
   await expect(
-    section.getByRole("button", { name: "Review with MetaMask" }),
+    section.getByRole("button", { name: "Claim with MetaMask", exact: true }),
   ).toHaveCount(0);
   await section
-    .getByRole("button", { name: "I checked wallet activity. Review again" })
+    .getByRole("button", { name: "Review again", exact: true })
     .click();
-  await section.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
-  await expect(section).toContainText("Claim submitted");
+  await section
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
+  await expect(section.getByText("Submitted", { exact: true })).toBeVisible();
   expect(h.calls.filter((m) => m === "eth_sendTransaction")).toHaveLength(1);
 });
 
@@ -761,9 +822,14 @@ test("an older stored claim cannot confirm the newer request on this page", asyn
   const h = await setup(page);
   await page.goto("/earnings", { waitUntil: "networkidle" });
   const section = page.getByRole("region", { name: "Referral rewards" });
-  await section.getByRole("button", { name: "Review with MetaMask" }).click();
-  await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
-  await expect(section).toContainText("Claim submitted");
+  await section
+    .getByRole("button", { name: "Claim with MetaMask", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Review referral claim" })
+    .getByRole("button", { name: "Claim", exact: true })
+    .click();
+  await expect(section.getByText("Submitted", { exact: true })).toBeVisible();
   await page.evaluate(
     ({ wallet, distributor, cumulative }) => {
       localStorage.setItem(
@@ -776,10 +842,10 @@ test("an older stored claim cannot confirm the newer request on this page", asyn
   const refreshed = page.waitForResponse("**/api/v1/referrals/me");
   await section.getByRole("button", { name: "Refresh record" }).click();
   await refreshed;
-  await expect(section).toContainText("not yet verified");
-  await expect(section).not.toContainText("Your claim is verified");
+  await expect(section).toContainText("Submitted · unverified");
+  await expect(verified(section)).toHaveCount(0);
   await expect(
-    section.getByRole("button", { name: "Review with MetaMask" }),
+    section.getByRole("button", { name: "Claim with MetaMask", exact: true }),
   ).toHaveCount(0);
   await expect(
     section.getByRole("link", { name: "View transaction" }),

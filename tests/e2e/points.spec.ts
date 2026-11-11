@@ -286,12 +286,12 @@ test(
     await expect(page.getByRole("table").locator("tbody tr")).toHaveCount(0);
     await page.goto("/points?period=lifetime");
     await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.getByText(/Page 2 of/)).toBeVisible();
+    await expect(page.getByText(/^2 \/ \d+$/u)).toBeVisible();
     await month.click();
     await expect(month).toHaveAttribute("aria-pressed", "true");
     await expect(allTime).toHaveAttribute("aria-pressed", "false");
     await expect(page).not.toHaveURL(/page=2|period=lifetime/u);
-    await expect(page.getByText(/Page 2 of/)).toHaveCount(0);
+    await expect(page.getByText(/^2 \/ \d+$/u)).toHaveCount(0);
     await allTime.click();
     await expect(allTime).toHaveAttribute("aria-pressed", "true");
     await expect(page).toHaveURL(/period=lifetime/u);

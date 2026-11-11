@@ -61,7 +61,7 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   });
   await expect(item).toHaveCount(1);
   await expect(
-    item.getByText("A contribution appeal needs your decision on GitHub."),
+    item.getByText("Appeal to decide", { exact: true }),
   ).toBeVisible();
   // Fetch the real authenticated redirect with the browser's request headers,
   // then hold it so this synthetic contribution never reaches live GitHub.
@@ -80,9 +80,16 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   await item.getByRole("link", { name: /Open appeal on GitHub/u }).click();
   await expect(page.getByText("Verified GitHub appeal redirect")).toBeVisible();
   await page.goto("/inbox", { waitUntil: "networkidle" });
+  const unread = item.getByRole("img", { name: "Unread", exact: true });
+  await expect(unread).toBeVisible();
   await item.getByRole("button", { name: "Mark as read" }).focus();
   await page.keyboard.press("Enter");
-  await expect(item.locator(".inbox-state")).toHaveText("Read");
+  // A read notice drops its unread dot and its mark-as-read control.
+  await expect(unread).toHaveCount(0);
+  await expect(item.getByRole("button", { name: "Mark as read" })).toHaveCount(
+    0,
+  );
+  await expect(item).not.toHaveClass(/inbox-unread/u);
   await expectAccessible(page, { everyRule: true });
   await page.screenshot({
     path: test.info().outputPath("appeal-review.png"),
@@ -93,11 +100,11 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   );
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    item.getByText("The contribution appeal was resolved."),
+    item.getByText("Appeal resolved", { exact: true }),
   ).toBeVisible();
-  await expect(
-    item.getByText("A contribution appeal needs your decision on GitHub."),
-  ).toHaveCount(0);
+  await expect(item.getByText("Appeal to decide", { exact: true })).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: test.info().outputPath("appeal-resolved.png"),
     fullPage: true,

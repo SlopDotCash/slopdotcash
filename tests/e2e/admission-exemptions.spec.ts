@@ -113,12 +113,19 @@ test("owner-approved admission exemption requires confirmation and retains revoc
     name: "Record exemption",
     exact: true,
   });
-  const reason = card.getByLabel("Reason for the exemption", { exact: true });
-  const reference = card.getByLabel("Owner decision reference", {
+  const exemptionForm = card.locator("section").filter({
+    has: page.getByRole("heading", {
+      name: "Owner-approved exemption",
+      exact: true,
+    }),
+  });
+  const reason = exemptionForm.getByLabel("Exemption reason", { exact: true });
+  const reference = exemptionForm.getByLabel("Decision link", {
     exact: true,
   });
-  const confirmation = card.getByRole("checkbox", {
-    name: "I confirm the human owner explicitly authorized this exemption for this repository.",
+  const confirmation = exemptionForm.getByRole("checkbox", {
+    name: "Owner authorized this",
+    exact: true,
   });
   await expect(confirmation).not.toBeChecked();
   await expect(grantButton).toBeDisabled();
@@ -164,15 +171,16 @@ test("owner-approved admission exemption requires confirmation and retains revoc
     name: "Revoke exemption",
     exact: true,
   });
-  const revokeConfirmation = card.getByRole("checkbox", {
-    name: "I confirm the human owner authorized this revocation.",
+  const revokeConfirmation = exemptionForm.getByRole("checkbox", {
+    name: "Owner authorized this",
+    exact: true,
   });
   await expect(revokeConfirmation).not.toBeChecked();
-  await card
-    .getByLabel("Reason for revocation")
+  await exemptionForm
+    .getByLabel("Exemption reason", { exact: true })
     .fill("Restore the normal admission requirement.");
-  await card
-    .getByLabel("Owner decision reference", { exact: true })
+  await exemptionForm
+    .getByLabel("Decision link", { exact: true })
     .fill("Owner decision to revoke this test exemption.");
   await expect(revokeButton).toBeDisabled();
   expect(revocations).toEqual([]);

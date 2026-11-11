@@ -72,14 +72,10 @@ function vaultMonthlyCap(
     !expectedAsset ||
     canonical(deployment.asset) !== canonical(expectedAsset)
   )
-    throw new Error(
-      "The vault token differs from the project's reward asset. Update the reward asset in project settings first.",
-    );
+    throw new Error("Vault token mismatch. Update the reward asset.");
   const recorded = project.rewardAsset?.decimals ?? network.assetDecimals;
   if (vaultDecimals !== recorded)
-    throw new Error(
-      "The vault token's decimals differ from the project's monthly amount. Update the reward asset in project settings first.",
-    );
+    throw new Error("Token decimals mismatch. Update the reward asset.");
   if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
   return BigInt(project.reward.monthlyCapMinor);
@@ -107,9 +103,7 @@ export async function reviewEvmMonthlySetting(
   const config = walletVaultConfig(deployment, wallet);
   await assertVaultWalletAccount(wallet, config);
   if (wallet.address.toLowerCase() !== deployment.owner.toLowerCase())
-    throw new Error(
-      "Connect the vault owner's wallet to change automatic monthly payment.",
-    );
+    throw new Error("Connect the vault owner's wallet.");
   await verifyEvmDeployment(config);
   const totals = await readVaultTotals({
     ...config,
@@ -170,9 +164,7 @@ export async function sendEvmMonthlySetting(
   beforeSend();
   const hash = await request("eth_sendTransaction", [transaction]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
-    throw new Error(
-      "The wallet did not return a transaction hash. Check wallet activity before another attempt.",
-    );
+    throw new Error("No transaction hash returned. Check wallet activity.");
   return hash;
 }
 /** Exact calldata, canonical finality and the one matching vault event. */
@@ -277,9 +269,7 @@ async function solanaRequest(
   if (!response.ok) {
     if (response.status === 422 && typeof value.message === "string")
       throw new Error(value.message);
-    throw new Error(
-      "The monthly payment setting could not be verified. Retry the review or transaction check.",
-    );
+    throw new Error("Monthly payment setting not verified. Retry.");
   }
   return value;
 }
@@ -303,9 +293,7 @@ export async function reviewSolanaMonthlySetting(
   if (!wallet.solanaSend)
     throw new Error("Choose a wallet with Solana transaction support.");
   if (wallet.address !== deployment.owner)
-    throw new Error(
-      "Connect the vault owner's wallet to change automatic monthly payment.",
-    );
+    throw new Error("Connect the vault owner's wallet.");
   const read = (await solanaRequest(project.id, deployment, { step: "read" }))
     .setting as { current: unknown; decimals: unknown } | undefined;
   if (!read || !isSetting(read.current) || !isAssetDecimals(read.decimals))
@@ -336,9 +324,7 @@ export async function reviewSolanaMonthlySetting(
   )
     throw new Error("The monthly payment review response is invalid.");
   if (!same(plan.current, read.current))
-    throw new Error(
-      "The vault's monthly payment setting changed during review. Review again.",
-    );
+    throw new Error("Monthly payment setting changed. Review again.");
   verifySolanaMonthlyPlan(deployment, plan, wallet.address, target);
   return {
     target,

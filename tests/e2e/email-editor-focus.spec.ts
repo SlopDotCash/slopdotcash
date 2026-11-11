@@ -238,7 +238,7 @@ async function serveAccount(
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
   const preferences = page.getByRole("region", {
-    name: "Email preferences",
+    name: "Email",
     exact: true,
   });
   const input = preferences.getByRole("textbox", {
@@ -247,12 +247,12 @@ async function serveAccount(
   });
   if (verifiedDestination)
     await preferences
-      .getByRole("button", { name: "Add or change email", exact: true })
+      .getByRole("button", { name: "Change email", exact: true })
       .click();
   await expect(input).toBeVisible();
   await input.fill("retained-before-check@example.test");
   await preferences
-    .getByRole("checkbox", { name: "Security email", exact: true })
+    .getByRole("checkbox", { name: "Security", exact: true })
     .check();
   return { state, preferences, input };
 }
@@ -280,7 +280,7 @@ test("same-account focus keeps the email draft editable while send is blocked", 
     await input.fill("edited-during-check@example.test");
     await expect(
       preferences.getByRole("button", {
-        name: "Send verification",
+        name: "Verify",
         exact: true,
       }),
     ).toBeDisabled();
@@ -294,10 +294,10 @@ test("same-account focus keeps the email draft editable while send is blocked", 
   }
   await expect(input).toHaveValue("edited-during-check@example.test");
   await expect(
-    preferences.getByRole("checkbox", { name: "Security email", exact: true }),
+    preferences.getByRole("checkbox", { name: "Security", exact: true }),
   ).toBeChecked();
   await expect(
-    preferences.getByRole("button", { name: "Send verification", exact: true }),
+    preferences.getByRole("button", { name: "Verify", exact: true }),
   ).toBeEnabled();
   expect(state.posts).toHaveLength(0);
   await expectAccessible(page);
@@ -320,7 +320,7 @@ for (const actor of [SECOND, null])
       await expect(input).toHaveValue("");
       await expect(
         preferences.getByRole("checkbox", {
-          name: "Security email",
+          name: "Security",
           exact: true,
         }),
       ).not.toBeChecked();
@@ -352,7 +352,7 @@ for (const actor of [FIRST, SECOND])
         await expect(input).toHaveValue("retained-before-check@example.test");
         await expect(
           preferences.getByRole("button", {
-            name: "Send verification",
+            name: "Verify",
             exact: true,
           }),
         ).toBeDisabled();
@@ -389,9 +389,7 @@ for (const actor of [FIRST, SECOND])
     state.sessionFailure = true;
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(input).toHaveCount(0);
-    await expect(preferences.getByRole("alert")).toContainText(
-      "Email preferences could not be loaded",
-    );
+    await expect(preferences.getByRole("alert")).toContainText("Couldn't load");
     await expectAccessible(page);
     await page.screenshot({
       path: info.outputPath("email-parent-check-error.png"),
@@ -400,7 +398,7 @@ for (const actor of [FIRST, SECOND])
     state.sessionFailure = false;
     state.actor = actor;
     await preferences
-      .getByRole("button", { name: "Retry email preferences", exact: true })
+      .getByRole("button", { name: "Retry", exact: true })
       .click();
     await expect(input).toBeVisible();
     await expect(input).toHaveValue(
@@ -449,15 +447,13 @@ test("a child-observed account change waits for parent binding before another dr
   const { state, preferences, input } = await serveAccount(page, context);
   state.actor = SECOND;
   await preferences
-    .getByRole("button", { name: "Send verification", exact: true })
+    .getByRole("button", { name: "Verify", exact: true })
     .click();
   await expect(
     preferences.getByText("The inbox account changed. Retry.", { exact: true }),
   ).toBeVisible();
   await expect(input).toHaveCount(0);
-  await preferences
-    .getByRole("button", { name: "Retry email preferences", exact: true })
-    .click();
+  await preferences.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(input).toHaveValue("");
   await input.fill("new-account-draft@example.test");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -472,7 +468,7 @@ test("a child-observed sign-out does not restore its draft on same-account retur
   const { state, preferences, input } = await serveAccount(page, context);
   state.actor = null;
   await preferences
-    .getByRole("button", { name: "Send verification", exact: true })
+    .getByRole("button", { name: "Verify", exact: true })
     .click();
   await expect(
     preferences.getByText("Your session expired.", { exact: false }).first(),
@@ -502,10 +498,12 @@ test("an unauthorized verification response clears the old draft", async ({
   const { state, preferences, input } = await serveAccount(page, context);
   state.refuseVerification = true;
   await preferences
-    .getByRole("button", { name: "Send verification", exact: true })
+    .getByRole("button", { name: "Verify", exact: true })
     .click();
   await expect(
-    preferences.getByText("Your session expired.", { exact: false }).first(),
+    preferences
+      .getByRole("link", { name: /^Sign in(?: with GitHub)?$/u })
+      .first(),
   ).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(input).toHaveValue("");
@@ -530,7 +528,7 @@ test("a departed verification preflight cannot reload preferences for a mismatch
   });
   try {
     await preferences
-      .getByRole("button", { name: "Send verification", exact: true })
+      .getByRole("button", { name: "Verify", exact: true })
       .click();
     await held.requested;
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -591,7 +589,7 @@ for (const status of [403, 409]) {
     );
     try {
       await preferences
-        .getByRole("switch", { name: "Activity email", exact: true })
+        .getByRole("switch", { name: "Activity", exact: true })
         .click();
       await held.requested;
       await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -665,7 +663,7 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
   });
   try {
     await preferences
-      .getByRole("switch", { name: "Activity email", exact: true })
+      .getByRole("switch", { name: "Activity", exact: true })
       .click();
     await held.requested;
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -675,7 +673,7 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
       .click();
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await preferences
-      .getByRole("button", { name: "Add or change email", exact: true })
+      .getByRole("button", { name: "Change email", exact: true })
       .click();
     await input.fill("new-mounted-draft@example.test");
     const reads = state.preferenceReads;
@@ -693,7 +691,7 @@ test("an old preference postflight cannot reset a remounted actor's new draft", 
     await expect(input).toHaveValue("new-mounted-draft@example.test");
     await expect(
       preferences.getByRole("checkbox", {
-        name: "Activity email",
+        name: "Activity",
         exact: true,
       }),
     ).toBeChecked();
@@ -732,17 +730,15 @@ for (const changed of [false, true]) {
       },
     );
     await preferences
-      .getByRole("switch", { name: "Activity email", exact: true })
+      .getByRole("switch", { name: "Activity", exact: true })
       .click();
     if (changed) {
       await expect(input).toHaveCount(0);
       await expect(preferences).toContainText("The inbox account changed");
     } else {
-      await expect(preferences).toContainText(
-        "Your preference could not be saved",
-      );
+      await expect(preferences).toContainText("Not saved");
       const toggle = preferences.getByRole("switch", {
-        name: "Activity email",
+        name: "Activity",
         exact: true,
       });
       await expect(toggle).not.toBeChecked();
@@ -784,17 +780,17 @@ test("a current destination conflict refreshes the destination before retry", as
     },
   );
   await preferences
-    .getByRole("switch", { name: "Activity email", exact: true })
+    .getByRole("switch", { name: "Activity", exact: true })
     .click();
   await expect(preferences).toContainText(
-    "Your verified destination changed. Review it before turning on email.",
+    "Address changed. Check it, then retry.",
   );
   await expect(preferences).toContainText("changed-destination@example.test");
   await preferences
-    .getByRole("switch", { name: "Activity email", exact: true })
+    .getByRole("switch", { name: "Activity", exact: true })
     .click();
   await expect(
-    preferences.getByRole("switch", { name: "Activity email", exact: true }),
+    preferences.getByRole("switch", { name: "Activity", exact: true }),
   ).toBeChecked();
   expect(versions).toEqual(["a".repeat(64), "b".repeat(64)]);
 });
@@ -820,11 +816,11 @@ for (const operation of ["save", "verify"] as const) {
     try {
       if (operation === "save")
         await preferences
-          .getByRole("switch", { name: "Activity email", exact: true })
+          .getByRole("switch", { name: "Activity", exact: true })
           .click();
       else
         await preferences
-          .getByRole("button", { name: "Send verification", exact: true })
+          .getByRole("button", { name: "Verify", exact: true })
           .click();
       await leaveEditorWithHeldSession(page);
       expect(state.posts).toEqual([]);

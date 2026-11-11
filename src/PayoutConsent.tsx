@@ -1,4 +1,4 @@
-import { ArrowDown, ShieldCheck, Vault, Wallet } from "lucide-react";
+import { ArrowDown, Clock, ShieldCheck, Vault, Wallet } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { evmBindingTypedData } from "../contracts/evm/adapter";
@@ -8,7 +8,7 @@ import { readBoundedJson } from "./lib/browser-json";
 import { decodeBase64, encodeBase64 } from "./lib/byte-encoding";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
-import { networkLabel } from "./lib/network-names";
+import { isTestNetwork, networkLabel } from "./lib/network-names";
 import type { AccountPayment, PaymentsAccount } from "./lib/payments/contracts";
 import {
   type SolanaBindingContext,
@@ -22,7 +22,8 @@ import {
   subscribeProjectSessionChange,
 } from "./lib/project-api";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { sameWalletAddress } from "./lib/wallets";
+import { sameWalletAddress, shortAddress } from "./lib/wallets";
+import { StatusBadge } from "./Presentation";
 
 async function request(
   path: string,
@@ -48,7 +49,7 @@ async function request(
   if (!response.ok)
     throw new Error(
       response.status === 409
-        ? "The wallet changed or is still being prepared. Reload this page and review again."
+        ? "Wallet changed. Reload."
         : "Payout consent is unavailable. Your award stays reserved. Retry later.",
     );
   return value;
@@ -155,7 +156,7 @@ export function PayoutConsent({
       if (!(await checkActor()) || !isCurrent()) return;
       if (!sameWalletAddress(network.family, wallet.address, claim.address))
         throw new Error(
-          "Connect your confirmed payout address. To change it, use Account wallets first.",
+          `Wrong address. Connect ${shortAddress(claim.address)}.`,
         );
       if (network.family === "evm") {
         const rpc = wallet.evmRequest;
@@ -184,9 +185,7 @@ export function PayoutConsent({
           },
         );
         if (JSON.stringify(typed) !== JSON.stringify(expected))
-          throw new Error(
-            "The payout consent names a different account, address, network or vault. Refresh and review again.",
-          );
+          throw new Error("Consent mismatch. Refresh.");
         if (!(await checkActor()) || !isCurrent()) return;
         const accounts = await rpc("eth_accounts", []);
         if (!isCurrent()) return;
@@ -224,9 +223,7 @@ export function PayoutConsent({
           throw new Error(
             "Payout consent was not stored. Refresh and review again.",
           );
-        setNotice(
-          "Wallet consent saved. Payment is not yet verified. Reload this page to check progress.",
-        );
+        setNotice("Authorized · pending");
       } else {
         if (!wallet.solanaSign)
           throw new Error(
@@ -237,9 +234,7 @@ export function PayoutConsent({
         });
         if (!isCurrent()) return;
         if (typeof prepared.transaction !== "string")
-          throw new Error(
-            "The binding is already pending or unavailable. Reload this page before trying again.",
-          );
+          throw new Error("Already pending. Reload.");
         const bytes = decodeBase64(prepared.transaction);
         const context = prepared.bindingContext as SolanaBindingContext;
         if (
@@ -248,9 +243,7 @@ export function PayoutConsent({
           context.githubUserId !== account.githubUserId ||
           context.destination !== claim.address
         )
-          throw new Error(
-            "The prepared binding names another vault or account. Refresh and review again.",
-          );
+          throw new Error("Binding mismatch. Refresh.");
         verifyPreparedSolanaBinding(bytes, context);
         const chain =
           `solana:${payment.network === "solana-mainnet" ? "mainnet" : payment.network.slice(7)}` as `solana:${string}`;
@@ -273,9 +266,7 @@ export function PayoutConsent({
           throw new Error(
             "Binding submission could not be verified. Reload this page before retrying.",
           );
-        setNotice(
-          "Binding submitted; payment is not yet verified. Reload this page to check progress.",
-        );
+        setNotice("Submitted · pending");
       }
       setOpen(false);
     } catch (e) {
@@ -303,17 +294,22 @@ export function PayoutConsent({
         !notice &&
         (wallets.length === 0 ? (
           // This browser has no wallet that can sign; wallets are set up in account settings.
-          <Link className="button secondary-button" href="/account#wallets">
-            Authorize payout wallet
+          <Link
+            ariaLabel="Authorize payout wallet"
+            className="button secondary-button"
+            href="/account#wallets"
+          >
+            Authorize
           </Link>
         ) : (
           <button
             type="button"
             ref={actionButton}
+            aria-label="Authorize payout wallet"
             className="button secondary-button"
             onClick={() => setOpen(true)}
           >
-            Authorize payout wallet
+            Authorize
           </button>
         ))}
       {createPortal(
@@ -331,13 +327,21 @@ export function PayoutConsent({
           onClose={() => setOpen(false)}
         >
           <div className="consent-head">
-            <ChainIcon chain={payment.chain} decorative />
-            <div>
-              <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
-                Authorize payout wallet
-              </h2>
-              <p>{networkLabel(payment.network)}</p>
-            </div>
+            <span
+              role="img"
+              aria-label={networkLabel(payment.network)}
+              title={networkLabel(payment.network)}
+            >
+              <ChainIcon chain={payment.chain} decorative />
+            </span>
+            <h2 id={headingId} tabIndex={-1} ref={reviewHeading}>
+              Authorize payout wallet
+            </h2>
+            {isTestNetwork(payment.network) ? (
+              <StatusBadge tone="warning">
+                {networkLabel(payment.network)}
+              </StatusBadge>
+            ) : null}
           </div>
           <div className="consent-route">
             <dl className="consent-party">
@@ -363,8 +367,8 @@ export function PayoutConsent({
           <p className="consent-note">
             <ShieldCheck aria-hidden="true" size={16} />
             {network.family === "evm"
-              ? "Signing moves no funds."
-              : "Signing moves no funds. Slop pays the network fee."}
+              ? "No funds move"
+              : "No funds move · no gas"}
           </p>
           <div className="wallet-picker-list">
             {wallets.map((wallet) => (
@@ -405,7 +409,9 @@ export function PayoutConsent({
       )}
       {notice && (
         <p role="status" tabIndex={-1} ref={result}>
-          {notice}
+          <StatusBadge icon={<Clock aria-hidden="true" size={14} />}>
+            {notice}
+          </StatusBadge>
         </p>
       )}
     </div>

@@ -93,9 +93,7 @@ export function BountySubmittedPayments({
       })
       .catch(() => {
         if (isCurrent())
-          setError(
-            "Saved transaction details could not be read. Use the case verification action.",
-          );
+          setError("Saved transactions unreadable. Verify from the case.");
       });
     return () => {
       loading = false;
@@ -180,7 +178,7 @@ export function BountySubmittedPayments({
       className="direct-bounty-payment"
       aria-label="Submitted payment recovery"
     >
-      <p>Verify transactions already sent before preparing another payment.</p>
+      <p>Unverified payments</p>
       {visible.map((row, index) => (
         <label key={`${row.key}:${row.item}`}>
           Transaction {solana ? "signature" : "hash"} {index + 1}

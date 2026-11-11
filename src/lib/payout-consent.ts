@@ -125,7 +125,5 @@ export function verifySignedSolanaBinding(
       { zip215: false },
     )
   )
-    throw new Error(
-      "Your wallet changed the binding transaction or returned an invalid signature. Nothing was submitted by this page.",
-    );
+    throw new Error("Invalid wallet signature. Nothing submitted.");
 }

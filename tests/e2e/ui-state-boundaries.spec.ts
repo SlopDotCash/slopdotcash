@@ -1,11 +1,19 @@
 /** Frontend state transitions run against the built UI; service responses are controlled. */
 
+import type { Page } from "@playwright/test";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { archivedPaidCycleIndex } from "../fixtures";
 import { expect, test } from "./fixtures";
 import { readLeaderboardResponse } from "./leaderboard-response";
 
 test.use({ video: "on" });
+
+/** The stale points notice; the stale project-list notice offers "Try again". */
+const pointsStale = (page: Page) =>
+  page
+    .locator("p.data-stale")
+    .filter({ hasText: /^\s*Points stale · /u })
+    .filter({ hasNot: page.getByRole("button", { name: "Try again" }) });
 
 test("malformed project-session responses show a recoverable error", async ({
   page,
@@ -52,13 +60,13 @@ test("an unchanged open project page becomes stale at the freshness boundary", a
   await expect(
     page.getByRole("region", { name: "Contributor standings", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(/Points may be outdated/u)).toHaveCount(0);
+  await expect(pointsStale(page)).toHaveCount(0);
   await page.screenshot({
     path: test.info().outputPath("fresh-records.png"),
     fullPage: true,
   });
   await page.clock.fastForward(61_000);
-  await expect(page.getByText(/Points may be outdated/u)).toBeVisible();
+  await expect(pointsStale(page)).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("stale-records.png"),
     fullPage: true,
@@ -135,7 +143,7 @@ test("an untouched allocation becomes unclaimed when wallet registration closes"
   await page.clock.fastForward(1_000);
   await expect(allocation).toContainText("Unclaimed");
   await expect(
-    allocation.getByRole("link", { name: /Add or confirm/ }),
+    allocation.getByRole("link", { name: /^Add .* wallet$/u }),
   ).toHaveCount(0);
   await page.screenshot({
     path: test.info().outputPath("registration-closed.png"),
@@ -163,9 +171,7 @@ test("a planned cycle with settlement evidence is rejected before rendering paid
     waitUntil: "networkidle",
   });
   await expect(page.getByRole("alert")).toContainText("Data could not load.");
-  await expect(
-    page.getByText("Approved, payment ready", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Payment ready", { exact: true })).toHaveCount(0);
   await page.screenshot({
     path: test.info().outputPath("contradictory-cycle-error.png"),
     fullPage: true,
@@ -256,7 +262,8 @@ test("automatic owner allocations stop accepting edits at the cutoff without ref
   );
   await page.goto("/projects/eliza/funding", { waitUntil: "networkidle" });
   await page
-    .getByRole("button", { name: "Review monthly awards", exact: true })
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
     .click();
   const awards = page.getByRole("region", {
     name: "Monthly awards",
@@ -272,7 +279,7 @@ test("automatic owner allocations stop accepting edits at the cutoff without ref
   });
   await page.clock.fastForward(1000);
   await expect(input).toBeDisabled();
-  await expect(awards).toContainText("Cutoff passed");
+  await expect(awards).toContainText("Finalizing");
   await expect(
     awards.getByRole("button", { name: "Save first-contributor", exact: true }),
   ).toBeDisabled();
@@ -307,7 +314,7 @@ test("a deadline crossed between DOM commit and passive effect still refreshes t
     { before: boundary - 60_000, after: boundary + 1 },
   );
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
-  await expect(page.getByText(/Points may be outdated/u)).toBeVisible();
+  await expect(pointsStale(page)).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("passive-effect-deadline.png"),
     fullPage: true,

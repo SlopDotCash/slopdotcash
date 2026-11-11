@@ -90,9 +90,7 @@ async function request(
   if (!response.ok) {
     if (response.status === 422 && typeof value.message === "string")
       throw new Error(value.message);
-    throw new Error(
-      "Solana funding could not be verified. Retry the review or transaction check.",
-    );
+    throw new Error("Solana funding not verified. Retry.");
   }
   return value;
 }
@@ -198,9 +196,7 @@ export async function sendSolanaWalletTransaction(
       zip215: false,
     })
   )
-    throw new Error(
-      "The wallet did not return a signature for this action. Check wallet activity before another attempt.",
-    );
+    throw new Error("No signature returned. Check wallet activity.");
   return solanaBase58(signature);
 }
 export async function checkSolanaVaultAction(

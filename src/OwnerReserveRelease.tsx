@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { LoaderCircle } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import type { MonthlyOwnerView } from "../backend/payments/monthly";
 import { errorMessage } from "./lib/errors";
 import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
@@ -18,6 +19,7 @@ import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
+import { CopyIdentifier } from "./Operations";
 import {
   PendingTransaction,
   UnsentTransactionRecovery,
@@ -25,13 +27,14 @@ import {
 import { NoWalletFound, WalletConnection } from "./Presentation";
 
 type Pending = PendingAttempt & { planId: string; hash: string | null };
+const spinner = (
+  <LoaderCircle className="wallet-spin" aria-hidden="true" size={14} />
+);
 const HELD: Record<string, string> = {
-  "allocation-unavailable":
-    "The complete original allocation is unavailable. The reserve stays held.",
-  "allocation-mismatch": "This reserve is not proven faulty. It stays held.",
-  "no-wrong-sum-fault": "The reserve total is correct. No release is needed.",
-  "prior-reserve-transition":
-    "This reserve has already changed. It cannot use this repair.",
+  "allocation-unavailable": "Allocation unavailable. Held.",
+  "allocation-mismatch": "Not proven faulty. Held.",
+  "no-wrong-sum-fault": "Total correct. Nothing to release.",
+  "prior-reserve-transition": "Already changed. Not repairable.",
 };
 /** Session storage prefix for a project's submitted reserve releases. */
 export const releaseStoragePrefix = (projectId: string) =>
@@ -64,14 +67,13 @@ export default function OwnerReserveRelease({
         throw new Error();
       return parsed;
     },
-    () =>
-      "The saved release cannot be read. Check wallet activity before another request.",
+    () => "Saved request unreadable. Check wallet activity.",
   );
   const [plan, setPlan] = useState<ReadyMonthlyRelease | null>(null);
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [hash, setHash] = useState(initial.pending?.hash ?? "");
   const { busy, error, run: act } = useAction(initial.error);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const family = view.deployment
     ? ESCROW_NETWORKS[view.deployment.network].family
     : null;
@@ -85,8 +87,7 @@ export default function OwnerReserveRelease({
   const amount = plan?.prepared.evidence.releasedGross;
   return (
     <details className="owner-reserve-release">
-      <summary>Repair a stuck monthly reserve</summary>
-      <p>Returns a reserve whose total is wrong to the vault's free balance.</p>
+      <summary>Repair reserve</summary>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {storageError && (
@@ -96,17 +97,14 @@ export default function OwnerReserveRelease({
           disabled={busy}
           onClick={() => void run(async () => clearUnreadable())}
         >
-          I checked wallet activity; clear the unreadable local request
+          Clear saved record
         </button>
       )}
       {pending ? (
         <PendingTransaction>
-          <p>
-            The wallet request is recorded. Check its result before another
-            attempt.
-          </p>
+          <p>{spinner} Pending · don't resend</p>
           <label>
-            Transaction hash or signature
+            Transaction hash
             <input
               value={hash}
               onChange={(event) => setHash(event.target.value)}
@@ -151,7 +149,7 @@ export default function OwnerReserveRelease({
                     );
                   storedPending.current = candidate;
                   setPending(candidate);
-                  setNotice("Waiting for the transaction to finalize.");
+                  setNotice(<>{spinner} Finalizing</>);
                   return;
                 }
                 if (result.status !== "failed" && result.status !== "finalized")
@@ -160,8 +158,8 @@ export default function OwnerReserveRelease({
                 setPlan(null);
                 setNotice(
                   result.status === "finalized"
-                    ? "Release verified. The reserve returned to the vault's free balance."
-                    : "The transaction failed. No reserve was released. You can review again.",
+                    ? "Released."
+                    : "Transaction failed. Nothing released.",
                 );
               })
             }
@@ -175,7 +173,7 @@ export default function OwnerReserveRelease({
                 void run(async () => {
                   clear(storedPending.current ?? pending);
                   setPlan(null);
-                  setNotice("Local request cleared after your wallet check.");
+                  setNotice("Cleared.");
                 })
               }
             />
@@ -214,15 +212,14 @@ export default function OwnerReserveRelease({
                 {view.asset && amount
                   ? `${formatBaseUnits(amount, view.asset.assetDecimals)}${view.asset.symbol ? ` ${formatAssetSymbol(view.asset.symbol)}` : ""}`
                   : `${amount} token base units`}{" "}
-                to the vault's free balance. This does not pay contributors or
-                withdraw funds.
+                → free balance
               </p>
               {!wallet ? (
                 <WalletConnection
                   address={null}
                   wallets={wallets}
                   disabled={busy}
-                  legend="Connect the vault owner's wallet"
+                  legend="Owner wallet"
                   empty={<NoWalletFound solana={family === "solana"} />}
                   onConnect={(provider) =>
                     void run(async () => {
@@ -257,33 +254,36 @@ export default function OwnerReserveRelease({
                             );
                         },
                       );
+                      const keep = (
+                        <>
+                          Not saved. Keep this{" "}
+                          {family === "solana" ? "signature" : "hash"}:{" "}
+                          <CopyIdentifier
+                            label="transaction hash"
+                            value={transactionId}
+                          />
+                        </>
+                      );
                       try {
                         if (!save({ ...intent, hash: transactionId }, intent)) {
-                          if (mounted.current)
-                            setNotice(
-                              `Submitted ${transactionId}. Keep this ${family === "solana" ? "signature" : "hash"}; the saved request changed.`,
-                            );
+                          if (mounted.current) setNotice(keep);
                           return;
                         }
                       } catch {
                         if (mounted.current) {
                           setPending({ ...intent, hash: transactionId });
                           setHash(transactionId);
-                          setNotice(
-                            `Submitted ${transactionId}. Keep this ${family === "solana" ? "signature" : "hash"}; browser storage could not save it.`,
-                          );
+                          setNotice(keep);
                         }
                         return;
                       }
                       if (!mounted.current) return;
                       setHash(transactionId);
-                      setNotice(
-                        "Submitted. Check the transaction to verify the release.",
-                      );
+                      setNotice(<>{spinner} Submitted</>);
                     })
                   }
                 >
-                  Review and sign release
+                  Sign release
                 </button>
               )}
             </div>

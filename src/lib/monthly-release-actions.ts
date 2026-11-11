@@ -142,8 +142,6 @@ export async function sendMonthlyRelease(
     fresh.transaction,
   ]);
   if (typeof hash !== "string" || !/^0x[0-9a-f]{64}$/i.test(hash))
-    throw new Error(
-      "The wallet result is unclear. Check wallet activity before another attempt.",
-    );
+    throw new Error("The wallet result is unclear. Check wallet activity.");
   return hash;
 }

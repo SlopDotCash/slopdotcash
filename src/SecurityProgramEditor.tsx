@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { StatusBadge } from "./Presentation";
 import {
   RewardAssetFields,
   type RewardAssetSelection,
@@ -9,6 +10,7 @@ import "./owner-review.css";
 import { Link } from "./Link";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
+import { GithubIcon } from "./lib/github-icon";
 import {
   currentProjectSession,
   ProjectApiError,
@@ -34,27 +36,15 @@ import {
 import { useAction } from "./lib/use-action";
 
 const TEXT_FIELDS = [
-  ["includedAssets", "Covered assets", "One asset per line."],
-  [
-    "excludedDependencies",
-    "Excluded dependencies",
-    "One dependency per line. Leave empty if none.",
-  ],
-  ["testingPermission", "Test rules", ""],
-  ["severityRubric", "Severity guide", ""],
-  [
-    "lossDefinition",
-    "Loss of funds",
-    "Describe the funds and losses covered by this program.",
-  ],
-  ["exhaustionRule", "When funds run out", ""],
-  ["dispute", "Disputes", "Explain how to request a review."],
-  [
-    "disclosure",
-    "Disclosure",
-    "State when and how a report may become public.",
-  ],
-  ["safeHarbor", "Researcher protection", ""],
+  ["includedAssets", "Covered assets"],
+  ["excludedDependencies", "Excluded dependencies"],
+  ["testingPermission", "Test rules"],
+  ["severityRubric", "Severity guide"],
+  ["lossDefinition", "Loss of funds"],
+  ["exhaustionRule", "When funds run out"],
+  ["dispute", "Disputes"],
+  ["disclosure", "Disclosure"],
+  ["safeHarbor", "Researcher protection"],
 ] as const;
 type TextField = (typeof TEXT_FIELDS)[number][0];
 const lines = (value: string) =>
@@ -370,10 +360,7 @@ export function SecurityProgramEditor({
       <h2 id="owner-security-title">Security bounty</h2>
       <div className="owner-form">
         <p className="operations-muted">
-          {fullAward
-            ? "You decide each award. The researcher receives the whole award and Slop takes no share."
-            : "You decide each award: 75% to the researcher, 25% to Slop."}{" "}
-          Changes apply to future reports only.
+          {fullAward ? "100% to researcher" : "75% researcher · 25% Slop"}
         </p>
         {existing && (
           <p>
@@ -426,7 +413,8 @@ export function SecurityProgramEditor({
                 <option value="closed">Closed</option>
               </select>
               <label htmlFor="bounty-amount">
-                Published gross award ({amountCurrency})
+                Award ({amountCurrency}){" "}
+                <StatusBadge>Discretionary</StatusBadge>
               </label>
               <input
                 id="bounty-amount"
@@ -454,7 +442,6 @@ export function SecurityProgramEditor({
                   </div>
                 </dl>
               )}
-              <p>A discretionary award, not a promised payment.</p>
               {existing?.amount.currency === "USD" && !existing.amount.asset ? (
                 <p>USD</p>
               ) : (
@@ -480,15 +467,10 @@ export function SecurityProgramEditor({
                 min="1"
                 max="1000"
                 required={!afterApproval}
+                placeholder={afterApproval ? "No limit" : undefined}
                 value={awards}
                 onChange={(event) => setAwards(event.target.value)}
               />
-              {afterApproval && (
-                <p>
-                  Leave blank to review each first qualifying finding
-                  separately.
-                </p>
-              )}
               <label htmlFor="bounty-commit">
                 Source commit (
                 {existing?.scope.sourceRevisions[0]?.repository ??
@@ -527,15 +509,11 @@ export function SecurityProgramEditor({
                 <fieldset disabled={busy}>
                   <legend>{title}</legend>
                   {TEXT_FIELDS.filter(([key]) => keys.includes(key)).map(
-                    ([key, label, help]) => (
+                    ([key, label]) => (
                       <div className="form-field" key={key}>
                         <label htmlFor={`bounty-${key}`}>{label}</label>
-                        {help ? <p id={`bounty-${key}-help`}>{help}</p> : null}
                         <textarea
                           id={`bounty-${key}`}
-                          aria-describedby={
-                            help ? `bounty-${key}-help` : undefined
-                          }
                           rows={3}
                           required={key !== "excludedDependencies"}
                           minLength={
@@ -567,14 +545,14 @@ export function SecurityProgramEditor({
               </details>
             ))}
             <details className="proposal-advanced">
-              <summary>Response targets and contacts</summary>
+              <summary>Response targets</summary>
               <fieldset disabled={busy}>
                 <legend>Response targets</legend>
                 {(
                   [
-                    ["acknowledgeHours", "Acknowledge within (hours)", 336],
-                    ["triageBusinessDays", "Triage within (business days)", 60],
-                    ["updateIntervalDays", "Send an update every (days)", 60],
+                    ["acknowledgeHours", "Acknowledge (hours)", 336],
+                    ["triageBusinessDays", "Triage (business days)", 60],
+                    ["updateIntervalDays", "Updates (days)", 60],
                   ] as const
                 ).map(([key, label, max]) => (
                   <div className="form-field" key={key}>
@@ -596,21 +574,33 @@ export function SecurityProgramEditor({
                   </div>
                 ))}
               </fieldset>
-              <p>
-                Project contacts:{" "}
-                {(existing?.approvers.technical ?? [actor])
-                  .map((person) => `@${person.githubLogin}`)
-                  .join(", ")}
-                .
+              <p title="Project contacts">
+                {(existing?.approvers.technical ?? [actor]).map((person) => (
+                  <span key={person.githubId}>
+                    <StatusBadge icon={<GithubIcon />}>
+                      @{person.githubLogin}
+                    </StatusBadge>{" "}
+                  </span>
+                ))}
               </p>
             </details>
           </div>
           {reviewing ? (
             <section aria-label="Review bounty terms">
-              <h3>Review before publishing</h3>
-              <p>
-                Proposed status: {status}. Changes apply to future reports only.
-              </p>
+              <h3>
+                Review{" "}
+                <StatusBadge
+                  tone={
+                    status === "open"
+                      ? "success"
+                      : status === "closed"
+                        ? "neutral"
+                        : "warning"
+                  }
+                >
+                  {status}
+                </StatusBadge>
+              </h3>
               <SecurityOffer
                 amountPreview={preview ?? undefined}
                 project={{

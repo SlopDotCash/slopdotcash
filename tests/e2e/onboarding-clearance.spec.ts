@@ -26,7 +26,7 @@ test("project agent setup falls back to the general prompt until cleared", async
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   await expect(
-    page.getByText("Project clearance could not be checked."),
+    page.locator("#start").getByText("Clearance unknown", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
@@ -35,7 +35,7 @@ test("project agent setup falls back to the general prompt until cleared", async
   state = "blocked";
   await page.reload({ waitUntil: "networkidle" });
   await expect(
-    page.getByText("This project is not cleared for agents."),
+    page.locator("#start").getByText("Not cleared", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
@@ -145,7 +145,7 @@ test("history navigation never carries another project's clearance into agent se
   });
   await page.goto("/projects/asi", { waitUntil: "networkidle" });
   await expect(
-    page.getByText("This project is not cleared for agents.", { exact: false }),
+    page.locator("#start").getByText("Not cleared", { exact: true }),
   ).toBeVisible();
   // Finish home snapshot reads before the deliberate clearance/history race.
   // holdClearance is still false while the home page settles.
@@ -221,7 +221,12 @@ test("history navigation never carries another project's clearance into agent se
   try {
     await page.evaluate(() => history.go(-2));
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("ASI");
-    await expect(page.getByText("Checking project clearance…")).toBeVisible();
+    await expect(
+      page.getByRole("status", {
+        name: "Checking project clearance",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(
       page.getByRole("status", { name: "Agent prompt" }),
     ).not.toContainText("SlopDotCash/asi");
@@ -245,7 +250,7 @@ test("history navigation never carries another project's clearance into agent se
     releaseClearance();
   }
   await expect(
-    page.getByText("This project is not cleared for agents.", { exact: false }),
+    page.locator("#start").getByText("Not cleared", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),

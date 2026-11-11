@@ -4,6 +4,7 @@ import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { isPointsSummary, type PointsSummary } from "./lib/points-summary";
 import { usePublicResource } from "./lib/use-public-resource";
+import { Spinner } from "./Presentation";
 
 const HOME_ROWS = 10;
 
@@ -49,7 +50,7 @@ export function HomeStandings() {
         <Link href="/points?period=lifetime">View leaderboard</Link>
       </div>
       {points.status === "loading" ? (
-        <p role="status">Loading top contributors…</p>
+        <Spinner label="Loading top contributors" />
       ) : points.status === "error" ? (
         <p role="status">
           <span>Top contributors are unavailable.</span>{" "}

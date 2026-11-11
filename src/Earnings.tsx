@@ -1,6 +1,8 @@
 import {
+  ArrowRight,
   Check,
   ExternalLink,
+  Eye,
   LoaderCircle,
   Pencil,
   Plus,
@@ -59,7 +61,7 @@ import {
   PayoutRow,
   RECEIVED_STATUS,
 } from "./PayoutRows";
-import { formatCycleMonth, RoutePageHeader } from "./Presentation";
+import { formatCycleMonth, RoutePageHeader, StatusBadge } from "./Presentation";
 import { ReferralClaims } from "./ReferralClaims";
 
 function chainDefaultNetwork(chain: EscrowChain): string {
@@ -479,16 +481,16 @@ export function EarningsPage({
         claim.claimId === saved?.claimId
       )
         throw e;
-      const network = NETWORK_NAMES[chain];
+      const cause = errorMessage(e, "Wallet confirmation failed.");
       if (authorizationAttempted)
         throw new Error(
-          `${errorMessage(e, "Wallet confirmation failed.")} Your new ${network} address ${address} was saved, but confirmation could not be verified. Check the current wallet status below before trying again.`,
+          `${cause} Saved, not confirmed. Check status, then retry.`,
         );
       throw new Error(
-        `${errorMessage(e, "Wallet confirmation failed.")} ${
+        `${cause} ${
           saved?.authorized
-            ? `Your new ${network} address ${address} is saved but not confirmed. Your verified address ${saved.address} remains active for payouts. Connect your new wallet again to confirm the replacement.`
-            : `Your ${network} address ${address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`
+            ? "Not confirmed. Old address still active. Reconnect to confirm."
+            : "Saved, not confirmed. Reconnect to confirm."
         }`,
       );
     }
@@ -525,10 +527,8 @@ export function EarningsPage({
       // A stopped confirmation can leave earlier chains confirmed.
       if (isCurrent()) refresh();
     }
-    if (isCurrent())
-      setMessage(
-        `${label} wallet confirmed. Eligible unpaid awards are sent automatically.`,
-      );
+    // The wallet card shows the confirmed mark itself.
+    if (isCurrent()) setMessage(`${label} confirmed`);
   }
 
   const familyOf = (id: WalletFamily) =>
@@ -587,9 +587,7 @@ export function EarningsPage({
     if (!pendingChange) return;
     returnFocus.current = pendingChange.family;
     setPendingChange(null);
-    setMessage(
-      `Kept your saved ${familyOf(pendingChange.family).label} address. Nothing was registered.`,
-    );
+    setMessage("Kept saved address");
   }
 
   const Root = walletsOnly ? "section" : "main";
@@ -612,7 +610,7 @@ export function EarningsPage({
               className="button secondary-button button-small"
               href="/account#wallets"
             >
-              Manage payout wallets
+              <WalletIcon aria-hidden="true" size={16} /> Wallets
             </a>
           }
         />
@@ -661,7 +659,7 @@ export function EarningsPage({
             ))}
           {picker && !wallets.some((wallet) => wallet.family === picker) && (
             <>
-              <p>No wallet found. Install one, then reload.</p>
+              <p>No wallet found</p>
               {WALLET_DOWNLOADS[picker].map((download) => (
                 <a
                   key={download.name}
@@ -681,7 +679,11 @@ export function EarningsPage({
           )}
         </div>
       </dialog>
-      {loading && <p role="status">Checking your payouts…</p>}
+      {loading && (
+        <p aria-label="Checking your payouts" role="status">
+          <LoaderCircle aria-hidden="true" className="wallet-spin" size={18} />
+        </p>
+      )}
       {signedOut && !loading && (
         <div>
           <a
@@ -712,7 +714,11 @@ export function EarningsPage({
       {message && <p role="status">{message}</p>}
       {data && (
         <>
-          {(error || loadError) && <p>Showing the last verified data.</p>}
+          {(error || loadError) && (
+            <p>
+              <StatusBadge tone="warning">Stale</StatusBadge>
+            </p>
+          )}
           {walletsOnly ? (
             <section aria-label="Payout wallets" className="wallet-cards">
               {WALLET_FAMILIES.map((family) => {
@@ -856,36 +862,30 @@ export function EarningsPage({
                           ref={changeHeading}
                           tabIndex={-1}
                         >
-                          Register a different {family.label} address?
+                          Change {family.label} address?
                         </h3>
                         <p>
-                          Your wallet returned a different account. Nothing is
-                          registered yet.
+                          <code
+                            className="wallet-address"
+                            title={`Saved address ${pendingChange.saved}`}
+                          >
+                            {shortAddress(pendingChange.saved)}
+                          </code>{" "}
+                          <ArrowRight
+                            aria-label="changes to"
+                            role="img"
+                            size={16}
+                          />{" "}
+                          <code
+                            className="wallet-address"
+                            title={`Wallet account ${pendingChange.address}`}
+                          >
+                            {shortAddress(pendingChange.address)}
+                          </code>
                         </p>
-                        <dl>
-                          <div>
-                            <dt>Saved address</dt>
-                            <dd>
-                              <code className="wallet-address">
-                                {pendingChange.saved}
-                              </code>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Wallet account</dt>
-                            <dd>
-                              <code className="wallet-address">
-                                {pendingChange.address}
-                              </code>
-                            </dd>
-                          </div>
-                        </dl>
                         <p className="wallet-consequence">
-                          <strong>
-                            Your GitHub identity and this address become a
-                            public, permanent record.
-                          </strong>{" "}
-                          The earlier address stays public.
+                          <Eye aria-hidden="true" size={16} />{" "}
+                          <strong>Public and permanent</strong>
                         </p>
                         <div className="wallet-change-actions">
                           <button
@@ -893,14 +893,14 @@ export function EarningsPage({
                             type="button"
                             onClick={confirmChange}
                           >
-                            Register wallet account
+                            Register
                           </button>
                           <button
                             className="button secondary-button"
                             type="button"
                             onClick={keepSaved}
                           >
-                            Keep saved address
+                            Keep saved
                           </button>
                         </div>
                       </section>
@@ -915,7 +915,7 @@ export function EarningsPage({
                 <h2 id={`${heading}-payments`}>Awards and payments</h2>
                 {data.payments.length === 0 &&
                 data.monthlyAwards.length === 0 ? (
-                  <p>No approved awards yet.</p>
+                  <p>No awards yet</p>
                 ) : (
                   <ul
                     className="payout-rows"
@@ -947,20 +947,17 @@ export function EarningsPage({
                             ? `Awaiting wallet: add or confirm your ${NETWORK_NAMES[payment.chain]} wallet`
                             : undefined
                         }
+                        statusHref={
+                          payment.deliveryState === "needs_wallet"
+                            ? "/account#wallets"
+                            : undefined
+                        }
                         transactionUrl={transactionUrl(
                           payment.network,
                           payment.transactionId,
                         )}
                         transactionLabel="View transaction"
                       >
-                        {payment.deliveryState === "needs_wallet" ? (
-                          <p className="payout-consent">
-                            <a href="/account#wallets">
-                              Add or confirm your {NETWORK_NAMES[payment.chain]}{" "}
-                              wallet
-                            </a>
-                          </p>
-                        ) : null}
                         <PayoutConsent
                           key={
                             data.wallets.find(

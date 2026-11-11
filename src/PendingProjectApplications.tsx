@@ -10,7 +10,7 @@ import {
   publishStoredApplication,
 } from "./lib/project-api";
 import { SLOPBOT_INSTALL_URL } from "./lib/project-contracts";
-import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
+import { SetupStateBadge } from "./ProjectSetupStatus";
 
 type Publication =
   | { status: "idle" | "submitting" | "cancelling" | "cancelled" }
@@ -107,10 +107,7 @@ function PendingApplication({
       try {
         await requireApplicationActor(actorId);
       } catch {
-        if (mounted.current)
-          onAccountLost(
-            "Your private session could not be checked. Reload your saved applications.",
-          );
+        if (mounted.current) onAccountLost("Session check failed. Reload.");
         return;
       }
       if (!mounted.current) return;
@@ -144,8 +141,14 @@ function PendingApplication({
         ) : (
           <strong>{application.manifest.name}</strong>
         )}
-        {publication.status === "published" ||
-        publication.status === "cancelled" ? null : (
+        {publication.status === "published" ? (
+          <a
+            aria-label={`Manage ${application.manifest.name}`}
+            href={`/projects/${publication.result.project.id}/manage`}
+          >
+            <SetupStateBadge state={publication.result.setup.state} />
+          </a>
+        ) : publication.status === "cancelled" ? null : (
           <>
             {application.publishable === false ? null : (
               <button
@@ -165,8 +168,8 @@ function PendingApplication({
                       publication.action === "publish"
                     ? "Retry"
                     : isRevision
-                      ? "Publish this change"
-                      : "Create this project"}
+                      ? "Publish"
+                      : "Create"}
               </button>
             )}
             <button
@@ -200,15 +203,6 @@ function PendingApplication({
             </>
           ) : null}
         </p>
-      ) : null}
-      {publication.status === "published" ? (
-        <ProjectSetupStatusPanel
-          actorId={actorId}
-          compact
-          projectId={publication.result.project.id}
-          initial={publication.result.setup}
-          showProjectLink={false}
-        />
       ) : null}
     </article>
   );

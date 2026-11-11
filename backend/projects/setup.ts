@@ -119,8 +119,7 @@ export async function readRepositoryAccess(
   if (reader === undefined)
     return {
       state: "retry",
-      message:
-        "Slop cannot reach Slopbot to check the installation right now. Try again later.",
+      message: "Slopbot unreachable.",
     };
   try {
     return {
@@ -138,8 +137,7 @@ export async function readRepositoryAccess(
   } catch {
     return {
       state: "retry",
-      message:
-        "GitHub or Slopbot did not answer the installation check. Try again.",
+      message: "Check failed.",
     };
   }
 }
@@ -235,6 +233,10 @@ function setupFunding(
 
 type ScanState = ProjectSetupStatus["checks"]["scan"];
 
+function restrictedLabel(state: string): string {
+  return `${state.charAt(0).toUpperCase()}${state.slice(1)}`;
+}
+
 function scanCheck(
   clearance: VettingClearance | { state: "unavailable"; message: string },
 ): ScanState {
@@ -250,8 +252,8 @@ function scanCheck(
                 : "existing-project",
             message:
               "exemption" in clearance
-                ? "Owner-approved admission exemption. No passed scan is claimed."
-                : "Existing project, permanently exempt from scan clearance.",
+                ? "Owner-approved exemption"
+                : "Exempt · existing project",
           }
         : {
             state: "cleared",
@@ -263,7 +265,7 @@ function scanCheck(
     case "queued":
       return {
         state: "queued",
-        message: "The security scan is queued. Nothing is needed from you.",
+        message: "Scan queued.",
       };
     case "unscanned":
       return {
@@ -273,8 +275,7 @@ function scanCheck(
     case "stale":
       return {
         state: "stale",
-        message:
-          "The repository or skill template changed since the last scan.",
+        message: "Scan stale.",
       };
     case "quarantined": {
       // Badges from the recorded result (issue #1991); a historical result or
@@ -312,25 +313,24 @@ export function projectSetupStatus(input: {
   activatedRevision: number | null;
   checkedAt: string;
 }): ProjectSetupStatus {
-  const { project, restriction, authority, access, clearance } = input;
+  const { project, restriction, authority, access } = input;
   const manifest = project.manifest;
-  const repository = manifest.repositories[0].id;
   const installation: ProjectSetupStatus["checks"]["installation"] =
     access.state === "retry"
       ? { state: "retry", message: access.message }
       : access.access.installation === "installed"
         ? {
             state: "installed",
-            message: `Slopbot is installed on ${repository}.`,
+            message: "Installed.",
           }
         : access.access.installation === "suspended"
           ? {
               state: "suspended",
-              message: `The Slopbot installation for ${repository} is suspended on GitHub.`,
+              message: "Suspended on GitHub.",
             }
           : {
               state: "missing",
-              message: `Slopbot is not installed on ${repository}.`,
+              message: "Not installed.",
             };
   let scan = scanCheck(input.clearance);
   const queuedNow =
@@ -339,7 +339,7 @@ export function projectSetupStatus(input: {
   if (queuedNow && scan.state !== "cleared" && scan.state !== "banned")
     scan = {
       state: "queued",
-      message: "The security scan is queued. Nothing is needed from you.",
+      message: "Scan queued.",
     };
   else if (input.scanRequest?.state === "unavailable")
     scan = { state: "unavailable", message: input.scanRequest.message };
@@ -359,8 +359,8 @@ export function projectSetupStatus(input: {
     nextAction = action(
       "restricted",
       restriction.state !== "clear" || scan.state === "banned"
-        ? `This project is ${restriction.state === "clear" ? "banned" : restriction.state}. Contributor work is closed. The steward or the account that created the project may request reinstatement.`
-        : "This project is delisted. Its history stays public.",
+        ? `${restrictedLabel(restriction.state === "clear" ? "banned" : restriction.state)}. Steward can request reinstatement.`
+        : "Delisted",
     );
   } else if (installation.state === "retry") {
     state = "retry";
@@ -369,7 +369,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      `${installation.message} Install it to continue. It is free. ${slopbotInstallScopeNote(repository)}`,
+      installation.message,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {
@@ -390,38 +390,17 @@ export function projectSetupStatus(input: {
     // paused project with complete skill fields was kept paused by an edit.
     state = "action_required";
     nextAction = publishesGeneratedSkills(manifest)
-      ? action(
-          "activate_project",
-          `${scan.message} Your edit kept the project paused. Check again to activate it.`,
-        )
-      : action(
-          "complete_skill_fields",
-          `${scan.message} The project stays paused until its contributor guide and skill fields are complete. Add them in a project update.`,
-        );
+      ? action("activate_project", "Paused by your edit.")
+      : action("complete_skill_fields", "Paused: add contributor rules.");
   } else if (scan.state === "queued") {
     state = "waiting";
     nextAction = action("wait_for_scan", scan.message);
   } else if (scan.state === "quarantined") {
     state = "action_required";
-    const loc =
-      clearance.state === "quarantined"
-        ? clearance.assessment.findingsLocation
-        : undefined;
-    const guidance =
-      loc === "template"
-        ? "Check for an updated skill template before requesting a new scan."
-        : loc === "unknown"
-          ? "Review the scan result before requesting a new scan."
-          : "Fix the cause if you know it, then request a new scan.";
-    nextAction = action("request_scan", `${scan.message} ${guidance}`);
+    nextAction = action("request_scan", scan.message);
   } else {
     state = "retry";
-    nextAction = action(
-      "retry_scan",
-      scan.state === "unavailable" || scan.state === "unverified"
-        ? scan.message
-        : `${scan.message} Check again to queue it.`,
-    );
+    nextAction = action("retry_scan", scan.message);
   }
   return {
     projectId: project.id,

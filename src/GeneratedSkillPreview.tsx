@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert, FileText } from "lucide-react";
 import { useEffect, useState } from "react";
 import contributorTemplate from "../skills/project-contributor-template/SKILL.md?raw";
 import reviewerTemplate from "../skills/project-reviewer-template/SKILL.md?raw";
@@ -74,7 +74,7 @@ export function GeneratedSkillPreview({
   if (!usesGeneratedSkills(manifest))
     return (
       <p className="admin-status">
-        This project uses committed skills at {manifest.skill.sourcePath}.
+        Committed skills: {manifest.skill.sourcePath}
       </p>
     );
   let previews: { role: string; files: Record<string, Uint8Array> }[];
@@ -113,7 +113,10 @@ export function GeneratedSkillPreview({
   const path = paths.includes(selectedPath) ? selectedPath : paths[0];
   if (compact)
     return (
-      <section aria-label="Generated skills" className="skill-preview-compact">
+      <details aria-label="Generated skills" className="skill-preview-compact">
+        <summary>
+          <FileText size={16} aria-hidden="true" /> Preview skill
+        </summary>
         <div className="skill-preview-controls">
           <fieldset className="skill-preview-options">
             <legend className="visually-hidden">Skill</legend>
@@ -139,7 +142,7 @@ export function GeneratedSkillPreview({
           spellCheck={false}
           value={decoder.decode(preview.files["SKILL.md"])}
         />
-      </section>
+      </details>
     );
   const content = (
     <>
@@ -166,7 +169,7 @@ export function GeneratedSkillPreview({
             ))}
           </select>
         </label>
-        {draft ? <span className="admin-status">Draft preview</span> : null}
+        {draft ? <span className="admin-status">Draft</span> : null}
       </div>
       <textarea
         aria-label={`${preview.role} ${path}`}
@@ -179,7 +182,7 @@ export function GeneratedSkillPreview({
   );
   return collapsible ? (
     <details className="skill-preview">
-      <summary>Preview generated skills</summary>
+      <summary>Preview skills</summary>
       {content}
     </details>
   ) : (

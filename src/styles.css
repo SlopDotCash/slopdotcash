@@ -3119,9 +3119,15 @@ a.payout-tx:hover {
 }
 
 .pr-dot {
+  display: inline-block;
+  flex: none;
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+.pr-dot-hollow {
+  border: 2px solid var(--muted);
 }
 
 .project-bars {
@@ -3841,6 +3847,12 @@ html:has(.security-page) {
 .owner-section.project-setup-status {
   display: block;
 }
+.project-setup-status > h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
 .project-setup-status > .handoff-actions {
   margin: 16px 0;
 }
@@ -4110,6 +4122,18 @@ html:has(.security-page) {
 
 .vault-meter {
   margin: 0;
+}
+
+.funded-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.funded-meter > .pr-bar {
+  flex: none;
+  width: 64px;
+  height: 6px;
 }
 
 .vault-available {

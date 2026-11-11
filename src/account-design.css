@@ -119,6 +119,8 @@
   color: var(--muted);
 }
 .inbox-page .inbox-item {
+  /* A one-line detail must truncate, not widen the list's grid track. */
+  min-width: 0;
   padding: 1rem 1.15rem;
   background: #181713;
 }
@@ -139,15 +141,26 @@
   background: #9cc9ff12;
   color: #9cc9ff;
 }
+.inbox-unread-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: #9cc9ff;
+}
 .inbox-item-heading .inbox-title {
   margin: 0;
   padding-top: 0.25rem;
   line-height: 1.4;
 }
 .inbox-page .inbox-detail {
+  overflow: hidden;
   color: #b9b5aa;
   line-height: 1.5;
   font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .inbox-page .inbox-meta {
   display: flex;

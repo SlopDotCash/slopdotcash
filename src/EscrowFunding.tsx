@@ -295,13 +295,17 @@ function VaultTotalsView({
         <p className="vault-fee" role="status">
           {totals.status === "loading" ? (
             <>
-              <LoaderCircle aria-hidden="true" size={14} />
-              Loading vault totals…
+              <LoaderCircle
+                className="wallet-spin"
+                aria-hidden="true"
+                size={14}
+              />
+              <span className="visually-hidden">Loading vault totals</span>
             </>
           ) : (
             <>
               <Hourglass aria-hidden="true" size={14} />
-              Totals not read yet
+              Pending
             </>
           )}
         </p>
@@ -360,10 +364,7 @@ export function EscrowFunding({
         ) : (
           <p className="vault-unconfigured" role="status">
             <CircleAlert aria-hidden="true" />
-            <span>
-              The project vault is not set up. Payments disbursed by the project
-              maintainer are not guaranteed.
-            </span>
+            <span>No vault yet. Payments are not guaranteed.</span>
           </p>
         )
       ) : (

@@ -142,7 +142,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   });
   const history = page
     .getByRole("listitem")
-    .filter({ hasText: "Archived cycle" });
+    .filter({ has: page.locator('a[href^="/cycles/"]') });
   await expect(history).toBeVisible();
   await expect(page.locator(".profile-totals strong").last()).toHaveText(
     /^[\d,]+$/u,
@@ -180,7 +180,7 @@ test("warm profiles reuse public records until expiry and recover a failed refre
   await revisit();
   const failedRefresh = page
     .locator("main > .data-notice")
-    .filter({ hasText: "Points may be outdated" });
+    .filter({ hasText: "Stale" });
   await expect(
     failedRefresh.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
@@ -341,7 +341,9 @@ test("warm reassigned handles wait for fresh identity before wallet and history 
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      page
+        .getByRole("listitem")
+        .filter({ has: page.locator('a[href^="/cycles/"]') }),
     ).toBeVisible();
     expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/1/current"]);
     await page
@@ -366,13 +368,15 @@ test("warm reassigned handles wait for fresh identity before wallet and history 
     hold = true;
     await page.goBack({ waitUntil: "domcontentloaded" });
     await expect(
-      page.getByText("Checking contributor…", { exact: true }),
+      page.getByTitle("Checking contributor", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Find a contributor", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      page
+        .getByRole("listitem")
+        .filter({ has: page.locator('a[href^="/cycles/"]') }),
     ).toHaveCount(0);
     expect(actorReads).toEqual([]);
     const sessionResponse = page.waitForResponse((response) =>
@@ -392,18 +396,20 @@ test("warm reassigned handles wait for fresh identity before wallet and history 
         ),
     );
     await expect(
-      page.getByText("Checking contributor…", { exact: true }),
+      page.getByTitle("Checking contributor", { exact: true }),
     ).toBeVisible();
     expect(actorReads).toEqual([]);
     releaseDirectory();
     await page.waitForLoadState("networkidle");
     await expect(
-      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      page
+        .getByRole("listitem")
+        .filter({ has: page.locator('a[href^="/cycles/"]') }),
     ).toHaveCount(0);
-    await expect(page.getByText(/Past wallet/u)).toHaveCount(0);
-    await expect(page.getByText("total points", { exact: true })).toHaveCount(
+    await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(
       0,
     );
+    await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
     expect(actorReads).toEqual([]);
     expect(walletRequests).toEqual([]);
     await info.attach("warm-reassigned-handle", {
@@ -437,7 +443,7 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
     .getByText("Loading points…");
   await expect(pastCycle).toHaveAttribute("href", "/cycles/eliza/2026-07");
   await expect(pointsLoading).toHaveCount(0);
-  await expect(pastRecord).toContainText("210 points");
+  await expect(pastRecord).toContainText("210 pts");
   await expect(pastRecord).toContainText("$1");
   // Historical accepted work stays on its archived project record. The
   // separate aggregate score no longer appears beside canonical Points.
@@ -468,7 +474,9 @@ test("a different actor reusing an old login does not inherit its history", {
   });
   await expect(page.locator("main.profile-page")).toBeVisible();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(0);
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
@@ -488,12 +496,16 @@ test(
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+      page
+        .getByRole("listitem")
+        .filter({ has: page.locator('a[href^="/cycles/"]') }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("heading", { name: current.login }),
     ).toHaveCount(0);
-    await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(
+      0,
+    );
     await expect(
       page.getByTitle("Closed cycles and ledger events outside those cycles"),
     ).toHaveCount(0);
@@ -521,7 +533,9 @@ test("a directory-verified historical contributor keeps archived links", {
   const { archived } = await profileRecords(page, { directoryOnly: true });
   await page.goto(`/contributors/${archived.login}`);
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toBeVisible();
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
@@ -538,12 +552,14 @@ test("historical names alone do not identify a current contributor or wallet", {
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(0);
-  await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(0);
   expect(walletRequests).toEqual([]);
   await expect(
-    page.getByText("Contributor records are unavailable.", { exact: true }),
+    page.getByText("Profile unavailable", { exact: true }),
   ).toBeVisible();
 });
 
@@ -565,9 +581,11 @@ test("a new owner listed without activity uses only its own identity and wallet"
     page.getByRole("heading", { name: archived.login, exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(0);
-  await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(0);
   expect(walletRequests).toEqual(["/api/v1/wallet-claims/actors/2/current"]);
 });
 
@@ -582,12 +600,14 @@ test("conflicting current names withhold history and wallet lookups", {
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByText("Contributor records are unavailable.", { exact: true }),
+    page.getByText("Profile unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(0);
-  await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(0);
   expect(walletRequests).toEqual([]);
 });
 
@@ -609,15 +629,17 @@ test("a stale activity login cannot override a directory rename", {
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByText("Contributor records are unavailable.", { exact: true }),
+    page.getByText("Profile unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(0);
   await expect(
     page.getByTitle("Closed cycles and ledger events outside those cycles"),
   ).toHaveCount(0);
-  await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Past wallet/u })).toHaveCount(0);
   expect(walletRequests).toEqual([]);
 });
 
@@ -639,16 +661,16 @@ test("an unavailable identity directory hides historical records until retry suc
   await page.goto(`/contributors/${archived.login}`, {
     waitUntil: "networkidle",
   });
-  await expect(page.getByRole("status")).toContainText(
-    "Contributor records are unavailable.",
-  );
+  await expect(page.getByRole("status")).toContainText("Profile unavailable");
   expect(walletRequests).toEqual([]);
   unavailable = false;
   await page
     .getByRole("button", { name: "Retry profile", exact: true })
     .click();
   await expect(
-    page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    page
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toBeVisible();
   await expect
     .poll(() => walletRequests)
@@ -683,6 +705,14 @@ test("a failed profile directory refresh keeps the last verified identity", asyn
   await page.goto(`${site}/contributors/${current.login}`, {
     waitUntil: "networkidle",
   });
+  const retryProfile = page.getByRole("button", {
+    name: "Retry profile",
+    exact: true,
+  });
+  const retryContributors = page.getByRole("button", {
+    name: "Retry contributors",
+    exact: true,
+  });
   await expect(page.locator("main.profile-page")).toBeVisible();
   unavailable = true;
   await page
@@ -696,12 +726,10 @@ test("a failed profile directory refresh keeps the last verified identity", asyn
     page.getByRole("heading", { name: current.login, exact: true }),
   ).toBeVisible();
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Profile records may be outdated." }),
+    page.getByRole("status").filter({ hasText: "Stale", has: retryProfile }),
   ).toBeVisible();
   await expect(
-    page.getByText("Contributor records are unavailable.", { exact: true }),
+    page.getByText("Profile unavailable", { exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
@@ -709,17 +737,11 @@ test("a failed profile directory refresh keeps the last verified identity", asyn
     fullPage: true,
   });
   unavailable = false;
-  const retryProfile = page.getByRole("button", {
-    name: "Retry profile",
-    exact: true,
-  });
   await retryProfile.focus();
   await expect(retryProfile).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Profile records may be outdated." }),
+    page.getByRole("status").filter({ hasText: "Stale", has: retryProfile }),
   ).toHaveCount(0);
   await expect(page.locator("main.profile-page")).toBeVisible();
 
@@ -735,23 +757,19 @@ test("a failed profile directory refresh keeps the last verified identity", asyn
   await expect(
     page
       .getByRole("status")
-      .filter({ hasText: "Contributor records may be outdated." }),
+      .filter({ hasText: "Stale", has: retryContributors }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: current.login, exact: true }),
   ).toBeVisible();
   unavailable = false;
-  const retryContributors = page.getByRole("button", {
-    name: "Retry contributors",
-    exact: true,
-  });
   await retryContributors.focus();
   await expect(retryContributors).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
     page
       .getByRole("status")
-      .filter({ hasText: "Contributor records may be outdated." }),
+      .filter({ hasText: "Stale", has: retryContributors }),
   ).toHaveCount(0);
 });
 
@@ -843,28 +861,32 @@ test("profile payment totals stay unavailable until direct transfers recover", a
     const paid = payouts.locator(".profile-payments-summary strong");
     const settlement = payouts
       .getByRole("listitem")
-      .filter({ hasText: "Archived cycle" });
+      .filter({ has: page.locator('a[href^="/cycles/"]') });
     await expect(settlement).toContainText("$1");
     expect(failures).toEqual([`503 ${paymentPath}`]);
     await page.screenshot({
       path: info.outputPath("profile-payments-unavailable.png"),
       fullPage: true,
     });
-    await expect(paid).toHaveText("Unavailable");
     await expect(
-      profile.getByText("Direct payment records unavailable."),
+      paid.getByRole("img", { name: "Unavailable", exact: true }),
     ).toBeVisible();
+    await expect(profile.getByText("Some payments unavailable")).toBeVisible();
     const retry = profile.getByRole("button", {
       name: "Retry payment records",
     });
     await retry.focus();
     await page.keyboard.press("Enter");
-    await expect(paid).toHaveText("Loading…");
+    await expect(paid.getByRole("status")).toHaveText("Loading");
     await expect(settlement).toContainText("$1");
     releaseRetry();
     await expect(paid).toHaveText("$3");
     await expect(
-      payouts.getByRole("listitem").filter({ hasText: "Direct transfer" }),
+      payouts.getByRole("listitem").filter({
+        has: page.getByRole("link", {
+          name: /^(?:Transaction|Funding record)$/u,
+        }),
+      }),
     ).toContainText("$2");
     await expect(retry).toHaveCount(0);
     await expectAccessible(page);
@@ -921,17 +943,19 @@ for (const staleMembership of [false, true]) {
       });
       if (staleMembership) {
         await expect(
-          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+          page
+            .getByRole("listitem")
+            .filter({ has: page.locator('a[href^="/cycles/"]') }),
         ).toHaveCount(0);
-        await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+        await expect(
+          page.getByRole("link", { name: /Past wallet/u }),
+        ).toHaveCount(0);
         await expect(
           page.getByRole("heading", {
-            name: "No Slop contributor with this login",
+            name: /^(?:@\S+|Contributor) not found$/u,
           }),
         ).toBeVisible();
-        await expect(
-          page.getByText("total points", { exact: true }),
-        ).toHaveCount(0);
+        await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
         expect(walletRequests).toEqual([]);
         return;
       }
@@ -940,14 +964,18 @@ for (const staleMembership of [false, true]) {
       ).toBeVisible();
       await expect(
         page
-          .getByText("total points", { exact: true })
+          .getByText("Total", { exact: true })
           .locator("..")
           .locator("strong"),
       ).toHaveText("5");
       await expect(
-        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+        page
+          .getByRole("listitem")
+          .filter({ has: page.locator('a[href^="/cycles/"]') }),
       ).toHaveCount(0);
-      await expect(page.getByText(/Past wallet/)).toHaveCount(0);
+      await expect(
+        page.getByRole("link", { name: /Past wallet/u }),
+      ).toHaveCount(0);
       expect(walletRequests).toEqual([
         "/api/v1/wallet-claims/actors/2/current",
       ]);
@@ -1058,7 +1086,7 @@ for (const scenario of [
       let pendingIdentity = true;
       if (reassigned || scenario === "delayed session") {
         await expect(
-          page.getByText("Checking contributor…", { exact: true }),
+          page.getByTitle("Checking contributor", { exact: true }),
         ).toBeVisible();
         if (scenario === "delayed session") {
           await (await directoryResponse).finished();
@@ -1081,7 +1109,7 @@ for (const scenario of [
         );
         pendingRequests = [...walletRequests];
         pendingIdentity = await page
-          .getByText("Checking contributor…", { exact: true })
+          .getByTitle("Checking contributor", { exact: true })
           .isVisible();
         await page.screenshot({
           path: test.info().outputPath("identity-source-pending.png"),
@@ -1095,7 +1123,7 @@ for (const scenario of [
       await (await sessionResponse).finished();
       if (scenario === "delayed directory") {
         await expect(
-          page.getByText("Checking contributor…", {
+          page.getByTitle("Checking contributor", {
             exact: true,
           }),
         ).toBeVisible();
@@ -1121,7 +1149,9 @@ for (const scenario of [
           page.getByRole("heading", { name: "alice2", exact: true }),
         ).toBeVisible();
         await expect(
-          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+          page
+            .getByRole("listitem")
+            .filter({ has: page.locator('a[href^="/cycles/"]') }),
         ).toBeVisible();
         await expect(
           page.getByTitle(
@@ -1130,7 +1160,7 @@ for (const scenario of [
         ).toHaveCount(0);
         await expect(
           page
-            .getByText("total points", { exact: true })
+            .getByText("Total", { exact: true })
             .locator("..")
             .locator("strong"),
         ).toHaveText(scenario === "absent member" ? "0" : "5");
@@ -1139,12 +1169,14 @@ for (const scenario of [
         ]);
       } else {
         await expect(
-          page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+          page
+            .getByRole("listitem")
+            .filter({ has: page.locator('a[href^="/cycles/"]') }),
         ).toHaveCount(0);
-        await expect(page.getByText(/Past wallet/)).toHaveCount(0);
         await expect(
-          page.getByText("total points", { exact: true }),
+          page.getByRole("link", { name: /Past wallet/u }),
         ).toHaveCount(0);
+        await expect(page.getByText("Total", { exact: true })).toHaveCount(0);
         await expect(
           page.getByTitle(
             "Closed cycles and ledger events outside those cycles",
@@ -1154,7 +1186,7 @@ for (const scenario of [
         if (scenario === "delayed session") {
           await expect(
             page.getByRole("heading", {
-              name: "No Slop contributor with this login",
+              name: /^(?:@\S+|Contributor) not found$/u,
             }),
           ).toBeVisible();
           await expectAccessible(page);
@@ -1183,7 +1215,10 @@ test("a confirmed absent contributor is noindex without invented GitHub links", 
     waitUntil: "networkidle",
   });
   await expect(
-    page.getByRole("heading", { name: "No Slop contributor with this login" }),
+    page.getByRole("heading", {
+      name: "@no-such-slop-login-zz9 not found",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.locator('main a[href*="github.com"]')).toHaveCount(0);
   await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
@@ -1214,11 +1249,12 @@ for (const failedSource of ["member", "me"] as const) {
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByText("Contributor records are unavailable.", { exact: true }),
+      page.getByText("Profile unavailable", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", {
-        name: "No Slop contributor with this login",
+        name: "@no-such-slop-login-zz9 not found",
+        exact: true,
       }),
     ).toHaveCount(0);
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
@@ -1232,7 +1268,8 @@ for (const failedSource of ["member", "me"] as const) {
     await page.keyboard.press("Enter");
     await expect(
       page.getByRole("heading", {
-        name: "No Slop contributor with this login",
+        name: "@no-such-slop-login-zz9 not found",
+        exact: true,
       }),
     ).toBeVisible();
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
@@ -1295,10 +1332,12 @@ test(
         waitUntil: "domcontentloaded",
       });
       await expect(
-        page.getByText("Checking contributor…", { exact: true }),
+        page.getByTitle("Checking contributor", { exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+        page
+          .getByRole("listitem")
+          .filter({ has: page.locator('a[href^="/cycles/"]') }),
       ).toBeVisible({ timeout: 17_500 });
     } finally {
       await page.screenshot({
@@ -1375,12 +1414,12 @@ test("a long direct transfer history remains readable without enlarging response
     ).toHaveText("$5,001");
     await expect(
       history.getByRole("button", {
-        name: "Show all 5001 records",
+        name: "Show all (5001)",
         exact: true,
       }),
     ).toBeVisible();
     await expect(
-      history.getByText("Direct payment records unavailable.", {
+      history.getByText("Some payments unavailable", {
         exact: false,
       }),
     ).toHaveCount(0);
@@ -1469,15 +1508,21 @@ test("profile history previews retain every payment and cycle behind keyboard co
     fullPage: true,
   });
   await history
-    .getByRole("button", { name: "Show all 9 records", exact: true })
+    .getByRole("button", { name: "Show all (9)", exact: true })
     .focus();
   await page.keyboard.press("Enter");
   await expect(history.getByRole("listitem")).toHaveCount(9);
   await expect(
-    history.getByRole("listitem").filter({ hasText: "Archived cycle" }),
+    history
+      .getByRole("listitem")
+      .filter({ has: page.locator('a[href^="/cycles/"]') }),
   ).toHaveCount(4);
   await expect(
-    history.getByRole("listitem").filter({ hasText: "Direct transfer" }),
+    history.getByRole("listitem").filter({
+      has: page.getByRole("link", {
+        name: /^(?:Transaction|Funding record)$/u,
+      }),
+    }),
   ).toHaveCount(5);
   await expect(
     history.getByRole("link", { name: /July 2026/u }),
@@ -1492,9 +1537,7 @@ test("profile history previews retain every payment and cycle behind keyboard co
     path: info.outputPath("profile-history-expanded.png"),
     fullPage: true,
   });
-  await history
-    .getByRole("button", { name: "Show recent records", exact: true })
-    .focus();
+  await history.getByRole("button", { name: "Show less", exact: true }).focus();
   await page.keyboard.press("Space");
   await expect(history.getByRole("listitem")).toHaveCount(5);
   await expect(total).toHaveText("$14");

@@ -131,8 +131,7 @@ test("same-project report references identify the private evidence to open", asy
     path: info.outputPath("report-list.png"),
     fullPage: true,
   });
-  const title = (reference: string) =>
-    `Private report · ${projectId} · ${reference}`;
+  const title = (reference: string) => `${projectId} · ${reference}`;
   await expect(
     page.getByRole("heading", { name: title("Case aaa11111"), exact: true }),
   ).toBeVisible();
@@ -164,7 +163,9 @@ test("same-project report references identify the private evidence to open", asy
   );
   expect(reads).toEqual([]);
   await selected.locator("summary.private-report-summary").click();
-  const read = selected.getByText("Read private report", { exact: true });
+  const read = selected
+    .locator("details.security-reference > summary")
+    .filter({ hasText: /^\s*Report\s*$/u });
   await read.focus();
   await page.keyboard.press("Enter");
   await expect(

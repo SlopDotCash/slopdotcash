@@ -104,10 +104,7 @@ test("intake routing and GitHub receipt remain independent in one report", async
     },
   );
   await expect(
-    card.getByText(
-      "Report cleared for review. The owner notification is pending.",
-      { exact: true },
-    ),
+    card.getByText("Cleared · notifying owner", { exact: true }),
   ).toBeVisible();
   await expect(
     card.getByText("GitHub refused the report for your account.", {
@@ -121,10 +118,7 @@ test("intake routing and GitHub receipt remain independent in one report", async
     .getByRole("button", { name: "Retry owner notification", exact: true })
     .click();
   await expect(
-    card.getByText(
-      "A maintainer cleared this report for owner review. No award has been approved by this routing decision.",
-      { exact: true },
-    ),
+    card.getByText("Cleared · no award yet", { exact: true }),
   ).toBeVisible();
   await expect(
     card.getByText("GitHub refused the report for your account.", {
@@ -167,18 +161,13 @@ for (const [canReview, canAuthorize, visible] of [
         throw new Error(`Unexpected action: ${path}`);
       },
     );
-    await expect(
-      card.getByText("Also send privately to GitHub", { exact: true }),
-    ).toHaveCount(visible ? 1 : 0);
+    await expect(card.getByText("Send to GitHub", { exact: true })).toHaveCount(
+      visible ? 1 : 0,
+    );
     await expect(
       card.getByRole("textbox", { name: "Summary", exact: true }),
     ).toHaveCount(0);
-    await expect(
-      card.getByText(
-        "Screening complete. Ready for the project owner's review.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    await expect(card.getByText("Owner review", { exact: true })).toBeVisible();
   });
 }
 
@@ -289,9 +278,7 @@ test("grant recovery saves the local draft and stays busy until navigation", asy
   });
   await authorize.click();
   await expect(
-    card.getByText(
-      /This browser could not keep your report during GitHub authorization/,
-    ),
+    card.getByText("Allow site storage, then retry.", { exact: true }),
   ).toBeVisible();
   expect(authorizations).toBe(0);
   await page.evaluate(() => {

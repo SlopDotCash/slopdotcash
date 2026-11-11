@@ -195,7 +195,7 @@ test("social membership preserves past points and discloses public connections w
     page.getByRole("region", { name: "Wallets", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Email preferences", exact: true }),
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toBeVisible();
   await expect(page.getByText(/Telegram/i)).toHaveCount(0);
   await expect(page.getByRole("main")).not.toContainText("+10 points");
@@ -225,7 +225,8 @@ test("social membership preserves past points and discloses public connections w
     .click();
   await expect(
     page
-      .getByText("total points", { exact: true })
+      .getByRole("region", { name: "Slop Points", exact: true })
+      .getByText("Total", { exact: true })
       .locator("..")
       .locator("strong"),
   ).toHaveText("15");

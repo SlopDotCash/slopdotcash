@@ -35,9 +35,9 @@ export class ErrorBoundary extends Component<
       return (
         <main className="fatal-error" role="alert">
           <span aria-hidden="true">!</span>
-          <h1>Slop could not load.</h1>
+          <h1>Something broke</h1>
           <button onClick={() => window.location.reload()} type="button">
-            Reload the page
+            Reload
           </button>
         </main>
       );

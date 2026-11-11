@@ -244,31 +244,28 @@ async function vettingFixture(page: Page, baseURL: string | undefined) {
       admin = false;
     },
     async prepare(kind: MutationKind) {
-      const field = {
-        name:
-          kind === "scan" ? "Reason for the scan" : "Reason for the exemption",
-        exact: true,
-      };
-      const form = card
-        .locator("form")
-        .filter({ has: page.getByRole("textbox", field) });
-      const reason = form.getByRole("textbox", field);
+      // Both forms label their field "Reason"; the section heading tells
+      // them apart.
+      const section = card.locator("section.admin-subsection").filter({
+        has: page.getByRole("heading", {
+          name: kind === "scan" ? "Scan" : "Owner-approved exemption",
+          exact: true,
+        }),
+      });
+      const reason = section.getByLabel(
+        kind === "scan" ? "Scan reason" : "Exemption reason",
+        { exact: true },
+      );
       await reason.fill(`  ${REASON}  `);
       if (kind === "grant") {
+        await card.getByLabel("Decision link", { exact: true }).fill(REFERENCE);
         await card
-          .getByLabel("Owner decision reference", { exact: true })
-          .fill(REFERENCE);
-        await card
-          .getByRole("checkbox", {
-            name: "I confirm the human owner explicitly authorized this exemption for this repository.",
-          })
+          .getByRole("checkbox", { name: "Owner authorized this", exact: true })
           .check();
       }
+      const form = section.locator("form");
       const button = form.getByRole("button", {
-        name:
-          kind === "scan"
-            ? `Queue scan of revision ${revision}`
-            : "Record exemption",
+        name: kind === "scan" ? "Queue scan" : "Record exemption",
         exact: true,
       });
       return { reason, form, button };
@@ -359,7 +356,7 @@ for (const kind of ["scan", "grant"] as const) {
       fixture.release();
       await expect(
         page.getByRole("alert").filter({
-          hasText: "@replacement is not a Slop admin.",
+          hasText: /^\s*Admins only$/u,
         }),
       ).toBeVisible();
       await expect(fixture.card).toHaveCount(0);
@@ -393,7 +390,7 @@ for (const kind of ["scan", "grant"] as const) {
       fixture.release();
       await expect(
         page.getByRole("alert").filter({
-          hasText: "@operator is not a Slop admin.",
+          hasText: /^\s*Admins only$/u,
         }),
       ).toBeVisible();
       await expect(fixture.card).toHaveCount(0);
@@ -419,7 +416,7 @@ for (const kind of ["scan", "grant"] as const) {
       await button.click();
       await expect(
         page.getByRole("alert").filter({
-          hasText: "@replacement is not a Slop admin.",
+          hasText: /^\s*Admins only$/u,
         }),
       ).toBeVisible();
       await expect(fixture.card).toHaveCount(0);
@@ -452,9 +449,7 @@ for (const kind of ["scan", "grant"] as const) {
       );
       fixture.release();
       const note =
-        kind === "scan"
-          ? `Queued a scan of ${fixture.projectId} revision ${fixture.revision}.`
-          : `Recorded the owner-approved exemption for ${fixture.projectId}.`;
+        kind === "scan" ? /^Scan queued\.$/u : /^Exemption recorded\.$/u;
       await expect(
         page.getByRole("status").filter({ hasText: note }),
       ).toBeVisible();
@@ -470,9 +465,7 @@ for (const kind of ["scan", "grant"] as const) {
           }),
         ).toBeVisible();
         await expect(
-          fixture.card.getByRole("button", {
-            name: `Queue scan of revision ${fixture.revision}`,
-          }),
+          fixture.card.getByRole("button", { name: "Queue scan", exact: true }),
         ).toHaveCount(0);
       }
       expect(fixture.posts).toHaveLength(1);

@@ -128,8 +128,7 @@ for (const retryStatus of [200, 401, 403]) {
       .fill("A saved description with a verified outcome");
     await page
       .getByRole("textbox", {
-        name: "Reason for revision (public)",
-        exact: true,
+        name: /^Reason\s*Public$/u,
       })
       .fill("Update the description to match the accepted project scope.");
     await expect(
@@ -394,8 +393,7 @@ test("an admin refresh timeout cannot retain private data while its identity rec
       .fill("Saved before the private refresh timed out");
     await page
       .getByRole("textbox", {
-        name: "Reason for revision (public)",
-        exact: true,
+        name: /^Reason\s*Public$/u,
       })
       .fill("Update the description to match accepted scope.");
     await page

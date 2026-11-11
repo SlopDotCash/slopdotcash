@@ -1,5 +1,14 @@
 import "./owner-review.css";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  LoaderCircle,
+  Lock,
+} from "lucide-react";
 import {
   type FormEvent,
   useCallback,
@@ -35,6 +44,7 @@ import OwnerReserveRelease, {
 } from "./OwnerReserveRelease";
 import {
   formatCycleMonth,
+  formatDate,
   formatDateTime,
   MetricGrid,
   MetricTile,
@@ -72,11 +82,11 @@ const STATE_TEXT: Record<
   string
 > = {
   underfunded: "Underfunded",
-  excluded: "Excluded: account banned",
-  "awaiting-reservation": "Approved: ready to reserve",
-  reserved: "Reserved, not yet paid",
+  excluded: "Excluded",
+  "awaiting-reservation": "Ready",
+  reserved: "Reserved",
   paid: "Paid",
-  conflict: "Conflict: another award holds this source",
+  conflict: "Conflict",
 };
 
 export default function OwnerAwards({
@@ -144,7 +154,7 @@ export default function OwnerAwards({
   const [loadError, setLoadError] = useState<string | null>(null);
   const busy = loading || actionBusy;
   const error = loadError ?? actionError;
-  const [notice, setNotice] = useState("");
+  const [savedActor, setSavedActor] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const base = `payments/projects/${encodeURIComponent(project.id)}`;
   const decimals = view?.asset?.assetDecimals ?? null;
@@ -193,7 +203,7 @@ export default function OwnerAwards({
     knownActor.current = null;
     setSelectedActor(null);
     setDrafts({});
-    setNotice("");
+    setSavedActor(null);
   }, []);
   useEffect(
     () =>
@@ -224,9 +234,7 @@ export default function OwnerAwards({
           return await currentProjectSession();
         } catch {
           if (current()) clearPrivate();
-          throw new Error(
-            "Your private session could not be checked. Refresh awards.",
-          );
+          throw new Error("Session check failed. Refresh.");
         }
       };
       const session = await checkSession();
@@ -291,7 +299,7 @@ export default function OwnerAwards({
     setLoadError(null);
     setActionError(null);
     setActionBusy(false);
-    setNotice("");
+    setSavedActor(null);
     setSignedOut(false);
     setLoading(false);
     const month = monthRequest.period;
@@ -332,7 +340,7 @@ export default function OwnerAwards({
     if (!mounted.current) return;
     const current = ++generation.current;
     const owns = () => mounted.current && generation.current === current;
-    setNotice("");
+    setSavedActor(null);
     setLoadError(null);
     setSignedOut(false);
     setActionBusy(true);
@@ -382,7 +390,7 @@ export default function OwnerAwards({
           next[view.period] = month;
           return next;
         });
-        setNotice("Allocation saved privately.");
+        setSavedActor(githubUserId);
       }
     });
   const finalize = () =>
@@ -406,7 +414,6 @@ export default function OwnerAwards({
           delete next[view.period];
           return next;
         });
-        setNotice("This month's awards are final.");
       }
     });
   const toggleAutomatic = () =>
@@ -482,16 +489,13 @@ export default function OwnerAwards({
           />
         ))}
       {!opened ? (
-        <>
-          <p>Review allocations and reserve finalized awards.</p>
-          <button
-            className="button secondary-button"
-            type="button"
-            onClick={() => setOpened(true)}
-          >
-            Review monthly awards
-          </button>
-        </>
+        <button
+          className="button secondary-button"
+          type="button"
+          onClick={() => setOpened(true)}
+        >
+          Open
+        </button>
       ) : (
         <>
           <form className="award-month-toolbar" onSubmit={load}>
@@ -539,7 +543,6 @@ export default function OwnerAwards({
             </p>
           )}
           {error && <p role="alert">{error}</p>}
-          {notice && <p role="status">{notice}</p>}
           {view && (
             <div>
               {view.deployment ? (
@@ -554,72 +557,75 @@ export default function OwnerAwards({
                 aria-label="Monthly payment settings"
               >
                 <div className="owner-award-finalization">
-                  <h3>Allocation finalization</h3>
                   <p>
-                    Automatic finalization{" "}
-                    <StatusBadge tone={view.automatic ? "success" : "neutral"}>
-                      {view.automatic ? "On" : "Off"}
-                    </StatusBadge>
+                    {view.canManage ? (
+                      <label className="checkbox-field">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={view.automatic}
+                          className="email-switch"
+                          disabled={busy}
+                          onClick={() => void toggleAutomatic()}
+                        />
+                        Auto-finalize
+                      </label>
+                    ) : (
+                      <>
+                        Auto-finalize{" "}
+                        <StatusBadge
+                          tone={view.automatic ? "success" : "neutral"}
+                        >
+                          {view.automatic ? "On" : "Off"}
+                        </StatusBadge>
+                      </>
+                    )}
                     <span>
                       {view.run ? (
-                        "This month is finalized."
+                        <StatusBadge tone="success" icon={<Lock size={12} />}>
+                          Final
+                        </StatusBadge>
                       ) : view.automatic ? (
                         cutoffPassed ? (
-                          "Cutoff passed · allocations are fixed while finalization completes."
+                          <>
+                            <LoaderCircle
+                              className="wallet-spin"
+                              aria-hidden="true"
+                              size={14}
+                            />{" "}
+                            Finalizing
+                          </>
                         ) : view.cutoffAt ? (
                           <>
                             Finalizes{" "}
                             <time dateTime={view.cutoffAt}>
                               {formatDateTime(view.cutoffAt)}
                             </time>
-                            .
-                            {view.canManage
-                              ? " You can finalize earlier."
-                              : null}
                           </>
-                        ) : view.canManage ? (
-                          "Finalize this month manually."
                         ) : null
-                      ) : view.canManage ? (
-                        "Finalize each month manually."
                       ) : null}
                     </span>
                   </p>
-                  {view.canManage ? (
-                    <button
-                      className="button secondary-button"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void toggleAutomatic()}
-                    >
-                      {view.automatic
-                        ? "Turn off automatic finalization"
-                        : "Turn on automatic finalization"}
-                    </button>
-                  ) : (
-                    <p role="status">View only</p>
-                  )}
+                  {view.canManage ? null : <p role="status">View only</p>}
                 </div>
                 {authorizationDeployment && (
                   <p className="owner-award-authorization">
-                    <strong>Vault payment authorization</strong>{" "}
                     <a
                       href={`/projects/${project.slug}/manage#vault-monthly-${authorizationDeployment.network}-${authorizationDeployment.vault}`}
                     >
-                      Review current setting and cap
+                      Auto-pay settings{" "}
+                      <ArrowRight aria-hidden="true" size={14} />
                     </a>
-                    <span>
-                      Owner wallet review required; separate from allocation
-                      finalization.
-                    </span>
                   </p>
                 )}
               </section>
               {project.reward.paymentMode !== "enabled" && (
-                <p role="status">Payments are disabled for this project.</p>
+                <p role="status">
+                  <StatusBadge>Payments off</StatusBadge>
+                </p>
               )}
               {!view.proposal ? (
-                <p>No allocation is proposed for this month yet.</p>
+                <p>No proposal yet</p>
               ) : !view.run ? (
                 <>
                   <MetricGrid>
@@ -638,7 +644,7 @@ export default function OwnerAwards({
                     />
                   </MetricGrid>
                   {view.proposal.allocations.length === 0 ? (
-                    <p>No one has an allocation this month.</p>
+                    <p>No allocations</p>
                   ) : (
                     <ul className="owner-award-list" aria-label="Allocations">
                       {view.proposal.allocations.map((row) => {
@@ -650,13 +656,9 @@ export default function OwnerAwards({
                           <li key={row.githubUserId}>
                             <div className="owner-award-recipient">
                               <h4>{row.login}</h4>
-                              <details>
-                                <summary>Allocation basis</summary>
-                                <dl>
-                                  <dt>Proposed gross</dt>
-                                  <dd>{amount(row.proposedGrossBase)}</dd>
-                                </dl>
-                              </details>
+                              <small>
+                                Proposed {amount(row.proposedGrossBase)}
+                              </small>
                             </div>
                             <AwardAmounts
                               gross={amount(row.grossBase)}
@@ -664,20 +666,25 @@ export default function OwnerAwards({
                                 (BigInt(row.grossBase) - fee).toString(),
                               )}
                               fee={amount(fee.toString())}
-                              saved
                             />
                             {view.canManage && (
                               <div className="owner-award-edit">
                                 <label htmlFor={id}>
-                                  <span aria-hidden="true">
-                                    {drafts[view.period]?.[row.githubUserId] ===
-                                    undefined
-                                      ? "Edit gross"
-                                      : "Unsaved gross"}
-                                  </span>
+                                  {drafts[view.period]?.[row.githubUserId] ===
+                                  undefined ? null : (
+                                    <span
+                                      className="pr-dot"
+                                      style={{ background: "var(--orange)" }}
+                                      title="Unsaved"
+                                    />
+                                  )}
                                   <span className="visually-hidden">
                                     Award for {row.login}
                                     {decimals === null ? " (base units)" : ""}
+                                    {drafts[view.period]?.[row.githubUserId] ===
+                                    undefined
+                                      ? ""
+                                      : " (unsaved)"}
                                   </span>
                                 </label>
                                 <input
@@ -715,8 +722,22 @@ export default function OwnerAwards({
                                   aria-label={`Save ${row.login}`}
                                   onClick={() => void save(row.githubUserId)}
                                 >
-                                  Save
+                                  {savedActor === row.githubUserId &&
+                                  drafts[view.period]?.[row.githubUserId] ===
+                                    undefined ? (
+                                    <>
+                                      <Check aria-hidden="true" size={14} />{" "}
+                                      Saved
+                                    </>
+                                  ) : (
+                                    "Save"
+                                  )}
                                 </button>
+                                <span role="status" className="visually-hidden">
+                                  {savedActor === row.githubUserId
+                                    ? "Saved"
+                                    : ""}
+                                </span>
                               </div>
                             )}
                           </li>
@@ -738,23 +759,24 @@ export default function OwnerAwards({
               ) : (
                 <>
                   <p role="status">
-                    Finalized{" "}
-                    {view.run.trigger === "automatic"
-                      ? "automatically"
-                      : view.canManage
-                        ? "by you"
-                        : "by the owner"}{" "}
-                    on{" "}
-                    <time dateTime={view.run.frozenAt}>
-                      {formatDateTime(view.run.frozenAt)}
-                    </time>
-                    .
-                    {view.run.funded
-                      ? ""
-                      : " Awards wait until the vault's free balance covers them."}
+                    <StatusBadge tone="success" icon={<Lock size={12} />}>
+                      Final ·{" "}
+                      {view.run.trigger === "automatic"
+                        ? "auto"
+                        : view.canManage
+                          ? "you"
+                          : "owner"}{" "}
+                      ·{" "}
+                      <time dateTime={view.run.frozenAt}>
+                        {formatDate(view.run.frozenAt)}
+                      </time>
+                    </StatusBadge>{" "}
+                    {view.run.funded ? null : (
+                      <StatusBadge tone="danger">Underfunded</StatusBadge>
+                    )}
                   </p>
                   {view.run.awards.length === 0 ? (
-                    <p>No awards this month.</p>
+                    <p>No awards</p>
                   ) : (
                     <ul className="owner-award-list" aria-label="Final awards">
                       {view.run.awards.map((award) => (
@@ -776,6 +798,16 @@ export default function OwnerAwards({
                                       ? "success"
                                       : "warning"
                                   }
+                                  icon={
+                                    award.state === "conflict" ? (
+                                      <Info size={12} />
+                                    ) : undefined
+                                  }
+                                  title={
+                                    award.state === "conflict"
+                                      ? "Another award holds this source"
+                                      : undefined
+                                  }
                                 >
                                   {STATE_TEXT[award.state]}
                                 </StatusBadge>
@@ -787,11 +819,12 @@ export default function OwnerAwards({
                               <button
                                 className="button secondary-button"
                                 type="button"
+                                aria-label={`Reserve award for ${award.login}`}
                                 onClick={() =>
                                   setSelectedActor(award.githubUserId)
                                 }
                               >
-                                Reserve award for {award.login}
+                                Reserve
                               </button>
                             )}
                         </li>
@@ -843,27 +876,25 @@ function AwardAmounts({
   gross,
   net,
   fee,
-  saved = false,
   fragment = false,
 }: {
   gross: string;
   net: string;
   fee: string;
-  saved?: boolean;
   fragment?: boolean;
 }) {
   const fields = (
     <>
       <div>
-        <dt>{saved ? "Saved gross" : "Award"}</dt>
+        <dt>Gross</dt>
         <dd>{gross}</dd>
       </div>
       <div>
-        <dt>Contributor receives</dt>
+        <dt>Net</dt>
         <dd>{net}</dd>
       </div>
       <div>
-        <dt>Fee</dt>
+        <dt>Fee (2%)</dt>
         <dd>{fee}</dd>
       </div>
     </>

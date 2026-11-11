@@ -49,9 +49,9 @@ test("a malformed fee report shows the section error and Retry recovers", async 
   const section = page.getByRole("region", { name: "Fee conversions" });
   const failure = section.getByRole("alert");
   await expect(failure).toHaveText(/The fee conversion report is invalid\./u);
-  await expect(
-    page.getByText("Slop could not load.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Something broke", { exact: true })).toHaveCount(
+    0,
+  );
   await expectAccessible(page);
 
   await failure.getByRole("button", { name: "Retry", exact: true }).click();
@@ -64,7 +64,7 @@ test("a malformed fee report shows the section error and Retry recovers", async 
  * The boundary contains render faults that valid data cannot rule out, such
  * as a browser built-in failing. The test injects that fault into BigInt so
  * the trigger does not depend on any product defect, and checks that
- * "Reload the page" loads the page again with fresh responses.
+ * "Reload" loads the page again with fresh responses.
  */
 test("a render failure shows the page error and Reload the page recovers", async ({
   page,
@@ -96,7 +96,7 @@ test("a render failure shows the page error and Reload the page recovers", async
   await page.goto("/admin?section=fees", { waitUntil: "networkidle" });
   const failure = page.getByRole("alert").filter({
     has: page.getByRole("heading", {
-      name: "Slop could not load.",
+      name: "Something broke",
       exact: true,
     }),
   });
@@ -111,16 +111,14 @@ test("a render failure shows the page error and Reload the page recovers", async
   });
 
   const reloaded = page.waitForEvent("load");
-  await failure
-    .getByRole("button", { name: "Reload the page", exact: true })
-    .click();
+  await failure.getByRole("button", { name: "Reload", exact: true }).click();
   await reloaded;
   await expect(
     page.getByRole("heading", { name: "Fee conversions", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Slop could not load.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Something broke", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(page.getByText("12.5 USDC")).toBeVisible();
   await expect(page).toHaveURL(/\/admin\?section=fees$/u);
   expect(reads).toBe(2);

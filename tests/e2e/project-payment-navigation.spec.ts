@@ -11,8 +11,8 @@ const site = deploymentOrigins(
 ).site;
 const firstProject = "eliza";
 const nextProject = "slopdotcash";
-const firstAmount = "$111.11 paid directly";
-const nextAmount = "$222.22 paid directly";
+const firstAmount = "$111.11";
+const nextAmount = "$222.22";
 
 function payments(projectId: string) {
   const transfer: DirectTransfer = {
@@ -94,14 +94,15 @@ test("project history previews recent payments and retains every older record", 
   const history = page.locator(".payment-history");
   const rows = history.locator(".money-summary");
   await expect(rows).toHaveCount(3);
-  await expect(rows.first()).toContainText("$5 paid directly");
+  await expect(rows.first().locator("strong")).toHaveText("$5");
   const expand = history.getByRole("button", {
-    name: "Show complete payment history",
+    name: "Show all",
+    exact: true,
   });
   await expand.focus();
   await page.keyboard.press("Enter");
   await expect(rows).toHaveCount(5);
-  await expect(rows.last()).toContainText("$1 paid directly");
+  await expect(rows.last().locator("strong")).toHaveText("$1");
   await expect(
     rows.last().getByRole("link", { name: "Disclosure" }),
   ).toHaveAttribute(
@@ -113,7 +114,7 @@ test("project history previews recent payments and retains every older record", 
     path: info.outputPath("project-history-expanded.png"),
     fullPage: true,
   });
-  await history.getByRole("button", { name: "Show recent history" }).click();
+  await history.getByRole("button", { name: "Show less", exact: true }).click();
   await expect(rows).toHaveCount(3);
 });
 
@@ -132,7 +133,7 @@ async function watchPaymentIdentity(page: Page) {
           projectName,
           text,
           disclosures: [...(history?.querySelectorAll("a") ?? [])]
-            .filter((a) => a.textContent === "Disclosure")
+            .filter((a) => a.getAttribute("aria-label") === "Disclosure")
             .map((a) => a.href),
         };
         observations.push(sample);
@@ -145,7 +146,7 @@ async function watchPaymentIdentity(page: Page) {
           const link = record.target;
           const row = link.closest(".money-summary");
           if (
-            link.textContent === "Disclosure" &&
+            link.getAttribute("aria-label") === "Disclosure" &&
             link.href.endsWith(
               `/api/v1/payments/projects/${nextProject}/direct-transfers`,
             ) &&
@@ -265,7 +266,7 @@ for (const navigation of ["project links", "browser history"] as const) {
       const summary = page.locator(".payment-history .money-summary");
       await expect(summary.locator("strong")).toHaveText(nextAmount);
       await expect(summary.locator("span")).toContainText(
-        /Sep 1, 2026.*August 2026/u,
+        /August 2026 · 1 transfers/u,
       );
       await page.screenshot({
         path: info.outputPath("direct-payment-disclosure.png"),
@@ -349,7 +350,9 @@ test("a late previous payment request cannot overwrite a retried project", async
     await page.evaluate(() => window.history.go(-2));
     await canceled;
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Slop");
-    const retry = page.getByRole("button", { name: "Retry direct payments" });
+    const retry = page
+      .locator(".payment-history")
+      .getByRole("button", { name: "Retry", exact: true });
     await expect(retry).toBeVisible();
     await expect(page.getByText(nextAmount, { exact: true })).toHaveCount(0);
     await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
@@ -369,7 +372,9 @@ test("a late previous payment request cannot overwrite a retried project", async
     await expect(page.getByText(firstAmount, { exact: true })).toHaveCount(0);
     await expect(page.getByText(nextAmount, { exact: true })).toBeVisible();
     await expect(
-      page.locator(".payment-history a").filter({ hasText: "Disclosure" }),
+      page
+        .locator(".payment-history")
+        .getByRole("link", { name: "Disclosure", exact: true }),
     ).toHaveAttribute(
       "href",
       `${site}/api/v1/payments/projects/${nextProject}/direct-transfers`,
@@ -419,9 +424,6 @@ test("payment history shows loading, not an empty history, while direct payments
     const history = page.locator(".payment-history");
     await expect(history.getByRole("status")).toHaveText(
       "Loading direct payments…",
-    );
-    await expect(history.getByText("No cycles have closed yet.")).toHaveCount(
-      0,
     );
     response.release();
     await expect(history.getByText(nextAmount, { exact: true })).toBeVisible();

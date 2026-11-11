@@ -65,7 +65,11 @@ for (const outcome of ["success", "failure"] as const) {
     });
     try {
       await page.goto("/projects/eliza", { waitUntil: "domcontentloaded" });
-      await expect(page.getByText("Checking project clearance…")).toBeVisible();
+      await expect(
+        page
+          .getByRole("status")
+          .filter({ hasText: "Checking project clearance" }),
+      ).toBeVisible();
       await page
         .getByRole("button", { name: "Copy agent prompt", exact: true })
         .click();

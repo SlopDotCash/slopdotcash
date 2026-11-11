@@ -259,8 +259,6 @@ export async function sendReferralClaim(
     transaction,
   ]);
   if (typeof result !== "string" || !/^0x[0-9a-f]{64}$/i.test(result))
-    throw new Error(
-      "The wallet returned no transaction hash. Check wallet activity before another attempt.",
-    );
+    throw new Error("No transaction hash. Check wallet.");
   return result;
 }

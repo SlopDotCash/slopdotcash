@@ -245,6 +245,12 @@ async function providers(
   );
 }
 
+/** The status names the confirmed wallet family. */
+const confirmedStatus = (page: Page, family: "EVM" | "Solana" = "EVM") =>
+  page
+    .getByRole("status")
+    .filter({ hasText: new RegExp(`^${family} confirmed$`, "u") });
+
 async function openPicker(page: Page, family: "EVM" | "Solana") {
   await page
     .getByRole("button", { name: `Connect ${family} wallet`, exact: true })
@@ -276,14 +282,10 @@ test("modal routes EVM to MetaMask and Solana to Backpack despite Phantom global
   });
   await evm.getByRole("button", { name: "MetaMask", exact: true }).click();
   await expect(evm).not.toBeVisible();
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page)).toBeVisible();
   const solana = await openPicker(page, "Solana");
   await solana.getByRole("button", { name: "Backpack", exact: true }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Solana wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page, "Solana")).toBeVisible();
   // One EVM connection confirms Base, Robinhood Chain and Ethereum. Each
   // chain keeps its own claim and signature.
   expect(
@@ -447,9 +449,7 @@ for (const [name, flags] of [
     const walletButton = dialog.getByRole("button", { name, exact: true });
     await expect(walletButton).toBeVisible();
     await walletButton.click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-    ).toBeVisible();
+    await expect(confirmedStatus(page)).toBeVisible();
   });
 
 test("conflicting EIP-6963 UUID removes both providers without wallet requests", {
@@ -675,17 +675,13 @@ test("mixed standard and legacy discovery keeps every distinct wallet", {
   await base
     .getByRole("button", { name: "Coinbase Wallet", exact: true })
     .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page)).toBeVisible();
   const solana = await openPicker(page, "Solana");
   await expect(
     solana.locator(".wallet-picker-list").getByRole("button"),
   ).toHaveText(["Phantom", "Solflare"]);
   await solana.getByRole("button", { name: "Solflare", exact: true }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Solana wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page, "Solana")).toBeVisible();
   expect(
     await page.evaluate(
       () => (window as unknown as { walletCalls: string[] }).walletCalls,
@@ -835,16 +831,24 @@ test(
     expect(await walletCalls(page)).toEqual([]);
     await chooseMetaMask(page, "Change");
     const confirmation = page.getByRole("region", {
-      name: "Register a different EVM address?",
+      name: "Change EVM address?",
     });
     await expect(confirmation).toBeVisible();
     await expect(
       confirmation.getByRole("heading", {
-        name: "Register a different EVM address?",
+        name: "Change EVM address?",
       }),
     ).toBeFocused();
-    await expect(confirmation).toContainText(`Saved address${savedAddress}`);
-    await expect(confirmation).toContainText(`Wallet account${evmAddress}`);
+    // Each short address keeps its full value in its tooltip.
+    await expect(
+      confirmation.getByTitle(`Saved address ${savedAddress}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      confirmation.getByTitle(`Wallet account ${evmAddress}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      confirmation.getByRole("img", { name: "changes to", exact: true }),
+    ).toBeVisible();
     // The picker ran before the account read, and nothing is registered yet.
     expect(await walletCalls(page)).toEqual([
       "MetaMask:wallet_requestPermissions",
@@ -860,11 +864,9 @@ test(
       fullPage: true,
     });
     await confirmation
-      .getByRole("button", { name: "Register wallet account", exact: true })
+      .getByRole("button", { name: "Register", exact: true })
       .click();
-    await expect(
-      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-    ).toBeVisible();
+    await expect(confirmedStatus(page)).toBeVisible();
     await expect(confirmation).toHaveCount(0);
     expect(writes.map((w) => w.path)).toEqual(
       Array.from({ length: 3 }, () => [
@@ -891,16 +893,12 @@ test("keeping the saved address registers nothing and returns focus to the walle
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Change");
-  await page
-    .getByRole("button", { name: "Keep saved address", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Keep saved", exact: true }).click();
   await expect(
-    page.getByRole("region", { name: "Register a different EVM address?" }),
+    page.getByRole("region", { name: "Change EVM address?" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("status").filter({
-      hasText: "Kept your saved EVM address. Nothing was registered.",
-    }),
+    page.getByRole("status").filter({ hasText: /^Kept saved address$/u }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Change EVM wallet", exact: true }),
@@ -917,7 +915,7 @@ test("connecting with an unconfirmed saved address asks before registering a dif
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Connect");
   await expect(
-    page.getByRole("region", { name: "Register a different EVM address?" }),
+    page.getByRole("region", { name: "Change EVM address?" }),
   ).toBeVisible();
   // Not a change of a confirmed wallet, so no account picker is forced.
   expect(await walletCalls(page)).toEqual(["MetaMask:eth_requestAccounts"]);
@@ -931,9 +929,7 @@ test("connecting the saved address confirms it without an extra step", {
   await providers(page, false, { connected: savedAddress });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Connect");
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page)).toBeVisible();
   expect(writes[0]).toEqual({
     path: "wallets/register",
     body: { chain: "base", address: savedAddress },
@@ -980,9 +976,7 @@ for (const rejectedSignature of [2, 3]) {
     ).toHaveLength(rejectedSignature - 1);
 
     await chooseMetaMask(page, "Change");
-    await expect(
-      page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-    ).toBeVisible();
+    await expect(confirmedStatus(page)).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
     expect(saved.map((wallet) => wallet.chain)).toEqual([
       "base",
@@ -1017,9 +1011,7 @@ test("a wallet without an account picker falls back to its connected account", {
   });
   await page.goto("/account#wallets");
   await chooseMetaMask(page, "Change");
-  await expect(
-    page.getByRole("status").filter({ hasText: "EVM wallet confirmed" }),
-  ).toBeVisible();
+  await expect(confirmedStatus(page)).toBeVisible();
   expect(await walletCalls(page)).toEqual([
     "MetaMask:wallet_requestPermissions",
     "MetaMask:eth_requestAccounts",
@@ -1071,7 +1063,7 @@ for (const scenario of [
     await page.goto("/account#wallets");
     await chooseMetaMask(page, "Change");
     const confirmation = page.getByRole("region", {
-      name: "Register a different EVM address?",
+      name: "Change EVM address?",
     });
     await expect(confirmation).toBeVisible();
     if (scenario.textScale === 2)
@@ -1136,11 +1128,12 @@ test(
     });
     await page.goto("/account#wallets");
     await chooseMetaMask(page, "Change");
-    await page
-      .getByRole("button", { name: "Register wallet account", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Register", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText(
-      `Wallet signature rejected by user. Your new Base address ${evmAddress} is saved but not confirmed. Your verified address ${savedAddress} remains active for payouts. Connect your new wallet again to confirm the replacement.`,
+      "Wallet signature rejected by user.",
+    );
+    await expect(page.getByRole("alert")).toContainText(
+      "Not confirmed. Old address still active. Reconnect to confirm.",
     );
     const saved = page.getByRole("region", { name: "Payout wallets" });
     await expect(saved).toContainText(savedAddress);

@@ -1,11 +1,25 @@
 import {
   ArrowLeft,
   ArrowRight,
+  BookMarked,
+  Bot,
+  Calendar,
+  Check,
+  CloudCheck,
+  CloudOff,
   GitBranch,
+  Info,
   ListChecks,
+  LoaderCircle,
+  Lock,
+  Minus,
+  Scale,
   Settings2,
   Shield,
+  ShieldAlert,
+  UserPlus,
   Wallet,
+  X,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,10 +43,7 @@ import {
   type SkillRuleField,
 } from "./lib/contribution-fields";
 import { errorMessage } from "./lib/errors";
-import {
-  ESCROW_PAYOUT_FEE_BASIS_POINTS,
-  ESCROW_WITHDRAWAL_FEE_BASIS_POINTS,
-} from "./lib/escrow-policy.mjs";
+import { ESCROW_PAYOUT_FEE_BASIS_POINTS } from "./lib/escrow-policy.mjs";
 import { hasBountyOverview } from "./lib/home-projects";
 import {
   createProject,
@@ -50,7 +61,6 @@ import {
   type OwnedRepository,
   type ProjectSetupStatus,
   SLOPBOT_INSTALL_URL,
-  slopbotInstallScopeNote,
   validRepositoryPath,
 } from "./lib/project-contracts";
 import {
@@ -83,7 +93,6 @@ import {
 import {
   bountyAmountPreview,
   PRIVATE_BOUNTY_CRITERIA,
-  PRIVATE_BOUNTY_DISCLOSURE,
   PRIVATE_BOUNTY_TESTING,
   privateBountyTerms,
 } from "./lib/security-bounty-proposal";
@@ -92,9 +101,11 @@ import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
   Avatar,
+  NetworkName,
   ProjectNav,
   RoutePageHeader,
   SignInPanel,
+  StatusBadge,
 } from "./Presentation";
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
@@ -293,8 +304,7 @@ function proposalErrors(p: Proposal): FieldErrors {
     const holder = lengthError(p.legalHolder, 2, 240);
     if (holder) errors.legalHolder = holder;
     if (p.stewardKind === "dao")
-      errors.copyrightModel =
-        "Sponsor-owned copyright is not available for a DAO steward. Choose another copyright model.";
+      errors.copyrightModel = "Not available for a DAO steward.";
   }
   if (p.inboundMode !== "unknown") {
     if (
@@ -305,7 +315,7 @@ function proposalErrors(p: Proposal): FieldErrors {
       )
     )
       errors.inboundTermsUrl =
-        "Use a github.com blob URL for this repository at the terms commit.";
+        "Use this repo's GitHub blob URL at that commit.";
     if (!GIT_SHA.test(p.inboundCommit))
       errors.inboundCommit = "Enter a 40-character commit SHA.";
     if (!FILE_DIGEST.test(p.inboundDigest))
@@ -630,6 +640,17 @@ function SubmitProject({
   );
 }
 
+/** Whether Slopbot may close pull requests, as a check or a dash. */
+function AutoCloseMark({ on }: { on: boolean }) {
+  return on ? (
+    <StatusBadge tone="success" icon={<Check size={14} />}>
+      On
+    </StatusBadge>
+  ) : (
+    <StatusBadge icon={<Minus size={14} />}>Off</StatusBadge>
+  );
+}
+
 function ClosureConsent({
   value,
   onChange,
@@ -643,22 +664,25 @@ function ClosureConsent({
     <div>
       <label className="checkbox-field">
         <input
-          aria-describedby={compact ? undefined : "automatic-closure-hint"}
           checked={value === "true"}
           name="automaticClosure"
           onChange={(event) => onChange(String(event.currentTarget.checked))}
           type="checkbox"
         />{" "}
-        {compact
-          ? "Allow Slopbot to close Slop-skill PRs; authors can appeal."
-          : "Allow automatic closure by Slopbot"}
+        {compact ? "Slopbot may close Slop-skill PRs" : "Slopbot auto-close"}
+        {compact ? null : (
+          <>
+            {" "}
+            <span
+              aria-label="Slop-skill PRs only · appealable"
+              role="img"
+              title="Slop-skill PRs only · appealable"
+            >
+              <Info size={16} aria-hidden="true" />
+            </span>
+          </>
+        )}
       </label>
-      {compact ? null : (
-        <p className="field-hint" id="automatic-closure-hint">
-          Only Slop-skill pull requests can be closed, and authors can appeal.
-          You can turn this off at any time.
-        </p>
-      )}
     </div>
   );
 }
@@ -701,9 +725,7 @@ function FundingFields({
   return (
     <>
       <fieldset className="funding-mode">
-        <legend>
-          {compact ? "Reward type" : "Monthly funding (optional)"}
-        </legend>
+        <legend>{compact ? "Reward type" : "Type"}</legend>
         <label className="checkbox-field">
           <input
             checked={choice.mode === "none" && !bounty}
@@ -743,11 +765,7 @@ function FundingFields({
           </label>
         ) : null}
       </fieldset>
-      {choice.mode === "none" && !bounty ? (
-        compact ? null : (
-          <p className="field-hint">Add funding later.</p>
-        )
-      ) : (
+      {choice.mode === "none" && !bounty ? null : (
         <>
           <RewardAssetFields
             choice={choice}
@@ -760,24 +778,19 @@ function FundingFields({
           <TextField
             error={error("monthlyAmount")}
             hint={
-              compact
-                ? undefined
-                : "A pledge until deposited in the vault. Changes apply from the next UTC month."
+              compact ? undefined : (
+                <StatusBadge tone="warning">Pledge until deposited</StatusBadge>
+              )
             }
             inputMode="decimal"
-            label={
-              bounty
-                ? `Award per accepted finding (${symbol})`
-                : `Monthly amount (${symbol})`
-            }
+            label={bounty ? `Award (${symbol})` : `Amount / month (${symbol})`}
             name="monthlyPool"
             onChange={(value) => set("monthlyAmount", value)}
             value={choice.monthlyAmount}
           />
           {compact ? null : (
             <p className="fee-preview">
-              Payout fee: {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}%. Unused-fund
-              withdrawal fee: {ESCROW_WITHDRAWAL_FEE_BASIS_POINTS / 100}%.
+              {ESCROW_PAYOUT_FEE_BASIS_POINTS / 100}% fee
             </p>
           )}
         </>
@@ -1458,7 +1471,7 @@ function ProjectProposalForm({
       ) : null}
       {step < SETUP_STEPS.length - 1 ? (
         <button className="button primary-button" onClick={next} type="button">
-          Next: {SETUP_STEPS[step + 1]} <ArrowRight aria-hidden="true" />
+          Next <ArrowRight aria-hidden="true" />
         </button>
       ) : null}
     </div>
@@ -1474,14 +1487,20 @@ function ProjectProposalForm({
           Project created
         </h1>
         <ProjectSetupStatusPanel
-          compact
           initial={submission.setup}
           projectId={submission.projectId}
           actorId={submission.actorId}
           showProjectLink={false}
         />
         {submission.referrer ? (
-          <p className="proposal-note">Referred by @{submission.referrer}.</p>
+          <p className="proposal-note">
+            <StatusBadge
+              icon={<UserPlus size={14} />}
+              title={`Referred by @${submission.referrer}`}
+            >
+              @{submission.referrer}
+            </StatusBadge>
+          </p>
         ) : null}
         <div className="wizard-actions">
           {/* Reload the registry so these routes can resolve the new project. */}
@@ -1505,7 +1524,7 @@ function ProjectProposalForm({
             }}
             type="button"
           >
-            Add another project
+            Add another
           </button>
         </div>
       </main>
@@ -1606,7 +1625,6 @@ function ProjectProposalForm({
             <div className="setup-project-identity">
               <ProjectImageField
                 key={imageRevision}
-                compact
                 ownerLogin={p.stewardLogin}
                 value={p.image}
                 onChange={set("image")}
@@ -1680,14 +1698,14 @@ function ProjectProposalForm({
                 {p.copyrightModel === "sponsor-owned" ? (
                   <TextField
                     error={shown("legalHolder")}
-                    label="Exact legal copyright holder"
+                    label="Copyright holder"
                     name="legalHolder"
                     onChange={set("legalHolder")}
                     value={p.legalHolder}
                   />
                 ) : null}
                 <ChoiceField
-                  label="Inbound contribution terms"
+                  label="Inbound terms"
                   name="inboundMode"
                   onChange={set("inboundMode")}
                   options={[
@@ -1838,93 +1856,136 @@ function ProjectProposalForm({
               <p>{p.headline || "No short description yet."}</p>
               <dl>
                 <div>
-                  <dt>Before you create</dt>
+                  <dt>
+                    <Bot size={16} aria-hidden="true" /> Slopbot
+                  </dt>
                   <dd>
-                    Install Slopbot on {p.repository || "the repository"}.{" "}
-                    {slopbotInstallScopeNote(p.repository || "that repository")}
+                    <a
+                      className="button secondary-button button-small"
+                      href={SLOPBOT_INSTALL_URL}
+                      rel="noreferrer"
+                      target="_blank"
+                      title={
+                        p.repository
+                          ? `Select only ${p.repository} on GitHub`
+                          : undefined
+                      }
+                    >
+                      Install Slopbot
+                    </a>
                   </dd>
                 </div>
                 {p.fundingMode === "bounty" ? null : (
                   <div>
-                    <dt>Slopbot automatic closure</dt>
+                    <dt>Auto-close</dt>
                     <dd>
-                      {p.automaticClosure === "true"
-                        ? "Allowed"
-                        : "Not allowed"}
+                      <AutoCloseMark on={p.automaticClosure === "true"} />
                     </dd>
                   </div>
                 )}
-                <div>
-                  <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
-                  <dd>
-                    {bounty && bountyAmounts
-                      ? `${bountyAmounts.gross} per accepted finding · pledge`
-                      : p.fundingMode !== "monthly"
-                        ? "None"
-                        : pool.valid
-                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? formatRewardCapDisplay(pool.display, { kind: p.rewardKind, symbol: fundingSymbol }) : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
-                          : "Invalid"}
-                  </dd>
-                </div>
+                {bounty || p.fundingMode === "monthly" ? (
+                  <div>
+                    <dt>{bounty ? "Private bounty" : "Monthly funding"}</dt>
+                    <dd>
+                      {bounty && bountyAmounts ? (
+                        <>
+                          {bountyAmounts.gross} / finding{" "}
+                          <StatusBadge tone="warning">Pledge</StatusBadge>
+                        </>
+                      ) : p.fundingMode !== "monthly" ? (
+                        "None"
+                      ) : pool.valid ? (
+                        <>
+                          {p.rewardKind === "token" || p.rewardKind === "native"
+                            ? formatRewardCapDisplay(pool.display, {
+                                kind: p.rewardKind,
+                                symbol: fundingSymbol,
+                              })
+                            : formatMonthlyAmount(pool.minor, 6, fundingSymbol)}
+                          /mo{" "}
+                          <NetworkName chain={p.settlementChain} iconOnly>
+                            {SETTLEMENT_CHAIN_NAMES[p.settlementChain] ??
+                              p.settlementChain}
+                          </NetworkName>{" "}
+                          <StatusBadge tone="warning">Pledge</StatusBadge>
+                        </>
+                      ) : (
+                        "Invalid"
+                      )}
+                    </dd>
+                  </div>
+                ) : null}
                 {bounty && bountyAmounts ? (
                   <div>
-                    <dt>Researcher / Slop</dt>
+                    <dt>Split</dt>
                     <dd>
-                      {bountyAmounts.researcher} / {bountyAmounts.slop}
+                      <StatusBadge>
+                        Researcher {bountyAmounts.researcher}
+                      </StatusBadge>{" "}
+                      <StatusBadge>Slop {bountyAmounts.slop}</StatusBadge>
                     </dd>
                   </div>
                 ) : null}
                 {p.fundingMode === "monthly" ? (
                   <div>
-                    <dt>Fees</dt>
-                    <dd>2% of ordinary awards and unused-fund withdrawals.</dd>
+                    <dt>Fee</dt>
+                    <dd>2%</dd>
                   </div>
                 ) : null}
                 {referrer ? (
                   <div>
                     <dt>Referred by</dt>
                     <dd>
-                      @{referrer}{" "}
+                      <StatusBadge icon={<UserPlus size={14} />}>
+                        @{referrer}
+                      </StatusBadge>{" "}
                       <button
+                        aria-label="Clear referral"
                         className="text-button"
                         onClick={clearReferrer}
+                        title="Clear referral"
                         type="button"
                       >
-                        Clear referral
+                        <X size={16} aria-hidden="true" />
                       </button>
                     </dd>
                   </div>
                 ) : null}
               </dl>
               <div className="setup-review-facts">
-                <dl>
-                  <div>
-                    <dt>Repository</dt>
-                    <dd>
-                      {p.repository || "Not set"} · {p.integrationBranch}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Steward</dt>
-                    <dd>{p.stewardLogin ? `@${p.stewardLogin}` : "Not set"}</dd>
-                  </div>
-                  <div>
-                    <dt>License</dt>
-                    <dd>{licenseKnown ? p.licenseSpdx : "Unknown"}</dd>
-                  </div>
-                  <div>
-                    <dt>Copyright</dt>
-                    <dd>{p.copyrightModel.replaceAll("-", " ")}</dd>
-                  </div>
-                </dl>
-                <p>{p.goal || "No goal yet."}</p>
-                {bounty ? (
-                  <>
-                    <p>{p.criteria}</p>
-                    <p>{p.requiredTests || PRIVATE_BOUNTY_TESTING}</p>
-                    <p>{PRIVATE_BOUNTY_DISCLOSURE}</p>
-                  </>
-                ) : null}
+                <p>
+                  <StatusBadge
+                    icon={<BookMarked size={14} />}
+                    title="Repository"
+                  >
+                    {p.repository || "Not set"}
+                  </StatusBadge>{" "}
+                  <StatusBadge icon={<GitBranch size={14} />} title="Branch">
+                    {p.integrationBranch}
+                  </StatusBadge>{" "}
+                  <StatusBadge title="Steward">
+                    {p.stewardLogin ? `@${p.stewardLogin}` : "No steward"}
+                  </StatusBadge>{" "}
+                  <StatusBadge icon={<Scale size={14} />} title="License">
+                    {licenseKnown ? p.licenseSpdx : "Unknown"}
+                  </StatusBadge>
+                  {p.copyrightModel === "unknown" ? null : (
+                    <>
+                      {" "}
+                      <StatusBadge title="Copyright">
+                        © {p.copyrightModel.replaceAll("-", " ")}
+                      </StatusBadge>
+                    </>
+                  )}
+                  {bounty ? (
+                    <>
+                      {" "}
+                      <StatusBadge icon={<Lock size={14} />}>
+                        Private reports
+                      </StatusBadge>
+                    </>
+                  ) : null}
+                </p>
               </div>
             </article>
             {valid ? (
@@ -2005,7 +2066,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
   if (!allowed || session.status !== "signed-in")
     return (
       <main className="shell route-main manage-page">
-        <RoutePageHeader title="Project settings" />
+        <RoutePageHeader title="Settings" />
         <ProjectNav project={project} current="settings" />
         {checking ? (
           <p role="status">Checking access…</p>
@@ -2013,7 +2074,7 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
           <SignInPanel
             state={session}
             next={`/projects/${project.slug}/manage`}
-            purpose="Sign in with a maintainer account to change project settings."
+            purpose="Maintainers only"
           />
         ) : error ? (
           <div role="alert">
@@ -2023,12 +2084,12 @@ export function ProjectUpdatePage({ project }: { project: ProjectDefinition }) {
               type="button"
               onClick={retry}
             >
-              Retry access check
+              Retry
             </button>
           </div>
         ) : (
           <p role="status">
-            Project settings are available only to this project's maintainers.
+            <Lock size={16} aria-hidden="true" /> Maintainers only
           </p>
         )}
       </main>
@@ -2063,7 +2124,7 @@ function ProjectUpdateDraft({
     />
   ) : (
     <main className="shell route-main manage-page">
-      <RoutePageHeader title="Project settings" />
+      <RoutePageHeader title="Settings" />
       <p role="status">Loading saved draft…</p>
     </main>
   );
@@ -2356,9 +2417,7 @@ function ProjectUpdateForm({
       changes.financial.length >
     0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
-    minor === "0"
-      ? "No monthly funding"
-      : formatMonthlyAmount(minor, digits, symbol);
+    minor === "0" ? "None" : formatMonthlyAmount(minor, digits, symbol);
   const diff = [
     {
       field: "vault",
@@ -2368,7 +2427,7 @@ function ProjectUpdateForm({
     },
     {
       field: "slopbot",
-      label: "Slopbot automatic closure",
+      label: "Auto-close",
       before:
         current.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
       after:
@@ -2379,10 +2438,8 @@ function ProjectUpdateForm({
           {
             field: "image",
             label: "Project image",
-            before: current.image
-              ? "Current custom image"
-              : "GitHub owner avatar",
-            after: next.image ? "New custom image" : "GitHub owner avatar",
+            before: current.image ?? "",
+            after: next.image ?? "",
           },
         ]
       : []),
@@ -2435,7 +2492,7 @@ function ProjectUpdateForm({
                       6,
                       String(next.reward.currency),
                     )
-                : "No monthly funding",
+                : "None",
           },
         ]
       : []),
@@ -2584,12 +2641,66 @@ function ProjectUpdateForm({
   nextMonth.setUTCDate(1);
   nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
   const nextCycle = nextMonth.toISOString().slice(0, 7);
+  /** What publishing one changed field does, shown as a chip on its row. */
+  type ChangeEffect = "live" | "rescan" | "next-month";
+  const changeEffect = (field: string): ChangeEffect =>
+    field === "vault" || field === "monthly"
+      ? "next-month"
+      : ["slopbot", "image", "headline", "description"].includes(field) ||
+          scanCleared
+        ? "live"
+        : "rescan";
+  const effectChip = (effect: ChangeEffect) =>
+    effect === "live" ? (
+      <StatusBadge tone="success">Live now</StatusBadge>
+    ) : effect === "rescan" ? (
+      <StatusBadge tone="warning" icon={<ShieldAlert size={14} />}>
+        {current.status === "active" ? "Rescan · pauses" : "Rescan"}
+      </StatusBadge>
+    ) : (
+      <StatusBadge icon={<Calendar size={14} />}>From {nextCycle}</StatusBadge>
+    );
+  const rowEffects = new Set(diff.map((change) => changeEffect(change.field)));
+  /** Effects of changed fields that have no row of their own below. */
+  const unlistedEffects = (
+    [
+      changes.presentation.length > 0 ||
+      (scanCleared && changes.executable.length > 0)
+        ? "live"
+        : null,
+      !scanCleared && changes.executable.length > 0 ? "rescan" : null,
+      changes.financial.length > 0 ? "next-month" : null,
+    ] as (ChangeEffect | null)[]
+  ).filter(
+    (effect): effect is ChangeEffect =>
+      effect !== null && !rowEffects.has(effect),
+  );
+  const changeValue = (field: string, text: string) =>
+    field === "slopbot" ? (
+      <AutoCloseMark on={text === "Allowed"} />
+    ) : field === "image" ? (
+      text ? (
+        <img src={text} alt="Custom avatar" width={32} height={32} />
+      ) : (
+        "GitHub avatar"
+      )
+    ) : (
+      text || "Not set"
+    );
   return (
     <main className="shell route-main manage-page">
       <p className="breadcrumb">
         <Link href={`/projects/${project.slug}`}>{project.name}</Link>
       </p>
-      <RoutePageHeader icon={<Settings2 />} title="Manage project" />
+      <RoutePageHeader
+        icon={<Settings2 />}
+        title="Settings"
+        titleAction={
+          !monthly && !bountyOnly ? (
+            <StatusBadge>External award</StatusBadge>
+          ) : undefined
+        }
+      />
       <ProjectNav project={project} current="settings" />
       {removal.state === "idle" &&
       session.status === "signed-in" &&
@@ -2647,7 +2758,6 @@ function ProjectUpdateForm({
             multiline
             name="criteria"
             onChange={set("criteria")}
-            placeholder="What accepted GitHub outcomes qualify?"
             value={value.criteria}
           />
           <ClosureConsent
@@ -2655,10 +2765,7 @@ function ProjectUpdateForm({
             value={value.automaticClosure}
           />
           <details className="proposal-skill-rules">
-            <summary>Contributor instructions</summary>
-            <p className="field-hint">
-              These cannot override Slop's safety rules.
-            </p>
+            <summary>More rules</summary>
             {SKILL_RULE_FIELDS.map((field) => (
               <TextField
                 error={shown(field)}
@@ -2707,35 +2814,28 @@ function ProjectUpdateForm({
         !current.escrow &&
         !assetTouched ? (
           <div>
-            <p className="field-hint">
-              Keeps this amount and asset. Publish this change to begin vault
-              setup.
-            </p>
             <button
               className="button secondary-button"
               onClick={() => set("fundingMode")("monthly")}
               type="button"
             >
-              Enable vault setup
+              Set up vault
             </button>
           </div>
         ) : null}
         {staleDraft ? (
           <div role="alert" className="form-error">
             <p>
-              This draft was saved against{" "}
-              {draftRevision === -1
-                ? "an unknown revision"
-                : `revision ${draftRevision}`}
-              . The current revision is {base?.revision}. Review the changes
-              below.
+              Draft is from{" "}
+              {draftRevision === -1 ? "an unknown rev" : `rev ${draftRevision}`}
+              ; now rev {base?.revision}.
             </p>
             <button
               type="button"
               className="button secondary-button"
               onClick={() => setDraftRevision(base?.revision ?? null)}
             >
-              Use this draft
+              Keep
             </button>
             <button
               type="button"
@@ -2748,50 +2848,38 @@ function ProjectUpdateForm({
                 setSubmission({ state: "idle" });
               }}
             >
-              Discard draft
+              Discard
             </button>
           </div>
         ) : null}
         {changed ? (
           <section aria-labelledby="update-changes" className="update-changes">
             <h2 id="update-changes">Changes</h2>
-            <ul>
-              {changes.presentation.length > 0 ||
-              (scanCleared && changes.executable.length > 0) ? (
-                <li>
-                  Presentation and cleared contribution changes publish now.
-                </li>
-              ) : null}
-              {!scanCleared && changes.executable.length > 0 ? (
-                <li>
-                  Contribution changes need a new security scan.{" "}
-                  {current.status === "active"
-                    ? "The project pauses and goes live again when the scan passes."
-                    : "The project goes live when the scan passes."}
-                </li>
-              ) : null}
-              {changes.financial.length > 0 ? (
-                <li>
-                  Financial changes apply from {nextCycle} (UTC). Funded awards
-                  keep their terms.
-                </li>
-              ) : null}
-            </ul>
+            {unlistedEffects.length > 0 ? (
+              <p>
+                {unlistedEffects.map((effect) => (
+                  <span key={effect}>{effectChip(effect)} </span>
+                ))}
+              </p>
+            ) : null}
             {diff.map((change) => (
               <ChangeReview
                 key={change.field}
                 label={change.label}
-                before={change.before || "Not set"}
-                after={change.after || "Not set"}
+                before={changeValue(change.field, change.before)}
+                after={
+                  <>
+                    {changeValue(change.field, change.after)}{" "}
+                    {effectChip(changeEffect(change.field))}
+                  </>
+                }
               />
             ))}
           </section>
         ) : null}
-        {attempted && (!valid || !changed) ? (
+        {attempted && !valid ? (
           <p className="form-error" role="alert">
-            {changed
-              ? "Fix the marked fields."
-              : "Change at least one field before you publish."}
+            Fix the marked fields.
           </p>
         ) : null}
         {loadError ? (
@@ -2803,7 +2891,10 @@ function ProjectUpdateForm({
           <button
             className="button primary-button"
             disabled={
-              submission.state === "publishing" || base === null || staleDraft
+              submission.state === "publishing" ||
+              base === null ||
+              staleDraft ||
+              !changed
             }
             onClick={() => void publish()}
             type="button"
@@ -2849,7 +2940,9 @@ function ProjectUpdateForm({
             </p>
           ) : submission.state === "published" ? (
             <p role="status">
-              Published revision {submission.result.project.revision}.
+              <StatusBadge tone="success" icon={<Check size={14} />}>
+                Rev {submission.result.project.revision}
+              </StatusBadge>
               {!hasBountyOverview(submission.result.project.manifest) &&
               submission.result.project.manifest.escrow &&
               submission.result.project.manifest.escrow.deployments.length ===
@@ -2862,11 +2955,27 @@ function ProjectUpdateForm({
             </p>
           ) : null}
           <p className="proposal-note" role="status">
-            {saveFailed
-              ? "This browser cannot save the draft."
-              : draftSaving
-                ? "Saving draft…"
-                : "Draft saved on this device."}
+            {saveFailed ? (
+              <StatusBadge
+                tone="danger"
+                icon={<CloudOff size={14} />}
+                title="This browser cannot save the draft."
+              >
+                Draft not saved
+              </StatusBadge>
+            ) : draftSaving ? (
+              <span aria-label="Saving draft…" role="img" title="Saving draft…">
+                <LoaderCircle className="wallet-spin" aria-hidden="true" />
+              </span>
+            ) : (
+              <span
+                aria-label="Draft saved on this device"
+                role="img"
+                title="Draft saved on this device"
+              >
+                <CloudCheck size={16} aria-hidden="true" />
+              </span>
+            )}
           </p>
         </div>
       </form>
@@ -2885,14 +2994,6 @@ function ProjectUpdateForm({
           Manage security bounty
         </Link>
       </p>
-      {!monthly && !bountyOnly ? (
-        <section aria-labelledby="update-payouts" className="owner-section">
-          <h2 id="update-payouts">Payouts</h2>
-          <p className="payout-status">
-            External award. Slop publishes contribution shares only.
-          </p>
-        </section>
-      ) : null}
     </main>
   );
 }

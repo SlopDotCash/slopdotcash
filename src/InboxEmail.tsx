@@ -1,5 +1,6 @@
 /** Explicit opt-in to the signed-in account's verified email destination (NOT-01). */
 
+import { Check, LoaderCircle, Mail, Pencil, RotateCcw, X } from "lucide-react";
 import {
   type FormEvent,
   useCallback,
@@ -11,12 +12,14 @@ import {
 import { localBackendOrigin, loginHref } from "./lib/browser-deployment";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
+import { GithubIcon } from "./lib/github-icon";
 import {
   currentProjectSession,
   ProjectApiError,
   subscribeProjectSessionChange,
 } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
+import { Spinner, StatusBadge } from "./Presentation";
 
 type PendingVerification = {
   email: string;
@@ -71,7 +74,7 @@ function preference(value: unknown): Preference {
         typeof body.destinationVersion !== "string" ||
         !/^[a-f0-9]{64}$/u.test(body.destinationVersion)))
   )
-    throw new Error("The email service returned an invalid preference.");
+    throw new Error("Email preferences unavailable");
   return body as Preference;
 }
 
@@ -249,9 +252,7 @@ export function InboxEmail({
     } catch {
       if (generation.current !== expectedGeneration) return false;
       setState({ status: "error", message: "The account check failed." });
-      throw new EmailAccountError(
-        "The account check failed. Retry before changing email.",
-      );
+      throw new EmailAccountError("Account check failed");
     }
     if (generation.current !== expectedGeneration) return false;
     if (!current) {
@@ -345,13 +346,10 @@ export function InboxEmail({
       }
       if (response.status === 409) {
         load();
-        setError(
-          "Your verified destination changed. Review it before turning on email.",
-        );
+        setError("Address changed. Check it, then retry.");
         return;
       }
-      if (!response.ok)
-        throw new Error("Your preference could not be saved. Please retry.");
+      if (!response.ok) throw new Error("Not saved");
       const result = (await readBoundedJson(
         response,
         4096,
@@ -361,9 +359,7 @@ export function InboxEmail({
         result?.enabled !== enabled ||
         result?.securityEnabled !== securityEnabled
       )
-        throw new Error(
-          "The saved preference could not be verified. Please retry.",
-        );
+        throw new Error("Not saved");
       if (generation.current !== current) return;
       if (!(await checkActor(actor, current))) return;
       if (generation.current !== current) return;
@@ -440,14 +436,11 @@ export function InboxEmail({
             : null;
         throw new Error(
           seconds === null
-            ? "Wait before requesting another verification email."
+            ? "Too many requests"
             : `Try again in ${seconds < 60 ? `${seconds} seconds` : `${Math.ceil(seconds / 60)} minutes`}.`,
         );
       }
-      if (response.status !== 202)
-        throw new Error(
-          "The verification email could not be requested. Retry.",
-        );
+      if (response.status !== 202) throw new Error("Not sent");
       setState({ status: "ready", actor, value: preference(result) });
       setEditing(false);
       requestKey.current = null;
@@ -472,21 +465,57 @@ export function InboxEmail({
   );
   // The verified address is shown before consent (NOT-01), not once email is on.
   const detail =
-    accountError !== undefined
-      ? `Email preferences could not be loaded: ${accountError}`
-      : busy
-        ? "Saving…"
-        : state.status === "loading"
-          ? "Loading…"
-          : state.status === "error"
-            ? `Email preferences could not be loaded: ${state.message}`
-            : ready?.availability === "verified"
-              ? on && securityOn
-                ? null
-                : `${localBackendOrigin ? "Preview address" : "Sent to"} ${ready.email}`
-              : ready?.availability === "unverified"
-                ? "No verified email address is on file. Notices still appear in this inbox."
-                : "We could not check your email address, so activity email cannot be turned on yet.";
+    accountError !== undefined ? (
+      accountError
+    ) : busy ? (
+      <LoaderCircle
+        className="wallet-spin"
+        role="img"
+        aria-label="Saving"
+        size={14}
+      />
+    ) : state.status === "loading" ? (
+      <LoaderCircle
+        className="wallet-spin"
+        role="img"
+        aria-label="Loading"
+        size={14}
+      />
+    ) : state.status === "error" ? (
+      "Unavailable"
+    ) : ready?.availability === "verified" ? (
+      <>
+        <Mail aria-hidden="true" size={14} /> {ready.email}
+      </>
+    ) : ready?.availability === "unverified" ? (
+      "No verified email"
+    ) : (
+      "Email check failed"
+    );
+  const editButton =
+    !enrollmentOpen && ready?.enrollmentAvailable ? (
+      ready.pending || verified ? (
+        <button
+          className="text-button"
+          disabled={busy}
+          type="button"
+          aria-label="Change email"
+          title="Change email"
+          onClick={editAddress}
+        >
+          <Pencil aria-hidden="true" size={14} />
+        </button>
+      ) : (
+        <button
+          className="text-button"
+          disabled={busy}
+          type="button"
+          onClick={editAddress}
+        >
+          Add email
+        </button>
+      )
+    ) : null;
 
   return (
     <section
@@ -496,8 +525,12 @@ export function InboxEmail({
       {headingId ? null : <h2 id="inbox-email-heading">Email preferences</h2>}
       {state.status === "signed-out" ? (
         <p>
-          Your session expired.{" "}
-          <a href={loginHref("/account#notifications")}>Sign in with GitHub</a>.
+          <a
+            className="button secondary-button"
+            href={loginHref("/account#notifications")}
+          >
+            <GithubIcon aria-hidden="true" size={18} /> Sign in
+          </a>
         </p>
       ) : (
         <>
@@ -505,10 +538,9 @@ export function InboxEmail({
             <>
               <div className="email-row">
                 <div className="email-text">
-                  <strong id="email-activity-label">Activity email</strong>
-                  {detail ? (
+                  <strong id="email-activity-label">Activity</strong>
+                  <span className="email-detail">
                     <span
-                      className="email-detail"
                       id="email-activity-detail"
                       role={
                         accountError !== undefined || state.status === "error"
@@ -520,14 +552,13 @@ export function InboxEmail({
                     >
                       {detail}
                     </span>
-                  ) : null}
+                    {ready?.pending ? null : <> {editButton}</>}
+                  </span>
                 </div>
                 <button
                   aria-busy={busy || checking || accountChecking}
                   aria-checked={on}
-                  aria-describedby={
-                    detail ? "email-activity-detail" : undefined
-                  }
+                  aria-describedby="email-activity-detail"
                   aria-labelledby="email-activity-label"
                   className="email-switch"
                   disabled={switchDisabled}
@@ -537,7 +568,7 @@ export function InboxEmail({
                 />
               </div>
               <div className="email-row">
-                <strong id="email-security-label">Security email</strong>
+                <strong id="email-security-label">Security</strong>
                 <button
                   aria-busy={busy || checking || accountChecking}
                   aria-checked={securityOn}
@@ -558,14 +589,17 @@ export function InboxEmail({
           {ready?.pending ? (
             <>
               <p role="status">
-                {ready.pending.state === "expired"
-                  ? "Verification expired"
-                  : ready.pending.state === "unknown"
-                    ? "Verification delivery not confirmed"
-                    : ready.pending.state === "sent"
-                      ? "Verification sent"
-                      : "Verification requested"}
-                : {ready.pending.email}
+                {ready.pending.email}{" "}
+                {ready.pending.state === "expired" ? (
+                  <StatusBadge tone="danger">Expired</StatusBadge>
+                ) : ready.pending.state === "unknown" ? (
+                  <StatusBadge tone="warning">Unconfirmed</StatusBadge>
+                ) : ready.pending.state === "sent" ? (
+                  <StatusBadge tone="info">Sent</StatusBadge>
+                ) : (
+                  <StatusBadge>Pending</StatusBadge>
+                )}{" "}
+                {editButton}
               </p>
               {localBackendOrigin ? (
                 <a href={`${localBackendOrigin}/__dev/mail`}>Open local mail</a>
@@ -589,8 +623,7 @@ export function InboxEmail({
                   }}
                 />
               </label>
-              <fieldset disabled={busy}>
-                <legend>After verification</legend>
+              <fieldset aria-label="After verification" disabled={busy}>
                 <label>
                   <input
                     type="checkbox"
@@ -603,7 +636,7 @@ export function InboxEmail({
                       requestKey.current = null;
                     }}
                   />{" "}
-                  Activity email
+                  Activity
                 </label>
                 <label>
                   <input
@@ -617,7 +650,7 @@ export function InboxEmail({
                       requestKey.current = null;
                     }}
                   />{" "}
-                  Security email
+                  Security
                 </label>
               </fieldset>
               <div className="handoff-actions">
@@ -626,7 +659,10 @@ export function InboxEmail({
                   disabled={busy || accountBlocked}
                   type="submit"
                 >
-                  {busy ? "Requesting…" : "Send verification"}
+                  {busy ? (
+                    <LoaderCircle className="wallet-spin" aria-hidden="true" />
+                  ) : null}
+                  Verify
                 </button>
                 {editing ? (
                   <button
@@ -640,15 +676,6 @@ export function InboxEmail({
                 ) : null}
               </div>
             </form>
-          ) : ready?.enrollmentAvailable ? (
-            <button
-              className="text-button"
-              disabled={busy}
-              type="button"
-              onClick={editAddress}
-            >
-              {ready.pending ? "Change email" : "Add or change email"}
-            </button>
           ) : null}
           {canRetry ? (
             <div>
@@ -661,7 +688,7 @@ export function InboxEmail({
                   load();
                 }}
               >
-                Retry email preferences
+                <RotateCcw aria-hidden="true" size={14} /> Retry
               </button>
             </div>
           ) : null}
@@ -800,9 +827,7 @@ export function InboxEmailAction() {
           action.actor !== null &&
           action.actor !== session.githubId
         ) {
-          setError(
-            "Your account changed. Reopen the email link for this account.",
-          );
+          setError("Wrong account for this link");
           return;
         }
         setActor(session?.githubId ?? null);
@@ -817,7 +842,7 @@ export function InboxEmailAction() {
       },
       () => {
         if (active && generation.current === current)
-          setError("Your account could not be checked. Reload to retry.");
+          setError("Account check failed");
       },
     );
     return () => {
@@ -842,7 +867,7 @@ export function InboxEmailAction() {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
           if (!session || session.githubId !== actor)
-            throw new Error("Your account changed. Reload before verifying.");
+            throw new Error("Wrong account for this link");
         }
         const response = await fetchWithDeadline(`${PATH}/${action.kind}`, {
           method: "POST",
@@ -861,8 +886,8 @@ export function InboxEmailAction() {
         if (!response.ok)
           throw new Error(
             response.status === 403
-              ? "Sign in to the account that requested this link."
-              : "This email link could not be used. It may have expired or already been used.",
+              ? "Wrong account for this link"
+              : "Link expired or already used.",
           );
         const result = await readBoundedJson(response, 4096, "email action");
         if (generation.current !== current) return;
@@ -871,18 +896,14 @@ export function InboxEmailAction() {
           const session = await currentProjectSession();
           if (generation.current !== current) return;
           if (!session || session.githubId !== actor)
-            throw new Error(
-              "Your account changed. Open email preferences to check the result.",
-            );
+            throw new Error("Account changed. Check preferences.");
         } else if (
           (result as { enabled?: unknown; securityEnabled?: unknown } | null)
             ?.enabled !== false ||
           (result as { securityEnabled?: unknown } | null)?.securityEnabled !==
             false
         )
-          throw new Error(
-            "The unsubscribe result could not be verified. Retry.",
-          );
+          throw new Error("Not confirmed. Retry.");
         try {
           storeEmailAction(null);
         } catch {
@@ -900,22 +921,16 @@ export function InboxEmailAction() {
   return (
     <section
       className="email-card email-link-action"
-      aria-labelledby="email-link-action-heading"
+      aria-label={action.kind === "verify" ? "Verify email" : "Unsubscribe"}
     >
-      <h2 id="email-link-action-heading">
-        {action.kind === "verify" ? "Verify email" : "Unsubscribe"}
-      </h2>
       {!action.token ? (
-        <p role="alert">This email link is invalid.</p>
+        <p role="alert">Invalid link</p>
       ) : done ? (
-        <>
-          <p role="status">
-            {action.kind === "verify"
-              ? "Email verified."
-              : "Email notifications stopped."}
-          </p>
-          <a href="/account#notifications">Email preferences</a>
-        </>
+        <p role="status">
+          <StatusBadge tone="success" icon={<Check size={14} />}>
+            {action.kind === "verify" ? "Verified" : "Unsubscribed"}
+          </StatusBadge>
+        </p>
       ) : action.kind === "verify" && actor === undefined ? (
         error ? (
           <button
@@ -923,14 +938,14 @@ export function InboxEmailAction() {
             type="button"
             onClick={() => setAction((value) => (value ? { ...value } : null))}
           >
-            Retry account check
+            Retry
           </button>
         ) : (
-          <p role="status">Checking your account…</p>
+          <Spinner label="Checking account" />
         )
       ) : action.kind === "verify" && actor === null ? (
         <a className="button secondary-button" href={loginHref("/inbox")}>
-          Sign in to verify email
+          Sign in
         </a>
       ) : (
         <button
@@ -952,12 +967,14 @@ export function InboxEmailAction() {
         </p>
       ) : null}
       <button
-        className="text-button"
+        className="text-button email-link-dismiss"
         type="button"
         disabled={busy}
+        aria-label="Dismiss"
+        title="Dismiss"
         onClick={discard}
       >
-        Dismiss
+        <X aria-hidden="true" size={18} />
       </button>
     </section>
   );

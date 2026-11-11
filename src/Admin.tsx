@@ -15,7 +15,9 @@ import {
   Code2,
   Coins,
   FolderGit2,
+  Globe,
   LayoutGrid,
+  Lock,
   Pause,
   RotateCcw,
   Save,
@@ -24,6 +26,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import {
@@ -70,6 +73,7 @@ import {
 } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
 import { transientHttpStatus } from "./lib/verified-frontend";
+import { CopyButton } from "./Operations";
 import { ChangeReview } from "./OwnerPresentation";
 import {
   formatDateTime,
@@ -324,14 +328,10 @@ function ProjectEditor({
       const minimum = field === "approvedScope" ? 6 : 0;
       return [
         field,
-        skillStarted && (value.length < minimum || value.length > 2000)
-          ? minimum
-            ? `${CONTRIBUTION_LABELS[field].label} must be ${minimum} to 2000 characters.`
-            : `${CONTRIBUTION_LABELS[field].label} must be at most 2000 characters.`
-          : null,
+        skillStarted && (value.length < minimum || value.length > 2000),
       ];
     }),
-  ) as Record<ContributionField, string | null>;
+  ) as Record<ContributionField, boolean>;
   const network = REWARD_ASSET_NETWORKS[asset.network];
   let projectFields: Record<string, unknown> | null = null;
   try {
@@ -349,11 +349,9 @@ function ProjectEditor({
         Object.hasOwn(manifest, key),
       )
     ) {
-      throw new Error(
-        "Use the Status, Contribution fields, and Reward asset controls. Remove those keys from advanced settings.",
-      );
+      throw new Error("Remove status, contribution and rewardAsset from JSON.");
     }
-    if (Object.values(skillErrors).some((value) => value !== null)) {
+    if (Object.values(skillErrors).some(Boolean)) {
       throw new Error(
         "Complete the approved scope, or clear every contribution field.",
       );
@@ -469,9 +467,7 @@ function ProjectEditor({
       await requireAdminActionActor(actorId);
       if (!mounted.current) return;
       if (currentDraft.current !== submittedDraft) {
-        setError(
-          "Revision saved. Your newer edits are still here; copy them before reloading.",
-        );
+        setError("Saved. Newer edits are unsaved — copy them first.");
         return;
       }
       onSaved(SAVED_NOTE);
@@ -492,11 +488,6 @@ function ProjectEditor({
   return (
     <form className="admin-editor" onSubmit={save}>
       <h3 className="visually-hidden">Edit project</h3>
-      {draftError ? (
-        <p role="status">
-          Draft storage unavailable. Keep this editor open until saved.
-        </p>
-      ) : null}
       <fieldset className="admin-fieldset" disabled={projectFields === null}>
         <legend>Project details</legend>
         {(
@@ -596,6 +587,7 @@ function ProjectEditor({
             <label key={field}>
               {CONTRIBUTION_LABELS[field].label}
               <textarea
+                aria-describedby={`admin-skill-count-${field}`}
                 aria-invalid={skillErrors[field] ? true : undefined}
                 onChange={(event) =>
                   setSkill((current) => ({
@@ -606,9 +598,18 @@ function ProjectEditor({
                 rows={field === "securityContact" ? 1 : 3}
                 value={skill[field]}
               />
-              {skillErrors[field] ? (
-                <small className="field-error">{skillErrors[field]}</small>
-              ) : null}
+              <small
+                aria-hidden="true"
+                className={skillErrors[field] ? "field-error" : "admin-status"}
+                id={`admin-skill-count-${field}`}
+                title={
+                  field === "approvedScope"
+                    ? "6 to 2000 characters"
+                    : "Up to 2000 characters"
+                }
+              >
+                {skill[field].trim().length} / 2000
+              </small>
             </label>
           ))}
         </div>
@@ -616,16 +617,15 @@ function ProjectEditor({
       <fieldset className="admin-fieldset">
         <legend>Reward asset</legend>
         {!assetSelected ? (
-          <p>
-            No reward asset.{" "}
+          <div>
             <button
               type="button"
               className="button secondary-button"
               onClick={() => setAssetSelected(true)}
             >
-              Use this reward asset
+              Set asset
             </button>
-          </p>
+          </div>
         ) : null}
         <label>
           Network
@@ -672,9 +672,7 @@ function ProjectEditor({
             }}
             value={asset.kind}
           >
-            <option value="stablecoin">
-              {network.stablecoin.symbol} (network stablecoin)
-            </option>
+            <option value="stablecoin">{network.stablecoin.symbol}</option>
             <option value="native">{network.native.symbol}</option>
             <option value="token">Another token</option>
           </select>
@@ -710,14 +708,19 @@ function ProjectEditor({
         ) : null}
         {project.manifest.rewardAsset ? (
           <p className="admin-status">
-            Stored: {project.manifest.rewardAsset.symbol},{" "}
-            {project.manifest.rewardAsset.decimals} decimals, verified{" "}
-            {formatDateTime(project.manifest.rewardAsset.verifiedAt)}.
+            <StatusBadge
+              tone="success"
+              icon={<CircleCheck />}
+              title={`Verified ${formatDateTime(project.manifest.rewardAsset.verifiedAt)}`}
+            >
+              {project.manifest.rewardAsset.symbol} ·{" "}
+              {project.manifest.rewardAsset.decimals} dp
+            </StatusBadge>
           </p>
         ) : null}
       </fieldset>
       <fieldset className="admin-fieldset admin-fields-wide">
-        <legend>Advanced settings · revision {project.revision}</legend>
+        <legend>Advanced</legend>
         <label>
           Manifest JSON
           <textarea
@@ -758,7 +761,12 @@ function ProjectEditor({
         )}
       </section>
       <label>
-        Reason for revision (public)
+        <span>
+          Reason{" "}
+          <StatusBadge icon={<Globe />} title="Shown publicly">
+            Public
+          </StatusBadge>
+        </span>
         <input
           maxLength={1000}
           onChange={(event) => setReason(event.target.value)}
@@ -785,13 +793,20 @@ function ProjectEditor({
           <Save aria-hidden="true" />{" "}
           {busy ? "Saving…" : `Save revision ${project.revision + 1}`}
         </button>
+        {draftError ? (
+          <span role="status">
+            <StatusBadge tone="warning" icon={<TriangleAlert />}>
+              Draft not stored
+            </StatusBadge>
+          </span>
+        ) : null}
         <button
           type="button"
           className="button secondary-button"
           disabled={busy}
           onClick={onCancel}
         >
-          <X aria-hidden="true" /> Close and keep draft
+          <X aria-hidden="true" /> Close
         </button>
         <button
           type="button"
@@ -802,9 +817,7 @@ function ProjectEditor({
               sessionStorage.removeItem(draftKey);
               onCancel();
             } catch {
-              setError(
-                "Could not discard the saved draft. Keep this editor open and try again.",
-              );
+              setError("Draft not discarded. Retry.");
             }
           }}
         >
@@ -888,21 +901,21 @@ function DelistButton({
       ) : null}
       {confirming ? (
         <div>
-          <span>Hide this project everywhere?</span>
+          <span>Delist?</span>
           <button
             className="button danger-button"
             disabled={busy}
             onClick={delist}
             type="button"
           >
-            {busy ? "Delisting…" : "Delist project"}
+            {busy ? "Delisting…" : "Confirm delist"}
           </button>
           <button
             className="button ghost-button"
             onClick={() => setConfirming(false)}
             type="button"
           >
-            Keep listed
+            Cancel
           </button>
         </div>
       ) : (
@@ -1029,7 +1042,7 @@ function ProjectsSection({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Find a project or repository"
+              placeholder="Search"
             />
           </label>
           <MetricGrid className="admin-counts">
@@ -1153,7 +1166,7 @@ function ProjectsSection({
                       </dd>
                     </div>
                     <div>
-                      <dt>Discovery placement</dt>
+                      <dt>Listing</dt>
                       <dd>{project.manifest.listingTier}</dd>
                     </div>
                     <div>
@@ -1375,19 +1388,30 @@ function FeeConversionsSection({ actorId }: { actorId: string }) {
                   {totals.length > 0 ? (
                     totals.map((total) => (
                       <dd key={total.token}>
-                        {total.conversions}{" "}
-                        {total.conversions === 1 ? "conversion" : "conversions"}
-                        : {total.amountIn} base units of{" "}
-                        {tokenLabel(total.token)} to{" "}
+                        <code title={total.token}>
+                          {total.token.length > 13
+                            ? `${total.token.slice(0, 6)}…${total.token.slice(-4)}`
+                            : total.token}
+                        </code>
+                        <CopyButton label="token address" text={total.token} />{" "}
+                        <span title="Base units">{total.amountIn}</span> →{" "}
                         {convertedAmount(
                           total.network,
                           total.targetToken,
                           total.amountOut,
-                        )}
+                        )}{" "}
+                        <StatusBadge
+                          title={`${total.conversions} ${total.conversions === 1 ? "conversion" : "conversions"}`}
+                        >
+                          ×{total.conversions}
+                        </StatusBadge>
                       </dd>
                     ))
                   ) : route.status === "usdc" ? (
-                    <dd>No conversions</dd>
+                    <dd className="admin-status">
+                      <span aria-hidden="true">—</span>
+                      <span className="visually-hidden">No conversions</span>
+                    </dd>
                   ) : null}
                 </div>
               );
@@ -1438,8 +1462,7 @@ export default function AdminPage() {
   } else if (!state.session.admin) {
     body = (
       <p className="form-error" role="alert">
-        <CircleAlert aria-hidden="true" /> @{state.session.githubLogin} is not a
-        Slop admin.
+        <Lock aria-hidden="true" /> Admins only
       </p>
     );
   } else {

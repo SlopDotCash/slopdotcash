@@ -94,7 +94,7 @@ test("security settings retry a failed management access check", async ({
 
   await retry.click();
   await expect(settings.getByRole("alert")).toContainText(
-    "Only the current project steward or a repository administrator can manage this bounty.",
+    "Steward or repo admin only.",
   );
   expect(revisionReads).toHaveLength(0);
 

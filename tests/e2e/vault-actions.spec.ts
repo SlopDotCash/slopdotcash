@@ -373,7 +373,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   // Public totals remain visible without exposing owner wallet controls.
   await page.goto("/projects/eliza", { waitUntil: "networkidle" });
   const summary = page.getByRole("region", { name: "Project escrow" });
-  await expect(summary).toContainText("Totals not read yet");
+  await expect(summary).toContainText("Pending");
   await expect(
     page.getByRole("region", { name: /^Fund or withdraw/u }),
   ).toHaveCount(0);
@@ -381,41 +381,35 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     page.getByRole("region", { name: /^Vault monthly authorization/u }),
   ).toHaveCount(0);
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
-  await expect(
-    page.getByText("Vault: Not set up", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("Payments are disabled for this project.", { exact: false }),
-  ).toHaveCount(0);
+  await expect(page.getByText("No vault", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Payments off", { exact: true })).toHaveCount(0);
   const actions = page.getByRole("region", {
     name: "Fund or withdraw · Base Sepolia (test)",
   });
   await actions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  await actions.getByLabel("Token amount", { exact: true }).fill("101");
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await actions.getByLabel("Amount", { exact: true }).fill("101");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(actions.getByRole("alert")).toContainText("Switch your wallet");
   wrongNetwork = false;
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(actions.getByRole("alert")).toContainText("balance is too low");
-  await actions.getByLabel("Token amount", { exact: true }).fill("10");
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await actions.getByLabel("Amount", { exact: true }).fill("10");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
-  ).toContainText("no refund right");
-  for (const address of [deployment.vault, deployment.asset]) {
-    await expect(
-      actions
-        .locator(".vault-contract-details")
-        .getByText(address, { exact: true }),
-    ).toBeVisible();
+  ).toContainText("Refundable only to the owner");
+  // Review and pending show the full addresses without a click.
+  for (const [label, address] of [
+    ["vault address", deployment.vault],
+    ["token address", deployment.asset],
+  ] as const) {
+    const identifier = actions
+      .locator(".compact-identifier")
+      .filter({ has: page.getByLabel(`Show full ${label}`, { exact: true }) });
+    await expect(identifier).toHaveAttribute("open", "");
+    await expect(identifier.getByText(address, { exact: true })).toBeVisible();
   }
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
@@ -431,9 +425,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     window.history.replaceState(window.history.state, "", "/how-it-works");
     window.history.pushState({}, "", current);
   });
-  await actions
-    .getByRole("button", { name: "Approve exact token amount in wallet" })
-    .click();
+  await actions.getByRole("button", { name: "Approve", exact: true }).click();
   try {
     await leaveWithVaultPreflight(page);
     expect(sends).toEqual([]);
@@ -447,20 +439,14 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await actions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  await actions.getByLabel("Token amount", { exact: true }).fill("10");
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await actions.getByLabel("Amount", { exact: true }).fill("10");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   rejected = true;
-  await actions
-    .getByRole("button", { name: "Approve exact token amount in wallet" })
-    .click();
+  await actions.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(actions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(0);
   rejected = false;
-  await actions
-    .getByRole("button", { name: "Approve exact token amount in wallet" })
-    .click();
+  await actions.getByRole("button", { name: "Approve", exact: true }).click();
   await expect.poll(() => sends.length).toBe(1);
   // The approval is included but not finalized: no block is mined here. The
   // view checks it without a click and opens the deposit review itself.
@@ -472,61 +458,55 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   expect(BigInt(approval.blockNumber)).toBeGreaterThan(
     BigInt(finalizedAtApproval.number),
   );
-  await expect(actions.getByRole("status")).toContainText(
-    "no funds have been deposited yet",
-  );
+  await expect(actions.getByRole("status")).toContainText(/Approve\s*Deposit/u);
   await expect(
     actions.getByRole("button", { name: "Check transaction", exact: true }),
   ).toHaveCount(0);
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
-  ).toContainText("no refund right");
-  await expect(actions.getByLabel("Token amount", { exact: true })).toHaveValue(
-    "10",
-  );
+  ).toContainText("Refundable only to the owner");
+  await expect(actions.getByLabel("Amount", { exact: true })).toHaveValue("10");
   ambiguous = true;
-  await actions
-    .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
-    .click();
-  await expect(actions.getByRole("alert")).toContainText(
-    "wallet result is unclear",
-  );
+  await actions.getByRole("button", { name: "Deposit", exact: true }).click();
+  await expect(actions.getByRole("alert")).toContainText("Result unclear");
   await page.reload({ waitUntil: "networkidle" });
   await actions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  for (const address of [deployment.vault, deployment.asset]) {
-    await expect(
-      actions
-        .locator(".vault-contract-details")
-        .getByText(address, { exact: true }),
-    ).toBeVisible();
+  // Review and pending show the full addresses without a click.
+  for (const [label, address] of [
+    ["vault address", deployment.vault],
+    ["token address", deployment.asset],
+  ] as const) {
+    const identifier = actions
+      .locator(".compact-identifier")
+      .filter({ has: page.getByLabel(`Show full ${label}`, { exact: true }) });
+    await expect(identifier).toHaveAttribute("open", "");
+    await expect(identifier.getByText(address, { exact: true })).toBeVisible();
   }
   await expect(
     actions.getByRole("button", {
-      name: "Confirm deposit in wallet",
+      name: "Deposit",
       exact: true,
     }),
   ).toHaveCount(0);
-  await actions.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  await actions.getByLabel("Transaction hash", { exact: true }).fill(sends[0]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(actions.getByRole("alert")).toContainText(
     "does not match the pending wallet action",
   );
-  await actions.getByLabel("Transaction hash from your wallet").fill(sends[1]);
+  await actions.getByLabel("Transaction hash", { exact: true }).fill(sends[1]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(actions.getByRole("status")).toContainText(
-    "Waiting for finalized",
-  );
+  await expect(actions.getByRole("status")).toContainText("Finalizing");
   await rpc("anvil_mine", ["0x40"]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(actions.getByRole("status")).toContainText("Deposit verified");
+  await expect(actions.getByRole("status")).toContainText("Deposited");
   const deposited = await rpc("eth_getTransactionReceipt", [sends[1]]);
   expect(
     deposited.logs.some(
@@ -536,31 +516,22 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   ).toBe(true);
   // A depositor's wallet is offered no withdrawal; the owner's wallet is.
   await expect(
-    actions.getByRole("radio", { name: "Withdraw free funds", exact: true }),
+    actions.getByRole("radio", { name: "Withdraw", exact: true }),
   ).toHaveCount(0);
-  await expect(actions).toContainText(
-    "Only the vault owner's wallet can withdraw free funds.",
-  );
   account = owner;
   ambiguous = false;
   await actions.getByRole("button", { name: "Choose another wallet" }).click();
   await actions
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  await actions
-    .getByRole("radio", { name: "Withdraw free funds", exact: true })
-    .check();
-  await actions.getByLabel("Token amount", { exact: true }).fill("11");
-  await actions
-    .getByRole("button", { name: "Review withdrawal", exact: true })
-    .click();
+  await actions.getByRole("radio", { name: "Withdraw", exact: true }).check();
+  await actions.getByLabel("Amount", { exact: true }).fill("11");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(actions.getByRole("alert")).toContainText(
     "exceeds the vault's free balance",
   );
-  await actions.getByLabel("Token amount", { exact: true }).fill("5");
-  await actions
-    .getByRole("button", { name: "Review withdrawal", exact: true })
-    .click();
+  await actions.getByLabel("Amount", { exact: true }).fill("5");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(
     actions.getByRole("region", { name: "Review vault action" }),
   ).toContainText("4.9");
@@ -583,7 +554,8 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   });
   await restoreText();
   const confirmWithdrawal = actions.getByRole("button", {
-    name: "Confirm withdrawal in wallet",
+    name: "Withdraw",
+    exact: true,
   });
   await confirmWithdrawal.focus();
   await expect(confirmWithdrawal).toBeFocused();
@@ -594,9 +566,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await page.waitForTimeout(4_000);
   await expect(actions).toContainText("Withdrawal awaiting verification");
   await rpc("anvil_mine", ["0x40"]);
-  await expect(actions.getByRole("status")).toContainText(
-    "Withdrawal verified",
-  );
+  await expect(actions.getByRole("status")).toContainText("Withdrawn");
   expect(sends).toHaveLength(3);
   const balance = await rpc("eth_call", [
     {
@@ -611,21 +581,17 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   ]);
   expect(BigInt(balance)).toBe(4_900_000n);
   // A real included transaction that runs out of gas must not count as a withdrawal.
-  await actions.getByLabel("Token amount", { exact: true }).fill("1");
-  await actions
-    .getByRole("button", { name: "Review withdrawal", exact: true })
-    .click();
+  await actions.getByLabel("Amount", { exact: true }).fill("1");
+  await actions.getByRole("button", { name: "Review", exact: true }).click();
   await expect(
-    actions.getByRole("button", { name: "Confirm withdrawal in wallet" }),
+    actions.getByRole("button", { name: "Withdraw", exact: true }),
   ).toBeVisible();
   forceFailedTransaction = true;
-  await actions
-    .getByRole("button", { name: "Confirm withdrawal in wallet" })
-    .click();
+  await actions.getByRole("button", { name: "Withdraw", exact: true }).click();
   await expect.poll(() => sends.length).toBe(4);
   await rpc("anvil_mine", ["0x40"]);
   await expect(actions.getByRole("status")).toContainText(
-    "The transaction failed.",
+    "Transaction failed.",
   );
   expect((await rpc("eth_getTransactionReceipt", [sends[3]])).status).toBe(
     "0x0",
@@ -719,7 +685,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     },
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   await selectAwardMonth(page, "2026-09");
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
@@ -736,7 +705,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("owner's wallet");
   await ownerActions
@@ -747,7 +716,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(
     ownerActions.getByRole("region", {
@@ -762,7 +731,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   });
   rejected = true;
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(4);
@@ -774,19 +743,18 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   holdRejectedSend = true;
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
   await expect.poll(() => heldRejectedSendStarted).toBe(true);
   await page.getByRole("link", { name: "Slop home", exact: true }).click();
   await expect(ownerActions).toHaveCount(0);
   await page.goBack();
   await expect(ownerActions).toBeVisible();
-  await ownerActions
-    .getByText("Wallet confirms nothing was sent", { exact: true })
-    .click();
+  await ownerActions.getByText("Nothing was sent?", { exact: true }).click();
   await ownerActions
     .getByRole("button", {
-      name: "I checked my wallet; this request was not sent",
+      name: "Not sent — clear",
+      exact: true,
     })
     .click();
   rejected = false;
@@ -796,14 +764,12 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await ownerActions
-    .getByRole("button", { name: "Authorize this award in wallet" })
+    .getByRole("button", { name: "Reserve in wallet", exact: true })
     .click();
-  await expect(ownerActions.getByRole("alert")).toContainText(
-    "wallet result is unclear",
-  );
+  await expect(ownerActions.getByRole("alert")).toContainText("Result unclear");
   expect(sends).toHaveLength(5);
   const commitmentKey =
     "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
@@ -831,7 +797,10 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "/api/v1/payments/projects/eliza/monthly/2026-09",
   );
   await page.reload();
-  await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await page
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
+    .click();
   await selectAwardMonth(page, "2026-09");
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
@@ -842,21 +811,26 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect(
     ownerActions.getByRole("button", {
-      name: "Authorize this award in wallet",
+      name: "Reserve in wallet",
+      exact: true,
     }),
   ).toHaveCount(0);
   expect(reviewReads).toBe(2);
   expect(diagnostics.count(unavailableReview)).toBe(1);
-  await ownerActions.getByLabel("Commitment transaction hash").fill(sends[1]);
+  await ownerActions
+    .getByLabel("Transaction hash", { exact: true })
+    .fill(sends[1]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
   await expect(ownerActions.getByRole("alert")).toContainText(
     "does not match the pending wallet action",
   );
-  await ownerActions.getByLabel("Commitment transaction hash").fill(sends[4]);
+  await ownerActions
+    .getByLabel("Transaction hash", { exact: true })
+    .fill(sends[4]);
   await rpc("anvil_mine", ["0x40"]);
   await ownerActions.getByRole("button", { name: "Check commitment" }).click();
   await expect(ownerActions.getByRole("status")).toContainText(
-    "Award reserved on the finalized chain",
+    /^\s*Reserved\b/u,
   );
   const counters = parseAbi([
     "function reservedPrincipal() view returns (uint128)",
@@ -879,7 +853,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     ).toBe(expected);
   }
   await ownerActions
-    .getByRole("button", { name: "Verify award and funding" })
+    .getByRole("button", { name: "Review", exact: true })
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText(
     "already committed",
@@ -1016,10 +990,11 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page
-    .getByRole("button", { name: "Review monthly awards", exact: true })
+    .getByRole("region", { name: "Monthly awards", exact: true })
+    .getByRole("button", { name: "Open", exact: true })
     .click();
   const authorizationLink = page.getByRole("link", {
-    name: "Review current setting and cap",
+    name: "Auto-pay settings",
     exact: true,
   });
   await expect(authorizationLink).toHaveAttribute(
@@ -1029,20 +1004,19 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await authorizationLink.click();
   await expect(monthly).toBeInViewport();
   await expect(
-    monthly.getByText("Current setting", { exact: true }),
+    monthly.getByRole("region", { name: "Review monthly payment setting" }),
   ).toHaveCount(0);
   expect(sends).toHaveLength(0);
   expect(await onChain()).toEqual({ cap: 0n, enabled: false });
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  const automatic = monthly.getByRole("checkbox", {
-    name: "Pay contributors automatically each month",
+  const automatic = monthly.getByRole("switch", {
+    name: "Auto-pay monthly",
+    exact: true,
   });
   await expect(automatic).toBeChecked();
-  await monthly
-    .getByRole("button", { name: "Review monthly payment setting" })
-    .click();
+  await monthly.getByRole("button", { name: "Review", exact: true }).click();
   await expect(monthly.getByRole("alert")).toContainText(
     "vault owner's wallet",
   );
@@ -1051,11 +1025,9 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  await monthly
-    .getByRole("button", { name: "Review monthly payment setting" })
-    .click();
+  await monthly.getByRole("button", { name: "Review", exact: true }).click();
   await expect(monthly.getByRole("alert")).toContainText(
-    "vault token differs from the project's reward asset",
+    "Vault token mismatch",
   );
   expect(sends).toHaveLength(0);
   expect(await onChain()).toEqual({ cap: 0n, enabled: false });
@@ -1064,25 +1036,24 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await monthly
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
-  await monthly
-    .getByRole("button", { name: "Review monthly payment setting" })
-    .click();
+  await monthly.getByRole("button", { name: "Review", exact: true }).click();
   const review = monthly.getByRole("region", {
     name: "Review monthly payment setting",
   });
   await expect(review).toContainText("Off");
   await expect(review).toContainText(cap);
-  await expect(
-    monthly
-      .locator(".vault-contract-details")
-      .getByText(owner, { exact: true }),
-  ).toBeVisible();
+  const ownerIdentifier = monthly.locator(".compact-identifier").filter({
+    has: page.getByLabel("Show full owner address", { exact: true }),
+  });
+  await expect(ownerIdentifier).toHaveAttribute("open", "");
+  await expect(ownerIdentifier.getByText(owner, { exact: true })).toBeVisible();
   await page.screenshot({
     path: info.outputPath("monthly-payment-review.png"),
     fullPage: true,
   });
   const turnOn = monthly.getByRole("button", {
-    name: "Turn on automatic monthly payment in wallet",
+    name: "Turn on",
+    exact: true,
   });
   rejected = true;
   await turnOn.click();
@@ -1091,9 +1062,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   rejected = false;
   ambiguous = true;
   await turnOn.click();
-  await expect(monthly.getByRole("alert")).toContainText(
-    "wallet result is unclear",
-  );
+  await expect(monthly.getByRole("alert")).toContainText("Result unclear");
   expect(sends).toHaveLength(1);
   ambiguous = false;
   await page.reload({ waitUntil: "networkidle" });
@@ -1101,20 +1070,15 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     .getByRole("button", { name: "Connect MetaMask", exact: true })
     .click();
   await expect(turnOn).toHaveCount(0);
-  await expect(
-    monthly
-      .locator(".vault-contract-details")
-      .getByText(owner, { exact: true }),
-  ).toBeVisible();
-  const recoveryHash = monthly.getByLabel("Transaction hash from your wallet");
+  await expect(ownerIdentifier).toHaveAttribute("open", "");
+  await expect(ownerIdentifier.getByText(owner, { exact: true })).toBeVisible();
+  const recoveryHash = monthly.getByLabel("Transaction hash", { exact: true });
   const unrelatedHash = `0x${"d".repeat(64)}`;
   await recoveryHash.fill(unrelatedHash);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(monthly.getByRole("status")).toContainText(
-    "Waiting for finalized",
-  );
+  await expect(monthly.getByRole("status")).toContainText("Finalizing");
   await expect(recoveryHash).toBeEditable();
   await expect(recoveryHash).toHaveValue(unrelatedHash);
   await expect(turnOn).toHaveCount(0);
@@ -1148,9 +1112,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   });
   await page.keyboard.press("Enter");
   await restoreRecoveryText();
-  await expect(monthly.getByRole("status")).toContainText(
-    "Waiting for finalized",
-  );
+  await expect(monthly.getByRole("status")).toContainText("Finalizing");
   await expect(recoveryHash).toBeEditable();
   await page.reload({ waitUntil: "networkidle" });
   await monthly
@@ -1163,33 +1125,28 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(monthly.getByRole("status")).toContainText(
-    "Automatic monthly payment is on",
-  );
+  await expect(monthly.getByRole("status")).toContainText(/^\s*On\b/u);
   expect(await onChain()).toEqual({
     cap: BigInt(project.reward.monthlyCapMinor),
     enabled: true,
   });
   // The same setting needs no second signature.
-  await monthly
-    .getByRole("button", { name: "Review monthly payment setting" })
-    .click();
-  await expect(review).toContainText("Nothing to sign");
+  await monthly.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(review).toContainText("No change");
   // Opting out keeps the cap and turns the commitment off.
   await automatic.uncheck();
-  await monthly
-    .getByRole("button", { name: "Review monthly payment setting" })
-    .click();
+  await monthly.getByRole("button", { name: "Review", exact: true }).click();
   await monthly
     .getByRole("button", {
-      name: "Turn off automatic monthly payment in wallet",
+      name: "Turn off",
+      exact: true,
     })
     .click();
   await expect.poll(() => sends.length).toBe(2);
   await expect(recoveryHash).toHaveCount(0);
   await expect(
     monthly.getByRole("link", {
-      name: "View submitted transaction",
+      name: "Transaction",
       exact: true,
     }),
   ).toHaveAttribute("href", new RegExp(sends[1]));
@@ -1207,9 +1164,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
-  await expect(monthly.getByRole("status")).toContainText(
-    "Automatic monthly payment is off",
-  );
+  await expect(monthly.getByRole("status")).toContainText(/^\s*Off\b/u);
   expect(await onChain()).toEqual({
     cap: BigInt(project.reward.monthlyCapMinor),
     enabled: false,
@@ -1529,7 +1484,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     });
     let setup = page.getByRole("region", { name: "Set up project vault" });
     await expect(
-      setup.getByRole("button", { name: "Review vault creation", exact: true }),
+      setup.getByRole("button", { name: "Review", exact: true }),
     ).toBeVisible();
     await expect(
       setup.getByRole("button", {
@@ -1552,27 +1507,27 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
     await restoreSetupText();
-    await setup.getByText("Recover an existing vault", { exact: true }).focus();
+    await setup.getByText("Recover vault", { exact: true }).focus();
     await page.keyboard.press("Enter");
     await setup
       .getByRole("button", { name: "Recover existing vault", exact: true })
       .click();
     await expect(setup.getByRole("alert")).toContainText(
-      "No existing vault was found",
+      "No vault found for this wallet.",
     );
     await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
+      setup.getByRole("button", { name: "Create vault", exact: true }),
     ).toHaveCount(0);
     expect(sends).toHaveLength(0);
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    const monthlySetting = setup.getByRole("combobox", {
-      name: "Automatic monthly payment",
+    const monthlySetting = setup.getByRole("switch", {
+      name: "Auto-pay monthly",
       exact: true,
     });
-    await expect(monthlySetting).toHaveValue("on");
-    if (!automatic) await monthlySetting.selectOption("off");
+    await expect(monthlySetting).toBeChecked();
+    if (!automatic) await monthlySetting.uncheck();
     const reviewButton = setup.getByRole("button", {
-      name: "Review vault creation",
+      name: "Review",
       exact: true,
     });
     // The wallet connection keeps the button disabled until it finishes.
@@ -1581,7 +1536,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(reviewButton).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
+      setup.getByRole("button", { name: "Create vault", exact: true }),
     ).toBeEnabled();
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.screenshot({
@@ -1616,7 +1571,9 @@ test("owner creates, registers and funds a vault through the real API", async ({
         response.request().method() === "POST" &&
         response.request().postDataJSON()?.step === "review",
     );
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await setup
+      .getByRole("button", { name: "Create vault", exact: true })
+      .click();
     await creationReviewWaiting;
     try {
       await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -1638,31 +1595,34 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await page.unroute(`**${setupPath}`);
     await page.goBack();
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    if (!automatic) await monthlySetting.selectOption("off");
+    if (!automatic) await monthlySetting.uncheck();
     await reviewButton.click();
     await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
+      setup.getByRole("button", { name: "Create vault", exact: true }),
     ).toBeEnabled();
     // A confirmed rejection may clear only its own marker, even after a new
     // component has recovered that marker and started another real request.
     rejectNextSetupSend = true;
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await setup
+      .getByRole("button", { name: "Create vault", exact: true })
+      .click();
     await expect.poll(() => setupRejectionStarted).toBe(true);
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
     await expect(setup).toHaveCount(0);
     await page.goBack();
-    await setup
-      .getByText("Wallet confirms nothing was sent", { exact: true })
-      .click();
+    await setup.getByText("Nothing was sent?", { exact: true }).click();
     await setup
       .getByRole("button", {
-        name: "I checked my wallet; this request was not sent",
+        name: "Not sent — clear",
+        exact: true,
       })
       .click();
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
-    if (!automatic) await monthlySetting.selectOption("off");
+    if (!automatic) await monthlySetting.uncheck();
     await reviewButton.click();
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await setup
+      .getByRole("button", { name: "Create vault", exact: true })
+      .click();
     await expect(setup.getByRole("alert")).toContainText(
       "Transport interrupted",
     );
@@ -1687,12 +1647,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toBe(retainedSetupRetry);
     await page.reload({ waitUntil: "networkidle" });
     // The original tab keeps the interrupted request and offers no second send.
-    await expect(setup.getByLabel("Creation transaction hash")).toHaveValue("");
     await expect(
-      setup.getByText("Wallet confirms nothing was sent"),
+      setup.getByLabel("Transaction hash", { exact: true }),
+    ).toHaveValue("");
+    await expect(
+      setup.getByText("Nothing was sent?", { exact: true }),
     ).toBeVisible();
     await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
+      setup.getByRole("button", { name: "Create vault", exact: true }),
     ).toHaveCount(0);
     // A fresh tab has the same authenticated owner but no injected wallet and
     // no saved creation request. Recover the already-sent vault without sending.
@@ -1705,22 +1667,20 @@ test("owner creates, registers and funds a vault through the real API", async ({
       name: "Set up project vault",
     });
     await expect(
-      recoverySetup.getByRole("button", { name: "Review vault creation" }),
+      recoverySetup.getByRole("button", { name: "Review", exact: true }),
     ).toBeDisabled();
     await expect(
       recoverySetup.getByRole("button", { name: /^Connect / }),
     ).toHaveCount(0);
     await recoverySetup
-      .getByRole("combobox", { name: "Automatic monthly payment", exact: true })
-      .selectOption(automatic ? "on" : "off");
+      .getByRole("switch", { name: "Auto-pay monthly", exact: true })
+      .setChecked(automatic);
     const recoverButton = recoverySetup.getByRole("button", {
       name: "Recover existing vault",
       exact: true,
     });
     await expect(recoverButton).not.toBeVisible();
-    await recoverySetup
-      .getByText("Recover an existing vault", { exact: true })
-      .focus();
+    await recoverySetup.getByText("Recover vault", { exact: true }).focus();
     await recoveryPage.keyboard.press("Enter");
     await expect(recoverButton).toBeEnabled();
     await expectAccessible(recoveryPage);
@@ -1731,24 +1691,22 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await recoverButton.focus();
     await recoveryPage.keyboard.press("Enter");
     await expect(
-      recoverySetup.getByRole("button", { name: "Create vault in wallet" }),
+      recoverySetup.getByRole("button", { name: "Create vault", exact: true }),
     ).toHaveCount(0);
     await expect(
-      recoverySetup.getByLabel("Creation transaction hash"),
+      recoverySetup.getByLabel("Transaction hash", { exact: true }),
     ).toBeFocused();
     await recoveryPage.keyboard.type(sends[0]);
     await recoverySetup
-      .getByRole("button", { name: "Check vault registration" })
+      .getByRole("button", { name: "Check", exact: true })
       .click();
-    await expect(recoverySetup.getByRole("status")).toContainText(
-      "not finalized",
-    );
+    await expect(recoverySetup.getByRole("status")).toContainText("Finalizing");
     await recoveryPage.reload({ waitUntil: "networkidle" });
     await expect(
-      recoverySetup.getByLabel("Creation transaction hash"),
+      recoverySetup.getByLabel("Transaction hash", { exact: true }),
     ).toHaveValue(sends[0]);
     await expect(
-      recoverySetup.getByRole("button", { name: "Create vault in wallet" }),
+      recoverySetup.getByRole("button", { name: "Create vault", exact: true }),
     ).toHaveCount(0);
     expect(sends).toHaveLength(1);
     await recoveryPage.screenshot({
@@ -1778,26 +1736,20 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(setup.getByText("1,000 $TEST", { exact: true })).toBeVisible();
     expectedRecoveryRejection = true;
     await setup
-      .getByLabel("Creation transaction hash")
+      .getByLabel("Transaction hash", { exact: true })
       .fill(unrelatedTransaction);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
+    await setup.getByRole("button", { name: "Check", exact: true }).click();
     await expect(setup.getByRole("alert")).toContainText("does not match");
     expect(sends).toHaveLength(1);
     await expect(
-      setup.getByRole("button", { name: "Create vault in wallet" }),
+      setup.getByRole("button", { name: "Create vault", exact: true }),
     ).toHaveCount(0);
     expectedRecoveryRejection = false;
-    await setup.getByLabel("Creation transaction hash").fill(sends[0]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
-    await expect(setup.getByRole("status")).toContainText("not finalized");
+    await setup.getByLabel("Transaction hash", { exact: true }).fill(sends[0]);
+    await setup.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(setup.getByRole("status")).toContainText("Finalizing");
     await rpc("anvil_mine", ["0x40"]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
+    await setup.getByRole("button", { name: "Check", exact: true }).click();
     await expect(setup).toHaveCount(0);
     await expect(
       recoveryPage
@@ -1811,7 +1763,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .filter({ hasText: /^Monthly rewards$/u })
       .click();
     await expect(
-      recoveryPage.getByRole("textbox", { name: /^Monthly amount/u }),
+      recoveryPage.getByRole("textbox", { name: /^Amount \/ month/u }),
     ).toHaveValue("2000");
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
@@ -1890,29 +1842,29 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .click();
     await monthlyControls
       .getByRole("button", {
-        name: "Review monthly payment setting",
+        name: "Review",
         exact: true,
       })
       .click();
-    await expect(monthlyControls.getByText(/^On, up to 2,000 /)).toBeVisible();
+    await expect(
+      monthlyControls.getByRole("region", {
+        name: "Review monthly payment setting",
+      }),
+    ).toContainText(/to\s*On · 2,000 /u);
     expect(sends).toHaveLength(1);
     const funding = page.getByRole("region", { name: /Fund or withdraw/ });
     await funding.getByRole("button", { name: "Connect MetaMask" }).click();
-    await funding.getByLabel("Token amount").fill("10");
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
+    await funding.getByLabel("Amount", { exact: true }).fill("10");
+    await funding.getByRole("button", { name: "Review", exact: true }).click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
     await expect(funding.getByRole("status")).toContainText(
-      "no funds have been deposited yet",
+      /Approve\s*Deposit/u,
     );
-    await funding
-      .getByRole("button", { name: "Confirm deposit in wallet" })
-      .click();
+    await funding.getByRole("button", { name: "Deposit", exact: true }).click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await expect(funding).toContainText("finalized");
+    await expect(funding.getByRole("status")).toContainText("Deposited");
     expect(
       BigInt(
         await rpc("eth_call", [
@@ -1944,7 +1896,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("region", { name: "Setup status: Ready" }),
+      page.getByRole("region", { name: /^Setup\s*Ready$/u }),
     ).toBeVisible();
     await expect(
       page
@@ -2203,7 +2155,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     // retained setup API still admits existing vaults used by private funding.
     await expect(setup).toHaveCount(0);
     await expect(
-      page.getByRole("combobox", { name: /^Automatic monthly payment/ }),
+      page.getByRole("switch", { name: /^Auto-pay monthly/ }),
     ).toHaveCount(0);
     const input = {
       expectedRevision: 1,
@@ -2254,18 +2206,14 @@ test("owner registers a separate bounty vault through the API and funds it priva
     ).rejects.toThrow();
     const funding = page.getByRole("region", { name: /Fund or withdraw/ });
     await funding.getByRole("button", { name: "Connect MetaMask" }).click();
-    await funding.getByLabel("Token amount").fill("10");
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
+    await funding.getByLabel("Amount", { exact: true }).fill("10");
+    await funding.getByRole("button", { name: "Review", exact: true }).click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
-    await funding
-      .getByRole("button", { name: "Confirm deposit in wallet" })
-      .click();
+    await funding.getByRole("button", { name: "Deposit", exact: true }).click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await expect(funding).toContainText("finalized");
+    await expect(funding.getByRole("status")).toContainText("Deposited");
     const scan = await page.request.post(`${origin}/__fixture`, {
       data: { scanSecurity: true },
     });
@@ -2273,8 +2221,8 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await expect(
       page.getByRole("region", { name: "Bounty funds", exact: true }),
-    ).toContainText("Available for new awards: 10 USDC");
-    await expect(funding.getByRole("status")).toContainText("finalized");
+    ).toContainText(/Available\s*10 USDC/u);
+    await expect(funding.getByRole("status")).toContainText("Deposited");
     await page.request.post(`${origin}/__fixture`, {
       data: { privateReadUnavailable: true },
     });
@@ -2292,15 +2240,13 @@ test("owner registers a separate bounty vault through the API and funds it priva
     );
     // A failed refresh must retain funded withdrawal and transaction recovery.
     await expect(funding).toBeVisible();
-    await expect(funding.getByRole("status")).toContainText("finalized");
-    await expect(bountyFunds).toContainText("Last verified balance");
-    await expect(bountyFunds).toContainText(
-      "Available for new awards: 10 USDC",
-    );
-    await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
-    await funding.getByLabel("Withdraw free funds").check();
+    await expect(funding.getByRole("status")).toContainText("Deposited");
+    await expect(bountyFunds.getByRole("alert")).toContainText("Stale");
+    await expect(bountyFunds).toContainText(/Available\s*10 USDC/u);
+    await expect(funding.getByLabel("Deposit", { exact: true })).toHaveCount(0);
+    await funding.getByLabel("Withdraw", { exact: true }).check();
     await expect(
-      funding.getByRole("button", { name: "Review withdrawal", exact: true }),
+      funding.getByRole("button", { name: "Review", exact: true }),
     ).toBeEnabled();
     await page.screenshot({
       path: info.outputPath("bounty-vault-stale-funds.png"),
@@ -2311,21 +2257,17 @@ test("owner registers a separate bounty vault through the API and funds it priva
     });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
-    await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
-    await expect(funding.getByRole("status")).toContainText("finalized");
+    await expect(funding.getByLabel("Deposit", { exact: true })).toBeVisible();
+    await expect(funding.getByRole("status")).toContainText("Deposited");
     // A capability refresh can finish while the final wallet identity check
     // waits. The old click must use the newly committed deposit restriction.
-    await funding.getByLabel("Deposit tokens").check();
-    await funding.getByLabel("Token amount").fill("1");
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
+    await funding.getByLabel("Deposit", { exact: true }).check();
+    await funding.getByLabel("Amount", { exact: true }).fill("1");
+    await funding.getByRole("button", { name: "Review", exact: true }).click();
     const sentBeforeRestriction = sends.length;
     const bountyPendingKey = `slop:vault-action:v1:${created.network}:${created.vault}:${created.asset}`;
     await holdVaultWalletPreflight(page);
-    await funding
-      .getByRole("button", { name: "Approve exact token amount in wallet" })
-      .click();
+    await funding.getByRole("button", { name: "Approve", exact: true }).click();
     try {
       await waitForVaultPreflight(page);
       await page.request.post(`${origin}/__fixture`, {
@@ -2337,7 +2279,9 @@ test("owner registers a separate bounty vault through the API and funds it priva
       );
       await page.getByRole("button", { name: "Refresh bounty funds" }).click();
       await restricted;
-      await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
+      await expect(funding.getByLabel("Deposit", { exact: true })).toHaveCount(
+        0,
+      );
       await releaseVaultPreflight(page);
       expect(sends).toHaveLength(sentBeforeRestriction);
       expect(
@@ -2357,12 +2301,12 @@ test("owner registers a separate bounty vault through the API and funds it priva
     });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
-    await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
+    await expect(funding.getByLabel("Deposit", { exact: true })).toBeVisible();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision" }),
+      page.getByRole("status").filter({ hasText: /Rev \d+/u }),
     ).toBeVisible();
     const final = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(final.project.manifest.securityBounty.status).toBe("open");
@@ -2408,13 +2352,13 @@ test("owner registers a separate bounty vault through the API and funds it priva
       waitUntil: "networkidle",
     });
     await expect(
-      page.getByRole("heading", { name: "Manage project", exact: true }),
+      page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("region", { name: "Bounty funds", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByText("Available for new awards:", { exact: false }),
+      page.locator(".route-metric").filter({ hasText: "Available" }),
     ).toHaveCount(0);
     await page.goto(`${origin}/projects/${id}/manage`, {
       waitUntil: "networkidle",
@@ -2422,7 +2366,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await openProjectSecuritySettings(page);
     await expect(
       page.getByRole("region", { name: "Bounty funds", exact: true }),
-    ).toContainText("Available for new awards: 10 USDC");
+    ).toContainText(/Available\s*10 USDC/u);
     await expect(funding.getByRole("status")).toHaveCount(0);
     // Unlike a transient read failure, lost authority must clear private data.
     await page.request.post(`${origin}/__fixture`, {
@@ -2441,9 +2385,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
-    await expect(bountyFunds).toContainText(
-      "Available for new awards: 10 USDC",
-    );
+    await expect(bountyFunds).toContainText(/Available\s*10 USDC/u);
     expect(failed).toEqual([
       `503 ${privateUrl}`,
       `503 ${privateUrl}`,
@@ -2486,9 +2428,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await expect(bountyFunds.getByRole("alert")).toContainText(
       "account changed",
     );
-    await expect(bountyFunds).not.toContainText(
-      "Available for new awards: 10 USDC",
-    );
+    await expect(bountyFunds).not.toContainText(/Available\s*10 USDC/u);
     await expect(funding).toHaveCount(0);
     await page.unroute(privateUrl);
     await page.unroute("**/api/v1/project-session");

@@ -170,59 +170,59 @@ export function parseNotificationsResponse(
   return body as NotificationsResponse;
 }
 
-/** One plain sentence for each event kind. */
+/** One short label for each event kind. */
 export function notificationTitle(n: Notification): string {
   switch (n.kind) {
     case "application_approved":
-      return `${n.subject} was added to Slop.`;
+      return `${n.subject} added`;
     case "application_rejected":
-      return `${n.subject} was not added to Slop.`;
+      return `${n.subject} not added`;
     case "project_ready":
-      return `The ${n.subject} project is open to contributors.`;
+      return `${n.subject} is open`;
     case "project_scan_failed":
-      return `The security scan of ${n.subject} did not clear. Contributor work stays closed until a scan passes.`;
+      return `${n.subject} scan failed`;
     case "project_installation_lost":
-      return `Slopbot is no longer installed on a ${n.subject} repository. Install it again so reviews continue.`;
+      return `${n.subject}: reinstall Slopbot`;
     case "project_revision":
-      return `The ${n.subject} project settings changed.`;
+      return `${n.subject} settings changed`;
     case "award_reserved":
-      return `An award from ${n.subject} is reserved for you.`;
+      return `${n.subject} award reserved`;
     case "payment_paid":
-      return `A payment from ${n.subject} is finalized.`;
+      return `${n.subject} payment paid`;
     case "payout_held":
-      return `A payout from ${n.subject} is held.`;
+      return `${n.subject} payout held`;
     case "wallet_changed":
-      return `A ${n.subject} payout wallet was added to your account.`;
+      return `${n.subject} wallet added`;
     case "project_quarantined":
-      return `The ${n.subject} project is quarantined. It is paused and not listed.`;
+      return `${n.subject} quarantined`;
     case "project_banned":
-      return `The ${n.subject} project is banned. It is paused and not listed.`;
+      return `${n.subject} banned`;
     case "reinstatement_requested":
-      return `A reinstatement request for ${n.subject} is open for independent review.`;
+      return `${n.subject} reinstatement in review`;
     case "project_reinstated":
-      return `The ${n.subject} project is reinstated.`;
+      return `${n.subject} reinstated`;
     case "reinstatement_denied":
-      return `The reinstatement request for ${n.subject} was denied.`;
+      return `${n.subject} reinstatement denied`;
     case "reinstatement_review":
-      return `A reinstatement request for ${n.subject} needs your independent review.`;
+      return `Review ${n.subject} reinstatement`;
     case "payout_exception":
       return n.eventKey.startsWith("monthly-underfunded:")
-        ? `The ${n.subject} monthly awards are underfunded.`
-        : `A payout from ${n.subject} is held and needs attention.`;
+        ? `${n.subject} awards underfunded`
+        : `${n.subject} payout held`;
     case "slopbot_appeal_review":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "A Points dispute is awaiting review."
-        : "A contribution appeal needs your decision on GitHub.";
+        ? "Points dispute to review"
+        : "Appeal to decide";
     case "slopbot_appeal_resolved":
       return n.eventKey.startsWith("slopbot-points-dispute:")
-        ? "The Points dispute was resolved."
-        : "The contribution appeal was resolved.";
+        ? "Points dispute resolved"
+        : "Appeal resolved";
     case "slopbot_scam_review":
-      return `Slopbot closed a ${n.subject} contribution as a scam. Review the author's account.`;
+      return `${n.subject} scam closure: review author`;
     case "security_case":
-      return `Private security case ${n.subject} changed.`;
+      return `Case ${n.subject} updated`;
     case "security_report_received":
-      return `Your private report ${n.subject} was received.`;
+      return `Report ${n.subject} received`;
   }
 }
 
