@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "13ec885c09e697ceef4213d294a3e4e888b9a99c03385790574b043f3f2437e9",
+  "inventorySha256": "297675fd6b306d0ae366091457db8fb4e38df246d1ef32a412542fdcfdfd36d6",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -174,7 +174,8 @@
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
-        "formal/models/api/project_setup_status.qnt"
+        "formal/models/api/project_setup_status.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
       ],
       "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
@@ -3657,7 +3658,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "line": 39,
+      "line": 46,
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],
@@ -3918,11 +3919,14 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 680,
+      "line": 686,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
-      "models": ["formal/models/vetting/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_disposition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "cdata",
         "comment",
@@ -3967,14 +3971,15 @@
       "values": ["accepted", "rejected", "unknown"],
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "lexicallyUnmentionedValues": ["accepted", "rejected", "unknown"],
+      "lexicallyUnmentionedValues": ["accepted", "rejected"],
       "review": "candidate-only"
     },
     {
       "path": "workers/vetting/scanners.ts",
-      "line": 352,
+      "line": 353,
       "name": "phase",
       "kind": "string-union",
       "values": ["invalid-response", "invalid-review"],

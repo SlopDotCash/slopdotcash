@@ -2212,7 +2212,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     expect(triaged.appealTriage).toMatchObject({
       state: "complete",
       provider: "surplus",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       promptRevision: "slop-security-appeal-triage-1",
       proposedOutcome: "return",
       confidence: 0.72,

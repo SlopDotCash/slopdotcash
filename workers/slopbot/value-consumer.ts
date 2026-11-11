@@ -89,7 +89,7 @@ export async function consumeValueRequest(
       !settings ||
       !revision ||
       !/^[a-f0-9]{40}$/.test(revision) ||
-      !env.SURPLUS_API_KEY
+      (!env.ORBIO_API_KEY && !env.SURPLUS_API_KEY)
     )
       return await finish("budget");
     const { monthly, maximum, start } = settings;
