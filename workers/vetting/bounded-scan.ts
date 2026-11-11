@@ -1567,6 +1567,62 @@ function gypIncludedPaths(files: ScanInputFile[]): {
 }
 
 /**
+ * Literal `Project` attributes of MSBuild `Import` elements. MSBuild
+ * resolves a relative specifier against the directory of the file that
+ * names it. `$(MSBuildThisFileDirectory)` is exactly that directory, so it
+ * is dropped before resolution; any other property expression names a
+ * path this reader cannot resolve and is not followed. SDK imports and
+ * absolute paths resolve outside the acquired tree by construction.
+ */
+function msbuildImportSpecifiers(text: string): string[] {
+  const specifiers: string[] = [];
+  for (const match of text.matchAll(
+    /<Import\b[^>]*?\bProject\s*=\s*(?:"([^"]*)"|'([^']*)')/giu,
+  )) {
+    const value = match[1] ?? match[2];
+    if (value === undefined || value === "") continue;
+    const literal = value.replace(/^\$\(MSBuildThisFileDirectory\)/iu, "");
+    if (literal.includes("$")) continue;
+    specifiers.push(literal);
+  }
+  return specifiers;
+}
+
+/**
+ * Files an MSBuild project loads through `Import`, including nested
+ * imports. MSBuild evaluates an imported file during the build whatever
+ * its name is, so an imported file is an install surface even when its
+ * name carries no MSBuild extension. A specifier that does not resolve
+ * inside the acquired tree names SDK or tooling content the submission
+ * does not contain, so it is not followed and is not a gap.
+ */
+function msbuildImportedPaths(files: ScanInputFile[]): Set<string> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const included = new Set<string>();
+  const seen = new Set<string>();
+  const queue = files
+    .filter((file) => MSBUILD_RECIPE.test(file.path))
+    .map((file) => file.path);
+  while (queue.length > 0) {
+    const path = queue.pop();
+    if (path === undefined || seen.has(path)) continue;
+    seen.add(path);
+    const file = byPath.get(path);
+    if (!file) continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const specifier of msbuildImportSpecifiers(text)) {
+      const resolved = resolveBuildInclude(path, specifier);
+      if (resolved === null || !byPath.has(resolved) || seen.has(resolved))
+        continue;
+      included.add(resolved);
+      queue.push(resolved);
+    }
+  }
+  return included;
+}
+
+/**
  * Inspects one revision's acquired files. Pure and deterministic: the same
  * bytes, surface classifications and rules produce the same inventory digest, so an
  * unchanged executable inventory reuses its clean result and any change to
@@ -1668,14 +1724,20 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const msbuildImported = msbuildImportedPaths(files);
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
-    // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    // Both build systems execute included files during configuration, and
+    // MSBuild evaluates the files its projects import.
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      msbuildImported.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
@@ -1728,8 +1790,11 @@ export function inspectRepository(input: {
     // MSBuild and Ant build.xml execute attribute values after XML
     // normalization. MSBuild also executes property element text after
     // character references are decoded. Shell text, and every other file,
-    // is left as written.
-    const msbuild = MSBUILD_RECIPE.test(file.path);
+    // is left as written. A file an MSBuild project imports is evaluated
+    // by MSBuild whatever its filename is, so it gets that normalization
+    // on the same terms as a project identified by its name.
+    const msbuild =
+      MSBUILD_RECIPE.test(file.path) || msbuildImported.has(file.path);
     const attributes =
       msbuild || ANT_BUILD_XML.test(file.path)
         ? xmlAttributeRuleText(text, msbuild)
