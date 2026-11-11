@@ -1,5 +1,6 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
+import { formatAssetSymbol } from "./reward-asset.mjs";
 import type {
   SecurityBountyTerms,
   SecurityProgramStatus,
@@ -38,7 +39,7 @@ export function securityBountyAmountLabel(
     formatBaseUnits(bounty.amount.grossMinor, bounty.amount.decimals),
   );
   if (!bounty.amount.asset) return `$${amount}`;
-  return `${amount} ${bounty.amount.asset.symbol}`;
+  return `${amount} ${formatAssetSymbol(bounty.amount.asset.symbol, bounty.amount.asset.kind)}`;
 }
 
 export function projectRewardSummaries(
@@ -65,7 +66,7 @@ export function projectRewardSummaries(
             kind: "monthly-pool",
             amount: compactWhole(amount),
             token: {
-              symbol: asset.symbol.replace(/^\$/u, ""),
+              symbol: formatAssetSymbol(asset.symbol, asset.kind),
               url:
                 asset.kind === "native"
                   ? asset.network === "solana"

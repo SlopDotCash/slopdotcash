@@ -12,7 +12,7 @@ import {
   readRecord,
   exactKeys as sharedExactKeys,
 } from "./record-validation.mjs";
-import { assertRewardAsset } from "./reward-asset.mjs";
+import { assertRewardAsset, formatAssetSymbol } from "./reward-asset.mjs";
 
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
@@ -147,7 +147,7 @@ export function formatSecurityAmount(minorUnits, amount) {
   const number = formatBaseUnits(minorUnits, amount.decimals);
   return amount.currency === "USD" && !amount.asset
     ? `$${number}`
-    : `${number} ${amount.asset?.symbol ?? amount.currency}`;
+    : `${number} ${formatAssetSymbol(amount.asset?.symbol ?? amount.currency, amount.asset?.kind)}`;
 }
 
 function validateApprovers(value) {

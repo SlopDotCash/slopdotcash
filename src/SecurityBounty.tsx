@@ -77,7 +77,7 @@ import {
 } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
-import type { RewardAsset } from "./lib/reward-asset.mjs";
+import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
@@ -176,7 +176,7 @@ function UnsignedPaymentRequest({
                 </span>
                 <strong>
                   {formatBaseUnits(transfer.amountBase, direct.asset.decimals)}{" "}
-                  {direct.asset.symbol}
+                  {formatAssetSymbol(direct.asset.symbol)}
                 </strong>
                 <CopyIdentifier
                   label={`${transfer.role === "fee" ? "Slop fee" : "researcher"} wallet`}

@@ -12,6 +12,7 @@ import { PRD_MONTHLY_SCHEDULE } from "./lib/payments/monthly-allocation";
 import { parseVaultAmount } from "./lib/payments/vault-amount";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { useAction } from "./lib/use-action";
 import OwnerCommitment, { recoverOwnerCommitments } from "./OwnerCommitment";
 import OwnerReserveRelease, {
@@ -141,7 +142,7 @@ export default function OwnerAwards({
   const amount = (value: string) =>
     decimals === null
       ? `${value} token base units`
-      : `${formatBaseUnits(value, decimals)}${symbol ? ` ${symbol}` : ""}`;
+      : `${formatBaseUnits(value, decimals)}${symbol ? ` ${formatAssetSymbol(symbol)}` : ""}`;
 
   const accept = useCallback(
     (body: MonthlyOwnerView, month: string) => {

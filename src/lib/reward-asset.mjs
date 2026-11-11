@@ -63,6 +63,24 @@ export const REWARD_ASSET_NETWORK_IDS = Object.freeze(
   Object.keys(REWARD_ASSET_NETWORKS),
 );
 
+const MAIN_ASSET_SYMBOLS = new Set([
+  "USD",
+  ...Object.values(REWARD_ASSET_NETWORKS).flatMap((network) => [
+    network.native.symbol,
+    network.stablecoin.symbol,
+  ]),
+]);
+
+/** Display metadata only; never changes a stored symbol or amount. */
+export function formatAssetSymbol(symbol, kind) {
+  const plain = symbol.replace(/^\$+/u, "");
+  return kind === "native" ||
+    kind === "stablecoin" ||
+    MAIN_ASSET_SYMBOLS.has(plain.toUpperCase())
+    ? plain
+    : `$${plain}`;
+}
+
 const SYMBOL = /^[A-Za-z0-9$._-]{1,16}$/u;
 const MAX_REWARD_ASSET_DECIMALS = 36;
 

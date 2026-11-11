@@ -66,6 +66,7 @@ import {
   validIntegrationBranch,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -1761,7 +1762,7 @@ export default function ProjectProposalPage() {
                       : p.fundingMode !== "monthly"
                         ? "None"
                         : pool.valid
-                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? pool.display : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? formatRewardCapDisplay(pool.display, { kind: p.rewardKind, symbol: fundingSymbol }) : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
                           : "Invalid"}
                   </dd>
                 </div>
@@ -2274,7 +2275,10 @@ function ProjectUpdateForm({ project }: { project: ProjectDefinition }) {
             after:
               choice.mode === "monthly" && amount.valid
                 ? choice.assetKind === "token" || choice.assetKind === "native"
-                  ? amount.display
+                  ? formatRewardCapDisplay(amount.display, {
+                      kind: choice.assetKind,
+                      symbol: String(next.reward.currency),
+                    })
                   : formatMonthlyAmount(
                       amount.minor,
                       6,

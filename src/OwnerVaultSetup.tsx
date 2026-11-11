@@ -8,6 +8,7 @@ import { networkLabel } from "./lib/network-names";
 import { formatBaseUnits, type PayoutPolicy } from "./lib/payments/contracts";
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -480,8 +481,12 @@ export function OwnerVaultSetup({
                   </select>
                 </label>
                 <p>
-                  Monthly cap: {project.reward.monthlyCapDisplay}. You can
-                  change this later.
+                  Monthly cap:{" "}
+                  {formatRewardCapDisplay(
+                    project.reward.monthlyCapDisplay,
+                    project.rewardAsset,
+                  )}
+                  . You can change this later.
                 </p>
               </>
             ) : null}

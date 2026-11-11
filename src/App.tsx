@@ -39,6 +39,7 @@ import {
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCycleIndex } from "./lib/use-cycle-index";
@@ -497,21 +498,20 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
-  if (project.rewardAsset?.kind === "native") return reward.monthlyCapDisplay;
+  const cap = formatRewardCapDisplay(
+    reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  if (project.rewardAsset?.kind === "native") return cap;
   if (project.rewardAsset?.kind === "token")
-    return reward.monthlyCapDisplay
-      .replace(/^[\d,]+(?=\s)/u, (digits) =>
-        new Intl.NumberFormat("en-US", {
-          notation: "compact",
-          maximumFractionDigits: 2,
-        })
-          .format(BigInt(digits.replaceAll(",", "")))
-          .toLowerCase(),
-      )
-      .replace(
-        /\s+(\$?\S+)$/u,
-        (_, symbol: string) => ` $${symbol.replace(/^\$/u, "")}`,
-      );
+    return cap.replace(/^[\d,]+(?=\s)/u, (digits) =>
+      new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 2,
+      })
+        .format(BigInt(digits.replaceAll(",", "")))
+        .toLowerCase(),
+    );
   if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -823,6 +823,7 @@ function HomePage() {
         <InstallPanel />
       </section>
 
+      <SecurityBounties />
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <h2 className="home-section-title">Projects</h2>
@@ -851,7 +852,6 @@ function HomePage() {
           </>
         )}
       </section>
-      <SecurityBounties />
       <section
         className="section shell home-leaderboard-section"
         id="leaderboard"
@@ -1366,7 +1366,7 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                   <>
                     {" "}
                     <ExternalLinkAnchor href={summary.token.url}>
-                      ${summary.token.symbol}
+                      {summary.token.symbol}
                     </ExternalLinkAnchor>
                   </>
                 ) : null}

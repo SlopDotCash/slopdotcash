@@ -9,6 +9,7 @@ import {
   sendMonthlyRelease,
 } from "./lib/monthly-release-actions";
 import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
+import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import {
@@ -198,7 +199,7 @@ export default function OwnerReserveRelease({
               <p>
                 Release{" "}
                 {view.asset && amount
-                  ? `${formatBaseUnits(amount, view.asset.assetDecimals)} ${view.asset.symbol}`
+                  ? `${formatBaseUnits(amount, view.asset.assetDecimals)}${view.asset.symbol ? ` ${formatAssetSymbol(view.asset.symbol)}` : ""}`
                   : `${amount} token base units`}{" "}
                 to the vault's free balance. This does not pay contributors or
                 withdraw funds.

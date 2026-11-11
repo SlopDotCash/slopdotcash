@@ -7,7 +7,7 @@ import {
   useProjectMaintainer,
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { formatAssetSymbol, NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { formatDateTime, NetworkName } from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
@@ -169,7 +169,7 @@ function ExistingBountyVault({
                     state.funds.availableMinor,
                     state.funds.decimals,
                   )}{" "}
-                  {state.funds.currency}.
+                  {formatAssetSymbol(state.funds.currency)}.
                 </p>
                 <p>
                   Finalized balance checked at{" "}
