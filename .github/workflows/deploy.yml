@@ -1816,9 +1816,11 @@ jobs:
             echo "::error::Published deployment manifest did not match the verified build."
             exit 1
           fi
-          # The inventory checks /index.html; this additional request proves the
-          # public root route resolves to those same tested bytes.
-          verify_download / dist/index.html index.html
+          # Both checks use the exact approved Function-rendered root, while
+          # the deployment manifest still binds the unmodified local bundle.
+          expected_root="$RUNNER_TEMP/slop-expected-root.html"
+          node scripts/dist-manifest.mjs render-root dist https://slop.cash > "$expected_root"
+          verify_download / "$expected_root" index.html
 
       - name: Verify active private trace API boundary
         if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true'

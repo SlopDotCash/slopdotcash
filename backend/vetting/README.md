@@ -86,10 +86,16 @@ A platform administrator may record an explicit human owner decision through
 `POST /api/v1/admin/vetting/exemptions`. This is a separate audited D1 record,
 not a change to the fixed migration-0075 set or a project manifest field.
 The request supplies the current `projectId`, `revision`, `reason`,
-`decisionReference`, and `confirmation: true`. The server checks current
-repository authority and stores the canonical registry digest, immutable
-GitHub repository identity and steward. Ordinary project owners cannot grant themselves
-an exemption.
+`decisionReference`, and `confirmation: true`. The administrator remains the
+audited approver and need not have repository write access (PRD section 8,
+owner decision of 11 November 2026). Separately, the server verifies that the
+registered project creator or individual steward retains current write/maintain
+authority through Slopbot, with the same installation and immutable repository
+identity checks. An organization is never used as a collaborator identity.
+Missing or uncertain authority, repository drift, restrictions, confirmed malice
+and a changed revision refuse the grant. The grant stores the canonical registry
+digest, immutable GitHub repository identity and steward. Ordinary project owners
+cannot grant themselves an exemption.
 
 An active grant clears normal admission for that repository without inventing
 an assessment. Public setup and operator views label it **Owner-approved
