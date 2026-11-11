@@ -7906,15 +7906,15 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "sha256": "7d2ad887912bb99d65ea2971439e237b4988443fbd21c63a4f8f12354f4b1ea2",
+      "sha256": "2b399ea27fe5816edb60067a53328e9dd1c94949fbe6b112a3578a46461da411",
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "candidateLines": [
-        3, 223, 230, 231, 254, 260, 286, 315, 326, 365, 374, 386, 395, 400, 407,
-        417, 419, 429, 432, 435, 439, 485, 500, 509, 513, 538, 547, 571, 577,
-        587
+        3, 225, 232, 233, 256, 262, 288, 317, 328, 367, 376, 388, 397, 402, 409,
+        419, 421, 431, 434, 437, 441, 487, 502, 511, 515, 540, 549, 573, 579,
+        589
       ],
       "review": "mapped-abstraction"
     },
