@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
+import { providerCost } from "../workers/slopbot/models";
+import { qualificationResponse } from "./qualification-response";
 import {
   MAXIMUM_ATTEMPTS,
   qualifySecurityScreening,
   ScreeningQualificationError,
 } from "./qualify-security-screening";
-import { providerCost } from "../workers/slopbot/models";
-import { qualificationResponse } from "./qualification-response";
 import { qualificationTransport } from "./qualify-value-models";
 
 // Deterministic transport fixtures for the real release wrappers. They prove
