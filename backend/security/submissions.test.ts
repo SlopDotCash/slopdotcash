@@ -1893,6 +1893,25 @@ describe("private intake: send outcomes", () => {
     expect((await t.create()).status).toBe(201);
   });
 
+  test("creating a new report settles an unverifiable submitted report without a list read first", async () => {
+    const t = setup();
+    const submission = await t.ready();
+    t.github.faults.get = "error";
+    const sent = await t.send(submission.id, 1);
+    expect(sent.body.submission?.state).toBe("submitted");
+    expect((await t.create()).body.error).toBe("submission_in_flight");
+    t.advance(SUBMITTED_LIMIT_MS + 1000);
+    // No read of the reporter's list happens first: creating a new report
+    // applies the time-based move itself, so the expired row is failed as
+    // unverifiable and no longer blocks.
+    const created = await t.create();
+    expect(created.status).toBe(201);
+    expect(t.row(submission.id)).toMatchObject({
+      state: "failed",
+      failure_code: "unverifiable",
+    });
+  });
+
   test("a 201 that is not the reporter's well-formed advisory is uncertain", async () => {
     for (const fault of ["wrong-author-201", "malformed-201"] as const) {
       const t = setup();
