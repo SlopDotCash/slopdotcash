@@ -9,6 +9,12 @@
 // deBridge answer live, read-only API calls. Every signed transaction goes
 // only to a local fork; nothing reaches a public network.
 //
+// After the main cycle, a second Base order is cancelled instead of filled:
+// the fee wallet sends the cancellation through the real DlnDestination, and
+// the real DlnSource pays the refund. Only the message transport between the
+// two chains is replaced, by a stub at deBridge's CallProxy address
+// (contracts/evm/test/BuybackFixture.sol). This part needs `forge` on PATH.
+//
 // Two things stand in for parties this harness cannot be:
 //   - Fee income is seeded as finalized journal rows (its derivation is
 //     covered by buyback.test.ts and the conversion fork test). Each seeded
@@ -19,6 +25,8 @@
 // Local results do not qualify a production deployment or a live fill.
 
 import { strict as assert } from "node:assert";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   type Address,
   createPublicClient,
@@ -71,6 +79,9 @@ const ROBINHOOD_FEES = 200_000_000n;
 /** The Umia launch contract holds USDG; it funds the fixtures on the fork. */
 const USDG_HOLDER = "0x96028de971a9d37404f5030f6284b40640e2d1a2";
 const TAKER = DLN.allowedTakers[0] as Address;
+/** USDC placed in the wallet: Base also holds the later, cancelled order's fees. */
+const funded = (chain: Evm) =>
+  chain === "base" ? 2n * SOURCE_FEES : SOURCE_FEES;
 
 const url = (chain: Evm) => `http://127.0.0.1:${CHAINS[chain].port}`;
 // Anvil charges no Base data fee and its receipts carry no `l1Fee`. The cost
@@ -109,11 +120,15 @@ const balanceOf = (chain: Evm, token: string, owner: string) =>
     functionName: "balanceOf",
     args: [owner as Address],
   });
-/** Anvil finalizes a block only after later blocks. */
+/**
+ * Anvil finalizes a block two epochs behind the head. The forks run with
+ * one-slot epochs, so a few blocks finalize a send; mining hundreds per round
+ * makes Anvil evict the older states the Worker's receipt checks read.
+ */
 const finalize = async () => {
   for (const chain of Object.keys(CHAINS) as Evm[])
     if (chain === "robinhood" || SOURCES.includes(chain))
-      await rpc(chain, "anvil_mine", ["0x80"]);
+      await rpc(chain, "anvil_mine", ["0x4"]);
 };
 async function impersonated(
   chain: Evm,
@@ -152,6 +167,8 @@ try {
           CHAINS[chain].fork,
           "--port",
           String(CHAINS[chain].port),
+          "--slots-in-an-epoch",
+          "1",
           "--silent",
         ],
         { stdout: "ignore", stderr: "inherit" },
@@ -243,12 +260,14 @@ try {
         [wallet as Address, 9n],
       ),
     );
+    // Base is funded once for both its fee receipts: a later storage write
+    // would cost the fork its historical reads of this token.
     await rpc(chain, "anvil_setStorageAt", [
       usdc,
       slot,
-      `0x${SOURCE_FEES.toString(16).padStart(64, "0")}`,
+      `0x${funded(chain).toString(16).padStart(64, "0")}`,
     ]);
-    assert.equal(await balanceOf(chain, usdc, wallet), SOURCE_FEES);
+    assert.equal(await balanceOf(chain, usdc, wallet), funded(chain));
     // The USDC this network's fees became; an odd unit proves the floor.
     await earn(
       chain,
@@ -357,14 +376,38 @@ try {
     console.log(
       `${label}: ${JSON.stringify(results.map((r) => [r.network, r.reconciled, r.buyback?.records, r.buyback?.arrived]))}`,
     );
-    const failed = rows("state = 'failed' AND id NOT LIKE 'seed-%'");
+    // A refused preparation signed nothing and is retried on a later scan
+    // (a live provider can refuse one request). A signed send must not fail.
+    const failed = rows(
+      "state = 'failed' AND tx_id IS NOT NULL AND id NOT LIKE 'seed-%'",
+    );
     assert.deepEqual(
       failed.map((row) => `${row.network} ${row.kind}: ${row.reason}`),
       [],
-      "no send may fail in the ordinary flow",
+      "no signed send may fail in the ordinary flow",
     );
+    // Keep the live, keyless provider APIs under their request limits.
+    await Bun.sleep(3_000);
     return results;
   };
+
+  /**
+   * Runs scans until `done` holds. A live quote can be refused for one scan
+   * (a provider answer or a moved price); the Worker records that and tries
+   * again, so the harness waits for the outcome instead of counting scans.
+   */
+  const until = async (label: string, done: () => boolean, limit = 12) => {
+    for (let scan = 1; scan <= limit; scan++) {
+      await round(`${label} ${scan}`);
+      if (done()) return;
+    }
+    throw new Error(`${label}: not reached in ${limit} scans`);
+  };
+  /** Sends of one kind that were signed, in journal order. */
+  const signed = (where: string) => rows(`${where} AND tx_id IS NOT NULL`);
+  const settled = (where: string) =>
+    signed(where).length > 0 &&
+    signed(where).every((row) => row.state === "finalized");
 
   // 1. Exact approvals: USDC to the pinned bridge, the USDG fee share to the
   // pinned router. Nothing else is signed.
@@ -390,10 +433,15 @@ try {
   );
   console.log("PASS: exact approvals to the pinned bridge and router only");
 
-  // 2. Orders on the real DlnSource; the fee-share purchase on Robinhood.
-  await round("2 orders and first purchase");
-  // 3. Deposits and the purchase finalize; the first burn is signed.
-  await round("3 deposits finalized");
+  // 2-3. Orders on the real DlnSource finalize; so does the fee-share
+  // purchase on Robinhood.
+  await until(
+    "2 orders and first purchase",
+    () =>
+      SOURCES.every((chain) =>
+        settled(`network = '${chain}' AND kind = 'bridge'`),
+      ) && settled("kind = 'buyback'"),
+  );
   const orders: { chain: "base" | "ethereum"; orderId: Hex; take: bigint }[] =
     [];
   for (const chain of SOURCES) {
@@ -407,7 +455,7 @@ try {
     const usdc = NETWORK_DEFINITIONS[chain].usdc as string;
     assert.equal(
       await balanceOf(chain, usdc, wallet),
-      SOURCE_FEES - SOURCE_FEES / 2n,
+      funded(chain) - SOURCE_FEES / 2n,
       `${chain}: exactly the buyback half left the wallet`,
     );
     const [status, , , , , giveAmount] = await client(chain).readContract({
@@ -427,7 +475,7 @@ try {
       `PASS: ${chain} bridged ${deposit.amount_in} USDC for ${terms.takeAmount} USDG, order ${terms.orderId}`,
     );
   }
-  const [firstBuy] = rows("kind = 'buyback'");
+  const [firstBuy] = signed("kind = 'buyback'");
   assert.equal(firstBuy.state, "finalized");
   assert.equal(firstBuy.amount_in, (ROBINHOOD_FEES / 2n).toString());
   const firstSlop = BigInt(firstBuy.amount_out as string);
@@ -513,15 +561,25 @@ try {
   await finalize();
 
   // 5-8. Arrivals are credited once, spent in full, and half of all SLOP burns.
-  for (const label of [
-    "4 arrivals credited",
-    "5 arrival purchase",
-    "6 purchase finalized",
-    "7 burn",
-    "8 burn finalized",
-    "9 idle",
-  ])
-    await round(label);
+  const acquiredNow = () =>
+    signed("kind = 'buyback'").reduce(
+      (sum, row) => sum + BigInt((row.amount_out as string | null) ?? "0"),
+      0n,
+    );
+  const burnedNow = () =>
+    signed("kind = 'burn' AND state = 'finalized'").reduce(
+      (sum, row) => sum + BigInt(row.amount_in as string),
+      0n,
+    );
+  await until(
+    "4 arrivals, purchase and burn",
+    () =>
+      signed("kind = 'buyback'").length >= 2 &&
+      settled("kind = 'buyback'") &&
+      settled("kind = 'burn'") &&
+      burnedNow() === acquiredNow() / 2n,
+    16,
+  );
   const outcomes = sqlite
     .query("SELECT outcome, amount FROM fee_bridge_outcomes ORDER BY rowid")
     .all() as { outcome: string; amount: string }[];
@@ -532,7 +590,7 @@ try {
       amount: order.take.toString(),
     })),
   );
-  const buys = rows("kind = 'buyback'");
+  const buys = signed("kind = 'buyback'");
   assert.ok(buys.every((row) => row.state === "finalized"));
   assert.equal(
     buys.reduce((sum, row) => sum + BigInt(row.amount_in as string), 0n),
@@ -543,7 +601,7 @@ try {
     (sum, row) => sum + BigInt(row.amount_out as string),
     0n,
   );
-  const burns = rows("kind = 'burn'");
+  const burns = signed("kind = 'burn'");
   assert.ok(burns.every((row) => row.state === "finalized"));
   const burned = burns.reduce(
     (sum, row) => sum + BigInt(row.amount_in as string),
@@ -582,6 +640,193 @@ try {
   const before = rows("id NOT LIKE 'seed-%'").length;
   await round("10 idempotent");
   assert.equal(rows("id NOT LIKE 'seed-%'").length, before);
+  // 11. An order nobody fills: the owner cancels it and the deposit is
+  // refunded. The Worker never cancels; it only proves the refund and then
+  // bridges that share again.
+  if (SOURCES.includes("base")) {
+    const base = NETWORK_DEFINITIONS.base.usdc as string;
+    await earn(
+      "base",
+      "conversion",
+      "0x1111111111111111111111111111111111111111",
+      base,
+      SOURCE_FEES,
+    );
+    await finalize();
+    await until(
+      "11 second order",
+      () =>
+        signed("network = 'base' AND kind = 'bridge'").length === 2 &&
+        settled("network = 'base' AND kind = 'bridge'"),
+    );
+    const second = signed("network = 'base' AND kind = 'bridge'").at(-1);
+    if (!second) throw new Error("second deposit is missing");
+    // floor(2 x 1,000.000001 / 2) less the first 500 already bridged.
+    assert.equal(second.amount_in, (SOURCE_FEES - SOURCE_FEES / 2n).toString());
+    const terms = JSON.parse(second.quote as string);
+    const receipt = await client("base").getTransactionReceipt({
+      hash: second.landed_tx_id as Hex,
+    });
+    const [created] = parseEventLogs({
+      abi: DLN_SOURCE_ABI,
+      eventName: "CreatedOrder",
+      logs: receipt.logs,
+    });
+    const cancelAbi = parseAbi([
+      "struct Order { uint64 makerOrderNonce; bytes makerSrc; uint256 giveChainId; bytes giveTokenAddress; uint256 giveAmount; uint256 takeChainId; bytes takeTokenAddress; uint256 takeAmount; bytes receiverDst; bytes givePatchAuthoritySrc; bytes orderAuthorityAddressDst; bytes allowedTakerDst; bytes allowedCancelBeneficiarySrc; bytes externalCall; }",
+      "function sendEvmOrderCancel(Order _order, address _cancelBeneficiary, uint256 _executionFee) payable",
+      "function claimCancel(bytes32 _orderId, address _beneficiary)",
+      "function deBridgeGate() view returns (address)",
+      "function callProxy() view returns (address)",
+      "function globalFixedNativeFee() view returns (uint256)",
+    ]);
+    // The order pins its refund to the source fee wallet: another
+    // beneficiary is refused by the real contract.
+    const cancel = (beneficiary: string) =>
+      encodeFunctionData({
+        abi: cancelAbi,
+        functionName: "sendEvmOrderCancel",
+        args: [created.args.order, beneficiary as Address, 0n],
+      });
+    const robinhood = client("robinhood");
+    const gate = await robinhood.readContract({
+      address: DLN.destination as Address,
+      abi: cancelAbi,
+      functionName: "deBridgeGate",
+    });
+    const messageFee = await robinhood.readContract({
+      address: gate,
+      abi: cancelAbi,
+      functionName: "globalFixedNativeFee",
+    });
+    await assert.rejects(
+      robinhood.call({
+        account: wallet as Address,
+        to: DLN.destination as Address,
+        data: cancel(TAKER),
+        value: messageFee,
+      }),
+      "a refund to another address is refused",
+    );
+    // The fee wallet is the order authority, so it alone can cancel.
+    const fees = await robinhood.estimateFeesPerGas();
+    const cancelGas = await robinhood.estimateGas({
+      account: wallet as Address,
+      to: DLN.destination as Address,
+      data: cancel(wallet),
+      value: messageFee,
+    });
+    const cancelHash = await robinhood.sendRawTransaction({
+      serializedTransaction: await account.signTransaction({
+        chainId: NETWORK_DEFINITIONS.robinhood.chainId as number,
+        type: "eip1559",
+        to: DLN.destination as Address,
+        data: cancel(wallet),
+        value: messageFee,
+        nonce: await robinhood.getTransactionCount({
+          address: wallet as Address,
+        }),
+        gas: (cancelGas * 13n) / 10n,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      }),
+    });
+    const cancelled = await robinhood.waitForTransactionReceipt({
+      hash: cancelHash,
+      pollingInterval: 200,
+      timeout: 30_000,
+    });
+    assert.equal(cancelled.status, "success", "owner cancellation");
+    await finalize();
+    const before = (
+      sqlite.query("SELECT COUNT(*) AS n FROM fee_bridge_outcomes").get() as {
+        n: number;
+      }
+    ).n;
+    // A cancellation in flight is neither an arrival nor yet a refund.
+    await round("14 cancelling");
+    assert.equal(
+      (
+        sqlite.query("SELECT COUNT(*) AS n FROM fee_bridge_outcomes").get() as {
+          n: number;
+        }
+      ).n,
+      before,
+      "nothing is credited or released while the cancellation is in flight",
+    );
+    assert.equal(signed("network = 'base' AND kind = 'bridge'").length, 2);
+
+    // Deliver the cancellation message: the real DlnSource refund path, with
+    // only deBridge's cross-chain transport replaced by the stub.
+    const root = fileURLToPath(new URL("../../contracts/evm", import.meta.url));
+    execFileSync(
+      "forge",
+      ["build", "--root", root, `${root}/test/BuybackFixture.sol`],
+      { stdio: "pipe" },
+    );
+    const stub = execFileSync(
+      "forge",
+      ["inspect", "--root", root, "BuybackCallProxyStub", "deployedBytecode"],
+      { encoding: "utf8", cwd: root },
+    ).trim();
+    assert.match(stub, /^0x[0-9a-f]+$/u);
+    const sourceGate = await client("base").readContract({
+      address: DLN.source as Address,
+      abi: cancelAbi,
+      functionName: "deBridgeGate",
+    });
+    const proxy = await client("base").readContract({
+      address: sourceGate,
+      abi: cancelAbi,
+      functionName: "callProxy",
+    });
+    await rpc("base", "anvil_setCode", [proxy, stub]);
+    const usdcBefore = await balanceOf("base", base, wallet);
+    await impersonated(
+      "base",
+      proxy,
+      DLN.source,
+      encodeFunctionData({
+        abi: cancelAbi,
+        functionName: "claimCancel",
+        args: [terms.orderId, wallet as Address],
+      }),
+    );
+    assert.equal(
+      (await balanceOf("base", base, wallet)) - usdcBefore,
+      BigInt(second.amount_in as string),
+      "the whole deposit returned to the source fee wallet",
+    );
+    await finalize();
+    const [refunded] = await round("15 refund recorded");
+    assert.equal(refunded.buyback?.refunded, 1);
+    assert.deepEqual(
+      sqlite
+        .query(
+          "SELECT outcome, amount, evidence_network FROM fee_bridge_outcomes WHERE bridge_id = ?",
+        )
+        .get(second.id as string),
+      {
+        outcome: "refunded",
+        amount: second.amount_in,
+        evidence_network: "base",
+      },
+    );
+    // The released share is bridged again, as a new order.
+    await until(
+      "16 retry order",
+      () =>
+        signed("network = 'base' AND kind = 'bridge'").length === 3 &&
+        settled("network = 'base' AND kind = 'bridge'"),
+    );
+    const third = signed("network = 'base' AND kind = 'bridge'").at(-1);
+    assert.equal(third?.amount_in, second.amount_in);
+    assert.notEqual(third?.id, second.id);
+    console.log(
+      `PASS: cancelled order ${terms.orderId} refunded ${second.amount_in} USDC, released once and bridged again`,
+    );
+  }
+
   const gas = sqlite
     .query(
       "SELECT network, COUNT(*) AS sends, SUM(CAST(actual_wei AS REAL)) AS wei FROM fee_native_gas WHERE state = 'signed' GROUP BY network",

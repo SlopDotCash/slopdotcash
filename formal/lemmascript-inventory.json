@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 727,
+    "files": 728,
     "functions": 10240,
     "selectedContractTargets": 188,
     "unprovedFunctions": 10052,
-    "nonTypeScriptFiles": 55
+    "nonTypeScriptFiles": 56
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -1841,6 +1841,9 @@
 
 ]},
 {"path":"contracts/evm/test/BoundedAttester.t.sol","sha256":"f7a785c6f7aa67de0300b6a87b18ac739ecfc8b6d3c3dc3247404ec53343ebdc","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/BuybackFixture.sol","sha256":"5fceb5f2b355001b726364ac0644e5d3fbfcc1d9e5f0648dc1c6b13643e695d1","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/DeployFactory.sol","sha256":"920313bdfd09d6127ae95ab64ea09072153a0402ba00b74123160be0c8fc82ba","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
