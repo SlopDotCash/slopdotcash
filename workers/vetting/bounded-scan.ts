@@ -1588,14 +1588,18 @@ const CMAKE_SOURCE = /(?:^|\/)cmakelists\.txt$|\.cmake$/iu;
  */
 function cmakeIncludeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
-  for (const line of text.split(/\r?\n/u)) {
-    const code = line.replace(/#.*$/u, "");
-    for (const match of code.matchAll(/\binclude\s*\(/giu)) {
-      const rest = code.slice((match.index ?? 0) + match[0].length);
-      const argument = /^\s*(?:"([^"]*)"|([^\s")]+))/u.exec(rest);
-      const value = argument?.[1] ?? argument?.[2];
-      if (value !== undefined && value !== "") specifiers.push(value);
-    }
+  // CMake separates a command's arguments with whitespace, so `include(`
+  // and its path may sit on different lines. Strip comments per line, then
+  // match over the whole text so the argument is read wherever it follows.
+  const code = text
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/#.*$/u, ""))
+    .join("\n");
+  for (const match of code.matchAll(/\binclude\s*\(/giu)) {
+    const rest = code.slice((match.index ?? 0) + match[0].length);
+    const argument = /^\s*(?:"([^"]*)"|([^\s")]+))/u.exec(rest);
+    const value = argument?.[1] ?? argument?.[2];
+    if (value !== undefined && value !== "") specifiers.push(value);
   }
   return specifiers;
 }
@@ -1652,7 +1656,10 @@ const MAKE_SOURCE = /(?:^|\/)(?:gnu)?makefile(?:\.(?:am|in|inc))?$/iu;
  */
 function makeIncludeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
-  for (const line of text.split(/\r?\n/u)) {
+  // GNU make joins a backslash-newline into one logical line before it
+  // reads a directive, so a continued `include` names every file on the
+  // joined line. Join first, then parse the logical lines.
+  for (const line of text.replace(/\\\r?\n/gu, "").split(/\r?\n/u)) {
     if (line.startsWith("\t")) continue;
     const code = line.replace(/#.*$/u, "");
     const directive = /^[ ]*(?:-include|sinclude|include)[ \t]+(.+)$/u.exec(

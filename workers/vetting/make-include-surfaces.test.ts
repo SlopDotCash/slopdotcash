@@ -111,6 +111,61 @@ test("the -include and sinclude forms are followed too", () => {
   }
 });
 
+test("a backslash-continued include names every file on the joined line", () => {
+  // GNU make joins a backslash-newline into one logical line before it
+  // reads a directive, so both files here are included at read time.
+  const inspection = scan([
+    ["Makefile", "include frag.txt \\\n  other.txt\n\nall:\n\techo ok\n"],
+    ["frag.txt", `X := $(shell ${PAYLOAD})\n`],
+    ["other.txt", `X := $(shell ${PAYLOAD})\n`],
+  ]);
+  expect(inspection.findings.map((finding) => finding.path).sort()).toEqual([
+    "frag.txt",
+    "other.txt",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 3,
+  });
+});
+
+test("an include whose file sits entirely on the continuation line is followed", () => {
+  const inspection = scan([
+    ["Makefile", "include \\\n  other.txt\n\nall:\n\techo ok\n"],
+    ["other.txt", `X := $(shell ${PAYLOAD})\n`],
+  ]);
+  expect(inspection.findings).toContainEqual(
+    expect.objectContaining({
+      path: "other.txt",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+});
+
+test("a trailing comment on the continuation line hides no included file", () => {
+  // The comment follows the continued file, so the joined logical line
+  // still names it. (A backslash before the `#` is not a continuation at
+  // all — real make rejects that file instead of including anything.)
+  const inspection = scan([
+    ["Makefile", "include frag.txt \\\n  other.txt # c\n\nall:\n\techo ok\n"],
+    ["frag.txt", `X := $(shell ${PAYLOAD})\n`],
+    ["other.txt", `X := $(shell ${PAYLOAD})\n`],
+  ]);
+  expect(inspection.findings.map((finding) => finding.path).sort()).toEqual([
+    "frag.txt",
+    "other.txt",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 3,
+  });
+});
+
 test("an include in a subdirectory makefile resolves beside that makefile", () => {
   const inspection = scan([
     ["sub/Makefile", "include frag.txt\n\nall:\n\techo ok\n"],

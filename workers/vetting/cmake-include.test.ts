@@ -106,6 +106,28 @@ test("a quoted path and a trailing comment still resolve", () => {
   ]);
 });
 
+test("an include() whose path sits on the next line is followed", () => {
+  // CMake separates a command's arguments with whitespace, so the path
+  // may follow `include(` on the next line and still be evaluated.
+  const inspection = inspected([
+    {
+      path: "CMakeLists.txt",
+      text: LIST("include(\n  deps/fetch.txt\n)"),
+    },
+    {
+      path: "deps/fetch.txt",
+      text: `execute_process(COMMAND sh -c "${PAYLOAD}")\n`,
+    },
+  ]);
+  expect(inspection.findings.map((finding) => finding.path)).toEqual([
+    "deps/fetch.txt",
+  ]);
+  expect(inspection.coverage.installScripts).toEqual({
+    state: "complete",
+    items: 2,
+  });
+});
+
 test("a plain text file outside include() stays unclassified", () => {
   expect(surfacesOf("NOTES.txt")).toEqual([]);
   expect(surfacesOf("src/main.cpp")).toEqual(["source"]);
