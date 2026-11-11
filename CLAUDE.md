@@ -257,6 +257,17 @@ decision. Display "Owner-approved exemption", never a passed scan. Retain
 earlier assessments; later investigations, flags, pauses, account restrictions,
 confirmed malice and fresh reinstatement checks still apply. Retain revocations
 and restore the ordinary admission gate after revocation.
+Owner decision, 11 November 2026: an administrator may record community
+admission after a cursory review of the latest development source under PRD
+section 8. An old pin or unproven source-to-binary match is not a manual-review
+gate. Record the actual branch/head, scope and limitations, and display
+"Owner-approved exemption", never a complete passed scan. The approver needs
+platform administrator authority; the registered creator or individual steward
+must separately retain current GitHub write/maintain authority through Slopbot.
+Do not impersonate that maintainer. Keep immutable identity/revision binding,
+earlier assessments, restrictions and confirmed-malicious controls. Contributors
+still review before installation. Automated results retain their actual pins
+and complete-evidence requirements.
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates

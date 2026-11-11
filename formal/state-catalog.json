@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "41e0c582f64d8bd9e0381f875df012961f8de7b223fe66dc7b2788851164e3f3",
+  "inventorySha256": "1f4138f13082c821c4796a70140b9f9348ac2f6fe9d329c339afdab7d01dded6",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -174,7 +174,8 @@
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
-        "formal/models/api/project_setup_status.qnt"
+        "formal/models/api/project_setup_status.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
       ],
       "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
@@ -3918,11 +3919,14 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 680,
+      "line": 686,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
-      "models": ["formal/models/vetting/vetting_disposition.qnt"],
+      "models": [
+        "formal/models/vetting/vetting_disposition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt"
+      ],
       "lexicallyUnmentionedValues": [
         "cdata",
         "comment",
@@ -3967,9 +3971,10 @@
       "values": ["accepted", "rejected", "unknown"],
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "lexicallyUnmentionedValues": ["accepted", "rejected", "unknown"],
+      "lexicallyUnmentionedValues": ["accepted", "rejected"],
       "review": "candidate-only"
     },
     {

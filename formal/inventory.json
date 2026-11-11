@@ -558,7 +558,8 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
-        "formal/models/vetting/vetting_admission_clearance.qnt"
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
       ],
       "candidateLines": [
         26, 32, 33, 43, 66, 79, 81, 98, 128, 215, 249, 267, 409, 426, 442, 461,
@@ -665,7 +666,8 @@
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
-        "formal/models/api/project_setup_status.qnt"
+        "formal/models/api/project_setup_status.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
       ],
       "candidateLines": [
         7, 49, 50, 60, 61, 112, 120, 126, 130, 139, 147, 148, 218, 230, 238,
@@ -1258,22 +1260,23 @@
     },
     {
       "path": "backend/vetting/handler.ts",
-      "sha256": "820dcb2fb0fe378a0c8a1e5a5a8b8c700469e1d5b142db37eef60f31c9081ecb",
+      "sha256": "7a0a1f991c66f925910a0e3b22065467cc0e6edfab7f401cf66a510d0ec2e55c",
       "models": [
         "formal/models/ui/ui_admin_vetting_requests.qnt",
         "formal/models/vetting/vetting_admin_actor.qnt",
         "formal/models/vetting/vetting_admission_lineage.qnt",
         "formal/models/vetting/vetting_evidence_registration.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt",
         "formal/models/vetting/vetting_scan_reuse.qnt",
         "formal/models/vetting/vetting_service_auth.qnt"
       ],
       "candidateLines": [
-        258, 275, 277, 333, 391, 393, 400, 418, 554, 585, 668, 678, 683, 716,
-        744, 771, 774, 775, 778, 780, 781, 785, 786, 787, 789, 800, 804, 805,
-        849, 852, 899, 941, 968, 972, 984, 985, 992, 1035, 1167, 1239, 1265,
-        1266
+        262, 279, 281, 337, 413, 417, 419, 446, 582, 613, 696, 706, 711, 744,
+        772, 799, 802, 803, 806, 808, 809, 813, 814, 815, 817, 828, 832, 833,
+        877, 880, 927, 969, 996, 1000, 1012, 1013, 1020, 1063, 1195, 1267, 1293,
+        1294
       ],
       "review": "mapped-abstraction"
     },
@@ -8719,10 +8722,13 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "9c91117652031b2a89d2d46acb75f8002cc03e97f84ededeb32fa7b064057d55",
-      "models": ["formal/models/vetting/vetting_disposition.qnt"],
+      "sha256": "9ef9ed33c25f4e9eb9f5c259c765a6fc4ff10e662603e2a6a1821ca1c621c002",
+      "models": [
+        "formal/models/vetting/vetting_disposition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt"
+      ],
       "candidateLines": [
-        241, 249, 250, 1704, 1705, 1886, 1946, 1967, 2034, 2050, 2093
+        245, 253, 254, 1720, 1721, 1902, 1963, 1984, 2051, 2067, 2110
       ],
       "review": "mapped-abstraction"
     },
@@ -8731,6 +8737,13 @@
       "sha256": "69b29c082cfa200b3dca73bc7c58860ab18bb59ab091b83a906444316626aa50",
       "models": ["formal/models/vetting/vetting_execution_provenance.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting/gzip-inputs.ts",
+      "sha256": "37705ab36bce1f38812638578efaf18f06171e0144a6b209a856c09cd0afa28e",
+      "models": ["formal/models/vetting/vetting_gzip_expansion.qnt"],
+      "candidateLines": [84, 85, 86, 165, 170],
       "review": "mapped-abstraction"
     },
     {
@@ -8783,30 +8796,32 @@
     },
     {
       "path": "workers/vetting/review-plan.ts",
-      "sha256": "c32d1f4b540c24baa6c02044c0a937de87452cd3b7966a55ae50ae7e5536df69",
+      "sha256": "000d5690e0f31d45e5cd7f303e914fdefebfc7a675de05df33570d05be938c1c",
       "models": [
         "formal/models/vetting/pr_review_retry.qnt",
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_failed_review_provenance.qnt",
+        "formal/models/vetting/vetting_review_alias_coverage.qnt",
         "formal/models/vetting/vetting_review_batches.qnt"
       ],
       "candidateLines": [
-        14, 95, 438, 498, 515, 518, 519, 528, 535, 536, 571, 594, 662, 669, 689,
-        711, 739, 767
+        14, 95, 484, 544, 561, 564, 565, 574, 581, 582, 617, 640, 708, 715, 735,
+        757, 785, 813
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting/run.ts",
-      "sha256": "7c5339d0cff0ac62cf8728f6c825fb4901080625ce2841ce32bd02d00f263182",
+      "sha256": "8094e4115eed803470b7e900c52bc21df72dac8acb39a8b321e3e761c079e973",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 139, 152, 153, 173, 198, 202, 209, 215, 224, 271, 480, 509,
-        517, 533, 539, 554, 578, 580, 606, 607, 658, 660, 664, 744, 748, 752,
-        756, 761, 824
+        517, 534, 540, 555, 579, 581, 607, 608, 659, 661, 665, 745, 749, 753,
+        757, 762, 825
       ],
       "review": "mapped-abstraction"
     },
@@ -18045,6 +18060,27 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+      "sha256": "4f0dae469543a5526ff69aef1310afc29c412c557d5007ab7531a13061bf27fb",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/setup.ts",
+        "backend/vetting/handler.ts"
+      ],
+      "scenarios": [
+        "administratorWriteCannotReplaceMaintainerTest",
+        "individualStewardFallbackTest",
+        "maliciousRaceRefusesTest",
+        "missingInstallationRefusesTest",
+        "nonAdminMaintainerCannotApproveTest",
+        "readOnlyAdminCreatorWriteTest",
+        "repositoryIdentityDriftRefusesTest",
+        "restrictionRaceRefusesTest",
+        "revisionRaceRefusesTest",
+        "unavailableMaintainerRefusesTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_failed_review_provenance.qnt",
       "sha256": "70eb3a34394d0a80f14e1596a207a9211bebb8e61bd5992b53d71f7778019fac",
       "sources": [
@@ -18202,6 +18238,25 @@
       ]
     },
     {
+      "path": "formal/models/vetting/vetting_gzip_expansion.qnt",
+      "sha256": "f07de86ca80a7eae1319989a31469775db754bef43b3fedca606f44df1a0af7a",
+      "sources": [
+        "workers/vetting/bounded-scan.ts",
+        "workers/vetting/gzip-inputs.ts",
+        "workers/vetting/run.ts"
+      ],
+      "scenarios": [
+        "corruptOrPartlyConsumedInputStaysHeldTest",
+        "decodedSourceStillRequiresReviewTest",
+        "laterMemberHeaderMustAlsoBeReviewedTest",
+        "nativeChildKeepsIndependentQuarantineTest",
+        "ordinaryGapCannotBeErasedByWrapperTest",
+        "originalCompressedSymlinkLineageSurvivesTest",
+        "payloadOnlyMissesOptionalHeaderInstructionsTest",
+        "unknownAndNestedArchiveDoNotClearTest"
+      ]
+    },
+    {
       "path": "formal/models/vetting/vetting_malicious_reinstatement.qnt",
       "sha256": "e9df5ae8f670b3a140e3c3a6c207f3cd6a2a8f90f56dc85ccb722d9db7b9f149",
       "sources": [
@@ -18339,6 +18394,18 @@
         "presentSourceWithoutBackupRetainsClaimTest",
         "retryRechecksBackupsAndCompletesPartialDeletionTest",
         "sharedReferencePreservesObjectTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_review_alias_coverage.qnt",
+      "sha256": "329b78ddbd3d8e9e7d148cc1aff39620afd792069a420150ee6316948747e81b",
+      "sources": ["workers/vetting/review-plan.ts"],
+      "scenarios": [
+        "aliasProvenanceNamesReviewedBatchTest",
+        "differentBatchCannotCoverAliasTest",
+        "flaggedAliasFindingIsPreservedTest",
+        "genuineGapSurvivesAliasMappingTest",
+        "mappingAloneIsNotReviewTest"
       ]
     },
     {

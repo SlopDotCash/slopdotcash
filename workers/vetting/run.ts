@@ -517,6 +517,7 @@ async function scanOne(
       return retry(assessmentId, "acquire", error);
     }
     const inspection = inspectRepository(inputs);
+    inputs.files.push(...(inspection.derivedFiles ?? []));
     // Retain the exact deterministic input separately from the final inventory
     // that includes execution IDs, timestamps and output. Neither is normalized.
     const sourceInventory = inspection.inventory;
