@@ -5,4 +5,5 @@ export function createDistManifest(root: string): Promise<{
 export function expectedPublishedRoot(
   root: string,
   origin: string,
+  expectedRawIndexSha256?: string,
 ): Promise<Uint8Array>;
