@@ -2,6 +2,12 @@ name: LemmaScript contracts
 
 on:
   workflow_call:
+    inputs:
+      proofs:
+        # "false" checks only the inventory; scripts/ci-scope.mjs selects it
+        # for a pull request that changes no proof source, artifact or tool.
+        type: string
+        default: "true"
   workflow_dispatch:
 
 permissions:
@@ -30,7 +36,11 @@ jobs:
           bun-version: "1.3.14"
       - name: Install pinned dependencies
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check the source inventory
+        if: inputs.proofs == 'false'
+        run: bun run lemmascript:inventory
       - name: Restore the verified Dafny archive
+        if: inputs.proofs != 'false'
         # Caches the official archive, not the extracted tree, so the setup
         # script checks its pinned SHA-256 on every run before unpacking it.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -38,11 +48,13 @@ jobs:
           path: .tools/dafny-4.11.0.zip
           key: dafny-4.11.0-a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179
       - name: Install pinned prover
+        if: inputs.proofs != 'false'
         run: bun run lemmascript:setup
       - name: Check inventory, source contracts, and proof integrity
+        if: inputs.proofs != 'false'
         run: bun run lemmascript:check
       - name: Retain proof results
-        if: always()
+        if: always() && inputs.proofs != 'false'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: lemmascript-results-${{ github.run_id }}
