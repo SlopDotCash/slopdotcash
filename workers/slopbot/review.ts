@@ -2226,6 +2226,34 @@ async function latestFinding(
   return row.category;
 }
 
+/** The revision the newest finding belongs to, or null when there is none.
+ * Reads the same rows as `latestFinding`, so the two never disagree about
+ * which finding is newest. */
+async function latestFindingRevision(
+  db: store.D1Database,
+  itemNodeId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT category, revision FROM (
+         SELECT json_extract(verdict, '$.category') AS category,
+           completed_at AS at, review_key, revision FROM slopbot_reviews
+         WHERE item_node_id = ?1 AND status = 'completed' AND verdict IS NOT NULL
+           AND action IN ('close', 'label', 'hold')
+         UNION ALL
+         SELECT json_extract(a.detail, '$.category'), a.created_at, a.review_key,
+           (SELECT r.revision FROM slopbot_reviews r
+            WHERE r.review_key = a.review_key)
+         FROM slopbot_actions a WHERE a.item_node_id = ?1 AND a.action = 'close')
+       ORDER BY at DESC, review_key DESC LIMIT 1`,
+    )
+    .bind(itemNodeId)
+    .first<{ category: Category | null; revision: string | null }>();
+  if (row === null || row.category === null || row.category === "none")
+    return null;
+  return row.revision;
+}
+
 /** The newest Slopbot finding when it belongs to an appealed revision: its
  * review is of that revision, or it was recorded at or before the appeal
  * opened. A newer revision's finding returns null, so its label stays.
@@ -2409,11 +2437,14 @@ export async function recordHumanSignal(
   // The maintainer decision binds the reopened revision, even after a push.
   const decided =
     kind === "human_reopen" && source ? source.revision : revision;
-  // An author's appeal — by command, or by reopening their own item —
-  // before any Slopbot finding decides nothing. Keep it out of the reopen
-  // key, which exempts the revision from review.
+  // An author's appeal (by command, or by reopening their own item)
+  // decides nothing about a revision the newest finding does not cover:
+  // before any finding, or after a push the finding predates, the current
+  // head keeps its own review. Keep such an appeal out of the reopen key,
+  // which exempts the revision from review.
   const beforeFinding =
-    kind === "appeal" && (await latestFinding(db, issue.node_id)) === null;
+    kind === "appeal" &&
+    (await latestFindingRevision(db, issue.node_id)) !== revision;
   const signalKey = `${beforeFinding ? "appeal-before-finding" : "reopen"}:${issue.node_id}:${decided}`;
   await store.recordAction(
     db,
