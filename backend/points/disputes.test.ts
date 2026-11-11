@@ -1085,3 +1085,43 @@ test("the dispute list finds awards recorded under the other node spelling of th
   };
   expect(other.awards).toEqual([]);
 });
+test("a duplicate create on a triage dispute still re-enqueues triage", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The manual award needs review.",
+  };
+  const created = await (await h.call("", input)).json();
+  expect(h.started).toEqual([created.id]);
+  const duplicate = await h.call("", input);
+  expect(duplicate.status).toBe(201);
+  expect(await duplicate.json()).toMatchObject({
+    id: created.id,
+    state: "triage",
+  });
+  expect(h.started).toEqual([created.id, created.id]);
+});
+
+test("a duplicate create on an escalated dispute without a draft returns the view without re-running triage", async () => {
+  const h = await fixture();
+  const input = {
+    revisionId: h.revision.id,
+    reason: "The manual award needs review.",
+  };
+  const created = await (await h.call("", input)).json();
+  expect(h.started).toEqual([created.id]);
+  // Escalated by an early path that writes no draft, as triage failures do.
+  h.sqlite
+    .query("UPDATE points_disputes SET escalated_at=?,escalation=?")
+    .run(
+      "2026-10-30T15:00:00.000Z",
+      "Slopbot triage is unavailable; independent review is required",
+    );
+  const duplicate = await h.call("", input);
+  expect(duplicate.status).toBe(201);
+  expect(await duplicate.json()).toMatchObject({
+    id: created.id,
+    state: "review",
+  });
+  expect(h.started).toEqual([created.id]);
+});
