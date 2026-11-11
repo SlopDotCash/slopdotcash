@@ -1677,7 +1677,19 @@ jobs:
           // Use the Worker's actual parser: live signing on every converting
           // network requires that network's own approved native limits.
           const { parseConfig } = require("./workers/fee-converter/config.ts");
-          parseConfig(Bun.TOML.parse(toml).vars);
+          const converter = parseConfig(Bun.TOML.parse(toml).vars);
+          // The SLOP buyback uses the same parser as the Worker. A buyback
+          // that is not off needs Robinhood enabled, and a live one needs
+          // that network's own approved native limits before it can sign.
+          const { parseBuybackConfig } = require("./workers/fee-converter/buyback-config.ts");
+          const buyback = parseBuybackConfig(Bun.TOML.parse(toml).vars, mode);
+          if (buyback.mode !== "off") {
+            const robinhood = converter.networks.find((n) => n.network === "robinhood");
+            if (!robinhood) throw new TypeError("the buyback needs robinhood in FEE_CONVERTER_NETWORKS");
+            if (buyback.mode === "live" && !robinhood.nativeBudget) {
+              throw new TypeError("a live buyback lacks Robinhood native gas limits");
+            }
+          }
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);
