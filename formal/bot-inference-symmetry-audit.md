@@ -15,7 +15,7 @@ states that differ by a permutation of the eight attempt IDs.
 
 - QNT SHA-256: `01644b21ca4172dc45be3abb9585a55ce4cd1b2341d2e3328d01da2c5b5ce60f`.
 - Complete translated TLA SHA-256: `2d5c042cd5bcd404884ceab0fd07cdfbe9ab66d7aa0c560e93a24e8cb797b507`.
-- TLA with appended VIEW SHA-256: `93de8063bf58e3bb06db80e80412a26392b52beb383551a3a5efebf910aa5c8d`.
+- TLA with appended VIEW SHA-256: `6c6fa46fc03d86e165e040e46af5e9772f72700028ce57ccd994369ad9d54c60`.
 - Operator: `SlopBotInferenceAttemptIdViewV1`.
 - Production definition and bindings are fixed in `scripts/quint-safety-view.mjs`
   and `formal/tlc-safety-views.json`. Neither the manifest nor the caller can
