@@ -255,6 +255,13 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
 }
 
+/** A directory component anywhere: the root and a nested package alike. */
+function inDirectory(lower: string, directory: string): boolean {
+  return new RegExp(`(?:^|/)${directory.replaceAll(".", "\\.")}/`, "u").test(
+    lower,
+  );
+}
+
 /** The surfaces one path belongs to; empty for non-executable content. */
 export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
@@ -272,23 +279,25 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("manifests");
   if (
     AGENT_INSTRUCTIONS.has(name) ||
-    lower.startsWith(".cursor/") ||
-    lower.startsWith(".claude/") ||
-    lower.startsWith(".github/instructions/") ||
-    lower.startsWith(".github/chatmodes/") ||
-    lower.startsWith(".junie/") ||
-    lower.startsWith(".idx/") ||
-    lower.startsWith(".windsurf/") ||
-    lower.includes("/.cursor/rules/")
+    // The same directories at the root of a repository and in a package of a
+    // monorepo: a per-package instruction file reaches an agent that works
+    // there, so it is not root-only content.
+    inDirectory(lower, ".cursor") ||
+    inDirectory(lower, ".claude") ||
+    inDirectory(lower, ".github/instructions") ||
+    inDirectory(lower, ".github/chatmodes") ||
+    inDirectory(lower, ".junie") ||
+    inDirectory(lower, ".idx") ||
+    inDirectory(lower, ".windsurf")
   )
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
-    lower.startsWith(".husky/") ||
-    lower.startsWith(".devcontainer/") ||
-    lower.startsWith(".vscode/") ||
+    inDirectory(lower, ".husky") ||
+    inDirectory(lower, ".devcontainer") ||
+    inDirectory(lower, ".vscode") ||
     /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
       lower,
     )
