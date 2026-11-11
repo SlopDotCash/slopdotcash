@@ -139,6 +139,9 @@ test("draft and funding previews format tickers without changing canonical draft
     }),
   ).toBe("10,000,000 $EPYH");
   expect(
+    formatRewardCapDisplay("1 A$$B", { kind: "token", symbol: "A$$B" }),
+  ).toBe("1 $A$$B");
+  expect(
     formatRewardCapDisplay("1.5 SOL", { kind: "native", symbol: "SOL" }),
   ).toBe("1.5 SOL");
   expect(formatRewardCapDisplay("$1,000", usdc)).toBe("$1,000");
