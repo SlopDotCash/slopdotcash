@@ -507,6 +507,28 @@ test("the expected overlay matches the actual pinned official adapter and review
   );
 });
 
+// Preserve the additional current-root allowances while moving their table.
+for (const model of [
+  "formal/models/api/api_trace.qnt",
+  "formal/models/ui/ui_private_intake.qnt",
+  "formal/models/payments/solana_binding_completion.qnt",
+  "formal/models/ui/evm_wallet_discovery.qnt",
+  "formal/models/vetting/vetting_generation_storage.qnt",
+  "formal/models/vetting/vetting_evidence_registration.qnt",
+  "formal/models/vetting/vetting_generation_retirement.qnt",
+  "formal/models/api/submission_authorization_wrappers.qnt",
+  "formal/models/api/api_submission_recovery.qnt",
+  "formal/models/api/wallet_claim_publication.qnt",
+  "formal/models/payments/stored_binding_broadcast_authority.qnt",
+  "formal/models/payments/evm_binding_consent_api.qnt",
+  "formal/models/api/trace_event_finalization.qnt",
+  "formal/models/api/api_private_authorization.qnt",
+  "formal/models/api/wallet_possession_completion.qnt",
+])
+  test(`preserves current-root resource allowance for ${model}`, () => {
+    expect(formalTimeoutMs(model, true)).toBe(600000);
+  });
+
 function workflowProgram() {
   const workflow = readFileSync(
     join(root, ".github/workflows/formal.yml"),

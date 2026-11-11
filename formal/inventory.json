@@ -3744,9 +3744,9 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "bbcd749f87e9a2c103ab72f7a73be82e9e2e61a0b43f1295693b1c50f71d3fe3",
+      "sha256": "246e3bdff9e2ae129a0f48e78d89547acb7c6a3e0fadc1a9870078f981c75ea6",
       "models": [],
-      "candidateLines": [36, 39, 47],
+      "candidateLines": [57, 60, 68],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },

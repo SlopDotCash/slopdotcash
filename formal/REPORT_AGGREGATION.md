@@ -8,9 +8,11 @@ Existing genuine graph receipts remain evidence at their recorded sources.
 
 The producer and consumer now share one pure contract for canonical command
 arguments, tool-file lists and per-model resource allowances. All original
-model domains, scenario seeds,100scenario samples,500simulation samples,
-60steps, invariant/temporal selection and17existing time allowances are
-preserved. The producer includes this contract's digest in every new report.
+model domains, scenario seed,100-sample test limit,500-sample simulation
+limit,60-step limit and invariant/temporal selection are preserved. The final port
+retains all32 resource allowances from merged development dabd9d893, including
+its15 newer600-second exceptions beyond this candidate's original317 base.
+These are resource allowances, not graph-completion claims. The producer includes this contract's digest in every new report.
 
 Aggregation requires exact current tool and mapped-source key sets/digests;
 the expected report mode, translation, pinned Quint version and Java metadata;
