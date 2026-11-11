@@ -1771,11 +1771,19 @@ describe("monthly coordinator", () => {
     expect((await coordinate(afterCutoff)).waiting).toEqual([
       { key: `${project.id}/2082-11`, reason: "stale-funding" },
     ]);
-    // A malformed or implausibly future observation must not authorize funds.
-    vault("5000", "not-a-date");
-    expect((await coordinate(afterCutoff)).waiting).toEqual([
-      { key: `${project.id}/2082-11`, reason: "stale-funding" },
-    ]);
+    // Legacy/direct rows must still use the strict canonical UTC boundary.
+    for (const invalid of [
+      "not-a-date",
+      "2082-12-04T00:00:00",
+      "2082-12-04T01:00:00+01:00",
+      "12/4/2082, 12:00:00 AM",
+      "2082-12-04T00:00:60.000Z",
+    ]) {
+      vault("5000", invalid);
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "stale-funding" },
+      ]);
+    }
     vault(
       "5000",
       new Date(afterCutoff.getTime() + 5 * 60_000 + 1).toISOString(),

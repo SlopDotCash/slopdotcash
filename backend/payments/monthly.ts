@@ -68,6 +68,7 @@ import type {
   MonthlyReleaseCheck,
   MonthlyReleaseRequest,
 } from "./monthly-reserve-release";
+import { canonicalObservationTime } from "./vault-snapshots";
 
 export class MonthlyPaymentError extends Error {
   constructor(
@@ -602,11 +603,18 @@ async function createMonthlyObligations(
         free_balance: string | null;
         observed_at: string;
       }>();
-    const observedAt = Date.parse(vault?.observed_at ?? "");
     if (
       !vault ||
-      vault.asset_address.toLowerCase() !== run.snapshot.asset.toLowerCase() ||
-      !Number.isFinite(observedAt) ||
+      vault.asset_address.toLowerCase() !== run.snapshot.asset.toLowerCase()
+    )
+      return "stale-funding";
+    let observedAt: number;
+    try {
+      observedAt = Date.parse(canonicalObservationTime(vault.observed_at, now));
+    } catch {
+      return "stale-funding";
+    }
+    if (
       now.getTime() - observedAt > VAULT_SNAPSHOT_STALE_MS ||
       observedAt - now.getTime() > VAULT_SNAPSHOT_MAX_FUTURE_MS
     )

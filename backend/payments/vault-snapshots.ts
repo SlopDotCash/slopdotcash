@@ -59,7 +59,7 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
     : a === b;
 }
 
-function canonicalObservationTime(value: string, now: Date): string {
+export function canonicalObservationTime(value: string, now: Date): string {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value))
     throw new Error("Invalid vault observation time");
   const milliseconds = Date.parse(value);
