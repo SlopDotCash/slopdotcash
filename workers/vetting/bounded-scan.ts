@@ -902,6 +902,131 @@ function installHookCommands(path: string, text: string): string[] {
   }
 }
 
+/** One literal relative path, quoted or not, ending a word. */
+const HOOK_PATH_TOKEN =
+  /^["']?((?:\.{1,2}\/)?[A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*)["']?(?=$|[\s;|&<>()'"])/u;
+/** A command that hands a file to an interpreter, with its no-value flags. */
+const HOOK_INTERPRETER = new RegExp(
+  String.raw`^(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?((?:${SHELL_COMMAND}|${INTERPRETER_COMMAND}|source|\.))\s+((?:-[A-Za-z]+(?:\\\r?\n)*\s+)*)`,
+  "u",
+);
+/**
+ * Flags that make the next argument program text or a module name instead of
+ * a file: `node -e`, `python -c`, `perl -e`, `python -m`. A shell's `-e` is
+ * errexit and keeps the file argument.
+ */
+const HOOK_CODE_FLAG = /[ecpmr]/u;
+const HOOK_SHELL_CODE_FLAG = /c/u;
+const HOOK_SHELL = /(?:^|\/)(?:ba|da|k|a|z|fi|t?c)?sh$/u;
+const HOOK_SEGMENT = /[;&|()\n]+/u;
+const HOOK_CD = /^cd\s+/u;
+/**
+ * Interpreters complete a missing script extension themselves, so a hook can
+ * name `scripts/postinstall` and run `scripts/postinstall.js`. Trying these
+ * keeps such a hook from reading as an unacquired file.
+ */
+const HOOK_EXTENSIONS = [
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".sh",
+  ".bash",
+  ".py",
+  ".rb",
+  ".pl",
+  ".ps1",
+  ".bat",
+  ".cmd",
+];
+
+/** The acquired file a hook names, or null when the tree does not hold it. */
+function resolveHookTarget(
+  byPath: ReadonlySet<string>,
+  fromFile: string,
+  specifier: string,
+): string | null {
+  const resolved = resolveBuildInclude(fromFile, specifier);
+  if (resolved === null) return null;
+  if (byPath.has(resolved)) return resolved;
+  for (const extension of HOOK_EXTENSIONS) {
+    if (byPath.has(`${resolved}${extension}`)) return `${resolved}${extension}`;
+  }
+  const index = `${resolved}/index.js`;
+  return byPath.has(index) ? index : null;
+}
+
+/**
+ * The repository file an install hook runs, when the hook names one instead of
+ * carrying the commands itself: `sh scripts/setup`, `node ./bin/boot`,
+ * `bash tools/prepare`. The path must sit in command position, so prose and
+ * arguments stay out, and it must be a relative literal, so `$HOME/x`, a URL,
+ * a glob or a flag stays out. A file with a recognized extension is already
+ * classified; this rule exists for the extensionless one, which no name
+ * classifier can see and no shebang declares. Without it the whole payload of
+ * that file is invisible while every surface still reads complete.
+ */
+function hookReferencedPaths(files: ScanInputFile[]): {
+  referenced: Set<string>;
+  unacquired: string[];
+} {
+  const byPath = new Set(files.map((file) => file.path));
+  const referenced = new Set<string>();
+  const unacquired = new Set<string>();
+  for (const file of files) {
+    const name = basename(file.path);
+    if (name !== "package.json" && name !== "composer.json") continue;
+    const text = decode(file.bytes);
+    if (text === null) continue;
+    for (const command of installHookCommands(file.path, text)) {
+      // A `cd` moves the directory the following segments resolve in.
+      let directory: string | undefined;
+      for (const segment of command.split(HOOK_SEGMENT)) {
+        const part = segment.trim();
+        if (part === "") continue;
+        const cd = HOOK_CD.exec(part);
+        if (cd !== null) {
+          const target = HOOK_PATH_TOKEN.exec(part.slice(cd[0].length))?.[1];
+          if (target !== undefined) directory = target;
+          continue;
+        }
+        const interpreted = HOOK_INTERPRETER.exec(part);
+        // A bare first word is a PATH lookup, not a file; only an interpreter
+        // hands it one, or a `cd` gives it a directory.
+        if (interpreted === null && directory === undefined) continue;
+        if (interpreted !== null) {
+          const [, command, flags] = interpreted;
+          const codeFlag = HOOK_SHELL.test(command)
+            ? HOOK_SHELL_CODE_FLAG
+            : HOOK_CODE_FLAG;
+          if (flags.trim() !== "" && codeFlag.test(flags.replaceAll("-", "")))
+            continue;
+        }
+        const specifier = HOOK_PATH_TOKEN.exec(
+          part.slice(interpreted?.[0].length ?? 0),
+        )?.[1];
+        if (specifier === undefined) continue;
+        // Installed, not committed: the file is not in the acquired tree.
+        if (specifier.replace(/^\.\//u, "").startsWith("node_modules/"))
+          continue;
+        if (!specifier.includes("/") && directory === undefined) continue;
+        const target = resolveHookTarget(
+          byPath,
+          file.path,
+          directory === undefined ? specifier : `${directory}/${specifier}`,
+        );
+        // A target with a surface of its own is classified by name already.
+        if (target !== null) referenced.add(target);
+        else
+          unacquired.add(
+            `Install hook file not acquired: ${specifier.slice(0, 500)}`,
+          );
+      }
+    }
+  }
+  return { referenced, unacquired: [...unacquired].sort() };
+}
+
 /** JSON that configures tools rather than holding data; always reviewed. */
 const CONFIG_JSON =
   /(?:^|\/)(?:tsconfig[^/]*|jsconfig[^/]*|\.?eslintrc[^/]*|\.babelrc|babel\.config|\.swcrc|turbo|nx|lerna|vercel|netlify|wrangler|app|manifest|renovate|\.prettierrc|biome|components|project|angular|firebase|now)\.json$/iu;
@@ -1668,11 +1793,19 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const hookFiles = hookReferencedPaths(files);
+  if (hookFiles.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...hookFiles.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
+      surfaces.push("installScripts", "source");
+    // An install hook that runs a file by path executes it during install.
+    if (surfaces.length === 0 && hookFiles.referenced.has(file.path))
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
     if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
