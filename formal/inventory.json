@@ -4710,6 +4710,7 @@
         "formal/models/ui/ui_project_images.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
@@ -17314,10 +17315,11 @@
     },
     {
       "path": "formal/models/ui/ui_setup_check_lifetime.qnt",
-      "sha256": "4bac02e9b3074bbddacabf6b5d93431217bc1e4e2d621d4f4a87452491f28b1c",
+      "sha256": "d1e1dafbdcd1d048a9c66491b1376ec4760226136e30fdf6ca792b5c9611d98b",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
+        "src/App.tsx",
         "src/PendingProjectApplications.tsx",
         "src/ProjectProposalPage.tsx",
         "src/ProjectSetupStatus.tsx",

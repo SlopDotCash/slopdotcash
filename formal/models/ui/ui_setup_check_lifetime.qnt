@@ -1,4 +1,5 @@
 // @source src/ProjectSetupStatus.tsx
+// @source src/App.tsx
 // @source src/PendingProjectApplications.tsx
 // @source src/ProjectProposalPage.tsx
 // @source src/lib/project-api.ts
