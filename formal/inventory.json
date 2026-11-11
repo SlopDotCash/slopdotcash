@@ -1975,7 +1975,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "4190667c9e19dd6e25be8a1ae76bb15cab020995f4280f45b76ac190493322fc",
+      "sha256": "3ebb236d3913f64312da82ff43c2e872f5198a33ea35a53007f2bafdaffe0d85",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -1983,7 +1983,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [519, 520, 556, 569],
+      "candidateLines": [522, 523, 559, 572],
       "review": "mapped-abstraction"
     },
     {
@@ -3225,7 +3225,7 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "f2a8fa41356504868bdb5c6ddaba1ddee18e2e60434a53da764940738e005543",
+      "sha256": "d6ba5e076cc6d6c402a159087a51b7e03a59c39f19d04a43a54512c75153d09a",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -3307,9 +3307,9 @@
     },
     {
       "path": "scripts/check-payout-readiness.ts",
-      "sha256": "c297c168fcd28959844343156482caa7f10aeb6de83a7d72c9aa912398238685",
+      "sha256": "b17e1f0a9d3abe27cc3915d39f10f1cf4dca09ea21bf09014d45382b526d3815",
       "models": ["formal/models/payments/payout_readiness.qnt"],
-      "candidateLines": [4, 45, 47, 49, 173, 253, 261, 262, 266, 268, 269],
+      "candidateLines": [4, 45, 47, 49, 176, 256, 264, 265, 269, 271, 272],
       "review": "mapped-abstraction"
     },
     {
@@ -4475,10 +4475,10 @@
     },
     {
       "path": "scripts/vault-setup-browser-server.ts",
-      "sha256": "36c1e01891d53f46c3fdba201fe5682b139c15f6e6beb580574ef9a894f6e82e",
+      "sha256": "85d252850926daf8a259b954c1542043f1d004c78417d610182a3aac0a765680",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        50, 55, 59, 75, 79, 136, 161, 261, 286, 301, 304, 307, 314
+        50, 55, 59, 75, 79, 136, 161, 262, 287, 302, 305, 308, 315
       ],
       "review": "mapped-abstraction"
     },
@@ -7331,9 +7331,9 @@
     },
     {
       "path": "workers/payment-executor/configure.mjs",
-      "sha256": "1dae5843a1b1109dc004719c12414e0f37618e94ae652727ced8ad870014478c",
+      "sha256": "e31b95b747c0b0bdc4002451eb77b562992e139ef290a6e113ddf1aeb2e41e4a",
       "models": ["formal/models/payments/deployment_plan.qnt"],
-      "candidateLines": [1, 417, 443, 454, 485],
+      "candidateLines": [1, 423, 449, 460, 491],
       "review": "mapped-abstraction"
     },
     {
@@ -7377,7 +7377,7 @@
     },
     {
       "path": "workers/payment-executor/index.ts",
-      "sha256": "04013b3bdfb9fb7f81222bf2aad1b7ac853594c5981d66794278fe4b13ab881a",
+      "sha256": "128437555144cf4af8a813e0a46754aefd95d7c78886d84cf3746960e285cd98",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -7386,7 +7386,7 @@
       "candidateLines": [
         111, 117, 132, 143, 151, 159, 160, 169, 178, 179, 182, 199, 204, 213,
         232, 240, 269, 288, 305, 320, 331, 335, 363, 394, 398, 475, 480, 481,
-        483, 485, 489, 512, 532, 549, 559, 599, 605, 680, 684, 827
+        483, 485, 489, 512, 532, 549, 559, 599, 605, 683, 687, 830
       ],
       "review": "mapped-abstraction"
     },
@@ -7488,7 +7488,7 @@
     },
     {
       "path": "workers/payments/deployments.ts",
-      "sha256": "207caeb93e20adb2880c3aea26db81f4c8f557c1beccd4dc2c91f98fb34ccce2",
+      "sha256": "e2b6482c6d8c0223745c0d472537ef6b339c9b55baa6ece1c06ce84cbb3159eb",
       "models": [
         "formal/models/payments/payment_worker_run.qnt",
         "formal/models/payments/solana_binding_api.qnt"
@@ -7498,7 +7498,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+      "sha256": "74023c8c34a5070114c7a7dfd95ccaf7aee30e9eda80d3130c043809f6a80dba",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -7506,9 +7506,9 @@
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        66, 93, 110, 113, 119, 120, 124, 151, 161, 165, 167, 171, 173, 184, 185,
-        187, 189, 191, 197, 200, 203, 207, 219, 220, 222, 223, 228, 278, 325,
-        336, 357, 365, 368, 399, 479, 579, 580, 639, 640
+        75, 114, 131, 134, 140, 141, 145, 172, 182, 186, 188, 192, 194, 205,
+        206, 208, 210, 212, 218, 221, 224, 228, 240, 241, 243, 244, 249, 299,
+        343, 354, 375, 383, 386, 421, 501, 601, 602, 661, 662
       ],
       "review": "mapped-abstraction"
     },
