@@ -17,7 +17,13 @@ import {
 } from "./value-work-unit-journal";
 import type { WorkUnitSource } from "./value-work-unit-types";
 
-type Selection = { repository: string; number: number; nodeId: string };
+type Selection = {
+  repository: string;
+  number: number;
+  nodeId: string;
+  /** Discovered through a body, review or timeline reference only. */
+  referenced?: true;
+};
 type Identity = {
   repository: string;
   repositoryDatabaseId: number;
@@ -117,6 +123,7 @@ export async function collectValueGroup(
     },
   ];
   const sources = new Map<string, WorkUnitSource>();
+  const historicalReferences = new Set<string>();
   const commitCarriers = new Map<string, Selection[]>();
   const censuses = new Map<string, AcceptedCommitCensus>();
   for (let position = 0; position < queue.length; position++) {
@@ -127,12 +134,16 @@ export async function collectValueGroup(
       if (prior.evidence.pull.node_id !== selected.nodeId) return null;
       continue;
     }
+    if (selected.referenced && historicalReferences.has(key)) continue;
     if (sources.size >= 32) return null;
     const repository = repositories.find(
       (r) =>
         r.projectId === root.projectId &&
         namesRepository(r, selected.repository),
     );
+    // A referenced PR in another project's repository, or in one that is not
+    // registered, can never join this project's work unit; leave it out.
+    if (!repository && selected.referenced) continue;
     if (!repository) return null;
     const current = `${repository.owner}/${repository.name}`;
     const identity = await github.get<{
@@ -166,17 +177,30 @@ export async function collectValueGroup(
       evidence.pull.state !== "closed"
     )
       return null;
-    // A proven no-change promotion's only limitation is its joint deferral;
-    // joint preparation drops it, so the source may enter the group.
-    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
-      return null;
     const occurred = Date.parse(
       evidence.pull.merged_at ??
         evidence.indirectAcceptance?.observedOnBranchAt ??
         evidence.pull.closed_at ??
         "",
     );
-    if (!Number.isFinite(occurred) || occurred < startAt) return null;
+    if (!Number.isFinite(occurred)) return null;
+    if (occurred < startAt) {
+      // Work accepted before the API start belongs to the subscription path
+      // and can never be valued here, so a group that waits for it never
+      // completes. A PR known only through a reference shares no accepted
+      // commit with the group (a shared commit discovers it as a carrier,
+      // which still keeps the group pending), so leave it out and do not
+      // follow its own references.
+      if (selected.referenced) {
+        historicalReferences.add(key);
+        continue;
+      }
+      return null;
+    }
+    // A proven no-change promotion's only limitation is its joint deferral;
+    // joint preparation drops it, so the source may enter the group.
+    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+      return null;
     const previous = await currentWorkUnitRecord(
       db,
       evidence.repositoryNodeId,
@@ -243,6 +267,7 @@ export async function collectValueGroup(
         repository: related.repository,
         number: related.number,
         nodeId: related.id,
+        referenced: true,
       });
     for (const sibling of group?.sources ?? [])
       queue.push({
