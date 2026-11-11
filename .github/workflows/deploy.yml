@@ -537,22 +537,54 @@ jobs:
     permissions:
       contents: read
 
+  proof-scope:
+    name: Select affected proofs
+    # Pull requests check only the state models and LemmaScript proofs their
+    # changes can affect; pushes, manual runs and promotions check all of them.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      formal_models: ${{ steps.scope.outputs.formal_models }}
+      formal_shards: ${{ steps.scope.outputs.formal_shards }}
+      lemmascript: ${{ steps.scope.outputs.lemmascript }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Select affected proofs
+        id: scope
+        run: node scripts/ci-scope.mjs
+
   state-models:
     name: Quint state models
+    needs: proof-scope
     uses: ./.github/workflows/formal.yml
+    with:
+      models: ${{ needs.proof-scope.outputs.formal_models }}
+      shards: ${{ needs.proof-scope.outputs.formal_shards }}
     permissions:
       contents: read
 
   lemmascript:
     name: LemmaScript contracts
+    needs: proof-scope
     uses: ./.github/workflows/lemmascript.yml
+    with:
+      proofs: ${{ needs.proof-scope.outputs.lemmascript }}
     permissions:
       contents: read
 
   quality:
     name: Skill, data, build, and browser checks
     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'cancelled') }}
-    needs: [prepare, check, browsers, isolated-artifact, state-models, lemmascript]
+    needs: [prepare, check, browsers, isolated-artifact, proof-scope, state-models, lemmascript]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -563,12 +595,14 @@ jobs:
           BROWSER_RESULT: ${{ needs.browsers.result }}
           SANDBOX_RESULT: ${{ needs.isolated-artifact.result }}
           SANDBOX_REQUIRED: ${{ needs.prepare.outputs.sandbox }}
+          PROOF_SCOPE_RESULT: ${{ needs.proof-scope.result }}
           QUINT_RESULT: ${{ needs.state-models.result }}
           LEMMASCRIPT_RESULT: ${{ needs.lemmascript.result }}
         run: |
           test "$PREPARE_RESULT" = success
           test "$CHECK_RESULT" = success
           test "$BROWSER_RESULT" = success
+          test "$PROOF_SCOPE_RESULT" = success
           test "$QUINT_RESULT" = success
           test "$LEMMASCRIPT_RESULT" = success
           if [ "$SANDBOX_REQUIRED" = true ]; then test "$SANDBOX_RESULT" = success; fi

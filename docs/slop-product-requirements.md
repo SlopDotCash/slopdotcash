@@ -599,6 +599,8 @@ Recheck roles and destinations before sending. Provider acceptance does not prov
 
 Public pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.
 
+Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
+
 | Dependency | Required failure behavior |
 | --- | --- |
 | GitHub identity, authority, and source | Refuse sensitive actions on unavailable proof; retain recoverable drafts and records. |
