@@ -15866,7 +15866,7 @@
     },
     {
       "path": "formal/models/ui/ui_cycle_archive.qnt",
-      "sha256": "78e92ffa9f1e3b102a1e618cf751de01cd48cc0fd1fa59c943f3221240e2eda7",
+      "sha256": "c8c62adf6f9f892c188c315aacdfafcb0072a8582fbaa845a6c9bba1cd1d8dc8",
       "sources": [
         "src/App.tsx",
         "src/CyclePages.tsx",
@@ -15895,6 +15895,8 @@
         "retiredMissingRecordWaitsForSnapshotTest",
         "retiredRecordLinkResolvesTest",
         "retirementDoesNotRestoreProjectPageTest",
+        "sameArchiveNavigationCannotCancelElapsedBoundaryTest",
+        "sameArchiveNavigationKeepsBoundaryTest",
         "staleIndexReplyRefusesTest",
         "staleThenSecondReviewDeadlineTest",
         "timerCannotFireAfterDepartureTest",
