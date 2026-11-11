@@ -147,6 +147,20 @@ export function buildEscrowCycle(
         (actor) => actor.nodeId === leader.actor.id,
       );
       if (!identity) throw new Error("Missing numeric GitHub identity");
+      // Archived identities are external bytes, not derived state: the node
+      // ID must decode to the claimed numeric ID, and the login must match
+      // the snapshot leader. Without this, a tampered mapping plus a
+      // regenerated proposal still validates, because validateEscrowCycle
+      // rebuilds from the same bytes. The numeric ID is stable across login
+      // renames, so it is the binding key; the login is cross-checked
+      // case-insensitively, matching compareActors.
+      if (githubUserIdFromNodeId(identity.nodeId) !== identity.githubUserId)
+        throw new Error("Archived GitHub identity does not match its node ID");
+      if (
+        identity.login.toLocaleLowerCase("en") !==
+        leader.actor.login.toLocaleLowerCase("en")
+      )
+        throw new Error("Archived GitHub identity login differs from proposal");
       const { gross, fee, net } = combined.awards[index];
       return {
         githubUserId: identity.githubUserId,
@@ -190,7 +204,8 @@ export function buildEscrowCycle(
   return proposal;
 }
 
-/** Exact reconstruction rejects amount changes, omitted actors, and edited review dates. */
+/** Exact reconstruction rejects amount changes, omitted actors, edited review
+ * dates, and identity mappings that do not match their node IDs. */
 export async function validateEscrowCycle(
   readArchive: (name: string) => Promise<Uint8Array>,
   projectId: string,
