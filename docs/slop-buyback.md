@@ -180,20 +180,25 @@ and use harness gas budgets and slippage, as each file's header explains.
   caller claims reaches the wallet without a journal row and is not counted as
   income. The buyback then takes less than half, never more.
 
-## Decisions the owner still has to confirm
+## Owner decisions
 
-The code holds no fallback for any of these; the checked-in values are
-proposals (PRD section 6 table).
+Confirmed by the owner on 10 November 2026 (PRD section 6 table). The code
+holds no fallback for any of these values.
 
 1. Every limit in the configuration table, including the minimum order of 500
    USDC and the 1.5% bridge cost limit.
 2. The Solana order ceiling of 0.05 SOL per order and 0.1 SOL per day, which is
    separate from and larger than the fee-conversion budget.
-3. The activation instant. Fees finalized before it never enter the buyback.
-4. A Robinhood Chain RPC that serves state at the finalized block.
-5. Whether SLOP received directly as a fee should have its half counted as
+3. The burn takes half of the SLOP the buyback acquired, once. The retained
+   half is never burned again.
+
+Still open, and needed before or at activation:
+
+1. The activation instant. Fees finalized before it never enter the buyback.
+2. A Robinhood Chain RPC that serves state at the finalized block.
+3. Whether SLOP received directly as a fee should have its half counted as
    acquired, as implemented, or be left out of the burn.
-6. Whether the Worker should later be allowed to cancel unfilled orders. It is
+4. Whether the Worker should later be allowed to cancel unfilled orders. It is
    not, today.
 
 ## Accepted risks

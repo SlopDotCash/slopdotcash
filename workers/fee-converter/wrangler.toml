@@ -73,8 +73,8 @@ KYBERSWAP_CLIENT_ID = "slop-fee-converter"
 # 10 November 2026). Off: nothing below is read and every network behaves as
 # before. Activation is a later reviewed change of BUYBACK_MODE and
 # BUYBACK_START_AT (see README.md, "SLOP buyback"); merging these values
-# activates nothing. Each limit below is a proposal that the owner confirms
-# at activation; the code has no fallback for any of them.
+# activates nothing. The owner confirmed each limit below on 10 November 2026
+# (PRD section 6); the code has no fallback for any of them.
 BUYBACK_MODE = "off"
 # UTC instant from which fee income counts; earlier fees never enter the buyback.
 BUYBACK_START_AT = ""

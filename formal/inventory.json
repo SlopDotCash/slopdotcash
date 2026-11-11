@@ -7158,14 +7158,14 @@
     },
     {
       "path": "workers/fee-converter/wrangler.staging.toml",
-      "sha256": "d569d5712374624c390e2bd5e336434a1189dbd7c9e64448672888d0febeb7c8",
+      "sha256": "da8dada8cc508e35f7ecc6020a995a1874b250132c7cdfe7084f8579d43c2781",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "636abfdc6ac47abc6ca2a3e8c5488d3e09cd0c27d0866c11a15c1a9fe89f4454",
+      "sha256": "d9e87bcd603591818ea749bb74515a2d41fba3fc54763c86fa6ddbe8efbcc893",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

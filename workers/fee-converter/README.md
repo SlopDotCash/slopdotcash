@@ -769,7 +769,8 @@ its receipt must show exactly that amount leaving the wallet for that address.
 ### Buyback configuration
 
 Every value is required once `BUYBACK_MODE` is not `off`; the code has no
-fallback. The checked-in values are proposals the owner confirms at activation.
+fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD section 6);
+`BUYBACK_START_AT` is set at activation.
 
 | Var                              | Checked-in value               | Meaning                                                                                          |
 | -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |

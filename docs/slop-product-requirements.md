@@ -362,7 +362,7 @@ Owner decision, 10 November 2026. Half of all fee income funds a programmatic bu
 - **BUY-06 — Records.** Journal every approval, order, purchase, and burn before broadcast in the existing fee journal. Record one finalized outcome per send and one proven outcome per deposit. Mark a state final only from finalized evidence. Show the ledger in the private administrator report.
 - **BUY-07 — Activation.** The buyback has its own mode, off by default. A live buyback needs a live converter, Robinhood Chain enabled with its key and native limits, and every limit set explicitly. Source approval does not activate it.
 
-| Limit | Proposed value |
+| Limit | Value |
 | --- | --- |
 | Buyback share of fee income | 50% |
 | Burn share of acquired SLOP | 50% |
@@ -374,7 +374,7 @@ Owner decision, 10 November 2026. Half of all fee income funds a programmatic bu
 | Purchase slippage and price impact | 1% and 3% |
 | Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |
 
-These values are proposals until the owner confirms them at activation. The Solana order ceiling is separate from the fee-conversion native budget.
+The owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation does not activate the buyback; the activation instant is set at activation. The Solana order ceiling is separate from the fee-conversion native budget.
 
 The buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.
 
