@@ -1259,3 +1259,13 @@ Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12
 `ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
 
 Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.
+
+### Private vetting backup-chain observation experiment
+
+The `vetting-backup-chain-observation-safety-v1` VIEW erases only two write-only
+outcomes, the completion capture outside its consuming phase, and the restore
+pointer before selection or after its final consumer. All storage facts,
+queues, counters and every original invariant operand stay exact. See the
+[four-field audit](vetting-backup-chain-view-audit.md). The original timeout
+remains incomplete; native controls and a complete frozen graph require their
+own qualification. No model action, domain, scenario or runtime changes.

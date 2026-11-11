@@ -216,6 +216,24 @@
       "sourceSha256": "767f463c4c1243d01ac4e0ca77316869af0c5e9441d1d96d911c27fdf077ad59",
       "translatedSha256": "c1dd49b06bbf150ee35e1b28fd796fc20d2568224454d46b5a24f937041080ed",
       "viewTlaSha256": "c3c7da3bd3645e1fd1fa872f42e6fd00dac225a11e00e5ef8337d998227a184a"
+    },
+    {
+      "id": "vetting-backup-chain-observation-safety-v1",
+      "model": "formal/models/vetting/vetting_backup_chain.qnt",
+      "module": "vetting_backup_chain",
+      "operator": "SlopVettingBackupChainViewV1",
+      "hashMode": "exact-backup-invariants-and-live-observations",
+      "memoryCandidateMode": "erase-write-only-outcomes-and-phase-dead-observation-pointers",
+      "fields": [
+        {
+          "name": "state",
+          "expression": "[s EXCEPT !.outcome = \"none\", !.restoreOutcome = \"none\", !.completionObserved = IF s.stage = \"phase-update\" THEN s.completionObserved ELSE FALSE, !.selected = IF s.restoreStage \\in {\"none\", \"done\"} THEN 0 ELSE s.selected]"
+        }
+      ],
+      "clauses": [],
+      "sourceSha256": "61ecf280693c06a4d3d717fcf5786fc9ba39172e543f62a60fd4559a475482ef",
+      "translatedSha256": "c6c7d4a872bc1cd2d99e37f432501b1db7de850ccd2f984dbdccf322d6ec051d",
+      "viewTlaSha256": "f2785b3cabcd079c0b716e39698728a9e6bdb6fac3d2af0c1fd82855868f13cf"
     }
   ]
 }

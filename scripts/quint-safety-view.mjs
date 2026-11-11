@@ -211,6 +211,23 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "vetting-backup-chain-observation-safety-v1",
+    model: "formal/models/vetting/vetting_backup_chain.qnt",
+    module: "vetting_backup_chain",
+    operator: "SlopVettingBackupChainViewV1",
+    hashMode: "exact-backup-invariants-and-live-observations",
+    memoryCandidateMode:
+      "erase-write-only-outcomes-and-phase-dead-observation-pointers",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.outcome = "none", !.restoreOutcome = "none", !.completionObserved = IF s.stage = "phase-update" THEN s.completionObserved ELSE FALSE, !.selected = IF s.restoreStage \\in {"none", "done"} THEN 0 ELSE s.selected]',
+      },
+    ],
+    clauses: [],
+  },
 ];
 
 function reviewedDefinition(view) {
