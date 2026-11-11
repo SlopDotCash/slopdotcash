@@ -235,6 +235,9 @@ for (const path of [
   "workers/fee-converter/evm.ts",
   "backend/fee-conversions/handler.ts",
   "backend/payments/handler.ts",
+  "workers/payment-executor/core.ts",
+  "workers/payments/index.ts",
+  "backend/projects/vault-setup.ts",
 ]) {
   test(`native EVM accounting coverage follows ${path}`, () => {
     expect(scopeFor({ [path]: "export {};\n" }).evm).toBe("true");
@@ -258,6 +261,9 @@ test("Solana fixture and fee changes select their actual chain job", () => {
     "tests/e2e/vault-setup-server.ts",
     "workers/fee-converter/solana-local.integration.ts",
     "backend/fee-conversions/handler.ts",
+    "workers/payment-executor/solana.ts",
+    "workers/payments/index.ts",
+    "backend/projects/vault-setup.ts",
     "scripts/escrow-acceptance/solana-local.ts",
     "scripts/escrow-acceptance.ts",
   ]) {

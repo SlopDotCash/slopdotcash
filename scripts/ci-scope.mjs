@@ -194,13 +194,13 @@ for (const [key, value] of Object.entries({
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/solana\/|^backend\/(security|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/(ci-scope\.mjs$|local-solana-validator\.|escrow-acceptance(?:\/|\.ts$))|^tests\/(bounty-wallet-seed\.ts$|direct-bounty-solana-chain\.ts$|e2e\/(solana-vault-actions\.spec|award-month|project-maintainer-fixture|vault-setup-server)\.ts$)/u,
+        /^contracts\/solana\/|^backend\/(security|fee-conversions)\/|^backend\/projects\/vault-setup\.ts$|^workers\/(fee-converter|payment-executor|payments)\/|^migrations\/|^src\/lib\/security-bounty\.|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/(ci-scope\.mjs$|local-solana-validator\.|escrow-acceptance(?:\/|\.ts$))|^tests\/(bounty-wallet-seed\.ts$|direct-bounty-solana-chain\.ts$|e2e\/(solana-vault-actions\.spec|award-month|project-maintainer-fixture|vault-setup-server)\.ts$)/u,
       )),
   evm:
     !pr ||
     (!promotion &&
       changed(
-        /^contracts\/evm\/|^backend\/(security|payments|fee-conversions)\/|^workers\/fee-converter\/|^migrations\/|^src\/lib\/security-bounty\.|^scripts\/(run-security-payments\.mjs$|escrow-acceptance(?:\/|\.ts$))|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
+        /^contracts\/evm\/|^backend\/(security|payments|fee-conversions)\/|^backend\/projects\/vault-setup\.ts$|^workers\/(fee-converter|payment-executor|payments)\/|^migrations\/|^src\/lib\/security-bounty\.|^scripts\/(run-security-payments\.mjs$|escrow-acceptance(?:\/|\.ts$))|^\.github\/workflows\/escrow-tests\.yml$|^scripts\/ci-scope\.mjs$/u,
       )),
 }))
   appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
