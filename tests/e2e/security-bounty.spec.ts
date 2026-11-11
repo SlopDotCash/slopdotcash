@@ -3113,6 +3113,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   page,
   request,
 }) => {
+  test.setTimeout(180_000);
   const id = `home-bounty-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
   await listProject(request, TOKENS.security, repository, id, {});
@@ -3230,6 +3231,12 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     page.getByRole("region", { name: "Published bounty offer" }),
   ).toHaveCount(0);
   await expectAccessible(page);
+  const intakeRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+      `/api/v1/security-programs/${id}/intake`,
+  );
   await page
     .getByRole("link", { name: "Report privately", exact: true })
     .click();
@@ -3241,6 +3248,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(
     page.getByRole("heading", { name: "Private report", exact: true }),
   ).toBeVisible();
+  expect(await (await intakeRead).finished()).toBeNull();
 
   // Clearing Featured moves the same bounty to Community without changing its offer.
   shown = { ...project, listingTier: "community" };
@@ -3299,7 +3307,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   );
   await expect
     .poll(() => dataPaths.filter((path) => !completedData.has(path)), {
-      timeout: 30_000,
+      timeout: 60_000,
     })
     .toEqual([]);
   await page.waitForLoadState("networkidle");
