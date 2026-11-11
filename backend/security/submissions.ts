@@ -329,13 +329,27 @@ async function createSubmission(
       "intake_unavailable",
       "Automatic private intake is not available for this program",
     );
-  const inFlight = await deps.db
-    .prepare(
-      "SELECT 1 AS found FROM security_submissions WHERE project_id = ? AND reporter_github_id = ? AND state IN ('submitting', 'uncertain', 'submitted')",
-    )
-    .bind(projectId, actor.githubId)
-    .first<{ found: number }>();
-  if (inFlight !== null)
+  const blockers = (
+    await deps.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM security_submissions WHERE project_id = ? AND reporter_github_id = ? AND state IN ('submitting', 'uncertain', 'submitted')`,
+      )
+      .bind(projectId, actor.githubId)
+      .all<SubmissionRow>()
+  ).results;
+  let inFlight = false;
+  for (const blocker of blockers ?? []) {
+    // Decide on settled state, like every other read and action: once its
+    // limit passes, a submitted row GitHub never let Slop verify fails as
+    // unverifiable and no longer blocks a new submission for the program,
+    // instead of blocking until the reporter happens to read their list
+    // first. A failed settle keeps the stored state, so the row still
+    // blocks and the next read retries the move.
+    const settled = await settle(deps, blocker).catch(() => blocker);
+    if (["submitting", "uncertain", "submitted"].includes(settled.state))
+      inFlight = true;
+  }
+  if (inFlight)
     fail(
       409,
       "submission_in_flight",

@@ -2,6 +2,7 @@
 // @source src/PendingProjectApplications.tsx
 // @source src/lib/project-api.ts
 // @evidence tests/e2e/project-removal.spec.ts
+// @evidence tests/e2e/registry.spec.ts
 // One removal/cancellation, two account identities, one unmount and remount.
 // The editor and saved-application component use the same in-flight lock as
 // their publication action. A native confirmation precedes the first await.
