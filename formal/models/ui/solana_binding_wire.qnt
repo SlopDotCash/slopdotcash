@@ -117,8 +117,8 @@ module solana_binding_wire {
     s.posted implies s.signedAccepted and s.postedIdentity == s.reviewed,
     s.prepareAccepted implies Set("valid", "other-attester", "vault-only").contains(s.input) }
   run prepared(kind: str): bool = init.then(configure(kind, 0, 1)).then(checkPrepared)
-  action offered = prepared("valid").then(handoff)
-  action signed(kind: str): bool = offered.then(walletReply(kind)).then(checkSigned)
+  run offered = prepared("valid").then(handoff)
+  run signed(kind: str): bool = offered.then(walletReply(kind)).then(checkSigned)
 
   run canonicalPreparedMessageAcceptedTest = prepared("valid").expect(s.prepareAccepted and s.reviewed == 1 and invariant)
   run wrongTransactionSignatureCountRefusesTest = prepared("tx-count").expect(s.error == "shape" and not(s.walletCalled) and invariant)

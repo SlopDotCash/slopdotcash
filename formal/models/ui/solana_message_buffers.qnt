@@ -113,7 +113,7 @@ module solana_message_buffers {
     s.accepted and not(s.returnedMutated) implies s.returnedSignature == s.signatureAtValidation }
   run exact(kind: str): bool = init.then(start(kind))
   action standardReply = providerReply(1, 64, "input", true).then(validate)
-  action legacyReady = exact("legacy").then(reconnectReply(true))
+  run legacyReady = exact("legacy").then(reconnectReply(true))
 
   run standardExactEchoReturnsPrivateSignatureTest = exact("standard").then(standardReply)
     .expect(s.accepted and s.returnedSignature == 1 and invariant)
