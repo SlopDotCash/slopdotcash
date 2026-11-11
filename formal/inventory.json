@@ -5719,9 +5719,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "23deb359a46ddc9af987bf4a4b60c1b17b65d8c534aa850b63f6a9748f8e8601",
+      "sha256": "ea3bb14c1aced2089477e9dee1ee4ac7a463685959a09ecd6e373d01b1df047f",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [178],
+      "candidateLines": [197],
       "review": "mapped-abstraction"
     },
     {
@@ -15809,7 +15809,7 @@
     },
     {
       "path": "formal/models/ui/ui_history_projection.qnt",
-      "sha256": "07b4953a3b7c210b2bf8071f3a14f688d5b5fdd9187626422e6c5f4b6295de20",
+      "sha256": "8baa4bfedb55af4f843d063b449094f73e3826522afcc679d37ae63685e3e974",
       "sources": [
         "src/lib/global-leaderboard.ts",
         "src/lib/reviewer-leaders.ts",
@@ -15818,9 +15818,12 @@
       ],
       "scenarios": [
         "archiveTest",
+        "closedNoAwardsMonthTest",
         "diagnosticUsageTest",
         "emptyTest",
-        "immutableArchiveTest"
+        "immutableArchiveTest",
+        "perActorArchiveTest",
+        "unlistedActorStaysOpenTest"
       ]
     },
     {
