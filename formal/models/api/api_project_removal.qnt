@@ -1,4 +1,6 @@
 // @source backend/projects/handler.ts
+// @source backend/projects/enforcement.ts
+// @source backend/projects/verified-enforcement.ts
 // @source backend/projects/cloudflare-persistence.ts
 // @source backend/projects/contracts.ts
 // @source src/lib/project-contracts.ts
@@ -18,6 +20,12 @@
 // implementation evidence. Lost HTTP responses do not undo committed writes.
 // Historical Points, private cases and funded obligations are represented by
 // retained identity sets; amount/chain/payment behavior is outside this model.
+// One moderator Quarantine or Ban (the single enforcement-generation change)
+// appends its own paused, retired revision unless the project is already
+// retired. Reinstatement appends the listed revision again when the
+// restriction opened on a listed one (PRD ADM-06), so that revision is no
+// removal: removal is refused while the project's own restriction is in
+// force, when read and again within the guarded append.
 module api_project_removal {
   var s: { head: int, history: List[int], retired: bool, active: bool,
     generation: int, removePhase: str, expected: int, readGeneration: int,
@@ -25,6 +33,7 @@ module api_project_removal {
     application: str, newApplication: bool, publishPrepared: bool,
     applicationPublished: bool, cancelResponse: str,
     setupPrepared: bool, setupBase: int, otherWritten: bool,
+    restricted: bool, openedListed: bool,
     points: Set[int], cases: Set[int], obligations: Set[int] }
 
   action init = s' = { head: 1, history: List(1), retired: false, active: true,
@@ -33,6 +42,7 @@ module api_project_removal {
     application: "pending", newApplication: false, publishPrepared: false,
     applicationPublished: false, cancelResponse: "none",
     setupPrepared: false, setupBase: 0, otherWritten: false,
+    restricted: false, openedListed: false,
     points: Set(1), cases: Set(1), obligations: Set(1) }
 
   action pendingNewProject = all { s.removePhase == "idle", s.head == 1,
@@ -52,7 +62,8 @@ module api_project_removal {
       .with("removePhase", "commit")
     else s.with("removePhase", "error").with("removeResponse", result) }
   action commitRemoval = all { s.removePhase == "commit", s.checkedAuthority,
-    s' = if (s.retired) s.with("removePhase", "committed")
+    s' = if (s.restricted) s.with("removePhase", "error").with("removeResponse", "restricted")
+    else if (s.retired) s.with("removePhase", "committed")
     else if (s.head != s.expected or s.generation != s.readGeneration or s.head == 3)
       s.with("removePhase", "error").with("removeResponse", "conflict")
     else s.with("head", s.head + 1).with("history", s.history.append(s.head + 1))
@@ -93,6 +104,18 @@ module api_project_removal {
       .with("otherWritten", true) }
   action enforcementArrives = all { s.generation == 0,
     s' = s.with("generation", 1) }
+  action restrictionApplies = all { s.generation == 0, s.head > 0,
+    s.retired or s.head < 3,
+    s' = (if (s.retired) s
+      else s.with("head", s.head + 1).with("history", s.history.append(s.head + 1))
+        .with("retired", true).with("active", false))
+      .with("generation", 1).with("restricted", true)
+      .with("openedListed", not(s.retired)) }
+  action reinstate = all { s.restricted, not(s.openedListed) or s.head < 3,
+    s' = (if (s.openedListed)
+        s.with("head", s.head + 1).with("history", s.history.append(s.head + 1))
+          .with("retired", false)
+      else s).with("restricted", false).with("openedListed", false) }
 
   action step = {
     nondet expected = 1.to(3).oneOf()
@@ -102,16 +125,20 @@ module api_project_removal {
       commitRemoval, removalWriteFailure, removalReply(yes),
       preparePublication, publishApplication, cancelApplication(yes),
       lostCancellationReply, prepareSetup, commitSetup, anotherRevision,
-      enforcementArrives, s' = s }
+      enforcementArrives, restrictionApplies, reinstate, s' = s }
   }
   val invariant = all {
     s.head >= 0, s.head <= 3, s.head == s.history.length(),
     s.history.indices().forall(i => s.history.nth(i) == i + 1),
-    s.retired implies (not(s.active) and s.removeWrites == 1),
+    s.retired implies not(s.active),
+    s.removeWrites <= 1,
     s.removeWrites == 1 implies s.retired,
+    s.restricted implies s.retired,
+    (s.restricted and s.openedListed) implies s.removeWrites == 0,
     s.application == "cancelled" implies not(s.applicationPublished),
     s.applicationPublished implies s.application == "approved",
-    s.removeResponse == "removed" implies (s.retired and s.checkedAuthority),
+    s.removeResponse == "removed" implies
+      (s.retired and s.checkedAuthority and s.removeWrites == 1),
     s.points == Set(1), s.cases == Set(1), s.obligations == Set(1)
   }
 
@@ -151,4 +178,17 @@ module api_project_removal {
     .expect(s.retired and not(s.active)).then(commitSetup.fail())
   run preparedUpdateCannotRestoreRemovedProjectTest = init.then(preparePublication).then(remove)
     .expect(s.retired and not(s.active)).then(publishApplication.fail())
+  run restrictionRetirementIsNoRemovalTest = init.then(restrictionApplies)
+    .then(beginRemoval(2)).then(authorityReply("verified")).then(commitRemoval)
+    .expect(s.removeResponse == "restricted" and s.removeWrites == 0 and s.head == 2 and invariant)
+    .then(reinstate).expect(not(s.retired) and s.head == 3 and invariant)
+  run staleRemovalDuringRestrictionIsRefusedTest = init.then(restrictionApplies)
+    .then(beginRemoval(1)).then(authorityReply("verified")).then(commitRemoval)
+    .expect(s.removeResponse == "restricted" and s.removeWrites == 0 and s.head == 2)
+  run restrictionDuringRemovalRefusesItTest = init.then(beginRemoval(1)).then(authorityReply("verified"))
+    .then(restrictionApplies).then(commitRemoval)
+    .expect(s.removeResponse == "restricted" and s.removeWrites == 0 and invariant)
+  run removalBeforeRestrictionSurvivesReinstatementTest = init.then(remove).then(removalReply(true))
+    .then(restrictionApplies).expect(s.head == 2 and s.restricted and not(s.openedListed))
+    .then(reinstate).expect(s.retired and s.head == 2 and s.removeResponse == "removed" and invariant)
 }

@@ -1492,6 +1492,203 @@ test("an intervening revision refuses removal without overwriting the newer proj
   expect(await t.persistence.listRevisions()).toHaveLength(2);
 });
 
+test("removal waits for reinstatement instead of reporting a quarantine's own retired revision as removed", async () => {
+  const t = registry();
+  const MOD_2 = "900000005";
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2]);
+  await t.create("remove-quarantined", "example/remove-quarantined");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-quarantined");
+  if (!listed) throw new Error("Project missing");
+  expect(listed).toMatchObject({
+    status: "active",
+    manifest: { listingTier: "community" },
+  });
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        ADMIN,
+        {
+          action: "quarantine",
+          reason: "Investigating a contributor report",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: listed.revision,
+          expectedSequence: 1,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const quarantined = await t.persistence.getProject("remove-quarantined");
+  if (!quarantined) throw new Error("Project missing");
+  expect(quarantined.manifest).toMatchObject({
+    status: "paused",
+    listingTier: "retired",
+  });
+  // That revision is the quarantine's, not a removal: reinstatement lists
+  // the project again. Neither the current head nor an editor loaded before
+  // the quarantine is told that the project was removed.
+  for (const expectedRevision of [quarantined.revision, listed.revision]) {
+    const removed = await t.call(
+      "POST",
+      "projects/remove-quarantined/remove",
+      OTHER,
+      { expectedRevision },
+    );
+    expect(removed.status).toBe(409);
+    expect(removed.body).toMatchObject({ error: "project_restricted" });
+  }
+  expect((await t.persistence.getProject(listed.id))?.revision).toBe(
+    quarantined.revision,
+  );
+  // The owner appeals; after a fresh clean scan another moderator reinstates.
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        projectId: "remove-quarantined",
+        reason: "The report is mistaken",
+        evidenceReference: "private-appeal-fixture",
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = {
+    ...CLEARED,
+    assessment: CLEARED.assessment && {
+      ...CLEARED.assessment,
+      revision: quarantined.revision,
+    },
+  };
+  t.sqlite
+    .prepare(
+      `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', 'fixture', ?, ?, ?, ?)`,
+    )
+    .run(
+      CLEARED.assessment?.id ?? "",
+      listed.id,
+      quarantined.revision,
+      quarantined.manifestSha256,
+      "e".repeat(64),
+      "a".repeat(40),
+      "d".repeat(64),
+      ADMIN,
+      "admin",
+      NOW,
+      "Reinstatement scan",
+      JSON.stringify({ disposition: "clean" }),
+      "f".repeat(64),
+      "0".repeat(64),
+      NOW,
+    );
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        MOD_2,
+        {
+          action: "reinstate",
+          reason: "The report did not hold up",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: quarantined.revision,
+          expectedSequence: 3,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const reinstated = await t.persistence.getProject(listed.id);
+  if (!reinstated) throw new Error("Project missing");
+  expect(reinstated.manifest.listingTier).toBe("community");
+  // A removal now appends its own revision, and that revision holds.
+  expect(
+    (
+      await t.call("POST", "projects/remove-quarantined/remove", OTHER, {
+        expectedRevision: reinstated.revision,
+      })
+    ).status,
+  ).toBe(200);
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: reinstated.revision + 1,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect((await t.call("GET", "projects/remove-quarantined", "")).status).toBe(
+    404,
+  );
+});
+
+test("a Ban recorded while a removal is in flight refuses it at the guarded write", async () => {
+  const t = registry();
+  await t.create("remove-ban-race", "example/remove-ban-race");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-ban-race/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-ban-race");
+  if (!listed) throw new Error("Project missing");
+  expect(listed.status).toBe("active");
+  // A confirmed malicious scan records its Ban after the removal read a clear
+  // restriction. The Ban's paused, retired revision is still pending, so a
+  // removal revision written now would become the one reinstatement undoes.
+  const generation = t.persistence.enforcementGeneration.bind(t.persistence);
+  let banned = false;
+  t.persistence.enforcementGeneration = async () => {
+    if (!banned) {
+      banned = true;
+      expect(
+        await t.persistence.appendEnforcement(
+          {
+            id: "enf_remove_ban_race_scan",
+            projectId: listed.id,
+            sequence: 1,
+            action: "ban",
+            stateAfter: "banned",
+            appealAfter: "none",
+            reason: "Synthetic confirmed malicious scan",
+            evidenceReference: "private-case-fixture",
+            repositoryGithubId: "987654321",
+            repositoryKeys: ["example/remove-ban-race"],
+            actor: null,
+            actorRole: "vetting-service",
+            decisionSource: "standing-rule",
+            systemIssuer: {
+              kind: "vetting-service",
+              keySha256: "a".repeat(64),
+              assessmentId: "vet_fixture",
+              policyVersion: "fixture",
+              rule: "confirmed-malicious",
+            },
+            beforeRevision: listed.revision,
+            beforeManifestSha256: listed.manifestSha256,
+            afterRevision: null,
+            afterManifestSha256: null,
+            result: "revision_pending",
+            createdAt: NOW,
+          },
+          null,
+          [],
+        ),
+      ).toBe("recorded");
+    }
+    return generation();
+  };
+  const removed = await t.call(
+    "POST",
+    "projects/remove-ban-race/remove",
+    OTHER,
+    { expectedRevision: listed.revision },
+  );
+  expect(banned).toBe(true);
+  expect(removed.status).toBe(409);
+  expect(removed.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: listed.revision,
+    manifest: { listingTier: "community" },
+  });
+});
+
 function storeCancellableApplication(
   t: ReturnType<typeof registry>,
   id = "app_cancellation00001",
