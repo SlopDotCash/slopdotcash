@@ -13,6 +13,7 @@ import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
 import { type ProjectView, requiredProjection } from "./project-view";
 import { repositoryCountsFrom } from "./project-repositories.mjs";
+import type { ProjectDefinition } from "./projects.mjs";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
 import {
   eventThirds,
@@ -62,7 +63,7 @@ function projectOf(repository: string) {
  * appended repository, after that repository's own start month.
  */
 export function recordCounts(
-  project: ReturnType<typeof projectOf>,
+  project: ProjectDefinition,
   record: { repository: string; occurredAt: string },
 ): boolean {
   const occurredAt = Date.parse(record.occurredAt);

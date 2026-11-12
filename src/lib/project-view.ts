@@ -484,8 +484,10 @@ export function projectCountedRepositories(
   project: ProjectDefinition,
   requestedCycleId?: string,
 ): ProjectDefinition["repositories"] {
-  const cycleId = requestedCycleId ?? monthIdFor(snapshot.window.to);
-  return repositoriesCountedFor(project, cycleBounds(cycleId).from);
+  return repositoriesCountedFor(
+    project,
+    projectCycleWindow(snapshot, project, requestedCycleId).calendar.from,
+  );
 }
 
 /** Reports whether the snapshot collected every repository counted that cycle. */

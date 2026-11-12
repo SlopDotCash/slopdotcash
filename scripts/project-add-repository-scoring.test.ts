@@ -1,11 +1,13 @@
 /// <reference types="bun-types" />
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { repositoryWorkCounts } from "../src/lib/points";
 import { recordCounts } from "../src/lib/global-leaderboard";
 import {
   createLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
 import {
+  createPaymentProjectView,
   createProjectView,
   projectActivityCollected,
 } from "../src/lib/project-view";
@@ -174,5 +176,132 @@ describe("appended repository scoring start", () => {
     expect(
       out.source.repositories.find((r) => r.id === EXTRA)?.repositoryId,
     ).toBe("R_extra_node");
+  });
+});
+
+describe("penalties, payment proposals and Points follow the start month", () => {
+  const novemberRepositories = (view: { ledger: { repository: string }[] }) =>
+    view.ledger.filter((event) => event.repository === EXTRA);
+
+  test("the payment proposal view excludes the appended repository before countsFrom and includes it from that month", () => {
+    const project = projectWithExtra();
+    const input = snapshot(true);
+    const november = createPaymentProjectView(
+      input,
+      "asi",
+      "2026-11",
+      undefined,
+      project,
+    );
+    expect(novemberRepositories(november)).toHaveLength(0);
+    const december = createPaymentProjectView(
+      input,
+      "asi",
+      "2026-12",
+      undefined,
+      project,
+    );
+    expect(novemberRepositories(december).length).toBeGreaterThan(0);
+    expect(() =>
+      createPaymentProjectView(
+        snapshot(false),
+        "asi",
+        "2026-12",
+        undefined,
+        project,
+      ),
+    ).toThrow("Snapshot has not collected activity for asi");
+  });
+
+  test("a debit on the appended repository applies from its start month and never before", () => {
+    const project = projectWithExtra();
+    const input = snapshot(true);
+    const author = input.ledger.find(
+      (event) => event.repository === EXTRA,
+    )?.actor;
+    if (!author) throw new Error("fixture actor missing");
+    const penalty = (occurredAt: string) =>
+      ({
+        id: `penalty:${occurredAt}`,
+        actor: author,
+        repository: EXTRA,
+        occurredAt,
+        category: "spam",
+        tableVersion: "1",
+        debitThirds: 1,
+        source: {
+          id: "PR_x",
+          kind: "pull-request",
+          number: 1,
+          title: "x",
+          url: "https://github.com/elizaOS/eliza/pull/1",
+        },
+      }) as never;
+    const debit = (view: {
+      leaders: { actor: { id: string }; penaltyThirds: number }[];
+    }) =>
+      view.leaders.find((leader) => leader.actor.id === author.id)
+        ?.penaltyThirds ?? 0;
+    const clean = createProjectView(
+      input,
+      "asi",
+      "2026-12",
+      undefined,
+      project,
+    );
+    const debited = createProjectView(
+      { ...input, penalties: [penalty("2026-12-02T00:00:00.000Z")] },
+      "asi",
+      "2026-12",
+      undefined,
+      project,
+    );
+    expect(debit(clean)).toBe(0);
+    expect(debit(debited)).toBe(1);
+    const november = createProjectView(
+      input,
+      "asi",
+      "2026-11",
+      undefined,
+      project,
+    );
+    const novemberDebited = createProjectView(
+      { ...input, penalties: [penalty("2026-11-10T00:00:00.000Z")] },
+      "asi",
+      "2026-11",
+      undefined,
+      project,
+    );
+    expect(debit(november)).toBe(0);
+    expect(debit(novemberDebited)).toBe(0);
+  });
+
+  test("Points ignore appended-repository work before countsFrom and keep unrestricted repositories", () => {
+    const project = projectWithExtra();
+    expect(
+      repositoryWorkCounts(
+        { repository: EXTRA, occurredAt: "2026-11-30T23:59:59.000Z" },
+        project,
+      ),
+    ).toBe(false);
+    expect(
+      repositoryWorkCounts(
+        { repository: EXTRA, occurredAt: COUNTS_FROM },
+        project,
+      ),
+    ).toBe(true);
+    expect(
+      repositoryWorkCounts(
+        { repository: "elizaOS/asi", occurredAt: "2026-08-13T00:00:00.000Z" },
+        project,
+      ),
+    ).toBe(true);
+    // A registered repository without a start month is unchanged.
+    expect(
+      repositoryWorkCounts({
+        repository: "elizaOS/asi",
+        occurredAt: "2026-08-13T00:00:00.000Z",
+      }),
+    ).toBe(true);
   });
 });
