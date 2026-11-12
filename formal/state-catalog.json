@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a761d4ed2d70b78669ccd9c1afa2ddad8dee65fcbd86fe754a2817a36be6a3c4",
+  "inventorySha256": "671d0e25dc10f8840e5ee7eebdc709bcf9bb08d711febaa684257b776a989bc5",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2776,6 +2776,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/VaultActions.tsx",
+      "line": 365,
+      "name": "result",
+      "kind": "string-union",
+      "values": [
+        "approval-confirmed",
+        "failed",
+        "finalized",
+        "not-sent",
+        "pending"
+      ],
+      "models": [
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["finalized"],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/allocation-funding.ts",
       "line": 31,
       "name": "fundingState",
@@ -2818,6 +2842,22 @@
         "external-provisional",
         "wound-up"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/evm-vault-actions.ts",
+      "line": 354,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["failed", "finalized", "not-sent", "pending"],
+      "models": [
+        "formal/models/contracts/evm_owner_action.qnt",
+        "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
