@@ -112,3 +112,25 @@ receipt reports complete exploration with zero queued states. There is no
 new native/full run in this preparation, no failed receipt is relabeled, and
 no temporal, exact-output, application-refinement or financial-activation
 claim is added. The sole release integrator owns publication of diagnostics.
+
+## Hosted qualification after the local incomplete attempt
+
+The isolated diagnostic at `4c2534d7839e9d543c543cca91067959e3ce5ce5`
+completed the exact reviewed keeper VIEW in workflow `43122103257`,
+job `130864867129`. The original local 180-second incomplete result above
+remains historical evidence. The hosted result generated 47,536,725 states,
+found 7,733,684 distinct VIEW classes, exhausted the queue at depth 29, and
+finished in 126,272 ms within its explicit 600,000 ms bound. Exit status was
+zero, with no error or invariant violation; inputs remained unchanged and
+the run was not canceled. All ordinary keeper stages passed.
+
+The verification receipt SHA-256 is
+`4670d01d7c69c1db4cdcc942274d943d61dd9d127fc4cb5d4e42ab94f23c016c`.
+The raw QNT, its applied VIEW, and all six mapped runtime source hashes match
+the reviewed packet `3e8b36a04e7650603e87fc4e3b573cd70a8af123`.
+The same diagnostic's complete native inventory subsequently passed all
+713 tests across 19 files, with 3,865 assertions and zero failures.
+
+This qualifies selective integration of this finite safety VIEW. It does not
+qualify the other four diagnostic projections, establish source refinement,
+or replace the final trusted branch and release gates.

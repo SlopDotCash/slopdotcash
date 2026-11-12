@@ -3235,7 +3235,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     (response) =>
       response.request().method() === "GET" &&
       new URL(response.url()).pathname ===
-      `/api/v1/security-programs/${id}/intake`,
+        `/api/v1/security-programs/${id}/intake`,
   );
   await page
     .getByRole("link", { name: "Report privately", exact: true })
@@ -3338,9 +3338,7 @@ for (const slowPage of [false, true]) {
     test.setTimeout(120_000);
     const id = `late-report-${slowPage ? "loading" : "selected"}-${projectSuffix()}`;
     const repository = `e2e-security/${id}`;
-    const role = test.info().project.name.endsWith("-mobile")
-      ? "reporter-b"
-      : "reporter-a";
+    const role: Role = `late-report-${slowPage ? "loading" : "selected"}-${test.info().project.name.endsWith("-mobile") ? "mobile" : "desktop"}`;
     diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
     await listProject(request, TOKENS.security, repository, id, {});
     await setIntake(request, repository, "disabled");
@@ -3909,11 +3907,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
   test.setTimeout(240_000);
   // Independent viewport journeys use distinct seeded reporters. The real
   // same-actor workload cap remains covered by the API integration cases.
-  const reporterRole = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const otherReporterRole =
-    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterRole: Role = test.info().project.name.endsWith("-mobile")
+    ? "forwarding-mobile"
+    : "forwarding-desktop";
+  const otherReporterRole: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   const reporterToken = TOKENS[reporterRole];
   const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
@@ -5073,9 +5072,11 @@ test("an accepted private report rechecks identity before navigation and preserv
   test.setTimeout(120_000);
   const id = `receipt-swap-${projectSuffix()}`;
   const first: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+    ? "receipt-swap-mobile"
+    : "receipt-swap-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   await preparePrivateReceiptForm(page, request, id, first);
   let release!: () => void;
@@ -5184,8 +5185,8 @@ test("a received private report survives a session outage without being submitte
   test.setTimeout(120_000);
   const id = `receipt-retry-${projectSuffix()}`;
   const reporter: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
+    ? "receipt-outage-mobile"
+    : "receipt-outage-desktop";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
   await preparePrivateReceiptForm(page, request, id, reporter);
@@ -5248,8 +5249,8 @@ test("a departed private receipt check cannot clear a newer draft or navigate it
   test.setTimeout(120_000);
   const id = `receipt-leave-${projectSuffix()}`;
   const reporter: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
+    ? "receipt-leave-mobile"
+    : "receipt-leave-desktop";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   await preparePrivateReceiptForm(page, request, id, reporter);
   let receiptReceived = false;
@@ -5341,12 +5342,22 @@ test("an uncertain private submission checks identity before exposing a retry @r
   test.setTimeout(120_000);
   const id = `receipt-unknown-${projectSuffix()}`;
   const first: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+    ? "receipt-unknown-mobile"
+    : "receipt-unknown-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
   await preparePrivateReceiptForm(page, request, id, first);
+  const reviewedPreview = page.locator(
+    "form.report-composer > .report-preview",
+  );
+  const privateDescription = await reviewedPreview.innerText();
+  expect(privateDescription).not.toBe("");
+  expect(privateDescription).toContain(
+    `Synthetic receipt lifecycle ${id}; this isolated report contains no production findings, credentials or funds.`,
+  );
   let posts = 0;
   let submissionId = "";
   await page.route("**/api/v1/security-submissions", async (route) => {
@@ -5365,9 +5376,13 @@ test("an uncertain private submission checks identity before exposing a retry @r
   await expect(
     page.getByText(/Your account changed or signed out/u),
   ).toBeVisible();
-  await expect(page.locator(".report-preview")).toHaveCount(0);
+  await expect(reviewedPreview).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(privateDescription);
   await expect(
     page.getByRole("textbox", { name: "Summary", exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("textbox", { name: /^Description/u }),
   ).toHaveValue("");
   await expect(
     page.getByRole("button", { name: "Retry same report" }),
@@ -5397,8 +5412,8 @@ test("an unknown private session hides an uncertain report until a session-only 
   test.setTimeout(120_000);
   const id = `receipt-session-${projectSuffix()}`;
   const reporter: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
+    ? "receipt-session-mobile"
+    : "receipt-session-desktop";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
   diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
@@ -5485,8 +5500,8 @@ test("an incomplete private receipt response keeps the original idempotent repor
   test.setTimeout(120_000);
   const id = `receipt-shape-${projectSuffix()}`;
   const reporter: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
+    ? "receipt-shape-mobile"
+    : "receipt-shape-desktop";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   await preparePrivateReceiptForm(page, request, id, reporter);
   let firstPayload: unknown;
@@ -5542,10 +5557,8 @@ for (const replaceStored of [false, true]) {
       "Private intake lane",
     );
     test.setTimeout(120_000);
-    const id = `report-400-${projectSuffix()}`;
-    const reporter: Role = test.info().project.name.endsWith("-mobile")
-      ? "reporter-b"
-      : "reporter-a";
+    const id = `report-400-${replaceStored ? "replacement" : "owned"}-${projectSuffix()}`;
+    const reporter: Role = `validation-${replaceStored ? "replacement" : "owned"}-${test.info().project.name.endsWith("-mobile") ? "mobile" : "desktop"}`;
     diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
     diagnostics.allowResponse(400, "POST", "/api/v1/security-submissions");
     await preparePrivateReceiptForm(page, request, id, reporter, true);
@@ -5787,9 +5800,11 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   const id = `inbox-draft-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
   const first: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+    ? "inbox-leave-mobile"
+    : "inbox-leave-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   await listProject(request, TOKENS.security, repository, id, {});
   await setIntake(request, repository, "disabled");
