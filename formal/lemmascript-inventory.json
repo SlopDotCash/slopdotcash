@@ -7556,7 +7556,7 @@
 {"path":"src/lib/github-work.ts","sha256":"81b7a8bafbb1d4778b11f1b75436b59eed230f5ff9cd86c897fbc41d4308d4d7","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"githubWorkKey","kind":"FunctionDeclaration","line":5,"sha256":"da7b93968d995dcc4542cbbd04b30a3314556357c6e4275f79a9922a1f51f420","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]}
 ]},
-{"path":"src/lib/global-leaderboard.ts","sha256":"d81076c9b27f5062db2303f7d26f7bc7fce51fbd6c482e3adf627665395a676b","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/global-leaderboard.ts","sha256":"f4ad16de1618286612577e37a378c782d595008482663cde03ce8050531e5644","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"actorFromCycle","kind":"FunctionDeclaration","line":39,"sha256":"aad97a78f4a5a8322693abdc17ca122a5931c08a3afbd5166cf22ab1399b5db5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"cycleKey","kind":"FunctionDeclaration","line":48,"sha256":"1b27937cfd47595a4d5739078c880aa67b989cfbda104acbefc4f156ee718563","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"projectOf","kind":"FunctionDeclaration","line":52,"sha256":"ab37d5dc49836ce8de300cc12fb3cff9b03afd86b14bad03e4b4621f7053df81","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
@@ -8241,7 +8241,7 @@
 {"name":"isPointsSummary","kind":"FunctionDeclaration","line":20,"sha256":"1a066cc07cda9d6629ade9707cb8543a0b00fb1a13f52e8c169ff443fea4d1fa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@54>","kind":"ArrowFunction","line":54,"sha256":"84753284c4d8319685b401d7b9f6e56cd887aa20586e8ecff3b691a858a002cb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/points.ts","sha256":"7487152c8ed6a4e1f2e8262f460dcbd640ee6682e02a5f79782b35c95d18bc23","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/points.ts","sha256":"f1d70a8894cf8ab71fb6c22fc45a8c9d18d01b875d303e07b28413c5e33a9749","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"iso","kind":"FunctionDeclaration","line":89,"sha256":"f3afcfe17dbe214d42f51b82ed4b81db59fa87fc2a885291dcf3200c6a176fe5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"exact","kind":"FunctionDeclaration","line":96,"sha256":"2ba2c766dd597bc7518d18aa106570f24ada61f25cad1bae9584c91a2b9c1973","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"repositoryWorkCounts","kind":"FunctionDeclaration","line":111,"sha256":"f7a0d3ac3fc195b704358cad7e78808b93921f0a73c90897866f1ae99ace57d8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -8578,7 +8578,7 @@
 {"name":"usesGeneratedSkills","kind":"FunctionDeclaration","line":131,"sha256":"0f0b31cea8c51b30b224b66320f6a20bb2c5308a54836e52ec39c8f4bf87a5cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"publishesGeneratedSkills","kind":"FunctionDeclaration","line":136,"sha256":"2c2e5c7a7b401e77bfffa6a3bf66fdd243511265eb8e0121c3f138dc3f798519","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/project-view.ts","sha256":"e27e8f0c1cd796373a785dbb6fa7a4f4af677682011d7e6c26bf21804314f780","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/project-view.ts","sha256":"0e922c78a70a687cfeebcfe8e2086ea5bb0c2baf315af61a2f0bee3df22d4978","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"requiredProjection","kind":"FunctionDeclaration","line":91,"sha256":"e9cef1cce8b40f829b927b80b4e087727d4b91d3363b87f8152c6e8a4dee6bc0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"iso","kind":"FunctionDeclaration","line":151,"sha256":"f043abf94acada2a716d9172d9f77a434a9c875bb171583f45403738c6073c6b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"monthIdFor","kind":"FunctionDeclaration","line":155,"sha256":"af74025a143ad517dc5684b45979ead7d2209a65f1af0676eb1f8183d74d2f33","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

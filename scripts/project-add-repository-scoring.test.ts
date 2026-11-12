@@ -1,11 +1,11 @@
 /// <reference types="bun-types" />
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import { repositoryWorkCounts } from "../src/lib/points";
 import { recordCounts } from "../src/lib/global-leaderboard";
 import {
   createLeaderboardSnapshot,
   type LeaderboardSnapshot,
 } from "../src/lib/leaderboard";
+import { repositoryWorkCounts } from "../src/lib/points";
 import {
   createPaymentProjectView,
   createProjectView,

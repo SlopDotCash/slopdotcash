@@ -75,7 +75,7 @@
   "src/lib/project-contracts.ts": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions.",
   "src/lib/project-image.mjs": "Pure bounded data-URL and file-signature validation; no retained state, I/O or mutation.",
   "src/lib/project-registry.ingested.mjs": "Static re-export of the build-time registry input, distinct from runtime registry; no independent state or effect.",
-  "src/lib/project-repositories.mjs": "Pure functions over manifest values (month arithmetic, append-suffix comparison, repository lookups); no state, I/O or transition. The append rule is enforced and modeled in project-policy.",
+  "src/lib/project-repositories.mjs": "Pure functions over manifest values (month arithmetic, append-suffix comparison, repository lookups); no state, I/O or transition. The append rule is enforced in project-policy and modeled in project_repository_append.",
   "src/lib/project-reward-summary.ts": "Pure presentation projection of supplied registry reward/bounty fields; no storage or asynchronous work. Project lifecycle and payment state are not established by this display helper.",
   "src/lib/received-totals.ts": "Pure supplied-response shape/arithmetic validator and reviewed USD-asset predicate. No fetch, mutable cache or payment transition; actual receipt indexing and public aggregation remain payment ledger responsibilities.",
   "src/lib/record-validation.mjs": "Pure record/key/string/integer/time validation primitives; no retained state or I/O.",

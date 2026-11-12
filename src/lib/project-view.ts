@@ -1,7 +1,7 @@
 import { compareActors } from "./github-actor";
-import { repositoriesCountedFor } from "./project-repositories.mjs";
 import { ordinaryFee } from "./payments/contracts";
 import { periodBounds } from "./payments/monthly-allocation";
+import { repositoriesCountedFor } from "./project-repositories.mjs";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. November 2026 and

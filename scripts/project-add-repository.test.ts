@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
+import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
 import {
   appendedRepositories,
   findListedRepository,
@@ -8,7 +8,7 @@ import {
   repositoryCountsFrom,
   repositoryIdentity,
 } from "../src/lib/project-repositories.mjs";
-import { assertProjectPolicyTransition } from "../src/lib/project-policy.mjs";
+import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 
