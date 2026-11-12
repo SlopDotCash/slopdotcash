@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bindSafetyView, readSafetyViews } from "./quint-safety-view.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
+
 const root = resolve(import.meta.dirname, "..");
 const model = "formal/models/payments/operator_keeper_lifecycle.qnt";
 const source = readFileSync(resolve(root, model), "utf8");
