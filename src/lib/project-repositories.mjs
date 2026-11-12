@@ -31,14 +31,27 @@ export function appendedRepositories(previous, next) {
   return after.slice(before.length);
 }
 
-function findRepository(manifest, repositoryId) {
+/**
+ * The listed repository a name refers to, or null. An exact id match on any
+ * entry wins over a recorded alias of another entry; names compare without
+ * case, like GitHub paths.
+ */
+export function findListedRepository(repositories, repositoryId) {
   const wanted = repositoryId.toLowerCase();
-  const index = manifest.repositories.findIndex((repository) =>
-    [repository.id, ...(repository.aliases ?? [])].some(
-      (candidate) => candidate.toLowerCase() === wanted,
-    ),
+  let index = repositories.findIndex(
+    (repository) => repository.id.toLowerCase() === wanted,
   );
-  return index < 0 ? null : { index, repository: manifest.repositories[index] };
+  if (index < 0)
+    index = repositories.findIndex((repository) =>
+      (repository.aliases ?? []).some(
+        (candidate) => candidate.toLowerCase() === wanted,
+      ),
+    );
+  return index < 0 ? null : { index, repository: repositories[index] };
+}
+
+function findRepository(manifest, repositoryId) {
+  return findListedRepository(manifest.repositories, repositoryId);
 }
 
 /** The permanent GitHub identity of a listed repository, or null. */

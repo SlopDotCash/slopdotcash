@@ -73,3 +73,22 @@ WHEN NEW.state = 'pending' AND EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'UNIQUE constraint failed: vetting_assessments.current_pending');
 END;
+
+-- Interim until clearance is computed per repository: a clean scan of one
+-- repository must not resolve the contributor flags of a project with more
+-- than one repository. A one-repository project resolves its bound flags
+-- exactly as migration 0060 did.
+DROP TRIGGER project_flags_resolve_on_clean_scan;
+CREATE TRIGGER project_flags_resolve_on_clean_scan
+AFTER UPDATE OF state ON vetting_assessments
+WHEN OLD.state = 'pending' AND NEW.state = 'clean' AND COALESCE((
+  SELECT json_array_length(p.manifest, '$.repositories')
+  FROM projects p WHERE p.id = NEW.project_id
+), 1) <= 1
+BEGIN
+  UPDATE project_flags
+     SET state = 'resolved', closed_at = NEW.completed_at,
+         closed_by = 'clean-scan', closed_reference = NEW.id
+   WHERE project_id = NEW.project_id AND state = 'active'
+     AND id IN (SELECT value FROM json_each(NEW.flag_ids));
+END;

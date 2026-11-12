@@ -4,6 +4,10 @@ import type { ProjectDefinition } from "./projects.mjs";
 
 export type ProjectRepository = ProjectDefinition["repositories"][number];
 
+export declare function findListedRepository(
+  repositories: readonly ProjectRepository[],
+  repositoryId: string,
+): { index: number; repository: ProjectRepository } | null;
 export declare function nextUtcMonthStart(now: Date): string;
 export declare function appendedRepositories(
   previous: Pick<ProjectDefinition, "repositories">,

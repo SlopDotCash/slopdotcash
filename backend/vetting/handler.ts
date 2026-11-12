@@ -18,6 +18,7 @@ import type {
   ProjectSetupStatus,
   WebSession,
 } from "../../src/lib/project-contracts";
+import { findListedRepository } from "../../src/lib/project-repositories.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   JOURNAL_SCHEMA,
@@ -613,18 +614,17 @@ async function requestAssessment(
   });
 }
 
-/** The manifest id of a listed repository, matched by id or alias; else null. */
+/**
+ * The manifest id of a listed repository; else null. An exact id match on
+ * any entry wins over an alias of another entry.
+ */
 function listedRepository(
   manifest: ProjectDefinition,
   repositoryId: string,
 ): string | null {
-  const wanted = repositoryId.toLowerCase();
   return (
-    manifest.repositories.find((entry) =>
-      [entry.id, ...(entry.aliases ?? [])].some(
-        (name) => name.toLowerCase() === wanted,
-      ),
-    )?.id ?? null
+    findListedRepository(manifest.repositories, repositoryId)?.repository.id ??
+    null
   );
 }
 
@@ -978,10 +978,13 @@ async function refreshQueue(
           pending = [latest];
         }
       } else {
-        // Until clearance is computed per repository, a project with more
-        // than one repository queues each repository that has no scan of
-        // the current revision, and recovers each pending assignment.
+        // Interim until clearance is computed per repository: a project with
+        // more than one repository queues each repository whose latest scan
+        // covered other executable content (or that has none), and recovers
+        // each pending assignment. A status, listing or presentation edit
+        // keeps the content digest, so it queues nothing.
         const assessments = await deps.vetting.projectAssessments(project.id);
+        const content = await vettedContentSha256(project.manifest);
         pending = [];
         for (const repositoryId of repositoryIds) {
           const own = assessments.filter(
@@ -993,7 +996,7 @@ async function refreshQueue(
           if (latest?.state === "pending") pending.push(latest);
           else if (
             clearance.state === "unscanned" &&
-            !own.some((assessment) => assessment.revision === project.revision)
+            latest?.contentSha256 !== content
           )
             plans.push({
               repositoryId,
@@ -1021,7 +1024,9 @@ async function refreshQueue(
           });
       }
     }
-    for (const plan of plans)
+    for (const plan of plans) {
+      // The cap counts queued rows, and one project can queue several.
+      if (queued.length >= MAX_AUTOMATIC_SCANS) break;
       try {
         const assessment = await queueAssessment(
           deps,
@@ -1041,6 +1046,7 @@ async function refreshQueue(
               : "queue_failed",
         });
       }
+    }
   }
   return json(200, { queued, reinstated, skipped });
 }

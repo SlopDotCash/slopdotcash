@@ -2,7 +2,10 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { githubHeaders } from "../../backend/github";
-import { repositoryIdentity as listedRepositoryIdentity } from "../../src/lib/project-repositories.mjs";
+import {
+  findListedRepository,
+  repositoryIdentity as listedRepositoryIdentity,
+} from "../../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
@@ -197,13 +200,11 @@ export async function acquireQueuedAssessment(
   if (manifest.id !== assessment.projectId)
     throw new Error("Manifest project mismatch");
   // One scan covers the one manifest repository the queue assigned, matched
-  // by its id or a recorded alias.
-  const wanted = queuedRepository.toLowerCase();
-  const entry = manifest.repositories.find((repository) =>
-    [repository.id, ...(repository.aliases ?? [])].some(
-      (name) => name.toLowerCase() === wanted,
-    ),
-  );
+  // by its id, else by a recorded alias.
+  const entry = findListedRepository(
+    manifest.repositories,
+    queuedRepository,
+  )?.repository;
   const refusal = (error: AcquisitionRefusal) =>
     new QueuedAcquisitionRefusal(
       assessment,
