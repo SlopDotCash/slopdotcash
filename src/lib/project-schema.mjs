@@ -1395,6 +1395,23 @@ function validateProjectDefinition(
   }
   validateSteward(project.steward);
   validateAuthority(project.authority, repositories[0]);
+  const seenGithubIds = new Set([String(project.authority.repositoryId)]);
+  const seenNodeIds = new Set([String(project.authority.repositoryNodeId)]);
+  for (const [index, repository] of repositories.entries()) {
+    if (index === 0 || repository.githubId === undefined) continue;
+    if (seenGithubIds.has(repository.githubId)) {
+      throw new TypeError(
+        `project.repositories[${index}].githubId duplicates another repository`,
+      );
+    }
+    if (seenNodeIds.has(repository.nodeId)) {
+      throw new TypeError(
+        `project.repositories[${index}].nodeId duplicates another repository`,
+      );
+    }
+    seenGithubIds.add(repository.githubId);
+    seenNodeIds.add(repository.nodeId);
+  }
   validateTerms(
     project.terms,
     repositories[0],

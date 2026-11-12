@@ -78,7 +78,7 @@ function assertFundingRouteTransition(previousRoutes, nextRoutes) {
   }
 }
 
-function canonical(value) {
+export function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.keys(value)

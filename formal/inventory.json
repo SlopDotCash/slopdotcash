@@ -6220,7 +6220,7 @@
     },
     {
       "path": "src/lib/project-policy.mjs",
-      "sha256": "75b80825277b96487fc84f6d894886191c234f1d3a7493208bc64509d316bfd9",
+      "sha256": "745575e62bef22ad8a24e22719551d6197d740026be6ecdc987991c56c350425",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
       "candidateLines": [4, 159, 231, 238, 239, 242, 250, 251, 252, 310],
       "review": "mapped-abstraction"
@@ -6260,7 +6260,7 @@
     },
     {
       "path": "src/lib/project-repositories.mjs",
-      "sha256": "c56049d58ddb683262fc03ddcb0aed372ceef6ebcf40c6823da258873188ddea",
+      "sha256": "36c2a8b6e5873a0d16a4122697a4cc66d4ddb9e00c838e4e370ce455e397b03d",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -6283,13 +6283,13 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "122dd0368a0cbd061bbffc06300036a4f9caee08140763e83b1c42a76f20a859",
+      "sha256": "e20fd899aad6cb5875439122d0478bd0a09acc3de5996278d21de961a04f756f",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
       "candidateLines": [
         126, 331, 342, 347, 351, 352, 411, 417, 423, 426, 430, 434, 535, 538,
         545, 548, 566, 592, 693, 694, 696, 701, 711, 1280, 1281, 1284, 1292,
-        1295, 1305, 1306, 1308, 1310, 1406, 1407, 1408, 1412, 1415, 1417, 1427,
-        1428, 1430, 1540
+        1295, 1305, 1306, 1308, 1310, 1423, 1424, 1425, 1429, 1432, 1434, 1444,
+        1445, 1447, 1557
       ],
       "review": "mapped-abstraction"
     },

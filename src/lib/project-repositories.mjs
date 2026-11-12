@@ -4,6 +4,8 @@
  * UTC month from which their work counts.
  */
 
+import { canonical } from "./project-policy.mjs";
+
 /** The first instant of the UTC month after `now`, as an exact ISO string. */
 export function nextUtcMonthStart(now) {
   return new Date(
@@ -12,7 +14,7 @@ export function nextUtcMonthStart(now) {
 }
 
 function sameEntry(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return canonical(left) === canonical(right);
 }
 
 /**

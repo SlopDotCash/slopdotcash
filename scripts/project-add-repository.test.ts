@@ -20,7 +20,7 @@ function entry(name: string, extra: Record<string, unknown> = {}) {
     githubUrl: `https://github.com/acme/${name}`,
     description: `The ${name} repository of the project.`,
     integrationBranch: "main",
-    githubId: "123456789",
+    githubId: String(100000000 + name.length * 1000 + name.charCodeAt(0)),
     nodeId: `R_kgDO${name}`,
     countsFrom: "2026-12-01T00:00:00.000Z",
     ...extra,
@@ -49,6 +49,50 @@ test("schema rejects identity fields on the primary repository", () => {
     countsFrom: "2026-12-01T00:00:00.000Z",
   });
   expect(() => assertProjectDefinition(project)).toThrow();
+});
+
+test("schema rejects a duplicate githubId across appended entries", () => {
+  expect(() =>
+    assertProjectDefinition(
+      withRepositories(base(), [
+        entry("one"),
+        entry("two", { githubId: entry("one").githubId }),
+      ]),
+    ),
+  ).toThrow();
+});
+
+test("schema rejects a duplicate nodeId across appended entries", () => {
+  expect(() =>
+    assertProjectDefinition(
+      withRepositories(base(), [
+        entry("one"),
+        entry("two", { nodeId: "R_kgDOone" }),
+      ]),
+    ),
+  ).toThrow();
+});
+
+test("schema rejects an appended githubId equal to the authority repository", () => {
+  const project = base();
+  expect(() =>
+    assertProjectDefinition(
+      withRepositories(project, [
+        entry("one", { githubId: project.authority.repositoryId }),
+      ]),
+    ),
+  ).toThrow();
+});
+
+test("schema rejects an appended nodeId equal to the authority repository", () => {
+  const project = base();
+  expect(() =>
+    assertProjectDefinition(
+      withRepositories(project, [
+        entry("one", { nodeId: project.authority.repositoryNodeId }),
+      ]),
+    ),
+  ).toThrow();
 });
 
 test("schema rejects a partial set and bad values", () => {
@@ -169,13 +213,16 @@ test("helpers", () => {
     nodeId: previous.authority.repositoryNodeId,
   });
   expect(repositoryIdentity(next, "acme/one")).toEqual({
-    githubId: "123456789",
+    githubId: entry("one").githubId,
     nodeId: "R_kgDOone",
   });
   expect(repositoryIdentity(next, "acme/missing")).toBeNull();
   expect(repositoryCountsFrom(next, previous.repositories[0].id)).toBeNull();
   const december = Date.parse("2026-12-01T00:00:00.000Z");
   expect(repositoryCountsFrom(next, "acme/one")).toBe(december);
+  const transferred = structuredClone(next);
+  Object.assign(transferred.repositories[1], { aliases: ["acme/older"] });
+  expect(repositoryCountsFrom(transferred, "acme/older")).toBe(december);
   expect(repositoriesCountedFor(next, december - 1)).toHaveLength(1);
   expect(repositoriesCountedFor(next, december)).toHaveLength(2);
 });
