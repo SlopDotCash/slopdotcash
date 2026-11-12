@@ -66,6 +66,7 @@ import {
   safeProposalHttpsUrl,
   slugify,
 } from "./lib/project-proposal";
+import { nextUtcMonthStart } from "./lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
   monthlyAmountDisplay,
@@ -92,6 +93,7 @@ import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
   Avatar,
+  formatDate,
   ProjectNav,
   RoutePageHeader,
   SignInPanel,
@@ -99,6 +101,7 @@ import {
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
+type ProjectRepositoryEntry = ProjectDefinition["repositories"][number];
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
 const LEGACY_PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 const PROPOSAL_STEP_KEY = `${LEGACY_PROPOSAL_STEP_KEY}:v2`;
@@ -2112,6 +2115,25 @@ function ProjectUpdateForm({
     | { state: "idle" | "removing" | "removed" }
     | { state: "error"; message: string; staleRevision: boolean }
   >({ state: "idle" });
+  // Repositories the owner adds in this edit (PRD section 4). Each counts
+  // from the next UTC month, set when the revision is built.
+  const [repositoryInput, setRepositoryInput] = useState("");
+  const [repositoryLookup, setRepositoryLookup] = useState<
+    { state: "idle" | "loading" } | { state: "error"; message: string }
+  >({ state: "idle" });
+  const repositoryLookupController = useRef<AbortController | null>(null);
+  const [addedRepositories, setAddedRepositories] = useState<
+    {
+      entry: Omit<ProjectRepositoryEntry, "countsFrom">;
+      ownDescription: boolean;
+    }[]
+  >([]);
+  useEffect(
+    () => () => {
+      repositoryLookupController.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     let active = true;
     setLoadError(null);
@@ -2268,6 +2290,12 @@ function ProjectUpdateForm({
           : lengthError(value[field], 1, 2_000),
       ]),
     ),
+    ...Object.fromEntries(
+      addedRepositories.map((added, index) => [
+        `addedRepository${index}`,
+        lengthError(added.entry.description, 12, 500),
+      ]),
+    ),
   };
   const choice: FundingChoice = {
     mode: value.fundingMode === "monthly" ? "monthly" : "none",
@@ -2300,6 +2328,7 @@ function ProjectUpdateForm({
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
+  const repositoryCountsFrom = nextUtcMonthStart(new Date());
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2334,6 +2363,18 @@ function ProjectUpdateForm({
     return {
       ...source,
       ...fundingFields,
+      ...(addedRepositories.length > 0
+        ? {
+            repositories: [
+              ...source.repositories,
+              ...addedRepositories.map(({ entry }) => ({
+                ...entry,
+                description: entry.description.trim(),
+                countsFrom: repositoryCountsFrom,
+              })),
+            ],
+          }
+        : {}),
       ...(source.slopbot !== undefined || value.automaticClosure === "true"
         ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
         : {}),
@@ -2355,6 +2396,8 @@ function ProjectUpdateForm({
       changes.executable.length +
       changes.financial.length >
     0;
+  // An added repository always needs its own scan, cleared project or not.
+  const executableCleared = scanCleared && addedRepositories.length === 0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
     minor === "0"
       ? "No monthly funding"
@@ -2386,6 +2429,12 @@ function ProjectUpdateForm({
           },
         ]
       : []),
+    {
+      field: "repositories",
+      label: "Repositories",
+      before: current.repositories.map((entry) => entry.id).join(", "),
+      after: next.repositories.map((entry) => entry.id).join(", "),
+    },
     {
       field: "headline",
       label: "Short description",
@@ -2465,6 +2514,7 @@ function ProjectUpdateForm({
     }
     if (!changed || base === null || staleDraft) return;
     const submittedDraft = draft;
+    const submittedRepositories = addedRepositories;
     publishInFlight.current = true;
     setSubmission({ state: "publishing" });
     try {
@@ -2495,6 +2545,9 @@ function ProjectUpdateForm({
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
       const editedDuringSave = latestDraft.current !== submittedDraft;
+      setAddedRepositories((list) =>
+        list.filter((added) => !submittedRepositories.includes(added)),
+      );
       setDraft(editedDuringSave ? latestDraft.current : null);
       setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
@@ -2515,6 +2568,65 @@ function ProjectUpdateForm({
       });
     } finally {
       publishInFlight.current = false;
+    }
+  }
+  async function addRepository() {
+    const repository = normalizeRepositoryInput(repositoryInput);
+    const listed = (name: string) =>
+      [...current.repositories, ...addedRepositories.map(({ entry }) => entry)]
+        .flatMap((entry) => [entry.id, ...(entry.aliases ?? [])])
+        .some((id) => id.toLowerCase() === name.toLowerCase());
+    repositoryLookupController.current?.abort();
+    if (listed(repository)) {
+      setRepositoryLookup({
+        state: "error",
+        message: `${repository} is already listed.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    repositoryLookupController.current = controller;
+    setRepositoryLookup({ state: "loading" });
+    try {
+      const facts = await lookupGitHubRepository(repository, controller.signal);
+      if (controller.signal.aborted || !mounted.current) return;
+      const refusal =
+        facts.fork !== false
+          ? `${facts.repository} is a fork. Add the original repository instead.`
+          : facts.archived !== false
+            ? `${facts.repository} is archived on GitHub.`
+            : listed(facts.repository)
+              ? `${facts.repository} is already listed.`
+              : null;
+      if (refusal !== null) {
+        setRepositoryLookup({ state: "error", message: refusal });
+        return;
+      }
+      const description = facts.description ?? "";
+      const usable = boundedText(description, 12, 500);
+      setAddedRepositories((list) => [
+        ...list,
+        {
+          entry: {
+            id: facts.repository,
+            displayName: facts.repository,
+            githubUrl: `https://github.com/${facts.repository}`,
+            description: usable ? description.trim() : "",
+            integrationBranch: facts.defaultBranch,
+            githubId: facts.numericId,
+            nodeId: facts.nodeId,
+          },
+          ownDescription: !usable,
+        },
+      ]);
+      setRepositoryInput("");
+      setRepositoryLookup({ state: "idle" });
+    } catch (error) {
+      if (controller.signal.aborted || !mounted.current) return;
+      setRepositoryLookup({
+        state: "error",
+        message: errorMessage(error, "Repository could not load."),
+      });
     }
   }
   async function remove() {
@@ -2673,6 +2785,79 @@ function ProjectUpdateForm({
             ))}
           </details>
         </details>
+        <details className="proposal-advanced">
+          <summary>Repositories</summary>
+          <ul>
+            {current.repositories.map((entry) => (
+              <li key={entry.id}>
+                {entry.id}
+                {entry.countsFrom ? (
+                  <>
+                    {" "}
+                    <small className="field-hint">
+                      Counts from {formatDate(entry.countsFrom)}
+                    </small>
+                  </>
+                ) : null}
+              </li>
+            ))}
+            {addedRepositories.map((added, index) => (
+              <li key={added.entry.id}>
+                {added.entry.id}{" "}
+                <small className="field-hint">
+                  Counts from {formatDate(repositoryCountsFrom)}. A security
+                  scan runs before it counts; an active project pauses until the
+                  scan clears.
+                </small>
+                {added.ownDescription ? (
+                  <TextField
+                    error={shown(`addedRepository${index}`)}
+                    label="Description"
+                    name={`addedRepository${index}`}
+                    onChange={(description) =>
+                      setAddedRepositories((list) =>
+                        list.map((item) =>
+                          item === added
+                            ? { ...item, entry: { ...item.entry, description } }
+                            : item,
+                        ),
+                      )
+                    }
+                    value={added.entry.description}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <TextField
+            error={
+              repositoryLookup.state === "error"
+                ? repositoryLookup.message
+                : undefined
+            }
+            label="GitHub repository"
+            name="addRepository"
+            onChange={(entry) => {
+              setRepositoryInput(entry);
+              if (repositoryLookup.state === "error")
+                setRepositoryLookup({ state: "idle" });
+            }}
+            placeholder="owner/repository or GitHub URL"
+            value={repositoryInput}
+          />
+          <button
+            className="button secondary-button"
+            disabled={
+              repositoryLookup.state === "loading" ||
+              repositoryInput.trim() === "" ||
+              submission.state === "publishing"
+            }
+            onClick={() => void addRepository()}
+            type="button"
+          >
+            Add
+          </button>
+        </details>
         {monthly && !bountyOnly ? (
           <details className="proposal-advanced">
             <summary>Monthly rewards</summary>
@@ -2757,12 +2942,12 @@ function ProjectUpdateForm({
             <h2 id="update-changes">Changes</h2>
             <ul>
               {changes.presentation.length > 0 ||
-              (scanCleared && changes.executable.length > 0) ? (
+              (executableCleared && changes.executable.length > 0) ? (
                 <li>
                   Presentation and cleared contribution changes publish now.
                 </li>
               ) : null}
-              {!scanCleared && changes.executable.length > 0 ? (
+              {!executableCleared && changes.executable.length > 0 ? (
                 <li>
                   Contribution changes need a new security scan.{" "}
                   {current.status === "active"
