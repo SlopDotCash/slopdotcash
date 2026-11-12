@@ -1020,19 +1020,27 @@ function actorKind(value: string): GitHubActorKind {
   return "Unknown";
 }
 
-function parseActor(value: unknown, path: string): GitHubActor | null {
+// GitHub serves some app accounts in two shapes under one immutable node ID:
+// the Copilot coding agent authors pull requests as the Bot
+// "copilot-swe-agent" but appears as the User "Copilot" in assignees and
+// commit authors. A BOT_ node ID is always an app account, so it is a Bot
+// wherever it appears and never receives person credit or claims work.
+export function parseActor(value: unknown, path: string): GitHubActor | null {
   if (value === null) {
     return null;
   }
   const actor = asRecord(value, path);
+  const id = asString(actor.id, `${path}.id`);
   return {
-    id: asString(actor.id, `${path}.id`),
+    id,
     login: asString(actor.login, `${path}.login`),
     avatarUrl: canonicalActorAvatarUrl(
       asString(actor.avatarUrl, `${path}.avatarUrl`),
     ),
     url: asString(actor.url, `${path}.url`),
-    kind: actorKind(asString(actor.__typename, `${path}.__typename`)),
+    kind: id.startsWith("BOT_")
+      ? "Bot"
+      : actorKind(asString(actor.__typename, `${path}.__typename`)),
   };
 }
 
