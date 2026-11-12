@@ -65,7 +65,10 @@ import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
-import { verifyAppendedRepositories } from "./appended-repositories";
+import {
+  assertAppendedIdentitiesUnlisted,
+  verifyAppendedRepositories,
+} from "./appended-repositories";
 import {
   PROJECT_API_CONTRACT_VERSION,
   type ProjectPersistence,
@@ -1658,6 +1661,18 @@ async function publishOwnerRevision(
   // never authorize private funding reads or a revision of another project.
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  // An appended repository's permanent GitHub id must be new to the registry.
+  const submittedRepositories = (body.manifest as Record<string, unknown>)
+    .repositories;
+  if (
+    Array.isArray(submittedRepositories) &&
+    submittedRepositories.length > current.manifest.repositories.length
+  )
+    assertAppendedIdentitiesUnlisted(
+      await deps.persistence.listProjects(),
+      current,
+      submittedRepositories,
+    );
   // The server decides status and listing; the owner sends content.
   let prepared = (await verifiedBountyAmount(
     withMonthlyAmount(

@@ -54,6 +54,58 @@ async function readAccess(
   }
 }
 
+type ListedProject = { id: string; manifest: ProjectDefinition };
+
+/**
+ * Refuses an appended repository whose permanent GitHub id any project
+ * already lists, under any name: another project's first repository
+ * (`authority.repositoryId`) or appended entry (`githubId`), this project's
+ * own first repository or entries, or an earlier entry of the same
+ * submission. Runs on the submitted entries before schema validation, so a
+ * renamed repository appended again is a registry conflict, not a manifest
+ * error.
+ */
+export function assertAppendedIdentitiesUnlisted(
+  projects: readonly ListedProject[],
+  project: ListedProject,
+  submittedRepositories: unknown,
+): void {
+  if (
+    !Array.isArray(submittedRepositories) ||
+    submittedRepositories.length <= project.manifest.repositories.length
+  )
+    return;
+  const listed = new Map<string, string>();
+  for (const candidate of [
+    project,
+    ...projects.filter((entry) => entry.id !== project.id),
+  ]) {
+    const { manifest } = candidate;
+    const ids = [
+      manifest.authority?.repositoryId,
+      ...manifest.repositories.slice(1).map((entry) => entry.githubId),
+    ];
+    for (const githubId of ids)
+      if (typeof githubId === "string" && !listed.has(githubId))
+        listed.set(githubId, candidate.id);
+  }
+  for (const entry of submittedRepositories.slice(
+    project.manifest.repositories.length,
+  )) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { id, githubId } = entry as { id?: unknown; githubId?: unknown };
+    if (typeof githubId !== "string") continue;
+    const owner = listed.get(githubId);
+    if (owner !== undefined)
+      fail(
+        409,
+        "registry_conflict",
+        `GitHub repository ${githubId}${typeof id === "string" ? ` (${id})` : ""} is already listed by project ${owner}`,
+      );
+    listed.set(githubId, project.id);
+  }
+}
+
 async function verifyOne(
   deps: AppendedRepositoryDependencies,
   actor: GithubActor,
@@ -65,6 +117,12 @@ async function verifyOne(
       422,
       "invalid_repository_start",
       `${entry.id} must count from ${countsFrom}, the start of the next UTC month.`,
+    );
+  if (entry.displayName !== entry.id)
+    fail(
+      422,
+      "invalid_repository",
+      `The display name of ${entry.id} must be ${entry.id}.`,
     );
   if (entry.githubId === undefined || entry.nodeId === undefined)
     fail(
