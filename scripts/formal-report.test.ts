@@ -761,7 +761,7 @@ test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
       const result = aggregate(directory);
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).toContain(
-        "3 check stages and 1 verifications passed for 1 models",
+        "3 check stages passed and 1 of 1 verifications completed for 1 models; 0 timed out without a result.",
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });
