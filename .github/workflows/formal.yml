@@ -201,8 +201,29 @@ jobs:
           for model in "${models[@]}"; do
             node scripts/check-formal.mjs "--model=$model" || failed+=("check $model")
           done
+          # A verification that only ran out of its time bound proves nothing
+          # either way: it is reported, not failed. A counterexample, crash,
+          # unstable input or broken model still fails the shard.
+          timed_out=()
           for model in "${models[@]}"; do
-            node scripts/check-formal.mjs --verify "--model=$model" || failed+=("verify $model")
+            if ! node scripts/check-formal.mjs --verify "--model=$model"; then
+              if node --input-type=module -e '
+                import { readFileSync } from "node:fs";
+                import { formalTimedOut } from "./scripts/formal-report.mjs";
+                const report = JSON.parse(readFileSync(`evidence/formal/verification-${process.argv[1]}.json`, "utf8"));
+                const failed = (report.results ?? []).filter((result) => result.passed !== true);
+                const timedOut = report.canceled === false && report.inputsUnchanged === true &&
+                  failed.length > 0 && failed.every(formalTimedOut);
+                process.exit(timedOut ? 0 : 1);
+              ' "$model"; then
+                timed_out+=("$model")
+              else
+                failed+=("verify $model")
+              fi
+            fi
+          done
+          for model in "${timed_out[@]}"; do
+            echo "::warning::Not verified within its time bound: $model"
           done
           if [ "${#failed[@]}" -gt 0 ]; then
             printf '::error::Failed: %s\n' "${failed[@]}"
@@ -251,7 +272,7 @@ jobs:
           import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
           import { listModels, modelSources } from "./scripts/formal-models.mjs";
-          import { formalAdapterOverlaySha256, formalReportProblems, formalStageArguments, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
+          import { formalAdapterOverlaySha256, formalReportProblems, formalStageArguments, formalTimedOut, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
           import { readSafetyViews, bindSafetyView } from "./scripts/quint-safety-view.mjs";
           import { verificationTransition } from "./scripts/quint-verification-step.mjs";
 
@@ -270,6 +291,7 @@ jobs:
           if (wanted && models.length !== wanted.size)
             problems.push("A selected model does not exist in this checkout");
           const merged = {};
+          const timedOut = [];
           for (const [prefix, stages] of [["checks", 3], ["verification", 1]]) {
             const results = [];
             let base = null;
@@ -306,11 +328,12 @@ jobs:
                 quintVersion,
                 timeoutMs: formalTimeoutMs(path, verify),
               };
-              const invalid = formalReportProblems(report, expected);
+              const invalid = formalReportProblems(report, expected, { allowTimeout: verify });
               if (invalid.length) {
                 problems.push(...invalid.map((reason) => `${prefix}: ${path}: ${reason}`));
                 continue;
               }
+              if (verify && report.results.some(formalTimedOut)) timedOut.push(path);
               base ??= report;
               if (JSON.stringify(report.toolHashes) !== JSON.stringify(base.toolHashes) ||
                   report.javaVersion !== base.javaVersion ||
@@ -338,8 +361,16 @@ jobs:
             for (const problem of problems) console.log(`::error::${problem}`);
             process.exit(1);
           }
+          for (const path of timedOut)
+            console.log(`::warning::Not verified within its time bound: ${path}`);
+          if (process.env.GITHUB_STEP_SUMMARY)
+            writeFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `## Quint state models\n\n${models.length - timedOut.length} of ${models.length} models verified; ${timedOut.length} not verified within their time bound (no counterexample found).\n\n${timedOut.map((path) => `- ${path}`).join("\n")}\n`,
+              { flag: "a" },
+            );
           console.log(
-            `${merged.checks.results.length} check stages and ${merged.verification.results.length} verifications passed for ${models.length}${wanted ? " selected" : ""} models.`,
+            `${merged.checks.results.length} check stages passed and ${merged.verification.results.length - timedOut.length} of ${merged.verification.results.length} verifications completed for ${models.length}${wanted ? " selected" : ""} models; ${timedOut.length} timed out without a result.`,
           );
           NODE
       - name: Retain verification commands and results

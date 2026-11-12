@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "52f985f31e176fd689e774094ff78c23f2fee61484d6eb3ecd582727cf01ad36",
+      "sha256": "f8d2b8caca36b2fa2b510f03e6a8a9a5c8a7a85bb8e3a93ffb2d5fd889250403",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 215, 240, 261, 349],
+      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
       "review": "mapped-abstraction"
     },
     {
@@ -3744,7 +3744,7 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "e1de84458ef00c431ab86f11e1f22c1495b7f32f1117c6b1d41515336bdc37e7",
+      "sha256": "207b331410ca1daae844d110ab76e449f1a3f16405b5c8b28c5be0f81b35ebd9",
       "models": [],
       "candidateLines": [59, 62, 70],
       "review": "reviewed-no-independent-state",
