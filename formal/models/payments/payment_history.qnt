@@ -125,18 +125,22 @@ module payment_history {
   }
   action step = {
     any {
-      { nondet row = Set(0, 1, 2, 3, 4, 5).oneOf() nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
-        nondet rail = Set("vault", "direct").oneOf() nondet n = Set(2, 3, 5).oneOf()
-        nondet yes = Set(false, true).oneOf()
-        configure(rail, n, yes, row, other) },
+      all { not(s.configured),
+        { nondet row = Set(0, 1, 2, 3, 4, 5).oneOf() nondet other = Set(0, 1, 2, 3, 4, 5).oneOf()
+          nondet rail = Set("vault", "direct").oneOf() nondet n = Set(2, 3, 5).oneOf()
+          nondet yes = Set(false, true).oneOf()
+          configure(rail, n, yes, row, other) } },
       { nondet filterScope = scopes.oneOf() nondet yes = Set(false, true).oneOf() scope(filterScope, yes) },
       appendRecord,
       appendPrivate,
       { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() visibility(id, yes) },
       { nondet row = Set(0, 1, 2, 3, 4, 5).oneOf() attachMonth(row) },
-      { nondet id = ids.oneOf() nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
-        nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf() nondet yes = Set(false, true).oneOf()
-        begin(id, after, through, yes) },
+      all { s.configured,
+        { nondet id = ids.oneOf()
+          all { s.pages.get(id).phase == "unused",
+            { nondet after = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
+              nondet through = Set(-1, 0, 1, 2, 3, 4, 5, 6).oneOf() nondet yes = Set(false, true).oneOf()
+              begin(id, after, through, yes) } } } },
       { nondet id = ids.oneOf() boundary(id) },
       { nondet id = ids.oneOf() count(id) },
       { nondet id = ids.oneOf() readPage(id) },

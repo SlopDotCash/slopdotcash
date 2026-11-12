@@ -106,6 +106,18 @@ jobs:
           ./scripts/contributor-allocation-safety-view.test.ts
           ./scripts/bot-inference-symmetry.test.ts
           ./scripts/operator-keeper-safety-view.test.ts
+          ./scripts/vetting-backup-chain-quotient.test.ts
+          ./scripts/email-actions-safety-view.test.ts
+          ./scripts/api-submission-recovery-safety-view.test.ts
+          ./scripts/wallet-possession-safety-view.test.ts
+          ./scripts/private-authorization-safety-view.test.ts
+          ./scripts/owner-private-requests-safety-view.test.ts
+          ./scripts/identity-admission-safety-view.test.ts
+          ./scripts/owner-vault-cap-cone-quotient.test.ts
+          ./scripts/vetting-evidence-registration-quotient.test.ts
+          ./scripts/payment-history-safety-view.test.ts
+          ./scripts/evm-binding-consent-safety-view.test.ts
+          ./scripts/historical-subscription-intake-safety-view.test.ts
           ./scripts/formal-source-binding.test.ts
           ./scripts/formal-report.test.ts
       - name: Check source inventory and state catalog

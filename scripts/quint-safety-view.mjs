@@ -49,19 +49,18 @@ const definitions = [
     clauses,
   },
   {
-    id: "owner-vault-terminal-stutter-safety-v7",
+    id: "owner-vault-cap-cone-safety-v8",
     model: "formal/models/api/api_owner_vault_lifecycle.qnt",
     module: "api_owner_vault_lifecycle",
-    operator: "SlopOwnerVaultTerminalStutterViewV7",
-    hashMode:
-      "terminal-stutter-local-and-monotone-global-invariant-observations",
+    operator: "SlopOwnerVaultCapConeViewV8",
+    hashMode: "terminal-stutter-and-closed-cap-copy-cone",
     memoryCandidateMode:
-      "erase-phase-dead-terminal-phase-and-monotone-true-terminal-indices",
+      "erase-policy-request-and-creation-cap-carriers-preserving-v7-rest",
     fields: [
       {
         name: "state",
         expression:
-          '[s EXCEPT !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"response", "done"} THEN LET obligation == (r.committed > 0 => (policyAt(r.committed).exists /\\ deploymentAt(r.purpose).exists)) IN <<"terminal", obligation, IF obligation THEN <<0, 0>> ELSE <<r.committed, r.purpose>>, (r.status > 0 => r.noStore), (r.result = "existing" => (r.captured.exists /\\ r.captured.family = r.family /\\ ~r.chainCalled /\\ r.committed = 0 /\\ r.responseRevision = r.current)), (r.result = "registered" => (r.committed > 0 /\\ r.responseRevision = r.committed)), (r.result = "pending" => r.committed = 0), (r.result = "funds" => (r.mode = "get" /\\ r.purpose = 2))>> ELSE [r EXCEPT !.creationRevision = 0, !.creationCap = 0, !.canSetup = FALSE, !.received = FALSE, !.expected = IF r.mode = "get" \\/ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"} THEN 1 ELSE r.expected, !.transaction = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 1 ELSE r.transaction, !.family = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN "evm" ELSE r.family, !.current = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN 0 ELSE r.current, !.policy = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 0 ELSE r.policy, !.cap = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 0 ELSE r.cap, !.captured = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN [exists |-> FALSE, transaction |-> 0, family |-> "evm"] ELSE IF r.mode = "review" THEN [r.captured EXCEPT !.transaction = 0, !.family = "evm"] ELSE r.captured, !.appendGeneration = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN -1 ELSE r.appendGeneration, !.restricted = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.restricted, !.banned = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.banned]]]',
+          '[s EXCEPT !.history = [rev \\in DOMAIN s.history |-> [s.history[rev] EXCEPT !.cap = 0]], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN IF r.phase \\in {"response", "done"} THEN LET obligation == (r.committed > 0 => (policyAt(r.committed).exists /\\ deploymentAt(r.purpose).exists)) IN <<"terminal", obligation, IF obligation THEN <<0, 0>> ELSE <<r.committed, r.purpose>>, (r.status > 0 => r.noStore), (r.result = "existing" => (r.captured.exists /\\ r.captured.family = r.family /\\ ~r.chainCalled /\\ r.committed = 0 /\\ r.responseRevision = r.current)), (r.result = "registered" => (r.committed > 0 /\\ r.responseRevision = r.committed)), (r.result = "pending" => r.committed = 0), (r.result = "funds" => (r.mode = "get" /\\ r.purpose = 2))>> ELSE [r EXCEPT !.creationRevision = 0, !.creationCap = 0, !.canSetup = FALSE, !.received = FALSE, !.expected = IF r.mode = "get" \\/ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"} THEN 1 ELSE r.expected, !.transaction = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 1 ELSE r.transaction, !.family = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN "evm" ELSE r.family, !.current = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN 0 ELSE r.current, !.policy = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN 0 ELSE r.policy, !.cap = 0, !.captured = IF r.mode = "get" \\/ (r.mode = "review" /\\ r.phase \\in {"chain", "append-generation", "append-validation", "commit", "postcommit"}) THEN [exists |-> FALSE, transaction |-> 0, family |-> "evm"] ELSE IF r.mode = "review" THEN [r.captured EXCEPT !.transaction = 0, !.family = "evm"] ELSE r.captured, !.appendGeneration = IF r.mode \\in {"get", "review"} \\/ r.phase = "postcommit" THEN -1 ELSE r.appendGeneration, !.restricted = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.restricted, !.banned = IF r.phase \\in {"funds", "service", "body", "expected", "history", "chain", "append-generation", "append-validation", "commit", "postcommit"} THEN FALSE ELSE r.banned]]]',
       },
     ],
     clauses: [],
@@ -241,6 +240,255 @@ const definitions = [
         name: "state",
         expression:
           '[s EXCEPT !.indexed = FALSE, !.projects = 0, !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN [r EXCEPT !.instance = 0, !.result = "none", !.caller = IF r.caller = "cron" THEN "cron" ELSE "direct", !.http = IF r.http = 200 THEN 200 ELSE 0]], !.runs = [i \\in DOMAIN s.runs |-> LET r == s.runs[i] IN IF r.phase \\in {"unused", "lost"} THEN <<r.phase>> ELSE IF r.phase = "settled" THEN <<r.phase, IF r.outcome = "throw" THEN "throw" ELSE IF r.outcome = "partial" THEN "partial" ELSE "other">> ELSE [r EXCEPT !.projects = 0]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "vetting-backup-chain-capped-carrier-safety-v2",
+    model: "formal/models/vetting/vetting_backup_chain.qnt",
+    module: "vetting_backup_chain",
+    operator: "SlopVettingBackupChainViewV2",
+    hashMode: "exact-backup-invariants-and-live-observations",
+    memoryCandidateMode:
+      "erase-dead-observations-and-permanently-capped-carriers",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.outcome = "none", !.restoreOutcome = "none", !.completionObserved = IF s.stage = "phase-update" THEN s.completionObserved ELSE FALSE, !.selected = IF s.restoreStage \\in {"none", "done"} THEN 0 ELSE s.selected, !.seen = IF s.replays >= 2 THEN {} ELSE s.seen, !.pending = IF s.deliveries >= 6 THEN {} ELSE s.pending]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "email-actions-phase-carrier-safety-v1",
+    model: "formal/models/ui/ui_email_actions.qnt",
+    module: "ui_email_actions",
+    operator: "SlopEmailActionsViewV1",
+    hashMode: "separate-raw-invariants-and-live-email-captures",
+    memoryCandidateMode:
+      "phase-dead-inputs-storage-bounds-and-explicit-closed-carriers",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'IF (s.loaded /\\ s.generation >= 4 /\\ s.request.attempt >= 2 /\\ s.request.phase \\in {"idle", "done"} /\\ (\\A id \\in {1, 2}: s.checks[id].phase = "done")) THEN <<"closed", s.present, s.request.phase, (s.generation >= 1), (s.generation <= 4), (s.captures <= 2), (s.request.attempt <= 2), (s.stored >= 0), (s.stored <= 2), (s.storedActor >= 0), (s.storedActor <= 2), (s.effects \\subseteq {1, 2}), (((s.done /\\ s.link > 0) => s.doneLink = s.link)), (((s.done /\\ s.link > 0) => s.doneLink \\in s.effects)), (((s.present /\\ s.link > 0 /\\ s.error # "none") => s.errorGeneration = s.generation)), ((s.request.phase = "done" => ~s.busy)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.cookie = s.request.actor)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.actor > 0))>> ELSE <<"open", [s EXCEPT !.scrubbed = FALSE, !.error = IF s.error = "none" THEN "none" ELSE "error", !.errorGeneration = IF s.error = "none" THEN 0 ELSE s.errorGeneration, !.stored = <<s.stored >= 0, s.stored <= 2>>, !.storedActor = <<s.storedActor >= 0, s.storedActor <= 2>>, !.checks = [id \\in DOMAIN s.checks |-> LET c == s.checks[id] IN IF c.phase = "unused" THEN <<c.phase>> ELSE IF c.phase = "done" THEN <<c.phase, c.generation>> ELSE IF c.phase = "waiting" THEN [c EXCEPT !.observed = 0, !.available = FALSE] ELSE c], !.request = LET r == s.request IN IF r.phase \\in {"idle", "done", "finally"} THEN <<r.phase, r.attempt>> ELSE IF r.phase = "catch" THEN <<r.phase, r.attempt, r.generation, IF r.cause = "none" THEN "none" ELSE "error">> ELSE IF r.phase \\in {"preflight", "preflight-observed", "http", "http-reply", "body", "postflight", "postflight-observed"} THEN [r EXCEPT !.cause = "none", !.observed = IF r.phase \\in {"preflight-observed", "postflight-observed"} THEN r.observed ELSE 0, !.available = IF r.phase \\in {"preflight-observed", "postflight-observed"} THEN r.available ELSE FALSE, !.cookie = IF r.phase = "http" THEN r.cookie ELSE 0] ELSE r], (((s.request.accepted /\\ s.request.kind = "verify") => s.request.cookie = s.request.actor)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.actor > 0))>>',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "api-submission-recovery-terminal-safety-v1",
+    model: "formal/models/api/api_submission_recovery.qnt",
+    module: "api_submission_recovery",
+    operator: "SlopSubmissionRecoveryTerminalViewV1",
+    hashMode: "terminal-own-claim-and-late-land-invariant-observations",
+    memoryCandidateMode:
+      "erase-write-only-output-and-done-payload-after-final-read",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.absenceObserved = FALSE, !.receiptReplyLost = FALSE, !.senders = [id \\in DOMAIN s.senders |-> LET r == s.senders[id] IN IF r.phase = "done" THEN <<r.phase, r.attempt, r.posted, ~(r.outcome \\in {"terminal", "retryable", "throttled"}), (r.posted => (r.matched /\\ r.usableRevision = r.claimRevision /\\ r.usableState = "submitting"))>> ELSE [r EXCEPT !.response = "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "wallet-possession-continuation-safety-v1",
+    model: "formal/models/api/wallet_possession_completion.qnt",
+    module: "wallet_possession_completion",
+    operator: "SlopWalletPossessionContinuationViewV1",
+    hashMode: "exact-witness-booleans-claim-indices-and-signature-conjunction",
+    memoryCandidateMode: "erase-consumed-proof-and-issue-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.issues = [i \\in DOMAIN s.issues |-> LET r == s.issues[i] IN [r EXCEPT !.claim = IF r.phase \\in {"owner", "existing", "prepare", "write"} THEN r.claim ELSE 1, !.actor = IF r.phase = "owner" THEN r.actor ELSE 1, !.stamp = IF r.phase = "write" THEN r.stamp ELSE -1, !.desired = "none", !.response = "none"]], !.requests = [i \\in DOMAIN s.requests |-> LET r == s.requests[i] IN [r EXCEPT !.actor = IF r.phase = "owner" THEN r.actor ELSE 1, !.challenge = IF r.phase \\in {"owner", "existing", "body", "consume", "consume-reply", "verify", "hash", "prewrite", "batch"} THEN r.challenge ELSE 0, !.bodyValid = IF r.phase \\in {"owner", "existing", "body"} THEN r.bodyValid ELSE FALSE, !.fieldsMatch = IF r.phase \\in {"owner", "existing", "body", "consume", "consume-reply", "verify"} THEN r.fieldsMatch /\\ r.signatureValid /\\ r.windowMatch ELSE FALSE, !.signatureValid = TRUE, !.windowMatch = TRUE, !.stamp = IF r.phase = "consume" THEN r.stamp ELSE -1, !.consumed = IF r.phase \\in {"consume-reply", "verify"} THEN r.consumed ELSE FALSE, !.desired = IF r.phase = "response" /\\ r.desired \\in {"200", "201"} THEN "200" ELSE "none", !.response = IF r.response \\in {"200", "201"} THEN "200" ELSE "none"]]]',
+      },
+    ],
+    clauses: [
+      {
+        name: "verifiedConsumed",
+        expression:
+          "[i \\in DOMAIN s.requests |-> (s.requests[i].verified => s.requests[i].consumed)]",
+      },
+    ],
+  },
+  {
+    id: "api-private-authorization-continuation-safety-v3",
+    model: "formal/models/api/api_private_authorization.qnt",
+    module: "api_private_authorization",
+    operator: "SlopPrivateAuthorizationContinuationViewV3",
+    hashMode:
+      "four-independent-used-observations-and-closed-flow-retirement-cones",
+    memoryCandidateMode:
+      "erase-unconsumed-phase-and-permanently-retired-flow-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.phase = "idle", !.flows = [i \\in DOMAIN s.flows |-> LET retired == (s.flows[i].exists /\\ s.flowCookie # i /\\ s.grant # i /\\ ~(\\E c \\in DOMAIN s.callbacks: s.callbacks[c].flow = i /\\ (s.callbacks[c].phase \\in {"validate", "exchange", "identity", "seal"} \\/ (s.callbacks[c].phase = "response" /\\ s.callbacks[c].result = "ok")))) IN [s.flows[i] EXCEPT !.until = IF s.flows[i].exists /\\ s.flowCookie # i /\\ ~(\\E c \\in DOMAIN s.callbacks: s.callbacks[c].phase = "validate" /\\ s.callbacks[c].flow = i) THEN 0 ELSE s.flows[i].until, !.session = IF retired THEN 0 ELSE s.flows[i].session, !.actor = IF retired THEN 0 ELSE s.flows[i].actor, !.submission = IF retired THEN 0 ELSE s.flows[i].submission]], !.flowUntil = 0, !.usedFlow = 0, !.usedSession = 0, !.usedActor = 0, !.usedSubmission = 0, !.usedAt = 0, !.usedUntil = 0, !.callbacks = [id \\in DOMAIN s.callbacks |-> LET c == s.callbacks[id] IN IF c.phase \\in {"unused", "done"} THEN <<c.phase>> ELSE IF c.phase = "response" THEN <<c.phase, c.result = "ok", IF c.result = "ok" THEN <<c.flow, c.at>> ELSE <<0, 0>>>> ELSE [c EXCEPT !.nonce = IF c.phase = "validate" THEN c.nonce ELSE 0, !.actor = IF c.phase \\in {"validate", "exchange", "identity"} THEN c.actor ELSE 0, !.result = "none"]]]',
+      },
+    ],
+    clauses: [
+      {
+        name: "usedSession",
+        expression:
+          '(s.phase = "used" => s.usedSession = flow(s.usedFlow).session)',
+      },
+      {
+        name: "usedActor",
+        expression:
+          '(s.phase = "used" => s.usedActor = flow(s.usedFlow).actor)',
+      },
+      {
+        name: "usedSubmission",
+        expression:
+          '(s.phase = "used" => s.usedSubmission = flow(s.usedFlow).submission)',
+      },
+      {
+        name: "usedDeadline",
+        expression: '(s.phase = "used" => s.usedAt < s.usedUntil)',
+      },
+    ],
+  },
+  {
+    id: "owner-private-terminal-safety-v1",
+    model: "formal/models/ui/ui_owner_private_requests.qnt",
+    module: "ui_owner_private_requests",
+    operator: "SlopOwnerPrivateRequestsViewV1",
+    hashMode: "exact-globals-live-requests-and-terminal-raw-invariant-bits",
+    memoryCandidateMode:
+      "erase-write-only-error-and-terminal-payload-after-full-reset-or-no-reuse",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = "none", !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, (r.actor >= 0), (r.actor <= 2), (r.admitted => r.cookie = r.actor)>> ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "identity-admission-terminal-observation-safety-v2",
+    model: "formal/models/api/api_identity_admission.qnt",
+    module: "api_identity_admission",
+    operator: "SlopIdentityAdmissionTerminalViewV2",
+    hashMode:
+      "allowed-generation-quota-and-terminal-local-invariant-observations",
+    memoryCandidateMode:
+      "erase-nonallowed-terminal-generation-and-payload-after-final-read",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, IF r.result = "allowed" THEN r.generation ELSE 0, r.result = "allowed", (r.result = "allowed" => (r.count >= 1 /\\ r.count <= 2)), (r.result \\in {"allowed", "429"} => (r.expiry > r.stamp /\\ r.retryAfter = r.expiry - r.stamp /\\ r.retryAfter >= 1)), (r.result = "429" => r.count > 2), (r.result = "503" => r.retryAfter = 0)>> ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "vetting-evidence-registration-observation-safety-v1",
+    model: "formal/models/vetting/vetting_evidence_registration.qnt",
+    module: "vetting_evidence_registration",
+    operator: "SlopVettingEvidenceRegistrationViewV1",
+    hashMode: "exact-registration-invariant-observations-and-live-fences",
+    memoryCandidateMode:
+      "classify-validation-results-and-erase-unconsumed-copy-cones",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.wholeMatches = TRUE, !.bytes = [part \\in DOMAIN s.bytes |-> IF s.bytes[part] = "valid" THEN "valid" ELSE "missing"], !.rows = [scope \\in DOMAIN s.rows |-> [s.rows[scope] EXCEPT !.service = 0, !.at = 0]], !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN [r EXCEPT !.raw = IF r.raw = 3 THEN 3 ELSE 1, !.fault = IF r.fault = "none" THEN "none" ELSE IF r.fault \\in {"json", "shape", "digest", "empty", "limit"} THEN "json" ELSE "object", !.service = 0, !.at = 0, !.cause = "none", !.status = IF r.status \\in {200, 201} THEN r.status ELSE 0, !.stored = (r.stored \\subseteq {1, 2}), !.delivered = FALSE]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "payment-history-terminal-page-safety-v2",
+    model: "formal/models/payments/payment_history.qnt",
+    module: "payment_history",
+    operator: "SlopPaymentHistoryTerminalPageViewV2",
+    hashMode: "indexed-retirement-and-six-page-invariant-observations",
+    memoryCandidateMode: "erase-attribution-fetched-and-absorbing-page-payload",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'LET retired == (LET sourceAcceptEnabled(id) == (s.pages[id].phase = "response" /\\ s.pages[id].after = s.cursor /\\ ((s.through = -1 /\\ s.pages[id].requested = -1) \\/ s.pages[id].requested = s.through) /\\ ~s.ready /\\ ~s.failed) frozenFrontier == ((\\A id \\in ids: s.pages[id].phase \\in {"response", "done"}) /\\ ~(\\E id \\in ids: sourceAcceptEnabled(id))) IN [id \\in DOMAIN s.pages |-> (s.configured /\\ (s.pages[id].phase = "done" \\/ (s.pages[id].phase = "response" /\\ (s.ready \\/ s.failed \\/ frozenFrontier))))]) IN [s EXCEPT !.monthly = {}, !.pages = [id \\in DOMAIN s.pages |-> IF retired[id] THEN [s.pages[id] EXCEPT !.months = {}, !.fetched = {}, !.after = 0, !.requested = -1, !.through = -1, !.total = -1, !.selected = {}, !.next = 0, !.result = "none"] ELSE [s.pages[id] EXCEPT !.months = {}, !.fetched = {}]]]',
+      },
+      {
+        name: "retired",
+        expression:
+          'LET sourceAcceptEnabled(id) == (s.pages[id].phase = "response" /\\ s.pages[id].after = s.cursor /\\ ((s.through = -1 /\\ s.pages[id].requested = -1) \\/ s.pages[id].requested = s.through) /\\ ~s.ready /\\ ~s.failed) frozenFrontier == ((\\A id \\in ids: s.pages[id].phase \\in {"response", "done"}) /\\ ~(\\E id \\in ids: sourceAcceptEnabled(id))) IN [id \\in DOMAIN s.pages |-> (s.configured /\\ (s.pages[id].phase = "done" \\/ (s.pages[id].phase = "response" /\\ (s.ready \\/ s.failed \\/ frozenFrontier))))]',
+      },
+    ],
+    clauses: [
+      {
+        name: "selectedSize",
+        expression:
+          "[id \\in DOMAIN s.pages |-> (Cardinality(s.pages[id].selected) <= 2)]",
+      },
+      {
+        name: "selectedSubsetFetched",
+        expression:
+          "[id \\in DOMAIN s.pages |-> (s.pages[id].selected \\subseteq s.pages[id].fetched)]",
+      },
+      {
+        name: "fetchedCount",
+        expression:
+          "[id \\in DOMAIN s.pages |-> (Cardinality(s.pages[id].fetched) <= 3)]",
+      },
+      {
+        name: "monthsSubset",
+        expression:
+          "[id \\in DOMAIN s.pages |-> (s.pages[id].months \\subseteq s.pages[id].selected)]",
+      },
+      {
+        name: "selectedRange",
+        expression:
+          "[id \\in DOMAIN s.pages |-> (\\A row \\in s.pages[id].selected: row > s.pages[id].after /\\ row <= s.pages[id].through)]",
+      },
+      {
+        name: "validResult",
+        expression:
+          '[id \\in DOMAIN s.pages |-> ((s.pages[id].result = "200" /\\ s.rail = "vault") => (s.pages[id].selected \\cap s.invalid = {}))]',
+      },
+    ],
+  },
+  {
+    id: "evm-binding-consent-terminal-safety-v1",
+    model: "formal/models/payments/evm_binding_consent_api.qnt",
+    module: "evm_binding_consent_api",
+    operator: "SlopEvmBindingConsentTerminalViewV1",
+    hashMode: "terminal-stored-key-and-raw-local-invariant-observations",
+    memoryCandidateMode:
+      "erase-write-only-output-and-terminal-payload-after-final-use",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "response", "done"} THEN <<r.phase, r.inserted, r.verified, r.desired = "200-authorized", IF r.inserted \\/ r.desired = "200-authorized" THEN <<r.snapshot, r.deployment, r.version, r.expiry>> ELSE <<0, 0, 0, 0>>, r.discoveryCalls <= 1, (r.discoveryCalls = 1 => (r.mode = "challenge" /\\ r.suppliedVersion = -1)), (r.verified => (r.mode = "authorize" /\\ r.snapshot = r.claim /\\ r.expiry > r.stamp + 600 /\\ r.expiry <= r.stamp + upper)), (r.desired = "200-challenge" => (~r.inserted /\\ r.expiry = r.stamp + lifetime))>> ELSE [r EXCEPT !.offset = 0, !.response = "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "historical-subscription-intake-phase-readback-safety-v2",
+    model: "formal/models/slopbot/historical_subscription_intake.qnt",
+    module: "historical_subscription_intake",
+    operator: "SlopHistoricalSubscriptionIntakeViewV2",
+    hashMode: "phase-subset-and-monotone-readback-observations",
+    memoryCandidateMode:
+      "erase-post-refresh-carriers-and-true-terminal-receipt-indices",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "response", "done"} THEN LET receipt == (r.status = 200 => (rowAt(r.returnedRow).exists /\\ r.returnedPayload = rowAt(r.returnedRow).payload)) IN <<r.phase, r.attempt, IF r.attempt > 0 /\\ r.attempt < 2 THEN <<r.mode, r.key, r.parent, r.payload, r.bundle>> ELSE <<>>, r.status = 200, receipt, IF receipt THEN <<0, 0>> ELSE <<r.returnedRow, r.returnedPayload>>, (r.status > 0 => r.noStore), (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE IF r.phase \\in {"prepare", "preflight", "append", "readback"} THEN <<"post-refresh", [r EXCEPT !.received = FALSE, !.sourceRevisions = [sourceId \\in DOMAIN r.sourceRevisions |-> 0], !.collected = {}, !.refreshed = {}], (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE [r EXCEPT !.received = FALSE]]]',
       },
     ],
     clauses: [],

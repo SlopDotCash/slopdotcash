@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "52f985f31e176fd689e774094ff78c23f2fee61484d6eb3ecd582727cf01ad36",
+      "sha256": "e58b854750014883a94ac4345c2cbb2bcef04d22a77d52084a81bb9f1b7fca66",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 215, 240, 261, 349],
+      "candidateLines": [1, 90, 123, 188, 227, 252, 273, 361],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,10 +1981,11 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "c0c787bc15dc65b384d27c50071fe74f8182b0d1e61a04a4ad31bdd650f16a1c",
+      "sha256": "2c927261ba7364bbbe433129728f2d5a883b5ec225412794db6bfa11caedd7ff",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247,
+        265, 266, 283, 301, 319, 342, 377, 395, 413, 414, 431, 478, 496, 497
       ],
       "review": "mapped-abstraction"
     },
@@ -3744,9 +3745,9 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "e1de84458ef00c431ab86f11e1f22c1495b7f32f1117c6b1d41515336bdc37e7",
+      "sha256": "a7688e996fc35bde8e5822e52b378db26fe183679fe876d7317778628637818f",
       "models": [],
-      "candidateLines": [59, 62, 70],
+      "candidateLines": [66, 69, 77],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
@@ -4216,10 +4217,11 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "ae69edab95b695a7e49b4377082175532489647de8e03d5135dacf2f89311635",
+      "sha256": "5a1b193b17baab550a2e36e61fdb76c7bdac5e6906b7f2d83a81925f4a914127",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 241
+        7, 61, 63, 79, 81, 95, 116, 118, 134, 151, 170, 173, 190, 206, 223, 240,
+        257, 259, 274, 291, 307, 331, 368, 386, 403, 405, 419, 472, 489, 491
       ],
       "review": "mapped-abstraction"
     },
@@ -12572,7 +12574,7 @@
     },
     {
       "path": "formal/models/payments/payment_history.qnt",
-      "sha256": "1f39992de916c278e325dd03c31d71475a04e805229356730e591381142813ab",
+      "sha256": "ca6e47f6ff38fb8129738d1cadd071607d9bf742d69a21d5bbedc1c5c9a262d1",
       "sources": [
         "backend/payments/direct-history.ts",
         "backend/payments/handler.ts",

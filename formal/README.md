@@ -1287,3 +1287,28 @@ seconds. The original QNT, all six mapped source files, and ordinary scenarios
 are unchanged. `formal/operator-keeper-safety-view-audit.md` records the
 continuation argument and native false-proof controls. This finite safety
 result does not establish source refinement or authorize keeper activation.
+
+## Second isolated model diagnostic
+
+This branch combines independently source-reviewed candidates for fresh hosted
+native controls, original ordinary-stage limits, and bounded full graphs.
+Source-only review or graph closure alone does not qualify a candidate for
+release. Prior native, ordinary and full-graph failures remain retained. The
+unchanged owner-private V1 receives one 1,200-second continuation after its
+frontier began falling at 600 seconds; no release allowance is changed here.
+
+The twelve selected models are `vetting_backup_chain`, `ui_email_actions`,
+`api_submission_recovery`, `wallet_possession_completion`,
+`api_private_authorization`, `ui_owner_private_requests`,
+`api_identity_admission`, `api_owner_vault_lifecycle`,
+`vetting_evidence_registration`, `payment_history`,
+`evm_binding_consent_api`, and `historical_subscription_intake`.
+The owner-vault V8 deliberately replaces V7 and retains its existing native
+controls. Payment history includes only its reviewed configure/begin guard
+lift in the raw QNT; its actions, domains, invariant and scenarios are intact.
+The payment static baseline still checks ten reviewed bindings, with the
+owner entry updated to V8. The sole mapped runtime difference from a packet
+is the already accepted vault-cap notice formatting in project handling;
+no modeled authority, transition or invariant changes with that display.
+All other mapped runtime source bytes match their candidate snapshots.
+Diagnostic resource allowances are centralized in `scripts/formal-report.mjs`.

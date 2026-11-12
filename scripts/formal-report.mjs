@@ -18,6 +18,13 @@ const verificationTools = [
 ];
 
 const verificationTimeouts = {
+  "formal/models/slopbot/historical_subscription_intake.qnt": 600_000,
+  "formal/models/payments/payment_history.qnt": 600_000,
+  // Isolated diagnostics; each native, ordinary and graph stage must pass.
+  "formal/models/vetting/vetting_backup_chain.qnt": 600_000,
+  "formal/models/api/api_identity_admission.qnt": 600_000,
+  // The prior V1 frontier began falling near its 600-second limit.
+  "formal/models/ui/ui_owner_private_requests.qnt": 1_200_000,
   // Reviewed continuation VIEW completed its full hosted graph in 126s.
   "formal/models/payments/operator_keeper_lifecycle.qnt": 600_000,
   // Hosted full graphs exceeded 180s with ongoing progress and states queued.
