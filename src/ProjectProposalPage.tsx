@@ -1975,6 +1975,8 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  /** Pending added repositories as JSON, or "" when there are none. */
+  repositories: string;
 } & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
@@ -1991,7 +1993,55 @@ const DRAFT_FIELDS = [
   "tokenSymbol",
   "monthlyAmount",
   "note",
+  "repositories",
 ] as const;
+
+/** A repository the owner added in this edit, not yet published. */
+type PendingRepository = {
+  entry: Omit<ProjectRepositoryEntry, "countsFrom">;
+  ownDescription: boolean;
+};
+
+/**
+ * Pending repositories from the saved draft. The draft comes from this
+ * device's storage, so anything that is not exactly an added entry is
+ * dropped as a whole.
+ */
+function pendingRepositories(text: string): PendingRepository[] {
+  if (text === "") return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const valid = (item: unknown): item is PendingRepository => {
+    if (typeof item !== "object" || item === null) return false;
+    const { entry, ownDescription } = item as Record<string, unknown>;
+    if (typeof ownDescription !== "boolean") return false;
+    if (typeof entry !== "object" || entry === null) return false;
+    const fields = entry as Record<string, unknown>;
+    return (
+      Object.keys(fields).sort().join(",") ===
+        "description,displayName,githubId,githubUrl,id,integrationBranch,nodeId" &&
+      typeof fields.id === "string" &&
+      validRepositoryPath(fields.id) &&
+      fields.displayName === fields.id &&
+      fields.githubUrl === `https://github.com/${fields.id}` &&
+      typeof fields.description === "string" &&
+      typeof fields.integrationBranch === "string" &&
+      fields.integrationBranch.length > 0 &&
+      fields.integrationBranch.length <= 255 &&
+      typeof fields.githubId === "string" &&
+      /^[1-9][0-9]*$/u.test(fields.githubId) &&
+      typeof fields.nodeId === "string" &&
+      /^[A-Za-z0-9_=-]{1,100}$/u.test(fields.nodeId)
+    );
+  };
+  return Array.isArray(value) && value.length <= 19 && value.every(valid)
+    ? value
+    : [];
+}
 
 /**
  * Owners publish project changes directly (PRD section 4). The page edits the
@@ -2122,12 +2172,6 @@ function ProjectUpdateForm({
     { state: "idle" | "loading" } | { state: "error"; message: string }
   >({ state: "idle" });
   const repositoryLookupController = useRef<AbortController | null>(null);
-  const [addedRepositories, setAddedRepositories] = useState<
-    {
-      entry: Omit<ProjectRepositoryEntry, "countsFrom">;
-      ownDescription: boolean;
-    }[]
-  >([]);
   useEffect(
     () => () => {
       repositoryLookupController.current?.abort();
@@ -2186,6 +2230,7 @@ function ProjectUpdateForm({
       capMinor === "0"
         ? ""
         : formatBaseUnits(capMinor, decimals, { grouping: false }),
+    repositories: "",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,
@@ -2210,7 +2255,9 @@ function ProjectUpdateForm({
             (field) =>
               typeof saved[field] === "string" &&
               (saved[field] as string).length <=
-                (field === "image" ? 16_384 : 4_000),
+                (field === "image" || field === "repositories"
+                  ? 16_384
+                  : 4_000),
           ).map((field) => [field, saved[field]]),
         )
       : null,
@@ -2250,6 +2297,19 @@ function ProjectUpdateForm({
   const set = (field: keyof UpdateDraft) => (next: string) => {
     if (draft === null) setDraftRevision(base?.revision ?? null);
     setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
+  };
+  // Pending added repositories are kept in the draft like any other edit.
+  const addedRepositories = useMemo(
+    () => pendingRepositories(value.repositories),
+    [value.repositories],
+  );
+  const changePending = (
+    change: (list: PendingRepository[]) => PendingRepository[],
+  ) => {
+    const list = change(
+      pendingRepositories(latestDraft.current?.repositories ?? ""),
+    );
+    set("repositories")(list.length > 0 ? JSON.stringify(list) : "");
   };
   // A legacy project needs an explicit funding choice to initialize a vault.
   // Editing only its text must preserve its existing funding and fee terms.
@@ -2514,7 +2574,6 @@ function ProjectUpdateForm({
     }
     if (!changed || base === null || staleDraft) return;
     const submittedDraft = draft;
-    const submittedRepositories = addedRepositories;
     publishInFlight.current = true;
     setSubmission({ state: "publishing" });
     try {
@@ -2545,10 +2604,24 @@ function ProjectUpdateForm({
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
       const editedDuringSave = latestDraft.current !== submittedDraft;
-      setAddedRepositories((list) =>
-        list.filter((added) => !submittedRepositories.includes(added)),
+      // Published additions leave the draft; later ones stay pending.
+      const published = new Set(
+        result.project.manifest.repositories.map((entry) =>
+          entry.id.toLowerCase(),
+        ),
       );
-      setDraft(editedDuringSave ? latestDraft.current : null);
+      const remaining = pendingRepositories(
+        latestDraft.current?.repositories ?? "",
+      ).filter(({ entry }) => !published.has(entry.id.toLowerCase()));
+      setDraft(
+        editedDuringSave
+          ? {
+              ...latestDraft.current,
+              repositories:
+                remaining.length > 0 ? JSON.stringify(remaining) : "",
+            }
+          : null,
+      );
       setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
@@ -2564,7 +2637,12 @@ function ProjectUpdateForm({
         staleRevision:
           failure instanceof ProjectApiError &&
           failure.code === "stale_revision",
-        message: errorMessage(failure, "Publication could not be confirmed."),
+        // The start month comes from this device's clock; Slop's differs.
+        message:
+          failure instanceof ProjectApiError &&
+          failure.code === "invalid_repository_start"
+            ? "The month an added repository counts from has changed. Check this device's date, then publish again."
+            : errorMessage(failure, "Publication could not be confirmed."),
       });
     } finally {
       publishInFlight.current = false;
@@ -2604,7 +2682,7 @@ function ProjectUpdateForm({
       }
       const description = facts.description ?? "";
       const usable = boundedText(description, 12, 500);
-      setAddedRepositories((list) => [
+      changePending((list) => [
         ...list,
         {
           entry: {
@@ -2809,15 +2887,28 @@ function ProjectUpdateForm({
                   scan runs before it counts; an active project pauses until the
                   scan clears.
                 </small>
+                <button
+                  aria-label={`Remove ${added.entry.id}`}
+                  className="text-button"
+                  disabled={submission.state === "publishing"}
+                  onClick={() =>
+                    changePending((list) =>
+                      list.filter((_, position) => position !== index),
+                    )
+                  }
+                  type="button"
+                >
+                  Remove
+                </button>
                 {added.ownDescription ? (
                   <TextField
                     error={shown(`addedRepository${index}`)}
                     label="Description"
                     name={`addedRepository${index}`}
                     onChange={(description) =>
-                      setAddedRepositories((list) =>
-                        list.map((item) =>
-                          item === added
+                      changePending((list) =>
+                        list.map((item, position) =>
+                          position === index
                             ? { ...item, entry: { ...item.entry, description } }
                             : item,
                         ),

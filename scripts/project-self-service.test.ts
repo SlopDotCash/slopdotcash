@@ -4012,6 +4012,12 @@ test.each([
     "invalid_repository",
   ],
   [
+    "a display name other than its id",
+    {},
+    { displayName: "Extra tools" },
+    "invalid_repository",
+  ],
+  [
     "a start in the current month",
     {},
     { countsFrom: "2026-10-01T00:00:00.000Z" },
@@ -4147,4 +4153,90 @@ test("a paused project's append stays paused, and existing owner edits are uncha
   });
   expect(presentation.status).toBe(200);
   expect(reads).toEqual([]);
+});
+
+// The registry is keyed by permanent GitHub ids too: a repository listed
+// under another name, by any project or by this one, is a registry conflict.
+test("an owner cannot append a repository another project lists under another name as its first repository", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  const base = applicationManifest("elsewhere", "acme-tools/elsewhere");
+  const created = await t.call("POST", "projects", OWNER, {
+    manifest: {
+      ...base,
+      authority: {
+        ...(base.authority as Record<string, unknown>),
+        repositoryId: "555000111",
+        repositoryNodeId: "R_extra",
+      },
+    },
+  });
+  expect(created.status).toBe(201);
+  t.state.scans = [];
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("elsewhere");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
+});
+
+test("an owner cannot append a repository another project appended under another name", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect(
+    (await t.create("elsewhere", "acme-tools/elsewhere-main")).status,
+  ).toBe(201);
+  const other = await t.persistence.getProject("elsewhere");
+  if (!other) throw new Error("project expected");
+  // Stored the way an earlier owner append leaves it.
+  const manifest = JSON.stringify({
+    ...other.manifest,
+    repositories: [
+      ...other.manifest.repositories,
+      addedEntry({
+        id: "acme-tools/elsewhere",
+        displayName: "acme-tools/elsewhere",
+        githubUrl: "https://github.com/acme-tools/elsewhere",
+      }),
+    ],
+  });
+  const sha256 = await sha256Hex(new TextEncoder().encode(manifest));
+  t.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('elsewhere',?,?,?,'Owner append',?)",
+    )
+    .run(other.revision + 1, manifest, sha256, NOW);
+  t.sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'elsewhere'",
+    )
+    .run(other.revision + 1, manifest, sha256);
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("elsewhere");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+test("an owner cannot append the project's own first repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  if (!before) throw new Error("project expected");
+  const renamed = "example/renamed-registry";
+  const response = await appendAdded(
+    t,
+    addedEntry({
+      id: renamed,
+      displayName: renamed,
+      githubUrl: `https://github.com/${renamed}`,
+      githubId: before.manifest.authority.repositoryId,
+      nodeId: before.manifest.authority.repositoryNodeId,
+    }),
+  );
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("open-registry");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
 });

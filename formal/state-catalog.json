@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f1b17526a0df5a89aac208f030e42ab268848e76deda476dc01a2b8c5fe41f1b",
+  "inventorySha256": "ab61de5f37f1846a91dc691a985638e8e055b60fe26e9afa1a5ca88cc66ece27",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2425,
+      "line": 2440,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -139,7 +139,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2629,
+      "line": 2644,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2477,7 +2477,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2110,
+      "line": 2160,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2501,7 +2501,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2115,
+      "line": 2165,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2525,7 +2525,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2122,
+      "line": 2172,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],

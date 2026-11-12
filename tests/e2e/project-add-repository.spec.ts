@@ -48,6 +48,7 @@ function elizaProject() {
 }
 
 test("a maintainer adds a repository, sees when it counts and publishes the append", async ({
+  diagnostics,
   page,
 }, info) => {
   const project = elizaProject();
@@ -63,6 +64,15 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
       manifest: typeof project;
     };
     published.push(body);
+    // The first publication meets a month boundary on Slop's clock.
+    if (published.length === 1)
+      return route.fulfill({
+        status: 422,
+        json: {
+          error: "invalid_repository_start",
+          message: `${ADDED} must count from another month.`,
+        },
+      });
     return route.fulfill({
       json: {
         project: {
@@ -129,17 +139,38 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
   await expect(
     page.getByText("Contribution changes need a new security scan."),
   ).toBeVisible();
+  // The pending repository is part of the draft saved on this device.
+  await expect(page.getByText("Draft saved on this device.")).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await summary.click();
+  await expect(
+    group.getByText(
+      `Counts from ${startDate()}. A security scan runs before it counts; an active project pauses until the scan clears.`,
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
+    "Extra tooling the project ships beside its core.",
+  );
   await expectAccessibleReflow(page, "project-add-repository");
   await page.screenshot({
     path: info.outputPath("add-repository-pending.png"),
     fullPage: true,
   });
-  await page
-    .getByRole("button", { name: "Publish changes", exact: true })
-    .click();
+  diagnostics.allowResponse(422, "PUT", "/api/v1/projects/eliza");
+  const publish = page.getByRole("button", {
+    name: "Publish changes",
+    exact: true,
+  });
+  await publish.click();
+  await expect(
+    page.getByText(
+      "The month an added repository counts from has changed. Check this device's date, then publish again.",
+    ),
+  ).toBeVisible();
+  await publish.click();
   await expect(page.getByText("Published revision 2.")).toBeVisible();
-  expect(published).toHaveLength(1);
-  const sent = published[0] as {
+  expect(published).toHaveLength(2);
+  const sent = published[1] as {
     manifest: typeof project;
     expectedRevision: number;
   };
@@ -186,5 +217,55 @@ test("a refused repository shows why inline and is not added", async ({
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     page.getByText(`${project.repositories[0].id} is already listed.`),
+  ).toBeVisible();
+});
+
+test("a pending repository can be removed before publication", async ({
+  page,
+}) => {
+  const project = elizaProject();
+  await serveProjectMaintainer(page, () => project);
+  await page.route(`**/api/v1/project-github/repositories/${ADDED}`, (route) =>
+    route.fulfill({
+      json: {
+        repository: lookup({
+          description: "Extra tooling the project ships beside its core.",
+        }),
+      },
+    }),
+  );
+  let writes = 0;
+  await page.route(/\/api\/v1\/projects\/eliza(?:\?.*)?$/u, (route) => {
+    if (route.request().method() === "PUT") writes += 1;
+    return route.fallback();
+  });
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await page.locator("summary", { hasText: /^Repositories$/u }).click();
+  await page.getByLabel("GitHub repository", { exact: true }).fill(ADDED);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  // A usable GitHub description needs no owner text.
+  await expect(page.getByLabel("Description", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Repositories", level: 3 }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: `Remove ${ADDED}`, exact: true })
+    .click();
+  await expect(page.getByText(/^Counts from /u)).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Repositories", level: 3 }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Publish changes", exact: true })
+    .click();
+  await expect(
+    page.getByText("Change at least one field before you publish."),
+  ).toBeVisible();
+  expect(writes).toBe(0);
+  // It can be added again.
+  await page.getByLabel("GitHub repository", { exact: true }).fill(ADDED);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: `Remove ${ADDED}`, exact: true }),
   ).toBeVisible();
 });
