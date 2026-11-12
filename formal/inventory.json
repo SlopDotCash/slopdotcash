@@ -6220,9 +6220,9 @@
     },
     {
       "path": "src/lib/project-policy.mjs",
-      "sha256": "ab192d28ad0c0887c46824b38b4df26a4a7002e1fdf6d334ba1b648b31bc7bfa",
+      "sha256": "75b80825277b96487fc84f6d894886191c234f1d3a7493208bc64509d316bfd9",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
-      "candidateLines": [4, 133, 205, 212, 213, 216, 224, 225, 226, 284],
+      "candidateLines": [4, 159, 231, 238, 239, 242, 250, 251, 252, 310],
       "review": "mapped-abstraction"
     },
     {
@@ -6259,10 +6259,18 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/project-repositories.mjs",
+      "sha256": "c56049d58ddb683262fc03ddcb0aed372ceef6ebcf40c6823da258873188ddea",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure functions over manifest values (month arithmetic, append-suffix comparison, repository lookups); no state, I/O or transition. The append rule is enforced and modeled in project-policy."
+    },
+    {
       "path": "src/lib/project-revision-changes.ts",
-      "sha256": "8349164f4ade595cfee0e8ceba5aa1f674b38fe951973dbbc7d011f23bf3bc43",
+      "sha256": "ed66ceddc3c71c6f462c2ea02a7561e27426f0af1a965f3af3772a5b0ccab659",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
-      "candidateLines": [12, 104],
+      "candidateLines": [12, 112],
       "review": "mapped-abstraction"
     },
     {
@@ -6275,13 +6283,13 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "bf68e6b1d422f38c5e27b0492cc8327fc8b79abf8d7b668200199606653c65a1",
+      "sha256": "122dd0368a0cbd061bbffc06300036a4f9caee08140763e83b1c42a76f20a859",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
       "candidateLines": [
         126, 331, 342, 347, 351, 352, 411, 417, 423, 426, 430, 434, 535, 538,
-        545, 548, 566, 592, 693, 694, 696, 701, 711, 1246, 1247, 1250, 1258,
-        1261, 1271, 1272, 1274, 1276, 1372, 1373, 1374, 1378, 1381, 1383, 1393,
-        1394, 1396, 1506
+        545, 548, 566, 592, 693, 694, 696, 701, 711, 1280, 1281, 1284, 1292,
+        1295, 1305, 1306, 1308, 1310, 1406, 1407, 1408, 1412, 1415, 1417, 1427,
+        1428, 1430, 1540
       ],
       "review": "mapped-abstraction"
     },
