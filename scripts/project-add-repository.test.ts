@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { classifyRevisionChanges } from "../src/lib/project-revision-changes";
 import {
   appendedRepositories,
+  findListedRepository,
   nextUtcMonthStart,
   repositoriesCountedFor,
   repositoryCountsFrom,
@@ -225,4 +226,14 @@ test("helpers", () => {
   expect(repositoryCountsFrom(transferred, "acme/older")).toBe(december);
   expect(repositoriesCountedFor(next, december - 1)).toHaveLength(1);
   expect(repositoriesCountedFor(next, december)).toHaveLength(2);
+});
+
+test("an exact repository id wins over another entry's alias", () => {
+  const repositories = [
+    { ...entry("one"), aliases: ["acme/two"] },
+    entry("two"),
+  ] as never[];
+  expect(findListedRepository(repositories, "ACME/two")?.index).toBe(1);
+  expect(findListedRepository(repositories, "acme/one")?.index).toBe(0);
+  expect(findListedRepository(repositories, "acme/three")).toBeNull();
 });

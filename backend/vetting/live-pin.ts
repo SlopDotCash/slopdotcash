@@ -5,6 +5,7 @@
  * caller never compares a clearance with a guessed commit.
  */
 
+import { findListedRepository } from "../../src/lib/project-repositories.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   type EdgeCache,
@@ -82,8 +83,8 @@ async function branchHead(
  * The live pin of one manifest repository: the head of its integration
  * branch and the template digest. A scan covers one repository at one
  * commit, so each repository of a project has its own pin. The default is
- * the project's first repository; an id that is neither a listed repository
- * id nor one of its aliases throws.
+ * the project's first repository; an exact id wins over another entry's
+ * alias, and a name that is neither a listed id nor an alias throws.
  */
 export async function readVettingPin(
   github: VettingGithub,
@@ -93,12 +94,10 @@ export async function readVettingPin(
 ): Promise<VettingPin> {
   if (!/^[0-9a-f]{64}$/u.test(templateSha256))
     throw new Error("The skill template digest is not a SHA-256.");
-  const wanted = repositoryId.toLowerCase();
-  const repository = manifest.repositories.find((entry) =>
-    [entry.id, ...(entry.aliases ?? [])].some(
-      (name) => name.toLowerCase() === wanted,
-    ),
-  );
+  const repository = findListedRepository(
+    manifest.repositories,
+    repositoryId,
+  )?.repository;
   if (repository === undefined)
     throw new Error(`The manifest does not list repository ${repositoryId}.`);
   return {

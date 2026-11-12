@@ -787,6 +787,9 @@ export class CloudflareVettingPersistence {
     if (
       !project ||
       !assessment ||
+      // Interim until clearance is computed per repository: one repository's
+      // clean scan never reinstates a project with more than one repository.
+      project.manifest.repositories.length > 1 ||
       livePin === null ||
       (livePin !== undefined &&
         (assessment.commitSha !== livePin.commitSha ||
@@ -875,6 +878,7 @@ export class CloudflareVettingPersistence {
       forReinstatement,
       admissionRepository(manifest),
       (manifest as Partial<ProjectDefinition>).steward?.github,
+      (manifest as Partial<ProjectDefinition>).repositories ?? [],
     );
   }
 
@@ -890,7 +894,17 @@ export class CloudflareVettingPersistence {
     forReinstatement = false,
     repositoryIdentity: string | null,
     steward: { actorId: string; nodeId: string } | undefined,
+    repositories: ProjectDefinition["repositories"],
   ): Promise<VettingClearance> {
+    // Interim until clearance is computed per repository: a fresh
+    // reinstatement reads one live pin, so it is never decided for a
+    // project with more than one repository.
+    if (forReinstatement && repositories.length > 1)
+      return {
+        state: "unverified",
+        reason:
+          "A reinstatement of a project with more than one repository needs a fresh clean scan of each repository, which Slop cannot verify yet.",
+      };
     const assessments = await this.projectAssessments(projectId);
     const reviewed = await this.db
       .prepare(
@@ -1019,8 +1033,16 @@ export class CloudflareVettingPersistence {
             `Slop could not read the live integration-branch head or skill template digest. ${error instanceof Error ? error.message : ""}`.trim(),
         };
       }
+      // The live pin is the first repository's; only its scans can match.
+      const first = repositories[0];
+      const names = new Set(
+        [first?.id ?? "", ...(first?.aliases ?? [])].map((name) =>
+          name.toLowerCase(),
+        ),
+      );
       pinned = relevant.filter(
         (assessment) =>
+          names.has(assessment.repositoryId.toLowerCase()) &&
           assessment.commitSha === live?.commitSha &&
           assessment.templateSha256 === live?.templateSha256,
       );

@@ -1868,28 +1868,19 @@ test("a cached scan from before a ban escalation is refused and cannot reinstate
   expect((await prematureReinstate.json()).error).toBe("vetting_required");
 });
 
-/** Appends a second repository to the project as its next revision. */
-async function appendSecondRepository() {
+/** Appends the next revision of the project with `change` applied. */
+async function appendRevision(change: (manifest: ProjectManifest) => void) {
   const current = sqlite
     .query("SELECT revision, manifest FROM projects WHERE id = 'open-registry'")
     .get() as { revision: number; manifest: string };
   const manifest = JSON.parse(current.manifest);
-  manifest.repositories.push({
-    id: "example/second-registry",
-    displayName: "example/second-registry",
-    githubUrl: "https://github.com/example/second-registry",
-    description: "The second repository of the project.",
-    integrationBranch: "main",
-    githubId: "223456789",
-    nodeId: "R_second",
-    countsFrom: "2026-11-01T00:00:00.000Z",
-  });
+  change(manifest);
   const text = JSON.stringify(manifest);
   const sha256 = await sha256Hex(new TextEncoder().encode(text));
   const revision = current.revision + 1;
   sqlite
     .query(
-      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('open-registry',?,?,?,'Append a repository',?)",
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('open-registry',?,?,?,'Fixture revision',?)",
     )
     .run(revision, text, sha256, NOW.toISOString());
   sqlite
@@ -1898,6 +1889,135 @@ async function appendSecondRepository() {
     )
     .run(revision, text, sha256);
 }
+type ProjectManifest = {
+  headline: string;
+  repositories: object[];
+  contribution: { requiredTests: string };
+};
+
+const SECOND_REPOSITORY = "example/second-registry";
+
+/** Appends a second repository to the project as its next revision. */
+function appendSecondRepository() {
+  return appendRevision((manifest) => {
+    manifest.repositories.push({
+      id: SECOND_REPOSITORY,
+      displayName: SECOND_REPOSITORY,
+      githubUrl: `https://github.com/${SECOND_REPOSITORY}`,
+      description: "The second repository of the project.",
+      integrationBranch: "main",
+      githubId: "223456789",
+      nodeId: "R_second",
+      countsFrom: "2026-11-01T00:00:00.000Z",
+    });
+  });
+}
+
+/** A scan fixture of the second repository's queued row. */
+async function secondRepositoryFixture(
+  assessmentId: string,
+  disposition: "clean" | "incomplete",
+  options: Parameters<typeof vettingScanResult>[2] = {},
+) {
+  const result = await scanFixture(assessmentId, disposition, options);
+  return {
+    ...result,
+    assessed: { ...result.assessed, repository: SECOND_REPOSITORY },
+  };
+}
+
+const firstRepositoryRow = async () => {
+  const row = (await vetting.pendingAssessments()).find(
+    (assessment) => assessment.repositoryId === "example/open-registry",
+  );
+  if (!row) throw new Error("no pending scan of the first repository");
+  return row;
+};
+
+test("a fresh reinstatement of a two-repository project is never decided by one repository's clean scan", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Explicit investigation"),
+  ).toBe("queued");
+  // A clean fresh scan of the first repository at the live pin.
+  const first = await firstRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    await vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+      true,
+    ),
+  ).toMatchObject({ state: "unverified" });
+});
+
+test("one repository's clean fresh scan neither resolves flags nor reinstates a two-repository project", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect(await (await flag("bob")).json()).toMatchObject({
+    paused: true,
+    freshScan: "queued",
+  });
+  clock = new Date(NOW.getTime() + 120_000);
+  const first = await firstRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await vetting.getAssessment(first.id))?.state).toBe("clean");
+  expect(await flags.activeFlags(clock)).toHaveLength(2);
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    ),
+  ).toEqual([]);
+  expect((await publicProject()).status).toBe(410);
+});
+
+test("a presentation-only revision does not rescan a two-repository project", async () => {
+  await listPausedProject();
+  await appendSecondRepository();
+  const { queued } = await refresh();
+  expect(queued).toHaveLength(2);
+  const [firstId, secondId] = queued;
+  expect(
+    (await postResult(await scanFixture(firstId, "incomplete"))).status,
+  ).toBe(200);
+  expect(
+    (await postResult(await secondRepositoryFixture(secondId, "incomplete")))
+      .status,
+  ).toBe(200);
+  // Listing and presentation edits keep the executable content digest.
+  await appendRevision((manifest) => {
+    manifest.headline =
+      "Reproducible research tooling, now in two repositories.";
+  });
+  expect((await refresh()).queued).toEqual([]);
+  // An executable change queues each repository again.
+  await appendRevision((manifest) => {
+    manifest.contribution.requiredTests =
+      "Run `bun test` in both repositories.";
+  });
+  expect((await refresh()).queued).toHaveLength(2);
+});
 
 test("an automatic refresh queues each repository once per revision", async () => {
   await listPausedProject();

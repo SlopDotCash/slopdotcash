@@ -1271,7 +1271,7 @@
     },
     {
       "path": "backend/vetting/handler.ts",
-      "sha256": "7b402d6d19d4e139af81614bec20e41603a94ca922dda194aa4293271dbfa219",
+      "sha256": "f2ccc838324ef147a825fe73ab21146c991e449cc7698747d5fd6a3e97edc0c9",
       "models": [
         "formal/models/ui/ui_admin_vetting_requests.qnt",
         "formal/models/vetting/vetting_admin_actor.qnt",
@@ -1284,23 +1284,23 @@
         "formal/models/vetting/vetting_service_auth.qnt"
       ],
       "candidateLines": [
-        266, 283, 285, 341, 417, 421, 423, 450, 695, 732, 818, 828, 833, 866,
-        911, 950, 953, 954, 955, 956, 958, 963, 966, 972, 974, 978, 983, 985,
-        993, 995, 1004, 1012, 1064, 1067, 1116, 1161, 1190, 1194, 1206, 1207,
-        1214, 1257, 1394, 1466, 1492, 1493
+        267, 284, 286, 342, 418, 422, 424, 451, 695, 732, 818, 828, 833, 866,
+        911, 950, 953, 954, 955, 956, 958, 963, 966, 972, 974, 978, 984, 988,
+        996, 998, 1007, 1015, 1070, 1073, 1122, 1167, 1196, 1200, 1212, 1213,
+        1220, 1263, 1400, 1472, 1498, 1499
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/vetting/live-pin.ts",
-      "sha256": "ae170a75182406f737e14d2487bdee144d9afe9702164e1a1695757cb030010b",
+      "sha256": "fb32f57745b4b19971d8ecb24d06abf23a06ec2404833482c9fa1fb323c53c9d",
       "models": ["formal/models/vetting/vetting_admission_lineage.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "sha256": "0e20b436e8d9c6d55e439fedfc8064a4ea8a18d2770f101ed2993ea7847203bf",
+      "sha256": "5b6b5c31b11dcad3349e7f29b384cbf228975ce072663d6fc9b077a24cb95f04",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
@@ -1312,9 +1312,9 @@
       ],
       "candidateLines": [
         76, 99, 117, 135, 179, 185, 248, 323, 367, 400, 405, 446, 472, 523, 553,
-        569, 570, 571, 574, 616, 617, 701, 702, 740, 751, 829, 910, 914, 922,
-        962, 974, 1009, 1017, 1029, 1031, 1032, 1035, 1044, 1051, 1053, 1058,
-        1063, 1076, 1079, 1081, 1083, 1084
+        569, 570, 571, 574, 616, 617, 701, 702, 740, 751, 832, 904, 924, 928,
+        936, 976, 988, 1023, 1031, 1051, 1053, 1054, 1057, 1066, 1073, 1075,
+        1080, 1085, 1098, 1101, 1103, 1105, 1106
       ],
       "review": "mapped-abstraction"
     },
@@ -3270,9 +3270,11 @@
     },
     {
       "path": "migrations/0123_vetting_assessment_repository.sql",
-      "sha256": "8da1743606e61017117845b82b197729553ee4b7a24156f3030c88c0a7f3e7a7",
+      "sha256": "93bb3aa64edb3ce9e847b2e09dfacf14181ffabd94e06712fa35bef3de95e9a0",
       "models": [],
-      "candidateLines": [22, 23, 33, 34, 40, 45, 46, 47, 61],
+      "candidateLines": [
+        22, 23, 33, 34, 40, 45, 46, 47, 61, 82, 83, 84, 89, 90, 92
+      ],
       "review": "pending"
     },
     {
@@ -6267,7 +6269,7 @@
     },
     {
       "path": "src/lib/project-repositories.mjs",
-      "sha256": "36c2a8b6e5873a0d16a4122697a4cc66d4ddb9e00c838e4e370ce455e397b03d",
+      "sha256": "5a3de1bf632c13dff88b9171db9b1586a5073435504ee90b672fe0be64d56c0d",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -8907,12 +8909,12 @@
     },
     {
       "path": "workers/vetting/queue.ts",
-      "sha256": "e21f662068a887d388858c69223cc8d18fc811461d091d247a63b29a017f9c28",
+      "sha256": "5041091e4cf95ba2f996844d430862856b6f74fefe9336405ae4eb5c295bfd92",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
-      "candidateLines": [2, 103, 177, 222, 239, 241, 248, 369, 385, 404, 416],
+      "candidateLines": [2, 106, 180, 223, 240, 242, 249, 370, 386, 405, 417],
       "review": "mapped-abstraction"
     },
     {
