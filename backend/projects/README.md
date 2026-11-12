@@ -79,6 +79,11 @@ Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private 
 Removal checks the current GitHub authority against the stored repository,
 including on retries. It uses the ordinary revision and enforcement fences,
 changes only status and listing tier, and never invokes setup activation.
+While the project's own Quarantine or Ban is in force, removal returns 409
+`project_restricted`, checked before an already-removed retry and again in the
+guarded append. The restriction's paused, retired revision is not a removal,
+because reinstatement lists the project again from the revision the
+restriction opened on.
 Retired projects publish no skills and cannot reactivate through setup checks.
 The registry API keeps their manifests for historical validation; discovery
 readers exclude the retired tier. Cancellation competes atomically with both
