@@ -370,7 +370,7 @@ jobs:
               { flag: "a" },
             );
           console.log(
-            `${merged.checks.results.length} check stages passed and ${merged.verification.results.length - timedOut.length} of ${merged.verification.results.length} verifications completed for ${models.length}${wanted ? " selected" : ""} models; ${timedOut.length} timed out without a result.`,
+            `${merged.checks.results.length} check stages and ${merged.verification.results.length - timedOut.length} verifications passed for ${models.length}${wanted ? " selected" : ""} models.${timedOut.length ? ` ${timedOut.length} timed out without a result.` : ""}`,
           );
           NODE
       - name: Retain verification commands and results
