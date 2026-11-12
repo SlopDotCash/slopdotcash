@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "52f985f31e176fd689e774094ff78c23f2fee61484d6eb3ecd582727cf01ad36",
+      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 215, 240, 261, 349],
+      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
       "review": "mapped-abstraction"
     },
     {
@@ -3744,7 +3744,7 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "e1de84458ef00c431ab86f11e1f22c1495b7f32f1117c6b1d41515336bdc37e7",
+      "sha256": "207b331410ca1daae844d110ab76e449f1a3f16405b5c8b28c5be0f81b35ebd9",
       "models": [],
       "candidateLines": [59, 62, 70],
       "review": "reviewed-no-independent-state",
@@ -3769,7 +3769,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "82bba07ba8b1e951200abf717d5009d655c05b6d556c2c1122406f7e0cb6924e",
+      "sha256": "07da883c8e653b6e5fcb7418cb0adf16edc1a4fd873d18da709efcd2a082e97e",
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
@@ -3780,14 +3780,14 @@
       ],
       "candidateLines": [
         23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
-        653, 685, 881, 1108, 1170, 1178, 1236, 1289, 1292, 1485, 1494, 1499,
-        1506, 1589, 1590, 1737, 1738, 1795, 1821, 1839, 1841, 1845, 1879, 1882,
-        1883, 1886, 1888, 1899, 1922, 2129, 2132, 2440, 2459, 2557, 2570, 2581,
-        2582, 2759, 2760, 2951, 2967, 2979, 2986, 3012, 3022, 3026, 3030, 3034,
-        3089, 3108, 3135, 3152, 3186, 3187, 3189, 3205, 3222, 3223, 3224, 3233,
-        3238, 3418, 3776, 3798, 3807, 3857, 3892, 3898, 3905, 3974, 4059, 4211,
-        4426, 4436, 4438, 4451, 4480, 4482, 4483, 4487, 4491, 4546, 4600, 4651,
-        4654
+        653, 685, 881, 1116, 1178, 1186, 1244, 1297, 1300, 1493, 1502, 1507,
+        1514, 1597, 1598, 1745, 1746, 1803, 1829, 1847, 1849, 1853, 1887, 1890,
+        1891, 1894, 1896, 1907, 1930, 2137, 2140, 2448, 2467, 2565, 2578, 2589,
+        2590, 2767, 2768, 2959, 2975, 2987, 2994, 3020, 3030, 3034, 3038, 3042,
+        3097, 3116, 3143, 3160, 3194, 3195, 3197, 3213, 3230, 3231, 3232, 3241,
+        3246, 3426, 3784, 3806, 3815, 3865, 3900, 3906, 3913, 3982, 4067, 4219,
+        4434, 4444, 4446, 4459, 4488, 4490, 4491, 4495, 4499, 4554, 4608, 4659,
+        4662
       ],
       "review": "mapped-abstraction"
     },
@@ -4529,14 +4529,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "2540b17918f66827d83a7b585360e4ecd5acbdcd59afe4d3d272193dad45f641",
+      "sha256": "4936a88b94e142f2dd6930fecb4872e7f21caf64b18d493d211e112a4ab7a8dd",
       "models": [
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 650, 686,
-        719, 743
+        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 651, 687,
+        720, 744
       ],
       "review": "mapped-abstraction"
     },
