@@ -125,19 +125,26 @@ module trace_route_authorization {
     s' = if (Set("fallback", "recovery").contains(s.route) and not(s.roles.contains("operator")))
       ended("403", "operator_required") else invoked(s.credential) }
   action step = {
-    nondet route = routes.oneOf()
-    nondet origin = origins.oneOf()
-    nondet header = originHeaders.oneOf()
-    nondet auth = authHeaders.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet session = Set("found", "absent", "error").oneOf()
-    nondet verified = Set("accepted", "refused", "error").oneOf()
-    nondet roles = roleChoices.oneOf()
-    any { begin(route, origin, yes, other, header, auth, third), browserWrapper, authority, lookup,
-      requireSameOrigin, readSession(session), observeAllowlist(yes), sessionActor(yes), verifyBearer(verified, roles),
-      dispatch, s' = s }
+    any {
+      // begin's own phase guard, repeated so that a started request refuses
+      // this branch before its choices are enumerated.
+      all { s.phase == "new",
+        { nondet route = routes.oneOf() nondet origin = origins.oneOf() nondet header = originHeaders.oneOf()
+          nondet auth = authHeaders.oneOf() nondet yes = Set(false, true).oneOf()
+          nondet other = Set(false, true).oneOf() nondet third = Set(false, true).oneOf()
+          begin(route, origin, yes, other, header, auth, third) } },
+      browserWrapper,
+      authority,
+      lookup,
+      requireSameOrigin,
+      { nondet session = Set("found", "absent", "error").oneOf() readSession(session) },
+      { nondet yes = Set(false, true).oneOf() observeAllowlist(yes) },
+      { nondet yes = Set(false, true).oneOf() sessionActor(yes) },
+      { nondet verified = Set("accepted", "refused", "error").oneOf() nondet roles = roleChoices.oneOf()
+        verifyBearer(verified, roles) },
+      dispatch,
+      s' = s
+    }
   }
   val pending = not(Set("new", "done", "delegated").contains(s.phase))
   val invariant = all {

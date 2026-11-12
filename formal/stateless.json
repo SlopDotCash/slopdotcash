@@ -100,6 +100,7 @@
   "src/lib/vetting-contracts.ts": "Only types and literal status arrays for assessment/clearance/journal records. No runtime transition or I/O.",
   "src/lib/wallet-proof.ts": "Type declarations only for immutable wallet evidence; emitted JavaScript has no runtime state or transitions.",
   "src/lib/wallets.ts": "Pure address validation, equality, byte conversion and shortened display. No claim storage, consent or authorization mutation; actual wallet registration/binding remains modeled and is not exempted.",
+  "src/lib/web-analytics.mjs": "Pure production-host predicate and deterministic HTML transform over supplied bytes. Owns no storage, clock, request or cross-call state. Its exact output and refusal behavior are exercised by the Function and release/evidence callers; raw-manifest binding and publication remain caller responsibilities.",
   "workers/fee-converter/d1.ts": "Type declarations of the minimal D1 statement surface; no runtime code or state transition.",
   "workers/fee-converter/solana-route-types.ts": "Type declarations of the route expectation and account observation records; no runtime code or state transition.",
   "workers/fee-converter/verified-arithmetic.ts": "Pure bigint rounding, slippage, remaining-cap, rescaling, spendable balance and gas/impact arithmetic. No quote fetch, signing, journal or payment state; those transitions remain fee conversion models.",
@@ -120,5 +121,7 @@
   "workers/vetting-backup/wrangler.toml": "Literal private backup/D1/R2/queue/cron configuration with backup and retention off. vetting_backup_chain/vetting_retention cover runtime state; queue concurrency1 does not replace their persistence constraints.",
   "workers/vetting-sandbox/wrangler.staging.toml": "Literal staging sandbox/container bindings with no public route. No own transition; merge/execution models cover callers while deployment and actual container isolation need separate evidence.",
   "workers/vetting-sandbox/wrangler.toml": "Literal private sandbox container binding and durable-object class migration; no branching runtime. Isolation/cleanup transitions are in vetting_execution_provenance/vetting_merge_isolation and operational release models; values alone do not prove sandboxing.",
-  "wrangler.toml": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability."
+  "wrangler.toml": "Static Pages bindings, environment constants and isolated preview declarations. No executable transition; API composition and service release models describe consumers. This configuration is not evidence of hosted binding availability.",
+  "scripts/quint-verification-step.mjs": "Pure exact-source selector for the independently reviewed owner delayed-input verification entry point. Returns fixed step/proof-kind metadata only after the complete pinned model hash matches; no own transition, storage, I/O or runtime behavior.",
+  "scripts/formal-report.mjs": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
 }

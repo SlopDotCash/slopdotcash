@@ -81,17 +81,29 @@ module ui_payment_page_assembly {
   action retry = all { s.phase == "error", s.retry == 0,
     s' = initial(s.mode, 1) }
   action step = {
-    nondet rows = batches.oneOf()
-    nondet through = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet total = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet nextValue = Set(-1, 0, 1, 2, 3).oneOf()
-    nondet shape = Set(false, true).oneOf()
-    nondet headers = Set(false, true).oneOf()
-    nondet amount = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
-    any { vaultMode, originRefusal, requestPage, transportFailure,
-      receivePage(rows, through, total, nextValue, shape, headers, amount),
-      receiveLegacy(rows, shape, headers), appendRow, finishPage,
-      cancelWaiting, lateReply, retry, s' = s }
+    any {
+      vaultMode,
+      originRefusal,
+      requestPage,
+      transportFailure,
+      // receivePage's own phase guard, repeated so that another phase refuses
+      // this branch before its choices are enumerated.
+      all { s.phase == "waiting",
+        { nondet rows = batches.oneOf() nondet through = Set(-1, 0, 1, 2, 3).oneOf()
+          nondet total = Set(-1, 0, 1, 2, 3).oneOf() nondet nextValue = Set(-1, 0, 1, 2, 3).oneOf()
+          nondet shape = Set(false, true).oneOf() nondet headers = Set(false, true).oneOf()
+          nondet amount = Set(0, 1, 2, 3, 4, 5, 6).oneOf()
+          receivePage(rows, through, total, nextValue, shape, headers, amount) } },
+      { nondet rows = batches.oneOf() nondet shape = Set(false, true).oneOf()
+        nondet headers = Set(false, true).oneOf()
+        receiveLegacy(rows, shape, headers) },
+      appendRow,
+      finishPage,
+      cancelWaiting,
+      lateReply,
+      retry,
+      s' = s
+    }
   }
   val invariant = all {
     s.pages >= 0, s.pages <= 3, s.retry >= 0, s.retry <= 1,

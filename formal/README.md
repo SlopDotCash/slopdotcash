@@ -56,14 +56,49 @@ the checked-out model, source and tool bytes, and it publishes the merged
 `checks.json` and `verification.json`. `tlc.json` runs four TLC workers, one
 per hosted-runner vCPU; the worker count changes no explored state space.
 
+Manual diagnostics may select space-separated model names with
+`gh workflow run formal.yml --ref BRANCH -f models="MODEL_NAME OTHER_MODEL" -f shards='[1]'`.
+The defaults are `all` and six shards. Each shard must contain a model, so small
+diagnostics select one shard. A focused result covers only the selected models; trusted
+branch releases still require every model and retain the same native controls,
+source bindings and report checks.
+
 Type, scenario and simulation stages have a 90-second limit. Finite verification
-normally has a 180-second limit; `ui_submitted_payment_recovery` has 600 seconds.
-The full-state `ui_bounty_payment_parent` graph and the `direct_bounty_journal`
-safety quotient have 1,800 seconds. After its reductions,
-`ui_solana_payment_pending` uses the ordinary limit. The runner
-records the effective limit and its own hash. These allowances change no model
-domain or invariant.
+normally has a 180-second limit. Explicit resource exceptions in
+`scripts/check-formal.mjs` retain all model domains and invariants:
+
+- 600 seconds: `ui_submitted_payment_recovery`, `ui_payout_consent_lifetime`,
+  `ui_email_actions`, `ui_email_preference_requests`, `ui_project_authority`,
+  `ui_vetting_reader`, `solana_wallet_provider`, `api_trace`, `ui_private_intake`,
+  `solana_binding_completion`, `evm_wallet_discovery`, `fee_value_caps`,
+  `vetting_generation_storage`, `vetting_evidence_registration`,
+  `vetting_generation_retirement`, `submission_authorization_wrappers`,
+  `api_submission_recovery`, `wallet_claim_publication`,
+  `stored_binding_broadcast_authority`, `evm_binding_consent_api`, and
+  `trace_event_finalization`, `api_private_authorization`, and
+  `wallet_possession_completion`.
+- 1,200 seconds: `ui_security_settings_lifetime` and `solana_binding_api`.
+- 1,800 seconds: `api_owner_vault_lifecycle`, `api_project_lookup_routes`,
+  `ui_admin_mutation_identity`, `ui_project_publication_lifetime`,
+  `ui_bounty_payment_parent`, and `direct_bounty_journal`.
+- 3,600 seconds: `ui_cycle_archive`. The corrected full concrete temporal graph
+  completed in 34 minutes 48 seconds with 3,929,088 distinct states, zero queued,
+  and no violation. Its domains, invariant and temporal property are unchanged.
+
+The admin graph still had 3.11 million states queued after 600 seconds; the
+publication graph had 2.18 million queued at that limit. The unchanged value-cap
+graph reached 962,410 distinct states before its 180-second timeout. Earlier
+owner/lookup VIEW measurements also exhausted 180 seconds; those incomplete
+receipts do not establish a pass for the final V3 projections. After its
+reductions, `ui_solana_payment_pending` uses the ordinary limit. The runner
+records the effective limit and its own hash.
 A timeout is an incomplete check, never a pass.
+
+`bot_inference_retention` has a separately bound
+[attempt-ID symmetry argument](bot-inference-symmetry-audit.md). It retains all
+eight attempts, every row bit, multiplicities, and the current/retained roles.
+Only permutations of otherwise uninterpreted attempt IDs are identified. This
+does not authorize an ID-specific property or temporal verification.
 
 The journal uses the exact, hash-bound safety view described in
 [the projection argument](tlc-safety-view-audit.md). Its result is exhaustive
@@ -103,6 +138,222 @@ completing. Scenarios fix the tracked key they assert on. This is reviewed
 reasoning, not a machine-checked equivalence theorem.
 
 ### Duplicate transition choices
+
+The affected API, payment, UI, contributor, Slopbot, tooling and vetting
+models bind each `step` choice inside the branch that reads it.
+Their former outer choices ranged only over literal nonempty sets, inclusive
+constant integer ranges, or constant aliases for such sets (`ids`, `slots`,
+`actors`, `observedActors`, `kinds`, `routes`, `keyIds`, `outcomes` and
+`clearances`). None depends on the current state. For nonempty domains,
+existential choice distributes over disjunction: each old branch successor
+still has a local witness, and every local witness can be extended with any
+value of the unused outer choices. Thus the same calls, arguments, guards,
+initial states, invariants and full-state successor sets remain. No state field
+or transition is projected away. The change avoids repeated enumeration of
+identical branch successors and changes seeded sampling frequencies. This
+argument would not apply to a possibly empty state-dependent outer domain.
+Retain before/after model hashes and exact graph receipts in the ignored formal
+evidence directory; a timeout is still incomplete verification.
+
+Scenario-only helpers containing `init.then(...)` use `run` declarations. Their
+expressions and assertions stay unchanged; production dispatchers do not call
+them. This removes the pinned native translator's initializer/action ambiguity
+without increasing the original `*Test` scenario set.
+
+### Source-bound safety views
+
+The journal, owner-vault, project-lookup, admin, email, publication,
+security-settings, Solana-binding, wallet-provider and allocation operators in `tlc-safety-views.json`
+are individually allowlisted. Each binds the complete model source, generated
+TLA, projection expression and final viewed TLA, plus the pinned official
+adapter. Unknown definitions, source changes and temporal properties refuse
+before TLC. The official runner's result handling is unchanged.
+
+A VIEW changes fingerprints while TLC retains a complete representative state.
+It must preserve the invariant and future projected successors; deleting
+fields merely because they are absent from the invariant is insufficient.
+Separate observations retain separate false classes whenever later transitions
+can repair one clause independently of another. The unchanged concrete actions,
+scenario assertions and sampled traces retain their original values.
+
+### Owner-vault verification
+
+`api_owner_vault_lifecycle` keeps its ordinary `step` and original scenarios.
+The transaction encoding and body/expected result expressions are extracted
+without changing their expressions, validation precedence or concrete guards.
+Only finite verification selects the explicitly source-bound
+`verificationStep`. Its receipt names
+`forward-safety-simulation-delayed-inputs`; this is an additional abstraction,
+not the complete concrete graph.
+
+- `verificationBegin` selects the original slot, mode and purpose with legal
+  `evm`/`exact`/revision-1 placeholders.
+- At Register's body transition, the full original family and raw transaction
+  domains are selected once and passed through the original encoding and body
+  expression atomically. Review never consumes those two inputs.
+- At the expected transition, the full original revision domain `0..3` is
+  selected once and evaluated by the original expected expression. Neither
+  consumer can return to its input phase or resample.
+
+Relate a reachable concrete state to an abstract state with equal globals and
+requests except inputs not yet consumed, and the permanently dead GET/Review
+inputs. At each consumer, choose exactly the values selected by the original
+concrete `begin`. Every value remains available. Earlier branches do not read
+those values beyond their satisfied legal-domain checks. Captured project,
+policy, deployment, restriction and authority observations remain at the same
+transitions; concurrent global writes and cross-slot phase observations remain
+exact. Every concrete step therefore has a related abstract successor. This
+is a manual forward safety simulation, not full concrete successor equality.
+
+Invariant preservation does not assume the invariant is true. `init` and
+`begin` set nonterminal `result` to `none` and `committed` to zero; only
+`respond` changes result while entering a terminal phase, and commit occurs
+after the consumers. Thus the deferred family cannot affect the conditional
+existing-deployment clause before it is materialized. A replay does not consume
+expected revision. Invalid body/purpose and unavailable service still precede
+replay; replay precedes expected-zero validation; expected zero precedes the
+existing-deployment and malformed-transaction refusals. EVM case folding and
+Solana case sensitivity remain distinct.
+
+The owner VIEW preserves every global. It erases only these nonterminal
+observations after their last use:
+
+| Mode or phase | Erased observations and reason |
+| --- | --- |
+| All | `creationRevision`, `creationCap`, `canSetup`, `received` are write-only for subsequent transitions and the invariant. Concrete scenarios retain them. |
+| GET | Expected/transaction/family and current/policy/cap/captured/generation cannot reach a write; funds/service returns before body. Current only feeds an unobserved GET response revision. |
+| Review | Transaction/family, policy/cap/generation and captured transaction/family never reach replay or append. Expected/current and captured existence remain exact through the expected check. |
+| Chain and later | Expected/history checking has finished; Review also no longer consumes current or captured deployment. |
+| After authority | Captured restricted/banned fields are dead. Append validation still reads the exact global restrictions. |
+| Postcommit | Register policy/cap/transaction/family/generation have already made their global writes; committed revision remains live. |
+
+Each terminal request retains all five local invariant truth values and
+`C = committed > 0 implies policyAt(committed).exists and deploymentAt(purpose).exists`,
+computed from the complete representative. While C is false, its exact
+committed/purpose indices remain. While true, the indices can be canonical:
+seed, edit and successful commit only add existing entries; no continuation
+writes existence false or deletes an entry. Terminal indices never change.
+True C is therefore closed under every writer; false C is recomputed from
+retained indices and exact globals and can still become true. No truth bit is
+supplied as an assumed authorization fact.
+
+Response and done share one canonical terminal phase. Owner slots are never
+reused, and cross-slot guards test only unused. `send` changes phase and the
+unobserved received field, so its projection is a self-loop, matched by the
+explicit `s' = s` in both dispatchers. All other projected successors agree.
+This is an **unlabeled whole-next safety quotient**: it does not preserve
+per-action send enabledness, action labels, response delivery, fairness or
+liveness. Lookup cannot use this phase collapse because it reuses done slots.
+The [terminal/stutter audit](owner-vault-terminal-stutter-view-audit.md) gives
+the continuation argument. Whole-source and transition-boundary guards reject
+new early reads, narrowed domains, resampling, terminal reuse, backward reads,
+changed consumer expressions, removed stutter or invariant changes.
+
+### Project-lookup verification
+
+`api_project_lookup_routes` retains the complete concrete model. Its VIEW
+erases the unused legacy-cache and login bytes. Data/cache versions and
+request payloads retain zero-versus-positive observations: the consumers test
+positivity and copy those values, never compare positive markers. Normalization
+commutes with copies, cache replacement and expiry. Rename, data changes and
+legacy writes can project to stutter, matched by the explicit step self-loop.
+Exact freshness and login bytes are not VIEW guarantees.
+
+The five additional input normalizations use explicit post-consumption phases:
+
+| Inputs | Last reader | Phases where normalization is permitted |
+| --- | --- | --- |
+| Method and transport | Dispatch | Session, cache, validate, actor, owned-list, repository, buffer, selection-input, selection-actor |
+| Expected actor | Session | Cache, validate, actor, owned-list, repository, buffer, selection-input, selection-actor |
+| Repository and login-valid flag | Session key capture and validate | Actor, owned-list, repository, buffer |
+
+These inputs occur in no original invariant clause. No phase returns to an
+earlier consumer; done reuse fully replaces them from idle. Other live fields
+remain exact. A deterministically refused dispatch additionally erases only
+inputs that cannot reach session/cache/selection, while retaining the exact
+403-versus-404 decision operands.
+
+Response, done and enforcement-handoff retain their **distinct phases**, attempt,
+pending-put flag, pending key/subject/payload positivity/wait flag, and each of
+the seven original invariant observations independently. With no pending put,
+its dependencies may be dummy values. Respond changes only phase and an
+unobserved delivery flag. Put completion clears pending and makes the
+pending-payload and error-implies-no-pending clauses true; the other five
+observations remain unchanged, including false ones. Success writes the
+retained cache destination and normalized contents. Begin reads only phase,
+attempt and pending before resetting the record. Handoff has no continuation
+except a hypothetical pending put. Invariant truth and future successor
+classes are preserved. Exact terminal payloads are not VIEW guarantees.
+`project-lookup-legacy-quotient.test.ts` binds the complete audited module and
+requires review for new reads, backward phases, reuse or invariant changes.
+
+### Other reviewed safety views
+
+- The [admin continuation audit](admin-mutation-continuation-view-audit.md)
+  retains all live identity, session, lifetime, storage, ownership and callback
+  dependencies. Dead slots retain exact admission truth; the clear-witness
+  implication remains a separate observation, including false values.
+- The [email preference audit](email-preference-request-view-audit.md) preserves
+  early cookie and returned-observation dependencies, separate authentication
+  truth and indexed publication witnesses. Counters and generations stay live.
+- The [publication continuation audit](publication-continuation-view-audit.md)
+  retains every future identity, ownership, server-admission and publication
+  dependency. Version 2 erases additional phase-dead payloads after their last
+  consumer, while preserving independent false admission observations.
+- The [security-settings audit](tlc-safety-view-audit.md#security-settings-lifetime-view)
+  preserves per-publication admission truth independently. Version 2 also
+  retains each stale HTTP read's exact admission predicate and current read
+  identity, while erasing only phase-dead or permanently stale payloads.
+- The [Solana binding audit](solana-binding-api-view-audit.md) keeps exact global
+  audit/effect membership and timestamps, terminal dispatch enabledness and nine
+  separate request clauses. Ledger availability and success/non-success are
+  the only normalized value classes.
+- The [wallet-provider audit](solana-wallet-provider-view-audit.md) preserves
+  exact pre-provider dependencies, provider-wait method/invocation and six
+  independent safety observations, including dormant false registration and
+  reconnection facts. Seven capability values normalize only after their
+  consumers become permanently disabled; late send effects remain observable.
+- The [allocation audit](tlc-safety-view-audit.md#contributor-allocation-view)
+  retains each account's eligibility, all global outputs and every future
+  request dependency. Version 2 distinguishes permanently stale requests from
+  current requests, preserves valid snapshots and absent-file closed state,
+  and erases payloads that are overwritten or ignored before consumption.
+- The existing [journal audit](tlc-safety-view-audit.md) retains its separate
+  projection and controls.
+
+All arguments are manual, source-bound safety arguments, not mechanically
+checked refinement theorems or exhaustive UI-output verification. The trusted
+native-control step runs the actual pinned TLC adapter, including false-clause,
+continuation and source-drift controls. These fixtures cannot substitute for a
+completed model graph. Resource limits are explicit per model; timeout,
+cancellation, input drift or queued work remains incomplete verification.
+Keep original receipts unchanged. A quotient state count is not a full-record
+count, and the owner forward simulation is named separately in its receipt.
+Implementation conformance, provider calls, chains and deployment need their
+own evidence.
+
+The separately frozen version-2 publication, security-settings and allocation
+quotients completed with 6,051,015, 798,102 and 57,276 distinct states,
+respectively, each with an empty queue under its recorded budget. Those
+receipts belong to their recorded prototype inputs; they are not a claim that
+a later combined revision ran those graphs. Earlier version-1 timeouts remain
+incomplete. Native controls, final source bindings and implementation evidence
+remain separate qualification requirements.
+
+The Solana binding API's identical configure guard now runs before its 384
+unchanged input tuples. Its existing VIEW expression is unchanged, with renewed
+source/TLA pins. That separately frozen quotient completed 3,373,889 distinct
+states with an empty queue in 688.320 seconds under its explicit 1,200-second
+allowance. Earlier 180- and 600-second attempts remain incomplete. Ordinary
+scenario and sampling budgets stay unchanged.
+
+The separately frozen wallet-provider V3 quotient completed 2,526,432 distinct
+states with an empty queue in 516.944 seconds under its recorded 600-second
+allowance. Its concrete model and original invariant remain unchanged. Native
+qualification reused the unchanged fresh V3 controls across the resource-only
+follow-up; this does not claim a final combined-head graph or native execution.
+
+### Other duplicate transition choices
 
 The payment-parent model enumerates reply payloads only for the current,
 authenticated read. Every payload for another pending read produces the same
@@ -724,6 +975,14 @@ positions. Browser regression definitions cover these transitions but remain
 unexecuted. The separate risk-flag component is unmounted; its local model does
 not establish an available UI flow.
 
+The archive model preserves its pending boundary on same-route navigation.
+`useRoute` keeps the archive component mounted, and `useTimeBoundary` cleans up
+only when its timestamp changes or the component unmounts. The earlier model
+cleared the timer without a render on `openArchive`, an impossible source
+transition that violated `deadlineDeliveryProperty`. The two same-archive
+navigation scenarios retain the timer before and after its deadline. The
+temporal property, fairness assumption and concrete browser code are unchanged.
+
 Setup status preserves a successful installation observation when the
 repository or steward identity is known to mismatch. That result asks for
 maintainer action rather than reporting an installation outage. Write routes
@@ -1020,3 +1279,11 @@ Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12
 `ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
 
 Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.
+
+The source-bound operator keeper continuation safety VIEW completed hosted
+verification at `4c2534d7839e9d543c543cca91067959e3ce5ce5`: 7,733,684
+distinct projected states, zero queued, and no invariant violation in 126.272
+seconds. The original QNT, all six mapped source files, and ordinary scenarios
+are unchanged. `formal/operator-keeper-safety-view-audit.md` records the
+continuation argument and native false-proof controls. This finite safety
+result does not establish source refinement or authorize keeper activation.

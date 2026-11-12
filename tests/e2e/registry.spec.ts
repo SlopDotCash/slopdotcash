@@ -3106,7 +3106,7 @@ for (const assetCase of [
     symbol: "BOUNTY",
     decimals: 8,
     minor: "1250000004",
-    gross: "12.50000004 REQUESTED",
+    gross: "12.50000004 $REQUESTED",
     researcher: "75%",
     slop: "25%",
   },
@@ -3410,7 +3410,7 @@ for (const assetCase of [
         .click();
       await expect(
         editor.getByRole("region", { name: "Published bounty offer" }),
-      ).toContainText("15.00000003 BOUNTY");
+      ).toContainText("15.00000003 $BOUNTY");
       await editor
         .getByRole("button", { name: "Publish bounty terms", exact: true })
         .click();

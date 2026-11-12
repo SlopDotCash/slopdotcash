@@ -184,19 +184,38 @@ module historical_subscription_intake {
     all { r.phase == "response", s' = s.with("requests", s.requests.set(id, r.with("phase", "done").with("received", received))) }
   }
   action step = {
-    nondet id = slots.oneOf()
-    nondet source = sources.oneOf()
-    nondet mode = Set("single", "joint").oneOf()
-    nondet key = Set(1, 2).oneOf()
-    nondet parent = 0.to(4).oneOf()
-    nondet payload = Set(1, 2).oneOf()
-    nondet result = Set("admin", "missing", "forbidden", "error").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { sourceChanges(source), registryChanges, pause, removeSource(source), revokeInstallation,
-      begin(id, mode, key, parent, payload, yes), headers(id, yes, other), session(id, result, yes), body(id, yes), envelope(id, yes), installation(id, yes),
-      collect(id, source, yes, other), reconstruct(id, yes), capture(id), refresh(id, source, yes), prepare(id, yes),
-      preflight(id), appendRecord(id, yes), readback(id, yes), failure(id), send(id, yes), s' = s }
+    any {
+      { nondet source = sources.oneOf() sourceChanges(source) },
+      registryChanges,
+      pause,
+      { nondet source = sources.oneOf() removeSource(source) },
+      revokeInstallation,
+      { nondet id = slots.oneOf() nondet mode = Set("single", "joint").oneOf() nondet key = Set(1, 2).oneOf()
+        nondet parent = 0.to(4).oneOf() nondet payload = Set(1, 2).oneOf() nondet yes = Set(false, true).oneOf()
+        begin(id, mode, key, parent, payload, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        headers(id, yes, other) },
+      { nondet id = slots.oneOf() nondet result = Set("admin", "missing", "forbidden", "error").oneOf()
+        nondet yes = Set(false, true).oneOf()
+        session(id, result, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() body(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() envelope(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() installation(id, yes) },
+      { nondet id = slots.oneOf() nondet source = sources.oneOf() nondet yes = Set(false, true).oneOf()
+        nondet other = Set(false, true).oneOf()
+        collect(id, source, yes, other) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() reconstruct(id, yes) },
+      { nondet id = slots.oneOf() capture(id) },
+      { nondet id = slots.oneOf() nondet source = sources.oneOf() nondet yes = Set(false, true).oneOf()
+        refresh(id, source, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() prepare(id, yes) },
+      { nondet id = slots.oneOf() preflight(id) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() appendRecord(id, yes) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() readback(id, yes) },
+      { nondet id = slots.oneOf() failure(id) },
+      { nondet id = slots.oneOf() nondet yes = Set(false, true).oneOf() send(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     0.to(4).contains(s.tip), s.tip > 0 implies rowAt(s.tip).exists,

@@ -16,6 +16,7 @@ import {
 import { apiRequest } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { formatRewardCapDisplay } from "./lib/reward-amount";
+import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
@@ -683,7 +684,13 @@ export function OwnerVaultSetup({
             {!bounty ? (
               <>
                 <dt>Monthly cap</dt>
-                <dd>{active.review.capDisplay}</dd>
+                <dd>
+                  {active.review.capDisplay.replace(
+                    /(\s)(\S+)$/u,
+                    (_match, space: string, symbol: string) =>
+                      `${space}${formatAssetSymbol(symbol)}`,
+                  )}
+                </dd>
                 <dt>Automatic payment</dt>
                 <dd>{active.input.automatic ? "On" : "Off"}</dd>
               </>

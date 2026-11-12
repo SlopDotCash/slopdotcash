@@ -89,14 +89,21 @@ module solana_message_buffers {
       .with("echoAtValidation", echoed).with("signatureAtValidation", s.providerSignature)
       .with("returnedSignature", s.providerSignature) }
   action step = {
-    nondet kind = Set("standard", "legacy").oneOf()
-    nondet signature = identities.oneOf()
-    nondet byteLength = Set(0, 63, 64).oneOf()
-    nondet echoKind = echoKinds.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { start(kind), reconnectReply(yes), mutateCaller, mutateProviderInput,
-      providerReply(signature, byteLength, echoKind, yes), providerFailure,
-      mutateProviderEcho, mutateProviderSignature, validate, mutateReturnedSignature, s' = s }
+    any {
+      { nondet kind = Set("standard", "legacy").oneOf() start(kind) },
+      { nondet yes = Set(false, true).oneOf() reconnectReply(yes) },
+      mutateCaller,
+      mutateProviderInput,
+      { nondet signature = identities.oneOf() nondet byteLength = Set(0, 63, 64).oneOf()
+        nondet echoKind = echoKinds.oneOf() nondet yes = Set(false, true).oneOf()
+        providerReply(signature, byteLength, echoKind, yes) },
+      providerFailure,
+      mutateProviderEcho,
+      mutateProviderSignature,
+      validate,
+      mutateReturnedSignature,
+      s' = s
+    }
   }
   val invariant = all {
     s.phase != "idle" implies s.expected == s.entry,
@@ -104,9 +111,10 @@ module solana_message_buffers {
     s.accepted implies s.signatureLength == 64,
     s.accepted and s.kind == "standard" implies s.echoAtValidation == s.entry,
     s.accepted and not(s.returnedMutated) implies s.returnedSignature == s.signatureAtValidation }
-  action exact(kind: str): bool = init.then(start(kind))
+  run exact(kind: str): bool = init.then(start(kind))
   action standardReply = providerReply(1, 64, "input", true).then(validate)
-  action legacyReady = exact("legacy").then(reconnectReply(true))
+  // This setup composes a run; keep it out of executable TLA+ actions.
+  run legacyReady = exact("legacy").then(reconnectReply(true))
 
   run standardExactEchoReturnsPrivateSignatureTest = exact("standard").then(standardReply)
     .expect(s.accepted and s.returnedSignature == 1 and invariant)

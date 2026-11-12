@@ -35,6 +35,7 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { formatRewardCapDisplay } from "../../src/lib/reward-amount";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAsset,
@@ -1445,13 +1446,15 @@ async function ownerVault(
         d.network === input.network &&
         d.deploymentTransaction === transactionId,
     );
-    if (existing)
+    if (existing) {
+      await deps.vaultSetup.observe(current, existing, input.payoutPolicy);
       return json(200, {
         status: "registered",
         deployment: existing,
         project: current.manifest,
         revision: current.revision,
       });
+    }
   }
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -1550,6 +1553,7 @@ async function ownerVault(
     reason:
       "Owner registered a finalized vault verified against the reviewed factory and project policy.",
   });
+  await deps.vaultSetup.observe(updated, deployment, input.payoutPolicy);
   return json(200, {
     status: "registered",
     deployment,
@@ -1559,7 +1563,7 @@ async function ownerVault(
     creation.manifest.reward.monthlyCapMinor !==
       updated.manifest.reward.monthlyCapMinor
       ? {
-          notice: `Creation used a monthly cap of ${creation.manifest.reward.monthlyCapDisplay}. The project now uses ${updated.manifest.reward.monthlyCapDisplay}. Use the automatic payment controls below to apply the new cap.`,
+          notice: `Creation used a monthly cap of ${formatRewardCapDisplay(creation.manifest.reward.monthlyCapDisplay, creation.manifest.rewardAsset)}. The project now uses ${formatRewardCapDisplay(updated.manifest.reward.monthlyCapDisplay, updated.manifest.rewardAsset)}. Use the automatic payment controls below to apply the new cap.`,
         }
       : {}),
   });

@@ -235,6 +235,9 @@ for (const path of [
   "workers/fee-converter/evm.ts",
   "backend/fee-conversions/handler.ts",
   "backend/payments/handler.ts",
+  "workers/payment-executor/core.ts",
+  "workers/payments/index.ts",
+  "backend/projects/vault-setup.ts",
 ]) {
   test(`native EVM accounting coverage follows ${path}`, () => {
     expect(scopeFor({ [path]: "export {};\n" }).evm).toBe("true");
@@ -258,6 +261,9 @@ test("Solana fixture and fee changes select their actual chain job", () => {
     "tests/e2e/vault-setup-server.ts",
     "workers/fee-converter/solana-local.integration.ts",
     "backend/fee-conversions/handler.ts",
+    "workers/payment-executor/solana.ts",
+    "workers/payments/index.ts",
+    "backend/projects/vault-setup.ts",
     "scripts/escrow-acceptance/solana-local.ts",
     "scripts/escrow-acceptance.ts",
   ]) {
@@ -412,7 +418,12 @@ test("a pull request that touches no model input or proof checks neither", () =>
   expect(values.lemmascript).toBe("false");
 });
 
-for (const path of ["formal/tlc.json", "scripts/check-formal.mjs", "bun.lock"])
+for (const path of [
+  "formal/tlc.json",
+  "scripts/check-formal.mjs",
+  "scripts/formal-report.mjs",
+  "bun.lock",
+])
   test(`a verifier tool change (${path}) checks every model`, () => {
     expect(scopeFor({ [path]: "{}\n" }, proofBase).formal_models).toBe("all");
   });

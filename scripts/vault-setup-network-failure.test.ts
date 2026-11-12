@@ -66,6 +66,7 @@ const CREATION_HASH = `0x${"ab".repeat(32)}`;
 const BLOCK_HASH = `0x${"cd".repeat(32)}`;
 let creationData = "0x";
 let creationStatus: "pending" | "failed" | "valid" = "valid";
+let snapshotLimited = false;
 let vaultGetters: Record<string, string> = {};
 const creationMethods: string[] = [];
 const getters = Object.fromEntries(
@@ -120,7 +121,11 @@ const rpc = Bun.serve({
           blockHash: BLOCK_HASH,
         });
       if (method === "eth_getBlockByNumber")
-        return answer({ number: "0x1", hash: BLOCK_HASH });
+        return answer({
+          number: "0x1",
+          hash: BLOCK_HASH,
+          timestamp: "0x69000000",
+        });
     }
     if (mode === "factory" || mode === "creation") {
       if (method === "eth_chainId") return answer("0x2105");
@@ -130,6 +135,14 @@ const rpc = Bun.serve({
         return answer(
           word(params[0] === CREATED_VAULT ? address("7") : address("8")),
         );
+      if (
+        method === "eth_call" &&
+        typeof params[0] === "object" &&
+        params[0].data === toFunctionSelector("totals()")
+      )
+        return snapshotLimited
+          ? new Response("rate limited", { status: 429 })
+          : answer(`0x${"0".repeat(640)}`);
       if (method === "eth_call" && typeof params[0] === "object")
         return answer(
           (params[0].to?.toLowerCase() === CREATED_VAULT
@@ -356,6 +369,7 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
       "projectId()": registryProjectDigest("vault-network"),
       "monthlyCap()": BigInt(monthlyCapMinor).toString(16),
       "monthlyEnabled()": "0",
+      "decimals()": "6",
     }).map(([signature, value]) => [
       toFunctionSelector(signature),
       word(value),
@@ -383,10 +397,55 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
       },
     });
     expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(
+      sqlite
+        .query(
+          "SELECT vault,asset_decimals,total_deposited,block_number FROM vault_snapshots",
+        )
+        .get(),
+    ).toEqual({
+      vault: CREATED_VAULT,
+      asset_decimals: 6,
+      total_deposited: "0",
+      block_number: "1",
+    });
+    // An existing registration from before snapshot seeding can recover through
+    // the same owner retry. RPC failure cannot publish zero or append a revision.
+    sqlite.exec("DELETE FROM vault_snapshots");
+    snapshotLimited = true;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 0 });
+    snapshotLimited = false;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: { status: "registered" },
+    });
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 1 });
+    const registered = await persistence.getProject("vault-network");
+    const pin = registered?.manifest.escrow?.deployments[0];
+    if (!registered || !pin || !deps.vaultSetup)
+      throw new Error("Registered fixture missing");
+    vaultGetters[toFunctionSelector("purpose()")] = word("1");
+    await deps.vaultSetup.observe(registered, pin, "security-bounty");
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM security_vault_snapshots").get(),
+    ).toEqual({ n: 1 });
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 1 });
     expect(creationMethods.some((method) => /send|sign/iu.test(method))).toBe(
       false,
     );
   } finally {
+    snapshotLimited = false;
     reviewedFactories.splice(0, reviewedFactories.length, factory);
     mode = "factory";
   }
