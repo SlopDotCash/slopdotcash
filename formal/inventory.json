@@ -3425,9 +3425,9 @@
     },
     {
       "path": "scripts/collect-quality-census.ts",
-      "sha256": "5e9404c388d30c36194664ea5af7520a4536abc44c6266c27fb6dd93a0119afe",
+      "sha256": "fe06a32095abc67e2b85092855e6cd75870e3af47c4173f1ae0d8522babdc749",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
-      "candidateLines": [3, 29, 31, 132, 136, 137, 162, 167],
+      "candidateLines": [3, 30, 32, 133, 137, 138, 163, 168],
       "review": "mapped-abstraction"
     },
     {
@@ -4053,9 +4053,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "928b3746261538268c90fba7e515a2f99f1654f661e033932079a7919e2b5626",
+      "sha256": "653c046883e2499484c5f3e1f40fad293abb6f631578904249b7eb9855cd1141",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 118, 226, 423, 511, 514],
+      "candidateLines": [7, 119, 232, 429, 517, 520],
       "review": "mapped-abstraction"
     },
     {
@@ -4529,13 +4529,13 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "4936a88b94e142f2dd6930fecb4872e7f21caf64b18d493d211e112a4ab7a8dd",
+      "sha256": "b084dc4b0d84398dd32ce55498fd347397a64dde722e62d60d466b7876800ba8",
       "models": [
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 651, 687,
+        49, 60, 107, 108, 109, 110, 112, 113, 180, 181, 182, 184, 185, 651, 687,
         720, 744
       ],
       "review": "mapped-abstraction"
@@ -5826,9 +5826,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "23deb359a46ddc9af987bf4a4b60c1b17b65d8c534aa850b63f6a9748f8e8601",
+      "sha256": "3550edca36d4e976ab7ee0b2b02e5c14b5fc4d4480550dc155352edd3d712944",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [178],
+      "candidateLines": [192],
       "review": "mapped-abstraction"
     },
     {
@@ -6319,9 +6319,9 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "sha256": "9559a6291a9254a5cd956e54a9866ecaaa81726027d748a5652540d1da09c101",
+      "sha256": "a76c7aa682ca7e6c5873790cc26e5e7abbb34c9e588c2c0bd6d7a22dc394667d",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [112, 120, 131, 287, 304, 330, 758, 786, 798],
+      "candidateLines": [113, 121, 132, 288, 305, 331, 779, 807, 819],
       "review": "mapped-abstraction"
     },
     {
@@ -6356,9 +6356,9 @@
     },
     {
       "path": "src/lib/repositories.mjs",
-      "sha256": "0110e932d060a4d3ae7b8ef2ee5a18ee85154e0bfad5b0c5321f9b827494b764",
+      "sha256": "1c5f6f2a2dfefeaf914c9fe535651515d72af806ab430a5366bbe5eb1029a2c8",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
-      "candidateLines": [20, 22, 54],
+      "candidateLines": [21, 23, 56],
       "review": "mapped-abstraction"
     },
     {
@@ -6638,15 +6638,15 @@
     },
     {
       "path": "src/lib/use-snapshot.ts",
-      "sha256": "210cf2bd5c24205f7778f83e9e1aa3317a1ac8b7f89f2a54c997dad41ab6b736",
+      "sha256": "a6432218cb3714481c11e53622197d11ea46392131782b7faa412f4c9a629b25",
       "models": [
         "formal/models/ui/ui_resources.qnt",
         "formal/models/ui/ui_snapshot_cache.qnt",
         "formal/models/ui/ui_time_boundary.qnt"
       ],
       "candidateLines": [
-        1, 26, 27, 29, 40, 56, 69, 74, 87, 96, 126, 128, 132, 140, 150, 155,
-        168, 185, 193, 195, 196, 199, 206, 219, 221, 232, 233, 237
+        1, 27, 28, 30, 41, 57, 70, 75, 88, 97, 123, 125, 129, 137, 147, 152,
+        165, 182, 190, 192, 193, 196, 203, 216, 218, 229, 230, 234
       ],
       "review": "mapped-abstraction"
     },

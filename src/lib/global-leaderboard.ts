@@ -12,6 +12,7 @@ import type { ActorRef } from "./leaderboard-types";
 import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
 import { type ProjectView, requiredProjection } from "./project-view";
+import { repositoryCountsFrom } from "./project-repositories.mjs";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
 import {
   eventThirds,
@@ -57,6 +58,21 @@ function projectOf(repository: string) {
 }
 
 /**
+ * Whether a record falls after the project's reward start and, for an
+ * appended repository, after that repository's own start month.
+ */
+export function recordCounts(
+  project: ReturnType<typeof projectOf>,
+  record: { repository: string; occurredAt: string },
+): boolean {
+  const occurredAt = Date.parse(record.occurredAt);
+  return (
+    occurredAt >= Date.parse(project.reward.rewardStartAt) &&
+    occurredAt >= (repositoryCountsFrom(project, record.repository) ?? 0)
+  );
+}
+
+/**
  * Rolling-window events and debits of months without a closed cycle record.
  * A closed record already carries its month's score, so a later debit never
  * changes it.
@@ -86,9 +102,7 @@ export function openMonthScores(
     const rows = records.map((record) => {
       const project = projectOf(record.repository);
       return {
-        afterStart:
-          Date.parse(record.occurredAt) >=
-          Date.parse(project.reward.rewardStartAt),
+        afterStart: recordCounts(project, record),
         scope: scopeIndex(cycleKey(project.id, record.occurredAt.slice(0, 7))),
       };
     });

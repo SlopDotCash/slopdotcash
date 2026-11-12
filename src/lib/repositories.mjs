@@ -4,6 +4,7 @@
  * row now carries the project that owns its scoring and reward policy.
  */
 
+import { repositoryIdentity } from "./project-repositories.mjs";
 import {
   INGESTED_HISTORICAL_PROJECTS,
   INGESTED_PROJECTS,
@@ -40,7 +41,8 @@ function flattenRepositories(projects) {
         expectedNodeId:
           currentIdentity.toLowerCase() === metadata.id.toLowerCase()
             ? null
-            : project.authority.repositoryNodeId,
+            : (repositoryIdentity(project, metadata.id)?.nodeId ??
+              project.authority.repositoryNodeId),
         projectId: project.id,
         role:
           projectIndex === 0 && repositoryIndex === 0 ? "primary" : "member",

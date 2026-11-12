@@ -9,6 +9,7 @@ import type {
   PenaltyFeedRecord,
   PenaltyHistoryRecord,
 } from "../src/lib/leaderboard-types";
+import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { findIngestedProjectByRepositoryId } from "../src/lib/projects.mjs";
 import {
   findRegisteredRepositoryById,
@@ -139,11 +140,10 @@ async function fetchHistoryPage(
     throw new Error("Invalid value-history source query");
   const project = findIngestedProjectByRepositoryId(registered.id);
   // Each project's primary repository has an immutable D1 authority pin.
-  // Secondary repositories retain the existing registered-name read path.
-  const pinnedNodeId =
-    project?.repositories[0].id === registered.id
-      ? project.authority.repositoryNodeId
-      : null;
+  // Appended repositories carry their own pinned node id in their entry.
+  const pinnedNodeId = project
+    ? (repositoryIdentity(project, registered.id)?.nodeId ?? null)
+    : null;
   if (
     repositoryNodeId !== undefined &&
     pinnedNodeId !== null &&
