@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { formalStageArguments } from "./formal-report.mjs";
 import { verificationTransition } from "./quint-verification-step.mjs";
 import { runE2ePhase } from "./run-e2e-phase.mjs";
 
@@ -21,7 +22,8 @@ function actionBlock(text: string, name: string, end: string) {
 }
 
 test("only the reviewed owner source selects the explicit abstract entry point", () => {
-  expect(verificationTransition(model, source)).toEqual({
+  const transition = verificationTransition(model, source);
+  expect(transition).toEqual({
     step: "verificationStep",
     kind: "forward-safety-simulation-delayed-inputs",
     sourceSha256: hash(source),
@@ -35,8 +37,21 @@ test("only the reviewed owner source selects the explicit abstract entry point",
   );
   const runner = readFileSync(join(root, "scripts/check-formal.mjs"), "utf8");
   expect(runner).toContain("? verificationTransition(input, modelText)");
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: Match the literal runner argument.
-  expect(runner).toContain("`--step=${finiteTransition.step}`");
+  expect(runner).toMatch(
+    /const stages = formalStageArguments\(\s*input,\s*verify,\s*finiteTransition,\s*temporalProperties,\s*\)/u,
+  );
+  expect(runner).toContain("for (const args of stages)");
+  expect(formalStageArguments(model, true, transition)[0]).toContain(
+    "--step=verificationStep",
+  );
+  for (const args of formalStageArguments(model, false, transition))
+    expect(args.some((arg) => arg.startsWith("--step="))).toBe(false);
+  const concrete = verificationTransition("formal/models/other.qnt", source);
+  expect(
+    formalStageArguments("formal/models/other.qnt", true, concrete)[0].some(
+      (arg) => arg.startsWith("--step="),
+    ),
+  ).toBe(false);
   expect(runner).toContain(
     'finiteTransition ?? { step: "step", kind: "concrete" }',
   );
