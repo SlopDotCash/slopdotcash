@@ -78,10 +78,11 @@ alias only.
     `0x000000000000000000000000000000000000dEaD`. Every order names that fee
     wallet as receiver, order authority and refund beneficiary, checked before
     signing. The other half of each fee keeps its earlier handling; on
-    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is off in the
-    checked-in configuration. Source approval does not activate the buyback:
-    activation needs its own reviewed change, the owner's confirmation of each
-    limit, and the readiness checks in `workers/fee-converter/README.md`. The
+    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is live in the
+    production configuration from 12 November 2026 (operator decision; PRD
+    section 6) and off on staging. Changing the mode, the start instant or any
+    limit needs its own reviewed change and the readiness checks in
+    `workers/fee-converter/README.md`. The
     Worker never cancels an order; cancelling an unfilled order is an owner
     action. `workers/fee-converter/wrangler.toml` sets the mode of
     each network. The Worker deploys only when the

@@ -378,7 +378,7 @@ Owner decision, 10 November 2026. Half of all fee income funds a programmatic bu
 | Purchase slippage and price impact | 1% and 3% |
 | Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |
 
-The owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation does not activate the buyback; the activation instant is set at activation. The Solana order ceiling is separate from the fee-conversion native budget.
+The owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation did not activate the buyback. Operator decision, 12 November 2026: the production buyback is live and counts fee income from `2026-11-12T00:00:00.000Z`; staging stays off. The Solana order ceiling is separate from the fee-conversion native budget.
 
 The buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.
 
@@ -720,7 +720,7 @@ Native-asset and Token-2022 scope permits implementation and local testing, not 
 
 Private-report intake is approved for staging and production after the reviewed release. This standing approval does not prove deployment or successful delivery.
 
-The SLOP buyback stays off until a reviewed activation. That activation needs the owner's confirmation of every limit and the activation instant, a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, a dry-run period, and one small live order whose fill, purchase, and burn are verified on chain. Local fork and validator results do not qualify a live fill.
+The SLOP buyback is live in production by operator decision of 12 November 2026, at the limits the owner confirmed on 10 November 2026. The dry-run period and the small verified live order that this gate required were not run, because no fee income existed to run them. Still required: a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, and on-chain verification of the first real order's fill, purchase, and burn before any burn is published. Local fork and validator results do not qualify a live fill. Any change to the mode, the start instant, or a limit is a reviewed change.
 
 Fee handling on Base, Ethereum, and Robinhood requires funded fee wallets and verified limits and readiness. The fee-converter release variable must be enabled. Keep Solana outside the production network list until its independent full-history recovery RPC, first registered vault, and all readiness checks pass. A reviewed main release then activates it. The Solana controls release, existing program upgrade, and approved 0.05 SOL gas top-up are recorded as complete. Do not repeat them; consult retained execution evidence before any later operation.
 
