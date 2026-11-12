@@ -29,6 +29,7 @@ import {
   CloudflareVettingPersistence,
   type VettingPin,
 } from "../backend/vetting/persistence";
+import { readVettingPin } from "../backend/vetting/live-pin";
 import { parseVettingResult } from "../backend/vetting/result";
 import { onRequest } from "../functions/api/v1/[[path]]";
 import { applicationManifest } from "../tests/project-application-manifest";
@@ -102,9 +103,15 @@ let livePin: VettingPin | null;
 const HEAD = "a".repeat(40);
 const TEMPLATE = "b".repeat(64);
 
-async function readLivePin(): Promise<VettingPin> {
+/** Live pins of repositories other than the first, by manifest id. */
+let repositoryPins: Record<string, VettingPin>;
+
+async function readLivePin(
+  _manifest?: unknown,
+  repositoryId?: string,
+): Promise<VettingPin> {
   if (livePin === null) throw new Error("GitHub returned 502.");
-  return livePin;
+  return (repositoryId && repositoryPins[repositoryId]) || livePin;
 }
 let ids = 0;
 
@@ -125,6 +132,7 @@ beforeEach(async () => {
   keys = await vettingKeyPair();
   configuredKeys = keys.publicKey;
   livePin = { commitSha: HEAD, templateSha256: TEMPLATE };
+  repositoryPins = {};
 });
 
 /** Seed the old content protocol before its real migration; never bypass its trigger. */
@@ -132,7 +140,12 @@ async function legacyContentRun(runId: string) {
   await retained.dispose();
   const database = sqliteD1(
     readdirSync(new URL("../migrations", import.meta.url))
-      .filter((name) => name.endsWith(".sql") && name < "0119_")
+      // The current application writes the per-repository scan column of
+      // 0123, which is independent of the content protocol 0119 replaces.
+      .filter(
+        (name) =>
+          name.endsWith(".sql") && (name < "0119_" || name.startsWith("0123_")),
+      )
       .sort(),
   );
   const { db } = database;
@@ -299,6 +312,40 @@ async function listPausedProject() {
   expect(created.status).toBe(201);
 }
 
+const SECOND = "example/second-registry";
+const SECOND_HEAD = "c".repeat(40);
+
+/** Appends a second repository to the listed project as revision 2. */
+function appendSecondRepository() {
+  const current = sqlite
+    .query("SELECT manifest FROM projects WHERE id = 'open-registry'")
+    .get() as { manifest: string };
+  const manifest = JSON.parse(current.manifest);
+  manifest.repositories.push({
+    id: SECOND,
+    displayName: SECOND,
+    githubUrl: `https://github.com/${SECOND}`,
+    description: "The second repository of the project.",
+    integrationBranch: "main",
+    githubId: "223456789",
+    nodeId: "R_second",
+    countsFrom: "2026-11-01T00:00:00.000Z",
+  });
+  const text = JSON.stringify(manifest);
+  const sha256 = createHash("sha256").update(text).digest("hex");
+  sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('open-registry',2,?,?,'Append a repository',?)",
+    )
+    .run(text, sha256, NOW.toISOString());
+  sqlite
+    .query(
+      "UPDATE projects SET revision = 2, manifest = ?, manifest_sha256 = ? WHERE id = 'open-registry'",
+    )
+    .run(text, sha256);
+  repositoryPins[SECOND] = { commitSha: SECOND_HEAD, templateSha256: TEMPLATE };
+}
+
 async function queueScan(): Promise<string> {
   const queued = await vettingApi(
     sessionRequest("POST", "admin/vetting/assessments", "admin", {
@@ -422,6 +469,159 @@ test("admin vetting binds protected reads and writes to the displayed actor", as
   // The independent signed-service protocol does not inherit an admin header.
   const service = await signed("GET", "vetting/requests");
   expect((await vettingApi(bindActor(service, "invalid"))).status).toBe(200);
+});
+
+describe("one admission scan per repository", () => {
+  const request = (body: Record<string, unknown> = {}) =>
+    vettingApi(
+      sessionRequest("POST", "admin/vetting/assessments", "admin", {
+        projectId: "open-registry",
+        revision: 2,
+        reason: "Admission scan",
+        ...body,
+      }),
+    );
+
+  test("an admin request queues and serves one scan per repository", async () => {
+    await listPausedProject();
+    appendSecondRepository();
+    const queued = await request();
+    expect(queued.status).toBe(201);
+    const body = await queued.json();
+    expect(
+      body.assessments.map((row: { commitSha: string }) => row.commitSha),
+    ).toEqual([HEAD, SECOND_HEAD]);
+    expect(body.assessment.id).toBe(body.assessments[0].id);
+    // Both repositories already have this pin queued.
+    expect((await request()).status).toBe(409);
+    expect((await request({ repository: SECOND })).status).toBe(409);
+    const unlisted = await request({ repository: "example/unlisted" });
+    expect(unlisted.status).toBe(422);
+    expect((await unlisted.json()).error).toBe("repository_not_listed");
+
+    const queue = await vettingApi(await signed("GET", "vetting/requests"));
+    expect(queue.status).toBe(200);
+    expect(
+      (await queue.json()).assessments.map(
+        (item: { repository: string; commitSha: string }) => [
+          item.repository,
+          item.commitSha,
+        ],
+      ),
+    ).toEqual([
+      ["example/open-registry", HEAD],
+      [SECOND, SECOND_HEAD],
+    ]);
+  });
+
+  test("a new pin of one repository leaves the other repository's scan queued", async () => {
+    await listPausedProject();
+    appendSecondRepository();
+    expect((await request()).status).toBe(201);
+    repositoryPins[SECOND] = {
+      commitSha: "d".repeat(40),
+      templateSha256: TEMPLATE,
+    };
+    const one = await request({ repository: SECOND });
+    expect(one.status).toBe(201);
+    expect((await one.json()).assessments).toHaveLength(1);
+    expect(
+      (await vetting.pendingAssessments()).map((row) => [
+        row.repositoryId,
+        row.commitSha,
+      ]),
+    ).toEqual([
+      ["example/open-registry", HEAD],
+      [SECOND, "d".repeat(40)],
+    ]);
+  });
+
+  test("a legacy scan without a repository is the first repository's scan", async () => {
+    await listPausedProject();
+    // A row written before migration 0123 stores no repository.
+    const legacy = `vet_${"9".repeat(32)}`;
+    sqlite
+      .query(
+        `INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state)
+         SELECT ?,id,1,manifest_sha256,manifest_sha256,?,?,?,?,?,'Admission scan','pending' FROM projects WHERE id='open-registry'`,
+      )
+      .run(
+        legacy,
+        HEAD,
+        TEMPLATE,
+        ADMIN.githubId,
+        ADMIN.githubLogin,
+        NOW.toISOString(),
+      );
+    expect(
+      sqlite
+        .query("SELECT repository_id FROM vetting_assessments WHERE id = ?")
+        .get(legacy),
+    ).toEqual({ repository_id: null });
+    expect((await vetting.getAssessment(legacy))?.repositoryId).toBe(
+      "example/open-registry",
+    );
+    appendSecondRepository();
+    // The first repository's newer pin supersedes the legacy row.
+    livePin = { commitSha: "e".repeat(40), templateSha256: TEMPLATE };
+    expect((await request()).status).toBe(201);
+    const pending = await vetting.pendingAssessments();
+    expect(pending.map((row) => [row.repositoryId, row.commitSha])).toEqual([
+      ["example/open-registry", "e".repeat(40)],
+      [SECOND, SECOND_HEAD],
+    ]);
+    expect(pending.some((row) => row.id === legacy)).toBe(false);
+  });
+
+  test("each repository's live pin is the head of its own integration branch", async () => {
+    await listPausedProject();
+    appendSecondRepository();
+    const project = await projects.getProject("open-registry");
+    if (project === null) throw new Error("project was not listed");
+    const heads: Record<string, string> = {
+      "/repos/example/open-registry/branches/main": HEAD,
+      [`/repos/${SECOND}/branches/main`]: SECOND_HEAD,
+    };
+    const github = {
+      apiOrigin: "https://api.github.com",
+      fetch: async (url: string) => {
+        const sha = heads[new URL(url).pathname];
+        return sha
+          ? Response.json({ commit: { sha } })
+          : new Response(null, { status: 404 });
+      },
+    };
+    const pin = (repositoryId?: string) =>
+      readVettingPin(github, project.manifest, TEMPLATE, repositoryId);
+    expect(await pin()).toEqual({ commitSha: HEAD, templateSha256: TEMPLATE });
+    expect(await pin(SECOND)).toEqual({
+      commitSha: SECOND_HEAD,
+      templateSha256: TEMPLATE,
+    });
+    await expect(pin("example/unlisted")).rejects.toThrow(
+      "The manifest does not list repository example/unlisted.",
+    );
+  });
+
+  test("a result for another repository of the project is refused", async () => {
+    await listPausedProject();
+    appendSecondRepository();
+    const { assessments } = await (await request()).json();
+    const second = assessments[1].id as string;
+    // The fixture names the first repository.
+    const wrong = await fixture(second, "incomplete");
+    const refused = await postResult(wrong);
+    expect(refused.status).toBe(422);
+    expect((await refused.json()).error).toBe("revision_mismatch");
+    const recorded = await postResult({
+      ...wrong,
+      assessed: { ...wrong.assessed, repository: SECOND },
+    });
+    expect(recorded.status).toBe(200);
+    expect((await vetting.pendingAssessments()).map((row) => row.id)).toEqual([
+      assessments[0].id,
+    ]);
+  });
 });
 
 describe("community security vetting", () => {
