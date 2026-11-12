@@ -11,8 +11,8 @@ import type { ActorRef } from "./leaderboard-types";
 
 import type { CycleIndex } from "./cycle-index";
 import type { GitHubActor, LeaderboardSnapshot } from "./leaderboard";
-import { type ProjectView, requiredProjection } from "./project-view";
 import { repositoryCountsFrom } from "./project-repositories.mjs";
+import { type ProjectView, requiredProjection } from "./project-view";
 import type { ProjectDefinition } from "./projects.mjs";
 import { findIngestedProjectByRepositoryId } from "./projects.mjs";
 import {

@@ -323,6 +323,11 @@ it (see `backend/projects/README.md`).
 An owner or moderator files an appeal to start reinstatement. An independent human moderator may decide it only after
 a fresh complete scan of the restricted revision. Migration 0031 stores the exact
 clean scan and reviewed malicious assessment IDs with that append-only decision.
+For a project with more than one repository the handler requires a fresh
+clean scan of every repository, but that record stores one clean scan ID, the
+first repository's. The database therefore checks only that scan; the
+requirement for the other repositories is enforced in application code
+(`backend/projects/handler.ts`), not by migration 0031. This is a known gap.
 Every later malicious assessment remains a new ban; no old decision covers it.
 The changed listing revision still needs clearance before its skills can publish.
 Migration 0032 preserves human enforcement history and admits the signed service
@@ -331,6 +336,9 @@ issuer only for standing-rule Ban records.
 Confirmed-malicious bans notify the configured administrators and project moderators, the applicant and steward, and known affected contributors. Contributor recipients come from current positive contribution records resolved through immutable membership IDs, plus project payment obligations and imported transfers. Reversed awards and unrelated projects do not select recipients. People without a resolvable inbox identity cannot receive a direct notice. The private inbox notice contains no security reason, trace, or evidence reference. The result, ban, and notices commit together; a repeated signed result cannot duplicate them.
 
 A scan records the active flag IDs when it is queued. Its clean result resolves
-only those flags. New flags keep the project paused and cause the next automatic
+only those flags. On a project with more than one repository, migration 0123 resolves
+a flag only once every repository the current manifest lists has a clean scan
+bound to that flag; a one-repository project resolves exactly as migration
+0060 did. New flags keep the project paused and cause the next automatic
 refresh to queue another scan. Equal timestamps do not make a newer flag part
 of an older scan. The database checks this boundary when it records reinstatement.

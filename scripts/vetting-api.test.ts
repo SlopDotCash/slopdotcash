@@ -25,11 +25,11 @@ import {
   handleVettingApi,
   signedVettingRequest,
 } from "../backend/vetting/handler";
+import { readVettingPin } from "../backend/vetting/live-pin";
 import {
   CloudflareVettingPersistence,
   type VettingPin,
 } from "../backend/vetting/persistence";
-import { readVettingPin } from "../backend/vetting/live-pin";
 import { parseVettingResult } from "../backend/vetting/result";
 import { onRequest } from "../functions/api/v1/[[path]]";
 import { applicationManifest } from "../tests/project-application-manifest";

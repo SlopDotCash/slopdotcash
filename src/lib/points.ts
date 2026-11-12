@@ -7,6 +7,8 @@ import type {
   ScoreEvent,
 } from "./leaderboard";
 import type { PenaltyHistoryRecord } from "./leaderboard-types";
+import { repositoryCountsFrom } from "./project-repositories.mjs";
+import { projectActivityCollected } from "./project-view";
 import {
   findHistoricalProject,
   findHistoricalRepository,
@@ -17,8 +19,6 @@ import {
   findRegisteredRepositoryById,
   REGISTERED_REPOSITORIES,
 } from "./repositories.mjs";
-import { repositoryCountsFrom } from "./project-repositories.mjs";
-import { projectActivityCollected } from "./project-view";
 import { assertPenaltyHistory } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
