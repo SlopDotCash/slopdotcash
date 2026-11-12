@@ -18,6 +18,7 @@ import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
+import { currentMonthlyCapDisplay } from "./lib/project-reward-summary";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
@@ -331,7 +332,10 @@ function sponsorPoolLabel(project: ProjectDefinition): string {
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward, project.rewardAsset);
+  return monthlyPoolLabel(
+    { ...reward, monthlyCapDisplay: currentMonthlyCapDisplay(project) },
+    project.rewardAsset,
+  );
 }
 
 function WhoBuildsOnSlop({
