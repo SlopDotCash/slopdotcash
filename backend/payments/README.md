@@ -334,7 +334,8 @@ sections 6 and 7). Migration `0062` adds its private records.
    (a `vault_snapshots` row newer than 30 minutes) covers the month together
    with every earlier obligation of the same vault that is still unreserved.
    An underfunded month waits for a deposit and creates nothing. The steward
-   gets one Inbox payout exception for that month (key
+   (or, for an Organization steward, the project's lister) gets one Inbox
+   payout exception for that month (key
    `monthly-underfunded:PROJECT:YYYY-MM`), however often the coordinator
    retries. Before it creates new obligations, the coordinator excludes accounts
    with an active moderator ban. It records the exact ban in
