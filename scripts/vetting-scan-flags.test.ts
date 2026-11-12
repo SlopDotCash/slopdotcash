@@ -1867,3 +1867,97 @@ test("a cached scan from before a ban escalation is refused and cannot reinstate
   expect(prematureReinstate.status).toBe(409);
   expect((await prematureReinstate.json()).error).toBe("vetting_required");
 });
+
+/** Appends a second repository to the project as its next revision. */
+async function appendSecondRepository() {
+  const current = sqlite
+    .query("SELECT revision, manifest FROM projects WHERE id = 'open-registry'")
+    .get() as { revision: number; manifest: string };
+  const manifest = JSON.parse(current.manifest);
+  manifest.repositories.push({
+    id: "example/second-registry",
+    displayName: "example/second-registry",
+    githubUrl: "https://github.com/example/second-registry",
+    description: "The second repository of the project.",
+    integrationBranch: "main",
+    githubId: "223456789",
+    nodeId: "R_second",
+    countsFrom: "2026-11-01T00:00:00.000Z",
+  });
+  const text = JSON.stringify(manifest);
+  const sha256 = await sha256Hex(new TextEncoder().encode(text));
+  const revision = current.revision + 1;
+  sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('open-registry',?,?,?,'Append a repository',?)",
+    )
+    .run(revision, text, sha256, NOW.toISOString());
+  sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'open-registry'",
+    )
+    .run(revision, text, sha256);
+}
+
+test("an automatic refresh queues each repository once per revision", async () => {
+  await listPausedProject();
+  await appendSecondRepository();
+  const { queued } = await refresh();
+  expect(
+    await Promise.all(
+      queued.map(async (id) => (await vetting.getAssessment(id))?.repositoryId),
+    ),
+  ).toEqual(["example/open-registry", "example/second-registry"]);
+  expect((await refresh()).queued).toEqual([]);
+  // A finished scan of one repository is not queued again for this revision.
+  expect((await postResult(await scanFixture(queued[0], "clean"))).status).toBe(
+    200,
+  );
+  expect((await refresh()).queued).toEqual([]);
+  expect((await vetting.pendingAssessments()).map((row) => row.id)).toEqual([
+    queued[1],
+  ]);
+});
+
+test("a cached clean scan stands in only for a scan of the same repository", async () => {
+  const original = await vetting.getAssessment(await activeProject());
+  const policyVersion = original?.result?.policyVersion;
+  await appendSecondRepository();
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      project,
+      "Explicit security investigation",
+    ),
+  ).toBe("queued");
+  const pending = await vetting.pendingAssessments();
+  expect(pending.map((row) => row.repositoryId)).toEqual([
+    "example/open-registry",
+    "example/second-registry",
+  ]);
+  // The same exact inventory as the original clean scan of the first repository.
+  const { inputManifestSha256 } = (
+    await scanFixture(pending[0].id, "clean", {}, false)
+  ).assessed;
+  const lookup = async (assessmentId: string) => {
+    const response = await vettingApi(
+      await signed(
+        "POST",
+        "vetting/reuse",
+        JSON.stringify({
+          assessmentId,
+          inputManifestSha256,
+          policyVersion,
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()).result;
+  };
+  expect(await lookup(pending[0].id)).toMatchObject({
+    assessed: { repository: "example/open-registry" },
+  });
+  expect(await lookup(pending[1].id)).toBeNull();
+});

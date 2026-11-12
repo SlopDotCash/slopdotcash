@@ -78,21 +78,29 @@ async function branchHead(
   return commitSha;
 }
 
+/**
+ * The live pin of one manifest repository: the head of its integration
+ * branch and the template digest. A scan covers one repository at one
+ * commit, so each repository of a project has its own pin. The default is
+ * the project's first repository; an id that is neither a listed repository
+ * id nor one of its aliases throws.
+ */
 export async function readVettingPin(
   github: VettingGithub,
   manifest: ProjectDefinition,
   templateSha256: string,
+  repositoryId: string = manifest.repositories[0].id,
 ): Promise<VettingPin> {
   if (!/^[0-9a-f]{64}$/u.test(templateSha256))
     throw new Error("The skill template digest is not a SHA-256.");
-  // A scan covers one repository at one commit. The skills cover every
-  // repository of the manifest, so a project with more than one has no
-  // clearance until the scan pins each of them.
-  if (manifest.repositories.length !== 1)
-    throw new Error(
-      `Slop vets exactly one repository per project; this manifest names ${manifest.repositories.length}.`,
-    );
-  const [repository] = manifest.repositories;
+  const wanted = repositoryId.toLowerCase();
+  const repository = manifest.repositories.find((entry) =>
+    [entry.id, ...(entry.aliases ?? [])].some(
+      (name) => name.toLowerCase() === wanted,
+    ),
+  );
+  if (repository === undefined)
+    throw new Error(`The manifest does not list repository ${repositoryId}.`);
   return {
     commitSha: await branchHead(
       github,

@@ -2,6 +2,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { githubHeaders } from "../../backend/github";
+import { repositoryIdentity as listedRepositoryIdentity } from "../../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { readRecord } from "../../src/lib/record-validation.mjs";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
@@ -19,6 +20,11 @@ import {
 
 const HEX = /^[0-9a-f]{64}$/u;
 const COMMIT = /^[0-9a-f]{40}$/u;
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+/** A queued assessment and the manifest repository id it must acquire. */
+export type QueuedRepositoryAssessment = QueuedAssessment & {
+  repository: string;
+};
 const object = (value: unknown) => readRecord(value, "Service record");
 const safePath = (value: unknown): string => {
   if (
@@ -78,7 +84,7 @@ const json = (bytes: Uint8Array) =>
   object(JSON.parse(new TextDecoder().decode(bytes)));
 export async function readPendingAssessments(
   connection: QueueConnection,
-): Promise<QueuedAssessment[]> {
+): Promise<QueuedRepositoryAssessment[]> {
   const origin = serviceOrigin(connection.origin);
   const value = json(
     await pinnedBytes(
@@ -106,6 +112,9 @@ export async function readPendingAssessments(
       !/^[a-z0-9][a-z0-9-]{0,47}$/u.test(row.projectId) ||
       !Number.isSafeInteger(row.revision) ||
       (row.revision as number) < 1 ||
+      typeof row.repository !== "string" ||
+      row.repository.length > 201 ||
+      !REPOSITORY.test(row.repository) ||
       !HEX.test(String(row.manifestSha256)) ||
       !HEX.test(String(row.templateSha256)) ||
       !COMMIT.test(String(row.commitSha)) ||
@@ -122,6 +131,7 @@ export async function readPendingAssessments(
       manifestSha256: String(row.manifestSha256),
       commitSha: String(row.commitSha),
       templateSha256: String(row.templateSha256),
+      repository: row.repository as string,
     };
   });
 }
@@ -161,10 +171,13 @@ export async function acquireQueuedAssessment(
     });
   }) as typeof fetch;
   // Re-read the signed queue at acquisition start. Caller-supplied commit/template pins are not accepted.
-  const assessment = (
+  const queued = (
     await readPendingAssessments({ ...connection, fetch: fetcher })
   ).find((item) => item.assessmentId === assessmentId);
-  if (!assessment) throw new Error("Assessment is no longer pending");
+  if (!queued) throw new Error("Assessment is no longer pending");
+  // The retained binding keeps the historical assessment fields; the
+  // repository is recorded beside it in the bundle.
+  const { repository: queuedRepository, ...assessment } = queued;
   const origin = connection.origin;
   const revision = json(
     await bytes(
@@ -183,20 +196,36 @@ export async function acquireQueuedAssessment(
   const manifest = assertProjectDefinition(JSON.parse(revision.manifestText));
   if (manifest.id !== assessment.projectId)
     throw new Error("Manifest project mismatch");
+  // One scan covers the one manifest repository the queue assigned, matched
+  // by its id or a recorded alias.
+  const wanted = queuedRepository.toLowerCase();
+  const entry = manifest.repositories.find((repository) =>
+    [repository.id, ...(repository.aliases ?? [])].some(
+      (name) => name.toLowerCase() === wanted,
+    ),
+  );
   const refusal = (error: AcquisitionRefusal) =>
     new QueuedAcquisitionRefusal(
       assessment,
-      manifest.repositories[0].id,
+      entry?.id ?? queuedRepository,
       error,
     );
-  if (manifest.repositories.length !== 1)
+  if (entry === undefined)
     throw refusal(new AcquisitionRefusal("Unsupported repository inventory"));
+  // The first repository's identity is the project's authority; an appended
+  // repository carries its own. Neither stands in for the other.
+  const expectedIdentity = listedRepositoryIdentity(manifest, entry.id);
+  if (expectedIdentity === null)
+    throw refusal(
+      new AcquisitionRefusal("Immutable repository identity mismatch"),
+    );
   // A recorded rename keeps the original path as the id and publishes the
   // current path as githubUrl. GitHub redirects the former name, and
   // acquisition follows no redirects, so read and fetch the current name.
-  const currentPath = new URL(
-    manifest.repositories[0].githubUrl,
-  ).pathname.replace(/^\/|\/$/gu, "");
+  const currentPath = new URL(entry.githubUrl).pathname.replace(
+    /^\/|\/$/gu,
+    "",
+  );
   const identityResponse = await fetcher(
     `https://api.github.com/repos/${currentPath}`,
     {
@@ -223,8 +252,8 @@ export async function acquireQueuedAssessment(
   const repositoryIdentity = json(await pinnedBytes(identityResponse));
   if (
     !Number.isSafeInteger(repositoryIdentity.id) ||
-    String(repositoryIdentity.id) !== manifest.authority.repositoryId ||
-    repositoryIdentity.node_id !== manifest.authority.repositoryNodeId ||
+    String(repositoryIdentity.id) !== expectedIdentity.githubId ||
+    repositoryIdentity.node_id !== expectedIdentity.nodeId ||
     typeof repositoryIdentity.full_name !== "string" ||
     repositoryIdentity.full_name.toLowerCase() !== currentPath.toLowerCase() ||
     repositoryIdentity.private !== false
@@ -361,6 +390,8 @@ export async function acquireQueuedAssessment(
       JSON.stringify({
         schema: "slop-queued-inputs-v1",
         assessment,
+        // The manifest repository id the scan result must name.
+        repository: entry.id,
         sourceInventorySha256: acquired.inventorySha256,
         repositoryIdentity: {
           id: String(repositoryIdentity.id),

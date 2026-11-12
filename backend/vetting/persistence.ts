@@ -65,6 +65,11 @@ export type VettingAssessment = {
   commitSha: string;
   /** The skill template input digest the queue assigned to the scan. */
   templateSha256: string;
+  /**
+   * The manifest repository id the scan covers. A row written before
+   * migration 0123 reads as the first repository of its own revision.
+   */
+  repositoryId: string;
   requestedBy: GithubActor;
   requestedAt: string;
   requestReason: string;
@@ -97,10 +102,19 @@ type AssessmentRow = {
   result_sha256: string | null;
   signing_key_sha256: string | null;
   completed_at: string | null;
+  repository_id: string;
 };
 
-const COLUMNS =
-  "id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at";
+/**
+ * The manifest repository an assessment row scans. A NULL `repository_id`
+ * (rows before migration 0123) is the first repository of the row's own
+ * revision, the same rule the `vetting_assessments_same_pending` trigger uses.
+ */
+function scannedRepository(row: string): string {
+  return `COALESCE(${row}.repository_id, (SELECT json_extract(r.manifest, '$.repositories[0].id') FROM project_revisions r WHERE r.project_id = ${row}.project_id AND r.revision = ${row}.revision))`;
+}
+
+const COLUMNS = `id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at, ${scannedRepository("vetting_assessments")} AS repository_id`;
 
 function fromRow(row: AssessmentRow): VettingAssessment {
   return {
@@ -111,6 +125,7 @@ function fromRow(row: AssessmentRow): VettingAssessment {
     contentSha256: row.content_sha256,
     commitSha: row.commit_sha,
     templateSha256: row.template_sha256,
+    repositoryId: row.repository_id,
     requestedBy: {
       githubId: row.requested_by_github_id,
       githubLogin: row.requested_by_github_login,
@@ -382,6 +397,7 @@ export class CloudflareVettingPersistence {
     return (rows.results ?? []).map(fromRow);
   }
 
+  /** The latest scan of each project repository, when it is still pending. */
   async pendingAssessments(): Promise<VettingAssessment[]> {
     const rows = await this.db
       .prepare(
@@ -389,6 +405,7 @@ export class CloudflareVettingPersistence {
          WHERE state = 'pending' AND rowid = (
            SELECT MAX(current.rowid) FROM vetting_assessments current
            WHERE current.project_id = vetting_assessments.project_id
+             AND ${scannedRepository("current")} = ${scannedRepository("vetting_assessments")}
          ) ORDER BY requested_at, rowid LIMIT 100`,
       )
       .all<AssessmentRow>();
@@ -511,7 +528,25 @@ export class CloudflareVettingPersistence {
     return row?.covered === 1;
   }
 
-  /** Refuses duplicate pins and stale replacements atomically. Older rows stay immutable. */
+  /** The first repository a stored revision lists, or null when it is missing. */
+  private async firstRepository(
+    projectId: string,
+    revision: number,
+  ): Promise<string | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT json_extract(manifest, '$.repositories[0].id') AS repository_id FROM project_revisions WHERE project_id = ? AND revision = ?",
+      )
+      .bind(projectId, revision)
+      .first<{ repository_id: string | null }>();
+    return row?.repository_id ?? null;
+  }
+
+  /**
+   * Refuses duplicate pins and stale replacements atomically, per project
+   * repository. Older rows stay immutable. Every new row stores its
+   * repository id; one omitted by the caller is the revision's first.
+   */
   async createAssessment(
     assessment: Omit<
       VettingAssessment,
@@ -521,19 +556,28 @@ export class CloudflareVettingPersistence {
       | "resultSha256"
       | "signingKeySha256"
       | "completedAt"
-    >,
+      | "repositoryId"
+    > & { repositoryId?: string },
     replacesPendingId?: string,
   ): Promise<"created" | "conflict"> {
+    const repositoryId =
+      assessment.repositoryId ??
+      (await this.firstRepository(assessment.projectId, assessment.revision));
     try {
       await this.db
         .prepare(
-          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, flag_ids)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, repository_id, flag_ids)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?,
              (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ? AND state = 'active' ORDER BY id))
            WHERE ? IS NULL OR EXISTS (
              SELECT 1 FROM vetting_assessments previous
              WHERE previous.id = ? AND previous.project_id = ? AND previous.state = 'pending'
-               AND previous.rowid = (SELECT MAX(rowid) FROM vetting_assessments WHERE project_id = ?)
+               AND ${scannedRepository("previous")} = ?
+               AND previous.rowid = (
+                 SELECT MAX(current.rowid) FROM vetting_assessments current
+                 WHERE current.project_id = previous.project_id
+                   AND ${scannedRepository("current")} = ?
+               )
            )`,
         )
         .bind(
@@ -549,11 +593,13 @@ export class CloudflareVettingPersistence {
           assessment.requestedAt,
           assessment.requestReason,
           replacesPendingId ?? null,
+          repositoryId,
           assessment.projectId,
           replacesPendingId ?? null,
           replacesPendingId ?? null,
           assessment.projectId,
-          assessment.projectId,
+          repositoryId,
+          repositoryId,
         )
         .run();
       if (replacesPendingId && !(await this.getAssessment(assessment.id)))
