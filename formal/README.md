@@ -1279,3 +1279,11 @@ Suggested work uses `ui_project_work`: finite counts of 0–12 issues and 0–12
 `ui_setup_check_lifetime` combines two actors, projects, request slots and lifetimes with one Suspense hide/reveal cycle. It retires old responses, restarts an automatic empty check on reveal, and preserves actor/project checks. Parent removal uses the existing departure transition: the management UI unmounts its setup child before the remote removal outcome is known, and delayed setup work cannot restore it. `tests/e2e/project-setup-resume.spec.ts` exercises the held lazy-vault chunk and a pending setup response after removal; `tests/e2e/registry.spec.ts` covers actual Pages/D1 setup, removal and cancellation. A manual check of a supplied initial result is not automatically restarted on reveal; that retained busy state remains an explicit model limitation. These finite abstractions do not establish source refinement.
 
 Private-case selection uses `ui_security_case_selection`: two valid case targets, two actors and two focus returns. Explicit case-list/Open-case events update their URL target; filter and Back clear it. Identity revalidation hides details before a current actor can load the remembered target. A URL supplies no access. Existing `ui_inbox` and `ui_private_case_revisions` own request lifetime and actor checks; the focused model treats an admitted detail reply as current only under those checks. The synthetic focus/clear regression in `private-case-ordering.spec.ts` and the Pages/D1 bounty workflow in `security-bounty.spec.ts` provide implementation evidence. Legacy asynchronous creation callbacks remain local; their retired-instance completions do not mutate browser history.
+
+The source-bound operator keeper continuation safety VIEW completed hosted
+verification at `4c2534d7839e9d543c543cca91067959e3ce5ce5`: 7,733,684
+distinct projected states, zero queued, and no invariant violation in 126.272
+seconds. The original QNT, all six mapped source files, and ordinary scenarios
+are unchanged. `formal/operator-keeper-safety-view-audit.md` records the
+continuation argument and native false-proof controls. This finite safety
+result does not establish source refinement or authorize keeper activation.
