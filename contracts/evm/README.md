@@ -562,7 +562,9 @@ It was run once, on 10 November 2026: the distributor is at
 owner is the Slop Cash S.P. operating wallet
 `0xbCA4736F59d03F07cFac9415A5936fECb06b2eA7`. Its poster is the unusable
 address `0x000000000000000000000000000000000000dEaD`, so no root can be posted
-until the owner sets a poster at activation. It holds no tokens and the
-program is inactive; `workers/referral-accrual/wrangler.toml` is unchanged. The AI-assisted internal review is
+until the owner sets a poster at activation. It held no tokens at deployment.
+Since 12 November 2026 `workers/referral-accrual/wrangler.toml` records this
+address, block and code hash for the independent root watcher, with the accrual
+job in `dry_run` and posting not activated. The AI-assisted internal review is
 [`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
 it is not an audit.
