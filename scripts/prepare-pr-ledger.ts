@@ -22,6 +22,7 @@ import {
   SCORE_RULE_VERSION,
 } from "../src/lib/leaderboard-constants";
 import { isUnavailableModelIdentifier } from "../src/lib/model-identity";
+import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { findProject } from "../src/lib/projects.mjs";
 import {
   REGISTERED_REPOSITORIES,
@@ -119,7 +120,11 @@ function rebindTransferredRepositoryPresentation(
  * pull-request checks see the current target registry. Trusted builds collect
  * the repository from GitHub instead.
  */
-function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
+export function addActivatedRepositories(
+  candidate: JsonRecord,
+  targetRepositories: typeof TARGET_REPOSITORIES = TARGET_REPOSITORIES,
+  lookupProject: typeof findProject = findProject,
+): JsonRecord {
   const repositories = array(candidate.repositories, "snapshot.repositories");
   const source = record(candidate.source, "snapshot.source");
   const sourceRepositories = array(
@@ -129,7 +134,7 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
   const deployedIds = repositories.map(
     (value, index) => record(value, `snapshot.repositories[${index}]`).id,
   );
-  const targetIds = TARGET_REPOSITORIES.map((repository) => repository.id);
+  const targetIds = targetRepositories.map((repository) => repository.id);
   let cursor = 0;
   for (const id of deployedIds) {
     cursor = targetIds.indexOf(String(id), cursor);
@@ -139,15 +144,16 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
   if (deployedIds.length === targetIds.length) return candidate;
   const nextRepositories: unknown[] = [];
   const nextSourceRepositories: unknown[] = [];
-  for (const target of TARGET_REPOSITORIES) {
+  for (const target of targetRepositories) {
     const index = deployedIds.indexOf(target.id);
     if (index >= 0) {
       nextRepositories.push(repositories[index]);
       nextSourceRepositories.push(sourceRepositories[index]);
       continue;
     }
-    const project = findProject(target.projectId);
-    if (project?.repositories[0]?.id !== target.id) {
+    const project = lookupProject(target.projectId);
+    const identity = project ? repositoryIdentity(project, target.id) : null;
+    if (!project || identity === null) {
       throw new TypeError(
         `activated repository ${target.id} has no recorded GraphQL node ID`,
       );
@@ -160,7 +166,7 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
     nextRepositories.push(published);
     nextSourceRepositories.push({
       id: target.id,
-      repositoryId: project.authority.repositoryNodeId,
+      repositoryId: identity.nodeId,
     });
   }
   return {
