@@ -888,9 +888,9 @@ const ACTIVITY_PAGE_SIZE = 100;
 const GRAPHQL_ACTOR_FIELDS = `
   login
   __typename
-  ... on User { databaseId }
-  ... on Bot { databaseId }
-  ... on Organization { databaseId }
+  ... on User { id databaseId }
+  ... on Bot { id databaseId }
+  ... on Organization { id databaseId }
 `;
 const GRAPHQL_COMMENT_FIELDS = `
   databaseId
@@ -1336,12 +1336,16 @@ function graphqlAccount(value, context) {
   const actor = asRecord(value, context);
   const type = asStringField(actor, "__typename", context);
   const login = asStringField(actor, "login", context);
+  const isBot =
+    type === "Bot" ||
+    (typeof actor.id === "string" && actor.id.startsWith("BOT_")) ||
+    login.toLowerCase().endsWith("[bot]");
   return {
     id: Number.isInteger(actor.databaseId)
       ? actor.databaseId
       : `login:${login.toLowerCase()}`,
     login,
-    type: type === "Bot" ? "Bot" : "User",
+    type: isBot ? "Bot" : "User",
   };
 }
 
@@ -2706,9 +2710,16 @@ export function parseModelDisclosure(text) {
 export function isBotAccount(account) {
   if (account === null) return false;
   const record = asRecord(account, "account");
-  asStringField(record, "login", "account");
+  const login = asStringField(record, "login", "account");
   if (record.type !== undefined && typeof record.type !== "string") {
     throw new TypeError("account.type must be a string when present");
+  }
+  if (
+    (typeof record.node_id === "string" && record.node_id.startsWith("BOT_")) ||
+    (typeof record.id === "string" && record.id.startsWith("BOT_")) ||
+    login.toLowerCase().endsWith("[bot]")
+  ) {
+    return true;
   }
   return String(record.type).toLowerCase() === "bot";
 }
@@ -2716,6 +2727,7 @@ export function isBotAccount(account) {
 export function isKnownHumanAccount(account) {
   if (account === null) return false;
   const record = asRecord(account, "account");
+  if (isBotAccount(record)) return false;
   if (record.type !== undefined && typeof record.type !== "string") {
     throw new TypeError("account.type must be a string when present");
   }
