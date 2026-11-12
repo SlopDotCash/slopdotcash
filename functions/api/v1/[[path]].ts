@@ -424,7 +424,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       flaggerAuthority(
         await readRepositoryAccess(repositoryAccess, manifest, actor),
         actor,
-        manifest.repositories[0].id,
+        manifest.repositories[0],
       ),
     sessionActor,
     moderatorGithubIds: operatorGithubIds,

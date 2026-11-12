@@ -168,9 +168,11 @@ function authorityAccess(access: AccessCheck): AuthorityAccess {
 function repositoryAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  registered: ProjectDefinition["repositories"][number],
   flagger: boolean,
 ): SetupAuthority {
+  // GitHub's install picker lists the repository only under its current name.
+  const repository = currentRepositoryPath(registered);
   return decideSetupAuthority(
     authorityAccess(access),
     actor.githubLogin,
@@ -190,7 +192,7 @@ function repositoryAuthority(
 export function setupAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  repository: ProjectDefinition["repositories"][number],
 ): SetupAuthority {
   return repositoryAuthority(access, actor, repository, false);
 }
@@ -199,7 +201,7 @@ export function setupAuthority(
 export function flaggerAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  repository: ProjectDefinition["repositories"][number],
 ): SetupAuthority {
   return repositoryAuthority(access, actor, repository, true);
 }
@@ -314,7 +316,7 @@ export function projectSetupStatus(input: {
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
-  const repository = manifest.repositories[0].id;
+  const repository = currentRepositoryPath(manifest.repositories[0]);
   const installation: ProjectSetupStatus["checks"]["installation"] =
     access.state === "retry"
       ? { state: "retry", message: access.message }

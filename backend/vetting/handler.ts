@@ -408,7 +408,7 @@ async function grantExemption(
     const authority = setupAuthority(
       checked,
       maintainer,
-      project.manifest.repositories[0].id,
+      project.manifest.repositories[0],
     );
     if (authority.state === "retry") {
       unavailable = authority.message;
