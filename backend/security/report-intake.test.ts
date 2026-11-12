@@ -2680,6 +2680,22 @@ describe("repository authority on a project without paid terms", () => {
     );
     expect(appealed.status).toBe(200);
     const open = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    // OWNER now holds dispute beside security-maintainer, but made the
+    // technical decision, so the appeal goes to another moderator.
+    const conflicted = await t.call(
+      OWNER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "decide-appeal",
+        expectedRevision: required(open.body.case).revision,
+        idempotencyKey: "unpaid-conflict-0000001",
+        outcome: "uphold",
+        reason: "The owner upholds their own rejection.",
+      },
+    );
+    expect(conflicted.status).toBe(403);
+    expect(conflicted.body.error).toBe("conflicted");
     const returned = await t.call(
       OTHER,
       "POST",
