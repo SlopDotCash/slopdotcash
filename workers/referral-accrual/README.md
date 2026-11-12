@@ -1,11 +1,12 @@
 # Slop referral-accrual Worker
 
-Owner decision, 27 October 2026: defer referrals from launch. Keep
-`REFERRAL_ACCRUAL_MODE="off"` and `REFERRAL_PROGRAM_ENABLED="false"`.
-Do not file accruals or post roots. Token setup, funding, public-testnet
-qualification and watcher activation are not launch requirements. Preserve
-the code and historical records. The procedures below apply only after a
-separate owner reactivation approval and their stated checks.
+Current state, 12 November 2026: record-only. `REFERRAL_ACCRUAL_MODE` is
+`"dry_run"` and `REFERRAL_PROGRAM_ENABLED` is `"false"`. The Worker files
+accrual records for each closed UTC month from 2026-11, holds no key and posts
+no root. The owner deferred referrals from launch on 27 October 2026 and agreed
+to reactivation on 10 November 2026 (PRD section 11, "Referral program"); under
+that approval the mode may be `off` or `dry_run`. Live posting still needs the
+owner's explicit activation and the checks under [Live mode](#live-mode).
 
 `slop-referral-accrual` files the project-referral accruals of each closed UTC
 month under [PRD section 11, "Referral program"](../../docs/slop-product-requirements.md#referral-program).
@@ -209,12 +210,13 @@ No manual Worker shell or separate release flag is needed. The helper verifies
 the exact source tag and one active version after deployment. In live mode it
 checks secret names without reading the poster key into CI.
 
-The 27 October 2026 deferral supersedes the owner's 25 October request to
-complete integration and activation for launch. Keep mode Off and the program
-flag false until separate reactivation approval. The actual token, funded
-distributor and required operating controls must then be verified before live
-posting. The recorded November start and program amounts remain unchanged.
-A deployed Off Worker does not file accruals, sign roots or spend gas.
+The 27 October 2026 deferral superseded the owner's 25 October request to
+complete integration and activation for launch. Since the reactivation approval
+of 10 November 2026 the checked-in mode is `dry_run` with the program flag
+false. The funded distributor and required operating controls must be verified
+before live posting. The recorded November start and program amounts remain
+unchanged. A deployed `dry_run` Worker files accrual records and the public
+accrual file; it loads no key, signs no root and spends no gas.
 
 ### Poster native fee limits
 

@@ -7842,9 +7842,9 @@
     },
     {
       "path": "workers/referral-accrual/wrangler.toml",
-      "sha256": "c9a01390b4ea5af19d44a6033e8e0537ec9c943b7de2c7c8c99d548c5f264e0f",
+      "sha256": "7f4965417724b0889a78bf3bf5bb7a7fb7ed4efdeb192bca2a799c66ea78d033",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
-      "candidateLines": [37, 55],
+      "candidateLines": [38, 59],
       "review": "mapped-abstraction"
     },
     {
