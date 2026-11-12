@@ -8,6 +8,8 @@ import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
 import {
+  notifyMonthlyUnderfunded,
+  notifyPayoutException,
   notifyProjectRevision,
   notifyProjectScanFailed,
   notifySecurityReportReceived,
@@ -24,6 +26,7 @@ const R = "2026-10-23T11:00:00.000Z";
 const APPLICANT = "910000001";
 const STEWARD = "910000002";
 const REPORTER = "910000004";
+const ORG = "910000009";
 const ADMIN = { githubId: "1", githubLogin: "admin" };
 
 function open() {
@@ -50,6 +53,7 @@ function open() {
     repo: string,
     current = repo,
     githubUrl = `https://github.com/${current}`,
+    stewardGithub: Record<string, string> = { actorId: STEWARD },
   ) => {
     const manifestWith = (state: string) =>
       JSON.stringify({
@@ -62,7 +66,7 @@ function open() {
             ...(current === repo ? {} : { aliases: [current] }),
           },
         ],
-        steward: { github: { actorId: STEWARD } },
+        steward: { github: stewardGithub },
       });
     const manifest = manifestWith(status);
     // An application always carries the paused manifest it asked to list.
@@ -84,6 +88,65 @@ function open() {
 }
 
 describe("exception-only notification events", () => {
+  test("a payout exception for an Organization steward reaches the project's lister", async () => {
+    const { db, sqlite, rows, project } = open();
+    project("alpha", "active", "example/alpha");
+    // Beta's steward is a GitHub Organization: nobody signs in as it.
+    project(
+      "beta",
+      "active",
+      "example/beta",
+      "example/beta",
+      "https://github.com/example/beta",
+      { actorId: ORG, type: "Organization" },
+    );
+    // The writers read only these rows; the month's reward basis is not needed.
+    sqlite.exec("PRAGMA foreign_keys = OFF;");
+    for (const id of ["alpha", "beta"]) {
+      sqlite.exec(
+        `INSERT INTO monthly_payment_runs (project_id,period,trigger,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at)
+           VALUES ('${id}','2026-10','automatic',1,'{}','${"b".repeat(64)}','base-sepolia','0x${"1".repeat(40)}','900','${T}');
+         INSERT INTO payment_obligations (id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at)
+           VALUES ('obligation-${id}','${id}','${REPORTER}','base-sepolia','base','0x${"1".repeat(40)}','0x${"2".repeat(40)}',6,'900','18','${(id === "alpha" ? "c" : "d").repeat(64)}','reserved','${T}');
+         INSERT INTO payment_outbox (obligation_id,state,updated_at) VALUES ('obligation-${id}','held','${R}');`,
+      );
+    }
+    sqlite.exec("PRAGMA foreign_keys = ON;");
+    // A coordinator retry or replayed hold writes nothing new.
+    for (let replay = 0; replay < 2; replay += 1) {
+      await db.batch(
+        ["alpha", "beta"].flatMap((id) => [
+          notifyMonthlyUnderfunded(db, id, "2026-10", R),
+          notifyPayoutException(db, `obligation-${id}`, R),
+        ]),
+      );
+    }
+    const notices = (id: string) => [
+      {
+        event_key: `monthly-underfunded:${id}:2026-10`,
+        kind: "payout_exception",
+        subject: id,
+        detail:
+          "The 2026-10 monthly awards wait for funds. No award is created until the vault covers the whole month.",
+        action_path: `/projects/${id}/funding`,
+      },
+      {
+        event_key: `payout-exception:obligation-${id}:${R}`,
+        kind: "payout_exception",
+        subject: id,
+        detail: null,
+        action_path: `/projects/${id}`,
+      },
+    ];
+    // A user steward keeps the notice; the lister does not get a copy.
+    expect(rows(STEWARD)).toEqual(notices("alpha"));
+    // An Organization steward's notice goes to the account that listed it.
+    expect(rows(ORG)).toEqual([]);
+    expect(rows(APPLICANT)).toEqual(notices("beta"));
+    expect(rows(REPORTER)).toEqual([]);
+    sqlite.close();
+  });
+
   test("setup completion is one project_ready notice, never sent to its publisher", async () => {
     const { db, rows, project } = open();
     project("alpha", "paused", "example/alpha");

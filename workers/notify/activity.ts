@@ -5,6 +5,7 @@ import {
   issueEmailUnsubscribeToken,
 } from "../../backend/notifications/email-destinations";
 import {
+  PAYOUT_EXCEPTION_RECIPIENTS,
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
@@ -77,7 +78,7 @@ const PROJECT_OWNER_KINDS = new Set([
 
 /**
  * PRD section 9: recheck roles before sending. A payout exception mails only
- * the project's current GitHub steward, and an owner notice only a current
+ * its current audience (the user steward, or an Organization steward's lister), and an owner notice only a current
  * owner. A vetting ban also reaches its current affected contributors and
  * staff; the shared event key can retain an owner link for a staff recipient.
  * A contributor-flag pause reaches current staff and owners.
@@ -91,10 +92,7 @@ async function stillProjectRecipient(
     .prepare(
       `SELECT n.kind,
               n.action_path,
-              n.recipient_github_id = (
-                SELECT json_extract(manifest, '$.steward.github.actorId')
-                  FROM projects WHERE id = n.subject
-              ) AS steward,
+              n.recipient_github_id IN ${PAYOUT_EXCEPTION_RECIPIENTS("n.subject")} AS steward,
               n.recipient_github_id IN ${PROJECT_OWNERS("n.subject")} AS owner,
               EXISTS (
                 SELECT 1 FROM project_enforcements e

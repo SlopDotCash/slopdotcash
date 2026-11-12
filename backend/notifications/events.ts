@@ -56,6 +56,29 @@ const GITHUB_ID = (column: string) =>
    AND ${column} GLOB '[1-9]*' AND ${column} NOT GLOB '*[^0-9]*'`;
 
 /**
+ * The audience of a payout exception: the project's GitHub steward when it is
+ * a user account. Nobody can sign in as an Organization, so an Organization
+ * steward's notice goes to the account that listed the project instead; a
+ * project with no recorded lister keeps the steward row. Activity mail
+ * rechecks it before each send (PRD section 9).
+ */
+export const PAYOUT_EXCEPTION_RECIPIENTS = (project: string) => `(
+  SELECT listed.recipient
+    FROM (${LISTED_BY(project)}) listed
+   WHERE EXISTS (
+     SELECT 1 FROM projects
+      WHERE id = ${project}
+        AND json_extract(manifest, '$.steward.github.type') = 'Organization'
+   )
+  UNION
+  SELECT json_extract(manifest, '$.steward.github.actorId')
+    FROM projects
+   WHERE id = ${project}
+     AND (json_extract(manifest, '$.steward.github.type') IS NOT 'Organization'
+          OR NOT EXISTS (${LISTED_BY(project)}))
+)`;
+
+/**
  * The people who answer for a project: the account that listed it and its
  * current GitHub steward. `project` is a SQL expression for the project id.
  * Activity mail rechecks it before each send (PRD section 9).
@@ -332,7 +355,7 @@ export function notifyWalletChanged<S>(
 
 /**
  * A held payout is a payout exception for the project's GitHub steward
- * (migration 0029). The row names only the project, never the contributor or
+ * (migration 0029), or its lister when the steward is an Organization. The row names only the project, never the contributor or
  * a wallet. A payment database without the project registry has no steward
  * row and writes nothing.
  */
@@ -345,22 +368,21 @@ export function notifyPayoutException<S>(
     .prepare(
       `${INSERT}
        SELECT 'payout-exception:' || q.obligation_id || ':' || q.updated_at,
-              json_extract(p.manifest, '$.steward.github.actorId'),
-              'payout_exception', o.project_id, NULL,
-              '/projects/' || o.project_id, q.updated_at, ?
+              recipient, 'payout_exception', o.project_id, NULL,
+              '/projects/' || o.project_id, q.updated_at, ?1
          FROM payment_outbox q
          JOIN payment_obligations o ON o.id = q.obligation_id
-         JOIN projects p ON p.id = o.project_id
-        WHERE q.obligation_id = ? AND q.state = 'held' AND q.updated_at = ?
-          AND ${GITHUB_ID("json_extract(p.manifest, '$.steward.github.actorId')")}
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("(SELECT project_id FROM payment_obligations WHERE id = ?2)")}
+        WHERE q.obligation_id = ?2 AND q.state = 'held' AND q.updated_at = ?1
+          AND ${GITHUB_ID("recipient")}
        ${ONCE}`,
     )
-    .bind(heldAt, obligationId, heldAt);
+    .bind(heldAt, obligationId);
 }
 
 /**
  * An underfunded frozen month is a payout exception for the project's GitHub
- * steward (PRD sections 6 and 9; owner decision D1). The key has no time, so
+ * steward, or its lister when the steward is an Organization (PRD sections 6 and 9; owner decision D1). The key has no time, so
  * each project month sends one notice however often the coordinator retries.
  * The row names only the project and month, never an amount or a contributor.
  */
@@ -374,15 +396,14 @@ export function notifyMonthlyUnderfunded<S>(
     .prepare(
       `${INSERT}
        SELECT 'monthly-underfunded:' || r.project_id || ':' || r.period,
-              json_extract(p.manifest, '$.steward.github.actorId'),
-              'payout_exception', r.project_id,
+              recipient, 'payout_exception', r.project_id,
               'The ' || r.period || ' monthly awards wait for funds. No award is created until the vault covers the whole month.',
-              '/projects/' || r.project_id || '/funding', r.frozen_at, ?
+              '/projects/' || r.project_id || '/funding', r.frozen_at, ?1
          FROM monthly_payment_runs r
-         JOIN projects p ON p.id = r.project_id
-        WHERE r.project_id = ? AND r.period = ?
+         JOIN ${PAYOUT_EXCEPTION_RECIPIENTS("?2")}
+        WHERE r.project_id = ?2 AND r.period = ?3
           AND r.obligations_created_at IS NULL
-          AND ${GITHUB_ID("json_extract(p.manifest, '$.steward.github.actorId')")}
+          AND ${GITHUB_ID("recipient")}
        ${ONCE}`,
     )
     .bind(at, projectId, period);
