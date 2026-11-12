@@ -494,13 +494,13 @@
       "fields": [
         {
           "name": "state",
-          "expression": "[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"response\", \"done\"} THEN LET receipt == (r.status = 200 => (rowAt(r.returnedRow).exists /\\ r.returnedPayload = rowAt(r.returnedRow).payload)) IN <<r.phase, r.attempt, IF r.attempt > 0 /\\ r.attempt < 2 THEN <<r.mode, r.key, r.parent, r.payload, r.bundle>> ELSE <<>>, r.status = 200, receipt, IF receipt THEN <<0, 0>> ELSE <<r.returnedRow, r.returnedPayload>>, (r.status > 0 => r.noStore), (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE IF r.phase \\in {\"prepare\", \"preflight\", \"append\", \"readback\"} THEN <<\"post-refresh\", [r EXCEPT !.received = FALSE, !.sourceRevisions = [sourceId \\in DOMAIN r.sourceRevisions |-> 0], !.collected = {}, !.refreshed = {}], (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE [r EXCEPT !.received = FALSE]]]"
+          "expression": "[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {\"unused\", \"response\", \"done\"} THEN LET SlopIntakeReadbackSafe == (r.status = 200 => (rowAt(r.returnedRow).exists /\\ r.returnedPayload = rowAt(r.returnedRow).payload)) IN <<r.phase, r.attempt, IF r.attempt > 0 /\\ r.attempt < 2 THEN <<r.mode, r.key, r.parent, r.payload, r.bundle>> ELSE <<>>, r.status = 200, SlopIntakeReadbackSafe, IF SlopIntakeReadbackSafe THEN <<0, 0>> ELSE <<r.returnedRow, r.returnedPayload>>, (r.status > 0 => r.noStore), (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE IF r.phase \\in {\"prepare\", \"preflight\", \"append\", \"readback\"} THEN <<\"post-refresh\", [r EXCEPT !.received = FALSE, !.sourceRevisions = [sourceId \\in DOMAIN r.sourceRevisions |-> 0], !.collected = {}, !.refreshed = {}], (r.refreshed \\subseteq r.collected), (r.collected \\subseteq r.members)>> ELSE [r EXCEPT !.received = FALSE]]]"
         }
       ],
       "clauses": [],
       "sourceSha256": "cbc8d18d11f2c13246d83dfb9c2d6aefc5345bfa20b248e82f172258b4ee6f22",
       "translatedSha256": "10224d70eb2cdae0311f4a59a054299aa94675042c0e3ea7f7f58b020735f93c",
-      "viewTlaSha256": "7081639e007d6082f773e98e33dfa00f8aad7a7f348a1a27ac6136e11b8e8228"
+      "viewTlaSha256": "403e5edaa1b8cbca5ce4f54eb4cd5ff229bc8fca472930c77250eaac1a6428f0"
     }
   ]
 }

@@ -1981,7 +1981,7 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "2c927261ba7364bbbe433129728f2d5a883b5ec225412794db6bfa11caedd7ff",
+      "sha256": "67ed8e1c65d78f45ec400c9f10f472071b0fe8c36cebb2208910dcf2812dcdc5",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247,
@@ -4217,7 +4217,7 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "5a1b193b17baab550a2e36e61fdb76c7bdac5e6906b7f2d83a81925f4a914127",
+      "sha256": "e07b82108fd1e1feabed1d9186617063a27bb36d8314ee41f90ea671690dcd0a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         7, 61, 63, 79, 81, 95, 116, 118, 134, 151, 170, 173, 190, 206, 223, 240,

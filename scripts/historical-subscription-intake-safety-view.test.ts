@@ -146,7 +146,7 @@ for (const [name, before, after] of [
   });
 test("historical V2 keeps the reviewed three cuts literal and raw", () => {
   expect(digest(selected.fields[0].expression)).toBe(
-    "38ae0b6161c2d901ce44dcc1937c7cbc54f15d8018ba30eef4c02137873998c4",
+    "9aba97c9865ac4b99407c2bb03659dbed6eae985be7c348e3dd954ebb7dde049",
   );
   expect(selected.clauses).toEqual([]);
   expect(
