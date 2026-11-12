@@ -18,6 +18,10 @@ const verificationTools = [
 ];
 
 const verificationTimeouts = {
+  // Complete unchanged raw graph: 42,181,633 distinct states, zero queued, 509.2s.
+  "formal/models/payments/received_totals.qnt": 600_000,
+  // Qualified continuation VIEW completed the hosted graph within 1200 seconds.
+  "formal/models/ui/ui_owner_private_requests.qnt": 1_200_000,
   // Reviewed continuation VIEW completed its full hosted graph in 126s.
   "formal/models/payments/operator_keeper_lifecycle.qnt": 600_000,
   // Hosted full graphs exceeded 180s with ongoing progress and states queued.
@@ -36,7 +40,8 @@ const verificationTimeouts = {
   "formal/models/api/submission_authorization_wrappers.qnt": 600_000,
   "formal/models/api/api_submission_recovery.qnt": 600_000,
   "formal/models/api/wallet_claim_publication.qnt": 600_000,
-  "formal/models/payments/stored_binding_broadcast_authority.qnt": 600_000,
+  // Complete unchanged raw graph: 52,378,592 distinct states, zero queued, 951.7s.
+  "formal/models/payments/stored_binding_broadcast_authority.qnt": 1_200_000,
   "formal/models/payments/evm_binding_consent_api.qnt": 600_000,
   "formal/models/api/trace_event_finalization.qnt": 600_000,
   "formal/models/api/api_private_authorization.qnt": 600_000,

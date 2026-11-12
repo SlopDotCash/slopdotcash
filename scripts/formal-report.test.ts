@@ -522,7 +522,6 @@ for (const model of [
   "formal/models/api/submission_authorization_wrappers.qnt",
   "formal/models/api/api_submission_recovery.qnt",
   "formal/models/api/wallet_claim_publication.qnt",
-  "formal/models/payments/stored_binding_broadcast_authority.qnt",
   "formal/models/payments/evm_binding_consent_api.qnt",
   "formal/models/api/trace_event_finalization.qnt",
   "formal/models/api/api_private_authorization.qnt",
@@ -711,3 +710,12 @@ test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
   },
   120000,
 );
+
+for (const [model, timeout] of [
+  ["formal/models/payments/received_totals.qnt", 600_000],
+  ["formal/models/payments/stored_binding_broadcast_authority.qnt", 1_200_000],
+  ["formal/models/ui/ui_owner_private_requests.qnt", 1_200_000],
+] as const)
+  test(`retains completed graph allowance for ${model}`, () => {
+    expect(formalTimeoutMs(model, true)).toBe(timeout);
+  });
