@@ -112,7 +112,7 @@ const installer =
 const allProofs = !pr || full || promotion;
 const changedFiles = new Set(files);
 const formalTools = changed(
-  /^(\.github\/workflows\/formal\.yml|scripts\/(ci-scope|check-formal|formal-models|run-e2e-phase|quint-[\w-]+)\.mjs|formal\/tlc(-safety-views)?\.json|package\.json|bun\.lock)$/u,
+  /^(\.github\/workflows\/formal\.yml|scripts\/(ci-scope|check-formal|formal-models|formal-report|run-e2e-phase|quint-[\w-]+)\.mjs|formal\/tlc(-safety-views)?\.json|package\.json|bun\.lock)$/u,
 );
 const modelName = (path) =>
   path.slice(path.lastIndexOf("/") + 1, -".qnt".length);

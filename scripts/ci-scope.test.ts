@@ -418,7 +418,12 @@ test("a pull request that touches no model input or proof checks neither", () =>
   expect(values.lemmascript).toBe("false");
 });
 
-for (const path of ["formal/tlc.json", "scripts/check-formal.mjs", "bun.lock"])
+for (const path of [
+  "formal/tlc.json",
+  "scripts/check-formal.mjs",
+  "scripts/formal-report.mjs",
+  "bun.lock",
+])
   test(`a verifier tool change (${path}) checks every model`, () => {
     expect(scopeFor({ [path]: "{}\n" }, proofBase).formal_models).toBe("all");
   });
