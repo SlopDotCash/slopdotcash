@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "238514ffaa549c25970a1877afb79e2b06e21d30752dee8c20935c68a381c4af",
+  "inventorySha256": "22a7fd87540c575386bc210231ae81ef3dd0602472c2cf9c2b7857f63d994627",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -298,7 +298,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 106,
+      "line": 109,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -313,7 +313,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 672,
+      "line": 681,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
