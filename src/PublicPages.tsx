@@ -320,6 +320,35 @@ export function HowItWorksPage() {
               </p>
             </div>
           </article>
+          <article className="faq-answer">
+            <h3>Is there a referral program?</h3>
+            <div>
+              <p>
+                Yes. You can refer a project today: sign in on slop.cash once,
+                then send its maintainer <code>slop.cash/r/</code> followed by
+                your GitHub login. The referral is recorded when the project
+                lists. A referrer receives SLOP only after a project they
+                brought in has paid its contributors.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
+                  Referral terms
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Does Slop buy back SLOP?</h3>
+            <div>
+              <p>
+                Yes, since 12 November 2026. Half of every fee Slop collects
+                buys SLOP on Robinhood Chain, and half of the SLOP bought is
+                burned. The money comes from fees, not the treasury. It starts
+                with the first fee, and nothing about it is guaranteed.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
+                  How the buyback works
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
         </div>
       </section>
     </main>
