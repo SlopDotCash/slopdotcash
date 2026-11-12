@@ -493,6 +493,260 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "points-disputes-phase-observation-safety-v1",
+    model: "formal/models/ui/ui_points_disputes.qnt",
+    module: "ui_points_disputes",
+    operator: "SlopPointsDisputesPhaseObservationViewV1",
+    hashMode: "exact-ui-globals-and-live-continuation-observations",
+    memoryCandidateMode:
+      "erase-write-only-and-phase-dead-request-observation-fields",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.parentNotifications = 0, !.error = IF s.error = "none" THEN "none" ELSE "error", !.reads = [i \\in DOMAIN s.reads |-> LET r == s.reads[i] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase>> ELSE [r EXCEPT !.kind = "none"]], !.mutations = [i \\in DOMAIN s.mutations |-> LET r == s.mutations[i] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase>> ELSE [r EXCEPT !.kind = "none"]], !.readObservations = [i \\in DOMAIN s.readObservations |-> LET r == s.reads[i] o == s.readObservations[i] invalid == (o.refused \\/ o.outcome = 3 \\/ o.actor # r.actor) IN IF r.phase \\in {"session-observed", "session-returned"} THEN <<IF o.outcome \\in {0, 3} THEN o.outcome ELSE 1, o.refused, o.actor = r.actor, IF ~invalid /\\ o.outcome # 0 THEN IF r.target = 0 THEN <<o.payload = 1>> ELSE <<o.payload, o.draft, (o.payload = 2 /\\ o.decider)>> ELSE <<>>>> ELSE IF r.phase \\in {"unused", "pending", "refused-body", "refused-session", "done"} THEN <<>> ELSE o], !.mutationObservations = [i \\in DOMAIN s.mutationObservations |-> LET r == s.mutations[i] o == s.mutationObservations[i] IN IF r.phase \\in {"session-observed", "session-returned"} THEN <<IF o.outcome \\in {0, 3} THEN o.outcome ELSE 1, o.refused, o.actor = r.actor>> ELSE IF r.phase \\in {"unused", "pending", "refused-body", "refused-session", "done"} THEN <<>> ELSE o]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "vetting-generation-storage-observation-safety-v1",
+    model: "formal/models/vetting/vetting_generation_storage.qnt",
+    module: "vetting_generation_storage",
+    operator: "SlopVettingGenerationStorageViewV1",
+    hashMode: "exact-global-state-and-raw-request-safety-observations",
+    memoryCandidateMode:
+      "erase-write-only-diagnostics-and-terminal-payloads-except-live-put-tail",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"idle", "done"} THEN <<r.phase, (r.result = "stored" => (r.verified /\\ r.activeAccepted /\\ r.selected > 0)), (r.result = "read" => (r.verified /\\ r.selected > 0)), r.putPending, IF r.putPending THEN <<r.candidate, r.generation, r.descriptor, r.reserved>> ELSE <<0, 0, 0, FALSE>>>> ELSE [r EXCEPT !.published = FALSE, !.dbFailure = FALSE, !.result = IF r.result \\in {"stored", "read"} THEN r.result ELSE "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "ui-solana-history-recovery-proof-terminal-safety-v1",
+    model: "formal/models/ui/ui_solana_history_recovery.qnt",
+    module: "ui_solana_history_recovery",
+    operator: "SlopSolanaHistoryRecoveryProofTerminalViewV1",
+    hashMode: "raw-local-invariant-observations-and-live-late-effect-revision",
+    memoryCandidateMode:
+      "normalize-closed-proof-copies-and-terminal-dead-payload",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'LET N(p) == IF p.signature # "valid" THEN absent ELSE IF ~p.exists THEN [absent EXCEPT !.signature = "valid"] ELSE p IN [s EXCEPT !.error = "none", !.cache = [k \\in DOMAIN s.cache |-> N(s.cache[k])], !.operations = [id \\in DOMAIN s.operations |-> LET r == s.operations[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, r.context, r.dispatched, IF r.dispatched /\\ ~(id \\in s.effects) /\\ r.postCookie = r.actor /\\ r.postCookie > 0 THEN <<TRUE, r.revision>> ELSE <<FALSE, 0>>, (r.index >= 1 /\\ r.index <= 2), r.prompts <= 2, r.ready \\subseteq messageIndices, (r.authorized => r.observedRevision = r.revision), (r.dispatched => (r.authorized /\\ r.ready = messageIndices)), (\\A i \\in r.ready: valid(r.local[i], r, i))>> ELSE [r EXCEPT !.local = [i \\in DOMAIN r.local |-> N(r.local[i])], !.candidate = N(r.candidate)]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "trace-run-phase-terminal-safety-v1",
+    model: "formal/models/api/trace_run_creation.qnt",
+    module: "trace_run_creation",
+    operator: "SlopTraceRunPhaseTerminalViewV1",
+    hashMode: "exact-global-rows-and-live-creation-invariant-carriers",
+    memoryCandidateMode: "erase-closed-outputs-and-phase-dead-terminal-data",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [slot \\in DOMAIN s.requests |-> LET r == s.requests[slot] IN IF r.phase \\in {"idle", "reply", "done"} THEN <<r.phase, r.attempt, r.actor, r.key, (r.snapshotId > 0 => (r.snapshotActor = r.actor /\\ r.snapshotPayload = r.payload)), (r.desired = "201" => (r.disposition = "created" /\\ r.snapshotId = r.generatedId)), (r.desired = "200" => (r.disposition = "existing" /\\ r.snapshotId > 0)), (r.insertOutcome = "inserted" => s.rows[index(r.actor, r.key)].id = r.generatedId), r.insertOutcome = "inserted", IF r.insertOutcome = "inserted" THEN r.generatedId ELSE 0>> ELSE IF r.phase \\in {"initial-ban", "body", "prepare", "lookup", "insert", "insert-result", "race-read", "by-id-read", "conflict-ban"} THEN [r EXCEPT !.snapshotLogin = 0, !.snapshotCreated = 0, !.snapshotState = "none", !.response = "none", !.priorResponse = "none", !.desired = IF r.desired \\in {"200", "201"} THEN r.desired ELSE "none", !.disposition = IF r.disposition \\in {"created", "existing"} THEN r.disposition ELSE "none", !.insertOutcome = IF r.insertOutcome \\in {"inserted", "constraint"} THEN r.insertOutcome ELSE "none", !.created = IF r.phase \\in {"lookup", "insert"} THEN r.created ELSE 0, !.login = IF r.phase \\in {"insert-result", "race-read", "by-id-read", "conflict-ban"} THEN 0 ELSE r.login] ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "payment-wallet-registration-phase-safety-v1",
+    model: "formal/models/payments/payment_wallet_registration.qnt",
+    module: "payment_wallet_registration",
+    operator: "SlopPaymentWalletRegistrationPhaseViewV1",
+    hashMode: "dynamic-success-row-binding-and-exact-retry-identity",
+    memoryCandidateMode:
+      "erase-output-and-phase-dead-request-captures-with-full-row-history",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [slot \\in DOMAIN s.requests |-> LET r == s.requests[slot] IN IF r.phase \\in {"unused", "response", "done"} THEN <<r.phase, r.attempt, r.actor, r.chain, r.desired = "200", IF r.desired = "200" THEN <<r.address, r.returned>> ELSE <<0, 0>> >> ELSE IF r.phase \\in {"tip", "prepare", "helper", "helper-reply", "winner"} THEN [r EXCEPT !.response = "none", !.winnerObserved = 0, !.desired = IF r.desired = "200" THEN "200" ELSE "none", !.helperKind = IF r.helperKind = "conflict" THEN "conflict" ELSE "none", !.login = IF r.phase \\in {"tip", "prepare", "helper"} THEN r.login ELSE 0, !.stamp = IF r.phase \\in {"tip", "prepare", "helper"} THEN r.stamp ELSE -1, !.candidate = IF r.phase = "helper" THEN r.candidate ELSE 0, !.predecessor = IF r.phase \\in {"prepare", "helper"} THEN r.predecessor ELSE 0, !.helperReturned = IF r.phase = "helper-reply" /\\ r.helperKind # "conflict" THEN r.helperReturned ELSE 0, !.returned = IF r.desired = "200" THEN r.returned ELSE 0] ELSE [r EXCEPT !.response = "none", !.winnerObserved = 0, !.desired = IF r.desired = "200" THEN "200" ELSE "none", !.helperKind = IF r.helperKind = "conflict" THEN "conflict" ELSE "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "project-skill-publication-observation-safety-v1",
+    model: "formal/models/api/project_skill_publication.qnt",
+    module: "project_skill_publication",
+    operator: "SlopProjectSkillPublicationViewV1",
+    hashMode: "eight-raw-local-invariant-observations-and-exact-global-state",
+    memoryCandidateMode: "erase-output-and-post-lookup-captured-set-closure",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "fallthrough", "response", "done"} THEN <<r.phase, (r.status > 0 => r.noStore), ((r.method = "HEAD" /\\ r.status > 0 /\\ ~r.caught) => ~r.body), ((r.route = "artifact" /\\ r.status = 200) => (r.roles = {1,2} /\\ r.fileCount = 4 /\\ r.project \\in r.cleared /\\ r.renderedRevision = r.revisions[r.project])), ((r.route = "discovery" /\\ r.status = 200) => r.cleared \\subseteq r.candidates), ((r.route = "terms" /\\ r.status = 200) => (r.template = 0 /\\ r.fileCount = 0)), (r.cleared \\subseteq r.candidates), (r.fileCount >= 0 /\\ r.fileCount <= 4), (r.phase = "fallthrough" => (r.status = 0 /\\ ~r.noStore))>> ELSE IF r.phase \\in {"template", "clearance", "discovered", "files", "render", "select"} THEN [r EXCEPT !.delivered = FALSE, !.projectRead = FALSE, !.restrictionsRead = FALSE, !.present = {}, !.active = {}, !.published = {}, !.retired = {}, !.restrictions = {}] ELSE [r EXCEPT !.delivered = FALSE]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "dev-identity-bridge-phase-safety-v1",
+    model: "formal/models/tooling/dev_identity_bridge.qnt",
+    module: "dev_identity_bridge",
+    operator: "SlopDevIdentityBridgePhaseViewV1",
+    hashMode: "raw-global-facts-and-live-remote-continuation-carriers",
+    memoryCandidateMode:
+      "erase-closed-time-copy-and-phase-dead-local-bridge-fields",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.startResult = IF s.startResult \\in {"error", "process-lost"} THEN "error" ELSE "none", !.authorizeResult = IF s.authorizeResult = "none" THEN "none" ELSE "other", !.rowCreated = -1, !.polls = [id \\in DOMAIN s.polls |-> LET p == s.polls[id] IN IF p.phase \\in {"unused", "finish", "done"} THEN <<p.phase, p.claimed, p.response = "200", (p.phase = "finish" /\\ p.desired = "200")>> ELSE IF p.phase \\in {"body", "lookup", "remote-read", "remote-clock", "remote-write", "remote-write-reply", "remote-reply", "remote-body", "delete-map", "mint", "hash", "store", "store-reply", "readback"} THEN [p EXCEPT !.created = -1, !.desired = IF p.desired = "200" THEN "200" ELSE "none", !.response = IF p.response = "200" THEN "200" ELSE "none", !.remoteResult = IF p.remoteResult \\in {"200", "none"} THEN p.remoteResult ELSE "error", !.capability = IF p.phase = "lookup" THEN p.capability ELSE FALSE, !.remoteStamp = IF p.phase = "remote-read" THEN p.remoteStamp ELSE -1, !.issueStamp = IF p.phase = "remote-write" THEN p.issueStamp ELSE -1, !.expiry = IF p.phase \\in {"hash", "store"} THEN p.expiry ELSE -1, !.alive = IF p.phase \\in {"body", "lookup", "remote-read", "remote-clock", "remote-write", "remote-write-reply", "remote-reply"} THEN p.alive ELSE TRUE] ELSE [p EXCEPT !.created = -1, !.desired = IF p.desired = "200" THEN "200" ELSE "none", !.response = IF p.response = "200" THEN "200" ELSE "none", !.remoteResult = IF p.remoteResult \\in {"200", "none"} THEN p.remoteResult ELSE "error"]], !.consumers = [id \\in DOMAIN s.consumers |-> LET c == s.consumers[id] IN IF c.phase \\in {"unused", "reply", "done"} THEN <<c.phase, c.accepted, c.response = "200", IF c.accepted THEN c.stamp ELSE -1>> ELSE IF c.phase \\in {"body", "hash", "write"} THEN [c EXCEPT !.response = IF c.response = "200" THEN "200" ELSE "none", !.matches = IF c.phase \\in {"hash", "write"} THEN c.matches ELSE FALSE, !.stamp = IF c.phase = "write" \\/ c.accepted THEN c.stamp ELSE -1] ELSE [c EXCEPT !.response = IF c.response = "200" THEN "200" ELSE "none"]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "ui-admin-vetting-request-observation-safety-v1",
+    model: "formal/models/ui/ui_admin_vetting_requests.qnt",
+    module: "ui_admin_vetting_requests",
+    operator: "SlopAdminVettingRequestViewV1",
+    hashMode:
+      "exact-request-ownership-and-all-phase-admission-callback-observations",
+    memoryCandidateMode: "erase-write-only-payloads-and-phase-dead-snapshots",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = FALSE, !.formPayload = 0, !.refreshes = 0, !.reads = [SlopAdminReadId \\in DOMAIN s.reads |-> LET SlopAdminRead == s.reads[SlopAdminReadId] SlopAdminReadTerminal == SlopAdminRead.phase \\in {"unused", "done"} SlopAdminReadSelected == s.privateRead = SlopAdminReadId SlopAdminReadIdentity == SlopAdminRead.phase \\in {"identity-observed", "identity-returned"} SlopAdminReadFailureLive == SlopAdminRead.phase \\in {"preflight", "postflight", "failure", "identity-observed", "identity-returned"} IN <<SlopAdminRead.phase, IF ~SlopAdminReadTerminal \\/ SlopAdminReadSelected THEN SlopAdminRead.life ELSE 0, IF SlopAdminReadTerminal THEN 0 ELSE SlopAdminRead.generation, IF ~SlopAdminReadTerminal \\/ SlopAdminReadSelected THEN SlopAdminRead.actor ELSE 0, IF SlopAdminRead.phase = "http" THEN SlopAdminRead.cookie = SlopAdminRead.actor ELSE FALSE, IF SlopAdminReadFailureLive THEN SlopAdminRead.failure = "access" ELSE FALSE, IF SlopAdminReadIdentity \\/ SlopAdminReadSelected THEN SlopAdminRead.observed ELSE 0, IF SlopAdminReadIdentity THEN SlopAdminRead.observedAdmin ELSE FALSE, IF SlopAdminReadIdentity THEN (IF SlopAdminRead.gate = "preflight" THEN "preflight" ELSE IF SlopAdminRead.gate = "postflight" THEN "postflight" ELSE "other") ELSE "other">>], !.mutation = LET SlopAdminMutation == s.mutation SlopAdminMutationTerminal == SlopAdminMutation.phase \\in {"unused", "done"} SlopAdminMutationIdentity == SlopAdminMutation.phase \\in {"identity-observed", "identity-returned"} SlopAdminMutationFailureLive == SlopAdminMutation.phase \\in {"preflight", "postflight", "failure", "identity-observed", "identity-returned"} IN <<SlopAdminMutation.phase, IF SlopAdminMutationTerminal THEN 0 ELSE SlopAdminMutation.life, IF SlopAdminMutationTerminal THEN 0 ELSE SlopAdminMutation.ownerRead, IF SlopAdminMutationTerminal THEN 0 ELSE SlopAdminMutation.actor, SlopAdminMutation.cookie = SlopAdminMutation.actor, SlopAdminMutation.observed = SlopAdminMutation.actor, SlopAdminMutation.observedAdmin, IF SlopAdminMutationFailureLive THEN SlopAdminMutation.failure = "access" ELSE FALSE, IF SlopAdminMutationIdentity THEN (IF SlopAdminMutation.gate = "preflight" THEN "preflight" ELSE IF SlopAdminMutation.gate = "postflight" THEN "postflight" ELSE "other") ELSE "other">>]',
+      },
+    ],
+    clauses: [
+      {
+        name: "refreshCountEqual",
+        expression: "(s.refreshes = s.callbacks)",
+      },
+    ],
+  },
+  {
+    id: "wallet-claim-publication-continuation-safety-v1",
+    model: "formal/models/api/wallet_claim_publication.qnt",
+    module: "wallet_claim_publication",
+    operator: "SlopWalletClaimPublicationContinuationViewV1",
+    hashMode: "exact-lineage-lookup-indices-and-success-classes",
+    memoryCandidateMode:
+      "erase-created-copy-cone-and-phase-dead-request-payloads",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.observedCurrent = 0, !.history = [SlopWcpIndex \\in DOMAIN s.history |-> [s.history[SlopWcpIndex] EXCEPT !.created = 0]], !.requests = [SlopWcpIndex \\in DOMAIN s.requests |-> LET SlopWcpRequest == s.requests[SlopWcpIndex] IN LET SlopWcpNeedsId == (SlopWcpRequest.desired = "201" \\/ SlopWcpRequest.outcome = "committed") IN LET SlopWcpBeforeCapture == (SlopWcpRequest.phase \\in {"authority", "body", "tip", "capture"}) IN LET SlopWcpOverwriteInputs == (SlopWcpRequest.mode = "contributor" /\\ SlopWcpBeforeCapture) IN IF SlopWcpRequest.phase \\in {"unused", "reply", "done"} THEN <<SlopWcpRequest.phase, SlopWcpRequest.attempt, SlopWcpRequest.mode, SlopWcpRequest.claim.actor, SlopWcpRequest.claim.chain, SlopWcpRequest.returned, SlopWcpRequest.outcome = "committed", SlopWcpRequest.desired = "201", IF SlopWcpNeedsId THEN SlopWcpRequest.claim.id ELSE 0>> ELSE [SlopWcpRequest EXCEPT !.tip = 0, !.disposition = "none", !.response = "none", !.outcome = IF SlopWcpRequest.outcome = "committed" THEN "committed" ELSE "none", !.desired = IF SlopWcpRequest.desired = "201" THEN "201" ELSE "none", !.claim = [SlopWcpRequest.claim EXCEPT !.exists = FALSE, !.created = 0, !.id = IF SlopWcpBeforeCapture /\\ ~SlopWcpNeedsId THEN 0 ELSE SlopWcpRequest.claim.id, !.observed = IF SlopWcpOverwriteInputs THEN 0 ELSE SlopWcpRequest.claim.observed, !.material = IF SlopWcpOverwriteInputs THEN 0 ELSE SlopWcpRequest.claim.material]]]]',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "incomplete-assessment-query-observation-safety-v1",
+    model: "formal/models/api/incomplete_assessment_queries.qnt",
+    module: "incomplete_assessment_queries",
+    operator: "SlopIncompleteAssessmentQueryViewV1",
+    hashMode: "indexed-retry-bounds-and-raw-query-invariant-observations",
+    memoryCandidateMode:
+      "erase-closed-retry-output-and-reset-terminal-query-payload",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'LET SlopIAQTerminal == (s.phase \\in {"idle", "done"}) SlopIAQPermission == (IF s.permission = "allowed" THEN "allowed" ELSE IF s.permission \\in {"unavailable", "missing", "replaced"} THEN "unavailable" ELSE "denied") IN [s EXCEPT !.ordinaryRead = FALSE, !.permission = SlopIAQPermission, !.rows = [SlopIAQDelivery \\in DOMAIN s.rows |-> [s.rows[SlopIAQDelivery] EXCEPT !.retry = -1]], !.retry = [SlopIAQPr \\in DOMAIN s.retry |-> -1], !.since = [SlopIAQPr \\in DOMAIN s.since |-> IF SlopIAQTerminal THEN -1 ELSE IF s.since[SlopIAQPr] >= 0 THEN 0 ELSE -1], !.actor = IF SlopIAQTerminal THEN 0 ELSE s.actor, !.bundled = IF SlopIAQTerminal THEN FALSE ELSE s.bundled, !.cursor = IF SlopIAQTerminal THEN 0 ELSE s.cursor, !.capturedManifest = IF SlopIAQTerminal THEN 0 ELSE s.capturedManifest, !.capturedBinding = IF SlopIAQTerminal THEN FALSE ELSE s.capturedBinding, !.contexts = IF SlopIAQTerminal THEN FALSE ELSE s.contexts, !.allowed = IF SlopIAQTerminal THEN FALSE ELSE s.allowed, !.queue = IF SlopIAQTerminal THEN "none" ELSE s.queue, !.status = IF SlopIAQTerminal THEN 0 ELSE s.status, !.ordinaryNotice = IF SlopIAQTerminal THEN FALSE ELSE s.ordinaryNotice, !.items = IF SlopIAQTerminal THEN {} ELSE s.items, !.eligibleSnapshot = IF SlopIAQTerminal THEN {} ELSE s.eligibleSnapshot, !.running = IF SlopIAQTerminal THEN {} ELSE s.running, !.nextCursor = IF SlopIAQTerminal THEN 0 ELSE s.nextCursor, !.publishedManifest = IF SlopIAQTerminal THEN 0 ELSE s.publishedManifest]',
+      },
+    ],
+    clauses: [
+      {
+        name: "deliveryRetryLower",
+        expression:
+          "[SlopIAQDelivery \\in deliveries |-> (s.rows[SlopIAQDelivery].retry >= -1)]",
+      },
+      {
+        name: "deliveryRetryUpper",
+        expression:
+          "[SlopIAQDelivery \\in deliveries |-> (s.rows[SlopIAQDelivery].retry <= 4)]",
+      },
+      {
+        name: "queryItemCount",
+        expression: "(Cardinality(s.items) <= 2)",
+      },
+      {
+        name: "queryItemSubset",
+        expression: "(s.items \\subseteq s.eligibleSnapshot)",
+      },
+      {
+        name: "queryItemCursor",
+        expression: "(\\A SlopIAQPr \\in s.items: SlopIAQPr > s.cursor)",
+      },
+      {
+        name: "queryItemSince",
+        expression: "(\\A SlopIAQPr \\in s.items: s.since[SlopIAQPr] >= 0)",
+      },
+      {
+        name: "queryRunningSubset",
+        expression: "(s.running \\subseteq s.items)",
+      },
+      {
+        name: "queryNextCursor",
+        expression: "((s.nextCursor # 0) => (s.nextCursor \\in s.items))",
+      },
+      {
+        name: "queryReadyAccess",
+        expression:
+          '((s.queue = "ready" /\\ Cardinality(s.items) > 0) => (s.allowed /\\ s.capturedBinding))',
+      },
+      {
+        name: "queryReadyManifest",
+        expression:
+          '((s.queue = "ready" /\\ s.allowed) => (s.publishedManifest = s.capturedManifest))',
+      },
+      {
+        name: "queryUnavailable",
+        expression:
+          '((s.queue = "unavailable") => (s.bundled /\\ s.status = 200 /\\ s.ordinaryNotice /\\ s.items = {}))',
+      },
+      {
+        name: "queryDoneStatus",
+        expression:
+          '((s.phase = "done" /\\ s.status = 200) => (s.queue \\in {"ready", "unavailable"}))',
+      },
+      {
+        name: "queryAuthNotice",
+        expression:
+          "((s.status = 401 \\/ s.status = 403) => ~s.ordinaryNotice)",
+      },
+    ],
+  },
+  {
+    id: "ui-owner-vault-work-liveness-safety-v1",
+    model: "formal/models/ui/ui_owner_vault_setup.qnt",
+    module: "ui_owner_vault_setup",
+    operator: "SlopOwnerVaultWorkSafetyViewV1",
+    hashMode: "exact-live-records-and-indexed-raw-prompt-observations",
+    memoryCandidateMode: "erase-output-cone-inert-work-and-coupled-history",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = FALSE, !.notice = "none", !.inputHash = 0, !.registered = {}, !.callbacks = s.callbacks \\ s.registered, !.work = [SlopOvId \\in DOMAIN s.work |-> IF SlopOvId \\notin ids THEN s.work[SlopOvId] ELSE LET SlopOvWork == s.work[SlopOvId] SlopOvLive == ((SlopOvWork.phase = "waiting" /\\ SlopOvWork.kind \\in {"connect", "review", "recover"}) \\/ (SlopOvWork.phase = "wallet-check" /\\ SlopOvWork.kind = "create") \\/ (SlopOvWork.phase = "registering" /\\ SlopOvWork.kind = "register") \\/ SlopOvWork.phase \\in {"fresh-review", "before-send", "wallet", "callback"}) IN [SlopOvWork EXCEPT !.epoch = IF SlopOvLive /\\ s.mounted /\\ s.active = SlopOvId /\\ SlopOvWork.epoch = s.epoch THEN s.epoch ELSE s.epoch + 1, !.kind = IF (SlopOvWork.phase = "waiting" /\\ SlopOvWork.kind \\in {"connect", "review", "recover"}) \\/ (SlopOvWork.phase = "wallet-check" /\\ SlopOvWork.kind = "create") \\/ (SlopOvWork.phase = "registering" /\\ SlopOvWork.kind = "register") THEN SlopOvWork.kind ELSE "none", !.phase = IF SlopOvLive THEN SlopOvWork.phase ELSE "done", !.captured = IF SlopOvWork.phase \\in {"wallet", "callback"} \\/ (SlopOvWork.phase = "registering" /\\ SlopOvWork.kind = "register") THEN SlopOvWork.captured ELSE empty]]]',
+      },
+      {
+        name: "promptInvariant",
+        expression:
+          "[SlopOvId \\in DOMAIN s.work |-> (SlopOvId \\in s.prompts => s.work[SlopOvId].captured.id = SlopOvId)]",
+      },
+    ],
+    clauses: [],
+  },
 ];
 
 function reviewedDefinition(view) {

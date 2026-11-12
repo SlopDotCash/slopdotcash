@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "e58b854750014883a94ac4345c2cbb2bcef04d22a77d52084a81bb9f1b7fca66",
+      "sha256": "f3fa7cedf323b563e722991c7fd2bf3815f1e9351058d8221de73c3c371a54e3",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 123, 188, 227, 252, 273, 361],
+      "candidateLines": [1, 91, 135, 200, 239, 264, 285, 373],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,11 +1981,13 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "67ed8e1c65d78f45ec400c9f10f472071b0fe8c36cebb2208910dcf2812dcdc5",
+      "sha256": "6aa41cf17d6b8ff62d637445cae52a494b11beb05e37dd2b6b73bbcfb6689221",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247,
-        265, 266, 283, 301, 319, 342, 377, 395, 413, 414, 431, 478, 496, 497
+        265, 266, 283, 301, 319, 342, 377, 395, 413, 414, 431, 478, 496, 497,
+        514, 515, 528, 532, 550, 566, 567, 582, 586, 600, 604, 605, 622, 623,
+        640, 663, 677, 678, 681, 682, 688, 692, 728, 732, 736, 752
       ],
       "review": "mapped-abstraction"
     },
@@ -3745,9 +3747,9 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "a7688e996fc35bde8e5822e52b378db26fe183679fe876d7317778628637818f",
+      "sha256": "791ef3d6006779e6596eb23d00f0e2319707ea895f5b379a53de9ed117da2ecf",
       "models": [],
-      "candidateLines": [66, 69, 77],
+      "candidateLines": [77, 80, 88],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
@@ -4217,11 +4219,13 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "e07b82108fd1e1feabed1d9186617063a27bb36d8314ee41f90ea671690dcd0a",
+      "sha256": "9e9a1e1e444fc04584b0d3c3368d8db0cea242bc9085a232bf4f3737c5cff25e",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
         7, 61, 63, 79, 81, 95, 116, 118, 134, 151, 170, 173, 190, 206, 223, 240,
-        257, 259, 274, 291, 307, 331, 368, 386, 403, 405, 419, 472, 489, 491
+        257, 259, 274, 291, 307, 331, 368, 386, 403, 405, 419, 472, 489, 491,
+        506, 508, 518, 523, 540, 556, 558, 568, 573, 585, 589, 591, 606, 608,
+        623, 645, 657, 659, 662, 664, 671, 676, 715, 720, 725, 738
       ],
       "review": "mapped-abstraction"
     },

@@ -18,6 +18,15 @@ const verificationTools = [
 ];
 
 const verificationTimeouts = {
+  "formal/models/ui/ui_owner_vault_setup.qnt": 600_000,
+  "formal/models/api/incomplete_assessment_queries.qnt": 600_000,
+  "formal/models/ui/ui_admin_vetting_requests.qnt": 600_000,
+  "formal/models/tooling/dev_identity_bridge.qnt": 600_000,
+  "formal/models/api/project_skill_publication.qnt": 600_000,
+  "formal/models/payments/payment_wallet_registration.qnt": 600_000,
+  "formal/models/api/trace_run_creation.qnt": 600_000,
+  "formal/models/ui/ui_solana_history_recovery.qnt": 600_000,
+  "formal/models/ui/ui_points_disputes.qnt": 600_000,
   "formal/models/slopbot/historical_subscription_intake.qnt": 600_000,
   "formal/models/payments/payment_history.qnt": 600_000,
   // Isolated diagnostics; each native, ordinary and graph stage must pass.
@@ -41,7 +50,9 @@ const verificationTimeouts = {
   "formal/models/vetting/vetting_evidence_registration.qnt": 600_000,
   "formal/models/vetting/vetting_generation_retirement.qnt": 600_000,
   "formal/models/api/submission_authorization_wrappers.qnt": 600_000,
-  "formal/models/api/api_submission_recovery.qnt": 600_000,
+  // V1's 600-second frontier fell from 2.77m to 1.78m queued states.
+  // One unchanged diagnostic continuation still requires complete queue-zero.
+  "formal/models/api/api_submission_recovery.qnt": 1_200_000,
   "formal/models/api/wallet_claim_publication.qnt": 600_000,
   "formal/models/payments/stored_binding_broadcast_authority.qnt": 600_000,
   "formal/models/payments/evm_binding_consent_api.qnt": 600_000,

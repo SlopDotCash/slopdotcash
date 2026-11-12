@@ -520,7 +520,6 @@ for (const model of [
   "formal/models/vetting/vetting_evidence_registration.qnt",
   "formal/models/vetting/vetting_generation_retirement.qnt",
   "formal/models/api/submission_authorization_wrappers.qnt",
-  "formal/models/api/api_submission_recovery.qnt",
   "formal/models/api/wallet_claim_publication.qnt",
   "formal/models/payments/stored_binding_broadcast_authority.qnt",
   "formal/models/payments/evm_binding_consent_api.qnt",
@@ -711,3 +710,9 @@ test.skipIf(process.env.SLOP_QUINT_TRANSLATOR_TEST !== "1")(
   },
   120000,
 );
+
+test("one unchanged API recovery continuation retains its reviewed 1200-second diagnostic bound", () => {
+  expect(
+    formalTimeoutMs("formal/models/api/api_submission_recovery.qnt", true),
+  ).toBe(1_200_000);
+});

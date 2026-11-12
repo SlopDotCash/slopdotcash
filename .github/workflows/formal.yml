@@ -37,8 +37,9 @@ env:
 jobs:
   inventory:
     runs-on: ubuntu-24.04
-    # Retain every native counterexample/continuation control and cold setup.
-    timeout-minutes: 30
+    # The prior 28-file batch took 20.2 minutes. Retain every native control
+    # while qualifying 11 additional complete-production controller files.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -118,6 +119,17 @@ jobs:
           ./scripts/payment-history-safety-view.test.ts
           ./scripts/evm-binding-consent-safety-view.test.ts
           ./scripts/historical-subscription-intake-safety-view.test.ts
+          ./scripts/points-disputes-safety-view.test.ts
+          ./scripts/vetting-generation-storage-quotient.test.ts
+          ./scripts/solana-history-recovery-safety-view.test.ts
+          ./scripts/trace-run-creation-safety-view.test.ts
+          ./scripts/payment-wallet-registration-safety-view.test.ts
+          ./scripts/project-skill-publication-safety-view.test.ts
+          ./scripts/dev-identity-bridge-safety-view.test.ts
+          ./scripts/admin-vetting-request-safety-view.test.ts
+          ./scripts/wallet-claim-publication-safety-view.test.ts
+          ./scripts/incomplete-assessment-safety-view.test.ts
+          ./scripts/owner-vault-work-safety-view.test.ts
           ./scripts/formal-source-binding.test.ts
           ./scripts/formal-report.test.ts
       - name: Check source inventory and state catalog
