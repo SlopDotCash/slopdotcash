@@ -47,6 +47,22 @@ controlling: pending or incomplete results block admission, and confirmed malice
 requires the existing independent decision. No project or different repository
 inherits another admission. A row existing is not successful evidence.
 
+A project with more than one repository clears only when each repository
+clears on its own: its own scans, its own exemption, its own identity history
+(the window stops at the first revision that does not list it or lists another
+identity) and, for reinstatement, its own live pin. A confirmed malicious
+finding bans the whole project first. Otherwise the first repository in
+manifest order that does not clear decides the project's state, and
+`repository` names it; a project with one repository never carries that
+field. The migration-0075 exemption covers the repositories a project listed
+when it was recorded; an appended repository, which stores its own GitHub id,
+needs its own admission. Refresh and owner setup requests queue only the
+repositories that are not cleared. A flag-only pause lifts, and the flags
+bound to the fresh scans resolve, only when every repository has a clean
+fresh scan; reinstatement also checks each repository's live pin. A moderator
+reinstatement after confirmed malice needs the same fresh clean scan of every
+repository.
+
 Initial and explicitly requested scans still pin the actual current commit and
 template and pass the unchanged acquisition, model, result and evidence rules.
 If a release replaces the template before a pending scan can finish, the next
@@ -86,7 +102,9 @@ A platform administrator may record an explicit human owner decision through
 `POST /api/v1/admin/vetting/exemptions`. This is a separate audited D1 record,
 not a change to the fixed migration-0075 set or a project manifest field.
 The request supplies the current `projectId`, `revision`, `reason`,
-`decisionReference`, and `confirmation: true`. The administrator remains the
+`decisionReference`, and `confirmation: true`, and optionally the manifest
+`repository` it exempts (default: the first; HTTP 422 `repository_not_listed`
+when the revision does not list it). Authority is read on that repository. The administrator remains the
 audited approver and need not have repository write access (PRD section 8,
 owner decision of 11 November 2026). Separately, the server verifies that the
 registered project creator or individual steward retains current write/maintain

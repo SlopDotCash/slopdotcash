@@ -74,10 +74,9 @@ BEGIN
   SELECT RAISE(ABORT, 'UNIQUE constraint failed: vetting_assessments.current_pending');
 END;
 
--- Interim until clearance is computed per repository: a clean scan of one
--- repository must not resolve the contributor flags of a project with more
--- than one repository. A one-repository project resolves its bound flags
--- exactly as migration 0060 did.
+-- A clean scan of one repository must not resolve the contributor flags of
+-- a project with more than one repository on its own. A one-repository
+-- project resolves its bound flags exactly as migration 0060 did.
 DROP TRIGGER project_flags_resolve_on_clean_scan;
 CREATE TRIGGER project_flags_resolve_on_clean_scan
 AFTER UPDATE OF state ON vetting_assessments
@@ -91,4 +90,38 @@ BEGIN
          closed_by = 'clean-scan', closed_reference = NEW.id
    WHERE project_id = NEW.project_id AND state = 'active'
      AND id IN (SELECT value FROM json_each(NEW.flag_ids));
+END;
+
+-- A project with more than one repository resolves a flag bound to this
+-- clean scan only when every repository its current manifest lists has a
+-- clean scan bound to that flag, so requested while the flag was active.
+-- This scan is already clean here, so the last repository to turn clean
+-- resolves the flag. A scan belongs to the repository whose id it names; a
+-- NULL id is the first repository of the scan's own revision.
+CREATE TRIGGER project_flags_resolve_on_clean_repository_scans
+AFTER UPDATE OF state ON vetting_assessments
+WHEN OLD.state = 'pending' AND NEW.state = 'clean' AND COALESCE((
+  SELECT json_array_length(p.manifest, '$.repositories')
+  FROM projects p WHERE p.id = NEW.project_id
+), 1) > 1
+BEGIN
+  UPDATE project_flags
+     SET state = 'resolved', closed_at = NEW.completed_at,
+         closed_by = 'clean-scan', closed_reference = NEW.id
+   WHERE project_id = NEW.project_id AND state = 'active'
+     AND id IN (SELECT value FROM json_each(NEW.flag_ids))
+     AND NOT EXISTS (
+       SELECT 1 FROM projects p, json_each(p.manifest, '$.repositories') listed
+        WHERE p.id = NEW.project_id
+          AND NOT EXISTS (
+            SELECT 1 FROM vetting_assessments a, json_each(a.flag_ids) bound
+             WHERE a.project_id = NEW.project_id AND a.state = 'clean'
+               AND bound.value = project_flags.id
+               AND COALESCE(a.repository_id, (
+                 SELECT json_extract(r.manifest, '$.repositories[0].id')
+                 FROM project_revisions r
+                 WHERE r.project_id = a.project_id AND r.revision = a.revision
+               )) = json_extract(listed.value, '$.id')
+          )
+     );
 END;

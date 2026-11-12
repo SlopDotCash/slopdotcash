@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "198f4de95984e09ac1d5873cb7795e9109b0e5175b0d2fc178c056a08b137a06",
+  "inventorySha256": "1315452d4e694bece1d620c52f13fcde9f8c43899bb7ef06ad339ece52bd1e08",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2392,
+      "line": 2415,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -139,7 +139,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2596,
+      "line": 2619,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -171,7 +171,7 @@
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 50,
+      "line": 54,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
@@ -457,7 +457,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "line": 629,
+      "line": 637,
       "name": "recordResult",
       "kind": "string-union",
       "values": ["conflict", "recorded"],
@@ -3290,7 +3290,7 @@
     },
     {
       "path": "src/lib/vetting-contracts.ts",
-      "line": 144,
+      "line": 163,
       "name": "exemption",
       "kind": "string-union",
       "values": [
