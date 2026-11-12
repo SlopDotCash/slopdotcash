@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1315452d4e694bece1d620c52f13fcde9f8c43899bb7ef06ad339ece52bd1e08",
+  "inventorySha256": "f1b17526a0df5a89aac208f030e42ab268848e76deda476dc01a2b8c5fe41f1b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2415,
+      "line": 2425,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -139,7 +139,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2619,
+      "line": 2629,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2429,7 +2429,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 852,
+      "line": 855,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2453,7 +2453,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1321,
+      "line": 1324,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2477,7 +2477,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2107,
+      "line": 2110,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2501,7 +2501,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2112,
+      "line": 2115,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2521,6 +2521,30 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["removing"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2122,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "loading"],
+      "models": [
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {

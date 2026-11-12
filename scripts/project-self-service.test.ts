@@ -3810,3 +3810,341 @@ test("an admission investigation queued during the activation check prevents act
     status: "active",
   });
 });
+
+// Owner add-repository flow (PRD section 4 "Setup requirements", section 8
+// "Clear a project before execution"): an owner appends a public repository
+// that GitHub and Slopbot verify; it counts from the next UTC month and the
+// existing executable-change path pauses an active project until it clears.
+const ADDED = "acme-tools/extra";
+
+function addedGithubRepository(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 555000111,
+    node_id: "R_extra",
+    full_name: ADDED,
+    description: "Extra tooling used by the open registry project.",
+    private: false,
+    fork: false,
+    archived: false,
+    default_branch: "main",
+    owner: {
+      login: "acme-tools",
+      id: 777000111,
+      node_id: "O_acme",
+      type: "Organization",
+    },
+    ...overrides,
+  };
+}
+
+/** GitHub REST and GraphQL answers for the added repository. */
+function addedGithub(
+  repository: () => Record<string, unknown> | "unavailable" | null,
+) {
+  return {
+    token: "public-read-token-fixture",
+    fetch: async (url: string, init?: RequestInit) => {
+      const facts = repository();
+      if (facts === "unavailable")
+        return new Response("unavailable", { status: 502 });
+      if (url === "https://api.github.com/graphql") {
+        if (facts === null) return new Response(null, { status: 404 });
+        const { query } = JSON.parse(String(init?.body));
+        return Response.json({
+          data: {
+            node: {
+              __typename: "Repository",
+              id: facts.node_id,
+              fullDatabaseId: String(facts.id),
+              isPrivate: false,
+              ...(query.includes("ProjectRepositoryBranches")
+                ? {
+                    refs: {
+                      nodes: [
+                        {
+                          name: "main",
+                          prefix: "refs/heads/",
+                          target: { __typename: "Commit", oid: "a".repeat(40) },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  }
+                : { ref: null }),
+            },
+          },
+        });
+      }
+      if (url === `https://api.github.com/repos/${ADDED}` && facts !== null)
+        return Response.json(facts);
+      return Response.json({ message: "Not Found" }, { status: 404 });
+    },
+  };
+}
+
+function addedEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: ADDED,
+    displayName: ADDED,
+    githubUrl: `https://github.com/${ADDED}`,
+    description: "Extra tooling used by the open registry project.",
+    integrationBranch: "main",
+    githubId: "555000111",
+    nodeId: "R_extra",
+    countsFrom: "2026-11-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const WRITE_ACCESS = {
+  installation: "installed",
+  installationId: 42,
+  permission: "write",
+  roleName: "write",
+} as RepositoryAccess;
+
+/** A listed project, activated through setup, ready for an owner append. */
+async function addRepositoryFixture(
+  options: { active?: boolean } = {},
+): Promise<
+  ReturnType<typeof registry> & {
+    githubFacts: { value: Record<string, unknown> | "unavailable" | null };
+    accessReads: string[];
+    appendedAccess: { value: RepositoryAccess | "unavailable" };
+  }
+> {
+  const t = registry();
+  const githubFacts: {
+    value: Record<string, unknown> | "unavailable" | null;
+  } = { value: addedGithubRepository() };
+  const appendedAccess: { value: RepositoryAccess | "unavailable" } = {
+    value: WRITE_ACCESS,
+  };
+  const accessReads: string[] = [];
+  t.deps.github = addedGithub(() => githubFacts.value);
+  t.deps.repositoryAccess = async (repository) => {
+    accessReads.push(`${repository.path}#${repository.githubId}`);
+    if (repository.path !== ADDED) return t.state.access;
+    if (appendedAccess.value === "unavailable")
+      throw new Error("Slopbot unavailable");
+    return appendedAccess.value;
+  };
+  await t.create("open-registry", "example/open-registry");
+  t.state.access = WRITE_ACCESS;
+  if (options.active !== false) {
+    t.state.clearance = CLEARED;
+    await t.call("POST", "project-setup/open-registry/check", OWNER, {});
+    expect((await t.persistence.getProject("open-registry"))?.status).toBe(
+      "active",
+    );
+  }
+  t.state.scans = [];
+  accessReads.length = 0;
+  return { ...t, githubFacts, accessReads, appendedAccess };
+}
+
+async function appendAdded(
+  t: Awaited<ReturnType<typeof addRepositoryFixture>>,
+  entry: Record<string, unknown> = addedEntry(),
+) {
+  const current = await t.persistence.getProject("open-registry");
+  if (!current) throw new Error("project expected");
+  return t.call("PUT", "projects/open-registry", OWNER, {
+    manifest: {
+      ...current.manifest,
+      repositories: [...current.manifest.repositories, entry],
+    },
+    expectedRevision: current.revision,
+  });
+}
+
+test("an owner appends a verified repository: one revision names it, the active project pauses and a scan is queued", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  // The appended repository is not scanned yet.
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(200);
+  expect(response.body.changes).toEqual({
+    presentation: [],
+    executable: ["repositories"],
+    financial: [],
+  });
+  const stored = await t.persistence.getProject("open-registry");
+  expect(stored?.revision).toBe((before?.revision ?? 0) + 1);
+  expect(stored?.status).toBe("paused");
+  expect(stored?.manifest.repositories.map((entry) => entry.id)).toEqual([
+    "example/open-registry",
+    ADDED,
+  ]);
+  expect(stored?.manifest.repositories[1]).toEqual(addedEntry());
+  const reason = t.sqlite
+    .query(
+      "SELECT reason FROM project_revisions WHERE project_id = 'open-registry' ORDER BY revision DESC LIMIT 1",
+    )
+    .get() as { reason: string };
+  expect(reason.reason).toStartWith(
+    `Owner update by @owner: added repository ${ADDED};`,
+  );
+  expect(t.state.scans).toEqual([
+    `open-registry@${stored?.revision}: Owner changed repositories`,
+  ]);
+  // Slopbot read the owner's permission on the appended repository itself.
+  expect(t.accessReads).toContain(`${ADDED}#555000111`);
+});
+
+test.each([
+  ["a fork", { fork: true }, {}, "invalid_repository"],
+  ["an archived repository", { archived: true }, {}, "invalid_repository"],
+  ["a private repository", { private: true }, {}, "invalid_repository"],
+  ["another numeric id", { id: 555000112 }, {}, "invalid_repository"],
+  ["another node id", { node_id: "R_other" }, {}, "invalid_repository"],
+  [
+    "another current name",
+    { full_name: "acme-tools/renamed" },
+    {},
+    "invalid_repository",
+  ],
+  [
+    "a missing integration branch",
+    {},
+    { integrationBranch: "release" },
+    "invalid_repository",
+  ],
+  [
+    "a start in the current month",
+    {},
+    { countsFrom: "2026-10-01T00:00:00.000Z" },
+    "invalid_repository_start",
+  ],
+  [
+    "a start two months away",
+    {},
+    { countsFrom: "2026-12-01T00:00:00.000Z" },
+    "invalid_repository_start",
+  ],
+] as const)(
+  "an owner cannot append %s",
+  async (_label, github, entry, error) => {
+    const t = await addRepositoryFixture();
+    const before = await t.persistence.getProject("open-registry");
+    t.githubFacts.value = addedGithubRepository(github);
+    const response = await appendAdded(t, addedEntry(entry));
+    expect(response.status).toBe(422);
+    expect(response.body.error).toBe(error);
+    expect(await t.persistence.getProject("open-registry")).toEqual(before);
+    expect(t.state.scans).toEqual([]);
+  },
+);
+
+test("an appended repository GitHub does not list, or cannot answer for, is refused without a revision", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  t.githubFacts.value = null;
+  const missing = await appendAdded(t);
+  expect(missing.status).toBe(422);
+  expect(missing.body.error).toBe("invalid_repository");
+  t.githubFacts.value = "unavailable";
+  const unavailable = await appendAdded(t);
+  expect(unavailable.status).toBe(503);
+  expect(unavailable.body.error).toBe("github_unavailable");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// Review Focus 4: authority on the first repository never covers another.
+test("an owner needs write access and Slopbot on the appended repository itself", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  t.appendedAccess.value = {
+    installation: "installed",
+    installationId: 43,
+    permission: "read",
+    roleName: "read",
+  };
+  const readOnly = await appendAdded(t);
+  expect(readOnly.status).toBe(403);
+  expect(readOnly.body.error).toBe("authority_required");
+  expect(String(readOnly.body.message)).toContain(ADDED);
+  t.appendedAccess.value = { installation: "missing" };
+  const missing = await appendAdded(t);
+  expect(missing.status).toBe(409);
+  expect(missing.body.error).toBe("slopbot_required");
+  expect(String(missing.body.message)).toContain(ADDED);
+  t.appendedAccess.value = "unavailable";
+  const unavailable = await appendAdded(t);
+  expect(unavailable.status).toBe(503);
+  expect(unavailable.body.error).toBe("github_unavailable");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
+});
+
+// Review Focus 3: a repository another project lists, by id or by a
+// recorded transfer alias, is a registry conflict, never a stale revision.
+test("an owner cannot append a repository another project lists by id or alias", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect((await t.create("other-registry", ADDED)).status).toBe(201);
+  const byId = await appendAdded(t);
+  expect(byId.status).toBe(409);
+  expect(byId.body.error).toBe("registry_conflict");
+  // A listed project that records the name as a transfer alias, stored the
+  // way a reviewed rename leaves it.
+  const other = await t.persistence.getProject("other-registry");
+  if (!other) throw new Error("project expected");
+  const renamed = "acme-tools/extra-renamed";
+  const manifest = JSON.stringify({
+    ...other.manifest,
+    repositories: [
+      {
+        ...other.manifest.repositories[0],
+        id: renamed,
+        displayName: renamed,
+        githubUrl: `https://github.com/${renamed}`,
+        aliases: [ADDED],
+      },
+    ],
+  });
+  const sha256 = await sha256Hex(new TextEncoder().encode(manifest));
+  t.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('other-registry',?,?,?,'Reviewed rename',?)",
+    )
+    .run(other.revision + 1, manifest, sha256, NOW);
+  t.sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'other-registry'",
+    )
+    .run(other.revision + 1, manifest, sha256);
+  const byAlias = await appendAdded(t);
+  expect(byAlias.status).toBe(409);
+  expect(byAlias.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+test("a paused project's append stays paused, and existing owner edits are unchanged", async () => {
+  const t = await addRepositoryFixture({ active: false });
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(200);
+  expect((await t.persistence.getProject("open-registry"))?.status).toBe(
+    "paused",
+  );
+  // A presentation edit of the two-repository project reads no GitHub facts
+  // for the already listed appended repository.
+  const reads: string[] = [];
+  const github = t.deps.github;
+  t.deps.github = {
+    ...github,
+    fetch: async (url, init) => {
+      reads.push(url);
+      return github.fetch(url, init);
+    },
+  };
+  const current = await t.persistence.getProject("open-registry");
+  const presentation = await t.call("PUT", "projects/open-registry", OWNER, {
+    manifest: { ...current?.manifest, headline: "Two repositories now." },
+    expectedRevision: current?.revision,
+  });
+  expect(presentation.status).toBe(200);
+  expect(reads).toEqual([]);
+});

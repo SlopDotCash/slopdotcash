@@ -2438,3 +2438,136 @@ test("a flag on a two-repository project resolves only once every repository has
     { state: "resolved", closed_by: "clean-scan", closed_reference: second.id },
   ]);
 });
+
+// Review Focus 1 through the owner route: an owner appends a repository to an
+// admitted active project; the existing executable-change path pauses it and
+// queues a scan of the appended repository only, and setup reactivates it
+// once that repository clears.
+test("an owner's append pauses an admitted project, scans only the appended repository and setup reactivates it", async () => {
+  const firstScan = await activeProject();
+  const ownerApi = (request: Request) =>
+    projectApi(request, {
+      github: {
+        token: "public-read-token-fixture",
+        fetch: async (url, init) => {
+          if (url === `https://api.github.com/repos/${SECOND_REPOSITORY}`)
+            return Response.json({
+              id: 223456789,
+              node_id: "R_second",
+              full_name: SECOND_REPOSITORY,
+              description: "The second repository of the project.",
+              private: false,
+              fork: false,
+              archived: false,
+              default_branch: "main",
+              owner: {
+                login: "example",
+                id: 987654321,
+                node_id: "O_example",
+                type: "Organization",
+              },
+            });
+          if (url === "https://api.github.com/graphql") {
+            const { query } = JSON.parse(String(init?.body));
+            return Response.json({
+              data: {
+                node: {
+                  __typename: "Repository",
+                  id: "R_second",
+                  fullDatabaseId: "223456789",
+                  isPrivate: false,
+                  ...(query.includes("ProjectRepositoryBranches")
+                    ? {
+                        refs: {
+                          nodes: [
+                            {
+                              name: "main",
+                              prefix: "refs/heads/",
+                              target: { __typename: "Commit", oid: HEAD },
+                            },
+                          ],
+                          pageInfo: { hasNextPage: false, endCursor: null },
+                        },
+                      }
+                    : { ref: null }),
+                },
+              },
+            });
+          }
+          return new Response(null, { status: 404 });
+        },
+      },
+      requestScan: vettingScanRequester({
+        vetting,
+        serviceAvailable: async () => true,
+        livePin: readLivePin,
+        now: () => clock,
+        randomId,
+      }),
+    });
+  const current = await projects.getProject("open-registry");
+  if (!current) throw new Error("missing project");
+  expect(current.status).toBe("active");
+  const response = await ownerApi(
+    sessionRequest("PUT", "projects/open-registry", "applicant", {
+      manifest: {
+        ...current.manifest,
+        repositories: [
+          ...current.manifest.repositories,
+          {
+            id: SECOND_REPOSITORY,
+            displayName: SECOND_REPOSITORY,
+            githubUrl: `https://github.com/${SECOND_REPOSITORY}`,
+            description: "The second repository of the project.",
+            integrationBranch: "main",
+            githubId: "223456789",
+            nodeId: "R_second",
+            countsFrom: "2026-11-01T00:00:00.000Z",
+          },
+        ],
+      },
+      expectedRevision: current.revision,
+    }),
+  );
+  expect(response.status).toBe(200);
+  const appended = await projects.getProject("open-registry");
+  expect(appended).toMatchObject({
+    revision: current.revision + 1,
+    status: "paused",
+  });
+  // Only the appended repository is queued; the first keeps its admission.
+  const pending = await vetting.pendingAssessments();
+  expect(pending.map((row) => row.repositoryId)).toEqual([SECOND_REPOSITORY]);
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(pending[0].id, "clean", {
+          runId: "scan-run-appended",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  const check = await ownerApi(
+    sessionRequest(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    ),
+  );
+  expect(check.status).toBe(200);
+  expect((await check.json()).setup).toMatchObject({
+    status: "active",
+    activatedRevision: current.revision + 2,
+  });
+  const reactivated = await projects.getProject("open-registry");
+  expect(reactivated?.status).toBe("active");
+  expect(
+    await vetting.manifestClearance(
+      "open-registry",
+      reactivated?.manifest as never,
+      reactivated?.revision as number,
+      readLivePin,
+    ),
+  ).toMatchObject({ state: "cleared", assessment: { id: firstScan } });
+});

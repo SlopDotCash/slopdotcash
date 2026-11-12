@@ -25,6 +25,7 @@ import {
   validRepositoryPath,
 } from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import { appendedRepositories } from "../../src/lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
   assertProjectDefinition,
@@ -64,6 +65,7 @@ import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
+import { verifyAppendedRepositories } from "./appended-repositories";
 import {
   PROJECT_API_CONTRACT_VERSION,
   type ProjectPersistence,
@@ -1744,6 +1746,11 @@ async function publishOwnerRevision(
     0
   )
     fail(422, "no_change", "The revision changes nothing");
+  // Appended repositories are verified on GitHub and through their own
+  // Slopbot installation before anything is recorded.
+  const added = appendedRepositories(current.manifest, submitted) ?? [];
+  if (added.length > 0)
+    await verifyAppendedRepositories(deps, actor, added, deps.now());
   let manifest =
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
@@ -1759,6 +1766,9 @@ async function publishOwnerRevision(
   if (scanRequired && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
   const summary = [
+    added.length > 0
+      ? `added ${added.length === 1 ? "repository" : "repositories"} ${added.map((entry) => entry.id).join(", ")}`
+      : null,
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
       : null,
@@ -2996,7 +3006,7 @@ async function githubLookup(
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
       ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
-      : `${url.origin}/api/v1/project-github/repository-node-v1/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
+      : `${url.origin}/api/v1/project-github/repository-node-v2/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
   );
   const build = async () => {
     if (parts[1] === "owned-repositories") {
