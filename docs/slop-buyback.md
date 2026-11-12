@@ -7,8 +7,11 @@ records the research, the contract review, the design, the state models and
 the local evidence. The operating instructions are in the
 [fee-converter guide](../workers/fee-converter/README.md#slop-buyback).
 
-Nothing here is active. `BUYBACK_MODE` is `off` in both checked-in Worker
-configurations, and a merge activates nothing.
+`BUYBACK_MODE` is `live` in the production Worker configuration from
+`2026-11-12T00:00:00.000Z`, by operator decision of 12 November 2026, and `off`
+on staging. The dry-run period and the small verified first order were not run:
+no fee income existed to run them. The first real order still has to be
+verified on chain (fee-converter guide, "Turn on the buyback", step 5).
 
 ## What the decision means in numbers
 
@@ -205,10 +208,17 @@ holds no fallback for any of these values.
 3. The burn takes half of the SLOP the buyback acquired, once. The retained
    half is never burned again.
 
-Still open, and needed before or at activation:
+Set at activation (operator decision, 12 November 2026):
 
-1. The activation instant. Fees finalized before it never enter the buyback.
-2. A Robinhood Chain RPC that serves state at the finalized block.
+1. The activation instant is `2026-11-12T00:00:00.000Z`. Fees finalized before
+   it never enter the buyback.
+
+Still open:
+
+2. A Robinhood Chain RPC that serves state at the finalized block. The Worker
+   holds an `RPC_URL_ROBINHOOD` secret; whether that endpoint serves such
+   reads was not verified at activation. Until one does, arrivals, claims and
+   approvals stay unverified and nothing is credited or bought.
 3. Whether the Worker should later be allowed to cancel unfilled orders. It is
    not, today.
 
