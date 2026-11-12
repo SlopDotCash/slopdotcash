@@ -116,12 +116,38 @@ function assertCommitmentTransition(previous, next) {
 }
 
 function assertRepositoryTransition(previousRepositories, nextRepositories) {
-  if (previousRepositories.length !== nextRepositories.length) {
+  if (nextRepositories.length < previousRepositories.length) {
     throw new TypeError("repository inventory cannot change");
+  }
+  for (
+    let index = previousRepositories.length;
+    index < nextRepositories.length;
+    index += 1
+  ) {
+    const added = nextRepositories[index];
+    if (
+      added.githubId === undefined ||
+      added.nodeId === undefined ||
+      added.countsFrom === undefined ||
+      added.aliases !== undefined
+    ) {
+      throw new TypeError(
+        "an appended repository needs githubId, nodeId and countsFrom and no aliases",
+      );
+    }
   }
   for (let index = 0; index < previousRepositories.length; index += 1) {
     const previous = previousRepositories[index];
     const next = nextRepositories[index];
+    if (
+      previous.githubId !== next.githubId ||
+      previous.nodeId !== next.nodeId ||
+      previous.countsFrom !== next.countsFrom
+    ) {
+      throw new TypeError(
+        "repository githubId, nodeId and countsFrom are immutable once published",
+      );
+    }
     const previousAliases = previous.aliases ?? [];
     const nextAliases = next.aliases ?? [];
     if (
