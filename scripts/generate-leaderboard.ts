@@ -286,7 +286,10 @@ export class GraphqlUpstreamError extends Error {
 /**
  * Runs one `nodes(ids:)` query. When the gateway fails the whole batch, the
  * two halves are requested separately and reassembled in request order, down
- * to single ids, which still fail closed.
+ * to single ids, which still fail closed. An enumerated node GitHub can no
+ * longer resolve is reported per half: the other half is still probed, and the
+ * error that leaves here covers every id this call was asked for, because
+ * callers record its `sources` as the batch's unavailable set.
  */
 export async function executeNodeBatch(
   client: Pick<GraphqlExecutor, "execute">,
@@ -299,18 +302,29 @@ export async function executeNodeBatch(
   } catch (error) {
     if (!(error instanceof GraphqlUpstreamError) || ids.length < 2) throw error;
     const middle = Math.ceil(ids.length / 2);
-    const head = await executeNodeBatch(
-      client,
-      document,
-      ids.slice(0, middle),
-      variables,
-    );
-    const tail = await executeNodeBatch(
-      client,
-      document,
-      ids.slice(middle),
-      variables,
-    );
+    const halves: JsonRecord[] = [];
+    const missing = new Map<string, UnavailableSource>();
+    let unavailable: SourceNodeUnavailableError | null = null;
+    for (const half of [ids.slice(0, middle), ids.slice(middle)]) {
+      try {
+        halves.push(await executeNodeBatch(client, document, half, variables));
+      } catch (halfError) {
+        // A half whose nodes are gone must not hide the sibling half's own
+        // unavailability, and must not leave ids this batch was asked for
+        // unprobed: the callers hold exactly the identities they are told
+        // about. Any other failure still fails closed on the spot.
+        if (!(halfError instanceof SourceNodeUnavailableError)) throw halfError;
+        for (const source of halfError.sources)
+          missing.set(source.nodeId, source);
+        unavailable = unavailable ?? halfError;
+      }
+    }
+    if (unavailable)
+      throw new SourceNodeUnavailableError([...missing.values()], {
+        cause: unavailable,
+      });
+    const head = halves[0];
+    const tail = halves[1];
     return {
       ...tail,
       nodes: [

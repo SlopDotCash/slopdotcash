@@ -1512,6 +1512,104 @@ test("canonical merged file recovery binds to the census repository when no alia
 });
 
 // The joint-hold probe re-checks the identities that failed the discarded first
+// attempt. When more than one of them is still unresolvable, one half of a
+// split batch must not hide the other: every id is probed, every id is held,
+// and none of them reaches hydration.
+test("two unavailable ids in one joint-hold batch are both probed and held instead of failing hydration", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy");
+  const fixtureFetch = globalThis.fetch;
+  const stillGone = new Set([retained.id, unaffected.id]);
+  const probed: string[][] = [];
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    let ids: string[] | undefined;
+    try {
+      const parsed = JSON.parse(String(init?.body ?? "")) as {
+        variables?: { ids?: string[] };
+      };
+      ids = parsed.variables?.ids;
+    } catch {
+      ids = undefined;
+    }
+    if (!Array.isArray(ids) || !ids.some((id) => stillGone.has(id)))
+      return fixtureFetch(input, init);
+    // GitHub still cannot resolve them, and the whole batch is refused first.
+    probed.push(ids);
+    if (ids.length > 1)
+      return new Response("<html>gateway unavailable</html>", {
+        status: 504,
+        headers: { "content-type": "text/html" },
+      });
+    return Response.json({
+      data: {
+        nodes: ids.map((id) =>
+          stillGone.has(id) ? null : { __typename: "PullRequest", id },
+        ),
+        rateLimit: {
+          cost: 1,
+          limit: 5000,
+          remaining: 4000,
+          resetAt: new Date(Date.now() + 3_600_000).toISOString(),
+        },
+      },
+      errors: ids.flatMap((id, index) =>
+        stillGone.has(id)
+          ? [
+              {
+                type: "NOT_FOUND",
+                path: ["nodes", index],
+                message: "Could not resolve requested node",
+              },
+            ]
+          : [],
+      ),
+    });
+  }) as typeof fetch;
+  const client = new GitHubGraphqlClient("fixture-token", transport, {
+    retryBaseDelayMs: 0,
+  });
+  try {
+    const snapshot = await generateLeaderboardFromGitHub(client, {
+      now: new Date(GENERATED_AT),
+      actualNow: new Date(GENERATED_AT),
+      evidenceToken: "fixture-token",
+      sourceRecovery: {
+        unavailableSources: [retained.id, unaffected.id].map((nodeId) => ({
+          nodeId,
+          reason: "NOT_FOUND" as const,
+        })),
+        allowJointHolds: true,
+      },
+    });
+    // The refused batch is retried, then both halves are probed on their own,
+    // in request order, and nothing asks for either id again: they are held.
+    const refused = probed.filter((ids) => ids.length > 1);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.every((ids) => ids.length === 2)).toBe(true);
+    expect(
+      probed.filter((ids) => ids.length === 1),
+      "every still-unavailable id must be re-probed on its own",
+    ).toEqual([[retained.id], [unaffected.id]]);
+    expect(
+      probed.at(-1),
+      "the tail probe must be the last request for either id",
+    ).toEqual([unaffected.id]);
+    const held = required(snapshot.source.unavailableSources);
+    expect(held.map((source) => source.nodeId).sort()).toEqual(
+      [retained.id, unaffected.id].sort(),
+    );
+    expect(
+      held.every((source) => source.unavailableInMergedCensus === true),
+    ).toBe(true);
+    expect(snapshot.source.counts.unavailableSources).toBe(2);
+    expect(snapshot.source.counts.unavailableMergedPullRequests).toBe(2);
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  } finally {
+    await f.close();
+  }
+});
+
+// The joint-hold probe re-checks the identities that failed the discarded first
 // attempt, REVIEW_DETAIL_BATCH_SIZE at a time. A gateway that refuses that whole
 // batch (502/503/504 with a non-JSON body) must split it like the other
 // nodes(ids:) callers in the generator instead of failing the run.
