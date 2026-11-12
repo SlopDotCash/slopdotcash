@@ -42,7 +42,7 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f8d2b8caca36b2fa2b510f03e6a8a9a5c8a7a85bb8e3a93ffb2d5fd889250403",
+      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
