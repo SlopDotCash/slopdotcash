@@ -7135,21 +7135,21 @@
     },
     {
       "path": "workers/fee-converter/solana-route-accounts.ts",
-      "sha256": "a2f777efa35551cf3e32a5075e4fbf49c07d6000b4fc9a7e9de061fcf3279f3c",
+      "sha256": "a35460c1d78818bc41a62647ed078e78dd6b61e3649f198ecf8fe46eccc79ce5",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
-        42, 96, 97, 98, 101, 102, 103, 105, 150, 161, 164, 169, 172, 175, 176,
-        177, 178, 179, 212, 213, 218, 221, 222, 224, 226, 227, 229, 232, 234,
-        236, 247, 249, 250, 251, 274, 284, 328, 342, 358
+        42, 96, 97, 98, 101, 102, 103, 105, 117, 157, 168, 171, 176, 179, 182,
+        183, 184, 185, 186, 219, 220, 225, 228, 229, 231, 233, 234, 236, 239,
+        241, 243, 254, 256, 257, 258, 281, 291, 335, 349, 365
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/solana-route-receipt.ts",
-      "sha256": "320be0037a87dbd3c9daa671c321d482e9f03929b8a7703cf4490fd00a7eb451",
+      "sha256": "8716c132bbe7a382457b747d0112981254ef30400356a397acc06fbfa8bd74e8",
       "models": ["formal/models/fees/solana_route.qnt"],
       "candidateLines": [
-        64, 70, 83, 94, 102, 106, 116, 174, 177, 180, 194, 206
+        64, 70, 83, 94, 102, 106, 116, 190, 193, 196, 209, 221
       ],
       "review": "mapped-abstraction"
     },
