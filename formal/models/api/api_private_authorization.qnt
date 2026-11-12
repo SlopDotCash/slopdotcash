@@ -106,15 +106,28 @@ module api_private_authorization {
   action validCallback(id: int, nonce: int): bool = capture(id, nonce, 0).then(validate(id, true, true))
   action complete(id: int): bool = exchange(id, true).then(identify(id, 1, true)).then(seal(id, true)).then(deliver(id))
   action step = {
-    nondet id = ids.oneOf()
-    nondet nonce = ids.oneOf()
-    nondet callbackActor = Set(0, 1, 2).oneOf()
-    nondet providerActor = ids.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { beginFlow(id), capture(id, nonce, callbackActor), validate(id, yes, other), exchange(id, yes),
-      identify(id, providerActor, yes), seal(id, yes), deliver(id), switchSession, switchActor, switchAccount,
-      signOut, switchSubmission, tamperGrant, expireCookie, useGrant, tick, s' = s }
+    any {
+      { nondet id = ids.oneOf() beginFlow(id) },
+      { nondet id = ids.oneOf() nondet nonce = ids.oneOf() nondet callbackActor = Set(0, 1, 2).oneOf()
+        capture(id, nonce, callbackActor) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        validate(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() exchange(id, yes) },
+      { nondet id = ids.oneOf() nondet providerActor = ids.oneOf() nondet yes = Set(false, true).oneOf()
+        identify(id, providerActor, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() seal(id, yes) },
+      { nondet id = ids.oneOf() deliver(id) },
+      switchSession,
+      switchActor,
+      switchAccount,
+      signOut,
+      switchSubmission,
+      tamperGrant,
+      expireCookie,
+      useGrant,
+      tick,
+      s' = s
+    }
   }
   val invariant = all {
     s.consumedCodes.subseteq(ids), s.flowCookie == 0 or flow(s.flowCookie).exists,

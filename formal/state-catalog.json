@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "4e8c0d4f5cf3da6131590f7e130aa74bff9f8495a4f47f48a3e48908d58e6c5b",
+  "inventorySha256": "0577a9a3103a4c33ac8a0c1abe6652fc78e3ae27832bc334516fabdd8a52d871",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2388,
+      "line": 2392,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -121,6 +121,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -138,7 +139,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2592,
+      "line": 2596,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -152,6 +153,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -2018,7 +2020,8 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
-        "formal/models/slopbot/value_feed_deadline.qnt"
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged", "open"],
       "review": "candidate-only"
@@ -2039,7 +2042,8 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
-        "formal/models/slopbot/value_feed_deadline.qnt"
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "merged-pull-requests",
@@ -2051,7 +2055,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3205,
+      "line": 3203,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2060,14 +2064,15 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
-        "formal/models/slopbot/value_feed_deadline.qnt"
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["closed", "merged"],
       "review": "candidate-only"
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3809,
+      "line": 3807,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2076,7 +2081,8 @@
         "formal/models/points/github_census.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
-        "formal/models/slopbot/value_feed_deadline.qnt"
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
       "review": "candidate-only"
@@ -2170,7 +2176,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 449,
+      "line": 451,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2195,7 +2201,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1087,
+      "line": 1088,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2327,7 +2333,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1487,
+      "line": 1470,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2423,7 +2429,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 851,
+      "line": 852,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2447,7 +2453,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1320,
+      "line": 1321,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2471,7 +2477,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2106,
+      "line": 2107,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2495,7 +2501,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2111,
+      "line": 2112,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2888,7 +2894,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 645,
+      "line": 647,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2898,7 +2904,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 736,
+      "line": 738,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -2912,7 +2918,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4570,
+      "line": 4574,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -2992,7 +2998,10 @@
       "name": "state",
       "kind": "string-union",
       "values": ["CLOSED", "OPEN"],
-      "models": ["formal/models/ui/ui_profile_history.qnt"],
+      "models": [
+        "formal/models/release/published_census_extension.qnt",
+        "formal/models/ui/ui_profile_history.qnt"
+      ],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
       "review": "candidate-only"
     },
@@ -3168,7 +3177,7 @@
     },
     {
       "path": "src/lib/project-proposal.ts",
-      "line": 148,
+      "line": 152,
       "name": "mode",
       "kind": "string-union",
       "values": ["monthly", "none"],

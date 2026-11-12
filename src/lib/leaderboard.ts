@@ -2298,13 +2298,15 @@ function workItemPriority(labels: GitHubLabel[]): WorkItem["priority"] {
 function workItemActionability(
   labels: GitHubLabel[],
   isDraft: boolean,
+  filesAvailable = true,
 ): WorkItem["actionability"] {
   if (isDraft) {
     return "draft";
   }
-  return labels.some((label) =>
-    BLOCKED_LABEL_PATTERN.test(normalizeLabel(label.name)),
-  )
+  return !filesAvailable ||
+    labels.some((label) =>
+      BLOCKED_LABEL_PATTERN.test(normalizeLabel(label.name)),
+    )
     ? "blocked"
     : "actionable";
 }
@@ -2442,6 +2444,7 @@ function pullRequestWorkItem(
   const actionability = workItemActionability(
     pullRequest.labels,
     pullRequest.isDraft,
+    pullRequest.files !== null,
   );
   return {
     item: {
@@ -2458,6 +2461,7 @@ function pullRequestWorkItem(
       priority: workItemPriority(pullRequest.labels),
       actionability,
       isDraft: pullRequest.isDraft,
+      filesAvailable: pullRequest.files !== null,
       reviewDecision: pullRequest.reviewDecision,
       activeReviewRequestCount: pullRequest.activeReviewRequestCount,
       commentCount: dedupeByNodeId(pullRequest.comments).length,
@@ -2554,7 +2558,7 @@ function collectOpenPullRequestOpportunities(
   const opportunities: ScoreOpportunity[] = [];
 
   for (const pullRequest of openPullRequests) {
-    if (pullRequest.mergedAt !== null) {
+    if (pullRequest.mergedAt !== null || pullRequest.files === null) {
       continue;
     }
     const repository = repositoryIdFromUrl(pullRequest.url);
@@ -5977,17 +5981,27 @@ function assertWorkItemValue(
     `${path}.actionability`,
   );
   const labelRecords = labels.map((name) => ({ id: name, name, color: "" }));
+  if (
+    item.filesAvailable !== undefined &&
+    (expectedKind !== "pull-request" ||
+      typeof item.filesAvailable !== "boolean")
+  ) {
+    throw new Error(
+      `${path}.filesAvailable must be a boolean for pull requests`,
+    );
+  }
   const expectedPriority = workItemPriority(labelRecords);
   const expectedActionability = workItemActionability(
     labelRecords,
     expectedKind === "pull-request" && item.isDraft === true,
+    item.filesAvailable !== false,
   );
   if (item.priority !== expectedPriority) {
     throw new Error(`${path}.priority does not match its labels`);
   }
   if (item.actionability !== expectedActionability) {
     throw new Error(
-      `${path}.actionability does not match its labels and draft state`,
+      `${path}.actionability does not match its labels, draft state, and file availability`,
     );
   }
   if (expectedKind === "issue") {

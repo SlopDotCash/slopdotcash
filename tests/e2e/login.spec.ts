@@ -270,7 +270,7 @@ test("the header login link keeps the current page as the return route", async (
   );
 });
 
-test("a cancelled pending sign-in lets the user start again", async ({
+test("leaving a pending sign-in lets the user start again", async ({
   diagnostics,
   page,
 }) => {
@@ -333,13 +333,17 @@ test("a cancelled pending sign-in lets the user start again", async ({
     const popup = await popupEvent;
     await expect(popup).toHaveURL(/\/v1\/oauth\/authorize\?/u);
     await popup.close();
-    const cancel = page.getByRole("button", {
-      name: "Cancel sign-in",
-      exact: true,
-    });
-    await cancel.focus();
+    await expect(
+      page.getByRole("button", { name: "Waiting for GitHub…", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Cancel sign-in", exact: true }),
+    ).toHaveCount(0);
+    await expectAccessible(page);
+    await page.getByRole("link", { name: "How it works", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toBeVisible();
+    await expect(page.locator(".login-page")).toHaveCount(0);
+    await page.goto(`${deployment.site}/login`);
     await expect(
       page.getByRole("button", { name: "Continue with GitHub", exact: true }),
     ).toBeEnabled();

@@ -408,6 +408,111 @@ describe("project registry API", () => {
     });
   }
 
+  test("vault registration formats the recovered token caps without changing reviewed or stored amounts", async () => {
+    access = ADMIN_ACCESS;
+    const created = await create(
+      applicationManifest(
+        "open-registry",
+        "example/open-registry",
+        rewardFields(
+          {
+            mode: "monthly",
+            network: "base",
+            assetKind: "token",
+            tokenAddress: TOKEN,
+            tokenSymbol: "OPEN",
+            monthlyAmount: "1000",
+          },
+          deps.now(),
+        ),
+      ),
+      { monthlyAmount: "1000" },
+    );
+    expect(created.status).toBe(201);
+    const initial = await persistence.getProject("open-registry");
+    if (!initial) throw new Error("Missing token project");
+    const reviewedText = await persistence.getRevisionText(
+      initial.id,
+      initial.revision,
+    );
+    const changed = await call("PUT", "projects/open-registry", "applicant", {
+      expectedRevision: initial.revision,
+      manifest: initial.manifest,
+      monthlyAmount: "2000",
+    });
+    expect(changed.status).toBe(200);
+    const deployment = {
+      network: "base-sepolia" as const,
+      vault: `0x${"1".repeat(40)}`,
+      asset: TOKEN,
+      owner: `0x${"2".repeat(40)}`,
+      identityAuthority: `0x${"3".repeat(40)}`,
+      feeRecipient: `0x${"4".repeat(40)}`,
+      factory: `0x${"5".repeat(40)}`,
+      registrar: `0x${"6".repeat(40)}`,
+      factoryCodeSha256: "c".repeat(64),
+      codeSha256: "d".repeat(64),
+      deploymentTransaction: `0x${"e".repeat(64)}`,
+      sourceCommit: "a".repeat(40),
+      bindingDelaySeconds: "0",
+      rotationDelaySeconds: null,
+      programId: null,
+      projectPda: null,
+      networkDomain: null,
+      upgradeAuthority: null,
+    };
+    let verificationReads = 0;
+    deps.vaultSetup = {
+      observe: async () => {},
+      networks: async () => ["base-sepolia"],
+      review: async () => {
+        throw new Error("Unused in registration recovery");
+      },
+      register: async (reviewed, actor, input, transactionId) => {
+        verificationReads++;
+        expect(reviewed.revision).toBe(initial.revision);
+        expect(reviewed.manifest.reward.monthlyCapMinor).toBe(
+          "1000000000000000000000",
+        );
+        expect(reviewed.manifest.reward.monthlyCapDisplay).toBe("1,000 OPEN");
+        expect(reviewed.manifest.rewardAsset?.symbol).toBe("OPEN");
+        expect(actor.githubId).toBe(APPLICANT.githubId);
+        expect(input.automatic).toBe(false);
+        expect(transactionId).toBe(deployment.deploymentTransaction);
+        return deployment;
+      },
+    };
+    const registered = await call(
+      "POST",
+      "project-vaults/open-registry",
+      "applicant",
+      {
+        step: "register",
+        expectedRevision: initial.revision,
+        network: "base-sepolia",
+        claimId: "verified-owner",
+        automatic: false,
+        transactionId: deployment.deploymentTransaction,
+      },
+    );
+    expect(registered.status).toBe(200);
+    const result = await registered.json();
+    expect(result.notice).toBe(
+      "Creation used a monthly cap of 1,000 $OPEN. The project now uses 2,000 $OPEN. Use the automatic payment controls below to apply the new cap.",
+    );
+    expect(result.project.reward).toMatchObject({
+      monthlyCapMinor: "2000000000000000000000",
+      monthlyCapDisplay: "2,000 OPEN",
+      currency: "OPEN",
+    });
+    expect(result.project.rewardAsset.symbol).toBe("OPEN");
+    expect(result.project.escrow.deployments).toEqual([deployment]);
+    expect(verificationReads).toBe(1);
+    expect(
+      await persistence.getRevisionText(initial.id, initial.revision),
+    ).toEqual(reviewedText);
+  });
+
   test("only a current owner can revise the EVM execution cap without changing its verified vault", async () => {
     access = ADMIN_ACCESS;
     await listProject(
@@ -450,6 +555,7 @@ describe("project registry API", () => {
       upgradeAuthority: null,
     };
     deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["base-sepolia"],
       review: async () => {
         throw Error("unused");
@@ -1180,6 +1286,7 @@ describe("project registry API", () => {
     if (!current) throw new Error("Missing bounty project");
     let verificationReads = 0;
     deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["base-sepolia"],
       review: async () => {
         throw new Error("Not used in this API boundary case");

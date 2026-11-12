@@ -66,13 +66,19 @@ module ui_incomplete_assessments {
       .with("parentVisible", s.cookie).with("page", 1).with("error", false)
       .with("active", 0).with("reload", false) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet page = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet result = Set("success", "refused", "temporary", "wrong-recipient").oneOf()
-    nondet available = Set(false, true).oneOf()
-    any { cookieChanges(actor), begin(id, page), reply(id, result), observeSession(id, available), returnSession(id), useSession(id),
-      initialUnavailable, depart, remount, s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2).oneOf() cookieChanges(actor) },
+      { nondet id = ids.oneOf() nondet page = ids.oneOf() begin(id, page) },
+      { nondet id = ids.oneOf() nondet result = Set("success", "refused", "temporary", "wrong-recipient").oneOf()
+        reply(id, result) },
+      { nondet id = ids.oneOf() nondet available = Set(false, true).oneOf() observeSession(id, available) },
+      { nondet id = ids.oneOf() returnSession(id) },
+      { nondet id = ids.oneOf() useSession(id) },
+      initialUnavailable,
+      depart,
+      remount,
+      s' = s
+    }
   }
   val invariant = all { s.parentVisible > 0 implies s.parentVisible == s.actor and s.mounted,
     not(s.mounted) implies s.page == 0, s.page >= 0, s.page <= 2 }

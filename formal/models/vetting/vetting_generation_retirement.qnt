@@ -181,17 +181,41 @@ module vetting_generation_retirement {
     s' = s.with("disk", s.disk.set(s.selected, "marker-missing"))
       .with("markers", s.markers.union(Set(s.selected))).with("lost", true) }
   action step = {
-    nondet target = targets.oneOf()
-    nondet ref = refs.oneOf()
-    nondet slot = slots.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet intact = Set(false, true).oneOf()
-    any { addReference, expire(ref), preserve(ref), reserveOldHead, admit(target), finishPut(target),
-      publishHead(slot, target), corruptBeforeFreeze(target), primaryCopy(target), seedConflictingOrphan(target), completeSnapshot,
-      freeze, holdShared, holdLegacy, choose(target), inspect, copyBody(yes), verifyBackup(yes),
-      createMissingMarker(yes), writeBackedMarker(yes), verifyMarker(yes), publishReceipt(yes),
-      recordRetirement(yes), readback(yes), failedState, retry, finishGeneration, referenceReceipt(ref),
-      restoreSupplement(target, yes, intact), allocateSuccessor, writeSuccessor, s' = s }
+    any {
+      addReference,
+      { nondet ref = refs.oneOf() expire(ref) },
+      { nondet ref = refs.oneOf() preserve(ref) },
+      reserveOldHead,
+      { nondet target = targets.oneOf() admit(target) },
+      { nondet target = targets.oneOf() finishPut(target) },
+      { nondet target = targets.oneOf() nondet slot = slots.oneOf() publishHead(slot, target) },
+      { nondet target = targets.oneOf() corruptBeforeFreeze(target) },
+      { nondet target = targets.oneOf() primaryCopy(target) },
+      { nondet target = targets.oneOf() seedConflictingOrphan(target) },
+      completeSnapshot,
+      freeze,
+      holdShared,
+      holdLegacy,
+      { nondet target = targets.oneOf() choose(target) },
+      inspect,
+      { nondet yes = Set(false, true).oneOf() copyBody(yes) },
+      { nondet yes = Set(false, true).oneOf() verifyBackup(yes) },
+      { nondet yes = Set(false, true).oneOf() createMissingMarker(yes) },
+      { nondet yes = Set(false, true).oneOf() writeBackedMarker(yes) },
+      { nondet yes = Set(false, true).oneOf() verifyMarker(yes) },
+      { nondet yes = Set(false, true).oneOf() publishReceipt(yes) },
+      { nondet yes = Set(false, true).oneOf() recordRetirement(yes) },
+      { nondet yes = Set(false, true).oneOf() readback(yes) },
+      failedState,
+      retry,
+      finishGeneration,
+      { nondet ref = refs.oneOf() referenceReceipt(ref) },
+      { nondet target = targets.oneOf() nondet yes = Set(false, true).oneOf() nondet intact = Set(false, true).oneOf()
+        restoreSupplement(target, yes, intact) },
+      allocateSuccessor,
+      writeSuccessor,
+      s' = s
+    }
   }
   val invariant = all {
     s.recorded.subseteq(s.markers), s.markers.forall(target =>

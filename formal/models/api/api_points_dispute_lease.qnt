@@ -180,12 +180,22 @@ module api_points_dispute_lease {
   action tick = all { now < 3, now' = now + 1,
     disputes' = disputes, workers' = workers, nextToken' = nextToken, keepCron }
   action step = {
-    nondet w = WORKERS.oneOf()
-    nondet d = DISPUTES.oneOf()
-    nondet r = Set("uphold", "deny", "unavailable").oneOf()
-    any { claim(w, d), refuse(w, d), read(w), call(w), recordCost(w),
-      throwBeforeCost(w), afterCost(w, r), escalate(w), error(w), release(w),
-      cronStart, cronSkip, cronReport, resolve(d), tick }
+    any {
+      { nondet w = WORKERS.oneOf() nondet d = DISPUTES.oneOf() claim(w, d) },
+      { nondet w = WORKERS.oneOf() nondet d = DISPUTES.oneOf() refuse(w, d) },
+      { nondet w = WORKERS.oneOf() read(w) },
+      { nondet w = WORKERS.oneOf() call(w) },
+      { nondet w = WORKERS.oneOf() recordCost(w) },
+      { nondet w = WORKERS.oneOf() throwBeforeCost(w) },
+      { nondet w = WORKERS.oneOf() nondet r = Set("uphold", "deny", "unavailable").oneOf()
+        afterCost(w, r) },
+      { nondet w = WORKERS.oneOf() escalate(w) },
+      { nondet w = WORKERS.oneOf() error(w) },
+      { nondet w = WORKERS.oneOf() release(w) },
+      cronStart, cronSkip, cronReport,
+      { nondet d = DISPUTES.oneOf() resolve(d) },
+      tick
+    }
   }
   val invariant = all {
     // recordDraft's `draft IS NULL` term: a row's draft is written once.

@@ -1418,7 +1418,7 @@ async function ownerSetupWorkflow(
         page
           .getByRole("status")
           .filter({ hasText: "Creation used a monthly cap" }),
-      ).toContainText("1,000 TEST. The project now uses 2,000 TEST");
+      ).toContainText("1,000 $TEST. The project now uses 2,000 $TEST");
     }
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(bounty ? 2 : 3);

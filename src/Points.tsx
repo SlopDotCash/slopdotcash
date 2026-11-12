@@ -740,7 +740,7 @@ function JoinPoints({
 }) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
-  const [canCancel, setCanCancel] = useState(false);
+  const [waitingForGitHub, setWaitingForGitHub] = useState(false);
   const [message, setMessage] = useState("");
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
@@ -794,7 +794,7 @@ function JoinPoints({
     const c = new AbortController();
     active.current = c;
     setBusy(true);
-    setCanCancel(true);
+    setWaitingForGitHub(true);
     setMessage("");
     let authorized = false;
     try {
@@ -856,7 +856,7 @@ function JoinPoints({
             throw new Error("Sign-in failed. Start again.");
           // COOP isolates the GitHub window and can report its WindowProxy as
           // closed while the user is still signing in. The bounded identity
-          // flow and explicit Cancel action determine when polling stops.
+          // flow and leaving this page determine when polling stops.
           return {
             status: response.status,
             body: body as Record<string, unknown>,
@@ -864,7 +864,7 @@ function JoinPoints({
         },
       });
       c.signal.throwIfAborted();
-      setCanCancel(false);
+      setWaitingForGitHub(false);
       const joined = await requestJson("/api/v1/points/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -900,7 +900,7 @@ function JoinPoints({
     } finally {
       if (active.current === c) {
         setBusy(false);
-        setCanCancel(false);
+        setWaitingForGitHub(false);
       }
     }
   }
@@ -942,30 +942,13 @@ function JoinPoints({
       >
         <GithubIcon aria-hidden="true" />
         {busy
-          ? canCancel
+          ? waitingForGitHub
             ? "Waiting for GitHub…"
             : "Signing in…"
           : closedAccount
             ? "Reopen account with GitHub"
             : "Continue with GitHub"}
       </button>
-      {busy && canCancel ? (
-        <button
-          type="button"
-          onClick={() => {
-            active.current?.abort();
-            active.current = null;
-            if (localBackendOrigin !== null) clearLocalFlow();
-            setBusy(false);
-            setCanCancel(false);
-            setMessage(
-              "Sign-in cancelled. Close the GitHub window and try again when ready.",
-            );
-          }}
-        >
-          Cancel sign-in
-        </button>
-      ) : null}
       <p role="status">{message}</p>
     </section>
   );

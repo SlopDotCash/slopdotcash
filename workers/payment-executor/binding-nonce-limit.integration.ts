@@ -86,6 +86,18 @@ const nonce = async () =>
     BigInt(await rpc("eth_getTransactionCount", [attester.address, "latest"])),
   );
 
+async function bindingExpiry() {
+  // Expiry cases deliberately advance Anvil beyond the wall clock. Later
+  // independent cases still need a live consent to reach their intended race.
+  const block = await rpc<{ timestamp: string }>("eth_getBlockByNumber", [
+    "latest",
+    false,
+  ]);
+  const chainClock = BigInt(block.timestamp);
+  const wallClock = BigInt(Math.floor(Date.now() / 1000));
+  return String((chainClock > wallClock ? chainClock : wallClock) + 86400n);
+}
+
 function calldata(signature: string, args: string[]) {
   const encoded = execFileSync("cast", ["calldata", signature, ...args], {
     encoding: "utf8",
@@ -485,7 +497,7 @@ async function fixture(
       "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,'base',?,?,6,'1000000','20000',?,'reserved',?)",
     )
     .run(award, projectId, actor, network, vault, asset, source.slice(2), now);
-  const expires = String(Math.floor(Date.now() / 1000) + 86400);
+  const expires = await bindingExpiry();
   const typed = evmBindingTypedData(chainId, vault, {
     githubUserId: actor,
     destination,
@@ -696,7 +708,7 @@ async function successorClaim(fixture: Fixture): Promise<BindingCandidate> {
       challenge,
       await wallet.signMessage({ message }),
     );
-  const expires = String(Math.floor(Date.now() / 1000) + 86400);
+  const expires = await bindingExpiry();
   const typed = evmBindingTypedData(chainId, fixture.vault, {
     githubUserId: old.githubUserId,
     destination: old.destination,

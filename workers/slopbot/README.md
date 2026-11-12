@@ -239,7 +239,6 @@ Do these in order. Each step names who does it and how to verify it.
    - `SLOPBOT_APP_ID`
    - `SLOPBOT_APP_USER_ID`
    - `SLOPBOT_APP_PRIVATE_KEY` (the PKCS#8 PEM)
-   - `ORBIO_API_KEY`
    - `SURPLUS_API_KEY`
 
    Orbio is primary; Surplus is backup. Each provider serves both models with
@@ -249,8 +248,11 @@ Do these in order. Each step names who does it and how to verify it.
    and `SURPLUS_BASE_URL` overrides must name verified endpoints for that
    provider. See the [Orbio authentication guide](https://www.orbio.so/developers/authentication)
    and [live model catalogue](https://api.orbio.so/api/v1/models).
-   The protected release qualification also requires both provider keys in
-   the GitHub release environment. Provision keys before releasing this route.
+   The protected `slop-production` GitHub environment requires both provider
+   keys. Its release uploads `ORBIO_API_KEY` together with the tested Worker
+   source in one version, retaining the existing App and Surplus secrets. It
+   verifies that version's ID, release tag, and all six secret bindings before
+   promotion. Do not set the Orbio key separately on the old live version.
 5. **Create the queues** in the production Cloudflare account (the account in
    `CLOUDFLARE_ACCOUNT_ID`, which also holds `slop-private`):
    `bunx wrangler queues create slopbot-jobs` and

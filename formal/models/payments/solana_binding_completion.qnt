@@ -177,17 +177,28 @@ module solana_binding_completion {
     all { call.phase == "final-auth", s' = s.with("calls", s.calls.set(id, call.with("phase", "ready"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet generation = generations.oneOf()
-    nondet mode = modes.oneOf()
-    nondet body = bodies.oneOf()
-    nondet kind = Set("exact", "mismatch", "throw").oneOf()
-    nondet a = Set(false, true).oneOf()
-    any { replaceClaim, advanceHeight, advanceTime, refreshGeneration,
-      externalStatus(generation, a), begin(id, mode, generation, body), initialAuthorization(id, a),
-      readJournal(id), validateWalletBytes(id), commitCompletion(id), commitReply(id, a),
-      readStatus(id, a), finalAuthorization(id, a), transmit(id, a), sendReply(id, kind),
-      awaitFailure(id), respond(id, a), s' = s }
+    any {
+      replaceClaim,
+      advanceHeight,
+      advanceTime,
+      refreshGeneration,
+      { nondet generation = generations.oneOf() nondet a = Set(false, true).oneOf() externalStatus(generation, a) },
+      { nondet id = ids.oneOf() nondet generation = generations.oneOf() nondet mode = modes.oneOf()
+        nondet body = bodies.oneOf()
+        begin(id, mode, generation, body) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() initialAuthorization(id, a) },
+      { nondet id = ids.oneOf() readJournal(id) },
+      { nondet id = ids.oneOf() validateWalletBytes(id) },
+      { nondet id = ids.oneOf() commitCompletion(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() commitReply(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() readStatus(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() finalAuthorization(id, a) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() transmit(id, a) },
+      { nondet id = ids.oneOf() nondet kind = Set("exact", "mismatch", "throw").oneOf() sendReply(id, kind) },
+      { nondet id = ids.oneOf() awaitFailure(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() respond(id, a) },
+      s' = s
+    }
   }
   val invariant = all {
     generations.contains(s.generation), Set(1, 2).contains(s.claim),
@@ -217,7 +228,7 @@ module solana_binding_completion {
   action completed(id: int): bool = commitCompletion(id).then(commitReply(id, true))
   action ready(id: int): bool = readStatus(id, true).then(finalAuthorization(id, true))
   action submitted(id: int): bool = transmit(id, true).then(sendReply(id, "exact")).then(respond(id, true))
-  action firstFull = init.then(validatedCall(1, "valid-a")).then(completed(1))
+  run firstFull = init.then(validatedCall(1, "valid-a")).then(completed(1))
 
   run walletSlotCompletionPreservesGenerationTest = firstFull.then(ready(1)).then(submitted(1))
     .expect(s.rows.get(1) == "full" and s.signatures.get(1) == 1 and s.calls.get(1).selectedGeneration == 1 and invariant)

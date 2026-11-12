@@ -122,13 +122,27 @@ module contributor_lock_publication {
   def mayStart(actor: int): bool = s.guard == "none" and s.canonical == actor
     and s.handles.get(actor).published and not(s.handles.get(actor).released)
   action step = {
-    nondet actor = callers.oneOf()
-    nondet succeeds = Set(false, true).oneOf()
-    any { seedStale, beginAcquire(actor), prepare(succeeds), inspect, quarantine(succeeds),
-      publish(succeeds), cleanupStale(succeeds), rollback(succeeds), cleanupCandidate(succeeds),
-      cleanupGuard(succeeds), publishHandle, reportAcquireFailure, beginRelease(actor),
-      renameRelease(succeeds), cleanupReleased(succeeds), finishRelease,
-      confirmAllStopped, manualRecovery, s' = s }
+    any {
+      seedStale,
+      { nondet actor = callers.oneOf() beginAcquire(actor) },
+      { nondet succeeds = Set(false, true).oneOf() prepare(succeeds) },
+      inspect,
+      { nondet succeeds = Set(false, true).oneOf() quarantine(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() publish(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() cleanupStale(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() rollback(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() cleanupCandidate(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() cleanupGuard(succeeds) },
+      publishHandle,
+      reportAcquireFailure,
+      { nondet actor = callers.oneOf() beginRelease(actor) },
+      { nondet succeeds = Set(false, true).oneOf() renameRelease(succeeds) },
+      { nondet succeeds = Set(false, true).oneOf() cleanupReleased(succeeds) },
+      finishRelease,
+      confirmAllStopped,
+      manualRecovery,
+      s' = s
+    }
   }
   val invariant = all {
     s.attempt >= 0 and s.attempt <= 3,
@@ -213,20 +227,20 @@ module contributor_lock_publication {
     .then(beginAcquire(2)).then(prepare(true)).then(inspect).then(publish(true)).then(cleanupGuard(true))
     .then(publishHandle).then(beginRelease(1)).then(cleanupReleased(false)).then(cleanupGuard(true))
     .then(finishRelease).expect(s.canonical == 2 and mayStart(2) and s.tombstones == Set(1) and invariant)
-  action releaseGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  run releaseGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(true)).then(publishHandle).then(beginRelease(1))
     .then(renameRelease(true)).then(cleanupReleased(true)).then(cleanupGuard(false)).then(finishRelease)
   run releaseGuardFailureBlocksSuccessorAndRetryTest = releaseGuardFailure
     .expect(s.handles.get(1).released and not(s.handles.get(1).complete) and invariant)
     .then(beginRelease(1).fail())
   run releaseGuardFailureBlocksSuccessorTest = releaseGuardFailure.then(beginAcquire(2).fail())
-  action acquireGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  run acquireGuardFailure = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(false)).then(reportAcquireFailure)
   run manualGuardRecoveryIsExternalTest = acquireGuardFailure.then(manualRecovery.fail())
   run stoppedOwnerAllowsManualGuardRecoveryTest = acquireGuardFailure.then(confirmAllStopped).then(manualRecovery)
     .then(beginAcquire(2)).then(prepare(true)).then(inspect).then(publish(true))
     .then(cleanupGuard(true)).then(publishHandle).expect(mayStart(2) and invariant)
-  action recoveredWithDebris = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
+  run recoveredWithDebris = init.then(beginAcquire(1)).then(prepare(true)).then(inspect)
     .then(publish(true)).then(cleanupGuard(true)).then(publishHandle).then(beginRelease(1))
     .then(renameRelease(true)).then(cleanupReleased(false)).then(cleanupGuard(false)).then(finishRelease)
     .then(confirmAllStopped).then(manualRecovery)

@@ -80,14 +80,35 @@ module ui_project_authority {
     s' = s.with("mounted", true).with("lifetime", 2).with("actor", 0)
       .with("status", "checking") }
   val controls = s.mounted and s.actor != 0 and s.verified == s.actor
-  action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet outcome = Set("success", "refused", "temporary").oneOf()
-    nondet available = Set(false, true).oneOf()
-    any { cookieChanges(actor), sessionObserved(actor), focus, begin(id), dispatch(id), admit(id),
-      response(id, outcome, actor), recheck(id, available), changeProject, depart, remount, s' = s }
+  // Bind choices inside the branch that reads them. Every original domain
+  // is nonempty, so distributing existential choice over this disjunction
+  // preserves enabledness and full-state successors while avoiding duplicate
+  // Cartesian enumeration. Invariants, direct actions and finite bounds stay.
+  action step = any {
+    { nondet actor = Set(0, 1, 2).oneOf()
+      cookieChanges(actor) },
+    { nondet actor = Set(0, 1, 2).oneOf()
+      sessionObserved(actor) },
+    focus,
+    { nondet id = ids.oneOf()
+      begin(id) },
+    { nondet id = ids.oneOf()
+      dispatch(id) },
+    { nondet id = ids.oneOf()
+      admit(id) },
+    { nondet id = ids.oneOf()
+      nondet actor = Set(0, 1, 2).oneOf()
+      nondet outcome = Set("success", "refused", "temporary").oneOf()
+      response(id, outcome, actor) },
+    { nondet id = ids.oneOf()
+      nondet available = Set(false, true).oneOf()
+      recheck(id, available) },
+    changeProject,
+    depart,
+    remount,
+    s' = s
   }
+
   val invariant = all { controls implies s.status == "allowed",
     not(s.mounted) implies not(controls),
     ids.forall(id => s.requests.get(id).admitted implies

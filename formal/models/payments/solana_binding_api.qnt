@@ -201,25 +201,40 @@ module solana_binding_api {
       request.with("phase", "done").with("response", if (received) request.desired else "lost"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet scope = scopes.oneOf()
-    nondet mode = modes.oneOf()
-    nondet profile = profiles.oneOf()
-    nondet first = rows.oneOf()
-    nondet second = rows.oneOf()
-    nondet input = inputClasses.oneOf()
-    nondet sessionClass = Set("member", "missing", "expired", "error").oneOf()
-    nondet expected = Set("absent", "matching", "invalid", "changed").oneOf()
-    nondet context = Set("matching", "missing", "duplicate", "missing-fields", "error").oneOf()
-    nondet fetch = Set("ok", "non-ok", "throw").oneOf()
-    nondet envelope = envelopes.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    any { configure(profile, first, second, a, b), advance, replaceClaim, closeAttempt(scope), begin(id, mode),
-      origin(id, a), session(id, sessionClass), expectedActor(id, expected), body(id, input), serviceGate(id),
-      ordinaryQuery(id), ownerQuery(id), commitAudit(id), auditReply(id, a), privateQuery(id), contextGate(id),
-      contextReply(id, context), selectedService(id), dispatch(id), serviceEffect(id), fetchReply(id, fetch),
-      responseJson(id, envelope), lookupFailure(id), respond(id, a), s' = s }
+    any {
+      { all { not(s.configured), {
+          nondet profile = profiles.oneOf() nondet first = rows.oneOf() nondet second = rows.oneOf()
+          nondet a = Set(false, true).oneOf() nondet b = Set(false, true).oneOf()
+          configure(profile, first, second, a, b) } } },
+      advance,
+      replaceClaim,
+      { nondet scope = scopes.oneOf() closeAttempt(scope) },
+      { nondet id = ids.oneOf() nondet mode = modes.oneOf() begin(id, mode) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() origin(id, a) },
+      { nondet id = ids.oneOf() nondet sessionClass = Set("member", "missing", "expired", "error").oneOf()
+        session(id, sessionClass) },
+      { nondet id = ids.oneOf() nondet expected = Set("absent", "matching", "invalid", "changed").oneOf()
+        expectedActor(id, expected) },
+      { nondet id = ids.oneOf() nondet input = inputClasses.oneOf() body(id, input) },
+      { nondet id = ids.oneOf() serviceGate(id) },
+      { nondet id = ids.oneOf() ordinaryQuery(id) },
+      { nondet id = ids.oneOf() ownerQuery(id) },
+      { nondet id = ids.oneOf() commitAudit(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() auditReply(id, a) },
+      { nondet id = ids.oneOf() privateQuery(id) },
+      { nondet id = ids.oneOf() contextGate(id) },
+      { nondet id = ids.oneOf()
+        nondet context = Set("matching", "missing", "duplicate", "missing-fields", "error").oneOf()
+        contextReply(id, context) },
+      { nondet id = ids.oneOf() selectedService(id) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() serviceEffect(id) },
+      { nondet id = ids.oneOf() nondet fetch = Set("ok", "non-ok", "throw").oneOf() fetchReply(id, fetch) },
+      { nondet id = ids.oneOf() nondet envelope = envelopes.oneOf() responseJson(id, envelope) },
+      { nondet id = ids.oneOf() lookupFailure(id) },
+      { nondet id = ids.oneOf() nondet a = Set(false, true).oneOf() respond(id, a) },
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 1, 2).contains(s.now), scopes.contains(s.claim), s.audits.subseteq(ids), s.effects.subseteq(ids),
@@ -237,8 +252,8 @@ module solana_binding_api {
         request.replyContext implies request.context and request.desired == "200",
         request.desired == "200" implies request.dispatched }
     }) }
-  action ordinary = init.then(configure("ordinary", "prepared", "unavailable", false, true))
-  action privateSetup = init.then(configure("private", "unavailable", "prepared", true, true))
+  run ordinary = init.then(configure("ordinary", "prepared", "unavailable", false, true))
+  run privateSetup = init.then(configure("private", "unavailable", "prepared", true, true))
   action admitted(id: int, mode: str): bool = begin(id, mode).then(origin(id, true)).then(session(id, "member"))
     .then(expectedActor(id, "matching")).then(body(id, "valid")).then(serviceGate(id))
   action ordinarySelected(id: int, mode: str): bool = admitted(id, mode).then(ordinaryQuery(id))
