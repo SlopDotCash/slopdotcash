@@ -27,7 +27,8 @@ export async function onRequest(
           project.id,
           project.manifest,
           project.revision,
-          () => livePin(project.manifest, undefined, templateSha256),
+          (repositoryId) =>
+            livePin(project.manifest, repositoryId, templateSha256),
         ),
     });
     if (artifact !== null) return artifact;

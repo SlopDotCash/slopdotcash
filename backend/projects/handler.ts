@@ -105,6 +105,7 @@ import {
   type AccessCheck,
   projectSetupStatus,
   type RepositoryAccessReader,
+  readListedRepositoryAccess,
   readRepositoryAccess,
   type ScanRequest,
   type ScanRequester,
@@ -1145,6 +1146,26 @@ async function runSetupCheck(
     }
   }
   const { authority, access } = checked;
+  // Every repository of the project needs the Slopbot installation.
+  const repositoryAccess: { repositoryId: string; access: AccessCheck }[] = [];
+  for (const entry of project.manifest.repositories.slice(1))
+    repositoryAccess.push({
+      repositoryId: entry.id,
+      access: (await readListedRepositoryAccess(
+        deps.repositoryAccess,
+        project.manifest,
+        entry.id,
+        actor,
+      )) ?? {
+        state: "retry",
+        message: `Slop has no permanent GitHub identity for ${entry.id}.`,
+      },
+    });
+  const installedEverywhere = repositoryAccess.every(
+    (read) =>
+      read.access.state === "read" &&
+      read.access.access.installation === "installed",
+  );
   const clearance = await deps.vettingClearance(
     project.id,
     project.manifest,
@@ -1177,6 +1198,7 @@ async function runSetupCheck(
     authority.state === "verified" &&
     access.state === "read" &&
     access.access.installation === "installed" &&
+    installedEverywhere &&
     clearance.state === "cleared" &&
     publishesGeneratedSkills(project.manifest)
   ) {
@@ -1194,6 +1216,7 @@ async function runSetupCheck(
     restriction,
     authority,
     access,
+    ...(repositoryAccess.length > 0 ? { repositoryAccess } : {}),
     clearance,
     scanRequest,
     activatedRevision,
@@ -2652,12 +2675,20 @@ async function recordEnforcement(
     const latestRestriction = restriction.records.findLast(
       (record) => record.action === "quarantine" || record.action === "ban",
     );
+    // A project with more than one repository needs this fresh clean scan
+    // of every repository, each at its own live pin.
+    const fresh =
+      vetting.state === "cleared" && vetting.assessment !== null
+        ? (vetting.repositoryAssessments ?? [vetting.assessment])
+        : [];
     if (
-      vetting.state !== "cleared" ||
-      vetting.assessment === null ||
-      vetting.assessment.revision !== project.revision ||
-      (latestRestriction !== undefined &&
-        vetting.assessment.requestedAt < latestRestriction.createdAt)
+      fresh.length === 0 ||
+      fresh.some(
+        (assessment) =>
+          assessment.revision !== project.revision ||
+          (latestRestriction !== undefined &&
+            assessment.requestedAt < latestRestriction.createdAt),
+      )
     )
       fail(
         409,
@@ -2665,8 +2696,11 @@ async function recordEnforcement(
         "Reinstatement requires a fresh clean scan of the current restricted revision, requested after the latest restriction, at the current integration-branch head and skill template.",
       );
     vettingReview = {
-      assessmentId: vetting.assessment.id,
-      maliciousAssessmentIds: vetting.reviewedMaliciousAssessmentIds ?? [],
+      assessmentId: fresh[0].id,
+      maliciousAssessmentIds:
+        vetting.state === "cleared" && vetting.assessment !== null
+          ? (vetting.reviewedMaliciousAssessmentIds ?? [])
+          : [],
     };
   }
   const selectedAccounts = input.responsibleAccounts ?? [];
