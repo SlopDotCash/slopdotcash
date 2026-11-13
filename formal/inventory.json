@@ -5793,7 +5793,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "b1aa01ae01492aa903c7985637c80fc67edd0b958f193add763ab32f973cd2a8",
+      "sha256": "b391dc0377464bd5d1524877611224f9f7f65e761bc3edd9445b5ff82adf6301",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
@@ -5802,9 +5802,9 @@
         "formal/models/ui/ui_vault_prompt_ownership.qnt"
       ],
       "candidateLines": [
-        63, 342, 343, 355, 367, 370, 373, 375, 377, 394, 399, 401, 415, 455,
-        457, 481, 486, 487, 496, 507, 524, 532, 533, 534, 535, 539, 545, 550,
-        551, 552, 553, 554, 557, 558, 569, 570, 572, 573, 574, 575
+        63, 342, 343, 355, 367, 370, 373, 375, 377, 394, 399, 401, 419, 459,
+        461, 485, 490, 491, 500, 511, 528, 536, 537, 538, 539, 543, 549, 554,
+        555, 556, 557, 558, 561, 562, 573, 574, 576, 577, 578, 579
       ],
       "review": "mapped-abstraction"
     },
@@ -7580,12 +7580,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "sha256": "4ae322244318e22e4d233adcd5183464e9be1eaa4a1d628ac1c2e00926414fb3",
+      "sha256": "a52933a9123833ab13c10663c1fbe6cab69fb8daf428b65af81c53649d9a4547",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/payments/operator_keeper_lifecycle.qnt"
       ],
-      "candidateLines": [62, 65, 93, 94, 103, 111, 136, 137],
+      "candidateLines": [
+        60, 66, 67, 81, 82, 83, 84, 85, 95, 96, 116, 119, 147, 148, 157, 165,
+        190, 191
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -8941,7 +8944,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "4fc98bc92c129a30fbc2b38352c0e80e20a82e3d05b7117cf653504acccf7c9f",
+      "sha256": "db304fe8748092d0ebd992674c93ce6144632c47824961d5505d5fd1b8683c67",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -8949,7 +8952,8 @@
         "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        246, 254, 255, 1761, 1762, 1943, 2004, 2025, 2092, 2108, 2151
+        249, 257, 258, 1772, 1773, 1809, 1810, 1979, 2040, 2061, 2128, 2144,
+        2187
       ],
       "review": "mapped-abstraction"
     },
@@ -18967,12 +18971,13 @@
     },
     {
       "path": "formal/models/vetting/vetting_path_coverage.qnt",
-      "sha256": "4e099ce87cf391f33c21cbabc155f088cc07bb1e705b900481bfcc03894b8745",
+      "sha256": "817f5a91825ea13fc87fe48e28c43f779d35c4a28a564cce2356330f9c4a1985",
       "sources": ["workers/vetting/bounded-scan.ts"],
       "scenarios": [
         "completeContentReviewTest",
         "omittedContentCannotPublishTest",
-        "previousCoverageCannotBeReusedTest"
+        "previousCoverageCannotBeReusedTest",
+        "unclassifiedTextCannotBeOmittedTest"
       ]
     },
     {
