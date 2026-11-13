@@ -20,11 +20,16 @@ afterAll(() => setSystemTime());
 
 const HUMAN_CLAIM = "a".repeat(64);
 const BOT_CLAIM = "b".repeat(64);
+const MERGE_CLAIM = "c".repeat(64);
 
 function snapshotWithJointUnits(
   botClaimActors: string[],
   changedLines?: [number | undefined, number | undefined],
-  options: { historicalCarrier?: boolean; missingCommit?: boolean } = {},
+  options: {
+    historicalCarrier?: boolean;
+    missingCommit?: boolean;
+    syncMerge?: boolean;
+  } = {},
 ) {
   const input = penaltyScoreInput([], GENERATED_AT);
   const pull = input.mergedPullRequests.find(
@@ -65,7 +70,9 @@ function snapshotWithJointUnits(
         ? [
             {
               ...unit("wu_shared", HUMAN_CLAIM),
-              claimIds: [HUMAN_CLAIM, BOT_CLAIM],
+              claimIds: options.syncMerge
+                ? [HUMAN_CLAIM, BOT_CLAIM, MERGE_CLAIM]
+                : [HUMAN_CLAIM, BOT_CLAIM],
               assessment: {
                 status: "assessed",
                 tier: "large",
@@ -80,6 +87,11 @@ function snapshotWithJointUnits(
       claims: [
         claim(HUMAN_CLAIM, [PENALIZED_AUTHOR.id]),
         claim(BOT_CLAIM, botClaimActors),
+        // The producer keeps a verified conflict resolution of a sync merge
+        // as a claim carrying the PR author (value-work-unit.ts).
+        ...(options.syncMerge
+          ? [claim(MERGE_CLAIM, [PENALIZED_AUTHOR.id])]
+          : []),
       ],
       sources: [
         {
@@ -119,6 +131,29 @@ function snapshotWithJointUnits(
                       type: "User",
                     },
                   })),
+                }
+              : {}),
+            ...(options.syncMerge
+              ? {
+                  commits: [
+                    ...[HUMAN_CLAIM, BOT_CLAIM].map((id, index) => ({
+                      sha: id.slice(0, 40),
+                      parents: [{ sha: "0".repeat(40) }],
+                      author: {
+                        node_id:
+                          index === 0 ? PENALIZED_AUTHOR.id : PROJECT_OWNER.id,
+                        type: "User",
+                      },
+                    })),
+                    {
+                      sha: MERGE_CLAIM.slice(0, 40),
+                      parents: [
+                        { sha: HUMAN_CLAIM.slice(0, 40) },
+                        { sha: "9".repeat(40) },
+                      ],
+                      author: { node_id: PENALIZED_AUTHOR.id, type: "User" },
+                    },
+                  ],
                 }
               : {}),
             ...(changedLines
@@ -182,6 +217,23 @@ test("a joint unit keeps its value and splits it by each author's claimed lines"
     ["wu_shared", PENALIZED_AUTHOR.id, 21.6],
     ["wu_shared", PROJECT_OWNER.id, 2.4],
   ]);
+});
+
+test("a sync merge's conflict resolution claim does not hold the line split", () => {
+  // PRD section 7: the split uses the unique accepted, non-merge commits and
+  // excludes synchronization merges, as the single pull request path does.
+  const snapshot = snapshotWithJointUnits([PROJECT_OWNER.id], [90, 10], {
+    syncMerge: true,
+  });
+  expect(jointMerges(snapshot)).toEqual([
+    ["wu_shared", PENALIZED_AUTHOR.id, 21.6],
+    ["wu_shared", PROJECT_OWNER.id, 2.4],
+  ]);
+  expect(
+    snapshot.valueAssessmentCoverage?.find(
+      (item) => item.pullRequestId === "PR_november",
+    )?.status,
+  ).not.toBe("incomplete");
 });
 
 test("a shared joint unit with missing line evidence holds its sources", () => {

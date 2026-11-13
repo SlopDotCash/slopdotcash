@@ -1,10 +1,22 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { implementationLineWeights } from "../src/lib/commit-credit";
-import { workUnitLineWeights } from "../src/lib/implementation-lines";
+import {
+  workUnitCreditActorIds,
+  workUnitLineWeights,
+} from "../src/lib/implementation-lines";
 import {
   PENALIZED_AUTHOR,
   PROJECT_OWNER,
 } from "../tests/penalty-score-fixture";
+import {
+  actor,
+  commit,
+  implemented,
+  makeOriginal,
+  repository,
+} from "../tests/value-promotion-fixture";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import type {
   WorkUnitClaim,
   WorkUnitEvidence,
@@ -141,4 +153,45 @@ test("current primary commit authors allocate a retained valuation without chang
     new Map([[PROJECT_OWNER.id, 10n]]),
   );
   expect(claim.implementationActorNodeIds).toEqual([PENALIZED_AUTHOR.id]);
+});
+
+test("a verified sync-merge resolution claim adds no recipient or line weight", async () => {
+  // The contributor merges the base branch into the PR branch and resolves a
+  // conflict in fix.ts. The score generator attaches the verified resolution
+  // (scripts/value-merge-ingestion.ts), and the producer keeps it as a claim.
+  const merge = "4".repeat(40);
+  const baseHead = "5".repeat(40);
+  const source = makeOriginal();
+  const patch =
+    "diff --git a/fix.ts b/fix.ts\n--- a/fix.ts\n+++ b/fix.ts\n@@ -1 +1 @@\n-export const fixed = true;\n+export const fixed = true as const;\n";
+  source.evidence.pull.head.sha = merge;
+  source.evidence.pull.commits = 2;
+  source.evidence.commits.push({
+    ...commit(merge),
+    parents: [{ sha: implemented }, { sha: baseHead }],
+  });
+  source.evidence.mergeResolutions = [
+    {
+      commitSha: merge,
+      parents: [implemented, baseHead],
+      gitVersion: "git version 2.45.0",
+      automaticTree: "e".repeat(40),
+      resolvedTree: "f".repeat(40),
+      hadConflicts: true,
+      patch,
+      patchSha256: createHash("sha256").update(patch).digest("hex"),
+      paths: ["fix.ts"],
+    },
+  ];
+  const joint = await prepareWorkUnitEvidence([source], [repository]);
+  expect(joint.limitations).toEqual([]);
+  const mergeClaim = joint.claims.find((claim) => claim.commitSha === merge);
+  if (!mergeClaim) throw new Error("fixture lost the merge resolution claim");
+  // PRD section 7: split by the unique accepted, non-merge commits and exclude
+  // synchronization merges. The merge claim adds no recipient, so the
+  // implementation commit's author keeps the whole line weight.
+  expect(workUnitCreditActorIds(joint, mergeClaim)).toEqual([]);
+  expect(workUnitLineWeights(joint, joint.claims)).toEqual(
+    new Map([[actor.node_id, 1n]]),
+  );
 });
