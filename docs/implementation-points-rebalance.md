@@ -39,6 +39,9 @@ verified again; an uploaded checkpoint is not its own evidence of completeness.
 ## Private eligibility and recording
 
 The reconcile job uses the production environment and publication lock. It
+binds the complete collection receipt and manifest to the current registry.
+Positive awards for work accepted on or after the recipient's existing account
+ban stay held; work accepted before that ban keeps its eligibility. It
 reads the same private project/month protection predicate used by `pointsSql`:
 monthly payment runs, allocation changes, direct transfers and unmapped legacy
 obligations. Missing, extra, duplicate or malformed query rows refuse the run.
@@ -51,7 +54,8 @@ remain intact. Displaced recipients receive zero-valued successor revisions.
 The domain validator checks actual Points projections as well as raw pool
 totals and refuses stale or incomplete connected pools.
 
-Immediately before a write the runner verifies it still uses current main.
+Immediately before a write the runner verifies it still uses current main
+and that the registry and account restrictions have not changed since planning.
 The unchanged atomic import guard checks private protection again, covering
 changes after the preflight. A pending public receipt is retained before import.
 Success requires the exact D1 batch digest, revision count and empty staging,

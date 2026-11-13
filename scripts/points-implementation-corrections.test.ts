@@ -158,17 +158,59 @@ function manifest(
     candidates,
   };
 }
+function otherCandidate(
+  journal: PointsJournal,
+): PointsImplementationCorrectionCandidate {
+  const otherSource = source();
+  otherSource.sourceId = "PR_other";
+  otherSource.sourceUrl = "https://github.com/SlopDotCash/asi/pull/2";
+  otherSource.headSha = sha("c");
+  otherSource.commitCount = 1;
+  otherSource.commits = [
+    {
+      sha: sha("c"),
+      parentCount: 1,
+      author: B,
+      additions: 1,
+      deletions: 0,
+      firstAcceptedSourceId: "PR_other",
+    },
+  ];
+  return {
+    id: "correction_other",
+    kind: "pull-request",
+    projectId: "asi",
+    sourceId: "PR_other",
+    sourceUrl: otherSource.sourceUrl,
+    occurredAt: OCCURRED,
+    workUnitId: "wu_other",
+    sourceIds: ["PR_other"],
+    expectedPredecessors: [...latestPoints(journal).values()]
+      .filter((revision) => revision.award.sourceId === "PR_other")
+      .map((revision) => ({
+        key: revision.award.key,
+        revisionId: revision.id,
+      })),
+    proof: {
+      status: "complete",
+      censusDigest: "c".repeat(64),
+      sources: [otherSource],
+    },
+  };
+}
 function apply(
   journal: PointsJournal,
   input = manifest(journal),
   eligible = true,
   at = RECORDED,
+  participationBans: ReadonlyMap<string, string> = new Map(),
 ) {
   return applyPointsImplementationCorrections(
     journal,
     input,
     input.candidates.map((row) => ({ candidateId: row.id, eligible })),
     at,
+    participationBans,
   );
 }
 function amounts(journal: PointsJournal) {
@@ -206,6 +248,61 @@ test("old v1 pool is shared in whole Points without revaluing or rewriting its h
     expect(revision.sourceDigest).toBe(result.manifestDigest);
     expect(revision.decision?.reason).toContain("unchanged historical");
   }
+});
+
+test("participation bans hold positive shares on or after the ban, preserving earlier work", () => {
+  for (const [bannedAt, held] of [
+    ["2025-12-31T23:59:59.000Z", true],
+    [OCCURRED, true],
+    ["2026-01-01T00:00:00.001Z", false],
+  ] as const) {
+    const journal = initial();
+    const result = apply(
+      journal,
+      manifest(journal),
+      true,
+      RECORDED,
+      new Map([[A.id, bannedAt]]),
+    );
+    expect(result.dispositions[0].status).toBe(held ? "held" : "applied");
+    if (held) expect(result.journal).toBe(journal);
+    else expect(amounts(result.journal)[A.id]).toBe(3);
+    expect(total(result.journal)).toBe(13);
+  }
+});
+
+test("a banned zero-share recipient does not block or redistribute the unchanged pool", () => {
+  const journal = initial([award(C, 1)]);
+  const result = apply(
+    journal,
+    manifest(journal),
+    true,
+    RECORDED,
+    new Map([[A.id, OCCURRED]]),
+  );
+  expect(result.dispositions[0].status).toBe("applied");
+  expect(amounts(result.journal)).toEqual({ [C.id]: 0, [B.id]: 1 });
+});
+
+test("the current ban map is mandatory and validates immutable IDs and canonical dates", () => {
+  const journal = initial();
+  const input = manifest(journal);
+  expect(() =>
+    Reflect.apply(applyPointsImplementationCorrections, undefined, [
+      journal,
+      input,
+      [{ candidateId: input.candidates[0].id, eligible: true }],
+      RECORDED,
+    ]),
+  ).toThrow("participation bans are required");
+  for (const bans of [
+    new Map([["bad actor id", OCCURRED]]),
+    new Map([[A.id, "2026-01-01T00:00:00Z"]]),
+    new Map([[A.id, "not-a-date"]]),
+  ])
+    expect(() => apply(journal, input, true, RECORDED, bans)).toThrow(
+      "invalid participation ban",
+    );
 });
 
 test("complete zero-line evidence uses actor-ID ties, while zero recipients cannot inflate the pool", () => {
@@ -332,6 +429,21 @@ test("the complete manifest replays once and never revives later corrections or 
   expect(total(replay.journal)).toBe(0);
 });
 
+test("a later ban does not make a recorded manifest replay rewrite history", () => {
+  const journal = initial();
+  const input = manifest(journal);
+  const first = apply(journal, input);
+  const replay = apply(
+    first.journal,
+    input,
+    true,
+    LATER,
+    new Map([[A.id, OCCURRED]]),
+  );
+  expect(replay.journal).toBe(first.journal);
+  expect(replay.dispositions[0].status).toBe("already-applied");
+});
+
 test("unrelated appends preserve the baseline prefix, but changed selected predecessors refuse", () => {
   const journal = initial();
   const input = manifest(journal);
@@ -369,6 +481,79 @@ test("a new connected grouped pool invalidates a stale ordinary correction", () 
   expect(() => apply(current, input)).toThrow("current source scope adds");
 });
 
+test("updated held work and its new sibling remain intact while unrelated work corrects", () => {
+  const original = award();
+  const journal = initial([original, award(C, 9, "PR_other", "wu_other")]);
+  const held = candidate(journal);
+  held.proof = { status: "held" };
+  const input = manifest(journal, [held, otherCandidate(journal)]);
+  const sibling = award(A, 7, SOURCE, `wu_${"f".repeat(64)}`, true);
+  const updated = { ...original, amount: 17 };
+  const current = appendPointAwards(
+    journal,
+    [updated, sibling],
+    "e".repeat(64),
+    "slop-score-v2",
+    COLLECTED,
+  );
+  const result = apply(current, input);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "held",
+    "applied",
+  ]);
+  expect(result.journal.revisions.slice(0, current.revisions.length)).toEqual(
+    current.revisions,
+  );
+  expect(latestPoints(result.journal).get(updated.key)?.award).toEqual(updated);
+  expect(latestPoints(result.journal).get(sibling.key)?.award).toEqual(sibling);
+  expect(
+    latestPoints(result.journal).get(
+      pointKey("asi", B.id, "merged-pull-request", "PR_other"),
+    )?.award.amount,
+  ).toBe(9);
+  expect(total(result.journal)).toBe(total(current));
+});
+
+test("a no-write component preserves newer recipients and siblings without blocking another correction", () => {
+  const oldA = award(A, 3);
+  const oldB = award(B, 10);
+  const journal = initial([
+    oldA,
+    oldB,
+    award(C, 0),
+    award(C, 9, "PR_other", "wu_other"),
+  ]);
+  const input = manifest(journal, [
+    candidate(journal),
+    otherCandidate(journal),
+  ]);
+  const sibling = award(A, 7, SOURCE, `wu_${"f".repeat(64)}`, true);
+  const current = appendPointAwards(
+    journal,
+    [{ ...oldA, amount: 4 }, { ...oldB, amount: 9 }, sibling],
+    "e".repeat(64),
+    "slop-score-v2",
+    COLLECTED,
+  );
+  const result = apply(current, input);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "unchanged",
+    "applied",
+  ]);
+  expect(result.journal.revisions.slice(0, current.revisions.length)).toEqual(
+    current.revisions,
+  );
+  expect(latestPoints(result.journal).get(oldA.key)?.award.amount).toBe(4);
+  expect(latestPoints(result.journal).get(oldB.key)?.award.amount).toBe(9);
+  expect(latestPoints(result.journal).get(sibling.key)?.award).toEqual(sibling);
+  expect(
+    latestPoints(result.journal).get(
+      pointKey("asi", B.id, "merged-pull-request", "PR_other"),
+    )?.award.amount,
+  ).toBe(9);
+  expect(total(result.journal)).toBe(total(current));
+});
+
 test("source-head and chronology mismatches cannot support a complete proof", () => {
   const journal = initial();
   const missingHead = manifest(journal);
@@ -385,7 +570,13 @@ test("every private eligibility entry is mandatory and no financial reason is re
   const journal = initial();
   const input = manifest(journal);
   const run = (eligibility: { candidateId: string; eligible: boolean }[]) =>
-    applyPointsImplementationCorrections(journal, input, eligibility, RECORDED);
+    applyPointsImplementationCorrections(
+      journal,
+      input,
+      eligibility,
+      RECORDED,
+      new Map(),
+    );
   expect(() => run([])).toThrow("every candidate exactly once");
   expect(() => run([{ candidateId: "unknown", eligible: true }])).toThrow();
   expect(() =>
@@ -519,12 +710,30 @@ test("an incomplete or privately ineligible grouped member retains the entire co
       { candidateId: second.input.candidates[1].id, eligible: false },
     ],
     RECORDED,
+    new Map(),
   );
   expect(retained.journal).toBe(second.journal);
   expect(retained.dispositions.map((row) => row.status)).toEqual([
     "retained",
     "retained",
   ]);
+});
+
+test("a prospective ban on one grouped recipient holds the whole connected source", () => {
+  const { journal, input } = grouped();
+  const result = apply(
+    journal,
+    input,
+    true,
+    RECORDED,
+    new Map([[A.id, OCCURRED]]),
+  );
+  expect(result.journal).toBe(journal);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "held",
+    "held",
+  ]);
+  expect(total(result.journal)).toBe(18);
 });
 
 test("partial unit scope, wrong decision, duplicated claims, and contradictory evidence refuse", () => {

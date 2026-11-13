@@ -3,8 +3,15 @@
  * complete until the entire repository ownership census is available.
  * This script never applies a correction or reads protected financial state.
  */
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { resolve } from "node:path";
 import { isCreditEligibleCommitAuthor } from "../src/lib/commit-credit";
 import {
@@ -51,6 +58,7 @@ import {
   completeOutcomeCommits,
   GitHubGraphqlClient,
   type GraphqlExecutor,
+  narrowedPageSize,
   OutcomeCommitLineLoader,
   parseSearchReference,
   resolveGitHubToken,
@@ -198,17 +206,36 @@ async function atomicJson(path: string, value: unknown) {
   await writeFile(temporary, `${encode(value)}\n`);
   await rename(temporary, path);
 }
-async function immutableBytes(path: string, bytes: Uint8Array) {
+/** Publish only a complete immutable file. An interrupted temporary write is
+ * never visible at the digest path and cannot poison a resumed campaign.
+ */
+export async function immutableBytes(path: string, bytes: Uint8Array) {
   await mkdir(resolve(path, ".."), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let failure: { error: unknown } | undefined;
   try {
-    await writeFile(path, bytes, { flag: "wx" });
+    await writeFile(temporary, bytes, { flag: "wx" });
+    try {
+      // link is an atomic create-if-absent operation on the same filesystem.
+      // rename would overwrite an existing immutable digest path.
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      requireThat(
+        digest(await readFile(path)) === digest(bytes),
+        "Immutable cache bytes changed",
+      );
+    }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    requireThat(
-      digest(await readFile(path)) === digest(bytes),
-      "Immutable cache bytes changed",
-    );
+    failure = { error };
   }
+  try {
+    await unlink(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !failure)
+      failure = { error };
+  }
+  if (failure) throw failure.error;
 }
 
 /** Exact successful responses are frozen within one baseline-bound campaign.
@@ -320,7 +347,11 @@ export class CorrectionEvidenceCache {
           }),
         ),
       );
-      if (response.ok && !parsed?.errors)
+      const validJson = typeof parsed === "object" && parsed !== null;
+      const completeGraphql =
+        url.pathname !== "/graphql" ||
+        (typeof parsed?.data === "object" && parsed.data !== null);
+      if (response.ok && validJson && completeGraphql && !parsed?.errors)
         await atomicJson(path, {
           status: response.status,
           headers,
@@ -344,18 +375,30 @@ function cachedExecutor(
     query: string,
     variables: Record<string, unknown> = {},
   ) => {
-    const body = encode({ query, variables });
-    const key = digest(
-      encode({ url: "https://api.github.com/graphql", method: "POST", body }),
-    );
-    const cached = await readJson<CachedResponse>(
-      resolve(cache.directory, "requests", `${key}.json`),
-    );
-    if (!cached)
-      return client.execute(
-        query,
-        variables as Parameters<typeof client.execute>[1],
+    let candidateVariables = variables as Parameters<
+      typeof narrowedPageSize
+    >[0];
+    let cached: CachedResponse | null;
+    for (;;) {
+      const body = encode({ query, variables: candidateVariables });
+      const key = digest(
+        encode({ url: "https://api.github.com/graphql", method: "POST", body }),
       );
+      cached = await readJson<CachedResponse>(
+        resolve(cache.directory, "requests", `${key}.json`),
+      );
+      if (cached) break;
+      // Canonical live retries can halve pageSize after a gateway failure.
+      // Reuse only those exact request variants; the caller still validates
+      // every cursor, total and final census digest from the retained bytes.
+      const narrower = narrowedPageSize(candidateVariables);
+      if (!narrower)
+        return client.execute(
+          query,
+          variables as Parameters<typeof client.execute>[1],
+        );
+      candidateVariables = narrower;
+    }
     const bytes = await readFile(
       resolve(cache.directory, "objects", cached.bodyDigest),
     );
@@ -402,7 +445,6 @@ interface SourceMetadata {
 interface SourceRead {
   outcome: MergedPullRequestOutcome;
   repositoryNodeId: string;
-  mergeSha: string;
 }
 async function readSources(
   client: GraphqlExecutor,
@@ -431,7 +473,6 @@ async function readSources(
       identities: NonNullable<
         Awaited<ReturnType<typeof completeOutcomeCommits>>
       >;
-      mergeSha: string;
       repositoryNodeId: string;
     }[] = [];
     for (const [index, candidate] of batch.entries()) {
@@ -465,11 +506,6 @@ async function readSources(
         );
         continue;
       }
-      const mergeSha = node.mergeCommit?.oid;
-      if (typeof mergeSha !== "string" || !/^[a-f0-9]{40}$/u.test(mergeSha)) {
-        held.set(candidate.sourceId, "accepted-merge-object-unavailable");
-        continue;
-      }
       const reference = parseSearchReference(
         node,
         `data.nodes[${index}]`,
@@ -487,7 +523,6 @@ async function readSources(
         candidate,
         outcome: reference.outcome,
         identities,
-        mergeSha,
         repositoryNodeId: live.id,
       });
     }
@@ -510,7 +545,6 @@ async function readSources(
       complete.set(item.candidate.sourceId, {
         outcome: item.outcome,
         repositoryNodeId: item.repositoryNodeId,
-        mergeSha: item.mergeSha,
       });
     }
   }
@@ -814,6 +848,7 @@ interface Campaign {
   baseline: ReturnType<typeof createPointsCorrectionBaseline>;
   through: string;
   before: string;
+  initialSearchPageSize?: number;
   projects: string[];
   registryDigest: string;
   repositories: RepositoryPlan[];
@@ -957,6 +992,7 @@ export async function collectImplementationCorrections(
       schemaVersion: "1",
       baseline,
       through,
+      initialSearchPageSize: 50,
       before:
         options.before ??
         new Date(Date.parse(through) - 35 * 24 * 60 * 60 * 1000).toISOString(),
@@ -967,6 +1003,13 @@ export async function collectImplementationCorrections(
     await atomicJson(resolve(directory, "baseline-journal.json"), journal);
     await atomicJson(resolve(directory, "campaign.json"), campaign);
   }
+  // Fieldless campaigns predate this optimization and keep their exact
+  // original request shape for raw-cache reconstruction.
+  const initialSearchPageSize = campaign.initialSearchPageSize ?? 100;
+  requireThat(
+    initialSearchPageSize === 50 || initialSearchPageSize === 100,
+    "Invalid frozen historical search page size",
+  );
   const limitations = new Map<string, string>();
   const allOutcomes: MergedPullRequestOutcome[] = [];
   const missingMonths: string[] = [];
@@ -1000,6 +1043,7 @@ export async function collectImplementationCorrections(
             { searchSliceCount: 0 },
             loader,
             plan.nodeId,
+            initialSearchPageSize,
           );
         } finally {
           cache.allowRequests = true;
@@ -1271,6 +1315,7 @@ export async function collectImplementationCorrections(
     registryDigest,
     censusDigest,
     ownershipComplete,
+    initialSearchPageSize,
     missingMonths,
     totalPositivePools: pools.length,
     selectedPools: selected.length,

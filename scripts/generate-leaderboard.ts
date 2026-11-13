@@ -1764,7 +1764,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
 // opaque `after` cursor valid, because a smaller `first` returns fewer nodes
 // from the same position, so callers page more times over an unchanged result
 // set and every reported total stays comparable.
-function narrowedPageSize(
+export function narrowedPageSize(
   variables: GraphqlVariables,
 ): GraphqlVariables | null {
   const current = variables.pageSize;
@@ -2454,13 +2454,22 @@ export async function collectSearchReferences(
   stats: { searchSliceCount: number },
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
+  initialSearchPageSize = GRAPHQL_PAGE_SIZE,
 ): Promise<NodeReference[]> {
+  if (
+    !Number.isInteger(initialSearchPageSize) ||
+    initialSearchPageSize < 1 ||
+    initialSearchPageSize > GRAPHQL_PAGE_SIZE
+  )
+    throw new Error(
+      "Initial search page size must be an integer from 1 to 100",
+    );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
     after: null,
-    pageSize: GRAPHQL_PAGE_SIZE,
+    pageSize: initialSearchPageSize,
     withMergeCommits: qualifier === "merged",
   });
   const firstPage = parseSearchPage(firstData, (value, path) =>
@@ -2484,6 +2493,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const right = await collectSearchReferences(
       client,
@@ -2496,6 +2506,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2524,7 +2535,7 @@ export async function collectSearchReferences(
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
-      pageSize: GRAPHQL_PAGE_SIZE,
+      pageSize: initialSearchPageSize,
       withMergeCommits: qualifier === "merged",
     });
     const page = parseSearchPage(data, (value, path) =>
