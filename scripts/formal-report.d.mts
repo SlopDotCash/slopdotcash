@@ -19,9 +19,12 @@ export function formalStageArguments(
   finiteTransition: { step: string } | null,
   temporalProperties?: string[],
 ): string[][];
+export function formalTimedOut(result: unknown): boolean;
+
 export function formalReportProblems(
   report: unknown,
   expected: FormalReportExpectation,
+  options?: { allowTimeout?: boolean },
 ): string[];
 
 export function formalAdapterOverlaySha256(adapterSha256: string): string;

@@ -18,6 +18,7 @@ import {
   formalAdapterOverlaySha256,
   formalReportProblems,
   formalStageArguments,
+  formalTimedOut,
   formalTimeoutMs,
   formalToolPaths,
 } from "./formal-report.mjs";
@@ -156,6 +157,63 @@ test("canonical commands keep all original scenario, seed, sample, step and inva
   expect(
     formalTimeoutMs("formal/models/ui/solana_wallet_provider.qnt", true),
   ).toBe(600000);
+});
+
+test("a verification that ran its whole allowance is a timeout, not a failure, only when allowed", () => {
+  const { report, expected } = fixture(true);
+  const [result] = report.results;
+  Object.assign(result, {
+    passed: false,
+    exitCode: 1,
+    error: null,
+    durationMs: expected.timeoutMs + 5,
+  });
+  expect(formalTimedOut(result)).toBe(true);
+  expect(formalReportProblems(report, expected)).toEqual([
+    "stage 1: failed or incomplete result",
+  ]);
+  expect(
+    formalReportProblems(report, expected, { allowTimeout: true }),
+  ).toEqual([]);
+  // Every other evidence check still applies to a timed-out stage.
+  result.sha256 = hash("wrong");
+  expect(
+    formalReportProblems(report, expected, { allowTimeout: true }),
+  ).toEqual(["stage 1: wrong model or digest"]);
+});
+
+for (const [name, change] of [
+  ["a counterexample before the deadline", { durationMs: 1000 }],
+  ["a recorded error", { error: "Verifier exceeded 8MiB output limit" }],
+  ["a passing exit status", { exitCode: 0 }],
+] as const) {
+  test(`${name} is never treated as a timeout`, () => {
+    const { report, expected } = fixture(true);
+    Object.assign(report.results[0], {
+      passed: false,
+      exitCode: 1,
+      error: null,
+      durationMs: expected.timeoutMs + 5,
+      ...change,
+    });
+    expect(formalTimedOut(report.results[0])).toBe(false);
+    expect(
+      formalReportProblems(report, expected, { allowTimeout: true }),
+    ).toEqual(["stage 1: failed or incomplete result"]);
+  });
+}
+
+test("ordinary scenario checks never accept a timeout", () => {
+  const { report, expected } = fixture(false);
+  Object.assign(report.results[0], {
+    passed: false,
+    exitCode: 1,
+    error: null,
+    durationMs: expected.timeoutMs + 5,
+  });
+  expect(
+    formalReportProblems(report, expected, { allowTimeout: true }),
+  ).toContain("stage 1: failed or incomplete result");
 });
 
 for (const verify of [false, true]) {

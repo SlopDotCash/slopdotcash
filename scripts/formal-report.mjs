@@ -196,8 +196,36 @@ function producerCommand(command, expectedArguments, verify, checkoutRoot) {
   return same(command.slice(index + 1), expectedArguments);
 }
 
-/** Return every failed contract instead of accepting absent fields as vacuous truth. */
-export function formalReportProblems(report, expected) {
+/**
+ * True when a verification stage ran its whole time allowance without a
+ * result: it failed with no recorded error and lasted at least its timeoutMs.
+ * A timeout proves nothing either way; a counterexample, a crash or a broken
+ * model ends before the deadline and stays a failure.
+ */
+export function formalTimedOut(result) {
+  return (
+    record(result) &&
+    result.passed === false &&
+    result.error === null &&
+    Number.isSafeInteger(result.exitCode) &&
+    result.exitCode !== 0 &&
+    Number.isSafeInteger(result.timeoutMs) &&
+    result.timeoutMs > 0 &&
+    Number.isSafeInteger(result.durationMs) &&
+    result.durationMs >= result.timeoutMs
+  );
+}
+
+/**
+ * Return every failed contract instead of accepting absent fields as vacuous
+ * truth. With allowTimeout, a verification stage that only timed out is not a
+ * failure; every identity, command, tool and view check still applies.
+ */
+export function formalReportProblems(
+  report,
+  expected,
+  { allowTimeout = false } = {},
+) {
   const problems = [];
   if (!record(report)) return ["report is not an object"];
   if (report.schemaVersion !== 1) problems.push("unsupported report schema");
@@ -236,9 +264,10 @@ export function formalReportProblems(report, expected) {
     if (typeof result.output !== "string")
       problems.push(`${label}: missing stage output`);
     if (
-      result.passed !== true ||
-      result.exitCode !== 0 ||
-      result.error !== null
+      (result.passed !== true ||
+        result.exitCode !== 0 ||
+        result.error !== null) &&
+      !(allowTimeout && expected.verify && formalTimedOut(result))
     )
       problems.push(`${label}: failed or incomplete result`);
     if (result.model !== expected.model || result.sha256 !== expected.sha256)
