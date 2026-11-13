@@ -47,9 +47,12 @@ import {
 } from "./project-draft-fixture";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 import {
+  holdVaultCreationReview,
   holdVaultWalletPreflight,
   leaveWithVaultPreflight,
+  releaseVaultCreationReview,
   releaseVaultPreflight,
+  waitForVaultCreationReview,
   waitForVaultPreflight,
 } from "./vault-request-fixture";
 
@@ -1232,7 +1235,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
   const origin = `http://127.0.0.1:${apiPort}`;
   const temporary = mkdtempSync(join(tmpdir(), "slop-vault-setup-"));
   let releaseSetupRejection = () => {};
-  let releaseCreationReview = () => {};
   if (!project.escrow) throw new Error("Missing project vault policy");
   const target = {
     ...project,
@@ -1589,42 +1591,27 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
     const setupKey = `slop:vault-setup:v1:${project.id}`;
-    let creationReviewStarted = () => {};
-    const creationReviewWaiting = new Promise<void>((resolve) => {
-      creationReviewStarted = resolve;
-    });
-    const creationReviewRelease = new Promise<void>((resolve) => {
-      releaseCreationReview = resolve;
-    });
     const setupPath = `/api/v1/project-vaults/${project.id}`;
-    await page.route(`**${setupPath}`, async (route) => {
-      if (
-        route.request().method() !== "POST" ||
-        route.request().postDataJSON()?.step !== "review"
-      ) {
-        await route.continue();
-        return;
-      }
-      const response = await route.fetch();
-      creationReviewStarted();
-      await creationReviewRelease;
-      await route.fulfill({ response });
-    });
-    const delayedReview = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === setupPath &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON()?.step === "review",
-    );
+    await holdVaultCreationReview(page, `${origin}${setupPath}`);
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
-    await creationReviewWaiting;
+    const heldReview = await waitForVaultCreationReview(page);
+    expect(heldReview.captured).toBe(1);
+    expect(heldReview.status).toBe(200);
+    expect(heldReview.bodyBytes).toBeGreaterThan(0);
     try {
       await page.getByRole("link", { name: "Slop home", exact: true }).click();
       await expect(setup).toHaveCount(0);
     } finally {
-      releaseCreationReview();
+      await releaseVaultCreationReview(page);
     }
-    await (await delayedReview).finished();
+    await page.waitForFunction(() => {
+      const state = (
+        window as typeof window & {
+          heldVaultCreationReview: { captured: number; released: boolean };
+        }
+      ).heldVaultCreationReview;
+      return state.captured === 1 && state.released;
+    });
     await page.evaluate(
       () =>
         new Promise<void>((resolve) =>
@@ -1635,7 +1622,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
     expect(
       await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
     ).toBeNull();
-    await page.unroute(`**${setupPath}`);
     await page.goBack();
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     if (!automatic) await monthlySetting.selectOption("off");
@@ -2000,7 +1986,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
   } finally {
-    releaseCreationReview();
+    await releaseVaultCreationReview(page);
     releaseSetupRejection();
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
