@@ -125,6 +125,8 @@ pre {
   border-color: var(--line-strong);
   background: transparent;
   color: var(--ink);
+  /* Keep enabled text and background paired, as for primary actions. */
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .secondary-button:hover {
@@ -624,8 +626,34 @@ label {
 }
 
 /* Home. */
+.home-audience-switch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+  margin: 0 0 32px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--brand-radius-medium);
+}
+
+.home-audience-switch .button {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 18px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.home-audience-switch .button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
 .hero {
-  padding-block: clamp(72px, 10vw, 140px) clamp(72px, 9vw, 128px);
+  padding-block: clamp(48px, 5vw, 72px) clamp(72px, 9vw, 128px);
 }
 
 .hero h1 {

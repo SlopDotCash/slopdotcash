@@ -183,6 +183,16 @@ No routine administrator approval is required. A stored applicant may publish th
 
 Maintainers may remove a registered project after a fresh check of their GitHub authority. Removal appends a paused, retired revision and hides the project from public discovery, work collection, and skill publication. Keep registry history, earned Points, private cases, and funded obligations. The applicant may cancel a pending application, including a pending update, without publishing it. Retain the cancelled record and prevent later publication. These maintainer controls are approved for the MVP (owner decision, 11 November 2026).
 
+### Maintainer agent entry
+
+Owner request, 13 November 2026: add a maintainer skill and a Contributor / Maintainer homepage switch within the MVP. The maintainer skill supports adding or resuming a project, reviewing GitHub work, repairing CI, maintaining project rules, handling authorized private reports, preparing monthly allocations, and removing a project or cancelling a pending application. It follows the user's requested task and the repository's rules; it does not create unrelated work or require renewed approval for actions already authorized.
+
+Keep one canonical global contributor skill and one canonical global maintainer skill, published at `/contribute/SKILL.md` and `/maintain/SKILL.md`. Keep `/SKILL.md` as the shared entry point. It routes an explicit contribution, review, private-report, or maintenance request to the corresponding skill and asks which journey only when the intent is missing or ambiguous. Publish each entry's source revision and integrity metadata through the existing build and discovery process. Project-specific contributor and reviewer skills retain their existing generation and installation contract; do not add per-project maintainer copies.
+
+The maintainer skill uses ordinary authorized GitHub tools for repository work and the existing authenticated Slop website for management. Choosing Maintainer is an intent, not proof of authority. Verify the current account and permanent repository identity, and recheck the required role before sensitive reads or writes. Do not substitute GitHub CLI authentication for a Slop session, extract browser cookies, or introduce a new terminal authentication mechanism. Without browser tools, complete independent repository work and prepare the exact remaining website steps.
+
+Preserve human decisions on bounty awards, escalated disputes, bans, and disclosure, and the existing financial and signer boundaries. Sign-in, installation consent, legal terms, and wallet authorization use their existing controls. Retain expected revisions, idempotency and uncertain attempts; a setup check may activate a project and is not a read-only poll. Do not change closure consent, funding requirements, payment policy, or production activation through this entry flow.
+
 ### Setup requirements
 
 Project contains the repository, integration branch, and contribution rules. Provide one picker for the user's public repositories and URL entry for other public repositories. Load repository facts after selection.
@@ -205,7 +215,7 @@ Owners may append public GitHub repositories to an existing project on its manag
 
 ### Skill source and installation
 
-Generate each skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
+Generate each project-specific skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
 
 The trust root is the canonical immutable template commit and approved D1 revision digest. The checksum detects corruption only. Resolve the full 40-character commit through the fixed canonical GitHub API. Verify the complete tree against immutable GitHub bytes and verify the rendered output against the approved digest.
 
@@ -481,6 +491,8 @@ Use existing routes and shared controls. Show the result, next action, and restr
 
 Home provides distinct contribution and private-report entry points. Show current security offers before project lists and rankings. Keep generic agent setup available even when discovery fails or no project is cleared.
 
+The hero has one Contributor / Maintainer switch above the headline. Contributor is the default; `?audience=maintainer` opens the maintainer view and an invalid value uses Contributor. Preserve the selected journey on reload and through browser navigation without cookies or local storage. The switch changes the headline, copied prompt, and every agent's skill destination together. Contributor keeps "Make money shipping open source"; Maintainer uses "Ship faster. With contributors." Both use the short instruction "Paste into your agent." Reset copy feedback and headline animation when switching. URL-only launchers receive the selected skill URL. Keep the direct Add a project route and the shared discovery sections. Use existing controls and icons with short accessible labels; add no role dashboard or explanatory cards. How it works links to both journeys and states that funding is optional. These interface changes are approved by the owner request of 13 November 2026.
+
 Preserve the campaign typing/deletion animation with a stable accessible heading. Disable it for reduced motion. Keep the header at the viewport top while scrolling. Keep the main landmark and keyboard navigation without the removed Skip to content link.
 
 Support mobile screens, keyboards, screen readers, reduced motion, and 200% zoom. Meet Web Content Accessibility Guidelines (WCAG) AA. Use field-linked errors, status announcements, exact readable values, and useful recovery actions.
@@ -693,7 +705,7 @@ Cite the relevant section and observable acceptance result in each implementatio
 | --- | --- |
 | Accounts | GitHub identity survives renames. Consent, visibility, closure, wallet replacement, and recovery follow section 3 without cross-account leakage. |
 | Contributors | Complete discovery, verified installation when used, attributed submission, acceptance, and Points. For an eligible funded award, also complete payment. Optional evidence never blocks submission. |
-| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. Remove a project with current authority or cancel a pending application; preserve history and obligations and refuse stale or unauthorized writes. |
+| Maintainers | Complete and resume setup without routine admin approval. Enter through the maintainer skill, preserve the user's task and existing authorization, and verify current authority for each sensitive action. Verify installation, admission, immutable revisions, and independent funding readiness. Remove a project with current authority or cancel a pending application; preserve history and obligations and refuse stale or unauthorized writes. |
 | Slopbot | Review registered repositories for free. Preserve incomplete outcomes, qualified closure scope, consent, reopen protection, penalties, and appeal escalation. |
 | Points | Complete source coverage, correct work/review shares, single debits and reversals, preserved history, and no duplicate credit. |
 | Security admission | Prove complete scans, honest exemptions, eligible two-flag pause, skill refusal, fresh reinstatement, and human confirmed-malicious decisions. |
@@ -701,7 +713,7 @@ Cite the relevant section and observable acceptance result in each implementatio
 | Monthly rewards | Prove one proposal and final allocation, full funding, owner adjustment/opt-out, cutoff fallback, permanent reserves, and exact finalized payment. |
 | Fee handling | Prove receipt, claim, conversion, reconciliation, and failure/restart controls. Keep Robinhood assets unconverted and enforce every value and gas limit. |
 | Operations | Prove role-scoped queues, idempotent notices, current consent, restoration, isolated local development, and explicit unavailable states. |
-| Interface | Verify all affected desktop/mobile flows, keyboard access, screen readers, 200% zoom, reduced motion, downloads, links, and console/network behavior. |
+| Interface | Verify all affected desktop/mobile flows, keyboard access, screen readers, 200% zoom, reduced motion, downloads, links, and console/network behavior. The audience switch, copied prompt, and agent skill URL agree after switching, reload, and browser navigation; copy failures remain recoverable. All three global skill entries are published with matching discovery integrity metadata. |
 | State correctness | Meet section 12 with source mappings, reachable scenarios, implementation evidence, and explicit gaps. |
 
 Use real provider calls for model behavior and real browser, database, and chain evidence where applicable. Record exact source revisions, client versions, providers, models, results, and limitations. Follow [CONTRIBUTING.md](../CONTRIBUTING.md) for required checks and affected agent-client coverage. Never publish secrets, private prompts/responses, source evidence, credentials, sessions, traces, or signing material.

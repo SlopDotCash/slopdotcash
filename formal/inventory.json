@@ -3428,7 +3428,7 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
+      "sha256": "133aacaf7fffc5b52a323e00229754f6ddbd8548094b48c8af406d2613fc9565",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -3724,12 +3724,12 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "2e2c7f4897eb9865a76d59bf62e954d02e421409526e686bbdb72ca79b43011f",
+      "sha256": "910f378791f465bd99217b162689acf49dccc3b7d108b1d57938ec1e8d2ad997",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
-      "candidateLines": [295, 296, 297, 320, 475, 572, 607],
+      "candidateLines": [299, 300, 301, 324, 479, 576, 611],
       "review": "mapped-abstraction"
     },
     {
@@ -4098,12 +4098,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "bb35b1fed7cfac71ed15e03465ee794a37cff36c56a2bc7cbe3d5b7b5cbfe4ad",
+      "sha256": "2e9c1e6b4858d9341303070c3c79edfceb75054150537f39e8c954f2139acb04",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
-        "formal/models/release/release_publication.qnt"
+        "formal/models/release/release_publication.qnt",
+        "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [214, 297],
+      "candidateLines": [218, 263, 329],
       "review": "mapped-abstraction"
     },
     {
@@ -4782,13 +4783,14 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "4d4f35b950112717ca991456923f8484f0e88802877fc9625d0ed22078711d46",
+      "sha256": "d4e71b300eefcc790c318b20ccffabc4c9abe3d8947cedc9bf8c91e5290a137e",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -4800,13 +4802,13 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 286, 296, 306, 317, 326, 327, 328, 329, 330, 332, 333, 394, 449,
-        450, 451, 454, 477, 543, 574, 611, 651, 655, 657, 698, 755, 811, 1021,
-        1036, 1050, 1060, 1090, 1093, 1155, 1158, 1160, 1164, 1165, 1173, 1192,
-        1196, 1204, 1205, 1212, 1216, 1251, 1295, 1298, 1315, 1316, 1359, 1361,
-        1381, 1383, 1438, 1439, 1442, 1443, 1446, 1447, 1464, 1465, 1471, 1476,
-        1478, 1482, 1483, 1541, 1551, 1582, 1584, 1609, 1610, 1627, 1628, 1639,
-        1641, 1654, 1657, 1668
+        13, 15, 301, 311, 321, 332, 341, 342, 343, 344, 345, 347, 348, 409, 465,
+        466, 467, 470, 493, 559, 590, 627, 667, 671, 673, 714, 772, 828, 850,
+        851, 1068, 1083, 1097, 1107, 1142, 1145, 1207, 1210, 1212, 1216, 1217,
+        1225, 1244, 1248, 1256, 1257, 1264, 1268, 1303, 1347, 1350, 1367, 1368,
+        1411, 1413, 1433, 1435, 1490, 1491, 1494, 1495, 1498, 1499, 1516, 1517,
+        1523, 1528, 1530, 1534, 1535, 1574, 1597, 1607, 1638, 1640, 1665, 1666,
+        1683, 1684, 1695, 1697, 1710, 1713, 1724
       ],
       "review": "mapped-abstraction"
     },
@@ -5007,14 +5009,14 @@
     },
     {
       "path": "src/Link.tsx",
-      "sha256": "e9deac09fa0a079b3b1b39b488b8407976252de2aeb09ca8c32b962cb573a835",
+      "sha256": "d924fc4af9ef52ccaae7e0d289d6750c3a43a75c2eeaf72008d6db03c1cb616c",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_points_disputes.qnt"
       ],
-      "candidateLines": [1, 47, 49, 61, 67, 73, 93, 140],
+      "candidateLines": [1, 51, 53, 65, 77, 83, 106, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -5406,11 +5408,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "0d609483172ee8f3db27ae1a9ec5565dccdde84d2c5344bc85b8540d4769ae75",
+      "sha256": "b20a7db5c783301d6a5e4fb971d9e1d64d8992b5408396791bb5a3a16793fce1",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        212, 297, 308, 343, 366, 367, 369, 370, 403, 405, 416, 565, 566, 568,
-        569, 610, 700
+        207, 292, 303, 338, 361, 362, 364, 365, 398, 400, 411, 560, 561, 563,
+        564, 605, 695
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6596,7 +6598,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "2b6bdcb44a7563537c7e3912adff16779335f051c87effa9ffa8a840c8f43f9e",
+      "sha256": "98a18b5c3b0d45e662eaeefe47b906c3e7380024e8ecba9cca20127d5bf7eddb",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -15685,6 +15687,17 @@
       ]
     },
     {
+      "path": "formal/models/tooling/global_skill_publication.qnt",
+      "sha256": "dffdb786e9e5935acd3ed8759c988e7ad83e8e4a054e77e2438368865ba4b403",
+      "sources": ["scripts/prepare-site.mjs"],
+      "scenarios": [
+        "completeSetTest",
+        "interruptedWriteIsIncompleteTest",
+        "invalidSourceDoesNotReplaceTest",
+        "missingRoleCannotPublishIndexTest"
+      ]
+    },
+    {
       "path": "formal/models/tooling/integration_pipeline.qnt",
       "sha256": "2bd1287c7ac3519836c19668e2d00510d125442fa35e65808aa0b0adf7fc1b57",
       "sources": [
@@ -16556,9 +16569,10 @@
     },
     {
       "path": "formal/models/ui/ui_hash_navigation.qnt",
-      "sha256": "efdc999363d0267088eb43013d45e9278cb17c1009ab2a8eae581bd928edf518",
+      "sha256": "819e86cc6d811dc65cf9f6aa8d0665fbce6824c3bdf1f1560611440764261825",
       "sources": ["src/App.tsx", "src/Link.tsx"],
       "scenarios": [
+        "audienceEntryKeepsViewportAndReturnTest",
         "delayedTargetTest",
         "readerStopsObserverTest",
         "restoreReaderPositionTest",
@@ -16591,6 +16605,21 @@
         "diagnosticUsageTest",
         "emptyTest",
         "immutableArchiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_home_audience.qnt",
+      "sha256": "aa8c501d3720d04fbe3913424d41f6552737de75798e7929d334d7438d43b1cf",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "defaultContributorTest",
+        "directMaintainerTest",
+        "historyRestoresRoleTest",
+        "invalidFallsBackTest",
+        "newSelectionDiscardsForwardHistoryTest",
+        "roleChangeClearsFailureTest",
+        "roleChangeClearsSuccessTest",
+        "selectedRoleSurvivesReloadTest"
       ]
     },
     {

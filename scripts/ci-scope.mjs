@@ -71,8 +71,8 @@ if (ui)
     lane("preview-2", "preview", "chromium firefox", "2/2"),
     lane("pages", "pages", "chromium", "1/1"),
   );
-// Root skill edits change raw Markdown and discovery bytes checked by Pages.
-if (!ui && changed(/^skills\/slop\//u))
+// Global skill edits change raw Markdown and discovery bytes checked by Pages.
+if (!ui && changed(/^skills\/slop(?:-contributor|-maintainer)?\//u))
   lanes.push(lane("pages", "pages", "chromium", "1/1"));
 if (api)
   lanes.push(

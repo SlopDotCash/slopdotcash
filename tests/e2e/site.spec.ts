@@ -6,6 +6,7 @@ import { readLeaderboardResponse } from "./leaderboard-response";
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
@@ -527,7 +528,7 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
   ).toContainText("$1,000,000");
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
-  ).toContainText(`${new URL(page.url()).origin}/SKILL.md`);
+  ).toContainText(`${new URL(page.url()).origin}/contribute/SKILL.md`);
   for (const agent of ["Cursor", "ChatGPT", "Claude"])
     await expect(
       page.getByRole("link", { name: agent, exact: true }),
@@ -1536,6 +1537,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
     request.get("/.well-known/agent-skills/index.json"),
@@ -1545,6 +1547,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
+    request.get("/skill-manifest.json"),
   ]);
   for (const response of [
     bootstrapResponse,
@@ -1555,6 +1558,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ]) {
     expect(response.status()).toBe(200);
   }
@@ -1596,8 +1600,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(rules).toContain("## Historical protocol record");
   }
   expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
-  const bootstrap = await bootstrapResponse.body();
-  const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
   const discovery = (await discoveryResponse.json()) as {
     $schema: string;
     skills: Array<{
@@ -1607,19 +1609,71 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
       url: string;
     }>;
   };
-  expect(discovery).toEqual({
-    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-    skills: [
-      expect.objectContaining({
-        digest: `sha256:${bootstrapDigest}`,
-        name: "slop",
-        type: "skill-md",
-        url: "https://slop.cash/SKILL.md",
-      }),
-    ],
+  expect(discovery.$schema).toBe(
+    "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  );
+  const manifest = await skillManifestResponse.json();
+  expect(skillManifestResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(skillManifestResponse.headers()["access-control-allow-origin"]).toBe(
+    "*",
+  );
+  const globalSkills = [
+    { name: "slop", path: "/SKILL.md" },
+    { name: "slop-contributor", path: "/contribute/SKILL.md" },
+    { name: "slop-maintainer", path: "/maintain/SKILL.md" },
+  ];
+  expect(discovery.skills.map((skill) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest.skills.map((skill: { name: string }) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest).toMatchObject({
+    schemaVersion: "1",
+    repository: "SlopDotCash/slopdotcash",
+    revision: expect.stringMatching(/^[a-f0-9]{40}$/u),
   });
-  expect(await discoverySkillResponse.body()).toEqual(bootstrap);
-  expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
+  const llms = await llmsResponse.text();
+  for (const [index, skill] of globalSkills.entries()) {
+    const [response, alias] =
+      skill.name === "slop"
+        ? [bootstrapResponse, discoverySkillResponse]
+        : await Promise.all([
+            request.get(skill.path),
+            request.get(`/.well-known/agent-skills/${skill.name}/SKILL.md`),
+          ]);
+    for (const published of [response, alias]) {
+      expect(published.status()).toBe(200);
+      expect(published.headers()["content-type"]).toContain("text/markdown");
+      expect(published.headers()["access-control-allow-origin"]).toBe("*");
+      expect(published.headers()["cache-control"]).toContain("max-age=300");
+    }
+    const bytes = await response.body();
+    const source = `skills/${skill.name}/SKILL.md`;
+    expect(bytes).toEqual(
+      readFileSync(new URL(`../../${source}`, import.meta.url)),
+    );
+    expect(await alias.body()).toEqual(bytes);
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    expect(discovery.skills[index]).toMatchObject({
+      name: skill.name,
+      type: "skill-md",
+      url: `https://slop.cash${skill.path}`,
+      digest,
+    });
+    expect(manifest.skills[index]).toEqual({
+      name: skill.name,
+      source,
+      url: `https://slop.cash${skill.path}`,
+      digest,
+      revision: manifest.revision,
+      revisionStatus: expect.stringMatching(/^(committed|working-tree)$/u),
+    });
+    expect(llms).toContain(`https://slop.cash${skill.path}`);
+    expect(llms).toContain(`SHA-256: ${digest.slice("sha256:".length)}`);
+  }
 });
 
 test("shows an explicit error for invalid data and retries", async ({
