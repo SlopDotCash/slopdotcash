@@ -70,7 +70,7 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "0a00013b3fed0db3abb9f11a62d88c2d05d789113b1fbc2e8f1d6bb881c832e1",
+      "sha256": "0d8821435834ad066ee52073aed09af2762f4481d23f179c560e8ab5255d9bcf",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
@@ -3455,13 +3455,13 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "b077b5cfe626965442939d553f12c1932eb832b5aaa70e7b04269a3ec386a395",
+      "sha256": "beb96e4cd3c8719776131b048825c834d42a82da8a09c809e833fa5106c21d84",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 7, 65, 145, 182, 198, 199, 204, 264, 287, 317, 325, 330, 384, 395,
-        458, 746, 1131, 1189, 1225, 1250, 1277, 1279
+        4, 11, 13, 73, 153, 190, 206, 207, 217, 220, 291, 314, 344, 356, 361,
+        427, 438, 499, 780, 1175, 1233, 1269, 1294, 1322, 1324
       ],
       "review": "mapped-abstraction"
     },
@@ -3811,7 +3811,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "190b09da31cd853bed1e645c716352e77db3c65997345c1adf7cfdd39e05b04c",
+      "sha256": "f736b7aa026166c570006529c22adae06dbd2097e728b483de9ee581410b1848",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3826,12 +3826,12 @@
         29, 184, 195, 204, 284, 296, 298, 301, 404, 492, 513, 549, 580, 645,
         677, 757, 790, 799, 807, 872, 1068, 1303, 1365, 1373, 1431, 1484, 1487,
         1680, 1689, 1694, 1701, 1784, 1785, 1932, 1933, 1990, 2016, 2044, 2046,
-        2050, 2084, 2087, 2088, 2091, 2093, 2104, 2127, 2335, 2338, 2576, 2696,
-        2817, 2830, 2841, 2842, 3029, 3030, 3221, 3237, 3249, 3256, 3282, 3292,
-        3296, 3300, 3304, 3359, 3378, 3405, 3422, 3456, 3457, 3459, 3475, 3492,
-        3493, 3494, 3503, 3508, 3688, 4046, 4068, 4077, 4127, 4162, 4168, 4175,
-        4244, 4330, 4488, 4712, 4722, 4724, 4737, 4767, 4769, 4770, 4774, 4778,
-        4834, 4888, 4939, 4942, 4957
+        2050, 2084, 2087, 2088, 2091, 2093, 2104, 2127, 2335, 2338, 2587, 2707,
+        2828, 2841, 2852, 2853, 3040, 3041, 3232, 3248, 3260, 3267, 3293, 3303,
+        3307, 3311, 3315, 3370, 3389, 3416, 3433, 3467, 3468, 3470, 3486, 3503,
+        3504, 3505, 3514, 3519, 3699, 4057, 4079, 4088, 4138, 4173, 4179, 4186,
+        4255, 4341, 4499, 4723, 4733, 4735, 4748, 4778, 4780, 4781, 4785, 4789,
+        4845, 4899, 4950, 4953, 4968
       ],
       "review": "mapped-abstraction"
     },
@@ -4074,12 +4074,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "3213346c0a9b5f8b0f27a78ce2629afb73955d648c5d619e96d1bfcccc736da3",
+      "sha256": "d44654ff84297c1445aee7095d8961b1c093b93df31681c092108dc4955c4eac",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 24, 206, 266, 278, 279, 280, 290, 294, 296, 308, 309, 325, 331, 341
+        4, 29, 40, 238, 301, 335, 347, 348, 349, 358, 363, 367, 369, 381, 382,
+        398, 404, 414
       ],
       "review": "mapped-abstraction"
     },
@@ -4619,7 +4620,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "aab43c0e9ac7bc66844b076f5fbb2a786f68c907c736c250f2f98b919d389f70",
+      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4627,8 +4628,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        65, 76, 123, 124, 125, 126, 128, 129, 196, 197, 198, 200, 201, 736, 756,
-        878, 914, 953, 977
+        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
+        879, 915, 954, 978
       ],
       "review": "mapped-abstraction"
     },
@@ -6223,12 +6224,13 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "3280f5a768fa910a8d7eb240c71dec8c67c5761eed1d5e5110853c2b151d5193",
+      "sha256": "5fb22145fe1ef43ca8d7c941a0beaa5a923a51e767db8d8864edb7e44f8c962f",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        82, 90, 101, 115, 122, 242, 399, 545, 550, 637, 709, 766, 847, 848, 849
+        83, 91, 102, 116, 123, 243, 400, 559, 564, 659, 731, 766, 794, 895, 896,
+        897
       ],
       "review": "mapped-abstraction"
     },

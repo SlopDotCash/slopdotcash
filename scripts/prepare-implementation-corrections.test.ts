@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   appendPointAwards,
   emptyPointsJournal,
@@ -12,6 +13,7 @@ import {
   correctionScopes,
   readCorrectionEligibility,
   recordCorrection,
+  verifyCorrectionCollection,
 } from "./prepare-implementation-corrections";
 
 function manifest(
@@ -42,6 +44,67 @@ const row = (period: string, protectedValue: number | boolean = 0) => ({
   protected: protectedValue,
 });
 const response = (rows: unknown[]) => [{ success: true, results: rows }];
+
+test("only the current registry and exact complete collection authorize apply", () => {
+  const input = manifest();
+  const registry = { projects: [{ id: "eliza", status: "active" }] };
+  const hash = (value: unknown) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const receipt = {
+    schemaVersion: "slop-implementation-correction-collection-v1",
+    manifestDigest: hash(input),
+    through: input.generatedAt,
+    registryDigest: hash(registry),
+    ownershipComplete: true,
+    totalPositivePools: input.candidates.length,
+    completeProofs: 0,
+    heldProofs: input.candidates.length,
+  };
+  expect(() =>
+    verifyCorrectionCollection(input, receipt, registry, true),
+  ).not.toThrow();
+  for (const invalid of [
+    { ...receipt, manifestDigest: "f".repeat(64) },
+    { ...receipt, through: "2026-11-12T00:00:00.000Z" },
+    { ...receipt, ownershipComplete: false },
+    { ...receipt, completeProofs: 1 },
+    { ...receipt, totalPositivePools: input.candidates.length - 1 },
+  ])
+    expect(() =>
+      verifyCorrectionCollection(input, invalid, registry, true),
+    ).toThrow();
+  expect(() =>
+    verifyCorrectionCollection(
+      input,
+      receipt,
+      { projects: [{ id: "eliza", status: "paused" }] },
+      true,
+    ),
+  ).toThrow();
+  const partial = { ...receipt, ownershipComplete: false };
+  expect(() =>
+    verifyCorrectionCollection(input, partial, registry, false),
+  ).not.toThrow();
+  const dishonest = structuredClone(input);
+  dishonest.candidates[0].proof = {
+    status: "complete",
+    censusDigest: "c".repeat(64),
+    sources: [],
+  };
+  expect(() =>
+    verifyCorrectionCollection(
+      dishonest,
+      {
+        ...partial,
+        manifestDigest: hash(dishonest),
+        completeProofs: 1,
+        heldProofs: input.candidates.length - 1,
+      },
+      registry,
+      false,
+    ),
+  ).toThrow();
+});
 
 test("private preflight maps each pool from an exact project-period row", () => {
   const input = manifest();

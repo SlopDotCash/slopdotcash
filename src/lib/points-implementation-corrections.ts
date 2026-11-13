@@ -5,7 +5,8 @@
  * responses, the registry, retained-copy bindings and grouped decision scope.
  * This is not an upload validator or an alternative GitHub authority. It checks
  * the collector's structural proof, derives weights, and preserves the current
- * journal's value. Private eligibility must come from the protected workflow;
+ * journal's value. The caller supplies current prospective participation bans.
+ * Private eligibility must come from the protected workflow;
  * the ordinary pointsSql financial guard remains mandatory at publication.
  */
 import { isCreditEligibleCommitAuthor } from "./commit-credit";
@@ -462,8 +463,21 @@ export function applyPointsImplementationCorrections(
   manifest: PointsImplementationCorrectionManifest,
   eligibility: readonly PointsCorrectionEligibility[],
   recordedAt: string,
+  participationBans: ReadonlyMap<string, string>,
 ): PointsImplementationCorrectionResult {
   assertPointsJournal(journal);
+  check(
+    participationBans instanceof Map,
+    "current participation bans are required",
+  );
+  const bannedAt = new Map<string, number>();
+  for (const [actorId, at] of participationBans) {
+    check(
+      typeof actorId === "string" && node.test(actorId) && instant(at),
+      "invalid participation ban identity or date",
+    );
+    bannedAt.set(actorId, Date.parse(at));
+  }
   check(
     manifest.schemaVersion === "1" &&
       manifest.rule === "historical-implementation-allocation-v1" &&
@@ -595,7 +609,15 @@ export function applyPointsImplementationCorrections(
         JSON.stringify(award) !==
         JSON.stringify(baseline.get(award.key)?.award),
     );
-    return { candidate, key, previous, proof, changed };
+    const participationHeld = replacements.some((award) => {
+      const at = bannedAt.get(award.actor.id);
+      return (
+        award.amount > 0 &&
+        at !== undefined &&
+        Date.parse(candidate.occurredAt) >= at
+      );
+    });
+    return { candidate, key, previous, proof, changed, participationHeld };
   });
   check(
     sameSet(
@@ -712,28 +734,6 @@ export function applyPointsImplementationCorrections(
       })),
     };
   }
-  for (const revision of current.values())
-    check(
-      !(
-        revision.award.category === "merged-pull-request" &&
-        revision.award.amount > 0 &&
-        selectedSources.has(
-          JSON.stringify([revision.award.projectId, revision.award.sourceId]),
-        ) &&
-        !selected.has(revision.award.key)
-      ),
-      "current source scope adds an unselected implementation pool",
-    );
-  for (const plan of plans) {
-    const now = currentPools.get(plan.key) ?? [];
-    check(
-      sameSet(
-        now.map((revision) => revision.id),
-        plan.previous.map((revision) => revision.id),
-      ),
-      "selected predecessors changed after the baseline",
-    );
-  }
   // Connected sources move together: incomplete proof or private ineligibility
   // cannot leave one part of a grouped contribution reassigned in isolation.
   const parent = plans.map((_, index) => index);
@@ -765,15 +765,63 @@ export function applyPointsImplementationCorrections(
   });
   const dispositions = new Map<string, PointsCorrectionDisposition["status"]>();
   const ready: typeof plans = [];
+  const currentPositiveSources = new Map<string, PointRevision[]>();
+  for (const revision of current.values()) {
+    const award = revision.award;
+    if (award.category !== "merged-pull-request" || award.amount <= 0) continue;
+    const key = JSON.stringify([award.projectId, award.sourceId]);
+    const rows = currentPositiveSources.get(key) ?? [];
+    rows.push(revision);
+    currentPositiveSources.set(key, rows);
+  }
   for (const component of components.values()) {
     const retained = component.some(
       (plan) => !permitted.get(plan.candidate.id),
     );
-    const held = component.some((plan) => !plan.proof || ambiguous.has(plan));
+    const held = component.some(
+      (plan) => !plan.proof || ambiguous.has(plan) || plan.participationHeld,
+    );
     if (retained || held) {
       for (const plan of component)
         dispositions.set(plan.candidate.id, retained ? "retained" : "held");
       continue;
+    }
+    if (!component.some((plan) => plan.changed.length > 0)) {
+      for (const plan of component)
+        dispositions.set(plan.candidate.id, "unchanged");
+      continue;
+    }
+    // A fresh rolling publication may update held or no-write pools while this
+    // historical census runs. Only a component that will append awards needs
+    // exact current predecessors and complete current sibling scope.
+    const componentKeys = new Set(
+      component.flatMap((plan) =>
+        plan.previous.map((revision) => revision.award.key),
+      ),
+    );
+    const componentSources = new Set(
+      component.flatMap((plan) =>
+        plan.candidate.sourceIds.map((id) =>
+          JSON.stringify([plan.candidate.projectId, id]),
+        ),
+      ),
+    );
+    for (const source of componentSources)
+      check(
+        (currentPositiveSources.get(source) ?? []).every((revision) =>
+          componentKeys.has(revision.award.key),
+        ),
+        "current source scope adds an unselected implementation pool",
+      );
+    for (const plan of component) {
+      const now = currentPools.get(plan.key) ?? [];
+      check(
+        sameSet(
+          now.map((revision) => revision.id),
+          plan.previous.map((revision) => revision.id),
+        ),
+        "selected predecessors changed after the baseline",
+      );
     }
     ready.push(...component);
   }

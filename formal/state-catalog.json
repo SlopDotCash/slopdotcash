@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "6fe3666a19a13d83ced5b6d42416812ea5492613ae1bcec93b7751456527fe2f",
+  "inventorySha256": "7a2e3f4194c6eee089d86a3fe804567cd2c3c442c827dbb3111096ee24570b12",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2071,7 +2071,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3473,
+      "line": 3484,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2090,7 +2090,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4077,
+      "line": 4088,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2132,7 +2132,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 436,
+      "line": 437,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2153,7 +2153,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 445,
+      "line": 446,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
@@ -3099,7 +3099,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 122,
+      "line": 123,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],

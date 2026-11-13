@@ -10,13 +10,19 @@ import {
   pointKey,
 } from "../src/lib/points";
 import { findProject } from "../src/lib/projects.mjs";
+import { collectTargetRepositories } from "../src/lib/repositories.mjs";
 import {
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,
+  immutableBytes,
   inventoryCorrectionPools,
   parseCollectionArguments,
 } from "./collect-implementation-corrections";
+import {
+  collectSearchReferences,
+  type GraphqlExecutor,
+} from "./generate-leaderboard";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -114,11 +120,14 @@ function fixture(merge = sha) {
 }
 function transport(merge = sha) {
   let requests = 0;
+  const searchPageSizes: number[] = [];
   const call = Object.assign(
     async (_input: RequestInfo | URL, init?: RequestInit) => {
       requests++;
       const body = JSON.parse(String(init?.body));
       const query: string = body.query;
+      if (query.includes("LeaderboardSearchReferences"))
+        searchPageSizes.push(body.variables.pageSize);
       let data: Record<string, unknown>;
       if (query.includes("CorrectionRepository"))
         data = {
@@ -170,7 +179,7 @@ function transport(merge = sha) {
     },
     { preconnect: fetch.preconnect },
   );
-  return { call, requests: () => requests };
+  return { call, requests: () => requests, searchPageSizes };
 }
 
 test("inventory includes every positive current pool and all zero-valued predecessors", () => {
@@ -294,7 +303,7 @@ test("complete canonical census derives first acceptance and resumes from raw ev
   );
 });
 
-test("missing accepted merge object leaves its pool held even after census completion", async () => {
+test("linked ordinary attribution uses the canonical accepted source even when the merge object is unavailable", async () => {
   const dir = await directory(),
     network = transport("");
   const result = await collectImplementationCorrections(
@@ -313,11 +322,8 @@ test("missing accepted merge object leaves its pool held even after census compl
     },
   );
   expect(result.receipt.ownershipComplete).toBe(true);
-  expect(result.manifest.candidates[0].proof.status).toBe("held");
-  expect(result.receipt.limitations).toContainEqual({
-    id: "PR_source",
-    reason: "accepted-merge-object-unavailable",
-  });
+  expect(result.manifest.candidates[0].proof.status).toBe("complete");
+  expect(result.receipt.completeProofs).toBe(1);
 });
 
 test("evidence transport rejects mutations and untrusted origins before sending", async () => {
@@ -454,4 +460,295 @@ test("CLI rejects invalid calendar months", () => {
         month,
       ]),
     ).toThrow("Invalid census month");
+});
+
+test("immutable publication survives an orphan temporary file and concurrent identical writers", async () => {
+  const dir = await directory(),
+    path = join(dir, "object");
+  const bytes = new TextEncoder().encode("complete response bytes");
+  await writeFile(`${path}.orphan.tmp`, "interrupted prefix");
+  await Promise.all(
+    Array.from({ length: 8 }, () => immutableBytes(path, bytes)),
+  );
+  expect(await readFile(path, "utf8")).toBe("complete response bytes");
+  expect((await readdir(dir)).sort()).toEqual(["object", "object.orphan.tmp"]);
+  expect(await readFile(`${path}.orphan.tmp`, "utf8")).toBe(
+    "interrupted prefix",
+  );
+});
+
+test("racing different immutable bytes never overwrite the winner", async () => {
+  const dir = await directory(),
+    path = join(dir, "object");
+  const results = await Promise.allSettled([
+    immutableBytes(path, new TextEncoder().encode("first")),
+    immutableBytes(path, new TextEncoder().encode("second")),
+  ]);
+  expect(
+    results.filter((result) => result.status === "fulfilled"),
+  ).toHaveLength(1);
+  expect(results.filter((result) => result.status === "rejected")).toHaveLength(
+    1,
+  );
+  const retained = await readFile(path, "utf8");
+  expect(["first", "second"]).toContain(retained);
+  await expect(
+    immutableBytes(path, new TextEncoder().encode("replacement")),
+  ).rejects.toThrow("Immutable cache bytes changed");
+  expect(await readFile(path, "utf8")).toBe(retained);
+  expect(await readdir(dir)).toEqual(["object"]);
+});
+
+test("the canonical collector completes fifty-result pages with exact cursors and counts", async () => {
+  const project = findProject("asi");
+  if (!project) throw new Error("fixture project missing");
+  const repository = collectTargetRepositories([project])[0];
+  const observed: { pageSize: unknown; after: unknown }[] = [];
+  let requestCount = 0;
+  const client: GraphqlExecutor = {
+    async execute(query, variables = {}) {
+      requestCount++;
+      const rateLimit = {
+        cost: 1,
+        limit: 5000,
+        remaining: 4990,
+        resetAt: "2026-02-01T00:00:00Z",
+      };
+      if (query.includes("LeaderboardOutcomeCommitLines"))
+        return {
+          nodes: [
+            {
+              __typename: "Commit",
+              id: "C_source",
+              oid: sha,
+              additions: 2,
+              deletions: 1,
+              repository: { id: "R_kgDOT23CXA" },
+            },
+          ],
+          rateLimit,
+        };
+      observed.push({ pageSize: variables.pageSize, after: variables.after });
+      const offset = Number(variables.after ?? 0),
+        end = Math.min(offset + Number(variables.pageSize), 120);
+      const nodes = Array.from({ length: end - offset }, (_, index) => ({
+        ...fixture(),
+        id: `PR_page_${offset + index + 1}`,
+        number: offset + index + 1,
+        url: `https://github.com/SlopDotCash/asi/pull/${offset + index + 1}`,
+      }));
+      return {
+        search: {
+          issueCount: 120,
+          nodes,
+          pageInfo: { hasNextPage: end < 120, endCursor: String(end) },
+        },
+        rateLimit,
+      };
+    },
+    getRequestCount: () => requestCount,
+    getRateLimit: () => ({
+      cost: 1,
+      consumedDuringRun: requestCount,
+      limit: 5000,
+      remaining: 4990,
+      resetAt: "2026-02-01T00:00:00Z",
+    }),
+  };
+  const references = await collectSearchReferences(
+    client,
+    repository,
+    new Date("2026-01-01T00:00:00Z"),
+    new Date("2026-02-01T00:00:00Z"),
+    "merged",
+    "is:pr is:merged",
+    "PullRequest",
+    { searchSliceCount: 0 },
+    undefined,
+    "R_kgDOT23CXA",
+    50,
+  );
+  expect(references).toHaveLength(120);
+  expect(new Set(references.map((entry) => entry.id)).size).toBe(120);
+  expect(observed).toEqual([
+    { pageSize: 50, after: null },
+    { pageSize: 50, after: "50" },
+    { pageSize: 50, after: "100" },
+  ]);
+});
+
+test("new campaigns freeze fifty-result searches while fieldless campaigns retain one hundred", async () => {
+  const fresh = await directory(),
+    freshNetwork = transport();
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  await collectImplementationCorrections(
+    {
+      projects: ["asi"],
+      directory: fresh,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    },
+    { ...dependencies, transport: freshNetwork.call },
+  );
+  expect(freshNetwork.searchPageSizes).toEqual([50]);
+  const old = await directory(),
+    oldNetwork = transport();
+  const options = {
+    projects: ["asi"],
+    directory: old,
+    sampleSourceIds: ["PR_source"],
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  await collectImplementationCorrections(options, {
+    ...dependencies,
+    transport: oldNetwork.call,
+  });
+  const path = join(old, "campaign.json"),
+    campaign = JSON.parse(await readFile(path, "utf8"));
+  delete campaign.initialSearchPageSize;
+  await writeFile(path, JSON.stringify(campaign));
+  await collectImplementationCorrections(
+    { ...options, month: "2026-01", sampleSourceIds: undefined },
+    { ...dependencies, transport: oldNetwork.call },
+  );
+  expect(oldNetwork.searchPageSizes).toEqual([100]);
+  const count = oldNetwork.requests();
+  await collectImplementationCorrections(
+    { ...options, month: "2026-01", sampleSourceIds: undefined },
+    { ...dependencies, transport: oldNetwork.call },
+  );
+  expect(oldNetwork.requests()).toBe(count);
+});
+
+test("malformed successful responses remain raw evidence but never poison the resumable cache", async () => {
+  const dir = await directory();
+  let requests = 0;
+  const transport = Object.assign(
+    async () => {
+      requests++;
+      return new Response(
+        requests === 1 ? "" : JSON.stringify({ data: { node: null } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const cache = new CorrectionEvidenceCache(dir, transport);
+  const input = "https://api.github.com/graphql";
+  const init = {
+    method: "POST",
+    body: JSON.stringify({ query: "query Sample { node }" }),
+  };
+  expect(await (await cache.fetch(input, init)).text()).toBe("");
+  expect(await (await cache.fetch(input, init)).json()).toEqual({
+    data: { node: null },
+  });
+  expect(await (await cache.fetch(input, init)).json()).toEqual({
+    data: { node: null },
+  });
+  expect(requests).toBe(2);
+  expect(cache.cacheHits).toBe(1);
+  expect((await readdir(join(dir, "objects"))).length).toBe(2);
+});
+
+test("a gateway-narrowed successful page reconstructs offline without retrying the failed larger request", async () => {
+  const dir = await directory(),
+    network = transport();
+  let requests = 0;
+  const sizes: number[] = [];
+  const flaky = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests++;
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("LeaderboardSearchReferences")) {
+        sizes.push(body.variables.pageSize);
+        if (body.variables.pageSize === 100)
+          return new Response("gateway failure", { status: 502 });
+      }
+      return network.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const deps = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: flaky,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    sampleSourceIds: ["PR_source"],
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  await collectImplementationCorrections(options, deps);
+  const path = join(dir, "campaign.json"),
+    campaign = JSON.parse(await readFile(path, "utf8"));
+  delete campaign.initialSearchPageSize;
+  await writeFile(path, JSON.stringify(campaign));
+  const month = { ...options, month: "2026-01", sampleSourceIds: undefined };
+  const first = await collectImplementationCorrections(month, deps);
+  expect(first.receipt.ownershipComplete).toBe(true);
+  expect(sizes).toEqual([100, 50]);
+  const count = requests;
+  const resumed = await collectImplementationCorrections(month, deps);
+  expect(requests).toBe(count);
+  expect(resumed.receipt.completeProofs).toBe(1);
+  expect(resumed.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+});
+
+test("missing commit evidence and changed source identity never create a complete proof", async () => {
+  for (const failure of ["commits", "identity"]) {
+    const dir = await directory(),
+      base = transport();
+    const altered = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        if (!body.query.includes("CorrectionMetadata"))
+          return base.call(input, init);
+        const node = fixture();
+        if (failure === "commits") node.commits.nodes = [];
+        else node.id = "PR_changed";
+        return new Response(
+          JSON.stringify({
+            data: {
+              nodes: [node],
+              rateLimit: {
+                cost: 1,
+                limit: 5000,
+                remaining: 4900,
+                resetAt: "2026-02-01T00:00:00Z",
+              },
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await expect(
+      collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: dir,
+          sampleSourceIds: ["PR_source"],
+          before: "2026-01-31T00:00:00.000Z",
+        },
+        {
+          journal: baseline(),
+          registry: registry(),
+          token: "private-test-token",
+          transport: altered,
+          now: new Date("2026-02-02T00:00:00Z"),
+        },
+      ),
+    ).rejects.toThrow();
+    await expect(readFile(join(dir, "manifest.json"))).rejects.toThrow();
+  }
 });
