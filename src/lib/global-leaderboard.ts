@@ -18,6 +18,7 @@ import {
   type PenaltyDeductions,
   penaltyDeductions,
 } from "./score-penalties";
+import { scoreThirdsToPoints } from "./score-units";
 import {
   type GlobalJoinRow,
   openSourceIndices,
@@ -228,38 +229,44 @@ export function createGlobalLeaders(
   const plan = planGlobalJoin(indexed, actors.size, projectCount, cycleCount);
   const result: GlobalLeader[] = [];
   for (let actor = 0; actor < actors.size; actor++) {
-    let score = 0,
-      tokens = 0,
+    let score = 0n;
+    let tokens = 0,
       projectedMinor = 0n,
       paidMinor = 0n;
     for (let index = plan.first[actor]; index >= 0; index = plan.next[index]) {
       const row = rows[index];
       if (row.kind === "cycle") {
-        score += row.score;
+        score += BigInt(scoreThirdsToPoints(row.score));
         paidMinor += row.paid;
-      } else if (row.kind === "event") score += row.score;
-      else if (row.kind === "deduction") score -= row.score;
+      } else if (row.kind === "event")
+        score += BigInt(scoreThirdsToPoints(row.score));
+      else if (row.kind === "deduction")
+        score -= BigInt(scoreThirdsToPoints(row.score));
       else {
         tokens += row.tokens;
         projectedMinor += row.projected;
       }
     }
     if (
-      score > 0 ||
+      score > 0n ||
       tokens > 0 ||
       projectedMinor > 0n ||
       paidMinor > 0n ||
       plan.cycles[actor] > 0
-    )
+    ) {
+      const points = Number(score);
+      if (!Number.isSafeInteger(points))
+        throw new RangeError("Global Points total overflow");
       result.push({
         actor: rows[plan.actorSource[actor]].actor as GitHubActor,
-        score: score / 3,
+        score: points / 30,
         tokens,
         projectedMinor,
         paidMinor,
         projects: plan.projects[actor],
         cycles: plan.cycles[actor],
       });
+    }
   }
   return result.sort(
     (left, right) =>

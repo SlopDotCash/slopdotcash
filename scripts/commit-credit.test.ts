@@ -481,6 +481,7 @@ for (const incomplete of [false, true]) {
         headRefOid: f.pull.head.sha,
         mergedAt: f.pull.merged_at,
         updatedAt: f.pull.updated_at,
+        baseRefName: "release",
         commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
       },
     ]);
@@ -489,3 +490,44 @@ for (const incomplete of [false, true]) {
     expect(result.retainedCommitAuthors.size).toBe(0);
   });
 }
+
+test("retained attribution does not hydrate unlinked commits already accepted on another branch", async () => {
+  const read = async (): Promise<never> => {
+    throw new Error("Already accepted commits must not hydrate attribution");
+  };
+  const transport = Object.assign(read, { preconnect: fetch.preconnect });
+  const common = {
+    url: "https://github.com/SlopDotCash/asi/pull/1",
+    number: 1,
+    headRefOid: "a".repeat(40),
+    updatedAt: "2026-10-02T00:00:00Z",
+  };
+  const result = await loadValueInputs(
+    { get: read, graphql: read, fileText: read },
+    [],
+    transport,
+    undefined,
+    [
+      {
+        ...common,
+        id: "PR_first_acceptance",
+        mergedAt: "2026-10-01T00:00:00Z",
+        baseRefName: "release",
+        commits: [
+          { oid: common.headRefOid, author: PENALIZED_AUTHOR, parentCount: 1 },
+        ],
+      },
+      {
+        ...common,
+        id: "PR_later_promotion",
+        url: "https://github.com/elizaOS/asi/pull/2",
+        number: 2,
+        mergedAt: "2026-10-02T00:00:00Z",
+        baseRefName: "main",
+        commits: [{ oid: common.headRefOid, author: null, parentCount: 1 }],
+      },
+    ],
+  );
+  expect(result.retainedCommitAuthors.size).toBe(0);
+  expect(result.implementationAttributionHolds.size).toBe(0);
+});

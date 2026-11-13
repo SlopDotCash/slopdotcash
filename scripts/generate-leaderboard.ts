@@ -635,7 +635,7 @@ const SEARCH_REFERENCES_QUERY = `
           commits(first: 100) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
+            nodes { commit { oid additions deletions parents { totalCount } author { user { ...LeaderboardActor } } } }
           }
         }
       }
@@ -656,7 +656,7 @@ const MORE_OUTCOME_COMMITS_QUERY = `
         commits(first: 100, after: $after) {
           totalCount
           pageInfo { hasNextPage endCursor }
-          nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
+          nodes { commit { oid additions deletions parents { totalCount } author { user { ...LeaderboardActor } } } }
         }
       }
     }
@@ -675,6 +675,18 @@ const PULL_REQUEST_DETAILS_QUERY = `
   }
   ${ACTOR_FRAGMENT}
   ${PULL_REQUEST_FRAGMENT}
+`;
+
+// The REST comparison endpoint supplies the complete commit range, but omits
+// per-commit statistics. Resolve those immutable objects in one batch per page.
+const OUTCOME_COMMIT_LINES_QUERY = `
+  query LeaderboardOutcomeCommitLines($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on Commit { id oid additions deletions }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
 `;
 
 const MERGED_FILE_SOURCE_QUERY = `
@@ -2386,44 +2398,81 @@ async function completeOutcomeCommits(
           `PR #${outcome.number} comparison does not match its commit range`,
         );
       }
-      const nodes = asArray(data.commits, "comparison.commits").map(
-        (value, index) => {
-          const path = `comparison.commits[${index}]`;
-          const commit = asRecord(value, path);
-          const author =
-            commit.author === null
-              ? null
-              : asRecord(commit.author, `${path}.author`);
-          return {
-            commit: {
-              oid: commit.sha,
-              parents: {
-                totalCount: asArray(commit.parents, `${path}.parents`).length,
-              },
-              author: {
-                user:
-                  author === null
-                    ? null
-                    : {
-                        __typename: author.type,
-                        id: author.node_id,
-                        login: author.login,
-                        avatarUrl: author.avatar_url,
-                        url: author.html_url,
-                      },
-              },
-            },
-          };
-        },
+      const comparisonCommits = asArray(data.commits, "comparison.commits").map(
+        (value, index) => asRecord(value, `comparison.commits[${index}]`),
       );
+      const ids = comparisonCommits.map((commit, index) =>
+        asString(commit.node_id, `comparison.commits[${index}].node_id`),
+      );
+      const lineData = await client.execute(OUTCOME_COMMIT_LINES_QUERY, {
+        ids,
+      });
+      const lineNodes = asArray(lineData.nodes, "data.nodes");
+      if (lineNodes.length !== ids.length)
+        throw new Error(
+          `PR #${outcome.number} commit statistics are incomplete`,
+        );
+      const nodes = comparisonCommits.map((value, index) => {
+        const path = `comparison.commits[${index}]`;
+        const commit = value;
+        const lines = asRecord(lineNodes[index], `data.nodes[${index}]`);
+        if (
+          lines.__typename !== "Commit" ||
+          lines.id !== ids[index] ||
+          lines.oid !== commit.sha
+        )
+          throw new Error(
+            `PR #${outcome.number} commit statistics identity changed`,
+          );
+        const author =
+          commit.author === null
+            ? null
+            : asRecord(commit.author, `${path}.author`);
+        return {
+          commit: {
+            oid: commit.sha,
+            additions: lines.additions,
+            deletions: lines.deletions,
+            parents: {
+              totalCount: asArray(commit.parents, `${path}.parents`).length,
+            },
+            author: {
+              user:
+                author === null
+                  ? null
+                  : {
+                      __typename: author.type,
+                      id: author.node_id,
+                      login: author.login,
+                      avatarUrl: author.avatar_url,
+                      url: author.html_url,
+                    },
+            },
+          },
+        };
+      });
       compared.push(...parseOutcomeCommits({ nodes }, "comparison"));
     }
-    const known = new Set(compared.map((commit) => commit.oid));
+    const known = new Map(compared.map((commit) => [commit.oid, commit]));
     if (
       !known.has(firstPage.headRefOid) ||
       commits.some((commit) => !known.has(commit.oid))
     ) {
       throw new Error(`PR #${outcome.number} comparison omitted known commits`);
+    }
+    for (const commit of commits) {
+      const hydrated = known.get(commit.oid);
+      if (
+        !hydrated ||
+        hydrated.parentCount !== commit.parentCount ||
+        hydrated.additions !== commit.additions ||
+        hydrated.deletions !== commit.deletions ||
+        hydrated.author?.id !== commit.author?.id ||
+        hydrated.author?.kind !== commit.author?.kind
+      )
+        throw new Error(
+          `PR #${outcome.number} comparison changed immutable commit metadata`,
+        );
     }
     commits = compared;
   }
@@ -2639,9 +2688,22 @@ function parseOutcomeCommits(
       throw new Error(
         `${commitPath}.parents.totalCount must be a non-negative integer`,
       );
+    const additions = asNumber(commit.additions, `${commitPath}.additions`);
+    const deletions = asNumber(commit.deletions, `${commitPath}.deletions`);
+    if (
+      !Number.isSafeInteger(additions) ||
+      additions < 0 ||
+      !Number.isSafeInteger(deletions) ||
+      deletions < 0
+    )
+      throw new Error(
+        `${commitPath} line counts must be non-negative integers`,
+      );
     return {
       oid: asFullCommitSha(commit.oid, `${commitPath}.oid`),
       parentCount,
+      additions,
+      deletions,
       // GitHub links app commits to a User whose reserved login ends in
       // "[bot]" (for example dependabot[bot]); no person can hold that login.
       author:

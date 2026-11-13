@@ -1,5 +1,6 @@
 import {
   implementationCreditActors,
+  implementationLineWeights,
   isCreditEligibleCommitAuthor,
 } from "./commit-credit";
 import {
@@ -12,6 +13,11 @@ import {
 } from "./external-sources";
 import { githubUserIdFromNodeId } from "./github-actor";
 import { githubWorkKey } from "./github-work";
+import { shareImplementationScoreThirds } from "./implementation-allocation";
+import {
+  workUnitCreditActorIds,
+  workUnitLineWeights,
+} from "./implementation-lines";
 import type {
   AttributionAssessment,
   AttributionAssessmentOptions,
@@ -62,6 +68,11 @@ import {
 } from "./leaderboard-types";
 import { isRecord } from "./record-validation.mjs";
 import { assertPenaltyHistory, penaltyDeductions } from "./score-penalties";
+import {
+  addScoreThirds,
+  isScoreThirds,
+  scoreThirdsToPoints,
+} from "./score-units";
 import {
   allocatePullRequestReviewCredit,
   assertValueScoringPolicy,
@@ -1802,10 +1813,14 @@ function addScore(
       event.category === "merged-pull-request" &&
       /^value:[a-f0-9]{64}$/u.test(event.scoreDecisionSourceId ?? "");
     if (
-      !Number.isSafeInteger(scoreThirds) ||
-      (scoreThirds < 1 && !assessedZero)
+      !(event.category === "merged-pull-request"
+        ? isScoreThirds(scoreThirds)
+        : Number.isSafeInteger(scoreThirds)) ||
+      (scoreThirds <= 0 && !assessedZero)
     ) {
-      throw new TypeError("v2 scoreThirds must be a positive safe integer");
+      throw new TypeError(
+        "v2 scoreThirds must represent positive whole Points",
+      );
     }
     const workUnitId = ledgerWorkUnitId(projectId, event);
     const globalWorkUnitKey = `${projectId}\0${event.occurredAt.slice(0, 7)}\0${workUnitId}`;
@@ -1830,20 +1845,29 @@ function addScore(
         "Accepted outcome scored in integer thirds under the ratified work-unit policy.",
     };
     entry.score += scoredEvent.points;
-    entry.scoreThirds += scoreThirds;
+    entry.scoreThirds = addScoreThirds(entry.scoreThirds, scoreThirds);
     if (scoredEvent.category === "merged-pull-request") {
       entry.points.mergedPullRequests += scoredEvent.points;
-      entry.pointThirds.mergedPullRequests += scoreThirds;
+      entry.pointThirds.mergedPullRequests = addScoreThirds(
+        entry.pointThirds.mergedPullRequests,
+        scoreThirds,
+      );
       entry.acceptedOutcomes.mergedPullRequests += 1;
       capUsage.acceptedOutcomes.mergedPullRequests += 1;
     } else if (scoredEvent.category === "substantive-review") {
       entry.points.substantiveReviews += scoredEvent.points;
-      entry.pointThirds.substantiveReviews += scoreThirds;
+      entry.pointThirds.substantiveReviews = addScoreThirds(
+        entry.pointThirds.substantiveReviews,
+        scoreThirds,
+      );
       entry.acceptedOutcomes.substantiveReviews += 1;
       capUsage.acceptedOutcomes.substantiveReviews += 1;
     } else {
       entry.points.evaluatedContributions += scoredEvent.points;
-      entry.pointThirds.evaluatedContributions += scoreThirds;
+      entry.pointThirds.evaluatedContributions = addScoreThirds(
+        entry.pointThirds.evaluatedContributions,
+        scoreThirds,
+      );
       entry.acceptedOutcomes.evaluatedContributions += 1;
       capUsage.acceptedOutcomes.evaluatedContributions += 1;
     }
@@ -2716,8 +2740,8 @@ function latestSourceUpdate(input: LeaderboardInput): string {
 /**
  * Assigns each commit SHA to the earliest merged pull request that lists it,
  * whatever its base branch, so a later consolidation or promotion pull
- * request cannot score the same commits again. Only an integration-branch
- * pull request shares credit with the committers it owns (SCR-04).
+ * request cannot score the same commits again. Every branch shares credit
+ * with the implementation authors of the commits it owns (SCR-04).
  */
 function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
@@ -2758,16 +2782,10 @@ function mergeCreditActors(
       ? pullRequest.author
       : null;
   const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
-  // A pull request that targets another branch keeps author-only credit.
-  const sharesCommitCredit =
-    pullRequest.baseRefName ===
-    findRegisteredRepositoryById(repositoryIdFromUrl(pullRequest.url))
-      ?.integrationBranch;
   // An empty *owned* implementation set is different from missing historical
   // commit evidence: all of this complete range was accepted by earlier PRs.
   // Do not turn the source-creator fallback into a second award for that work.
   if (
-    sharesCommitCredit &&
     pullRequest.commits?.length &&
     pullRequest.commits.every((commit) => commit.parentCount !== undefined) &&
     pullRequest.commits.some((commit) => (commit.parentCount ?? 2) <= 1) &&
@@ -2778,21 +2796,58 @@ function mergeCreditActors(
     )
   )
     return [];
-  const commitAuthors = sharesCommitCredit
-    ? (pullRequest.commits ?? [])
-        .filter(
-          (commit) =>
-            (commit.parentCount === undefined || commit.parentCount <= 1) &&
-            commitOwners.get(`${repositoryId}\0${commit.oid}`) ===
-              pullRequest.id,
-        )
-        .map((commit) =>
-          isCreditEligibleCommitAuthor(commit.author)
-            ? commit.author
-            : (retainedAuthors?.get(commit.oid)?.actor ?? commit.author),
-        )
-    : [];
+  const commitAuthors = (pullRequest.commits ?? [])
+    .filter(
+      (commit) =>
+        (commit.parentCount === undefined || commit.parentCount <= 1) &&
+        commitOwners.get(`${repositoryId}\0${commit.oid}`) === pullRequest.id,
+    )
+    .map((commit) =>
+      isCreditEligibleCommitAuthor(commit.author)
+        ? commit.author
+        : (retainedAuthors?.get(commit.oid)?.actor ?? commit.author),
+    );
   return implementationCreditActors(author, commitAuthors);
+}
+
+/** Use the same owned implementation and retained authors as merge credit. */
+function mergeCreditLineWeights(
+  pullRequest: MergedPullRequestOutcome,
+  commitOwners: ReadonlyMap<string, string>,
+  retainedAuthors?: NonNullable<
+    LeaderboardInput["retainedCommitAuthors"]
+  > extends ReadonlyMap<string, infer T>
+    ? T
+    : never,
+): Map<string, bigint> | null {
+  const repositoryId = repositoryIdFromUrl(pullRequest.url);
+  if (
+    !pullRequest.commits?.length ||
+    pullRequest.commits.some((commit) => commit.parentCount === undefined)
+  )
+    return null;
+  const seen = new Set<string>();
+  const commits = pullRequest.commits
+    .filter((commit) => {
+      if (
+        (commit.parentCount !== undefined && commit.parentCount > 1) ||
+        commitOwners.get(`${repositoryId.toLowerCase()}\0${commit.oid}`) !==
+          pullRequest.id ||
+        seen.has(commit.oid)
+      )
+        return false;
+      seen.add(commit.oid);
+      return true;
+    })
+    .map((commit) => ({
+      ...commit,
+      author: isCreditEligibleCommitAuthor(commit.author)
+        ? commit.author
+        : (retainedAuthors?.get(commit.oid)?.actor ?? commit.author),
+    }));
+  return commits.length > 0
+    ? implementationLineWeights(pullRequest.author, commits)
+    : null;
 }
 
 /**
@@ -3425,6 +3480,14 @@ function createSnapshotWithReviewCutoff(
   // SCR-04 credit actors by pull request. A shared work unit can suppress a
   // pull request's merge events; its credit actors stay self-reviewers.
   const creditActorIds = new Map<string, ReadonlySet<string>>();
+  const implementationAllocations = new Map<
+    string,
+    {
+      totalScoreThirds: number;
+      weights: ReadonlyMap<string, bigint>;
+      actors: ReadonlyMap<string, GitHubActor>;
+    }
+  >();
   for (const pullRequest of mergedPullRequestOutcomes) {
     // A missing joint member withholds that assessment, not this separately
     // verified merge's existing minimum or a current human ratification.
@@ -3446,6 +3509,13 @@ function createSnapshotWithReviewCutoff(
         : null;
     // Score v1 history credits the pull-request author only.
     let actors = mergeCreditActorsOf(pullRequest);
+    const lineWeights = v2
+      ? mergeCreditLineWeights(
+          pullRequest,
+          commitOwners,
+          input.retainedCommitAuthors?.get(pullRequest.id),
+        )
+      : null;
     creditActorIds.set(
       pullRequest.id,
       new Set(actors.map((actor) => actor.id)),
@@ -3489,24 +3559,27 @@ function createSnapshotWithReviewCutoff(
       );
     if (valueRecord) {
       const ids = valueDecision?.implementationActorNodeIds ?? [];
-      actors = ids
-        .map((id) => {
-          const actor =
-            actors.find((candidate) => candidate.id === id) ??
-            input.valueActors?.get(id);
-          if (!actor || actor.id !== id || isBotActor(actor))
-            throw new Error(
-              "Value implementation actor lacks a verified GitHub identity",
-            );
-          return actor;
-        })
-        .sort((left, right) =>
-          left.id === author?.id
-            ? -1
-            : right.id === author?.id
-              ? 1
-              : compareCodeUnits(left.id, right.id),
-        );
+      // Attribution changes do not alter the retained value-evidence digest.
+      // Prefer the complete current commit census over old recipient fields.
+      if (!pullRequest.commits?.length)
+        actors = ids
+          .map((id) => {
+            const actor =
+              actors.find((candidate) => candidate.id === id) ??
+              input.valueActors?.get(id);
+            if (!actor || actor.id !== id || isBotActor(actor))
+              throw new Error(
+                "Value implementation actor lacks a verified GitHub identity",
+              );
+            return actor;
+          })
+          .sort((left, right) =>
+            left.id === author?.id
+              ? -1
+              : right.id === author?.id
+                ? 1
+                : compareCodeUnits(left.id, right.id),
+          );
       if (
         valueRecord.assessment.tier !== "none" &&
         (pullRequest.commits ?? []).some((commit) => {
@@ -3532,11 +3605,35 @@ function createSnapshotWithReviewCutoff(
         : valuePolicyApplies
           ? MIN_VALUE_MERGE_THIRDS
           : unratifiedMergeScoreThirds(pullRequest.mergedAt));
-    const shares = shareScoreThirds(
-      totalThirds,
-      actors.length,
-      valuePolicyApplies && (valueRecord || ratification) ? 0 : 1,
-    );
+    if (
+      lineWeights === null
+        ? actors.length > 1
+        : actors.some((actor) => !lineWeights.has(actor.id)) ||
+          [...lineWeights.keys()].some(
+            (id) => !actors.some((actor) => actor.id === id),
+          )
+    ) {
+      attributionHeldSourceIds.add(pullRequest.id);
+      heldSourceIds.add(pullRequest.id);
+      continue;
+    }
+    const shares = lineWeights
+      ? shareImplementationScoreThirds(
+          totalThirds,
+          actors.map((actor) => actor.id),
+          lineWeights,
+        )
+      : [totalThirds];
+    const zeroLineFallback =
+      lineWeights !== null &&
+      [...lineWeights.values()].every((weight) => weight === 0n);
+    if (lineWeights) {
+      implementationAllocations.set(pullRequest.id, {
+        totalScoreThirds: totalThirds,
+        weights: lineWeights,
+        actors: new Map(actors.map((actor) => [actor.id, actor])),
+      });
+    }
     if (author) {
       const authorEntry = actorEntry(entries, author);
       authorEntry.rawActivity.additions += pullRequest.additions;
@@ -3566,7 +3663,7 @@ function createSnapshotWithReviewCutoff(
     for (const [index, actor] of actors.entries()) {
       const isAuthor = actor.id === author?.id;
       const scoreThirds = shares[index] as number;
-      if (ratification && scoreThirds === 0) continue;
+      if (scoreThirds === 0) continue;
       const contributionBonus =
         isAuthor && contributionRun?.traceUpload ? 1_500 : 0;
       const retainedSources = [
@@ -3631,7 +3728,7 @@ function createSnapshotWithReviewCutoff(
           reason:
             actors.length === 1
               ? actorReason
-              : `${actorReason} Shared equally among ${actors.length} commit authors.`,
+              : `${actorReason} Shared among ${actors.length} implementation authors ${zeroLineFallback ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.`,
         },
       );
       if (scored && isAuthor) {
@@ -3658,6 +3755,51 @@ function createSnapshotWithReviewCutoff(
         source.evidence,
       ]),
     );
+    const unitLineWeights = new Map<string, Map<string, bigint> | null>();
+    const unitActorIds = new Map<string, string[]>();
+    let incompleteLineWeights = false;
+    for (const unit of decision.record.units) {
+      const scoped = unit.claimIds.map((id) => {
+        const claim = claims.get(id);
+        if (!claim)
+          throw new Error("Joint unit lost a verified implementation claim");
+        return claim;
+      });
+      if (
+        scoped.some((claim) =>
+          claim.carrierPullRequestIds.some((id) => scoreRatifications.has(id)),
+        )
+      )
+        continue;
+      const resolvedActors = scoped.map((claim) =>
+        workUnitCreditActorIds(decision.evidence, claim),
+      );
+      if (resolvedActors.some((ids) => ids === null)) {
+        incompleteLineWeights = true;
+        break;
+      }
+      const ids = new Set(resolvedActors.flatMap((ids) => ids ?? []));
+      if (ids.size === 0) continue;
+      const weights = workUnitLineWeights(decision.evidence, scoped);
+      if (
+        weights === null
+          ? ids.size > 1
+          : [...ids].some((id) => !weights.has(id)) ||
+            [...weights.keys()].some((id) => !ids.has(id))
+      ) {
+        incompleteLineWeights = true;
+        break;
+      }
+      unitLineWeights.set(unit.workUnitId, weights);
+      unitActorIds.set(unit.workUnitId, [...ids]);
+    }
+    if (incompleteLineWeights) {
+      for (const source of decision.record.sources) {
+        attributionHeldSourceIds.add(source.pullRequestNodeId);
+        heldSourceIds.add(source.pullRequestNodeId);
+      }
+      continue;
+    }
     for (const unit of decision.record.units) {
       if (unit.claimIds.length === 0) continue;
       const scoped = unit.claimIds.map((id) => {
@@ -3746,9 +3888,7 @@ function createSnapshotWithReviewCutoff(
         .filter((source) => source !== undefined)
         .sort((a, b) => compareCodeUnits(a.pull.node_id, b.pull.node_id))[0];
       const primaryAuthorId = (retainedOriginal ?? first).pull.user.node_id;
-      const actors = [
-        ...new Set(scoped.flatMap((claim) => claim.implementationActorNodeIds)),
-      ]
+      const actors = (unitActorIds.get(unit.workUnitId) ?? [])
         .map((id) => {
           const actor = input.valueActors?.get(id);
           if (!actor || actor.id !== id || isBotActor(actor))
@@ -3769,13 +3909,22 @@ function createSnapshotWithReviewCutoff(
       // credited; the other units of the group still score.
       if (!actors.length) continue;
       // An accepted unit assessed at zero keeps the minimum (owner decision D2).
-      const shares = shareScoreThirds(
-        Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]),
-        actors.length,
-        0,
-      );
+      const totalThirds = Math.max(MIN_VALUE_MERGE_THIRDS, VALUE_TIERS[tier]);
+      const lineWeights = unitLineWeights.get(unit.workUnitId);
+      const shares = lineWeights
+        ? shareImplementationScoreThirds(
+            totalThirds,
+            actors.map((actor) => actor.id),
+            lineWeights,
+          )
+        : [totalThirds];
+      const zeroLineFallback =
+        lineWeights !== null &&
+        lineWeights !== undefined &&
+        [...lineWeights.values()].every((weight) => weight === 0n);
       for (const [index, actor] of actors.entries()) {
         const thirds = shares[index] as number;
+        if (thirds === 0) continue;
         addScore(entries, ledger, mergedSources, participationBans, {
           id: `${completion.pull.node_id}:joint:${unit.workUnitId}:merged:${actor.id}`,
           actor,
@@ -3797,7 +3946,7 @@ function createSnapshotWithReviewCutoff(
             title: completion.pull.title,
             url: completion.pull.html_url,
           },
-          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale} Shared among ${actors.length} scoped implementation actors.`,
+          reason: `Provisional joint value assessment (${tier})${completion.indirectAcceptance ? " of work accepted through indirect integration" : ""}: ${unit.assessment.rationale}${actors.length > 1 ? ` Shared among ${actors.length} scoped implementation actors ${zeroLineFallback ? "equally because all verified line counts are zero" : "in proportion to verified changed lines"}.` : ""}`,
         });
       }
     }
@@ -4999,7 +5148,10 @@ function createSnapshotWithReviewCutoff(
     penaltyProjectOf,
   ).byActor;
   for (const entry of entries.values())
-    entry.scoreThirds -= deductions.get(entry.actor.id) ?? 0;
+    entry.scoreThirds =
+      (scoreThirdsToPoints(entry.scoreThirds) -
+        scoreThirdsToPoints(deductions.get(entry.actor.id) ?? 0)) /
+      10;
   const leaders = [...entries.values()]
     .filter(
       (entry) =>
@@ -5111,8 +5263,6 @@ function createSnapshotWithReviewCutoff(
               status === "missing" &&
               pull.mergedAt !== null &&
               "commits" in pull &&
-              pull.baseRefName ===
-                findRegisteredRepositoryById(repository)?.integrationBranch &&
               pull.commits !== null &&
               pull.commits.length > 0 &&
               pull.commits.every(
@@ -5148,6 +5298,45 @@ function createSnapshotWithReviewCutoff(
               verifiedActors.every((id) => publishedActors.includes(id))
                 ? verifiedActors
                 : undefined;
+            const allocation = implementationAllocations.get(pull.id);
+            const allocationActors = allocation
+              ? [...allocation.weights.keys()].sort(compareCodeUnits)
+              : [];
+            const allocationShares = allocation
+              ? shareImplementationScoreThirds(
+                  allocation.totalScoreThirds,
+                  allocationActors,
+                  allocation.weights,
+                )
+              : [];
+            const positiveAllocationActors = allocationActors.filter(
+              (_, index) => allocationShares[index] > 0,
+            );
+            const allocationEvents = allocation
+              ? publishedLedger.filter(
+                  (event) =>
+                    event.category === "merged-pull-request" &&
+                    event.source.id === pull.id,
+                )
+              : [];
+            const completeAllocation =
+              allocation !== undefined &&
+              !attributionHeldSourceIds.has(pull.id) &&
+              [
+                "legacy-policy",
+                "missing",
+                "assessed",
+                "human-ratified",
+              ].includes(status) &&
+              positiveAllocationActors.length === allocationEvents.length &&
+              positiveAllocationActors.every((id) =>
+                allocationEvents.some(
+                  (event) =>
+                    event.actor.id === id &&
+                    event.scoreThirds ===
+                      allocationShares[allocationActors.indexOf(id)],
+                ),
+              );
             return {
               pullRequestId: pull.id,
               repository,
@@ -5163,6 +5352,30 @@ function createSnapshotWithReviewCutoff(
                   : (decision?.latestDigest ?? null),
               ...(verifiedImplementationActorNodeIds
                 ? { verifiedImplementationActorNodeIds }
+                : {}),
+              ...(completeAllocation
+                ? {
+                    implementationAllocation: {
+                      rule: "changed-lines-v1" as const,
+                      totalScoreThirds: allocation.totalScoreThirds,
+                      weights: [...allocation.weights.entries()]
+                        .sort(([left], [right]) =>
+                          compareCodeUnits(left, right),
+                        )
+                        .map(([actorNodeId, changedLines]) => {
+                          const actor = allocation.actors.get(actorNodeId);
+                          if (!actor)
+                            throw new Error(
+                              "Implementation allocation lost its verified actor",
+                            );
+                          return {
+                            actorNodeId,
+                            actorLogin: actor.login,
+                            changedLines: changedLines.toString(),
+                          };
+                        }),
+                    },
+                  }
                 : {}),
             };
           }),
@@ -5225,6 +5438,14 @@ function assertNonNegativeInteger(
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`${path} must be a non-negative integer`);
   }
+}
+
+function assertScoreThirds(
+  value: unknown,
+  path: string,
+): asserts value is number {
+  if (!isScoreThirds(value))
+    throw new Error(`${path} must represent non-negative whole Points`);
 }
 
 function assertPositiveInteger(
@@ -5927,7 +6148,7 @@ function assertLeaderValue(
   assertPositiveInteger(entry.rank, `${path}.rank`);
   assertActorValue(entry.actor, `${path}.actor`, validatedActors);
   assertNonNegativeInteger(entry.score, `${path}.score`);
-  assertNonNegativeInteger(entry.scoreThirds, `${path}.scoreThirds`);
+  assertScoreThirds(entry.scoreThirds, `${path}.scoreThirds`);
   if (Math.floor(Number(entry.scoreThirds) / 3) !== entry.score) {
     throw new Error(`${path}.score does not equal rounded-down scoreThirds`);
   }
@@ -5945,15 +6166,23 @@ function assertLeaderValue(
   let scoreThirdsTotal = 0;
   for (const key of pointKeys) {
     assertNonNegativeNumber(points[key], `${path}.points.${key}`);
-    assertNonNegativeInteger(pointThirds[key], `${path}.pointThirds.${key}`);
+    assertScoreThirds(pointThirds[key], `${path}.pointThirds.${key}`);
     if (Math.abs(Number(points[key]) - Number(pointThirds[key]) / 3) > 1e-12) {
       throw new Error(`${path}.points.${key} does not match integer thirds`);
     }
-    scoreThirdsTotal += Number(pointThirds[key]);
+    scoreThirdsTotal = addScoreThirds(
+      scoreThirdsTotal,
+      Number(pointThirds[key]),
+    );
   }
   if (entry.penaltyThirds !== undefined) {
-    assertPositiveInteger(entry.penaltyThirds, `${path}.penaltyThirds`);
-    scoreThirdsTotal -= Number(entry.penaltyThirds);
+    assertScoreThirds(entry.penaltyThirds, `${path}.penaltyThirds`);
+    if (Number(entry.penaltyThirds) <= 0)
+      throw new Error("penaltyThirds must be positive");
+    scoreThirdsTotal =
+      (scoreThirdsToPoints(scoreThirdsTotal) -
+        scoreThirdsToPoints(Number(entry.penaltyThirds))) /
+      10;
   }
   if (scoreThirdsTotal !== entry.scoreThirds) {
     throw new Error(`${path}.scoreThirds does not equal its point breakdown`);
@@ -6347,8 +6576,10 @@ function assertLedgerValue(
   const scoreThirds = event.scoreThirds;
   const validV2 =
     isV2 &&
-    Number.isSafeInteger(scoreThirds) &&
-    (Number(scoreThirds) >= 1 ||
+    (event.category === "merged-pull-request"
+      ? isScoreThirds(scoreThirds)
+      : Number.isSafeInteger(scoreThirds)) &&
+    (Number(scoreThirds) > 0 ||
       (scoreThirds === 0 &&
         event.category === "merged-pull-request" &&
         typeof event.scoreDecisionSourceId === "string" &&
@@ -7276,31 +7507,52 @@ export function assertLeaderboardSnapshot(
     for (const event of events) {
       const eventThirds = event.scoreThirds ?? event.points * 3;
       if (event.category === "merged-pull-request") {
-        pointThirds.mergedPullRequests += eventThirds;
+        pointThirds.mergedPullRequests = addScoreThirds(
+          pointThirds.mergedPullRequests,
+          eventThirds,
+        );
         outcomes.mergedPullRequests += 1;
       } else if (event.category === "resolved-issue") {
-        pointThirds.resolvedIssues += eventThirds;
+        pointThirds.resolvedIssues = addScoreThirds(
+          pointThirds.resolvedIssues,
+          eventThirds,
+        );
         outcomes.resolvedIssues += 1;
       } else if (event.category === "material-test-change") {
-        pointThirds.materialTestChanges += eventThirds;
+        pointThirds.materialTestChanges = addScoreThirds(
+          pointThirds.materialTestChanges,
+          eventThirds,
+        );
         outcomes.materialTestChanges += 1;
       } else if (event.category === "evidence") {
-        pointThirds.evidence += eventThirds;
+        pointThirds.evidence = addScoreThirds(
+          pointThirds.evidence,
+          eventThirds,
+        );
         outcomes.evidenceCategories += 1;
       } else if (event.category === "substantive-review") {
-        pointThirds.substantiveReviews += eventThirds;
+        pointThirds.substantiveReviews = addScoreThirds(
+          pointThirds.substantiveReviews,
+          eventThirds,
+        );
         outcomes.substantiveReviews += 1;
       } else {
-        pointThirds.evaluatedContributions += eventThirds;
+        pointThirds.evaluatedContributions = addScoreThirds(
+          pointThirds.evaluatedContributions,
+          eventThirds,
+        );
         outcomes.evaluatedContributions += 1;
       }
     }
     const appliedPenaltyThirds = penaltyThirds.get(leader.actor.id) ?? 0;
     const ledgerThirds =
-      events.reduce(
-        (total, event) => total + (event.scoreThirds ?? event.points * 3),
+      (events.reduce(
+        (total, event) =>
+          total + scoreThirdsToPoints(event.scoreThirds ?? event.points * 3),
         0,
-      ) - appliedPenaltyThirds;
+      ) -
+        scoreThirdsToPoints(appliedPenaltyThirds)) /
+      10;
     if (
       (leader.penaltyThirds ?? 0) !== appliedPenaltyThirds ||
       Math.floor(ledgerThirds / 3) !== leader.score ||
@@ -7646,6 +7898,8 @@ export function assertLeaderboardSnapshot(
         ![
           "pullRequestId,pullRequestNumber,recordDigest,repository,status",
           "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
+          "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
+          "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
         ].includes(Object.keys(row).sort().join(","))
       )
         throw new Error("Value coverage has unexpected fields");
@@ -7685,6 +7939,99 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.implementationAllocation !== undefined) {
+        const allocation = assertObject(
+          row.implementationAllocation,
+          "implementation allocation",
+        );
+        if (
+          Object.keys(allocation).sort().join(",") !==
+            "rule,totalScoreThirds,weights" ||
+          allocation.rule !== "changed-lines-v1" ||
+          !Number.isSafeInteger(allocation.totalScoreThirds) ||
+          (allocation.totalScoreThirds as number) < 1 ||
+          !Array.isArray(allocation.weights) ||
+          allocation.weights.length === 0 ||
+          !["legacy-policy", "missing", "assessed", "human-ratified"].includes(
+            row.status as string,
+          )
+        )
+          throw new Error("Implementation allocation is invalid");
+        const ids: string[] = [];
+        const logins = new Map<string, string>();
+        const weights = new Map<string, bigint>();
+        for (const value of allocation.weights) {
+          const weight = assertObject(
+            value,
+            "implementation allocation weight",
+          );
+          if (
+            Object.keys(weight).sort().join(",") !==
+              "actorLogin,actorNodeId,changedLines" ||
+            typeof weight.actorNodeId !== "string" ||
+            githubUserIdFromNodeId(weight.actorNodeId) === null ||
+            !isCreditEligibleCommitAuthor({
+              id: weight.actorNodeId,
+              kind: "User",
+            }) ||
+            weights.has(weight.actorNodeId) ||
+            typeof weight.actorLogin !== "string" ||
+            !/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/iu.test(
+              weight.actorLogin,
+            ) ||
+            [...logins.values()].some(
+              (login) =>
+                login.toLowerCase() ===
+                (weight.actorLogin as string).toLowerCase(),
+            ) ||
+            typeof weight.changedLines !== "string" ||
+            !/^(0|[1-9][0-9]*)$/u.test(weight.changedLines)
+          )
+            throw new Error("Implementation allocation weight is invalid");
+          const observed = validatedActors.get(weight.actorNodeId);
+          if (
+            (observed &&
+              (observed.kind !== "User" ||
+                observed.login !== weight.actorLogin)) ||
+            [...validatedActors.values()].some(
+              (actor) =>
+                actor.login.toLowerCase() ===
+                  (weight.actorLogin as string).toLowerCase() &&
+                actor.id !== weight.actorNodeId,
+            )
+          )
+            throw new Error("Implementation allocation actor is inconsistent");
+          ids.push(weight.actorNodeId);
+          logins.set(weight.actorNodeId, weight.actorLogin);
+          weights.set(weight.actorNodeId, BigInt(weight.changedLines));
+        }
+        const shares = shareImplementationScoreThirds(
+          allocation.totalScoreThirds as number,
+          ids,
+          weights,
+        );
+        const events = validatedLedger.filter(
+          (event) =>
+            event.category === "merged-pull-request" &&
+            event.source.id === row.pullRequestId,
+        );
+        if (
+          events.length !== shares.filter((share) => share > 0).length ||
+          ids.some((id, index) => {
+            const event = events.find((candidate) => candidate.actor.id === id);
+            return shares[index] === 0
+              ? event !== undefined
+              : !event ||
+                  event.scoreThirds !== shares[index] ||
+                  event.actor.login !== logins.get(id) ||
+                  event.repository !== row.repository ||
+                  event.source.number !== row.pullRequestNumber;
+          })
+        )
+          throw new Error(
+            "Implementation allocation does not match its score events",
+          );
+      }
       if (row.verifiedImplementationActorNodeIds !== undefined) {
         const ids = row.verifiedImplementationActorNodeIds;
         const sourceActors = validatedLedger
