@@ -256,13 +256,14 @@ export async function checkVaultAction(
     step === "send" ? deployment.vault : deployment.asset,
     expectedInput,
     native && operation === "deposit" ? BigInt(gross) : 0n,
+    // An approval moves no funds and never counts as funding, so it needs only
+    // canonical inclusion. The next review reads the live allowance again, and
+    // a reorganized approval makes the deposit fail before the wallet prompt.
+    step === "send" ? "finalized" : "included",
   );
   if (checked.status !== "finalized") return checked.status;
   const receipt = checked.receipt;
-  if (step !== "send") {
-    // Approval never counts as funding; the next review reads the actual allowance again.
-    return "approval-confirmed";
-  }
+  if (step !== "send") return "approval-confirmed";
   const topic =
     EVM_ESCROW_EVENT_TOPICS[
       operation === "deposit" ? "Deposited" : "UnusedWithdrawn"
@@ -287,7 +288,11 @@ export async function checkVaultAction(
   return "finalized";
 }
 
-/** Verify exact wallet intent and canonical finality before inspecting its domain event. */
+/**
+ * Verify exact wallet intent and canonical finality before inspecting its domain event.
+ * `evidence: "included"` accepts a canonical block that is not finalized yet. Only a
+ * token approval may use it; every transfer of funds keeps the finalized default.
+ */
 export async function readFinalizedWalletTransaction(
   deployment: EscrowDeployment,
   wallet: VaultConnection,
@@ -295,6 +300,7 @@ export async function readFinalizedWalletTransaction(
   target: string,
   expectedInput: string,
   expectedValue = 0n,
+  evidence: "finalized" | "included" = "finalized",
 ) {
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -330,21 +336,27 @@ export async function readFinalizedWalletTransaction(
     throw new Error(
       "This transaction does not match the pending wallet action. Check its hash in your wallet.",
     );
-  const finalized = (await request("eth_getBlockByNumber", [
-    "finalized",
-    false,
-  ])) as { number: string };
-  if (BigInt(receipt.blockNumber) > BigInt(finalized.number))
-    return { status: "pending" as const, receipt: null };
+  if (evidence === "finalized") {
+    const finalized = (await request("eth_getBlockByNumber", [
+      "finalized",
+      false,
+    ])) as { number: string };
+    if (BigInt(receipt.blockNumber) > BigInt(finalized.number))
+      return { status: "pending" as const, receipt: null };
+  }
   const block = (await request("eth_getBlockByNumber", [
     receipt.blockNumber,
     false,
-  ])) as { hash: string };
+  ])) as { hash: string } | null;
   if (
-    block.hash !== receipt.blockHash ||
+    block?.hash !== receipt.blockHash ||
     receipt.transactionHash.toLowerCase() !== transactionId.toLowerCase()
-  )
+  ) {
+    // A block that is not final can still be replaced; ask again later.
+    if (evidence === "included")
+      return { status: "pending" as const, receipt: null };
     throw new Error("The transaction is not in the canonical finalized chain.");
+  }
   if (receipt.status === "0x0") return { status: "failed" as const, receipt };
   if (receipt.status !== "0x1")
     throw new Error("The transaction status is not recognized.");
