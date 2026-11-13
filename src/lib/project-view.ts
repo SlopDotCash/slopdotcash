@@ -43,6 +43,7 @@ import {
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
+import { addScoreThirds, scoreThirdsToPoints } from "./score-units";
 import { sumAmounts } from "./verified-allocation";
 import { allocateWeightedRows } from "./weighted-allocation";
 
@@ -601,32 +602,41 @@ export function createProjectView(
     const actorRuns = runsByActor.get(actor.id) ?? [];
     const usage = usageForActor(actor.id, events, actorRuns);
     const earnedThirds = events.reduce(
-      (total, event) => total + eventThirds(event),
+      (total, event) => addScoreThirds(total, eventThirds(event)),
       0,
     );
     const penaltyThirds = deductions.get(actor.id) ?? 0;
-    const rawThirds = earnedThirds - penaltyThirds;
+    const earnedPoints = scoreThirdsToPoints(earnedThirds);
+    const rawPoints = earnedPoints - scoreThirdsToPoints(penaltyThirds);
+    const rawThirds = rawPoints / 10;
     // The automatic monthly policy starts in November. Preserve archived
     // calculations; unpaid historical corrections require their own reviewed
     // assessment and funded-history reconciliation (PRD sections 7 and 11).
-    const earnedWeight =
+    const exactEarnedWeight =
       cycleId >= "2026-11"
-        ? earnedThirds * 10_000
+        ? BigInt(earnedPoints) * 1_000n
         : events.reduce(
             (total, event) =>
               total +
-              (event.scoreThirds ?? event.points * 3) *
-                (10_000 + (event.evidenceBonusBasisPoints ?? 0)),
-            0,
-          );
+              BigInt(scoreThirdsToPoints(eventThirds(event))) *
+                BigInt(10_000 + (event.evidenceBonusBasisPoints ?? 0)),
+            0n,
+          ) / 10n;
+    const earnedWeight = Number(exactEarnedWeight);
+    if (!Number.isSafeInteger(earnedWeight))
+      throw new RangeError("Project contribution weight overflow");
     // A debit lowers the payment weight in the same proportion as the score.
     const weightedThirdBasisPoints =
       penaltyThirds === 0
         ? earnedWeight
-        : Math.floor((earnedWeight * rawThirds) / earnedThirds);
+        : Number(
+            (exactEarnedWeight * BigInt(rawPoints)) / BigInt(earnedPoints),
+          );
     const payoutExclusion = payoutExclusionFor(project, cycleId, actor.id);
     const computeBonus =
-      earnedThirds === 0 ? 0 : Math.floor(earnedWeight / earnedThirds) - 10_000;
+      earnedPoints === 0
+        ? 0
+        : Number((exactEarnedWeight * 10n) / BigInt(earnedPoints)) - 10_000;
     const score = Math.floor(rawThirds / 3);
     const points = {
       "merged-pull-request": 0,

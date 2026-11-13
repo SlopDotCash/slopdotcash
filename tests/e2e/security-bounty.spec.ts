@@ -4933,6 +4933,26 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
       .locator(".security-program-editor")
       .getByRole("group", { name: "Asset", exact: true }),
   ).toHaveCount(0);
+  const refreshFunds = page.getByRole("button", {
+    name: "Refresh bounty funds",
+    exact: true,
+  });
+  await expect(refreshFunds).toBeEnabled();
+  await expect(
+    page.getByText("Loading bounty funds…", { exact: true }),
+  ).toBeHidden();
+  // The enabled state can precede the end of the button's color transition.
+  // Wait only for this control's finite animations before checking contrast.
+  await refreshFunds.evaluate(async (button) => {
+    await Promise.all(
+      button
+        .getAnimations()
+        .filter((animation) =>
+          Number.isFinite(animation.effect?.getComputedTiming().endTime),
+        )
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("registered-vault-locked.png"),

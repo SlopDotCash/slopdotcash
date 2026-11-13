@@ -1,5 +1,10 @@
+import { isCreditEligibleCommitAuthor } from "../src/lib/commit-credit";
 import { type DeploymentTier, deploymentOrigins } from "../src/lib/deployment";
-import { canonicalActorAvatarUrl } from "../src/lib/leaderboard";
+import { workUnitCreditActorIds } from "../src/lib/implementation-lines";
+import {
+  canonicalActorAvatarUrl,
+  repositoryIdFromUrl,
+} from "../src/lib/leaderboard";
 /** Read only: no model calls, score publication or payment authority. */
 import type {
   GitHubActor,
@@ -33,6 +38,10 @@ import {
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import {
+  RetainedAttributionIncompleteError,
+  retainedCommitCreditSources,
+} from "./retained-commit-credit";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
@@ -415,16 +424,24 @@ export async function fetchWorkUnitHistoryPage(
   };
 }
 
+type AttributionOutcome = Pick<
+  MergedPullRequestOutcome,
+  "id" | "url" | "number" | "headRefOid" | "updatedAt"
+> & {
+  mergedAt: string | null;
+  closedAt?: string | null;
+  commits?: MergedPullRequestOutcome["commits"];
+  baseRefName?: string;
+};
+
 export async function loadValueInputs(
   github: Pick<GitHubClient, "get" | "graphql" | "fileText">,
-  outcomes: readonly (Pick<
-    MergedPullRequestOutcome,
-    "id" | "url" | "number" | "headRefOid" | "updatedAt"
-  > & { mergedAt: string | null; closedAt?: string | null })[],
+  outcomes: readonly AttributionOutcome[],
   transport: Fetch = fetch,
   unavailableJointSources?: (
     ids: readonly string[],
   ) => Promise<readonly string[]>,
+  attributionOutcomes: readonly AttributionOutcome[] = outcomes,
 ) {
   const heldWorkUnits: HeldWorkUnit[] = [];
   const valueDecisions = new Map<
@@ -445,10 +462,57 @@ export async function loadValueInputs(
       : never;
   const jointValueDecisions = new Map<string, JointDecision>();
   const valueActors = new Map<string, GitHubActor>();
+  const implementationAttributionHolds = new Map<string, readonly string[]>();
+  const retainedCommitAuthors = new Map<
+    string,
+    Map<
+      string,
+      {
+        actor: GitHubActor;
+        originalPullRequestId: string;
+        originalPullRequestUrl: string;
+        originalCommitSha: string;
+      }
+    >
+  >();
   const publicRepositories = new Map<string, PublicMergeRepository>();
   const census = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
   if (census.size !== outcomes.length)
     throw new Error("Value census repeats a source");
+  const attributionIds = new Set<string>();
+  for (const outcome of attributionOutcomes) {
+    if (attributionIds.has(outcome.id))
+      throw new Error("Attribution census repeats a source");
+    attributionIds.add(outcome.id);
+    const prior = census.get(outcome.id);
+    if (
+      prior &&
+      ["url", "number", "headRefOid", "updatedAt", "mergedAt", "closedAt"].some(
+        (field) =>
+          prior[field as keyof AttributionOutcome] !==
+          outcome[field as keyof AttributionOutcome],
+      )
+    )
+      throw new Error("Attribution census disagrees with the value census");
+    census.set(outcome.id, outcome);
+  }
+  const acceptedCommitOwners = new Map<string, string>();
+  const acceptedOutcomes = [...census.values()]
+    .filter((outcome) => outcome.mergedAt !== null)
+    .sort(
+      (left, right) =>
+        Date.parse(left.mergedAt as string) -
+          Date.parse(right.mergedAt as string) ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    );
+  for (const outcome of acceptedOutcomes) {
+    const repositoryId = repositoryIdFromUrl(outcome.url).toLowerCase();
+    for (const commit of outcome.commits ?? []) {
+      const key = `${repositoryId}\0${commit.oid}`;
+      if (!acceptedCommitOwners.has(key))
+        acceptedCommitOwners.set(key, outcome.id);
+    }
+  }
   const sourceCache = new Map<string, WorkUnitSource>();
   const observedGroups = new Map<string, string | null>();
   const groups = new Map<string, JointDecision>();
@@ -595,6 +659,96 @@ export async function loadValueInputs(
     }
   }
 
+  async function resolveRetainedAuthors(
+    outcome: (typeof outcomes)[number],
+    repositoryId: string,
+  ) {
+    if (!outcome.mergedAt) return;
+    // Every branch credits primary authors. Read retained-copy evidence only
+    // for known ordinary unlinked commits first accepted by this PR; a later
+    // promotion cannot trigger another attribution pass for imported work.
+    const creditRepositoryId = repositoryIdFromUrl(outcome.url).toLowerCase();
+    const eligibleCommitShas = new Set(
+      (outcome.commits ?? [])
+        .filter(
+          (commit) =>
+            commit.parentCount !== undefined &&
+            commit.parentCount <= 1 &&
+            !isCreditEligibleCommitAuthor(commit.author) &&
+            acceptedCommitOwners.get(`${creditRepositoryId}\0${commit.oid}`) ===
+              outcome.id,
+        )
+        .map((commit) => commit.oid),
+    );
+    if (eligibleCommitShas.size === 0) return;
+    const accepted = await source(repositoryId, outcome.number, outcome.id);
+    const sources = [accepted];
+    for (const reference of accepted.evidence.relatedPullRequests) {
+      if (
+        reference.repository.toLowerCase() !== repositoryId.toLowerCase() ||
+        reference.number >= outcome.number
+      )
+        continue;
+      const original = await source(
+        repositoryId,
+        reference.number,
+        reference.id,
+      );
+      if (
+        original.evidence.pull.state === "closed" &&
+        !original.evidence.pull.merged_at
+      )
+        sources.push(original);
+    }
+    // Without an original-source candidate, unlinked work keeps the ordinary
+    // source-creator fallback. Its provisional minimum needs no value review.
+    if (sources.length === 1) return;
+    let bindings: Awaited<ReturnType<typeof retainedCommitCreditSources>>;
+    try {
+      bindings = await retainedCommitCreditSources(accepted, sources);
+    } catch (error) {
+      if (!(error instanceof RetainedAttributionIncompleteError)) throw error;
+      implementationAttributionHolds.set(outcome.id, error.limitations);
+      return;
+    }
+    const eligibleBindings = [...bindings].filter(([sha]) =>
+      eligibleCommitShas.has(sha),
+    );
+    await hydrateActors(
+      new Set(eligibleBindings.map(([, entry]) => entry.actorNodeId)),
+    );
+    const authors = new Map<
+      string,
+      {
+        actor: GitHubActor;
+        originalPullRequestId: string;
+        originalPullRequestUrl: string;
+        originalCommitSha: string;
+      }
+    >();
+    for (const [sha, binding] of eligibleBindings) {
+      const actor = valueActors.get(binding.actorNodeId);
+      if (!actor || !isCreditEligibleCommitAuthor(actor))
+        throw new Error("Retained source creator identity is unavailable");
+      authors.set(sha, {
+        actor,
+        originalPullRequestId: binding.originalPullRequestId,
+        originalPullRequestUrl: binding.originalPullRequestUrl,
+        originalCommitSha: binding.originalCommitSha,
+      });
+    }
+    if (authors.size) retainedCommitAuthors.set(outcome.id, authors);
+  }
+
+  // Attribution applies to the complete merge census, including historical
+  // work. Only the policy-selected outcomes below read assessment history.
+  for (const outcome of attributionOutcomes) {
+    const [owner, repo] = new URL(outcome.url).pathname
+      .split("/")
+      .filter(Boolean);
+    await resolveRetainedAuthors(outcome, `${owner}/${repo}`);
+  }
+
   for (const outcome of outcomes) {
     const [owner, repo] = new URL(outcome.url).pathname
       .split("/")
@@ -690,6 +844,12 @@ export async function loadValueInputs(
               (claim) => claim.implementationActorNodeIds,
             ),
           );
+          // Current allocation uses primary commit authors on every branch.
+          // Preserve the original evidence/claims for valuation digest checks.
+          for (const claim of decision.evidence.claims)
+            for (const id of workUnitCreditActorIds(decision.evidence, claim) ??
+              [])
+              actors.add(id);
           const positiveReviews = new Set(
             decision.assessment.units.flatMap((unit) =>
               unit.assessment.reviews
@@ -744,7 +904,14 @@ export async function loadValueInputs(
     if (decision.status === "assessed")
       await hydrateActors(new Set(decision.implementationActorNodeIds));
   }
-  return { valueDecisions, jointValueDecisions, valueActors, heldWorkUnits };
+  return {
+    valueDecisions,
+    jointValueDecisions,
+    valueActors,
+    retainedCommitAuthors,
+    implementationAttributionHolds,
+    heldWorkUnits,
+  };
 }
 
 const ACCOUNT_BAN_FEED = "https://slop.cash/api/v1/project-account-bans";
