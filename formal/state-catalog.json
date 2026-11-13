@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "be9691bb070ecba6d2819a81044381015d049bf1eb3e8c942a67b579b0257cb0",
+  "inventorySha256": "79bb85712bfe7f911d46ee89d0f0d6cfd3621c20107ac53779d846518b9e4077",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2018,6 +2018,7 @@
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2040,6 +2041,7 @@
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2055,13 +2057,14 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3211,
+      "line": 3223,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2072,13 +2075,14 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3815,
+      "line": 3827,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2112,11 +2116,13 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 422,
-      "name": "outcomes",
+      "line": 425,
+      "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2832,7 +2838,7 @@
         "DISMISSED",
         "PENDING"
       ],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": [
         "APPROVED",
         "CHANGES_REQUESTED",
@@ -2844,71 +2850,71 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 191,
+      "line": 196,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 339,
+      "line": 344,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["APPROVED", "CHANGES_REQUESTED"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 490,
+      "line": 495,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["claimed", "unclaimed"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 498,
+      "line": 503,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["complete", "missing", "partial"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 545,
+      "line": 550,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["candidate", "excluded"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 647,
+      "line": 652,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["complete", "suppressed-limit"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 738,
+      "line": 764,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": [
         "history",
         "latestDigest",
@@ -2918,12 +2924,15 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4574,
+      "line": 4638,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
         "formal/models/ui/ui_score_selection.qnt",
