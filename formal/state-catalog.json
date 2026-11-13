@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a761d4ed2d70b78669ccd9c1afa2ddad8dee65fcbd86fe754a2817a36be6a3c4",
+  "inventorySha256": "cf7c95cb0613ef9fd2e1b33f3f29c247ba6eb65765b9243dc69f108b27344584",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2131,7 +2131,7 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1257,
+      "line": 1270,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
@@ -2148,7 +2148,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 137,
+      "line": 146,
       "name": "useState",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2162,7 +2162,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 174,
+      "line": 183,
       "name": "mode",
       "kind": "string-union",
       "values": ["enforcement", "enforcement-preview"],
@@ -2176,7 +2176,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 451,
+      "line": 459,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2201,7 +2201,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1088,
+      "line": 1104,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2226,7 +2226,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 24,
+      "line": 27,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
@@ -2248,7 +2248,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 37,
+      "line": 40,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
@@ -2264,7 +2264,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 40,
+      "line": 43,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
@@ -2295,7 +2295,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 213,
+      "line": 220,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2314,7 +2314,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 537,
+      "line": 551,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2333,7 +2333,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1470,
+      "line": 1460,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2429,7 +2429,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 852,
+      "line": 865,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2453,7 +2453,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1321,
+      "line": 1334,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2477,7 +2477,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2107,
+      "line": 2168,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2501,7 +2501,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2112,
+      "line": 2173,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2525,7 +2525,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 263,
+      "line": 369,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2553,7 +2553,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 960,
+      "line": 1047,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2581,7 +2581,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 975,
+      "line": 1062,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2609,7 +2609,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 977,
+      "line": 1064,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2637,7 +2637,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 993,
+      "line": 1080,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2665,7 +2665,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1032,
+      "line": 1119,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -2721,7 +2721,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1355,
+      "line": 1481,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -2749,7 +2749,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1630,
+      "line": 1723,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -2773,6 +2773,25 @@
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["request-information"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/VettingEvidence.tsx",
+      "line": 385,
+      "name": "useState",
+      "kind": "string-union",
+      "values": ["", "downloading", "verified-download", "verified-text"],
+      "models": [
+        "formal/models/ui/ui_artifacts.qnt",
+        "formal/models/ui/ui_vetting_inventory.qnt",
+        "formal/models/ui/ui_vetting_reader.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "",
+        "downloading",
+        "verified-download",
+        "verified-text"
+      ],
       "review": "candidate-only"
     },
     {
