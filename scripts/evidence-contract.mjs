@@ -23,8 +23,12 @@ const FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const REMOTE_ARTIFACT_PATHS = [
   "index.html",
   "SKILL.md",
+  "contribute/SKILL.md",
+  "maintain/SKILL.md",
   ".well-known/agent-skills/index.json",
   ".well-known/agent-skills/slop/SKILL.md",
+  ".well-known/agent-skills/slop-contributor/SKILL.md",
+  ".well-known/agent-skills/slop-maintainer/SKILL.md",
   "llms.txt",
   "skill-manifest.json",
   "data/leaderboard.json",

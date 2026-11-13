@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "12f2b093013be85b2311af5193e76af5d85873741d8f81b412e60cecde6e5b80",
+  "inventorySha256": "4f4425b58b27f1de9114348ac3306dc87339fa5c1e3e91e4d094eebecbc93a2e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2213,7 +2213,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 451,
+      "line": 467,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2223,6 +2223,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2238,7 +2239,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1091,
+      "line": 1143,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2248,6 +2249,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",

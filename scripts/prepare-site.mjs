@@ -1,5 +1,5 @@
 /**
- * Builds the public contribution-skill artifacts from their canonical source.
+ * Builds the public skill artifacts from their canonical source.
  * The site never carries a hand-maintained skill copy: every raw endpoint,
  * archive, checksum, and manifest is regenerated before development or build.
  */
@@ -36,8 +36,19 @@ const repositoryRoot = packageRoot;
 const publicRoot = join(packageRoot, "public");
 const downloadsRoot = join(publicRoot, "downloads");
 const publicProtocolRoot = join(publicRoot, "protocol");
-const bootstrapSkillRoot = join(repositoryRoot, "skills", "slop");
-const bootstrapSkillSource = join(bootstrapSkillRoot, "SKILL.md");
+const globalSkillEntries = [
+  { name: "slop", path: "SKILL.md", label: "Slop entry skill" },
+  {
+    name: "slop-contributor",
+    path: "contribute/SKILL.md",
+    label: "Contributor skill",
+  },
+  {
+    name: "slop-maintainer",
+    path: "maintain/SKILL.md",
+    label: "Maintainer skill",
+  },
+];
 const skillValidator = join(
   repositoryRoot,
   "scripts",
@@ -50,7 +61,7 @@ const sourceRepository = "SlopDotCash/slopdotcash";
 function frontmatterValue(source, field) {
   const match = source.match(new RegExp(`^${field}:\\s*(.+)$`, "mu"));
   if (!match) {
-    throw new TypeError(`[Slop] bootstrap skill omitted ${field}`);
+    throw new TypeError(`[Slop] global skill omitted ${field}`);
   }
   const value = match[1].trim();
   if (value.startsWith('"')) {
@@ -63,7 +74,7 @@ function frontmatterValue(source, field) {
   } else if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)) {
     return value;
   }
-  throw new TypeError(`[Slop] bootstrap skill has invalid ${field}`);
+  throw new TypeError(`[Slop] global skill has invalid ${field}`);
 }
 
 function run(executable, args, cwd = repositoryRoot) {
@@ -169,8 +180,6 @@ writeFileSync(
   join(publicProtocolRoot, "identity-v1.json"),
   `${JSON.stringify(IDENTITY_RECORD, null, 2)}\n`,
 );
-runPython([skillValidator, bootstrapSkillRoot]);
-
 const commit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: repositoryRoot,
   encoding: "utf8",
@@ -178,61 +187,72 @@ const commit = execFileSync("git", ["rev-parse", "HEAD"], {
 if (!/^[0-9a-f]{40}$/.test(commit)) {
   throw new TypeError("[Slop] git did not return a full commit SHA");
 }
-const bootstrapFiles = listRegularSkillFiles(bootstrapSkillRoot);
-if (bootstrapFiles.length !== 1 || bootstrapFiles[0] !== "SKILL.md") {
-  throw new TypeError(
-    "[Slop] universal bootstrap must remain one reviewable SKILL.md",
-  );
-}
-const bootstrapSkillBytes = readFileSync(bootstrapSkillSource);
-const bootstrapSkillText = bootstrapSkillBytes.toString("utf8");
-const bootstrapSkillName = frontmatterValue(bootstrapSkillText, "name");
-const bootstrapSkillDescription = frontmatterValue(
-  bootstrapSkillText,
-  "description",
-);
-if (bootstrapSkillName !== "slop") {
-  throw new TypeError("[Slop] universal bootstrap must be named slop");
-}
-const bootstrapSkillDigest = sha256(bootstrapSkillBytes);
-let bootstrapRevisionStatus = "working-tree";
-try {
-  const committedBootstrap = execFileSync(
-    "git",
-    ["show", "HEAD:skills/slop/SKILL.md"],
-    {
+// Validate every source before replacing the published skill set. The global
+// entries remain single reviewable documents; project skill trees retain their
+// separate immutable-template and D1 revision verification below.
+const globalSkills = globalSkillEntries.map((entry) => {
+  const root = join(repositoryRoot, "skills", entry.name);
+  const source = `skills/${entry.name}/SKILL.md`;
+  runPython([skillValidator, root]);
+  const files = listRegularSkillFiles(root);
+  if (files.length !== 1 || files[0] !== "SKILL.md") {
+    throw new TypeError(
+      `[Slop] ${entry.name} must remain one reviewable SKILL.md`,
+    );
+  }
+  const bytes = readFileSync(join(repositoryRoot, source));
+  const text = bytes.toString("utf8");
+  if (frontmatterValue(text, "name") !== entry.name) {
+    throw new TypeError(`[Slop] global skill must be named ${entry.name}`);
+  }
+  let revisionStatus = "working-tree";
+  try {
+    const committed = execFileSync("git", ["show", `HEAD:${source}`], {
       cwd: repositoryRoot,
       encoding: null,
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
-    },
-  );
-  if (bootstrapSkillBytes.equals(committedBootstrap)) {
-    bootstrapRevisionStatus = "committed";
+    });
+    if (bytes.equals(committed)) revisionStatus = "committed";
+  } catch {
+    // error-policy:J3 an absent committed source is an explicit working-tree state.
   }
-} catch {
-  // error-policy:J3 an absent committed source is an explicit working-tree state.
-}
+  return {
+    ...entry,
+    source,
+    bytes,
+    description: frontmatterValue(text, "description"),
+    url: `${publicSiteOrigin}/${entry.path}`,
+    digest: `sha256:${sha256(bytes)}`,
+    revision: commit,
+    revisionStatus,
+  };
+});
 const discoveryRoot = join(publicRoot, ".well-known", "agent-skills");
-const discoverySkillRoot = join(discoveryRoot, "slop");
 rmSync(discoveryRoot, { force: true, recursive: true });
-mkdirSync(discoverySkillRoot, { recursive: true });
-copyFileSync(bootstrapSkillSource, join(publicRoot, "SKILL.md"));
-copyFileSync(bootstrapSkillSource, join(discoverySkillRoot, "SKILL.md"));
+for (const name of ["contribute", "maintain"]) {
+  rmSync(join(publicRoot, name), { force: true, recursive: true });
+}
+for (const skill of globalSkills) {
+  const discoverySkillRoot = join(discoveryRoot, skill.name);
+  const publishedPath = join(publicRoot, skill.path);
+  mkdirSync(discoverySkillRoot, { recursive: true });
+  mkdirSync(dirname(publishedPath), { recursive: true });
+  writeFileSync(publishedPath, skill.bytes);
+  writeFileSync(join(discoverySkillRoot, "SKILL.md"), skill.bytes);
+}
 writeFileSync(
   join(discoveryRoot, "index.json"),
   `${JSON.stringify(
     {
       $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-      skills: [
-        {
-          name: bootstrapSkillName,
-          type: "skill-md",
-          description: bootstrapSkillDescription,
-          url: `${publicSiteOrigin}/SKILL.md`,
-          digest: `sha256:${bootstrapSkillDigest}`,
-        },
-      ],
+      skills: globalSkills.map((skill) => ({
+        name: skill.name,
+        type: "skill-md",
+        description: skill.description,
+        url: skill.url,
+        digest: skill.digest,
+      })),
     },
     null,
     2,
@@ -240,7 +260,7 @@ writeFileSync(
 );
 writeFileSync(
   join(publicRoot, "llms.txt"),
-  `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n- [Slop bootstrap skill](${publicSiteOrigin}/SKILL.md): Inspect and install the repository-specific contribution skill. SHA-256: ${bootstrapSkillDigest}.\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n\nThe bootstrap source revision is ${commit} (${bootstrapRevisionStatus}). It never authorizes wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`,
+  `# Slop\n\n> Contribute to or maintain open source with your agent. GitHub remains the authority for repository work.\n\n## Agent onboarding\n\n${globalSkills.map((skill) => `- [${skill.label}](${skill.url}): ${skill.description} SHA-256: ${skill.digest.slice("sha256:".length)}. Source revision: ${skill.revision} (${skill.revisionStatus}).`).join("\n")}\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n- [Skill source manifest](${publicSiteOrigin}/skill-manifest.json): Source paths and revision status for each global skill.\n\nChecksums detect corruption; they do not prove source identity or grant authority. Skills never authorize credential, private-key, private trace, or raw conversation disclosure.\n`,
 );
 // Project skills are rendered per request from the D1 manifest revision and
 // this one reviewed template pair, so no per-project file is built here. The
@@ -266,7 +286,19 @@ writeFileSync(
       name: null,
       repository: sourceRepository,
       revision: commit,
-      revisionStatus: bootstrapRevisionStatus,
+      revisionStatus: globalSkills.every(
+        (skill) => skill.revisionStatus === "committed",
+      )
+        ? "committed"
+        : "working-tree",
+      skills: globalSkills.map((skill) => ({
+        name: skill.name,
+        source: skill.source,
+        url: skill.url,
+        digest: skill.digest,
+        revision: skill.revision,
+        revisionStatus: skill.revisionStatus,
+      })),
       generatedAt: new Date().toISOString(),
     },
     null,

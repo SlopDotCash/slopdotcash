@@ -60,6 +60,10 @@ flowchart LR
 
 ## Add your open-source project
 
+Choose **Maintainer** on [slop.cash](https://slop.cash/?audience=maintainer), or
+give your agent the [maintainer skill](https://slop.cash/maintain/SKILL.md), to
+add, resume or maintain a project through the existing GitHub and Slop workflows.
+
 Sign in with GitHub and create your project at
 [`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
 GitHub authority, creates a paused project, and queues its first security scan.

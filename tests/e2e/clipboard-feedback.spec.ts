@@ -47,6 +47,41 @@ async function settleCopy(page: Page, index: number, success: boolean) {
 }
 
 for (const outcome of ["success", "failure"] as const) {
+  test(`switching audience discards the old prompt's pending copy ${outcome}`, async ({
+    page,
+    diagnostics,
+  }) => {
+    diagnostics.allowPreviewApiMisses();
+    await controlClipboard(page);
+    await page.goto("/", { waitUntil: "networkidle" });
+    const button = page.locator(".agent-prompt-box button");
+    await button.click();
+    await page.getByRole("button", { name: "Maintainer", exact: true }).click();
+    await expect(
+      page.getByRole("status", { name: "Agent prompt" }),
+    ).toContainText("/maintain/SKILL.md");
+    await settleCopy(page, 0, outcome === "success");
+    await expect(button).toHaveAttribute("data-copy", "idle");
+    await button.click();
+    await settleCopy(page, 1, true);
+    await expect(button).toHaveAttribute("data-copy", "copied");
+    const copied = await page.evaluate(() =>
+      (
+        window as Window & { copyRequests?: { value: string }[] }
+      ).copyRequests?.map((request) => request.value),
+    );
+    expect(copied).toEqual([
+      `Read ${new URL(page.url()).origin}/contribute/SKILL.md and follow it.`,
+      `Read ${new URL(page.url()).origin}/maintain/SKILL.md and follow it.`,
+    ]);
+    await page
+      .getByRole("button", { name: "Contributor", exact: true })
+      .click();
+    await expect(button).toHaveAttribute("data-copy", "idle");
+  });
+}
+
+for (const outcome of ["success", "failure"] as const) {
   test(`clearance changes the displayed prompt before old copy ${outcome}`, async ({
     page,
     diagnostics,

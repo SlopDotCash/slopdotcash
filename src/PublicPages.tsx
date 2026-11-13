@@ -4,6 +4,7 @@ import {
   BookOpen,
   CalendarCheck,
   CircleSlash,
+  FolderPlus,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -50,8 +51,8 @@ export function HowItWorksPage() {
               <Search className="route-step-icon" aria-hidden="true" />
               <strong>1. Choose work</strong>
               <p>
-                Find an active <Link href="/#projects">project</Link>, read its
-                skill and choose unblocked work.
+                <Link href="/">Use the contributor skill</Link> to find
+                unblocked work.
               </p>
             </li>
             <li>
@@ -85,37 +86,31 @@ export function HowItWorksPage() {
           <h2 id="maintainer-path">For maintainers</h2>
           <ol className="mechanism-flow">
             <li>
-              <GitPullRequest className="route-step-icon" aria-hidden="true" />
-              <strong>1. Add a project</strong>
+              <FolderPlus className="route-step-icon" aria-hidden="true" />
+              <strong>1. Add or resume</strong>
               <p>
-                <Link href="/projects/new">
-                  Add your repository and contribution rules
+                <Link href="/?audience=maintainer">
+                  Use the maintainer skill
                 </Link>
-                . Install free Slopbot and complete the security checks.
+                .
               </p>
             </li>
             <li>
-              <Wallet className="route-step-icon" aria-hidden="true" />
-              <strong>2. Fund the pool</strong>
-              <p>
-                Only funds in the project vault pay awards. Unused funds roll
-                over. <Link href="/sponsors">Funding options</Link>
-              </p>
+              <ShieldCheck className="route-step-icon" aria-hidden="true" />
+              <strong>2. Get ready</strong>
+              <p>GitHub access. Free Slopbot. Admission.</p>
             </li>
             <li>
               <ListChecks className="route-step-icon" aria-hidden="true" />
-              <strong>3. Adjust awards</strong>
-              <p>
-                Change proposed amounts within the cap before the monthly
-                cutoff.
-              </p>
+              <strong>3. Maintain your project</strong>
+              <p>PRs, CI, rules and private reports.</p>
             </li>
             <li>
-              <CalendarCheck className="route-step-icon" aria-hidden="true" />
-              <strong>4. Automatic payment</strong>
+              <Wallet className="route-step-icon" aria-hidden="true" />
+              <strong>4. Manage rewards</strong>
               <p>
-                Funded awards pay at the <a href="#payments">monthly cutoff</a>{" "}
-                unless you turn automatic payment off.
+                Funding is optional. Adjust allocations before the{" "}
+                <a href="#payments">monthly cutoff</a>.
               </p>
             </li>
           </ol>
