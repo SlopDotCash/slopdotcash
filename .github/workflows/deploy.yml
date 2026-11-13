@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       use_published_data:
-        description: "Manual main release only: retain the last published production leaderboard and profiles with their original timestamps"
+        description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
 
@@ -84,14 +84,17 @@ jobs:
             exit 1
           fi
 
-      - name: Require manual main release for published data
+      - name: Require manual main or development release for published data
         if: inputs.use_published_data == true
         env:
           BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "$GITHUB_REF" = "refs/heads/main"
+          case "$GITHUB_REF" in
+            refs/heads/main | refs/heads/development) ;;
+            *) echo "::error::Published data is limited to manual main or development releases."; exit 1 ;;
+          esac
           test "$BOOTSTRAP_STAGING_PROFILES" = "false"
 
       - name: Setup Node.js
@@ -225,20 +228,26 @@ jobs:
             echo "::warning::Profile census did not reconcile; retrying once."
           done
 
-      - name: Load validated published data for manual production release
+      - name: Load validated published data for manual release
         if: inputs.use_published_data == true
         run: |
           set -euo pipefail
+          # Each environment reuses only its own last publication, which was
+          # collected against that environment's registry.
+          data_origin="https://slop.cash"
+          if [ "$VITE_SLOP_ENVIRONMENT" = "staging" ]; then
+            data_origin="https://staging.slop.cash"
+          fi
           mkdir -p public/data
           ledger_file="$(mktemp "$RUNNER_TEMP/slop-release-ledger.XXXXXX")"
           profiles_file="$(mktemp "$RUNNER_TEMP/slop-release-profiles.XXXXXX")"
           trap 'rm -f "$ledger_file" "$profiles_file"' EXIT
           bun scripts/download-leaderboard.ts \
-            https://slop.cash/data/leaderboard.json "$ledger_file"
+            "$data_origin/data/leaderboard.json" "$ledger_file"
           curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
             --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-            https://slop.cash/data/profiles.json --output "$profiles_file"
+            "$data_origin/data/profiles.json" --output "$profiles_file"
           bun --no-env-file -e '
             import { assertLeaderboardSnapshot } from "./src/lib/leaderboard";
             const snapshot = await Bun.file(process.argv[1]).json();
@@ -985,34 +994,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/eliza-computer-pages-project.json"
-          status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 1048576 \
-              --output "$response" \
-              --write-out "%{http_code}" \
-              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer"
-          )"
-          if [ "$status" != "200" ]; then
-            echo "::error::The reviewed eliza-computer Pages project is unavailable (HTTP $status); routine release code will not create or reconfigure it."
-            exit 1
-          fi
-          node - "$response" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (
-            value?.success !== true ||
-            value?.result?.name !== "eliza-computer" ||
-            value?.result?.production_branch !== "main"
-          ) {
-            throw new TypeError("the reviewed eliza-computer Pages project contract drifted");
-          }
-          NODE
+        run: bun --no-env-file scripts/prepare-vetting-public-key.ts preflight production
 
       - name: Validate optional Slopbot value scoring settings
         if: steps.release-input.outputs.superseded != 'true'

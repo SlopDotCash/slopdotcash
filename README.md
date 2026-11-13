@@ -265,10 +265,18 @@ profiles:
 gh workflow run deploy.yml --ref main -f use_published_data=true
 ```
 
-This option is available only for a manual `main` release. It validates the
+A manual `development` release may use the same option to deploy staging with
+the leaderboard and profiles staging last published:
+
+```bash
+gh workflow run deploy.yml --ref development -f use_published_data=true
+```
+
+This option is available only for a manual `main` or `development` release.
+Each environment reuses only its own last publication. It validates the
 published data and preserves its original collection timestamps and history.
 It skips fresh leaderboard/profile collection and the merge-collector install.
-All code, browser, sandbox, build and production release checks still run.
+All code, browser, sandbox, build and release checks still run.
 Missing or invalid published data stops the release. The option defaults to
 `false`; normal releases continue to collect fresh data.
 
