@@ -10977,10 +10977,10 @@
 {"name":"dispatchSpendAlert","kind":"FunctionDeclaration","line":16,"sha256":"1d02856e610ca5986d3a29956766bc2cebe2ed2926381efa63d05731964d91a5","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@62>","kind":"ArrowFunction","line":62,"sha256":"862e9775862b9620d0b5f1b3d6cc8cbedc0d3a4c58f00b9383bada8574882c55","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"workers/slopbot/value-accepted-commit-census.ts","sha256":"a2b623fe0f651448768b7a4fb454b665731e0272f1308cfa84a50215fbb40ecf","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/slopbot/value-accepted-commit-census.ts","sha256":"d2762311aa4939faaa4664848ac3a4a91a65cc0379bbb4fdca8f6862ffc4202f","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"compareRangeCommits","kind":"FunctionDeclaration","line":45,"sha256":"57a93a16bf59d5f42c42a616b4635badaa317a1af58403ac83eb835b5ac995f2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"collectAcceptedCommitCensus","kind":"FunctionDeclaration","line":87,"sha256":"50977c2df8412b6a18ac1825f6e08d587576e2807ae2f19443d6f562999cd14c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"collectRange","kind":"FunctionDeclaration","line":98,"sha256":"e7620e683ca520399ba2d65272327391c5a93ca13ba6d8b3fabb28be21d22c9d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect"]}
+{"name":"collectRange","kind":"FunctionDeclaration","line":98,"sha256":"15c6b663fc84667265537d98a82e27b306a728ed7cee4dd4f21ca1a274382582","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect"]}
 ]},
 {"path":"workers/slopbot/value-accepted-range.ts","sha256":"1c1e3497f38fb59a1a08164f90c2face0a767155928ac922133335bccf12b2ac","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"collectAcceptedValueRange","kind":"FunctionDeclaration","line":19,"sha256":"9bfc4b7a67cd22377ec9e2ba6e7cdbe840d0885f8644b57a7ddc0d6c11f5a717","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
@@ -11126,7 +11126,7 @@
 {"path":"workers/slopbot/value-evidence-types.ts","sha256":"ad975bab5bacdda9fef837efc8afcc55b446342cbfaeb1134922e053326f9324","language":"typescript","disposition":"no-function-body","functions":[
 
 ]},
-{"path":"workers/slopbot/value-evidence.ts","sha256":"ae46fb549ed08a8d8731900d6e4f6e5d10039149eb6da447689cb934419eb4fa","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/slopbot/value-evidence.ts","sha256":"3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"fileChange","kind":"FunctionDeclaration","line":58,"sha256":"e91e478ef726c5aa4ca953e74cf51475d24ec9b94ef1559b659a621bff8d42f2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"changeBytes","kind":"FunctionDeclaration","line":88,"sha256":"ceab4830bfc7d937bdb6949282530a024adde0e0140e8d7d0335bec2ca312759","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"<ArrowFunction@91>","kind":"ArrowFunction","line":91,"sha256":"0db6d5e357fae770fbaa37c4f1fdb0973e2b38ba1fd7abb75a76ad1bdf4a9a14","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
@@ -11138,7 +11138,7 @@
 {"name":"<ArrowFunction@176>","kind":"ArrowFunction","line":176,"sha256":"22eb351f5c0af01c578e20a026574970539e7f1af48f3423a36fbb42a76050d7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@199>","kind":"ArrowFunction","line":199,"sha256":"8e686ba94f64b6e7d7b196cac219cee6f9d1867c15e7df5931f16a679d4844ea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@217>","kind":"ArrowFunction","line":217,"sha256":"ebca256bb845f207ebd2930c741e39c5368845737913bdeb52b9a24e59d59969","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"relatedPullRequests","kind":"FunctionDeclaration","line":226,"sha256":"498597629134c949f47763b793d572148bb43d55c85e675921e5a80604d793a2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"relatedPullRequests","kind":"FunctionDeclaration","line":226,"sha256":"7abf871ec781287479267751f100fa8d468a5caa6de85c170793beb8ea9ef650","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
 {"name":"<ArrowFunction@330>","kind":"ArrowFunction","line":330,"sha256":"2d4d522065790956235d4e83198b86cda630bf78884ec98353d0b68b642f17d2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"<ArrowFunction@353>","kind":"ArrowFunction","line":353,"sha256":"e360190997659002045e5e0bb2072cf7560abe48f1c88a514447f53db4329f58","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@383>","kind":"ArrowFunction","line":383,"sha256":"1096ba6fc29f5965bbdc8e803156b5bf6b96201139227e13323187e08d6a00fe","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
