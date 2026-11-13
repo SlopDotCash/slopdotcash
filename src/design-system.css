@@ -125,6 +125,8 @@ pre {
   border-color: var(--line-strong);
   background: transparent;
   color: var(--ink);
+  /* Keep enabled text and background paired, as for primary actions. */
+  transition: border-color var(--brand-motion-fast) var(--brand-motion-ease);
 }
 
 .secondary-button:hover {
