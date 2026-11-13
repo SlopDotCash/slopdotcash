@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "d9cd8499e062dbf1f54316f821c621a9933df759046cc92cb5f842cee936ebdc",
+  "inventorySha256": "ff4042f84840f7c9bba8b7da748cc1ba4c63bfe34a715cd055465a10f5e214dc",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2036,7 +2036,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 371,
+      "line": 460,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2071,7 +2071,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3473,
+      "line": 3633,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2090,7 +2090,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4077,
+      "line": 4237,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2132,7 +2132,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 436,
+      "line": 437,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2153,7 +2153,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 445,
+      "line": 446,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
@@ -3095,6 +3095,22 @@
       "values": ["approved", "excluded", "held"],
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": ["excluded"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/points-implementation-corrections.ts",
+      "line": 123,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["already-applied", "applied", "held", "retained", "unchanged"],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "already-applied",
+        "retained",
+        "unchanged"
+      ],
       "review": "candidate-only"
     },
     {
