@@ -210,7 +210,7 @@ jobs:
           bun scripts/prepare-pr-ledger.ts \
             "$ledger_file" public/data/leaderboard.json
 
-      - run: bunx vite build
+      - run: node node_modules/vite/bin/vite.js build
         if: github.event_name != 'pull_request'
       - run: node scripts/test-payout-browser.mjs
         if: github.event_name != 'pull_request'

@@ -201,6 +201,8 @@ An optional custom project image falls back to the GitHub owner avatar. Do not u
 
 Show one setup summary with separate authority, Slopbot, security, and funding results, plus the next action. Activate after complete setup, current authority, installation, and valid admission clearance. Economic policy changes apply from the next UTC calendar month; preserve frozen terms and funded obligations.
 
+Owners may append public GitHub repositories to an existing project on its manage page. An appended repository cannot be a fork or archived, and no project may already list its permanent numeric and node IDs. The owner needs current write, maintain, or admin authority through a Slopbot installation on that repository. Its work counts from the first day of the next UTC month. An append never removes, reorders, or renames a listed repository. Each repository needs its own admission scan or owner-approved exemption, and the project is cleared only when every repository is. Appending to an active project pauses it. A clean scan of the last uncleared repository reactivates it; after an exemption, the owner runs the setup check. The monthly close skips a paused project, so if a scan has not cleared when the month closes, that month has no allocation. A flag-only pause or a moderator reinstatement needs a fresh clean scan of every repository. Proposed by the operator on 12 November 2026; approved by the owner's merge.
+
 ### Skill source and installation
 
 Generate each skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
@@ -424,6 +426,8 @@ Share merge credit with verified implementation authors. Credit useful reviews s
 
 Determine implementation recipients from GitHub-linked primary commit authors. Opening, recreating, updating, or merging a PR alone earns no implementation share. For a commit without an eligible linked author, retain the source PR creator as the fallback; use the original PR creator when verified retained-copy evidence binds that commit to an original PR. A reference in a PR description alone is insufficient. Commit counts do not increase the work unit's Points. Preserve frozen awards and append corrections for eligible unpaid work.
 
+Owner decision, 13 November 2026: keep the PR or grouped work unit's value score unchanged and split its implementation Points in proportion to each recipient's additions plus deletions in the unique accepted, non-merge commits, on every base branch. Exclude synchronization merges and work already credited in another accepted source. For a retained-copy claim, count the accepted copy's changed lines. Allocate whole Points by largest remainder, breaking ties by immutable GitHub actor ID; no per-recipient minimum may inflate the total. Complete zero-line evidence uses equal shares for binary or empty changes. Missing line evidence for multiple recipients holds the allocation; it never implies equal weights. A sole verified recipient receives the whole score. Rebalancing without a current value assessment preserves the complete previously recorded PR total, including a former carrier's share, and changes only its recipients. Keep original occurrence dates and append corrections; approved, funded, scheduled and paid rewards remain unchanged.
+
 Credit at most the first five distinct qualifying reviewers. Use each reviewer's highest band. The review pool is their summed bands, capped at the PR's assessed credit, with a 10-point minimum. Allocate proportionally by largest remainder in 10-point increments. Break ties by first qualifying review time, then review node ID.
 
 Use reviewed evaluation manifests only for useful work that ordinary scoring does not cover. Never reward a source twice. A merged PR later removed by GitHub retains its recorded Points and reward eligibility.
@@ -503,7 +507,7 @@ A passed scan means every defined check ran on the bound revision and found no m
 
 ### Exemptions and restrictions
 
-Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. Display an exemption, never a passed scan.
+Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. The exemption covers each project's original repositories; a repository appended later needs its own admission scan or owner-approved exemption. Display an exemption, never a passed scan.
 
 A separate owner-approved Umia fork exemption requires an audited administrator record. Bind it to the current D1 revision, permanent repository identity, steward, approving actor, reason, and time. Display **Owner-approved exemption**. Another repository or steward cannot inherit it. Other grants require a separate human owner decision. Retain previous assessments and audited revocations; revocation restores ordinary admission.
 
