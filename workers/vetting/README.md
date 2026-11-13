@@ -21,7 +21,7 @@ mean the code is free of all malware.
 
 | Surface | What it reads |
 | --- | --- |
-| `source` | Code and configuration files of the executable inventory |
+| `source` | Every ordinary acquired text blob, including files with unknown names or suffixes; compressed payloads retain their artifact classification |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
 | `installScripts` | Package lifecycle hooks, pnpm file hooks (`.pnpmfile.cjs`, `.pnpmfile.js`), `setup.py`, `build.rs`, `Makefile.PL`, `Build.PL`, `extconf.rb`, `build.zig`, `build.zig.zon`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`, MSBuild projects and imports such as `<name>.csproj`, `<name>.fsproj`, `<name>.vbproj`, `<name>.vcxproj`, `<name>.proj`, `<name>.props` and `<name>.targets`, node-gyp `binding.gyp`, `<name>.gyp`, `<name>.gypi`, and repository files named by a GYP `includes` entry), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `tox.ini`, `tox.toml`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
@@ -33,6 +33,23 @@ same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Dedicated `tox.ini` and
 `tox.toml` files are also install surfaces. This name-based classification does
 not parse tox tables from shared manifests.
+
+Rake task files (`.rake`), `Rakefile.rb`, Bundler's `Gemfile` variants and
+`gems.rb`, and Make fragments (`.mk`, `.make`) are install surfaces too.
+Lockfiles are not executable Gemfile variants. Arbitrarily named files loaded
+by these build systems still receive full source review: classification does
+not depend on interpreting Ruby or Make expressions. Previously unrecognized
+text remains in full model review even under generated or vendor directories.
+Unknown undecodable bytes retain their digest as quarantined binary artifacts
+and make source coverage incomplete; an extension never proves they are safe.
+Unknown-format compressed payloads remain quarantined under the existing gzip
+policy even when their decoded bytes are UTF-8; this fallback does not release
+them or claim that the model reviewed those payloads.
+
+This covers the acquired bytes, not a complete runtime dependency graph.
+Existing GYP and shell-helper resolvers retain their explicit missing-input
+gaps. The reviewer must also preserve concrete missing or unresolved local
+executable inputs found in the source; external code is not inferred reviewed.
 
 CMake evaluates a file named by `include()` during configure, so that file is
 install content even when its name carries no recipe extension. Only a literal
