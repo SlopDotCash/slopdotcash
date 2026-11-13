@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "52f985f31e176fd689e774094ff78c23f2fee61484d6eb3ecd582727cf01ad36",
+      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 215, 240, 261, 349],
+      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
       "review": "mapped-abstraction"
     },
     {
@@ -3744,7 +3744,7 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "e1de84458ef00c431ab86f11e1f22c1495b7f32f1117c6b1d41515336bdc37e7",
+      "sha256": "207b331410ca1daae844d110ab76e449f1a3f16405b5c8b28c5be0f81b35ebd9",
       "models": [],
       "candidateLines": [59, 62, 70],
       "review": "reviewed-no-independent-state",
@@ -3769,7 +3769,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "82f9a8bfa1506a2603eeaf4b996b0629a2e87ab5e10c5742c891eca3a86c1d56",
+      "sha256": "fab3c2e1ee1cf902b813a5173eb82b17ee117f1e3491fef11547d75f913bafd7",
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
@@ -3780,14 +3780,14 @@
       ],
       "candidateLines": [
         23, 178, 189, 198, 265, 277, 279, 282, 395, 483, 504, 540, 571, 635,
-        667, 699, 895, 1122, 1184, 1192, 1250, 1303, 1306, 1499, 1508, 1513,
-        1520, 1603, 1604, 1751, 1752, 1809, 1835, 1853, 1855, 1859, 1893, 1896,
-        1897, 1900, 1902, 1913, 1936, 2143, 2146, 2454, 2473, 2571, 2584, 2595,
-        2596, 2773, 2774, 2965, 2981, 2993, 3000, 3026, 3036, 3040, 3044, 3048,
-        3103, 3122, 3149, 3166, 3200, 3201, 3203, 3219, 3236, 3237, 3238, 3247,
-        3252, 3432, 3790, 3812, 3821, 3871, 3906, 3912, 3919, 3988, 4073, 4225,
-        4440, 4450, 4452, 4465, 4494, 4496, 4497, 4501, 4505, 4560, 4614, 4665,
-        4668
+        667, 699, 895, 1130, 1192, 1200, 1258, 1311, 1314, 1507, 1516, 1521,
+        1528, 1611, 1612, 1759, 1760, 1817, 1843, 1861, 1863, 1867, 1901, 1904,
+        1905, 1908, 1910, 1921, 1944, 2151, 2154, 2462, 2481, 2579, 2592, 2603,
+        2604, 2781, 2782, 2973, 2989, 3001, 3008, 3034, 3044, 3048, 3052, 3056,
+        3111, 3130, 3157, 3174, 3208, 3209, 3211, 3227, 3244, 3245, 3246, 3255,
+        3260, 3440, 3798, 3820, 3829, 3879, 3914, 3920, 3927, 3996, 4081, 4233,
+        4448, 4458, 4460, 4473, 4502, 4504, 4505, 4509, 4513, 4568, 4622, 4673,
+        4676
       ],
       "review": "mapped-abstraction"
     },
@@ -4529,14 +4529,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "2540b17918f66827d83a7b585360e4ecd5acbdcd59afe4d3d272193dad45f641",
+      "sha256": "4936a88b94e142f2dd6930fecb4872e7f21caf64b18d493d211e112a4ab7a8dd",
       "models": [
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 650, 686,
-        719, 743
+        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 651, 687,
+        720, 744
       ],
       "review": "mapped-abstraction"
     },
@@ -5495,19 +5495,21 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "03adaa1fcf389b04cfebe219defefac27b8f6d6b08acf5125de9d0454ee6a2b0",
+      "sha256": "a6edb9931c22337dcf9f949dc570871a2930a7e76a671fbe511f1d3dddf70f4c",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 29, 38, 44, 57, 59, 112, 118, 128, 131, 132, 134, 135, 136, 137, 154,
-        156, 160, 197, 219, 270, 302, 309, 316, 317, 318, 325, 326, 328, 332,
-        333, 334, 335, 357, 358, 359, 368, 376, 389, 403, 430, 446, 451, 454,
-        461, 464, 471, 472, 478, 616
+        2, 29, 38, 44, 66, 68, 121, 127, 137, 140, 141, 143, 144, 145, 146, 163,
+        165, 169, 206, 228, 279, 311, 312, 315, 324, 331, 332, 333, 340, 341,
+        343, 347, 349, 350, 351, 373, 374, 375, 385, 395, 400, 407, 421, 427,
+        428, 432, 434, 466, 480, 507, 523, 528, 531, 538, 541, 548, 549, 555,
+        693
       ],
       "review": "mapped-abstraction"
     },
@@ -5736,14 +5738,16 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "30e3fb68c1006efc4fc5029333fb361f4b01f419d3525a7625226f46ad6f6623",
+      "sha256": "19451f77e51cbf98c267cd74707cc3f9d57b2e5920973e657814741ebd5f62ca",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt"
       ],
       "candidateLines": [
-        260, 287, 308, 314, 331, 333, 334, 337, 338, 347, 348, 349, 350, 351
+        262, 264, 288, 293, 294, 303, 314, 320, 337, 339, 340, 341, 344, 345,
+        357, 358, 360, 361, 362, 363
       ],
       "review": "mapped-abstraction"
     },
@@ -7288,7 +7292,7 @@
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "d9e87bcd603591818ea749bb74515a2d41fba3fc54763c86fa6ddbe8efbcc893",
+      "sha256": "eec63b89e0c6a97dedbea80f88a91256df5841b2880256be2c2fcb6352ca167e",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -17797,6 +17801,19 @@
       "sha256": "81ac338b14423f7e132db94de0f5716bccfde4f3223d04416b8215e153f82a48",
       "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
       "scenarios": ["bodyTimeoutTest", "invalidTest", "validTest"]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_auto_check.qnt",
+      "sha256": "55f7d4f428c52dd62c3ffb8a0e786926fee96449f0ca53471f591c7965bca961",
+      "sources": ["src/VaultActions.tsx", "src/lib/evm-vault-actions.ts"],
+      "scenarios": [
+        "approvalBeforeFinalityTest",
+        "attemptLimitTest",
+        "failedTransferTest",
+        "recoveryHashNeedsClickTest",
+        "replacedApprovalTest",
+        "transferWaitsForFinalityTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_vault_prompt_ownership.qnt",
