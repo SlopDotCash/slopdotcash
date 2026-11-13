@@ -1081,6 +1081,11 @@ test("moderators restrict a project and refuse reinstatement without canonical s
   await expect(ban).toContainText("Stays at 3");
   await expect(ban).toContainText("No revision needed");
   await ban.getByRole("button", { name: "Confirm: Ban project" }).click();
+  // The preview already contains "Banned". Wait for the saved confirmation
+  // before another actor files an appeal against that restriction sequence.
+  await expect(admin.getByRole("status").first()).toContainText(
+    "Ban project recorded",
+  );
   await expect(panel()).toContainText("Banned");
   // ELG-02: the applicant who listed the project files the appeal. The
   // request client sends no Secure cookie over local http.
