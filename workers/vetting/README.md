@@ -68,6 +68,23 @@ or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
 also an `installScripts` surface, at any depth. Each can make the package
 manager execute code, for example through `node-options` in `.npmrc`.
 
+Lifecycle command text and known shell install files also follow literal local
+file invocations. Referenced files become install content, so their literal
+download URLs remain unretrieved artifacts. Shell helpers and named package
+scripts are followed with
+their invoking working directory; repeated references and cycles are
+deduplicated. Straight-line literal `cd` changes resolve locally. Missing,
+escaping or dynamic paths, substitutions, grouped commands, conditional
+directory changes, unsupported control flow, `eval` and unresolved dispatcher
+options keep install coverage
+partial. Sourced helpers are read, but their effect on the invoking directory
+is left unresolved. Quoted here-document bodies are data, not commands. This
+is literal shell-command coverage,
+not a complete language call graph: no target code, substitution or variable
+is evaluated. Non-shell helper files are reviewed as install content without
+treating their language's strings as shell commands. Unrelated source and
+fixture URLs do not become install artifacts.
+
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
@@ -218,7 +235,8 @@ an operator. The pass removes the acquired bytes after each assessment. An
 error that escapes one assessment (for example a refused journal reservation)
 is reported for that assessment alone, as `retry` at step `assessment` with
 the error name and never its message; the assessment stays pending and the
-pass continues with the next queued project, so one repository cannot hold
+pass continues with the next queued assessment (each repository of a project is
+queued as its own assessment), so one repository cannot hold
 back every project queued behind it. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.

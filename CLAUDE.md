@@ -234,7 +234,11 @@ future executable changes. Later projects require one successful admission scan 
 repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
-cannot inherit a nonexempt admission. Explicit security investigations control
+cannot inherit a nonexempt admission. An owner may append public repositories on the
+manage page; each needs the owner's current authority through Slopbot, counts from
+the next UTC month, is never removed or reordered, and needs its own admission scan
+or exemption, because the migration-0075 exemption covers only original repositories.
+Explicit security investigations control
 nonexempt admission (owner decision, 27 October 2026, PRD section 8).
 Admission scans have no repository size limit (owner decision, 28 October
 2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,
@@ -608,11 +612,12 @@ shared publication lock.
 
 Every release snapshots the current D1 registry, passes the full quality gate,
 and publishes through its branch's normal release job. Normal releases ingest
-live GitHub data. An explicit manual `main` run may set `use_published_data`
-to retain the last published production leaderboard and profiles after
-validation, with their original timestamps and history. This option cannot run
-on staging or with staging bootstrap; missing or invalid published data stops
-the release. It never uses the pull-request data adapter or skips code, browser,
+live GitHub data. An explicit manual `main` or `development` run may set
+`use_published_data` to retain the last leaderboard and profiles published by
+that run's own environment (production or staging) after validation, with their
+original timestamps and history (operator decision, 13 November 2026). This
+option cannot run with staging bootstrap; missing or invalid published data
+stops the release. It never uses the pull-request data adapter or skips code, browser,
 sandbox, source-identity or deployment checks. To publish new data without a
 commit, run the release workflow by hand (`workflow_dispatch`) with the option
 off. Every production release requires current main equivalence. Every

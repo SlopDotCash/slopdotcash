@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2db3e35fad6e28886933555b8894a6677a58e0fd7327bf494da2bb8f82b961ea",
+  "inventorySha256": "071fab487671cc006c88bf51413dcb0a2c5aedbe34a2b1eda4edc7f0a88e9510",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2392,
+      "line": 2458,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -121,6 +121,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -132,14 +133,15 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
-        "formal/models/vetting/vetting_admission_clearance.qnt"
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2596,
+      "line": 2662,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -153,6 +155,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -164,14 +167,15 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
-        "formal/models/vetting/vetting_admission_clearance.qnt"
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 50,
+      "line": 54,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
@@ -179,7 +183,8 @@
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/project_setup_status.qnt",
-        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
@@ -391,7 +396,7 @@
     },
     {
       "path": "backend/security/submission-store.ts",
-      "line": 293,
+      "line": 296,
       "name": "review_decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -457,7 +462,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "line": 583,
+      "line": 637,
       "name": "recordResult",
       "kind": "string-union",
       "values": ["conflict", "recorded"],
@@ -468,6 +473,7 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "lexicallyUnmentionedValues": ["conflict", "recorded"],
@@ -2011,7 +2017,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 230,
+      "line": 235,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2030,7 +2036,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 365,
+      "line": 370,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2059,7 +2065,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3453,
+      "line": 3468,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2078,7 +2084,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4057,
+      "line": 4072,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2120,7 +2126,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 429,
+      "line": 436,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2439,7 +2445,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 852,
+      "line": 855,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2463,7 +2469,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1321,
+      "line": 1324,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2487,7 +2493,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2107,
+      "line": 2160,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2511,7 +2517,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2112,
+      "line": 2165,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2531,6 +2537,30 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["removing"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2172,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "loading"],
+      "models": [
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -3245,7 +3275,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 99,
+      "line": 100,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -3265,7 +3295,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 132,
+      "line": 133,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
@@ -3344,7 +3374,7 @@
     },
     {
       "path": "src/lib/vetting-contracts.ts",
-      "line": 144,
+      "line": 163,
       "name": "exemption",
       "kind": "string-union",
       "values": [
@@ -3796,11 +3826,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 188,
+      "line": 191,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],
       "review": "candidate-only"
     },
@@ -4094,13 +4127,14 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 691,
+      "line": 693,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_local_helpers.qnt",
         "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "lexicallyUnmentionedValues": [

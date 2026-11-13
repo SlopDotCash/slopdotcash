@@ -320,6 +320,34 @@ export function HowItWorksPage() {
               </p>
             </div>
           </article>
+          <article className="faq-answer">
+            <h3>Is there a referral program?</h3>
+            <div>
+              <p>
+                Not yet. Referrals are recorded, but none pay until the program
+                is switched on.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
+                  Referral terms
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Does Slop buy back SLOP?</h3>
+            <div>
+              <p>
+                The buyback is configured live since 12 November 2026. Half of
+                eligible fee income funds SLOP purchases on Robinhood Chain once
+                minimum order sizes are met. Half of the SLOP acquired is
+                allocated to burning. The first verified bridge fill, purchase
+                and burn are still pending. Funding comes from fees, not the
+                treasury, and nothing is guaranteed.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
+                  How the buyback works
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
         </div>
       </section>
     </main>

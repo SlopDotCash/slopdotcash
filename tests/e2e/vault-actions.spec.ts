@@ -47,9 +47,12 @@ import {
 } from "./project-draft-fixture";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 import {
+  holdVaultCreationReview,
   holdVaultWalletPreflight,
   leaveWithVaultPreflight,
+  releaseVaultCreationReview,
   releaseVaultPreflight,
+  waitForVaultCreationReview,
   waitForVaultPreflight,
 } from "./vault-request-fixture";
 
@@ -1240,7 +1243,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
   const origin = `http://127.0.0.1:${apiPort}`;
   const temporary = mkdtempSync(join(tmpdir(), "slop-vault-setup-"));
   let releaseSetupRejection = () => {};
-  let releaseCreationReview = () => {};
   if (!project.escrow) throw new Error("Missing project vault policy");
   const target = {
     ...project,
@@ -1597,42 +1599,27 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
     const setupKey = `slop:vault-setup:v1:${project.id}`;
-    let creationReviewStarted = () => {};
-    const creationReviewWaiting = new Promise<void>((resolve) => {
-      creationReviewStarted = resolve;
-    });
-    const creationReviewRelease = new Promise<void>((resolve) => {
-      releaseCreationReview = resolve;
-    });
     const setupPath = `/api/v1/project-vaults/${project.id}`;
-    await page.route(`**${setupPath}`, async (route) => {
-      if (
-        route.request().method() !== "POST" ||
-        route.request().postDataJSON()?.step !== "review"
-      ) {
-        await route.continue();
-        return;
-      }
-      const response = await route.fetch();
-      creationReviewStarted();
-      await creationReviewRelease;
-      await route.fulfill({ response });
-    });
-    const delayedReview = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === setupPath &&
-        response.request().method() === "POST" &&
-        response.request().postDataJSON()?.step === "review",
-    );
+    await holdVaultCreationReview(page, `${origin}${setupPath}`);
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
-    await creationReviewWaiting;
+    const heldReview = await waitForVaultCreationReview(page);
+    expect(heldReview.captured).toBe(1);
+    expect(heldReview.status).toBe(200);
+    expect(heldReview.bodyBytes).toBeGreaterThan(0);
     try {
       await page.getByRole("link", { name: "Slop home", exact: true }).click();
       await expect(setup).toHaveCount(0);
     } finally {
-      releaseCreationReview();
+      await releaseVaultCreationReview(page);
     }
-    await (await delayedReview).finished();
+    await page.waitForFunction(() => {
+      const state = (
+        window as typeof window & {
+          heldVaultCreationReview: { captured: number; released: boolean };
+        }
+      ).heldVaultCreationReview;
+      return state.captured === 1 && state.released;
+    });
     await page.evaluate(
       () =>
         new Promise<void>((resolve) =>
@@ -1643,7 +1630,6 @@ test("owner creates, registers and funds a vault through the real API", async ({
     expect(
       await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
     ).toBeNull();
-    await page.unroute(`**${setupPath}`);
     await page.goBack();
     await setup.getByRole("button", { name: "Connect MetaMask" }).click();
     if (!automatic) await monthlySetting.selectOption("off");
@@ -1797,6 +1783,18 @@ test("owner creates, registers and funds a vault through the real API", async ({
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toHaveCount(0);
     expectedRecoveryRejection = false;
+    const registeredRevision = recoveryPage.waitForResponse((response) => {
+      return (
+        response.request().method() === "GET" &&
+        response.url() === `${origin}/api/v1/projects/${project.id}?reload=1`
+      );
+    });
+    const registeredSetup = recoveryPage.waitForResponse((response) => {
+      return (
+        response.request().method() === "POST" &&
+        response.url() === `${origin}/api/v1/project-setup/${project.id}/check`
+      );
+    });
     await setup.getByLabel("Creation transaction hash").fill(sends[0]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
@@ -1819,10 +1817,37 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       recoveryPage.getByRole("textbox", { name: /^Monthly amount/u }),
     ).toHaveValue("2000");
+    const [revisionResponse, setupResponse] = await Promise.all([
+      registeredRevision,
+      registeredSetup,
+    ]);
+    expect(revisionResponse.status()).toBe(200);
+    expect(await revisionResponse.json()).toMatchObject({
+      revision: 3,
+      vetting: { state: "cleared" },
+    });
+    expect(setupResponse.status()).toBe(200);
+    expect(setupResponse.request().postDataJSON()).toEqual({});
+    expect(await setupResponse.json()).toMatchObject({
+      setup: {
+        projectId: project.id,
+        revision: 3,
+        checks: {
+          authority: { state: "verified" },
+          installation: { state: "installed" },
+          scan: {
+            state: "cleared",
+            exempt: true,
+            exemptionKind: "existing-project",
+          },
+        },
+      },
+    });
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
-    // Settings refresh the registered revision and read its retained clearance once.
-    expect(state.scanReads).toBe(afterEdit.scanReads + 1);
+    // The revision read and authenticated setup check each read retained
+    // clearance once. The empty check body requests no new scan.
+    expect(state.scanReads).toBe(afterEdit.scanReads + 2);
     expect(state.revisions.n).toBe(3);
     expect(state.project.manifest.reward.monthlyCapMinor).toBe("2000000000");
     const created = state.project.manifest.escrow.deployments[0];
@@ -1967,7 +1992,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
   } finally {
-    releaseCreationReview();
+    await releaseVaultCreationReview(page);
     releaseSetupRejection();
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
@@ -2362,8 +2387,33 @@ test("owner registers a separate bounty vault through the API and funds it priva
       data: { privateReadUnavailable: false },
     });
     await page.getByRole("button", { name: "Refresh bounty funds" }).click();
-    await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
+    await expect(
+      bountyFunds.getByRole("alert").filter({
+        hasText: "Private balance read is unavailable.",
+      }),
+    ).toHaveCount(0);
+    // A balance refresh clears its own failure, not the prior wallet refusal.
+    await expect(funding.getByRole("alert")).toHaveText(
+      "New deposits are currently unavailable.",
+    );
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
+    await funding.getByLabel("Deposit tokens").check();
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await expect(
+      funding.getByRole("button", {
+        name: "Approve exact token amount in wallet",
+      }),
+    ).toBeEnabled();
+    await expect(funding.getByRole("alert")).toHaveCount(0);
+    expect(sends).toHaveLength(sentBeforeRestriction);
+    expect(
+      await page.evaluate(
+        (key) => sessionStorage.getItem(key),
+        bountyPendingKey,
+      ),
+    ).toBeNull();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();

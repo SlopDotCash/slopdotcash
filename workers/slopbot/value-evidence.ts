@@ -347,7 +347,7 @@ async function relatedPullRequests(
           } | null;
         } | null;
       }>(
-        `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}}}`,
+        `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}} rateLimit{cost limit remaining resetAt}}`,
         { owner: targetOwner, name: targetName, number: target.number },
       )
       .catch(() => null);
@@ -385,6 +385,44 @@ async function relatedPullRequests(
     ),
     limitations: [...new Set(limitations)],
   };
+}
+
+/** Discover retained-copy candidates before reading any commit patches.
+ * Uses the same complete discussions and reference resolver as valuation.
+ * This is discovery only; a candidate still needs full retained-copy proof.
+ */
+export async function collectValueReferenceEvidence(
+  client: EvidenceClient,
+  repository: string,
+  number: number,
+) {
+  const path = `/repos/${repository}/pulls/${number}`;
+  const pull = await client.get<Pull>(path);
+  if (!pull) throw new Error("Pull request unavailable");
+  const [reviews, comments, reviewComments] = await Promise.all([
+    pages<Review>(client, `${path}/reviews`),
+    pages<Comment>(client, `/repos/${repository}/issues/${number}/comments`),
+    pages<Comment>(client, `${path}/comments`),
+  ]);
+  const related = await relatedPullRequests(
+    client,
+    repository,
+    number,
+    pull.node_id,
+    [
+      pull.body ?? "",
+      ...reviews.map((review) => review.body),
+      ...comments.map((entry) => entry.body),
+      ...reviewComments.map((entry) => entry.body),
+    ],
+  );
+  for (const [name, actual, expected] of [
+    ["comments", comments.length, pull.comments],
+    ["review comments", reviewComments.length, pull.review_comments],
+  ] as const)
+    if (actual !== expected)
+      related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);
+  return { pull, ...related };
 }
 /** True when `id` names the repository or one of its aliases, ignoring case. */
 export function namesRepository(
