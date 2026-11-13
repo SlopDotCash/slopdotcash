@@ -2,22 +2,90 @@
  * reference. Shared by commit and PR discovery. Each scan stops at the next
  * tag or bracket, so one comment is read in linear time.
  */
+function normalizeGithubHosts(text: string): string {
+  return text.replace(
+    /(?<![\w./-])(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)*github\.com\//giu,
+    "https://github.com/",
+  );
+}
+
+function canonicalGithubUrl(raw: string): string {
+  return raw.replace(
+    /^(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)*github\.com\//iu,
+    "https://github.com/",
+  );
+}
+
 export function githubLinkDestinations(text: string): string {
-  return text
+  return normalizeGithubHosts(text)
     .replace(
       /<a\b([^<>]*)>(?:(?!<\/?a\b)[\s\S])*<\/a>/giu,
-      (anchor, attributes: string) =>
-        /\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1/iu.exec(
+      (anchor, attributes: string) => {
+        const href = /\bhref=(["'])(https:\/\/github\.com\/[^"']+)\1/iu.exec(
           attributes,
-        )?.[2] ?? anchor,
+        )?.[2];
+        return href === undefined ? anchor : canonicalGithubUrl(href);
+      },
     )
     .replace(
-      /\[[^[\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)[\]]+)\)/gu,
-      "$1",
+      /\[[^[\]\n]*\]\(\s*<?(https:\/\/github\.com\/[^<>\s)"']+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\s*\)/gu,
+      (_link, destination: string) => canonicalGithubUrl(destination),
     );
 }
 
 const label = (text: string) => text.trim().replace(/\s+/gu, " ").toLowerCase();
+
+/** Fenced samples are not references. GitHub does not autolink inside them,
+ * including a fence quoted or opened under a list marker. */
+function withoutFencedCode(text: string): string {
+  let fence: { marker: string; length: number } | null = null;
+  const kept: string[] = [];
+  for (const physical of text.split("\n")) {
+    const carriage = physical.endsWith("\r");
+    const line = carriage ? physical.slice(0, -1) : physical;
+    const delimiter =
+      /^ {0,3}(?:> {0,3})*(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/u.exec(
+        line,
+      );
+    if (delimiter) {
+      const marker = delimiter[1];
+      if (fence === null) fence = { marker: marker[0], length: marker.length };
+      else if (
+        marker[0] === fence.marker &&
+        marker.length >= fence.length &&
+        delimiter[2].trim().length === 0
+      )
+        fence = null;
+      kept.push(carriage ? "\r" : "");
+      continue;
+    }
+    kept.push(fence === null ? physical : carriage ? "\r" : "");
+  }
+  return kept.join("\n");
+}
+
+/** Text safe for commit and pull-request discovery. Link labels, titles,
+ * reference-style labels, and fenced samples cannot create a local number or
+ * digest; a GitHub destination keeps its own repository scope.
+ */
+export function githubReferenceText(text: string): string {
+  const visible = githubLinkDestinations(withoutFencedCode(text))
+    .replace(
+      /\[[^[\]\n]*\]\(\s*<?[^<>\s)"']*>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\s*\)/gu,
+      " ",
+    )
+    .replace(/<a\b[^<>]*>(?:(?!<\/?a\b)[\s\S])*<\/a>/giu, " ");
+  const definitions = new Set(
+    [...visible.matchAll(/^ {0,3}\[([^[\]\n]+)\]:/gmu)].map((match) =>
+      label(match[1]),
+    ),
+  );
+  return visible.replace(
+    /\[([^[\]\n]*)\](\[[^[\]\n]*\])?/gu,
+    (link, content: string, reference?: string) =>
+      reference !== undefined || definitions.has(label(content)) ? " " : link,
+  );
+}
 
 /** Prose is discovery only, including GitHub's /pull/N/commits/SHA route.
  * Any GitHub host spelling is scoped by its destination. A reference-style
@@ -38,26 +106,10 @@ export function sameRepositoryCommitHints(repository: string, text: string) {
   const local = (target: string) =>
     target.toLowerCase() === repository.toLowerCase();
   const name = repository.split("/")[1];
-  const definitions = new Set(
-    [...text.matchAll(/^ {0,3}\[([^[\]\n]+)\]:/gmu)].map((m) => label(m[1])),
+  const referencesText = githubReferenceText(text).replace(
+    /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:[/?#][^\s<>"')]*|\b)/gu,
+    (url, target: string) => (local(target) ? url : " "),
   );
-  const referencesText = githubLinkDestinations(
-    text
-      .replace(
-        /(?<![\w./-])(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)*github\.com\//giu,
-        "https://github.com/",
-      )
-      .replace(/\]\(<(https:\/\/github\.com\/[^<>\n]*)>\)/gu, "]($1)"),
-  )
-    .replace(
-      /\[([^[\]\n]*)\](\[[^[\]\n]*\])?/gu,
-      (link, content: string, reference?: string) =>
-        reference !== undefined || definitions.has(label(content)) ? " " : link,
-    )
-    .replace(
-      /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:[/?#][^\s<>"')]*|\b)/gu,
-      (url, target: string) => (local(target) ? url : " "),
-    );
   return [
     ...new Set(
       [
