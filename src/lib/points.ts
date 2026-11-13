@@ -19,8 +19,8 @@ import {
   REGISTERED_REPOSITORIES,
 } from "./repositories.mjs";
 import { assertPenaltyHistory } from "./score-penalties";
-import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { scoreThirdsToPoints } from "./score-units";
+import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
 import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 

@@ -2,12 +2,12 @@
 import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
+import { compareActors } from "./github-actor";
 import {
   isScoreThirds,
-  scoreThirdsToPoints,
   scoreThirdsStringToPoints,
+  scoreThirdsToPoints,
 } from "./score-units";
-import { compareActors } from "./github-actor";
 import { allocateWeightedRows } from "./weighted-allocation";
 
 const QUALITY_TIERS = {

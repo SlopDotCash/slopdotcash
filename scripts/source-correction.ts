@@ -20,8 +20,8 @@ import {
 } from "../src/lib/leaderboard";
 import { findProject } from "../src/lib/projects.mjs";
 import {
-  scoreThirdsToPoints,
   pointsToScoreThirdsString,
+  scoreThirdsToPoints,
 } from "../src/lib/score-units";
 
 export const sha256 = (bytes: string | Uint8Array) =>
