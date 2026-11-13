@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { readLeaderboardBytes } from "../src/lib/leaderboard-transport.mjs";
 import { PROJECTS } from "../src/lib/projects.mjs";
 import { childEnvironment } from "./child-environment.mjs";
+import { expectedPublishedRoot } from "./dist-manifest.mjs";
 import {
   beginEvidenceTransaction,
   validateEvidenceBundle,
@@ -329,8 +330,21 @@ if (mode === "production") {
     manifestArtifact.contents,
     revision,
   );
+  // Verify the approved root transform against this same raw capture, while
+  // retaining the original artifacts and fingerprint in the evidence bundle.
+  const publishedIndex = Buffer.from(
+    await expectedPublishedRoot(
+      distRoot,
+      PRODUCTION_ORIGIN,
+      hash(indexArtifact.contents),
+    ),
+  );
   const remoteArtifacts = await verifyRemoteArtifacts({
-    artifacts,
+    artifacts: artifacts.map((artifact) =>
+      artifact.path === "index.html"
+        ? { ...artifact, contents: publishedIndex }
+        : artifact,
+    ),
     cacheKey,
   });
   const network = await inspectProductionNetwork(

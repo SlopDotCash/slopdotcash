@@ -24,11 +24,13 @@ import {
 const ORIGIN = "https://slop.test";
 const AT = "2026-10-27T16:00:00.000Z";
 const ADMIN = { githubId: "12345678", githubLogin: "owner" };
+const CREATOR = { githubId: "87654321", githubLogin: "maintainer" };
 const PROJECT = "owner-admission";
 const REPO = "example/owner-admission";
+type Permission = "admin" | "write" | "read" | "none";
 const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
-function fixture() {
+function fixture(creator: typeof CREATOR | null = CREATOR) {
   const { db, sqlite } = sqliteD1();
   const projects = new CloudflareProjectPersistence(db);
   const vetting = new CloudflareVettingPersistence(db, async () => false);
@@ -45,9 +47,18 @@ function fixture() {
       sha = digest(text);
     sqlite
       .query(
-        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at,actor_github_id,actor_github_login) VALUES(?,?,?,?,?,?,?,?)",
       )
-      .run(PROJECT, revision, text, sha, "Synthetic revision", AT);
+      .run(
+        PROJECT,
+        revision,
+        text,
+        sha,
+        "Synthetic revision",
+        AT,
+        creator?.githubId ?? null,
+        creator?.githubLogin ?? null,
+      );
     if (revision === 1)
       sqlite
         .query(
@@ -63,31 +74,49 @@ function fixture() {
   }
   publish();
   let administrator = ADMIN;
-  let permission: "admin" | "read" = "admin",
+  let permission: Permission = "admin",
     wrongIdentity = false,
     unavailable = false;
+  let wrongRepositoryName = false;
   let beforeAccess: (() => void) | null = null;
-  const repositoryAccess: RepositoryAccessReader = async () => {
+  const accessActors: { githubId: string; githubLogin: string }[] = [];
+  const permissions = new Map<string, Permission>();
+  let installation: "installed" | "missing" | "suspended" = "installed";
+  let missingRepositoryFacts = false;
+  const repositoryAccess: RepositoryAccessReader = async (
+    _repository,
+    actor,
+  ) => {
+    accessActors.push(actor);
     beforeAccess?.();
     beforeAccess = null;
     if (unavailable) throw new Error("Synthetic GitHub outage");
+    if (installation === "missing") return { installation: "missing" };
+    if (installation === "suspended")
+      return { installation: "suspended", installationId: 1 };
     return {
       installation: "installed",
       installationId: 1,
-      permission,
+      permission: permissions.get(actor.githubId) ?? permission,
       roleName: null,
-      repository: {
-        id: wrongIdentity ? 999999 : Number(manifest.authority.repositoryId),
-        node_id: manifest.authority.repositoryNodeId,
-        full_name: manifest.repositories[0].id,
-        private: false,
-        owner: {
-          id: Number(manifest.steward.github.actorId),
-          node_id: manifest.steward.github.nodeId,
-          login: manifest.steward.github.login,
-          type: manifest.steward.github.type,
-        },
-      },
+      repository: missingRepositoryFacts
+        ? undefined
+        : {
+            id: wrongIdentity
+              ? 999999
+              : Number(manifest.authority.repositoryId),
+            node_id: manifest.authority.repositoryNodeId,
+            full_name: wrongRepositoryName
+              ? "another/repository"
+              : manifest.repositories[0].id,
+            private: false,
+            owner: {
+              id: Number(manifest.steward.github.actorId),
+              node_id: manifest.steward.github.nodeId,
+              login: manifest.steward.github.login,
+              type: manifest.steward.github.type,
+            },
+          },
     };
   };
   const readPin = async () => ({
@@ -233,7 +262,13 @@ function fixture() {
     refresh,
     publish,
     manifest: () => manifest,
-    setPermission: (value: "admin" | "read") => (permission = value),
+    setPermission: (value: Permission) => (permission = value),
+    setActorPermission: (id: string, value: Permission) =>
+      permissions.set(id, value),
+    accessActors,
+    setInstallation: (value: typeof installation) => (installation = value),
+    setMissingRepositoryFacts: () => (missingRepositoryFacts = true),
+    setWrongRepositoryName: () => (wrongRepositoryName = true),
     setAdministrator: (actor: typeof ADMIN) => (administrator = actor),
     setWrongIdentity: () => (wrongIdentity = true),
     setUnavailable: () => (unavailable = true),
@@ -269,6 +304,85 @@ function fixture() {
 }
 
 describe("owner-approved admission exemptions", () => {
+  test("a platform administrator may approve with read access while the registered creator retains admin", async () => {
+    const f = fixture();
+    f.setActorPermission(ADMIN.githubId, "read");
+    f.setActorPermission(CREATOR.githubId, "admin");
+    const granted = await f.grant();
+    expect(granted.status).toBe(201);
+    expect(granted.body.exemption.grantedBy).toEqual(ADMIN);
+    expect(f.accessActors).toEqual([CREATOR]);
+    expect((await f.vetting.listAdmissionExemptions())[0].grantedBy).toEqual(
+      ADMIN,
+    );
+  });
+  test("maintainer write access suffices without assigning platform approval to that maintainer", async () => {
+    const f = fixture();
+    f.setActorPermission(ADMIN.githubId, "none");
+    f.setActorPermission(CREATOR.githubId, "write");
+    const granted = await f.grant();
+    expect(granted.status).toBe(201);
+    expect(granted.body.exemption.grantedBy).toEqual(ADMIN);
+    expect(f.accessActors).toEqual([CREATOR]);
+  });
+  test("an individual steward can supply authority when the creator is absent or has lost access", async () => {
+    for (const creator of [null, CREATOR]) {
+      const f = fixture(creator);
+      const previous = f.manifest();
+      const steward = { githubId: "22222222", githubLogin: "individual" };
+      f.publish({
+        ...previous,
+        steward: {
+          ...previous.steward,
+          kind: "individual",
+          github: {
+            ...previous.steward.github,
+            actorId: steward.githubId,
+            nodeId: "U_individual",
+            login: steward.githubLogin,
+            type: "User",
+            profileUrl: "https://github.com/individual",
+          },
+        },
+      });
+      f.setPermission("read");
+      f.setActorPermission(steward.githubId, "write");
+      const granted = await f.grant();
+      expect(granted.status).toBe(201);
+      expect(granted.body.exemption.grantedBy).toEqual(ADMIN);
+      expect(f.accessActors).toEqual(creator ? [CREATOR, steward] : [steward]);
+    }
+  });
+  test("administrator repository access cannot replace missing registered maintainer authority", async () => {
+    for (const permission of ["read", "none"] as const) {
+      const f = fixture();
+      f.setActorPermission(ADMIN.githubId, "admin");
+      f.setActorPermission(CREATOR.githubId, permission);
+      expect((await f.grant()).status).toBe(403);
+      expect(f.accessActors).toEqual([CREATOR]);
+      expect(await f.vetting.listAdmissionExemptions()).toHaveLength(0);
+    }
+    const absent = fixture(null);
+    expect((await absent.grant()).status).toBe(403);
+    expect(absent.accessActors).toEqual([]);
+    expect(await absent.vetting.listAdmissionExemptions()).toHaveLength(0);
+  });
+  test("missing or suspended Slopbot and uncertain repository identity cannot approve", async () => {
+    for (const installation of ["missing", "suspended"] as const) {
+      const f = fixture();
+      f.setInstallation(installation);
+      expect((await f.grant()).status).toBe(403);
+      expect(await f.vetting.listAdmissionExemptions()).toHaveLength(0);
+    }
+    const missing = fixture();
+    missing.setMissingRepositoryFacts();
+    expect((await missing.grant()).status).toBe(503);
+    expect(await missing.vetting.listAdmissionExemptions()).toHaveLength(0);
+    const renamed = fixture();
+    renamed.setWrongRepositoryName();
+    expect((await renamed.grant()).status).toBe(409);
+    expect(await renamed.vetting.listAdmissionExemptions()).toHaveLength(0);
+  });
   test("binds an explicit admin grant to the registered repository without inventing a scan", async () => {
     const f = fixture();
     const queued = await f.queue();

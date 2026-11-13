@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { providerCost } from "../workers/slopbot/models";
+import { qualificationResponse } from "./qualification-response";
 import {
   MAXIMUM_ATTEMPTS,
   qualifySecurityScreening,
@@ -10,7 +12,7 @@ import { qualificationTransport } from "./qualify-value-models";
 // receipt handling and refusals, not real-provider or model qualification.
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
 const body = {
-  model: "claude-opus-5.5",
+  model: "claude-sonnet-5.5",
   stop_reason: "end_turn",
   content: [
     {
@@ -24,7 +26,7 @@ function request() {
   return new Request(ENDPOINT, {
     method: "POST",
     body: JSON.stringify({
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       item: { contentOmittedFromModel: true },
     }),
   });
@@ -364,4 +366,98 @@ test("screening accepts the requested JSON inside one Markdown fence", async () 
     noSleep,
   );
   expect(result.requests).toBe(1);
+});
+
+test("Orbio qualification refuses a Surplus receipt and stops after the unknown charge", async () => {
+  const value = {
+    ...body,
+    model: "anthropic/claude-sonnet-5.5",
+    usage: { buyer_cost_micro: 0 },
+  };
+  const source = transport(value, { "x-si-buyer-cost-micro": "0" });
+  const wrapped = qualificationTransport(source.fetch);
+  const orbioRequest = () =>
+    new Request("https://api.orbio.so/api/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "anthropic/claude-sonnet-5.5",
+        item: { contentOmittedFromModel: true },
+      }),
+    });
+  await expect(wrapped.fetch(orbioRequest())).rejects.toThrow();
+  expect(await wrapped.mayCall()).toBe(false);
+  await expect(wrapped.fetch(orbioRequest())).rejects.toThrow();
+  expect(source.calls()).toBe(1);
+});
+
+test("qualification rejects a model sent to the other provider before spending", async () => {
+  const source = transport({ ...body, usage: { buyer_cost_micro: 0 } });
+  const wrapped = qualificationTransport(source.fetch);
+  for (const [endpoint, model] of [
+    [ENDPOINT, "anthropic/claude-sonnet-5.5"],
+    ["https://api.orbio.so/api/v1/messages", "claude-sonnet-5.5"],
+  ]) {
+    await expect(
+      wrapped.fetch(
+        new Request(endpoint, {
+          method: "POST",
+          body: JSON.stringify({
+            model,
+            item: { contentOmittedFromModel: true },
+          }),
+        }),
+      ),
+    ).rejects.toThrow();
+  }
+  expect(source.calls()).toBe(0);
+  expect(wrapped.requestCount()).toBe(0);
+});
+
+test("Orbio qualification retains its USD cost receipt without consuming SDK output", async () => {
+  for (const cost of [0, 0.000075]) {
+    const value = {
+      ...body,
+      model: "anthropic/claude-sonnet-5.5",
+      usage: { cost },
+    };
+    const source = transport(value);
+    const wrapped = qualificationTransport(source.fetch);
+    const response = await wrapped.fetch(
+      new Request("https://api.orbio.so/api/v1/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          model: value.model,
+          item: { contentOmittedFromModel: true },
+        }),
+      }),
+    );
+    expect(await response.json()).toEqual(value);
+    expect(source.calls()).toBe(1);
+    expect(wrapped.requestCount()).toBe(1);
+    expect(await wrapped.mayCall()).toBe(true);
+  }
+});
+
+test("fractional Orbio receipts bound qualification spending without inventing an actual ledger charge", async () => {
+  const value = {
+    ...body,
+    model: "anthropic/claude-sonnet-5.5",
+    usage: { cost: 0.0000755 },
+  };
+  expect(providerCost(new Headers(), value, "orbio")).toBeNull();
+  const receipt = await qualificationResponse(Response.json(value), "orbio");
+  expect(receipt.cost).toBe(76);
+  const source = transport({ ...value, usage: { cost: 0.9999995 } });
+  const wrapped = qualificationTransport(source.fetch);
+  await wrapped.fetch(
+    new Request("https://api.orbio.so/api/v1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        model: value.model,
+        item: { contentOmittedFromModel: true },
+      }),
+    }),
+  );
+  expect(await wrapped.mayCall()).toBe(false);
+  expect(source.calls()).toBe(1);
 });

@@ -78,15 +78,19 @@ module payment_wallet_activation {
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
   action step = {
-    nondet first = states.oneOf()
-    nondet second = states.oneOf()
-    nondet a = Set(false, true).oneOf()
-    nondet b = Set(false, true).oneOf()
-    nondet c = Set(false, true).oneOf()
-    nondet id = ids.oneOf()
-    nondet claim = ids.oneOf()
-    any { configure(first, second, a, b, c), replacement, begin(id, claim), batch(id), batchFailure(id),
-      batchReply(id, a), readback(id, a), respond(id, a), s' = s }
+    any {
+      { nondet first = states.oneOf() nondet second = states.oneOf() nondet a = Set(false, true).oneOf()
+        nondet b = Set(false, true).oneOf() nondet c = Set(false, true).oneOf()
+        configure(first, second, a, b, c) },
+      replacement,
+      { nondet id = ids.oneOf() nondet claim = ids.oneOf() begin(id, claim) },
+      { nondet id = ids.oneOf() batch(id) },
+      { nondet id = ids.oneOf() batchFailure(id) },
+      { nondet a = Set(false, true).oneOf() nondet id = ids.oneOf() batchReply(id, a) },
+      { nondet a = Set(false, true).oneOf() nondet id = ids.oneOf() readback(id, a) },
+      { nondet a = Set(false, true).oneOf() nondet id = ids.oneOf() respond(id, a) },
+      s' = s
+    }
   }
   val invariant = all {
     ids.contains(s.tip), s.authorized.subseteq(ids),
@@ -106,7 +110,7 @@ module payment_wallet_activation {
       all { request.added implies request.admitted and s.authorized.contains(request.claim),
         request.response == "200" implies request.observedEffective == request.claim and s.authorized.contains(request.claim) }
     }) }
-  action ready = init.then(configure("held", "absent", true, true, false))
+  run ready = init.then(configure("held", "absent", true, true, false))
   action finished(id: int): bool = batch(id).then(batchReply(id, true)).then(readback(id, true)).then(respond(id, true))
 
   run authorizationQueuesEligibleHeldAndAbsentRowsTest = ready.then(begin(1, 1)).then(finished(1))

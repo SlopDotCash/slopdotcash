@@ -143,17 +143,29 @@ module submission_authorization_wrappers {
   def newSendAllowed(id: int): bool = row(id).exists and Set("draft", "failed").contains(row(id).state)
     and row(id).advisory == 0 and not(s.banned.contains(row(id).actor)) and (not(row(id).stored) or (row(id).qualified and row(id).body))
   action step = {
-    nondet id = requests.oneOf()
-    nondet target = rows.oneOf()
-    nondet actor = actors.oneOf()
-    nondet key = requests.oneOf()
-    nondet state = states.oneOf()
-    nondet origin = Set("slop", "direct").oneOf()
-    nondet mode = Set("create", "authorize").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { seed(state, yes, origin), hold(target), outage(target), ban(actor), progress(target, state),
-      begin(id, mode, actor, target, key, origin, yes), lookup(id), readiness(id, yes), insert(id), insertReply(id, yes),
-      readback(id, yes), qualify(id), flow(id, yes), decorate(id, yes), respond(id, yes), s' = s }
+    any {
+      { nondet state = states.oneOf() nondet origin = Set("slop", "direct").oneOf()
+        nondet yes = Set(false, true).oneOf()
+        seed(state, yes, origin) },
+      { nondet target = rows.oneOf() hold(target) },
+      { nondet target = rows.oneOf() outage(target) },
+      { nondet actor = actors.oneOf() ban(actor) },
+      { nondet target = rows.oneOf() nondet state = states.oneOf() progress(target, state) },
+      { nondet id = requests.oneOf() nondet target = rows.oneOf() nondet actor = actors.oneOf()
+        nondet key = requests.oneOf() nondet origin = Set("slop", "direct").oneOf()
+        nondet mode = Set("create", "authorize").oneOf() nondet yes = Set(false, true).oneOf()
+        begin(id, mode, actor, target, key, origin, yes) },
+      { nondet id = requests.oneOf() lookup(id) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() readiness(id, yes) },
+      { nondet id = requests.oneOf() insert(id) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() insertReply(id, yes) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() readback(id, yes) },
+      { nondet id = requests.oneOf() qualify(id) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() flow(id, yes) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() decorate(id, yes) },
+      { nondet id = requests.oneOf() nondet yes = Set(false, true).oneOf() respond(id, yes) },
+      s' = s
+    }
   }
   val invariant = all { rows.forall(n => row(n).exists == s.events.contains(n)),
     rows.forall(a => rows.forall(b => a == b or not(row(a).exists and row(b).exists and row(a).actor == row(b).actor and row(a).key == row(b).key))),

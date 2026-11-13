@@ -1020,19 +1020,27 @@ function actorKind(value: string): GitHubActorKind {
   return "Unknown";
 }
 
-function parseActor(value: unknown, path: string): GitHubActor | null {
+// GitHub serves some app accounts in two shapes under one immutable node ID:
+// the Copilot coding agent authors pull requests as the Bot
+// "copilot-swe-agent" but appears as the User "Copilot" in assignees and
+// commit authors. A BOT_ node ID is always an app account, so it is a Bot
+// wherever it appears and never receives person credit or claims work.
+export function parseActor(value: unknown, path: string): GitHubActor | null {
   if (value === null) {
     return null;
   }
   const actor = asRecord(value, path);
+  const id = asString(actor.id, `${path}.id`);
   return {
-    id: asString(actor.id, `${path}.id`),
+    id,
     login: asString(actor.login, `${path}.login`),
     avatarUrl: canonicalActorAvatarUrl(
       asString(actor.avatarUrl, `${path}.avatarUrl`),
     ),
     url: asString(actor.url, `${path}.url`),
-    kind: actorKind(asString(actor.__typename, `${path}.__typename`)),
+    kind: id.startsWith("BOT_")
+      ? "Bot"
+      : actorKind(asString(actor.__typename, `${path}.__typename`)),
   };
 }
 
@@ -1164,10 +1172,10 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
   const id = asString(node.id, `${path}.id`);
   const comments = parseComments(node.comments, `${path}.comments`, id);
   const reviews = parseReviews(node.reviews, `${path}.reviews`);
-  // GitHub can return null for an oversized draft diff, even with zero diff
-  // counters. Retain that draft, but never represent unavailable files as [].
+  // GitHub can return null for an oversized open diff, even with zero diff
+  // counters. Retain the source, but never represent unavailable files as [].
   const files =
-    node.files === null && node.state === "OPEN" && node.isDraft === true
+    node.files === null && node.state === "OPEN"
       ? null
       : parseFiles(node.files, `${path}.files`);
   const closingIssues = parseClosingIssueIds(
@@ -2536,7 +2544,7 @@ async function collectOpenReferences(
   }
   const deduped = dedupeByNodeId(references);
   if (deduped.length !== expectedCount) {
-    throw new Error(
+    throw new OpenSetChangedError(
       `Open ${field} changed during listing: expected ${expectedCount}, received ${deduped.length} unique references`,
     );
   }
@@ -2757,9 +2765,7 @@ async function completePullRequestConnections(
     if (
       node.files === null &&
       parsed.state === "OPEN" &&
-      pullRequest.isDraft &&
       node.state === "OPEN" &&
-      node.isDraft === true &&
       node.headRefOid === pullRequest.headRefOid
     ) {
       // A later page can become unavailable too. Discard the partial diff.

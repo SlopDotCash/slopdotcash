@@ -140,13 +140,24 @@ module submission_receipt_verification {
   action recoverReceipt = all { s.receipt, s' = s.with("recovered", true) }
   val permanentFailure = s.rowState == "failed" and terminalFailures.contains(s.failureCode)
   action step = {
-    nondet id = ids.oneOf()
-    nondet origin = Set("slop", "direct").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet fault = faults.oneOf()
-    nondet outcome = Set("ready", "none", "unavailable", "unexpected").oneOf()
-    any { configure(origin, yes), begin(id), terms(id, yes), advisory(id, fault), contacts(id, outcome),
-      prepare(id, yes), otherAdvisoryCase, concurrentTransition, batchFailureBeforeCommit(id), commit(id), lostBatchResult(id), reply(id, yes), resolve(id), recoverReceipt, s' = s }
+    any {
+      { nondet origin = Set("slop", "direct").oneOf() nondet yes = Set(false, true).oneOf() configure(origin, yes) },
+      { nondet id = ids.oneOf() begin(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() terms(id, yes) },
+      { nondet id = ids.oneOf() nondet fault = faults.oneOf() advisory(id, fault) },
+      { nondet id = ids.oneOf() nondet outcome = Set("ready", "none", "unavailable", "unexpected").oneOf()
+        contacts(id, outcome) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() prepare(id, yes) },
+      otherAdvisoryCase,
+      concurrentTransition,
+      { nondet id = ids.oneOf() batchFailureBeforeCommit(id) },
+      { nondet id = ids.oneOf() commit(id) },
+      { nondet id = ids.oneOf() lostBatchResult(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() reply(id, yes) },
+      { nondet id = ids.oneOf() resolve(id) },
+      recoverReceipt,
+      s' = s
+    }
   }
   val invariant = all { s.revision >= 1 and s.revision <= 5, s.caseCount >= 0 and s.caseCount <= 1,
     s.receipt implies s.rowState == "receipt-verified" and s.caseCount == 1,

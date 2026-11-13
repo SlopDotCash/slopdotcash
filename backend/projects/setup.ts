@@ -23,6 +23,7 @@ import {
 } from "../../src/lib/project-contracts";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { scanClearanceView } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
 import { quarantinedScanMessage } from "../vetting/summary";
 import type { RepositoryControl } from "./contracts";
@@ -275,11 +276,16 @@ function scanCheck(
         message:
           "The repository or skill template changed since the last scan.",
       };
-    case "quarantined":
+    case "quarantined": {
+      // Badges from the recorded result (issue #1991); a historical result or
+      // one that did not finish has none.
+      const view = scanClearanceView(clearance.assessment);
       return {
         state: "quarantined",
         message: quarantinedScanMessage(clearance.assessment),
+        ...(view ? { clearance: view } : {}),
       };
+    }
     case "banned":
       return {
         state: "banned",

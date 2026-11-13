@@ -25,6 +25,7 @@ function harness(rejectMail = false) {
     "0104_slopbot_value_inference_attempts.sql",
     "0118_slopbot_zero_call_reconciliation.sql",
     "0120_slopbot_value_attempt_completion.sql",
+    "0122_orbio_provider_failure_notices.sql",
   ]);
   const mail: string[] = [];
   const notify = {
@@ -46,14 +47,23 @@ function harness(rejectMail = false) {
     provider: number | null,
     outcome = "ok",
     failure: string | null = null,
+    gateway = "surplus",
   ) =>
     sqlite
       .prepare(`
     INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
     input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,provider_cost_micro_usd,failure)
-    VALUES ('review',1,'triage',0,'surplus','model',?,0,0,0,0,'price',?,0,'estimated',?,?,?)
+    VALUES ('review',1,'triage',0,?,?,?,0,0,0,0,'price',?,0,'estimated',?,?,?)
   `)
-      .run(outcome, estimated, `${month}-01T00:00:00.000Z`, provider, failure);
+      .run(
+        gateway,
+        gateway === "orbio" ? "anthropic/claude-sonnet-5.5" : "model",
+        outcome,
+        estimated,
+        `${month}-01T00:00:00.000Z`,
+        provider,
+        failure,
+      );
   return { sqlite, db, mail, notify, add };
 }
 
@@ -509,7 +519,7 @@ test("provider failure mail includes safe causes and retains ambiguous delivery 
 
     const legacyNotice = {
       callId: 1,
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       kind: "request-failed",
       occurredAt: "2026-11-01T00:00:00.000Z",
     };
@@ -552,6 +562,32 @@ test("provider failure mail includes safe causes and retains ambiguous delivery 
       { outcome: "accepted" },
       { outcome: "ambiguous" },
     ]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("Orbio failure queues one private operator notice while success sends none", async () => {
+  const h = harness();
+  try {
+    h.add("2026-11", 0, null, "ok", null, "orbio");
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(0);
+    h.add("2026-11", 0, null, "failed", "provider returned HTTP 503", "orbio");
+    await Promise.all([
+      dispatchFailureAlert(h.db, h.notify),
+      dispatchFailureAlert(h.db, h.notify),
+    ]);
+    expect(h.mail).toHaveLength(1);
+    expect(h.mail[0]).toContain("provider returned HTTP 503");
+    expect(h.mail[0]).toContain("anthropic/claude-sonnet-5.5");
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(1);
+    expect(
+      h.sqlite
+        .query("SELECT outcome FROM slopbot_provider_failure_receipts")
+        .all(),
+    ).toEqual([{ outcome: "accepted" }]);
   } finally {
     h.sqlite.close();
   }

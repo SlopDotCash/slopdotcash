@@ -25,6 +25,7 @@ The minimum viable product (MVP) includes:
 - Private reports, discretionary bounties, remediation, and controlled disclosure.
 - Monthly vault allocations, supported private-award payments, and finalized payment records.
 - Conversion of received fees within the approved fee wallets.
+- The programmatic SLOP buyback and burn funded by half of fee income, described in section 6.
 - The separate contributor token allocation described in section 6.
 
 Support Base, Ethereum, Robinhood Chain, and Solana. Each project selects one network and asset. Section 6 defines supported assets and payment restrictions.
@@ -180,6 +181,8 @@ Work may earn acceptance and Points without a funded award. A pause stops contri
 
 No routine administrator approval is required. A stored applicant may publish through the same current authority checks. Funding readiness remains separate from registration and admission.
 
+Maintainers may remove a registered project after a fresh check of their GitHub authority. Removal appends a paused, retired revision and hides the project from public discovery, work collection, and skill publication. Keep registry history, earned Points, private cases, and funded obligations. The applicant may cancel a pending application, including a pending update, without publishing it. Retain the cancelled record and prevent later publication. These maintainer controls are approved for the MVP (owner decision, 11 November 2026).
+
 ### Setup requirements
 
 Project contains the repository, integration branch, and contribution rules. Provide one picker for the user's public repositories and URL entry for other public repositories. Load repository facts after selection.
@@ -232,7 +235,7 @@ Slopbot is required, always free, and limited to registered repositories. Never 
 
 Apply effective repository security, scope, ignore, and rejection rules before review. Review exact source against approved base-branch rules. Run untrusted code only in approved isolation without secrets or posting credentials.
 
-Use Surplus Opus 5.5, then GPT-6.1 Sol as fallback. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
+Owner decision, 11 November 2026: use Orbio first and Surplus Intelligence as backup. Start with Claude Sonnet 5.5 through Orbio. Any Orbio failure, including exhausted credits, goes directly to Surplus Claude Sonnet 5.5, then Surplus GPT-6.1 Terra. Do not retry another Orbio model before the backup. Use these lower-cost models for active API review, scoring, repository scanning, and private-report analysis. Preserve historical model attribution and billing records. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
 
 Slopbot assesses PR size and value and credits useful reviews under section 7. Maintainers decide merges. Preserve repository opt-outs and exemptions.
 
@@ -278,6 +281,8 @@ The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadat
 
 Verify the asset identity, token program, decimals, behavior, and finality throughout each flow. Use integer base units and largest-remainder allocation. Never assume six decimals, add unlike assets, or present a token amount as dollars.
 
+Owner decision, 11 November 2026: display project-token tickers with exactly one leading dollar sign, such as `$CREDIT` and `$EPYH`. Native and approved stablecoin tickers, including SOL, ETH, USDC and USDG, remain unprefixed. This is ticker notation, not a USD valuation. Preserve canonical stored asset symbols, integer amounts, existing dollar-denominated amount formatting and reward terms.
+
 ### Monthly allocation
 
 Automatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.
@@ -307,7 +312,7 @@ No application service may sign outside these limits. An owner-authorized agent 
 | Signer | Allowed scope |
 | --- | --- |
 | Identity attester | Attest authenticated GitHub identity for a wallet-signed binding and submit that binding. Sign bounded monthly allocation roots and the limited approvals below. |
-| Fee-wallet key | Claim accrued fees from reviewed vaults into the same fee wallet. Convert only received fees through approved routes within all limits. |
+| Fee-wallet key | Claim accrued fees from reviewed vaults into the same fee wallet. Convert only received fees through approved routes within all limits. For the buyback share only: bridge USDC to the Robinhood Chain fee wallet through the approved bridge, buy SLOP there into the same wallet, and send the burn share of acquired SLOP to the burn address. |
 | Referral root poster | Post cumulative referral roots only after separate reactivation. It remains disabled for launch. |
 
 One identity authority may serve the three EVM networks. The EVM fee wallet also shares one key across those networks. Solana has a separate fee wallet. Store dedicated fee keys as Worker secrets. Fee keys hold no vault role and cannot touch free funds, principal, reserved awards, or payments.
@@ -326,7 +331,7 @@ Immediate upgrades can change logic governing deposited funds. A compromised att
 
 ### Received-fee handling
 
-Convert received fees to USDC on Base, Ethereum, and Solana. Return proceeds to the same fee wallet. Robinhood Chain never converts or bridges fees: retain each asset and show **not converted**. Unavailable conversion elsewhere leaves the token pending or failed and never blocks contributor payment.
+Convert received fees to USDC on Base, Ethereum, and Solana. Return proceeds to the same fee wallet. Outside the buyback share below, Robinhood Chain never converts or bridges fees: retain each asset and show **not converted**. Unavailable conversion elsewhere leaves the token pending or failed and never blocks contributor payment.
 
 Convert on receipt only when the value is at least 5 USDC and ten times the gas cost. Limit slippage to 1%, price impact to 2%, value to 1,000 USDC per run, and 5,000 USDC per day.
 
@@ -348,6 +353,34 @@ For an expired Solana fee send, require two independent full-history RPC provide
 For versioned Jupiter routes, resolve every address lookup and inspect all affected accounts. Verify signer, destination, token, native-debit, and rent limits. Unresolved accounts or unsupported extensions refuse signing.
 
 Owners authorize sweeps to separate EVM and Solana software wallets. A human or authorized agent executes outside the Worker. Sweep keys stay in the owner's local `.env`. They are not cold-storage wallets.
+
+### SLOP buyback and burn
+
+Owner decision, 10 November 2026. Half of all fee income funds a programmatic buyback of SLOP, the Slop Cash token at `0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood Chain. This is 1% of an ordinary award or withdrawal and 12.5% of a private security bounty. The other half keeps the handling above. This section supersedes "never converts or bridges" for the buyback share only.
+
+- **BUY-01 — Share.** Count verified fee income from an activation instant: finalized conversions into USDC, finalized USDC fee claims, and completed direct-award fees. The buyback may take at most the floor of half of that cumulative total, less every amount already committed. A fee in another token counts once, as its conversion output. Earlier income never counts. A retry, restart, or repeated run must not take a share twice.
+- **BUY-02 — Bridge.** On Base, Ethereum, and Solana, bridge the buyback share of USDC to the Robinhood Chain fee wallet as Paxos USDG through one deBridge DLN order at a time. Before signing, verify the exact amount, asset, destination chain, and the fee wallet as receiver, order authority, and refund beneficiary. Refuse any external call, affiliate fee, unknown reserved taker, or unchecked byte. Refuse an order below the minimum value or above the cost limit. On EVM, approve exactly the order amount to the pinned bridge contract first.
+- **BUY-03 — Arrival.** Credit an arrival once, from the order's fulfilled status at a finalized Robinhood Chain block. Release a deposit only after a proven refund. A deposit without either stays in transit. The Worker never cancels an order. Report an order that stays unfilled; cancellation is an owner action.
+- **BUY-04 — Purchase.** On Robinhood Chain, claim accrued fees from reviewed vaults when the buyback is active. Spend each proven arrival in full, and each fee received there at the buyback share, on SLOP through the approved swap route with output to the same fee wallet. Apply the purchase limits for minimum value, slippage, price impact, and value per run and day. The retained half of a Robinhood fee stays unconverted. SLOP received as a fee needs no purchase: its buyback share counts as acquired.
+- **BUY-05 — Burn.** Keep purchased SLOP in the Robinhood Chain fee wallet. Send half of all SLOP acquired, rounded down and less every burn already committed, to `0x000000000000000000000000000000000000dEaD`. The retained half is never burned again. SLOP has no holder burn function, so `totalSupply` does not fall; the burn address balance is the public record. A paused token waits.
+- **BUY-06 — Records.** Journal every approval, order, purchase, and burn before broadcast in the existing fee journal. Record one finalized outcome per send and one proven outcome per deposit. Mark a state final only from finalized evidence. Show the ledger in the private administrator report.
+- **BUY-07 — Activation.** The buyback has its own mode, off by default. A live buyback needs a live converter, Robinhood Chain enabled with its key and native limits, and every limit set explicitly. Source approval does not activate it.
+
+| Limit | Value |
+| --- | --- |
+| Buyback share of fee income | 50% |
+| Burn share of acquired SLOP | 50% |
+| Minimum bridge order | 500 USDC |
+| Maximum bridge cost: spread, fixed protocol fee, and network fee | 1.5% of the order |
+| Fixed protocol fee ceiling, Base and Ethereum | 0.001 ETH per order |
+| Solana order native ceiling: order-account rent, fixed fee, and network fee | 0.05 SOL per order, 0.1 SOL per UTC day |
+| Minimum purchase and minimum burn | 25 USDG and 5 USDG of value |
+| Purchase slippage and price impact | 1% and 3% |
+| Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |
+
+The owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation did not activate the buyback. Operator decision, 12 November 2026: the production buyback is live and counts fee income from `2026-11-12T00:00:00.000Z`; staging stays off. The Solana order ceiling is separate from the fee-conversion native budget.
+
+The buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.
 
 ### Separate contributor token allocation
 
@@ -462,7 +495,7 @@ Run deterministic checks over every file. Review large content in token-budgeted
 
 There is no repository, entry-count, file, object, or run size refusal. Repeating the same scan cannot be the sole remedy for a large repository. Incomplete review never passes.
 
-Use Surplus Opus 5.5 first. Use GPT-6.1 Sol or specialist investigation only for ambiguous or high-risk findings. Use one disposable Cloudflare sandbox per risky artifact, with internet off and no secrets. Full runtime execution of every project is not required.
+Use Surplus Claude Sonnet 5.5 first. Use GPT-6.1 Terra or specialist investigation only for ambiguous or high-risk findings. Use one disposable Cloudflare sandbox per risky artifact, with internet off and no secrets. Full runtime execution of every project is not required.
 
 A passed scan means every defined check ran on the bound revision and found no malicious result. Record checks and coverage gaps. It is not a guarantee of safety. Uncovered executable content makes the scan incomplete unless a check, isolated execution, or specialist review covers it.
 
@@ -471,6 +504,10 @@ A passed scan means every defined check ran on the bound revision and found no m
 Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. Display an exemption, never a passed scan.
 
 A separate owner-approved Umia fork exemption requires an audited administrator record. Bind it to the current D1 revision, permanent repository identity, steward, approving actor, reason, and time. Display **Owner-approved exemption**. Another repository or steward cannot inherit it. Other grants require a separate human owner decision. Retain previous assessments and audited revocations; revocation restores ordinary admission.
+
+Owner decision, 11 November 2026: administrators may approve community admission after a cursory malicious-code review of the latest development source. Use the project's registered integration branch; use its current `develop` branch when the owner selects that branch for the review. An older source pin or an unproven source-to-binary match does not block this manual review. Record the actual branch and head observed, review scope, limitations, approving administrator and owner decision in the audited admission-exemption record. Keep its **Owner-approved exemption** label; do not present it as a complete passed scan or rewrite earlier assessments. Contributors still review the project themselves before installing or running it.
+
+The approving platform administrator need not have write access to a third-party repository. Verify the registered project's creator or individual steward still has current GitHub write or maintain authority through its Slopbot installation, and bind the grant to the current immutable repository, steward and D1 revision. Record the administrator as the approver, without impersonating the maintainer. Missing installation, unavailable authority, restrictions and confirmed malice still refuse approval. Automated scan results keep their actual source bindings and complete-evidence requirements.
 
 Exemptions do not override investigations, flags, pauses, bans, or fresh reinstatement checks.
 
@@ -511,7 +548,7 @@ Retain the exact report in private object storage before optional forwarding. Bi
 
 ### Screening, human review, and forwarding
 
-Screen before notifying the project owner. Use the existing Surplus account and requested model `claude-opus-5.5`. The marketplace model identity is not independently verified. Use no provider fallback and execute no submitted code. Treat every report field as untrusted data.
+Screen before notifying the project owner. Use the existing Surplus account and requested model `claude-sonnet-5.5`. The marketplace model identity is not independently verified. Use no provider fallback and execute no submitted code. Treat every report field as untrusted data.
 
 Screen for plausibility, reproducibility, missing evidence, duplication, and spam. Screening is advisory and separate from severity, acceptance, award, payment, and disclosure. Missing evidence, suspected spam, uncertainty, or provider failure must remain recoverable. An authorized owner may review or override a held result. Notify owners only for plausible or owner-approved reports, through private Inbox and verified email notices.
 
@@ -599,7 +636,7 @@ Recheck roles and destinations before sending. Provider acceptance does not prov
 
 Public pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.
 
-Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
+Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. Cloudflare does not inject into HTML the site's Pages Function serves, so that function adds the same beacon tag on the production host only. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
 
 | Dependency | Required failure behavior |
 | --- | --- |
@@ -650,7 +687,7 @@ Cite the relevant section and observable acceptance result in each implementatio
 | --- | --- |
 | Accounts | GitHub identity survives renames. Consent, visibility, closure, wallet replacement, and recovery follow section 3 without cross-account leakage. |
 | Contributors | Complete discovery, verified installation when used, attributed submission, acceptance, and Points. For an eligible funded award, also complete payment. Optional evidence never blocks submission. |
-| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. |
+| Maintainers | Complete and resume setup without routine admin approval. Verify authority, installation, admission, immutable revisions, and independent funding readiness. Remove a project with current authority or cancel a pending application; preserve history and obligations and refuse stale or unauthorized writes. |
 | Slopbot | Review registered repositories for free. Preserve incomplete outcomes, qualified closure scope, consent, reopen protection, penalties, and appeal escalation. |
 | Points | Complete source coverage, correct work/review shares, single debits and reversals, preserved history, and no duplicate credit. |
 | Security admission | Prove complete scans, honest exemptions, eligible two-flag pause, skill refusal, fresh reinstatement, and human confirmed-malicious decisions. |
@@ -682,6 +719,8 @@ Launch the non-money product first. Mainnet activation is explicit, one network 
 Native-asset and Token-2022 scope permits implementation and local testing, not a mainnet upgrade, funding, or signer activation. Qualify creation, deposits, refunds, reservations, payouts, claims, and accounting. Token-2022 also requires the fully inspected conversion path. Each upgrade or funding step needs its own reviewed execution plan and owner authorization.
 
 Private-report intake is approved for staging and production after the reviewed release. This standing approval does not prove deployment or successful delivery.
+
+The SLOP buyback is live in production by operator decision of 12 November 2026, at the limits the owner confirmed on 10 November 2026. The dry-run period and the small verified live order that this gate required were not run, because no fee income existed to run them. Still required: a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, and on-chain verification of the first real order's fill, purchase, and burn before any burn is published. Local fork and validator results do not qualify a live fill. Any change to the mode, the start instant, or a limit is a reviewed change.
 
 Fee handling on Base, Ethereum, and Robinhood requires funded fee wallets and verified limits and readiness. The fee-converter release variable must be enabled. Keep Solana outside the production network list until its independent full-history recovery RPC, first registered vault, and all readiness checks pass. A reviewed main release then activates it. The Solana controls release, existing program upgrade, and approved 0.05 SOL gas top-up are recorded as complete. Do not repeat them; consult retained execution evidence before any later operation.
 
@@ -757,6 +796,6 @@ Review every explicit and implicit state transition in the application. Cover UI
 - **STATE-02 — Models.** Define initial states, actions, refusal conditions, invariants, and reachable outcomes. Cover loading, empty, stale, invalid, error, success, authorization, expiry, cancellation, retry, duplicates, concurrency, partial writes, interruption, and recovery. Preserve immutable history, distinct financial states, and integer amounts. Model uncertainty without treating a request or signature as finality. Check parent/child and cross-subsystem composition.
 - **STATE-03 — Conformance.** Compare models with actual workflows through model-derived traces or equivalent named scenarios at real entry points. Database races need database evidence; UI changes need browser evidence. Keep required provider and chain checks. Models cannot replace them.
 - **STATE-04 — Fix and maintain.** Reproduce discrepancies, fix their causes, and repeat affected checks. Update models, mappings, and implementation evidence when behavior changes. Never weaken an invariant or remove a failure path to hide a defect.
-- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run `bun run formal:check` and `bun run formal:verify`. Record tool versions, source hashes, scenarios, backend, finite bounds, results, and unresolved gaps. Distinguish simulation, exhaustive finite exploration, implementation conformance, and live integration.
+- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run `bun run formal:check` and `bun run formal:verify`. Record tool versions, source hashes, scenarios, backend, finite bounds, results, and unresolved gaps. Distinguish simulation, exhaustive finite exploration, implementation conformance, and live integration. Operator decision, 12 November 2026: an exhaustive verification that runs its whole time allowance without a result is recorded as "not verified within its time bound", shown as a warning, and does not fail the release gate. A counterexample, crash, broken model, unstable input or failed scenario check still fails it, and every identity, command, tool and view check still applies to the timed-out stage.
 
 Passing abstract models does not prove implementation refinement or the absence of every possible state error. Completion requires reviewed models and implementation evidence for every inventoried transition, corrected discrepancies, passing checks, and explicit assumptions. Keep this requirement open while any required coverage or evidence is incomplete.

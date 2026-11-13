@@ -42,7 +42,16 @@
 // No in-flight lookup coalescing exists; a later completion may overwrite a
 // newer public cache snapshot. Failed cache reads fall back; failed puts do
 // not fail a response. waitUntil may let a put settle after response delivery.
-// No tests, parser, checker or provider request ran for these definitions.
+// A source-bound TLC safety VIEW retains cache/data/payload positivity and
+// exact live subjects, actors, keys and attempts. Terminal response/done/handoff
+// tuples keep all seven invariant observations, pending key/subject/waitUntil
+// and payload positivity.
+// It erases unused login/legacy bytes, deterministically refused input fields,
+// and five phase-dead inputs only after their final read. Concrete actions,
+// scenarios and sampled traces retain all original bytes. Exact freshness/login
+// bytes and terminal payload bytes are not safety-VIEW claims.
+// See formal/README.md for the manual quotient argument and execution limits;
+// scripts/project-lookup-legacy-quotient.test.ts binds its audited source body.
 module api_project_lookup_routes {
   val ids = Set(1, 2)
   val keyIds = Set(1, 2, 3, 4)
@@ -177,22 +186,69 @@ module api_project_lookup_routes {
     all { request.phase == "response", request.waitUntil or not(request.putPending),
       s' = s.with("requests", s.requests.set(id, request.with("phase", "done").with("delivered", delivered))) }
   }
-  action step = {
-    nondet id = ids.oneOf()
-    nondet route = routes.oneOf()
-    nondet method = Set("GET", "POST", "HEAD").oneOf()
-    nondet expected = Set(0, 1, 2, 3).oneOf()
-    nondet repository = Set(0, 1, 2).oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet key = keyIds.oneOf()
-    nondet result = Set("hit", "miss", "error").oneOf()
-    nondet outcome = outcomes.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { switchSession(actor), rename(id), changeData, revokeModerator(id), expire(key), legacyPut(id, repository),
-      begin(id, route, method, expected, repository, yes, yes, yes), dispatch(id), session(id, yes, yes), cacheRead(id, result),
-      validate(id), actorReply(id, outcome), dataReply(id, outcome), buffer(id, yes), putRecord(id, yes), selectionInput(id, repository, yes),
-      selectionReply(id, outcome, id), respond(id, yes), s' = s }
+  // Bind choices inside the branch that reads them. Every original domain
+  // is nonempty, so distributing existential choice over this disjunction
+  // preserves enabledness and full-state successors while avoiding duplicate
+  // Cartesian enumeration. Invariants, direct actions and finite bounds stay.
+  action concreteStep = any {
+    { nondet actor = Set(0, 1, 2).oneOf()
+      switchSession(actor) },
+    { nondet id = ids.oneOf()
+      rename(id) },
+    changeData,
+    { nondet id = ids.oneOf()
+      revokeModerator(id) },
+    { nondet key = keyIds.oneOf()
+      expire(key) },
+    { nondet id = ids.oneOf()
+      nondet repository = Set(0, 1, 2).oneOf()
+      legacyPut(id, repository) },
+    { nondet id = ids.oneOf()
+      all { Set("unused", "done").contains(s.requests.get(id).phase),
+        s.requests.get(id).attempt < 2, not(s.requests.get(id).putPending), {
+          nondet route = routes.oneOf()
+          nondet method = Set("GET", "POST", "HEAD").oneOf()
+          nondet expected = Set(0, 1, 2, 3).oneOf()
+          nondet repository = Set(0, 1, 2).oneOf()
+          nondet yes = Set(false, true).oneOf()
+          begin(id, route, method, expected, repository, yes, yes, yes) } } },
+    { nondet id = ids.oneOf()
+      dispatch(id) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      session(id, yes, yes) },
+    { nondet id = ids.oneOf()
+      nondet result = Set("hit", "miss", "error").oneOf()
+      cacheRead(id, result) },
+    { nondet id = ids.oneOf()
+      validate(id) },
+    { nondet id = ids.oneOf()
+      nondet outcome = outcomes.oneOf()
+      actorReply(id, outcome) },
+    { nondet id = ids.oneOf()
+      nondet outcome = outcomes.oneOf()
+      dataReply(id, outcome) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      buffer(id, yes) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      putRecord(id, yes) },
+    { nondet id = ids.oneOf()
+      nondet repository = Set(0, 1, 2).oneOf()
+      nondet yes = Set(false, true).oneOf()
+      selectionInput(id, repository, yes) },
+    { nondet id = ids.oneOf()
+      nondet outcome = outcomes.oneOf()
+      selectionReply(id, outcome, id) },
+    { nondet id = ids.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      respond(id, yes) },
+    s' = s
   }
+
+  action step = concreteStep
+
   val invariant = ids.forall(id => {
     val request = s.requests.get(id)
     all { request.attempt <= 2,

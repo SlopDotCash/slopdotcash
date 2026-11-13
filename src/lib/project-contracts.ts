@@ -1,4 +1,5 @@
 import type { ProjectDefinition } from "./projects.mjs";
+import type { ScanClearanceView } from "./scan-clearance";
 import type { VettingClearance } from "./vetting-contracts";
 
 export type GithubActor = { githubId: string; githubLogin: string };
@@ -27,7 +28,11 @@ export type ProjectRevision = {
   createdAt: string;
 };
 
-export type ApplicationStatus = "pending" | "approved" | "rejected";
+export type ApplicationStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
 export type AdminNotification = "pending" | "sent" | "failed";
 
 export type ProjectApplication = {
@@ -154,7 +159,7 @@ export type ProjectEnforcement = {
 export type PublicProjectApplication = Omit<
   ProjectApplication,
   "repositoryKey"
-> & { repository: string | null };
+> & { repository: string | null; publishable?: boolean };
 
 export type AdminProject = ProjectRecord & {
   enforcement: ProjectEnforcementState;
@@ -331,6 +336,11 @@ export type ProjectSetupStatus = {
     scan: {
       state: VettingClearance["state"] | "unavailable";
       message: string;
+      /**
+       * Why an incomplete scan did not clear, as badges from the recorded
+       * result (PRD section 8, issue #1991); no finding text.
+       */
+      clearance?: ScanClearanceView;
       /** Recorded exemption (PRD section 8); never a passed scan. */
       exempt?: true;
       exemptionKind?: "existing-project" | "owner-approved-admission";

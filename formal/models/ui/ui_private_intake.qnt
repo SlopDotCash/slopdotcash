@@ -146,15 +146,27 @@ module ui_private_intake {
   action parentObservesIdentityLoss = all { s.cookie != s.owner,
     s' = s.with("mounted", false).with("text", false).with("storage", 0) }
   action step = {
-    nondet id = Set(1, 2).oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet observed = Set(-1, 0, 1, 2).oneOf()
-    nondet writes = Set(false, true).oneOf()
-    nondet failure = Set("validation", "identity", "transient").oneOf()
-    any { review, edit, cookieChanges(actor), start(id, writes), preflight(id, observed), dispatch(id),
-      acceptServer(id), refuseServer(id, failure), receiveAccepted(id), receiveFailure(id), malformedReceipt(id),
-      captureSession(id, observed), deliverSession(id), finish(id), replaceStoredDraft,
-      depart, remount, parentObservesIdentityLoss }
+    any {
+      review,
+      edit,
+      { nondet actor = Set(0, 1, 2).oneOf() cookieChanges(actor) },
+      { nondet id = Set(1, 2).oneOf() nondet writes = Set(false, true).oneOf() start(id, writes) },
+      { nondet id = Set(1, 2).oneOf() nondet observed = Set(-1, 0, 1, 2).oneOf() preflight(id, observed) },
+      { nondet id = Set(1, 2).oneOf() dispatch(id) },
+      { nondet id = Set(1, 2).oneOf() acceptServer(id) },
+      { nondet id = Set(1, 2).oneOf() nondet failure = Set("validation", "identity", "transient").oneOf()
+        refuseServer(id, failure) },
+      { nondet id = Set(1, 2).oneOf() receiveAccepted(id) },
+      { nondet id = Set(1, 2).oneOf() receiveFailure(id) },
+      { nondet id = Set(1, 2).oneOf() malformedReceipt(id) },
+      { nondet id = Set(1, 2).oneOf() nondet observed = Set(-1, 0, 1, 2).oneOf() captureSession(id, observed) },
+      { nondet id = Set(1, 2).oneOf() deliverSession(id) },
+      { nondet id = Set(1, 2).oneOf() finish(id) },
+      replaceStoredDraft,
+      depart,
+      remount,
+      parentObservesIdentityLoss
+    }
   }
   val invariant = all {
     s.posts <= 2,

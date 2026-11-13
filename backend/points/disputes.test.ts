@@ -973,7 +973,7 @@ test("triage resolves the current repository path after a project rename or tran
           id: "msg_points_dispute_renamed",
           type: "message",
           role: "assistant",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "end_turn",
           content: [
             {
