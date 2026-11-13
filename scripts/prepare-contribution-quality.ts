@@ -11,6 +11,7 @@ import {
   paymentReviewSnapshot,
 } from "../src/lib/leaderboard";
 import { findProject } from "../src/lib/projects.mjs";
+import { scoreThirdsToPoints } from "../src/lib/score-units";
 
 const [preparationPath, snapshotPath, closedPath, basesPath, outputPath] =
   process.argv.slice(2);
@@ -139,7 +140,9 @@ const events: QualityEvent[] = ledger.map((event) => {
         : "evaluation",
     scoreThirds: thirds,
     weight: (
-      BigInt(thirds) * BigInt(10_000 + (event.evidenceBonusBasisPoints ?? 0))
+      (BigInt(scoreThirdsToPoints(thirds)) *
+        BigInt(10_000 + (event.evidenceBonusBasisPoints ?? 0))) /
+      10n
     ).toString(),
     flags,
   };

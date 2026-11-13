@@ -181,6 +181,9 @@ export interface MergedPullRequestOutcome {
     author: GitHubActor | null;
     /** Live collection records parents so branch-sync merges do not confer authorship. */
     parentCount?: number;
+    /** Complete immutable commit diff counts; absent only in retained old inputs. */
+    additions?: number;
+    deletions?: number;
   }> | null;
 }
 
@@ -684,6 +687,16 @@ export interface LeaderboardSnapshot {
     recordDigest: string | null;
     /** Complete current primary-commit attribution, independent of valuation. */
     verifiedImplementationActorNodeIds?: string[];
+    /** Source-verified allocation; this never changes the PR's value tier. */
+    implementationAllocation?: {
+      rule: "changed-lines-v1";
+      totalScoreThirds: number;
+      weights: {
+        actorNodeId: string;
+        actorLogin: string;
+        changedLines: string;
+      }[];
+    };
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */

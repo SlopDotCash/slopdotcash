@@ -15,6 +15,7 @@ import {
 } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import type { CycleIndexState } from "./lib/use-cycle-index";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 import { useTimeBoundary } from "./lib/use-time-boundary";
@@ -447,8 +448,8 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       </small>
                     </th>
                     <td>
-                      {(
-                        (contributor.scoreThirds ?? contributor.score * 3) * 10
+                      {scoreThirdsToPoints(
+                        contributor.scoreThirds ?? contributor.score * 3,
                       ).toLocaleString()}
                     </td>
                     <td>

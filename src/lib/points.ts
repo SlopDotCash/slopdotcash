@@ -1,6 +1,7 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
 
 import { githubUserIdFromNodeId } from "./github-actor";
+import { shareImplementationPoints } from "./implementation-allocation";
 import type {
   GitHubActor,
   LeaderboardSnapshot,
@@ -19,6 +20,7 @@ import {
 } from "./repositories.mjs";
 import { assertPenaltyHistory } from "./score-penalties";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
+import { scoreThirdsToPoints } from "./score-units";
 import { sha256Hex } from "./sha256";
 import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
@@ -374,10 +376,7 @@ function pointsForScore(
   event: Pick<ScoreEvent, "scoreThirds" | "points"> &
     Partial<Pick<ScoreEvent, "category" | "scoreDecisionSourceId">>,
 ): number {
-  const amount =
-    event.scoreThirds === undefined
-      ? event.points * (3 * POINTS_PER_THIRD)
-      : event.scoreThirds * POINTS_PER_THIRD;
+  const amount = scoreThirdsToPoints(event.scoreThirds ?? event.points * 3);
   const assessedZero =
     amount === 0 &&
     event.category === "merged-pull-request" &&
@@ -759,29 +758,142 @@ export function applyPointsSnapshot(
       )
       .flatMap((unit) => unit.sourceNodeIds),
   );
-  const verifiedUnassessedSources = new Map<string, string[]>();
-  for (const row of snapshot.valueAssessmentCoverage ?? []) {
-    if (
-      row.status === "missing" &&
-      row.recordDigest === null &&
-      row.verifiedImplementationActorNodeIds?.length
-    )
-      verifiedUnassessedSources.set(
-        row.pullRequestId,
-        row.verifiedImplementationActorNodeIds,
-      );
+  const priorMergesBySource = new Map<string, PointRevision[]>();
+  for (const prior of previousPoints.values()) {
+    const a = prior.award;
+    if (a.category !== "merged-pull-request") continue;
+    const key = `${a.projectId}\0${a.sourceId}`;
+    const rows = priorMergesBySource.get(key) ?? [];
+    rows.push(prior);
+    priorMergesBySource.set(key, rows);
   }
-  const awards = snapshot.ledger
-    .filter((e) => e.actor.kind === "User")
-    .map(awardForScore)
+  const heldUnassessedSources = new Set<string>();
+  const allocationAwards: PointAward[] = [];
+  const allocationDecisions = new Map<string, PointDecision>();
+  const snapshotAwards = snapshot.ledger
+    .filter((event) => event.actor.kind === "User")
+    .map(awardForScore);
+  const currentMergesBySource = new Map<string, PointAward[]>();
+  for (const award of snapshotAwards) {
+    if (award.category !== "merged-pull-request") continue;
+    const key = `${award.projectId}\0${award.sourceId}`;
+    const rows = currentMergesBySource.get(key) ?? [];
+    rows.push(award);
+    currentMergesBySource.set(key, rows);
+  }
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    if (row.status !== "missing" || row.recordDigest !== null) continue;
+    const projectId = findHistoricalRepository(row.repository)?.projectId;
+    if (!projectId) continue;
+    const sourceKey = `${projectId}\0${row.pullRequestId}`;
+    const prior = priorMergesBySource.get(sourceKey);
+    if (!prior?.length) continue;
+    // A missing value assessment cannot replace a recorded PR pool with the
+    // fallback minimum, or add a second pool under a different recipient.
+    heldUnassessedSources.add(sourceKey);
+    const allocation = row.implementationAllocation;
+    const current = currentMergesBySource.get(sourceKey) ?? [];
+    const actorIds =
+      allocation?.weights.map((weight) => weight.actorNodeId) ?? [];
+    if (
+      !allocation ||
+      allocation.rule !== "changed-lines-v1" ||
+      heldSources.has(row.pullRequestId) ||
+      !current.length ||
+      new Set(actorIds).size !== actorIds.length ||
+      current.some((award) => !actorIds.includes(award.actor.id)) ||
+      [...prior.map(({ award }) => award), ...current].some(
+        (a) =>
+          a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId),
+      ) ||
+      prior.some(
+        (revision) =>
+          revision.recordedAt > snapshot.generatedAt ||
+          revision.award.occurredAt !== current[0].occurredAt ||
+          revision.award.occurredAt < snapshot.window.from ||
+          revision.award.occurredAt >= snapshot.window.to,
+      )
+    )
+      continue;
+    const weights = new Map<string, bigint>();
+    for (const weight of allocation.weights) {
+      if (
+        !actorIds.includes(weight.actorNodeId) ||
+        weights.has(weight.actorNodeId) ||
+        !/^(0|[1-9][0-9]*)$/u.test(weight.changedLines)
+      )
+        break;
+      weights.set(weight.actorNodeId, BigInt(weight.changedLines));
+    }
+    if (weights.size !== actorIds.length) continue;
+    // Preserve the complete current source total, including a carrier's old
+    // fraction. Only its recipient changes; no old assessment is re-rated.
+    const total = prior.reduce(
+      (sum, revision) => sum + BigInt(revision.award.amount),
+      0n,
+    );
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+    const shares = shareImplementationPoints(Number(total), actorIds, weights);
+    const priorByKey = new Map(
+      prior.map((revision) => [revision.award.key, revision]),
+    );
+    const currentByActor = new Map(current.map((a) => [a.actor.id, a]));
+    const replacements: PointAward[] = [];
+    for (const [index, actorId] of actorIds.entries()) {
+      const key = pointKey(
+        projectId,
+        actorId,
+        "merged-pull-request",
+        row.pullRequestId,
+      );
+      const previous = priorByKey.get(key)?.award;
+      const amount = shares[index];
+      // Zero allocations for new actors need no journal row. Existing rows do
+      // need an explicit zero revision when their share moves elsewhere.
+      if (amount === 0 && !previous) continue;
+      const currentAward = currentByActor.get(actorId) ?? {
+        ...current[0],
+        key,
+        actor: {
+          id: actorId,
+          login: allocation.weights[index].actorLogin,
+        },
+      };
+      replacements.push({
+        ...(previous ?? currentAward),
+        actor: currentAward.actor,
+        amount,
+      });
+    }
+    const replacementKeys = new Set(replacements.map((a) => a.key));
+    replacements.push(
+      ...prior
+        .filter((revision) => !replacementKeys.has(revision.award.key))
+        .map(({ award }) => ({ ...award, amount: 0 })),
+    );
+    allocationAwards.push(...replacements);
+    // Retain the value source when the pool had one: Points uses it to keep
+    // assessed work units scoped to their original month. The new snapshot
+    // digest and reason identify this revision as an allocation correction.
+    const valueSourceId = prior
+      .filter((revision) => revision.decision?.sourceId.startsWith("value:"))
+      .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt))[0]
+      ?.decision?.sourceId;
+    for (const award of replacements) {
+      if (award.amount === priorByKey.get(award.key)?.award.amount) continue;
+      allocationDecisions.set(award.key, {
+        sourceId: valueSourceId ?? row.pullRequestId,
+        effectiveAt: snapshot.generatedAt,
+        reason: `Complete primary-commit changed-line evidence reallocates the unchanged ${total} Points PR pool; this allocation-only correction does not reassess its value.`,
+      });
+    }
+  }
+  const awards = snapshotAwards
     .filter((a) => !batchOwned.has(a.key))
-    // This proof corrects recipients, not value. Keep a retained contributor's
-    // existing amount until a fresh assessment can replace it.
     .filter(
       (a) =>
         a.category !== "merged-pull-request" ||
-        !verifiedUnassessedSources.get(a.sourceId)?.includes(a.actor.id) ||
-        !previousPoints.has(a.key),
+        !heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`),
     )
     // Unavailable source is not evidence against a recorded award. A newly
     // verified merge can earn its minimum, but cannot add another award on
@@ -797,7 +909,8 @@ export function applyPointsSnapshot(
           !previousOwnRecordSources.has(a.sourceId) &&
           !previouslyAwardedJointSources.has(a.sourceId)),
     );
-  const decisions = new Map<string, PointDecision>();
+  awards.push(...allocationAwards);
+  const decisions = new Map<string, PointDecision>(allocationDecisions);
   const parentDecisions = new Map<string, PointDecision>();
   for (const event of snapshot.ledger) {
     if (
@@ -881,7 +994,6 @@ export function applyPointsSnapshot(
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
-    let correctedImplementation: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
@@ -889,23 +1001,6 @@ export function applyPointsSnapshot(
       const coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
-      if (
-        a.category === "merged-pull-request" &&
-        a.provisional &&
-        !previous.decision &&
-        coverage?.pullRequestId === a.sourceId &&
-        coverage.status === "missing" &&
-        coverage.recordDigest === null &&
-        coverage.verifiedImplementationActorNodeIds?.length &&
-        !coverage.verifiedImplementationActorNodeIds.includes(a.actor.id) &&
-        snapshot.generatedAt > previous.recordedAt
-      )
-        correctedImplementation = {
-          sourceId: a.sourceId,
-          effectiveAt: snapshot.generatedAt,
-          reason:
-            "Complete primary-commit evidence excludes this actor from the accepted implementation; the prior provisional PR-carrier share is removed.",
-        };
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
       if (
@@ -931,7 +1026,6 @@ export function applyPointsSnapshot(
             coverage.status,
           )) &&
         !invalidatedJointDecision &&
-        !correctedImplementation &&
         !(
           a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
           ownRecordMerges.has(`${a.projectId}\0${a.sourceId}`)
@@ -953,7 +1047,6 @@ export function applyPointsSnapshot(
     ) {
       awards.push({ ...a, amount: 0 });
       const decision =
-        correctedImplementation ??
         invalidatedJointDecision ??
         parentDecisions.get(a.sourceUrl.split("#")[0]);
       if (decision)
