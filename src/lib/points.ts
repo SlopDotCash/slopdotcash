@@ -781,10 +781,30 @@ export function applyPointsSnapshot(
       )
       .flatMap((unit) => unit.sourceNodeIds),
   );
+  const verifiedUnassessedSources = new Map<string, string[]>();
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    if (
+      row.status === "missing" &&
+      row.recordDigest === null &&
+      row.verifiedImplementationActorNodeIds?.length
+    )
+      verifiedUnassessedSources.set(
+        row.pullRequestId,
+        row.verifiedImplementationActorNodeIds,
+      );
+  }
   const awards = snapshot.ledger
     .filter((e) => e.actor.kind === "User" && repositoryWorkCounts(e))
     .map(awardForScore)
     .filter((a) => !batchOwned.has(a.key))
+    // This proof corrects recipients, not value. Keep a retained contributor's
+    // existing amount until a fresh assessment can replace it.
+    .filter(
+      (a) =>
+        a.category !== "merged-pull-request" ||
+        !verifiedUnassessedSources.get(a.sourceId)?.includes(a.actor.id) ||
+        !previousPoints.has(a.key),
+    )
     // Unavailable source is not evidence against a recorded award. A newly
     // verified merge can earn its minimum, but cannot add another award on
     // top of a retained joint decision or prior per-source award, including
@@ -883,6 +903,7 @@ export function applyPointsSnapshot(
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
+    let correctedImplementation: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
@@ -890,6 +911,23 @@ export function applyPointsSnapshot(
       const coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
+      if (
+        a.category === "merged-pull-request" &&
+        a.provisional &&
+        !previous.decision &&
+        coverage?.pullRequestId === a.sourceId &&
+        coverage.status === "missing" &&
+        coverage.recordDigest === null &&
+        coverage.verifiedImplementationActorNodeIds?.length &&
+        !coverage.verifiedImplementationActorNodeIds.includes(a.actor.id) &&
+        snapshot.generatedAt > previous.recordedAt
+      )
+        correctedImplementation = {
+          sourceId: a.sourceId,
+          effectiveAt: snapshot.generatedAt,
+          reason:
+            "Complete primary-commit evidence excludes this actor from the accepted implementation; the prior provisional PR-carrier share is removed.",
+        };
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
       if (
@@ -915,6 +953,7 @@ export function applyPointsSnapshot(
             coverage.status,
           )) &&
         !invalidatedJointDecision &&
+        !correctedImplementation &&
         !(
           a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
           ownRecordMerges.has(`${a.projectId}\0${a.sourceId}`)
@@ -938,6 +977,7 @@ export function applyPointsSnapshot(
     ) {
       awards.push({ ...a, amount: 0 });
       const decision =
+        correctedImplementation ??
         invalidatedJointDecision ??
         parentDecisions.get(a.sourceUrl.split("#")[0]);
       if (decision)
