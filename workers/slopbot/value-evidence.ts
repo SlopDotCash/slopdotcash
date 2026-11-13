@@ -1,4 +1,7 @@
-import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "../../src/lib/commit-credit";
 import {
   findRegisteredRepositoryById,
   type TargetRepository,
@@ -883,8 +886,6 @@ export async function collectValueEvidence(
         );
   }
   // Trailer identities are source text, not credit authority under SCR-04.
-  const implementationActors = new Set<string>();
-  if (pull.user.type !== "Bot") implementationActors.add(pull.user.node_id);
   let historicalBranchPolicy: ValueBranchPolicy | undefined;
   let noChangePromotion: NoChangePromotionProof | null = null;
   try {
@@ -924,24 +925,28 @@ export async function collectValueEvidence(
       );
     }
   }
-  if (
+  const sharesCommitCredit =
     pull.base.ref === repositoryPolicy?.integrationBranch ||
-    matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base)
-  ) {
-    for (const commit of commits) {
-      if (
-        commit.parents.length <= 1 &&
-        (!indirect.acceptance ||
-          indirect.acceptance.acceptedCommitShas.includes(commit.sha)) &&
-        commit.author &&
-        isCreditEligibleCommitAuthor({
-          id: commit.author.node_id,
-          kind: commit.author.type,
-        })
-      )
-        implementationActors.add(commit.author.node_id);
-    }
-  }
+    matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base);
+  const implementationActors = new Set(
+    implementationCreditActors(
+      { id: pull.user.node_id, kind: pull.user.type },
+      sharesCommitCredit
+        ? commits
+            .filter(
+              (commit) =>
+                commit.parents.length <= 1 &&
+                (!indirect.acceptance ||
+                  indirect.acceptance.acceptedCommitShas.includes(commit.sha)),
+            )
+            .map((commit) =>
+              commit.author
+                ? { id: commit.author.node_id, kind: commit.author.type }
+                : null,
+            )
+        : [],
+    ).map((actor) => actor.id),
+  );
   for (const attribution of commitAttribution)
     limitations.push(...attribution.limitations);
   const after = await client.get<Pull>(path);
