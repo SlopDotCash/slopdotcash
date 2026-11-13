@@ -124,7 +124,7 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(
     group.getByText(
-      `Counts from ${startDate()}. A security scan runs before it counts; an active project pauses until the scan clears.`,
+      `Counts from ${startDate()}. A security scan runs before it counts; an active project pauses until the scan clears. If the scan has not cleared when the month closes, that month has no allocation.`,
     ),
   ).toBeVisible();
   // GitHub gave no usable description, so the owner writes one.
@@ -145,7 +145,7 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
   await summary.click();
   await expect(
     group.getByText(
-      `Counts from ${startDate()}. A security scan runs before it counts; an active project pauses until the scan clears.`,
+      `Counts from ${startDate()}. A security scan runs before it counts; an active project pauses until the scan clears. If the scan has not cleared when the month closes, that month has no allocation.`,
     ),
   ).toBeVisible();
   await expect(page.getByLabel("Description", { exact: true })).toHaveValue(
@@ -164,7 +164,7 @@ test("a maintainer adds a repository, sees when it counts and publishes the appe
   await publish.click();
   await expect(
     page.getByText(
-      "The month an added repository counts from has changed. Check this device's date, then publish again.",
+      "The month changed, so an added repository counts from a later month. Reload the page, then publish again.",
     ),
   ).toBeVisible();
   await publish.click();

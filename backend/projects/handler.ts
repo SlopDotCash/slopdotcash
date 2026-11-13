@@ -2252,11 +2252,19 @@ async function appendRevision(
       manifest,
       current.revision,
     );
+    // A multi-repository clearance names the repository that did not
+    // clear; a single-repository one never does.
+    const uncleared =
+      vetting.state !== "cleared" && "repository" in vetting
+        ? vetting.repository
+        : undefined;
     if (vetting.state !== "cleared")
       fail(
         422,
         "vetting_required",
-        `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`,
+        uncleared === undefined
+          ? `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`
+          : `Security vetting of ${uncleared} is ${vetting.state}. A successful retained admission scan of ${uncleared} is required before activation; reinstatement requires fresh evidence.`,
       );
   }
   const manifestSha256 = await sha256Hex(new TextEncoder().encode(text));
@@ -2278,7 +2286,18 @@ async function appendRevision(
     },
     enforcementGeneration,
   );
-  if (result === "conflict") {
+  // Another project taking an appended repository's name during the write
+  // is a registry conflict; every other race keeps its earlier answer.
+  if (
+    result === "repository_conflict" &&
+    manifest.repositories.length > current.manifest.repositories.length
+  )
+    fail(
+      409,
+      "registry_conflict",
+      "Another project lists a repository of this revision. Reload before retrying.",
+    );
+  if (result !== "updated") {
     fail(409, "stale_revision", "The project changed since you loaded it");
   }
   await purgeProjectCache(

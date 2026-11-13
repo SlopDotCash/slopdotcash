@@ -21,8 +21,8 @@
 // repository, in that order. Only an accepted append changes the list. It
 // pauses the project and leaves the repository unscanned until its own scan
 // or exemption clears it (vetting_repository_clearance models that); the
-// project reactivates through setup only once no listed repository is
-// unscanned.
+// project reactivates once every repository clears (a clean result reruns
+// the setup check), and never while a listed repository is unscanned.
 //
 // Bounds: three entries per project, months 0 to 2, one appended entry per
 // submission (the multi-entry submission repeats the same checks per entry,
