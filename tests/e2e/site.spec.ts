@@ -2031,6 +2031,7 @@ test("how it works answers the referral and buyback questions", async ({
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
   await expect(buyback).toContainText("half of the SLOP bought is burned");
+  await expect(buyback).toContainText("starts with the first fee");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
   ).toHaveAttribute("href", "https://record.slop.cash/buyback");
