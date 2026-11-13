@@ -8299,7 +8299,7 @@
     },
     {
       "path": "workers/slopbot/value-commit-hints.ts",
-      "sha256": "436c70e39bb0e29f91bbf9891f1bee1ec082ee911d4f924dd6da3c0fbb49c57d",
+      "sha256": "10694869796f842d1b1cdfc25438d9e1b9b7a1257c0f357611c0c7b66b90411a",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8554,13 +8554,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
+      "sha256": "22a03d2ecf90625054b8edd7c997b8dd45c272ab5caa4618040e7d0d914f8011",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 260, 266, 290, 324],
+      "candidateLines": [33, 60, 258, 264, 288, 322],
       "review": "mapped-abstraction"
     },
     {
