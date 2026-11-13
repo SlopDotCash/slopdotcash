@@ -85,14 +85,28 @@ module ui_submitted_payment_lifetime {
     s' = s.with("requests", s.requests.set(id, request(id).with("phase", "done")))
       .with("active", if (owns(id)) 0 else s.active).with("busy", if (owns(id)) 0 else s.busy) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet value = Set(1, 2).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { edit(value), actorChanges(actor), replaceContext, depart, parentDeparts, begin(id),
-      observeSession(id), returnSession(id), consumeSession(id), parentRead(id, yes), parentReturn(id),
-      consumeParent(id), persist(id, yes), observePostSession(id), returnPostSession(id), dispatch(id),
-      backend(id, yes), publish(id), settle(id), s' = s }
+    any {
+      { nondet value = Set(1, 2).oneOf() edit(value) },
+      { nondet actor = Set(0, 1, 2).oneOf() actorChanges(actor) },
+      replaceContext,
+      depart,
+      parentDeparts,
+      { nondet id = ids.oneOf() begin(id) },
+      { nondet id = ids.oneOf() observeSession(id) },
+      { nondet id = ids.oneOf() returnSession(id) },
+      { nondet id = ids.oneOf() consumeSession(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() parentRead(id, yes) },
+      { nondet id = ids.oneOf() parentReturn(id) },
+      { nondet id = ids.oneOf() consumeParent(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() persist(id, yes) },
+      { nondet id = ids.oneOf() observePostSession(id) },
+      { nondet id = ids.oneOf() returnPostSession(id) },
+      { nondet id = ids.oneOf() dispatch(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() backend(id, yes) },
+      { nondet id = ids.oneOf() publish(id) },
+      { nondet id = ids.oneOf() settle(id) },
+      s' = s
+    }
   }
   val invariant = all { s.busy == s.active, not(s.badWrite), not(s.badPost),
     s.accepted.subseteq(s.posts), s.updates.subseteq(s.accepted),

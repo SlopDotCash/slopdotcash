@@ -78,7 +78,7 @@ import {
 } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
-import type { RewardAsset } from "./lib/reward-asset.mjs";
+import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
@@ -179,7 +179,7 @@ function UnsignedPaymentRequest({
                 </span>
                 <strong>
                   {formatBaseUnits(transfer.amountBase, direct.asset.decimals)}{" "}
-                  {direct.asset.symbol}
+                  {formatAssetSymbol(direct.asset.symbol)}
                 </strong>
                 <CopyIdentifier
                   label={`${transfer.role === "fee" ? "Slop fee" : "researcher"} wallet`}
@@ -4331,16 +4331,17 @@ function SecurityInboxContent({
     };
   });
   const openCase = useCallback(
-    (caseId: string) => {
+    (caseId: string | null) => {
       setSelected(caseId);
       const query = new URLSearchParams(window.location.search);
-      query.set("case", caseId);
+      if (caseId) query.set("case", caseId);
+      else query.delete("case");
       window.history.replaceState(
         window.history.state,
         "",
         `${embedded ? "/inbox" : "/security"}?${query}`,
       );
-      reload();
+      if (caseId) reload();
     },
     [reload, embedded],
   );
@@ -4423,7 +4424,7 @@ function SecurityInboxContent({
               value={filter}
               onChange={(event) => {
                 setFilter(event.target.value as ReportFilter);
-                setSelected(null);
+                openCase(null);
               }}
             >
               <option value="all">All reports</option>
@@ -4483,7 +4484,7 @@ function SecurityInboxContent({
                       <button
                         aria-pressed={selected === record.id}
                         className="security-case-choice"
-                        onClick={() => setSelected(record.id)}
+                        onClick={() => openCase(record.id)}
                         type="button"
                       >
                         <span>{record.projectId}</span>
@@ -4500,16 +4501,7 @@ function SecurityInboxContent({
                 <button
                   type="button"
                   className="text-button"
-                  onClick={() => {
-                    setSelected(null);
-                    const query = new URLSearchParams(window.location.search);
-                    query.delete("case");
-                    window.history.replaceState(
-                      window.history.state,
-                      "",
-                      `${window.location.pathname}?${query}`,
-                    );
-                  }}
+                  onClick={() => openCase(null)}
                 >
                   Back to reports
                 </button>

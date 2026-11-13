@@ -46,6 +46,32 @@ export const E2E_SECURITY_ACCOUNTS = Object.freeze({
   // scenarios. Its setup must not consume their reporters' hourly budgets.
   "inbox-focus-desktop": "900000033",
   "inbox-focus-mobile": "900000034",
+  // Independent writing journeys keep their real per-actor admission budgets.
+  // Their read-only privacy/session observers retain reporter-a/b identities.
+  "receipt-leave-desktop": "900000035",
+  "receipt-leave-mobile": "900000036",
+  "late-report-selected-desktop": "900000037",
+  "late-report-selected-mobile": "900000038",
+  "late-report-loading-desktop": "900000039",
+  "late-report-loading-mobile": "900000040",
+  "receipt-swap-desktop": "900000041",
+  "receipt-swap-mobile": "900000042",
+  "receipt-outage-desktop": "900000043",
+  "receipt-outage-mobile": "900000044",
+  "receipt-unknown-desktop": "900000045",
+  "receipt-unknown-mobile": "900000046",
+  "receipt-session-desktop": "900000047",
+  "receipt-session-mobile": "900000048",
+  "receipt-shape-desktop": "900000049",
+  "receipt-shape-mobile": "900000050",
+  "validation-owned-desktop": "900000051",
+  "validation-owned-mobile": "900000052",
+  "validation-replacement-desktop": "900000053",
+  "validation-replacement-mobile": "900000054",
+  "inbox-leave-desktop": "900000055",
+  "inbox-leave-mobile": "900000056",
+  "forwarding-desktop": "900000057",
+  "forwarding-mobile": "900000058",
   security: "900000013",
   triager: "900000014",
   finance: "900000015",
@@ -247,8 +273,8 @@ async function handlePrivateIntake(state, request, response, url) {
     if (request.headers.authorization !== "Bearer e2e-fixture-analysis-key")
       return send(401, { type: "error" });
     const body = await readBody(request);
-    // Owner decision: request Opus 5.5 through Surplus only.
-    if (JSON.parse(body).model !== "claude-opus-5.5")
+    // Owner decision: request Sonnet 5.5 through Surplus only.
+    if (JSON.parse(body).model !== "claude-sonnet-5.5")
       return send(400, { type: "error" });
     state.analysisRequests.push(body);
     // Exercise the screening transport before the separate case proposal.

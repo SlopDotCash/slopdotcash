@@ -116,7 +116,7 @@ function publicKeyBytes(value: string): Uint8Array {
   return bytes;
 }
 /** Solana `find_program_address`: the first bump from 255 down whose hash is off the curve. */
-function programAddress(programId: string, seeds: Uint8Array[]): string {
+export function programAddress(programId: string, seeds: Uint8Array[]): string {
   const program = publicKeyBytes(programId);
   const marker = encoder.encode("ProgramDerivedAddress");
   for (let bump = 255; bump >= 0; bump--) {

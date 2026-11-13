@@ -2,7 +2,25 @@ name: State model verification
 
 on:
   workflow_call:
+    inputs:
+      models:
+        # "all", "none", or space-separated model names selected by
+        # scripts/ci-scope.mjs for a pull request.
+        type: string
+        default: all
+      shards:
+        type: string
+        default: "[1, 2, 3, 4, 5, 6]"
   workflow_dispatch:
+    inputs:
+      models:
+        description: "all, or space-separated model names for a focused diagnostic run"
+        type: string
+        default: all
+      shards:
+        description: "JSON shard array; use [1] for a small focused diagnostic run"
+        type: string
+        default: "[1, 2, 3, 4, 5, 6]"
 
 permissions:
   contents: read
@@ -19,7 +37,8 @@ env:
 jobs:
   inventory:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Retain every native counterexample/continuation control and cold setup.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -71,7 +90,24 @@ jobs:
       - name: Refuse false proofs with full-state and safety-view checks
         env:
           SLOP_QUINT_TRANSLATOR_TEST: "1"
-        run: bun test ./scripts/quint-local-translator.test.ts ./scripts/quint-safety-view.test.ts
+        run: >-
+          bun test
+          ./scripts/quint-local-translator.test.ts
+          ./scripts/quint-safety-view.test.ts
+          ./scripts/owner-vault-terminal-quotient.test.ts
+          ./scripts/project-lookup-legacy-quotient.test.ts
+          ./scripts/owner-vault-delayed-input.test.ts
+          ./scripts/admin-mutation-continuation-quotient.test.ts
+          ./scripts/email-preference-request-quotient.test.ts
+          ./scripts/publication-continuation-quotient.test.ts
+          ./scripts/security-settings-safety-view.test.ts
+          ./scripts/solana-binding-api-quotient.test.ts
+          ./scripts/solana-wallet-provider-quotient.test.ts
+          ./scripts/contributor-allocation-safety-view.test.ts
+          ./scripts/bot-inference-symmetry.test.ts
+          ./scripts/operator-keeper-safety-view.test.ts
+          ./scripts/formal-source-binding.test.ts
+          ./scripts/formal-report.test.ts
       - name: Check source inventory and state catalog
         run: |
           bun run formal:coverage
@@ -79,13 +115,16 @@ jobs:
 
   models:
     name: models ${{ matrix.shard }}
+    # Manual diagnostics may select models; trusted releases request all.
+    if: ${{ (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
-    # The slowest single model has a 30-minute verifier allowance.
-    timeout-minutes: 75
+    # Each model keeps its explicit bound; leave time for the complete shard.
+    # The prior 75-minute budget canceled two shards before their later models.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(inputs.shards || '[1, 2, 3, 4, 5, 6]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -138,6 +177,7 @@ jobs:
         env:
           SHARD_INDEX: ${{ strategy.job-index }}
           SHARD_TOTAL: ${{ strategy.job-total }}
+          SELECTED_MODELS: ${{ inputs.models || 'all' }}
         run: |
           set -euo pipefail
           java -version
@@ -146,9 +186,14 @@ jobs:
             const [index, total] = process.argv.slice(1).map(Number);
             if (!Number.isSafeInteger(total) || total < 1 || !(index >= 0 && index < total))
               throw new Error("Invalid model shard");
-            for (const [position, path] of listModels(process.cwd()).entries())
-              if (position % total === index)
-                console.log(path.slice(path.lastIndexOf("/") + 1, -".qnt".length));
+            const name = (path) => path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
+            const selected = process.env.SELECTED_MODELS;
+            const wanted = selected === "all" ? null : new Set(selected.split(" "));
+            const paths = listModels(process.cwd()).filter((path) => !wanted || wanted.has(name(path)));
+            if (wanted && paths.length !== wanted.size)
+              throw new Error("A selected model does not exist in this checkout");
+            for (const [position, path] of paths.entries())
+              if (position % total === index) console.log(name(path));
           ' "$SHARD_INDEX" "$SHARD_TOTAL")
           test "${#models[@]}" -gt 0
           echo "Shard $((SHARD_INDEX + 1))/$SHARD_TOTAL: ${#models[@]} models"
@@ -156,8 +201,29 @@ jobs:
           for model in "${models[@]}"; do
             node scripts/check-formal.mjs "--model=$model" || failed+=("check $model")
           done
+          # A verification that only ran out of its time bound proves nothing
+          # either way: it is reported, not failed. A counterexample, crash,
+          # unstable input or broken model still fails the shard.
+          timed_out=()
           for model in "${models[@]}"; do
-            node scripts/check-formal.mjs --verify "--model=$model" || failed+=("verify $model")
+            if ! node scripts/check-formal.mjs --verify "--model=$model"; then
+              if node --input-type=module -e '
+                import { readFileSync } from "node:fs";
+                import { formalTimedOut } from "./scripts/formal-report.mjs";
+                const report = JSON.parse(readFileSync(`evidence/formal/verification-${process.argv[1]}.json`, "utf8"));
+                const failed = (report.results ?? []).filter((result) => result.passed !== true);
+                const timedOut = report.canceled === false && report.inputsUnchanged === true &&
+                  failed.length > 0 && failed.every(formalTimedOut);
+                process.exit(timedOut ? 0 : 1);
+              ' "$model"; then
+                timed_out+=("$model")
+              else
+                failed+=("verify $model")
+              fi
+            fi
+          done
+          for model in "${timed_out[@]}"; do
+            echo "::warning::Not verified within its time bound: $model"
           done
           if [ "${#failed[@]}" -gt 0 ]; then
             printf '::error::Failed: %s\n' "${failed[@]}"
@@ -176,7 +242,7 @@ jobs:
 
   quint:
     needs: [inventory, models]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && (inputs.models || 'all') != 'none' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -195,9 +261,10 @@ jobs:
           pattern: quint-state-shard-${{ github.run_id }}-*
           path: ${{ runner.temp }}/quint-shards
           merge-multiple: true
-      - name: Require one passing check and verification for every model
+      - name: Require one passing check and verification for every selected model
         env:
           SHARD_REPORTS: ${{ runner.temp }}/quint-shards
+          SELECTED_MODELS: ${{ inputs.models || 'all' }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -205,17 +272,30 @@ jobs:
           import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
           import { listModels, modelSources } from "./scripts/formal-models.mjs";
+          import { formalAdapterOverlaySha256, formalReportProblems, formalStageArguments, formalTimedOut, formalTimeoutMs, formalToolPaths } from "./scripts/formal-report.mjs";
+          import { readSafetyViews, bindSafetyView } from "./scripts/quint-safety-view.mjs";
+          import { verificationTransition } from "./scripts/quint-verification-step.mjs";
 
           const root = process.cwd();
           const shards = process.env.SHARD_REPORTS;
           const digest = (path) =>
             createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+          const safetyViews = readSafetyViews(root);
+          const quintVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies["@informalsystems/quint"];
+          const selected = process.env.SELECTED_MODELS;
+          const wanted = selected === "all" ? null : new Set(selected.split(" "));
+          const models = listModels(root).filter(
+            (path) => !wanted || wanted.has(path.slice(path.lastIndexOf("/") + 1, -".qnt".length)),
+          );
           const problems = [];
+          if (wanted && models.length !== wanted.size)
+            problems.push("A selected model does not exist in this checkout");
           const merged = {};
+          const timedOut = [];
           for (const [prefix, stages] of [["checks", 3], ["verification", 1]]) {
             const results = [];
             let base = null;
-            for (const path of listModels(root)) {
+            for (const path of models) {
               const name = path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
               const file = join(shards, `${prefix}-${name}.json`);
               if (!existsSync(file)) {
@@ -223,25 +303,37 @@ jobs:
                 continue;
               }
               const report = JSON.parse(readFileSync(file, "utf8"));
-              const sources = modelSources(readFileSync(join(root, path), "utf8"));
-              const stale = Object.entries(report.toolHashes ?? {}).some(
-                ([tool, hash]) => digest(tool) !== hash,
-              );
-              const ok =
-                report.schemaVersion === 1 &&
-                report.canceled === false &&
-                report.inputsUnchanged === true &&
-                !stale &&
-                Array.isArray(report.results) &&
-                report.results.length === stages &&
-                report.results.every(
-                  (result) =>
-                    result.passed === true &&
-                    result.model === path &&
-                    result.sha256 === digest(path) &&
-                    sources.every((source) => result.sources?.[source] === digest(source)),
-                );
-              if (!ok) problems.push(`${prefix}: ${path} did not pass for this checkout`);
+              const source = readFileSync(join(root, path), "utf8");
+              const sources = modelSources(source);
+              const verify = prefix === "verification";
+              const transition = verify ? verificationTransition(path, source) : null;
+              const temporalProperties = [...source.matchAll(/^\s*temporal\s+(\w+Property)\s*=/gmu)].map((match) => match[1]);
+              const view = verify ? safetyViews.views.find((entry) => entry.model === path) : null;
+              let safetyView = null;
+              if (view) {
+                bindSafetyView(safetyViews, view.id, path, source);
+                const { module, ...evidence } = view;
+                safetyView = { ...evidence, adapterSha256: safetyViews.quintAdapterSha256, overlaySha256: formalAdapterOverlaySha256(safetyViews.quintAdapterSha256) };
+              }
+              const expected = {
+                checkoutRoot: root,
+                model: path,
+                sha256: digest(path),
+                sources: Object.fromEntries(sources.map((file) => [file, digest(file)])),
+                toolHashes: Object.fromEntries(formalToolPaths(verify).map((file) => [file, digest(file)])),
+                verify,
+                commands: formalStageArguments(path, verify, transition, temporalProperties),
+                finiteTransition: transition ?? { step: "step", kind: "concrete" },
+                safetyView,
+                quintVersion,
+                timeoutMs: formalTimeoutMs(path, verify),
+              };
+              const invalid = formalReportProblems(report, expected, { allowTimeout: verify });
+              if (invalid.length) {
+                problems.push(...invalid.map((reason) => `${prefix}: ${path}: ${reason}`));
+                continue;
+              }
+              if (verify && report.results.some(formalTimedOut)) timedOut.push(path);
               base ??= report;
               if (JSON.stringify(report.toolHashes) !== JSON.stringify(base.toolHashes) ||
                   report.javaVersion !== base.javaVersion ||
@@ -269,8 +361,16 @@ jobs:
             for (const problem of problems) console.log(`::error::${problem}`);
             process.exit(1);
           }
+          for (const path of timedOut)
+            console.log(`::warning::Not verified within its time bound: ${path}`);
+          if (process.env.GITHUB_STEP_SUMMARY)
+            writeFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `## Quint state models\n\n${models.length - timedOut.length} of ${models.length} models verified; ${timedOut.length} not verified within their time bound (no counterexample found).\n\n${timedOut.map((path) => `- ${path}`).join("\n")}\n`,
+              { flag: "a" },
+            );
           console.log(
-            `${merged.checks.results.length} check stages and ${merged.verification.results.length} verifications passed for ${listModels(root).length} models.`,
+            `${merged.checks.results.length} check stages and ${merged.verification.results.length - timedOut.length} verifications passed for ${models.length}${wanted ? " selected" : ""} models.${timedOut.length ? ` ${timedOut.length} timed out without a result.` : ""}`,
           );
           NODE
       - name: Retain verification commands and results

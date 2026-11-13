@@ -125,18 +125,25 @@ module github_lookup_repository {
       .with("licenseSource", s.nameRepository).with("byteBlob", s.heads.get(s.nameRepository))
       .with("licenseHash", s.heads.get(s.nameRepository)) }
   action step = {
-    nondet mode = Set("repository", "head").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet outcome = fetchResults.oneOf()
-    nondet first = entries.oneOf()
-    nondet second = entries.oneOf()
-    nondet nextValue = Set("none", "fresh1", "fresh2", "fresh3", "empty", "malformed").oneOf()
-    nondet identity = Set("numeric-id", "node-id", "private", "missing-node").oneOf()
-    nondet blob = Set("valid", "missing", "non-blob", "node-id", "private", "rate", "partial", "transport").oneOf()
-    nondet licensed = licenseResults.oneOf()
-    any { renameAndReuse, advanceHead, begin(mode, yes), credential(yes), metadata(outcome, yes),
-      pageReply(outcome, first, second), pageIdentityRefusal(identity), row, nextPage(nextValue),
-      headReply(outcome), blobReply(blob), license(licensed), s' = s }
+    any {
+      renameAndReuse,
+      advanceHead,
+      { nondet mode = Set("repository", "head").oneOf() nondet yes = Set(false, true).oneOf() begin(mode, yes) },
+      { nondet yes = Set(false, true).oneOf() credential(yes) },
+      { nondet yes = Set(false, true).oneOf() nondet outcome = fetchResults.oneOf() metadata(outcome, yes) },
+      { nondet outcome = fetchResults.oneOf() nondet first = entries.oneOf() nondet second = entries.oneOf()
+        pageReply(outcome, first, second) },
+      { nondet identity = Set("numeric-id", "node-id", "private", "missing-node").oneOf()
+        pageIdentityRefusal(identity) },
+      row,
+      { nondet nextValue = Set("none", "fresh1", "fresh2", "fresh3", "empty", "malformed").oneOf()
+        nextPage(nextValue) },
+      { nondet outcome = fetchResults.oneOf() headReply(outcome) },
+      { nondet blob = Set("valid", "missing", "non-blob", "node-id", "private", "rate", "partial", "transport").oneOf()
+        blobReply(blob) },
+      { nondet licensed = licenseResults.oneOf() license(licensed) },
+      s' = s
+    }
   }
   val sourceIdentity = s.branchSources.subseteq(Set(s.capturedRepository))
     and (s.mode != "repository" or s.headSource == 0 or s.headSource == s.capturedRepository)

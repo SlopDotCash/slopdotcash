@@ -196,18 +196,33 @@ module vetting_generation_storage {
   action nextGeneration = all { s.generations.get(1) != "active", s.generations.get(2) == "absent",
     s' = s.with("generations", s.generations.set(2, "active")) }
   action step = {
-    nondet id = callers.oneOf()
-    nondet generation = generations.oneOf()
-    nondet descriptor = descriptors.oneOf()
-    nondet target = targets.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet mode = Set("read", "store").oneOf()
-    nondet body = Set("corrupt", "missing").oneOf()
-    any { begin(id, mode, generation, descriptor, target, yes), activeCheck(id, yes), headRead(id, yes),
-      currentRead(id, yes), reserve(id, yes), reservationReply(id, yes), reservationReadback(id, yes),
-      startPut(id), settlePut(id), putReply(id, yes), candidateRead(id, yes), publish(id, yes),
-      publicationReply(id, yes), winnerRead(id, yes), winnerVerify(id, yes), changeBody(target, body),
-      retireGeneration(generation), marker(target), retirementRecord(target), finishRetirement(generation), nextGeneration, s' = s }
+    any {
+      { nondet id = callers.oneOf() nondet generation = generations.oneOf() nondet descriptor = descriptors.oneOf()
+        nondet target = targets.oneOf() nondet yes = Set(false, true).oneOf()
+        nondet mode = Set("read", "store").oneOf()
+        begin(id, mode, generation, descriptor, target, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() activeCheck(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() headRead(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() currentRead(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() reserve(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() reservationReply(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() reservationReadback(id, yes) },
+      { nondet id = callers.oneOf() startPut(id) },
+      { nondet id = callers.oneOf() settlePut(id) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() putReply(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() candidateRead(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() publish(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() publicationReply(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() winnerRead(id, yes) },
+      { nondet id = callers.oneOf() nondet yes = Set(false, true).oneOf() winnerVerify(id, yes) },
+      { nondet target = targets.oneOf() nondet body = Set("corrupt", "missing").oneOf() changeBody(target, body) },
+      { nondet generation = generations.oneOf() retireGeneration(generation) },
+      { nondet target = targets.oneOf() marker(target) },
+      { nondet target = targets.oneOf() retirementRecord(target) },
+      { nondet generation = generations.oneOf() finishRetirement(generation) },
+      nextGeneration,
+      s' = s
+    }
   }
   val invariant = all {
     s.safePublication, s.createOnly,

@@ -2,9 +2,15 @@
 // @source scripts/record-evidence.mjs
 // @source scripts/evidence-bundle.mjs
 // @evidence scripts/evidence-transport.test.ts
+// @evidence scripts/record-evidence-analytics.test.js
 // One TLS probe and one response, a two-unit body bound and three chunks.
 // Fake clock progress marks one absolute deadline; traffic cannot reset it.
 // Native TLS/Web Stream details and network authenticity remain external.
+// The exact-body expectation belongs to the caller: production index.html
+// uses only the approved expectedPublishedRoot result, bound to its earlier
+// raw capture; other artifacts keep their raw expected bytes. Observed bodies
+// are never normalized. Digest/HTML-transform correctness is outside this
+// transport model; evidence_capture models its preflight refusal boundary.
 module evidence_transport {
   var s: { tlsPhase: str, socketOpen: bool, validated: bool, closeRequested: bool,
     tlsPrimary: str, tlsCleanupError: bool, tlsResult: str, tlsSettlements: int, clock: int, deadlineExpired: bool,

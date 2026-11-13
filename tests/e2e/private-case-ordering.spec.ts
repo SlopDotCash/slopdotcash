@@ -58,7 +58,11 @@ async function releaseAction(
 }
 
 /** Real private-case components; only authority and HTTP scheduling are fixtures. */
-async function privateCase(page: Page, diagnostics: Diagnostics) {
+async function privateCase(
+  page: Page,
+  diagnostics: Diagnostics,
+  withProgram = false,
+) {
   const actor = { githubId: "42", githubLogin: "case-maintainer" };
   let record = {
     id: caseId,
@@ -123,7 +127,13 @@ async function privateCase(page: Page, diagnostics: Diagnostics) {
       });
     if (path === "/api/v1/security-cases")
       return route.fulfill({
-        json: { viewer: actor, programs: [], cases: [record] },
+        json: {
+          viewer: actor,
+          programs: withProgram
+            ? [{ projectId: record.projectId, roles: ["security-maintainer"] }]
+            : [],
+          cases: [record],
+        },
       });
     if (path === casePath && request.method() === "GET") {
       caseReads++;
@@ -330,3 +340,69 @@ test("a departed private case callback does not start another case read", async 
     fixture.release();
   }
 });
+
+for (const width of [1440, 320]) {
+  test.describe(`case selection at ${width}px`, () => {
+    test.use({ viewport: { width, height: width === 1440 ? 1000 : 800 } });
+    test("a selected private case survives same-account focus and a cleared filter stays closed", async ({
+      page,
+      diagnostics,
+    }, info) => {
+      const fixture = await privateCase(page, diagnostics, true);
+      const session = { githubId: "42", githubLogin: "case-maintainer" };
+      const identity = deferred();
+      let holdIdentity = true;
+      await page
+        .getByRole("button", { name: "Back to reports", exact: true })
+        .click();
+      const choice = page.getByRole("button", { name: /^ordering-fixture /u });
+      await choice.click();
+      await expect(fixture.detail.locator(".security-next-step")).toContainText(
+        "Case revision 1",
+      );
+      await page.route("**/api/v1/project-session", async (route) => {
+        if (holdIdentity) {
+          identity.started();
+          await identity.wait;
+        }
+        await route.fulfill({ json: { session } });
+      });
+      try {
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await identity.requested;
+        await expect(
+          page.getByText("Checking private session…", { exact: true }),
+        ).toBeVisible();
+        await expect(fixture.detail).toHaveCount(0);
+        const refreshed = caseListResponse(page);
+        holdIdentity = false;
+        identity.release();
+        await (await refreshed).finished();
+        await expect(
+          fixture.detail.locator(".security-next-step"),
+        ).toContainText("Case revision 1");
+        await expect(page).toHaveURL(new RegExp(`\\?case=${caseId}$`, "u"));
+        await expectAccessibleReflow(page, "private-case-restored-after-focus");
+        await page.screenshot({
+          path: info.outputPath("private-case-restored.png"),
+          fullPage: true,
+        });
+
+        await page
+          .getByRole("combobox", { name: "Show reports", exact: true })
+          .selectOption("resolved");
+        await expect(fixture.detail).toHaveCount(0);
+        await expect(page).not.toHaveURL(/[?&]case=/u);
+        const nextList = caseListResponse(page);
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await (await nextList).finished();
+        await expect(choice).toHaveAttribute("aria-pressed", "false");
+        await expect(fixture.detail).toHaveCount(0);
+      } finally {
+        holdIdentity = false;
+        identity.release();
+        fixture.release();
+      }
+    });
+  });
+}

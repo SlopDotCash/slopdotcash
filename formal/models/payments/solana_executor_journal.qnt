@@ -127,16 +127,27 @@ module solana_executor_journal {
         if (request.snapshot.cosigner) "partial" else "broadcast"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet role = roles.oneOf()
-    nondet fingerprint = Set(1, 2).oneOf()
-    nondet generation = quotes.oneOf()
-    nondet outcome = Set("absent", "success", "failed-pending", "failed-final", "error").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { configure(role, yes), advance, pay, bind, retire, cosign, begin(id, fingerprint), load(id),
-      status(id, outcome), height(id, yes), refresh(id, yes), quote(id, generation, yes),
-      admit(id, yes, other), handoff(id), s' = s }
+    any {
+      { nondet role = roles.oneOf() nondet yes = Set(false, true).oneOf() configure(role, yes) },
+      advance,
+      pay,
+      bind,
+      retire,
+      cosign,
+      { nondet id = ids.oneOf() nondet fingerprint = Set(1, 2).oneOf() begin(id, fingerprint) },
+      { nondet id = ids.oneOf() load(id) },
+      { nondet id = ids.oneOf()
+        nondet outcome = Set("absent", "success", "failed-pending", "failed-final", "error").oneOf()
+        status(id, outcome) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() height(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() refresh(id, yes) },
+      { nondet id = ids.oneOf() nondet generation = quotes.oneOf() nondet yes = Set(false, true).oneOf()
+        quote(id, generation, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        admit(id, yes, other) },
+      { nondet id = ids.oneOf() handoff(id) },
+      s' = s
+    }
   }
   val invariant = all {
     s.height >= 0 and s.height <= 6, roles.contains(s.role),
@@ -151,8 +162,8 @@ module solana_executor_journal {
         request.signed implies quotes.contains(request.quote),
         request.result == "observed" implies request.returned.exists }
     }) }
-  action empty(role: str): bool = init.then(configure(role, false))
-  action retained(role: str): bool = init.then(configure(role, true))
+  run empty(role: str): bool = init.then(configure(role, false))
+  run retained(role: str): bool = init.then(configure(role, true))
   action fresh(id: int, generation: int): bool = begin(id, 1).then(load(id)).then(quote(id, generation, true))
   action expire(id: int): bool = begin(id, 1).then(load(id)).then(status(id, "absent")).then(height(id, true)).then(refresh(id, true))
 

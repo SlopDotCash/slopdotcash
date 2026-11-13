@@ -134,16 +134,27 @@ module trace_event_finalization {
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet key = ids.oneOf()
-    nondet payload = ids.oneOf()
-    nondet op = operations.oneOf()
-    nondet owner = owners.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet kind = replyKinds.oneOf()
-    any { attach, tick, setBan(yes), begin(id, op, key, payload, owner, yes), admission(id), readOwner(id),
-      validateEvent(id), readEvent(id), insertEvent(id), captureFinalizeTime(id), finalizeWrite(id),
-      writeReply(id, kind), readFinalized(id, yes), conflictBan(id), readOrWriteFailure(id), respond(id, yes), s' = s }
+    any {
+      attach,
+      tick,
+      { nondet yes = Set(false, true).oneOf() setBan(yes) },
+      { nondet id = ids.oneOf() nondet key = ids.oneOf() nondet payload = ids.oneOf() nondet op = operations.oneOf()
+        nondet owner = owners.oneOf() nondet yes = Set(false, true).oneOf()
+        begin(id, op, key, payload, owner, yes) },
+      { nondet id = ids.oneOf() admission(id) },
+      { nondet id = ids.oneOf() readOwner(id) },
+      { nondet id = ids.oneOf() validateEvent(id) },
+      { nondet id = ids.oneOf() readEvent(id) },
+      { nondet id = ids.oneOf() insertEvent(id) },
+      { nondet id = ids.oneOf() captureFinalizeTime(id) },
+      { nondet id = ids.oneOf() finalizeWrite(id) },
+      { nondet id = ids.oneOf() nondet kind = replyKinds.oneOf() writeReply(id, kind) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() readFinalized(id, yes) },
+      { nondet id = ids.oneOf() conflictBan(id) },
+      { nondet id = ids.oneOf() readOrWriteFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() respond(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 2, eventCount <= 2,
