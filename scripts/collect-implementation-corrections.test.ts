@@ -20,8 +20,11 @@ import {
   parseCollectionArguments,
 } from "./collect-implementation-corrections";
 import {
+  CommitStatisticsUnavailableError,
   collectSearchReferences,
+  GitHubGraphqlClient,
   type GraphqlExecutor,
+  OutcomeCommitLineLoader,
 } from "./generate-leaderboard";
 
 const dirs: string[] = [];
@@ -750,5 +753,452 @@ test("missing commit evidence and changed source identity never create a complet
       ),
     ).rejects.toThrow();
     await expect(readFile(join(dir, "manifest.json"))).rejects.toThrow();
+  }
+});
+
+test("split node batches reconstruct a complete checkpoint offline and missing or tampered halves refuse", async () => {
+  const dir = await directory();
+  const node = fixture();
+  const commits = Array.from({ length: 100 }, (_, index) => ({
+    commit: {
+      ...node.commits.nodes[0].commit,
+      id: `C_split_${index}`,
+      oid: (index + 1).toString(16).padStart(40, "0"),
+    },
+  }));
+  const large = {
+    ...node,
+    headRefOid: commits.at(-1)?.commit.oid,
+    commits: { ...node.commits, totalCount: commits.length, nodes: commits },
+  };
+  const byId = new Map(commits.map(({ commit }) => [commit.id, commit]));
+  const base = transport();
+  let requests = 0;
+  const observedBatches: number[] = [];
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests++;
+      const body = JSON.parse(String(init?.body));
+      const query = body.query as string;
+      let data: Record<string, unknown>;
+      if (query.includes("LeaderboardSearchReferences")) {
+        data = {
+          search: {
+            issueCount: 1,
+            nodes: [large],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        };
+      } else if (query.includes("CorrectionMetadata")) {
+        data = { nodes: [large] };
+      } else if (query.includes("LeaderboardOutcomeCommitLines")) {
+        const ids = body.variables.ids as string[];
+        observedBatches.push(ids.length);
+        if (
+          ids.length === 100 ||
+          (ids.length === 50 && ids[0] === "C_split_50")
+        )
+          return new Response("gateway failure", { status: 502 });
+        data = {
+          nodes: ids.map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: byId.get(id)?.oid,
+            additions: 2,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
+        };
+      } else return base.call(input, init);
+      return Response.json({
+        data: {
+          ...data,
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T01:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    month: "2026-01",
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  const deps = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const first = await collectImplementationCorrections(options, deps);
+  expect(first.receipt.ownershipComplete).toBe(true);
+  expect(first.receipt.completeProofs).toBe(1);
+  expect(observedBatches).toContain(100);
+  expect(observedBatches).toContain(50);
+  expect(observedBatches).toContain(25);
+  const count = requests;
+  const resumed = await collectImplementationCorrections(options, deps);
+  expect(requests).toBe(count);
+  expect(resumed.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+
+  // One retained half's object and pointer are enough to exercise both
+  // integrity boundaries without changing the complete checkpoint itself.
+  let pointerPath = "";
+  let objectPath = "";
+  for (const file of await readdir(join(dir, "attempts"))) {
+    const attempt = JSON.parse(
+      await readFile(join(dir, "attempts", file), "utf8"),
+    );
+    if (attempt.status !== 200 || !attempt.body) continue;
+    const body = JSON.parse(attempt.body);
+    if (
+      !body.query.includes("LeaderboardOutcomeCommitLines") ||
+      body.variables.ids.length !== 50
+    )
+      continue;
+    const key = createHash("sha256")
+      .update(
+        JSON.stringify({
+          url: attempt.url,
+          method: attempt.method,
+          body: attempt.body,
+        }),
+      )
+      .digest("hex");
+    pointerPath = join(dir, "requests", `${key}.json`);
+    objectPath = join(dir, "objects", attempt.bodyDigest);
+    break;
+  }
+  expect(pointerPath).not.toBe("");
+  const originalObject = await readFile(objectPath);
+  await writeFile(objectPath, "tampered response");
+  await expect(collectImplementationCorrections(options, deps)).rejects.toThrow(
+    "digest mismatch",
+  );
+  expect(requests).toBe(count);
+  await writeFile(objectPath, originalObject);
+  await rm(pointerPath);
+  await expect(collectImplementationCorrections(options, deps)).rejects.toThrow(
+    "missing raw request evidence",
+  );
+  expect(requests).toBe(count);
+}, 30_000);
+
+function unavailableCounterTransport(
+  options: {
+    parentCount?: number;
+    unlinked?: boolean;
+    alterRest?: (value: Record<string, unknown>) => unknown;
+    alterError?: (value: Record<string, unknown>) => void;
+    missingRateLimit?: boolean;
+  } = {},
+) {
+  const parentCount = options.parentCount ?? 1;
+  const base = transport();
+  const who = {
+    ...actor,
+    type: "User",
+    node_id: actor.id,
+    avatar_url: "https://avatars.githubusercontent.com/u/42",
+    html_url: "https://github.com/author",
+  };
+  const pull = fixture();
+  pull.commits.nodes[0].commit.parents.totalCount = parentCount;
+  if (options.unlinked)
+    (pull.commits.nodes[0].commit.author as { user: unknown }).user = null;
+  const rateLimit = {
+    cost: 1,
+    limit: 5000,
+    remaining: 4900,
+    resetAt: "2026-02-01T01:00:00Z",
+  };
+  let requests = 0;
+  let restRequests = 0;
+  const call = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests++;
+      const url = new URL(String(input));
+      if (url.pathname === `/repos/SlopDotCash/asi/commits/${sha}`) {
+        restRequests++;
+        const value = {
+          node_id: "C_source",
+          sha,
+          url: url.href,
+          html_url: `https://github.com/SlopDotCash/asi/commit/${sha}`,
+          author: who,
+          parents: Array.from({ length: parentCount }, (_, index) => ({
+            sha: (index + 1).toString(16).padStart(40, "0"),
+          })),
+          stats:
+            parentCount > 1
+              ? { additions: 0, deletions: 0, total: 0 }
+              : { additions: 2, deletions: 1, total: 3 },
+        };
+        const altered = options.alterRest ? options.alterRest(value) : value;
+        return altered === null
+          ? new Response("not found", { status: 404 })
+          : Response.json(altered);
+      }
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("LeaderboardOutcomeCommitLines")) {
+        const error = {
+          type: "SERVICE_UNAVAILABLE",
+          path: ["nodes", 0, "additions"],
+          message: "The additions count for this commit is unavailable.",
+        };
+        options.alterError?.(error);
+        return Response.json({
+          data: {
+            nodes: [null],
+            ...(options.missingRateLimit ? {} : { rateLimit }),
+          },
+          errors: [error],
+        });
+      }
+      if (body.query.includes("LeaderboardSearchReferences"))
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [pull],
+            },
+            rateLimit,
+          },
+        });
+      if (body.query.includes("CorrectionMetadata"))
+        return Response.json({ data: { nodes: [pull], rateLimit } });
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, requests: () => requests, restRequests: () => restRequests };
+}
+
+test("verified REST counters recover ordinary and merge commits and replay the raw error offline", async () => {
+  for (const parentCount of [1, 2]) {
+    const dir = await directory();
+    const network = unavailableCounterTransport({
+      parentCount,
+      alterError:
+        parentCount > 1
+          ? (error) => {
+              error.path = ["nodes", 0, "deletions"];
+            }
+          : undefined,
+    });
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const deps = {
+      journal: baseline(),
+      registry: registry(),
+      token: "private-test-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const first = await collectImplementationCorrections(options, deps);
+    expect(first.receipt.ownershipComplete).toBe(true);
+    const proof = first.manifest.candidates[0].proof;
+    expect(proof.status).toBe("complete");
+    if (proof.status !== "complete")
+      throw new Error("expected complete source evidence");
+    expect(proof.sources[0].commits[0]).toMatchObject({
+      parentCount,
+      additions: parentCount > 1 ? 0 : 2,
+      deletions: parentCount > 1 ? 0 : 1,
+    });
+    expect(network.restRequests()).toBe(1);
+    const before = network.requests();
+    const repeated = await collectImplementationCorrections(options, deps);
+    expect(network.requests()).toBe(before);
+    expect(repeated.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+    const raw = await Promise.all(
+      (await readdir(join(dir, "objects"))).map((name) =>
+        readFile(join(dir, "objects", name), "utf8"),
+      ),
+    );
+    expect(
+      raw.some((text) =>
+        text.includes('"errors":[{"type":"SERVICE_UNAVAILABLE"'),
+      ),
+    ).toBe(true);
+  }
+});
+
+test("REST recovery can supply a previously unavailable primary-author link", async () => {
+  const dir = await directory();
+  const network = unavailableCounterTransport({ unlinked: true });
+  const result = await collectImplementationCorrections(
+    {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    },
+    {
+      journal: baseline(),
+      registry: registry(),
+      token: "private-test-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    },
+  );
+  const proof = result.manifest.candidates[0].proof;
+  if (proof.status !== "complete")
+    throw new Error("expected complete source evidence");
+  expect(proof.sources[0].commits[0].author).toMatchObject({
+    id: actor.id,
+    kind: "User",
+  });
+});
+
+test("REST counter recovery refuses wrong commit, repository, parents, author, stats and missing evidence", async () => {
+  const alterations: Array<(value: Record<string, unknown>) => unknown> = [
+    (value) => ({ ...value, node_id: "C_other" }),
+    (value) => ({ ...value, sha: "b".repeat(40) }),
+    (value) => ({
+      ...value,
+      url: `https://api.github.com/repos/other/repo/commits/${sha}`,
+    }),
+    (value) => ({ ...value, parents: [] }),
+    (value) => ({ ...value, parents: [{ sha: "bad" }] }),
+    (value) => ({
+      ...value,
+      author: {
+        ...(value.author as Record<string, unknown>),
+        node_id: "MDQ6VXNlcjQz",
+      },
+    }),
+    (value) => ({ ...value, stats: { additions: -1, deletions: 1, total: 0 } }),
+    (value) => ({ ...value, stats: { additions: 2, deletions: 1, total: 4 } }),
+    (value) => ({
+      ...value,
+      stats: { additions: 0.5, deletions: 0.5, total: 1 },
+    }),
+    () => null,
+  ];
+  for (const alterRest of alterations) {
+    const dir = await directory();
+    const network = unavailableCounterTransport({ alterRest });
+    await expect(
+      collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: dir,
+          month: "2026-01",
+          before: "2026-01-31T00:00:00.000Z",
+        },
+        {
+          journal: baseline(),
+          registry: registry(),
+          token: "private-test-token",
+          transport: network.call,
+          now: new Date("2026-01-31T23:59:59Z"),
+        },
+      ),
+    ).rejects.toThrow();
+    await expect(readFile(join(dir, "manifest.json"))).rejects.toThrow();
+  }
+});
+
+test("unrelated GraphQL errors never invoke historical REST counter recovery", async () => {
+  for (const alterError of [
+    (value: Record<string, unknown>) => {
+      value.type = "FORBIDDEN";
+    },
+    (value: Record<string, unknown>) => {
+      value.path = ["nodes", 0, "repository"];
+    },
+    (value: Record<string, unknown>) => {
+      value.path = ["nodes", 5, "additions"];
+    },
+  ]) {
+    const dir = await directory();
+    const network = unavailableCounterTransport({ alterError });
+    await expect(
+      collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: dir,
+          month: "2026-01",
+          before: "2026-01-31T00:00:00.000Z",
+        },
+        {
+          journal: baseline(),
+          registry: registry(),
+          token: "private-test-token",
+          transport: network.call,
+          now: new Date("2026-01-31T23:59:59Z"),
+        },
+      ),
+    ).rejects.toThrow();
+    expect(network.restRequests()).toBe(0);
+  }
+});
+
+test("ordinary line loaders retain their refusal and account for the unavailable query", async () => {
+  const network = unavailableCounterTransport();
+  const client = new GitHubGraphqlClient("private-test-token", network.call);
+  const expected = fixture().commits.nodes[0].commit;
+  const loader = new OutcomeCommitLineLoader(client);
+  await expect(
+    loader.hydrate("R_kgDOT23CXA", [
+      {
+        id: expected.id,
+        oid: expected.oid,
+        parentCount: 1,
+        author: {
+          ...actor,
+          kind: "User",
+          avatarUrl: "https://avatars.githubusercontent.com/u/42",
+          url: "https://github.com/author",
+        },
+      },
+    ]),
+  ).rejects.toBeInstanceOf(CommitStatisticsUnavailableError);
+  expect(client.getRateLimit().consumedDuringRun).toBe(1);
+  expect(network.restRequests()).toBe(0);
+});
+
+test("a counter error without rate accounting is never admitted for cached recovery", async () => {
+  const dir = await directory();
+  const network = unavailableCounterTransport({ missingRateLimit: true });
+  await expect(
+    collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: dir,
+        month: "2026-01",
+        before: "2026-01-31T00:00:00.000Z",
+      },
+      {
+        journal: baseline(),
+        registry: registry(),
+        token: "private-test-token",
+        transport: network.call,
+        now: new Date("2026-01-31T23:59:59Z"),
+      },
+    ),
+  ).rejects.toThrow();
+  expect(network.restRequests()).toBe(0);
+  for (const name of await readdir(join(dir, "requests"))) {
+    const pointer = JSON.parse(
+      await readFile(join(dir, "requests", name), "utf8"),
+    );
+    const envelope = JSON.parse(
+      await readFile(join(dir, "objects", pointer.bodyDigest), "utf8"),
+    );
+    expect(envelope.errors).toBeUndefined();
   }
 });
