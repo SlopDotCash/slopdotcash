@@ -17,6 +17,7 @@ import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
   directConsent,
+  directPreparationFence,
   insertDirectIntent,
   prepareDirectIntent,
   recoverDirectIntent,
@@ -503,6 +504,7 @@ test("refreshing or recovering a Solana direct payment checks the intent network
       "prepare-payment-key-1",
       intent,
       stamp,
+      directPreparationFence(caseId, REPORTER.githubId, OWNER.githubId, intent),
     ).run();
 
     // 1. Refreshing on the matching cluster while the blockhash is valid returns null.
