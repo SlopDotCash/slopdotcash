@@ -4085,9 +4085,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "9030a5f30d0815a071677fb2fc12d81c6bd52c9608514eb023c6c43b04d1d355",
+      "sha256": "18b69cea56616fa54092dde87c17b9c4724a436694fcb9c2f05f8457093dd48d",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 120, 233, 445, 533, 536],
+      "candidateLines": [7, 118, 229, 441, 529, 532],
       "review": "mapped-abstraction"
     },
     {
@@ -5970,7 +5970,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "c73da57c52297023cb996d5d36a82097a3055717cd42f61ba7ca0ee404e26350",
+      "sha256": "a1970da5d7ecc27fa93ac293e378b9fa635acbd75d9ce55fd65624038c8b9ec6",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5988,11 +5988,11 @@
         2241, 2249, 2271, 2286, 2295, 2303, 2349, 2399, 2449, 2504, 2521, 2522,
         2525, 2526, 2630, 2632, 2633, 2637, 2640, 2648, 2650, 2668, 2972, 2991,
         3046, 3222, 3417, 3442, 3530, 3549, 3672, 3751, 4146, 4157, 4191, 4254,
-        4268, 4591, 4804, 5005, 5118, 5143, 5267, 5275, 5280, 5347, 5361, 6109,
-        6111, 6134, 6138, 6142, 6147, 6293, 6302, 6312, 6313, 6371, 6406, 6412,
-        6432, 6437, 6444, 6452, 6454, 6480, 6483, 6497, 6499, 6520, 6522, 6526,
-        6529, 6534, 6726, 6728, 6987, 7031, 7094, 7095, 7916, 7917, 7918, 7919,
-        7936, 7946, 7957, 7973, 8062, 8128, 8129, 8156, 8363
+        4268, 4591, 4804, 5005, 5118, 5143, 5274, 5282, 5287, 5354, 5368, 6116,
+        6118, 6141, 6145, 6149, 6154, 6300, 6309, 6319, 6320, 6378, 6413, 6419,
+        6439, 6444, 6451, 6459, 6461, 6487, 6490, 6504, 6506, 6527, 6529, 6533,
+        6536, 6541, 6733, 6735, 6994, 7038, 7101, 7102, 7923, 7924, 7925, 7926,
+        7943, 7953, 7964, 7980, 8069, 8135, 8136, 8163, 8370
       ],
       "review": "mapped-abstraction"
     },
@@ -8238,7 +8238,7 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "a2b623fe0f651448768b7a4fb454b665731e0272f1308cfa84a50215fbb40ecf",
+      "sha256": "d2762311aa4939faaa4664848ac3a4a91a65cc0379bbb4fdca8f6862ffc4202f",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_commit_census_fallback.qnt"
@@ -8347,7 +8347,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "ae46fb549ed08a8d8731900d6e4f6e5d10039149eb6da447689cb934419eb4fa",
+      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
       "models": [
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
