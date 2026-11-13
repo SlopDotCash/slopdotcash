@@ -67,11 +67,18 @@ module api_identity_admission {
     })) }
   action cleanupFailure = all { s.cleanupPhase == "waiting", s' = s.with("cleanupPhase", "failed") }
   action step = {
-    nondet id = ids.oneOf()
-    nondet key = digestKeys.oneOf()
-    nondet ok = Set(false, true).oneOf()
-    any { tick, capture(id, key), hash(id, ok), commit(id), sqlFailure(id), reply(id, ok),
-      beginCleanup, deleteExpired, cleanupFailure, s' = s }
+    any {
+      tick,
+      { nondet id = ids.oneOf() nondet key = digestKeys.oneOf() capture(id, key) },
+      { nondet id = ids.oneOf() nondet ok = Set(false, true).oneOf() hash(id, ok) },
+      { nondet id = ids.oneOf() commit(id) },
+      { nondet id = ids.oneOf() sqlFailure(id) },
+      { nondet id = ids.oneOf() nondet ok = Set(false, true).oneOf() reply(id, ok) },
+      beginCleanup,
+      deleteExpired,
+      cleanupFailure,
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 6,

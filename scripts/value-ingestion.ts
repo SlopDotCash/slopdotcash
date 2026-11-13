@@ -821,7 +821,8 @@ export async function hydrateValueActors(
           login: actor.login,
           avatarUrl: canonicalActorAvatarUrl(actor.avatarUrl),
           url: actor.url,
-          kind: "User",
+          // An app account served in User shape (BOT_ node ID) is a Bot.
+          kind: actor.id.startsWith("BOT_") ? "Bot" : "User",
         });
       }
       break;

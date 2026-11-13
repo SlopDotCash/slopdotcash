@@ -1,24 +1,71 @@
 // @source scripts/evidence-bundle.mjs
 // @source scripts/evidence-contract.mjs
+// @source scripts/dist-manifest.mjs
 // @source scripts/record-evidence.mjs
 // @source scripts/run-e2e.mjs
 // @source scripts/run-e2e-phase.mjs
 // @evidence scripts/evidence-publication.test.ts
+// @evidence scripts/record-evidence-analytics.test.js
 // One prior bundle, one candidate and one possible concurrent valid winner.
 // Local rename, transaction state, cleanup and process result are distinct.
 // Parser/media validation and real browser/process behavior are abstract inputs.
+// Production preflight precedes transaction staging. One raw index capture,
+// one possible replacement and the exact approved canonical-host transform
+// are finite equality classes, not a proof of SHA-256 or HTML rendering. The
+// helper's complete manifest check and final re-read are separate observations.
+// Only the verifier's expected index is rendered; recorded artifacts and the
+// skill-manifest fingerprint retain their captured bytes. Remote bytes are
+// compared unchanged, never stripped/normalized. Local mode keeps its original
+// path. Mutation after the final expected-byte read is not a filesystem lock
+// guarantee. TLS, redirects, MIME, exact streaming and process ownership stay
+// in the existing transport/process models and actual artifact tests.
 module evidence_capture {
-  var s: { phase: str, transaction: str, buildBound: bool, browserClean: bool,
+  type State = { phase: str, transaction: str, buildBound: bool, browserClean: bool,
     complete: bool, current: int, previous: int, backup: bool, staged: bool,
     rootError: str, primary: str, recoveryError: bool, cleanupErrors: Set[str],
-    attempted: Set[str], previewStopped: bool, result: str, logged: bool }
-  action init = s' = { phase: "new", transaction: "none", buildBound: false,
+    attempted: Set[str], previewStopped: bool, result: str, logged: bool,
+    productionPhase: str, diskIndex: int, diskManifest: int, capturedIndex: int,
+    loadedIndex: int, recordedIndex: int, fingerprint: int, tagged: bool,
+    expectedRoot: int, observedRoot: int, remoteReads: int }
+  var s: State
+  pure val initialState: State = { phase: "new", transaction: "none", buildBound: false,
     browserClean: false, complete: false, current: 1, previous: 1, backup: false,
     staged: false, rootError: "none", primary: "none", recoveryError: false,
     cleanupErrors: Set(), attempted: Set(), previewStopped: false,
-    result: "none", logged: false }
+    result: "none", logged: false,
+    productionPhase: "local", diskIndex: 1, diskManifest: 1, capturedIndex: 0,
+    loadedIndex: 0, recordedIndex: 0, fingerprint: 0, tagged: false,
+    expectedRoot: 0, observedRoot: 0, remoteReads: 0 }
+  action init = s' = initialState
+  pure def refuseArtifact(value: State): State = value.with("phase", "preflight-failed")
+    .with("productionPhase", "refused").with("result", "failure")
+    .with("rootError", "artifact").with("primary", "artifact")
+  action alreadyTaggedRaw = all { s.phase == "new", s.productionPhase == "local",
+    s' = s.with("tagged", true) }
+  action productionCapture = all { s.phase == "new", s.productionPhase == "local",
+    s' = s.with("productionPhase", "captured").with("capturedIndex", s.diskIndex)
+      .with("recordedIndex", s.diskIndex).with("fingerprint", 1) }
+  // A concurrent writer may replace the index alone or regenerate a coherent
+  // new manifest. Neither can replace the earlier captured verifier target.
+  action replaceIndex(regenerateManifest: bool): bool = all { s.phase == "new",
+    Set("captured", "manifest-checked").contains(s.productionPhase), s.diskIndex == 1,
+    s' = s.with("diskIndex", 2).with("diskManifest", if (regenerateManifest) 2 else s.diskManifest) }
+  action checkCapturedManifest(validDigest: bool, manifestValid: bool): bool = all {
+    s.phase == "new", s.productionPhase == "captured",
+    s' = if (validDigest and manifestValid and s.diskManifest == s.diskIndex and s.diskManifest == s.capturedIndex)
+      s.with("productionPhase", "manifest-checked").with("loadedIndex", s.diskManifest)
+    else refuseArtifact(s) }
+  action renderExpectedRoot(approvedTransform: bool): bool = all { s.phase == "new", s.productionPhase == "manifest-checked",
+    s' = if (s.diskIndex == s.loadedIndex and approvedTransform)
+      s.with("productionPhase", "rendered").with("expectedRoot", if (s.tagged) s.capturedIndex else s.capturedIndex + 2)
+    else refuseArtifact(s) }
+  action verifyProductionArtifacts(observedRoot: int, otherArtifactsExact: bool): bool = all {
+    s.phase == "new", s.productionPhase == "rendered", Set(1, 3, 9).contains(observedRoot),
+    val observed = s.with("observedRoot", observedRoot).with("remoteReads", 1)
+    s' = if (observedRoot == s.expectedRoot and otherArtifactsExact) observed.with("productionPhase", "verified")
+      else refuseArtifact(observed) }
   action noPrior = all { s.phase == "new", s' = s.with("current", 0).with("previous", 0) }
-  action stage = all { s.phase == "new",
+  action stage = all { s.phase == "new", Set("local", "verified").contains(s.productionPhase),
     s' = s.with("phase", "staging").with("transaction", "open").with("staged", true) }
   // The .video setup now belongs to the same owned operation as capture.
   action setupFailure = all { s.phase == "staging",
@@ -86,12 +133,19 @@ module evidence_capture {
   action step = {
     nondet a = Set(false, true).oneOf()
     nondet b = Set(false, true).oneOf()
-    any { noPrior, stage, setupFailure, capture(a, b), closeBrowser(a), validate(a),
+    any { alreadyTaggedRaw, productionCapture, replaceIndex(a), checkCapturedManifest(a, b), renderExpectedRoot(a),
+      verifyProductionArtifacts(1, a), verifyProductionArtifacts(3, a), verifyProductionArtifacts(9, a),
+      noPrior, stage, setupFailure, capture(a, b), closeBrowser(a), validate(a),
       movePrevious(a), concurrentWinner, publish(a), restoreOnError(a), cleanupBackup(a),
       stopPreview(a), abort(a), retryAbort(a), protectedAbort, logSuccess,
       crashBetweenRenames, crashAfterPublication, s' = s }
   }
   val invariant = all {
+    s.productionPhase != "local" implies (s.capturedIndex == 1 and s.recordedIndex == s.capturedIndex and s.fingerprint == 1),
+    s.productionPhase == "verified" implies (s.expectedRoot == s.observedRoot and s.loadedIndex == s.capturedIndex
+      and s.expectedRoot == (if (s.tagged) s.capturedIndex else s.capturedIndex + 2)),
+    s.productionPhase == "refused" implies (s.remoteReads <= 1 and not(s.staged) and s.transaction == "none"),
+    s.current == 2 and s.productionPhase != "local" implies s.productionPhase == "verified",
     s.current == 2 implies s.complete and s.buildBound and s.browserClean,
     s.current == 0 and s.previous != 0 implies s.backup,
     s.transaction == "published" implies s.current == 2 and not(s.staged),
@@ -146,7 +200,7 @@ module evidence_capture {
   run failedPreviousMoveKeepsOldBundleTest = init.then(stage).then(capture(true, true)).then(closeBrowser(true))
     .then(validate(true)).then(movePrevious(false)).then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and not(s.backup) and s.primary == "publication" and invariant)
-  action invalidBundle = init.then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
+  action invalidBundle = (s' = initialState).then(stage).then(capture(true, false)).then(closeBrowser(true)).then(validate(true))
   run invalidBundleCannotPublishTest = invalidBundle.then(movePrevious(true).fail())
   run invalidBundleFinalizesFailureTest = invalidBundle.then(stopPreview(true)).then(abort(true))
     .expect(s.current == 1 and s.primary == "validation" and invariant)
@@ -161,4 +215,30 @@ module evidence_capture {
     .then(validate(true)).then(movePrevious(true)).then(publish(true)).then(cleanupBackup(false))
     .then(stopPreview(true)).then(abort(true)).then(protectedAbort)
     .expect(s.current == 2 and s.backup and s.transaction == "published" and invariant)
+  action approvedProductionRoot = productionCapture.then(checkCapturedManifest(true, true)).then(renderExpectedRoot(true))
+  run approvedRenderedRootRetainsRawCaptureTest = init.then(approvedProductionRoot).then(verifyProductionArtifacts(3, true))
+    .then(stage).then(capture(true, true)).then(closeBrowser(true)).then(validate(true)).then(movePrevious(true))
+    .then(publish(true)).then(cleanupBackup(true)).then(stopPreview(true)).then(abort(true)).then(logSuccess)
+    .expect(s.logged and s.recordedIndex == 1 and s.expectedRoot == 3 and s.fingerprint == 1 and invariant)
+  run rawRootCannotSubstituteForRenderedRootTest = init.then(approvedProductionRoot).then(verifyProductionArtifacts(1, true))
+    .expect(s.productionPhase == "refused" and s.recordedIndex == 1).then(stage.fail())
+  run unapprovedRemoteHtmlIsNotNormalizedTest = init.then(approvedProductionRoot).then(verifyProductionArtifacts(9, true))
+    .expect(s.productionPhase == "refused" and s.observedRoot == 9).then(stage.fail())
+  run anotherArtifactStillRequiresRawEqualityTest = init.then(approvedProductionRoot).then(verifyProductionArtifacts(3, false))
+    .expect(s.productionPhase == "refused" and s.current == 1)
+  run changedIndexWithoutNewManifestRefusesBeforeFetchTest = init.then(productionCapture).then(replaceIndex(false))
+    .then(checkCapturedManifest(true, true)).expect(s.productionPhase == "refused" and s.remoteReads == 0 and s.recordedIndex == 1)
+  run regeneratedManifestCannotReplaceEarlierCaptureTest = init.then(productionCapture).then(replaceIndex(true))
+    .then(checkCapturedManifest(true, true)).expect(s.productionPhase == "refused" and s.remoteReads == 0 and s.fingerprint == 1)
+  run finalIndexRereadRefusesAfterManifestCheckTest = init.then(productionCapture).then(checkCapturedManifest(true, true))
+    .then(replaceIndex(true)).then(renderExpectedRoot(true)).expect(s.productionPhase == "refused" and s.remoteReads == 0)
+  run invalidEarlierDigestRefusesBeforeFetchTest = init.then(productionCapture).then(checkCapturedManifest(false, true))
+    .expect(s.productionPhase == "refused" and s.remoteReads == 0)
+  run malformedManifestRefusesBeforeFetchTest = init.then(productionCapture).then(checkCapturedManifest(true, false))
+    .expect(s.productionPhase == "refused" and s.remoteReads == 0)
+  run transformFailureCannotStartCaptureTest = init.then(productionCapture).then(checkCapturedManifest(true, true))
+    .then(renderExpectedRoot(false)).expect(s.productionPhase == "refused").then(stage.fail())
+  run alreadyTaggedRawRootKeepsApprovedIdentityTransformTest = init.then(alreadyTaggedRaw).then(approvedProductionRoot)
+    .then(verifyProductionArtifacts(1, true)).expect(s.productionPhase == "verified" and s.expectedRoot == s.recordedIndex and invariant)
+
 }

@@ -29,7 +29,7 @@
 // cache deletion errors are swallowed. A retry can discover the stored vault.
 // History bounds are finite; no liveness or continuous external freshness claim.
 // Existing workflow definitions are partial evidence, not execution of all
-// races below. This model and its scenarios have not been executed or parsed.
+// races below. Exact execution receipts are retained by the formal runner.
 module api_owner_vault_lifecycle {
   val slots = Set(1, 2)
   val purposes = Set(1, 2)
@@ -76,13 +76,14 @@ module api_owner_vault_lifecycle {
       kind != "policy" or purposes.forall(purpose => not(deploymentAt(purpose).exists)),
       s' = s.with("head", s.head + 1).with("history", s.history.set(s.head + 1, nextPolicy)) }
   }
+  def encodedTransaction(family: str, transaction: str): int = if (transaction == "malformed") 3 else if (transaction == "exact" or (family == "evm" and transaction == "case")) 1 else 2
   action begin(id: int, mode: str, purpose: int, family: str, expected: int, transaction: str): bool = all {
     slots.contains(id), s.requests.get(id).phase == "unused", Set("get", "review", "register").contains(mode),
     Set(0, 1, 2).contains(purpose), Set("evm", "solana").contains(family), 0.to(3).contains(expected),
     Set("exact", "case", "other", "malformed").contains(transaction),
     s' = s.with("requests", s.requests.set(id, idle.with("phase", "headers").with("mode", mode)
       .with("purpose", purpose).with("family", family).with("expected", expected)
-      .with("transaction", if (transaction == "malformed") 3 else if (transaction == "exact" or (family == "evm" and transaction == "case")) 1 else 2))) }
+      .with("transaction", encodedTransaction(family, transaction)))) }
   action headers(id: int, origin: bool): bool = {
     val r = s.requests.get(id)
     all { r.phase == "headers", s' = s.with("requests", s.requests.set(id,
@@ -131,22 +132,24 @@ module api_owner_vault_lifecycle {
       if (not(available)) respond(r, 503, "service-unavailable") else if (r.mode == "get") respond(r, 200, "networks").with("responseRevision", r.current)
       else r.with("phase", "body"))) }
   }
-  action body(id: int, valid: bool): bool = {
-    val r = s.requests.get(id)
-    all { r.phase == "body", s' = s.with("requests", s.requests.set(id,
-      if (not(valid) or not(purposes.contains(r.purpose))) respond(r, 400, "body")
+  // Pure extraction only: the concrete actions below keep their original
+  // guards, input domains and exact request updates, including refusal order.
+  def bodyResult(r: Request, valid: bool): Request = if (not(valid) or not(purposes.contains(r.purpose))) respond(r, 400, "body")
       else if (r.mode == "register" and r.captured.exists and r.captured.family == r.family and r.captured.transaction == r.transaction)
         respond(r, 200, "existing").with("responseRevision", r.current)
-      else r.with("phase", "expected"))) }
-  }
-  action expected(id: int): bool = {
-    val r = s.requests.get(id)
-    all { r.phase == "expected", s' = s.with("requests", s.requests.set(id,
-      if (r.expected == 0) respond(r, 400, "expected")
+      else r.with("phase", "expected")
+  def expectedResult(r: Request): Request = if (r.expected == 0) respond(r, 400, "expected")
       else if (r.mode == "review" and r.expected != r.current) respond(r, 409, "stale-review")
       else if (r.captured.exists) respond(r, 409, "already-registered")
       else if (r.mode == "register" and r.transaction == 3) respond(r, 400, "transaction")
-      else r.with("phase", if (r.mode == "register" and r.expected != r.current) "history" else "chain"))) }
+      else r.with("phase", if (r.mode == "register" and r.expected != r.current) "history" else "chain")
+  action body(id: int, valid: bool): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "body", s' = s.with("requests", s.requests.set(id, bodyResult(r, valid))) }
+  }
+  action expected(id: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "expected", s' = s.with("requests", s.requests.set(id, expectedResult(r))) }
   }
   action history(id: int): bool = {
     val r = s.requests.get(id)
@@ -204,24 +207,174 @@ module api_owner_vault_lifecycle {
     all { Set("session", "project", "enforcements", "service", "body", "history", "append-generation", "append-validation").contains(r.phase),
       s' = s.with("requests", s.requests.set(id, respond(r, 500, "dependency"))) }
   }
-  action step = {
-    nondet id = slots.oneOf()
-    nondet purpose = Set(0, 1, 2).oneOf()
-    nondet mode = Set("get", "review", "register").oneOf()
-    nondet family = Set("evm", "solana").oneOf()
-    nondet revision = 0.to(3).oneOf()
-    nondet tx = Set("exact", "case", "other", "malformed").oneOf()
-    nondet role = Set("owner", "writer", "none", "retry", "missing-app").oneOf()
-    nondet editKind = Set("cap", "policy", "other").oneOf()
-    nondet outcome = Set("valid", "pending", "invalid", "unavailable", "wallet-missing").oneOf()
-    nondet reply = Set("ok", "lost", "bad-metadata").oneOf()
-    nondet post = Set("ok", "cache-delete-failed", "generation-read-failed").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { omitProject, seedDeployment(purpose, family), changeAuthority(role), restrict, ban, edit(editKind),
-      begin(id, mode, purpose, family, revision, tx), headers(id, yes), session(id, yes), project(id), enforcements(id), authority(id),
-      funds(id, yes), service(id, yes), body(id, yes), expected(id), history(id), chain(id, outcome), appendGeneration(id), appendValidation(id, yes),
-      commit(id, reply), postcommit(id, post), send(id, yes), dependencyFailure(id), s' = s }
+  // Bind choices inside the branch that reads them. Every original domain
+  // is nonempty, so distributing existential choice over this disjunction
+  // preserves enabledness and full-state successors while avoiding duplicate
+  // Cartesian enumeration. Invariants, direct actions and finite bounds stay.
+  action step = any {
+    omitProject,
+    { nondet purpose = Set(0, 1, 2).oneOf()
+      nondet family = Set("evm", "solana").oneOf()
+      seedDeployment(purpose, family) },
+    { nondet role = Set("owner", "writer", "none", "retry", "missing-app").oneOf()
+      changeAuthority(role) },
+    restrict,
+    ban,
+    { nondet editKind = Set("cap", "policy", "other").oneOf()
+      edit(editKind) },
+    { nondet id = slots.oneOf()
+      all { s.requests.get(id).phase == "unused", {
+        nondet purpose = Set(0, 1, 2).oneOf()
+        nondet mode = Set("get", "review", "register").oneOf()
+        nondet family = Set("evm", "solana").oneOf()
+        nondet revision = 0.to(3).oneOf()
+        nondet tx = Set("exact", "case", "other", "malformed").oneOf()
+        begin(id, mode, purpose, family, revision, tx) } } },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      headers(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      session(id, yes) },
+    { nondet id = slots.oneOf()
+      project(id) },
+    { nondet id = slots.oneOf()
+      enforcements(id) },
+    { nondet id = slots.oneOf()
+      authority(id) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      funds(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      service(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      body(id, yes) },
+    { nondet id = slots.oneOf()
+      expected(id) },
+    { nondet id = slots.oneOf()
+      history(id) },
+    { nondet id = slots.oneOf()
+      nondet outcome = Set("valid", "pending", "invalid", "unavailable", "wallet-missing").oneOf()
+      chain(id, outcome) },
+    { nondet id = slots.oneOf()
+      appendGeneration(id) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      appendValidation(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet reply = Set("ok", "lost", "bad-metadata").oneOf()
+      commit(id, reply) },
+    { nondet id = slots.oneOf()
+      nondet post = Set("ok", "cache-delete-failed", "generation-read-failed").oneOf()
+      postcommit(id, post) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      send(id, yes) },
+    { nondet id = slots.oneOf()
+      dependencyFailure(id) },
+    s' = s
   }
+
+  // Verification-only forward safety abstraction. Ordinary step and all named
+  // scenarios above/below continue to use concrete begin/body/expected.
+  // Before first consumption these legal placeholders hide no invariant read.
+  // Register materializes family/raw transaction at body; expectedRevision is
+  // sampled only at expected. Each consumer advances phase, so no resampling.
+  action verificationBegin(id: int, mode: str, purpose: int): bool =
+    begin(id, mode, purpose, "evm", 1, "exact")
+  action verificationBody(id: int, valid: bool, family: str, transaction: str): bool = {
+    val r = s.requests.get(id)
+    val materialized = if (r.mode == "register") r.with("family", family)
+      .with("transaction", encodedTransaction(family, transaction)) else r
+    all { r.phase == "body", Set("evm", "solana").contains(family),
+      Set("exact", "case", "other", "malformed").contains(transaction),
+      s' = s.with("requests", s.requests.set(id, bodyResult(materialized, valid))) }
+  }
+  action verificationExpected(id: int, revision: int): bool = {
+    val r = s.requests.get(id)
+    all { r.phase == "expected", 0.to(3).contains(revision),
+      s' = s.with("requests", s.requests.set(id, expectedResult(r.with("expected", revision)))) }
+  }
+  action verificationStep = any {
+    omitProject,
+    { nondet purpose = Set(0, 1, 2).oneOf()
+      nondet family = Set("evm", "solana").oneOf()
+      seedDeployment(purpose, family) },
+    { nondet role = Set("owner", "writer", "none", "retry", "missing-app").oneOf()
+      changeAuthority(role) },
+    restrict,
+    ban,
+    { nondet editKind = Set("cap", "policy", "other").oneOf()
+      edit(editKind) },
+    { nondet id = slots.oneOf()
+      all { s.requests.get(id).phase == "unused", {
+        nondet purpose = Set(0, 1, 2).oneOf()
+        nondet mode = Set("get", "review", "register").oneOf()
+        verificationBegin(id, mode, purpose) } } },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      headers(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      session(id, yes) },
+    { nondet id = slots.oneOf()
+      project(id) },
+    { nondet id = slots.oneOf()
+      enforcements(id) },
+    { nondet id = slots.oneOf()
+      authority(id) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      funds(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      service(id, yes) },
+    { nondet id = slots.oneOf()
+      all { s.requests.get(id).phase == "body", {
+        nondet yes = Set(false, true).oneOf()
+        nondet family = Set("evm", "solana").oneOf()
+        nondet tx = Set("exact", "case", "other", "malformed").oneOf()
+        verificationBody(id, yes, family, tx) } } },
+    { nondet id = slots.oneOf()
+      all { s.requests.get(id).phase == "expected", {
+        nondet revision = 0.to(3).oneOf()
+        verificationExpected(id, revision) } } },
+    { nondet id = slots.oneOf()
+      history(id) },
+    { nondet id = slots.oneOf()
+      nondet outcome = Set("valid", "pending", "invalid", "unavailable", "wallet-missing").oneOf()
+      chain(id, outcome) },
+    { nondet id = slots.oneOf()
+      appendGeneration(id) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      appendValidation(id, yes) },
+    { nondet id = slots.oneOf()
+      nondet reply = Set("ok", "lost", "bad-metadata").oneOf()
+      commit(id, reply) },
+    { nondet id = slots.oneOf()
+      nondet post = Set("ok", "cache-delete-failed", "generation-read-failed").oneOf()
+      postcommit(id, post) },
+    { nondet id = slots.oneOf()
+      nondet yes = Set(false, true).oneOf()
+      send(id, yes) },
+    { nondet id = slots.oneOf()
+      dependencyFailure(id) },
+    s' = s
+  }
+
+  // The source-bound V7 TLC VIEW keeps every global and all live request
+  // fields. Terminal slots share a canonical phase while keeping five local
+  // invariant observations and the monotone history/deployment observation
+  // (exact indices while false). send then projects to the unconditional
+  // stutter present in both dispatchers. This is an unlabeled whole-next safety
+  // quotient, not per-action enabledness or action-label equivalence; see
+  // formal/owner-vault-terminal-stutter-view-audit.md. verificationStep also
+  // needs the separate manual forward-simulation argument above. Neither
+  // establishes implementation refinement, response delivery or liveness.
+
   val invariant = all { revisions.contains(s.head), policyAt(s.head).exists,
     slots.forall(id => {
       val r = s.requests.get(id)

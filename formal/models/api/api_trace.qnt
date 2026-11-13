@@ -164,16 +164,28 @@ module api_trace {
   action removedRoute = all { s.removedRequests < 2,
     s' = s.with("removedRequests", s.removedRequests + 1) }
   action step = {
-    nondet slot = ids.oneOf()
-    nondet key = ids.oneOf()
-    nondet digest = ids.oneOf()
-    nondet successful = Set(false, true).oneOf()
-    any { verifyIntake, disableIntake, ban, reinstate, issueIntent(key, digest),
-      expire(key), dispatch(slot, key), readCapability(slot),
-      validateUpload(slot, successful), reserveInsert(slot), readReservation(slot),
-      putBytes(slot, successful), verifyObject(slot, successful),
-      attach(slot, successful), reply(slot), loseAttachmentReply(slot),
-      finalize, event, removedRoute, s' = s }
+    any {
+      verifyIntake,
+      disableIntake,
+      ban,
+      reinstate,
+      { nondet key = ids.oneOf() nondet digest = ids.oneOf() issueIntent(key, digest) },
+      { nondet key = ids.oneOf() expire(key) },
+      { nondet slot = ids.oneOf() nondet key = ids.oneOf() dispatch(slot, key) },
+      { nondet slot = ids.oneOf() readCapability(slot) },
+      { nondet slot = ids.oneOf() nondet successful = Set(false, true).oneOf() validateUpload(slot, successful) },
+      { nondet slot = ids.oneOf() reserveInsert(slot) },
+      { nondet slot = ids.oneOf() readReservation(slot) },
+      { nondet slot = ids.oneOf() nondet successful = Set(false, true).oneOf() putBytes(slot, successful) },
+      { nondet slot = ids.oneOf() nondet successful = Set(false, true).oneOf() verifyObject(slot, successful) },
+      { nondet slot = ids.oneOf() nondet successful = Set(false, true).oneOf() attach(slot, successful) },
+      { nondet slot = ids.oneOf() reply(slot) },
+      { nondet slot = ids.oneOf() loseAttachmentReply(slot) },
+      finalize,
+      event,
+      removedRoute,
+      s' = s
+    }
   }
   val invariant = all {
     s.reservation == s.reservationWitness,

@@ -50,6 +50,40 @@ export type AssessmentSummary = {
   artifacts: number;
   heldArtifacts: number;
   findingsLocation?: "repository" | "template" | "both" | "unknown";
+  /** Present for a bounded scan result; absent for a historical result. */
+  scan?: ScanClearanceFacts;
+};
+
+/** One model review's recorded outcome, without its text. */
+export type ScanReviewOutcome = {
+  status: "completed" | "unavailable" | "failed" | "not-started";
+  verdict: "no-findings" | "findings" | "malicious-suspected" | null;
+  risk: "low" | "ambiguous" | "high" | null;
+};
+
+/**
+ * Owner-safe facts of one bounded scan (`slop-vetting-result-v2`), read from
+ * the recorded result's enumerated fields only (issue #1991): never from a
+ * finding summary, model output, prompt or source content. Setup status and
+ * the admin view derive the same generic reasons from them.
+ */
+export type ScanClearanceFacts = {
+  /** Deterministic checks that flagged content, by threat name. */
+  flaggedChecks: string[];
+  /** Deterministic checks that did not run. */
+  checksNotRun: string[];
+  /** Surfaces the scan did not read completely. */
+  incompleteSurfaces: { surface: string; state: "partial" | "unsupported" }[];
+  /** The scanner's own coverage notes, recorded with the result. */
+  visibilityGaps: string[];
+  /** Open high or critical findings per category; counts only. */
+  openFindings: { category: string; count: number }[];
+  review: {
+    primary: ScanReviewOutcome;
+    specialist: ScanReviewOutcome | null;
+    /** The result was ambiguous or high risk, so only a specialist could clear it. */
+    escalated: boolean;
+  };
 };
 
 /**

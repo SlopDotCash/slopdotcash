@@ -375,10 +375,11 @@ async function createContributorWalletClaim(
       "Wallet claim changed; reload the current claim before submitting",
     );
   }
+  // The numeric actor ID is stable across login renames, so the login is
+  // not part of the dedup key; this matches registerPaymentWallet.
   if (
     current?.source === "d1_registry" &&
-    current.walletAddress === walletAddress &&
-    current.githubLogin.toLowerCase() === actor.githubLogin.toLowerCase()
+    current.walletAddress === walletAddress
   ) {
     return json(200, publicWalletClaim(current));
   }

@@ -12,7 +12,7 @@ for (const surface of ["admin", "owner"] as const) {
     diagnostics.allowPreviewApiMisses();
     const project = PROJECTS.find((entry) => entry.id === "eliza");
     if (!project) throw new Error("Missing project fixture");
-    await serveProjectMaintainer(page, () => project);
+    await serveProjectMaintainer(page, () => project, "42");
     await page.route("**/api/v1/admin/projects", (route) =>
       route.fulfill({ json: { projects: [] } }),
     );

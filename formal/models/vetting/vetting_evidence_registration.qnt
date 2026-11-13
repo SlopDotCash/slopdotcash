@@ -151,18 +151,31 @@ module vetting_evidence_registration {
     all { r.phase == "response", s' = s.with("requests", s.requests.set(id, r.with("phase", "done").with("delivered", delivered))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet scope = ids.oneOf()
-    nondet raw = Set(1, 2, 3).oneOf()
-    nondet fault = faults.oneOf()
-    nondet service = ids.oneOf()
-    nondet outcome = Set("valid", "invalid", "unconfigured", "oversize", "throw").oneOf()
-    nondet part = physicalParts.oneOf()
-    nondet state = Set("valid", "missing", "corrupt").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { tick, removeUnreferencedAssessment, rotateGeneration, changePart(part, state), wrongWhole,
-      begin(id, scope, raw, fault, service), configuration(id, yes), signature(id, outcome), json(id), assessment(id, yes), objects(id), canonical(id),
-      initialRead(id, yes), batch(id, yes), batchReply(id, yes), catchRead(id, yes), hint(id, yes), response(id, yes), s' = s }
+    any {
+      tick,
+      removeUnreferencedAssessment,
+      rotateGeneration,
+      { nondet part = physicalParts.oneOf() nondet state = Set("valid", "missing", "corrupt").oneOf()
+        changePart(part, state) },
+      wrongWhole,
+      { nondet id = ids.oneOf() nondet scope = ids.oneOf() nondet raw = Set(1, 2, 3).oneOf()
+        nondet fault = faults.oneOf() nondet service = ids.oneOf()
+        begin(id, scope, raw, fault, service) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() configuration(id, yes) },
+      { nondet id = ids.oneOf() nondet outcome = Set("valid", "invalid", "unconfigured", "oversize", "throw").oneOf()
+        signature(id, outcome) },
+      { nondet id = ids.oneOf() json(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() assessment(id, yes) },
+      { nondet id = ids.oneOf() objects(id) },
+      { nondet id = ids.oneOf() canonical(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() initialRead(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() batch(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() batchReply(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() catchRead(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() hint(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() response(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     ids.forall(scope => {

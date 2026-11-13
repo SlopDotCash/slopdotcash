@@ -560,6 +560,8 @@ export interface WorkItem {
   priority: (typeof WORK_ITEM_PRIORITIES)[number];
   actionability: (typeof WORK_ITEM_ACTIONABILITIES)[number];
   isDraft: boolean | null;
+  /** Open PR diff availability; absent on historical snapshots and issues. */
+  filesAvailable?: boolean;
   reviewDecision: string | null;
   activeReviewRequestCount: number | null;
   commentCount: number;

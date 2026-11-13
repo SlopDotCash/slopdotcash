@@ -196,6 +196,90 @@ test("exact-wei reservations serialize competing attempts and preserve liability
   await expect(request(2)).rejects.toThrow("Native daily budget");
 });
 
+test("bridge cost retains approval and replacement ceilings until the next deposit", async () => {
+  const h = await fixture({
+    perTransaction: "10000000",
+    perDay: "100000000",
+    additionalFeeReserve: "0",
+  });
+  const approval = h.tx();
+  const reservation = await h.reserve(approval);
+  const raw = await h.account.signTransaction(approval);
+  const row = {
+    ...h.row("bridge-preparation-approval", raw, reservation),
+    kind: "approval" as const,
+    route: "debridge" as const,
+    approvalTxId: keccak256(raw),
+    minAmountOut: null,
+    expiresAt: null,
+  };
+  await h.store.insert(row, { runId: h.run, now: h.now() });
+  expect(
+    await h.journal.bridgePreparationNative(token, {
+      nonce: 1,
+      maximum: 2_100_000n,
+    }),
+  ).toBe(4_200_000n);
+  // A replacement can only win the original nonce; its maximum replaces,
+  // rather than adds to, that nonce's retained liability.
+  expect(
+    await h.journal.bridgePreparationNative(token, {
+      nonce: 0,
+      maximum: 2_625_000n,
+    }),
+  ).toBe(2_625_000n);
+  // A terminal business failure cannot erase a signed native liability.
+  await h.store.update(row.id, {
+    state: "failed",
+    reason: "approval reverted",
+    updatedAt: h.now().toISOString(),
+  });
+  expect(
+    await h.journal.bridgePreparationNative(token, {
+      nonce: 1,
+      maximum: 2_100_000n,
+    }),
+  ).toBe(4_200_000n);
+  await h.journal.settle(
+    {
+      txId: keccak256(raw),
+      rawTx: raw,
+      conversionId: row.id,
+      feeWallet: h.wallet,
+      nonce: 0,
+    },
+    { txId: keccak256(raw), actualWei: "1500000", blockHash: hash(7) },
+  );
+  expect(
+    await h.journal.bridgePreparationNative(token, {
+      nonce: 1,
+      maximum: 2_100_000n,
+    }),
+  ).toBe(3_600_000n);
+  const depositTx = h.tx(1);
+  const depositReservation = await h.reserve(depositTx);
+  const depositRaw = await h.account.signTransaction(depositTx);
+  const deposit = {
+    ...h.row("bridge-preparation-deposit", depositRaw, depositReservation),
+    kind: "bridge" as const,
+    route: "debridge" as const,
+    expiresAt: null,
+  };
+  await h.store.insert(deposit, { runId: h.run, now: h.now() });
+  await h.store.update(deposit.id, {
+    state: "finalized",
+    amountOut: deposit.amountIn,
+    finalizedAt: h.now().toISOString(),
+    updatedAt: h.now().toISOString(),
+  });
+  expect(
+    await h.journal.bridgePreparationNative(token, {
+      nonce: 2,
+      maximum: 2_100_000n,
+    }),
+  ).toBe(2_100_000n);
+});
+
 test("a successor retires only uncommitted reservations; stale signed commits roll back", async () => {
   const h = await fixture();
   const id = await h.reserve();

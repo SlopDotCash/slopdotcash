@@ -1,7 +1,11 @@
 import { CircleDot, GitPullRequest } from "lucide-react";
+import { useState } from "react";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import type { DataState } from "./lib/use-snapshot";
 import { DataNotice, ExternalLinkAnchor } from "./Presentation";
+
+/** Suggestions shown before the rest are expanded; every item stays reachable. */
+const SHOWN = 10;
 
 /** Public snapshot suggestions; GitHub remains the authority for taking work. */
 export function ProjectWork({
@@ -16,6 +20,7 @@ export function ProjectWork({
   /** Show the shared stale-data notice when no other section on the page does. */
   notice: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (project.status !== "active") return null;
   // Reward-cycle views may not exist yet. Work discovery uses the snapshot
   // independently so a future pool start cannot hide current work.
@@ -52,7 +57,7 @@ export function ProjectWork({
           {notice ? <DataNotice state={state} retry={retry} /> : null}
           {items.length ? (
             <ul className="project-work-list">
-              {items.map((item) => {
+              {(expanded ? items : items.slice(0, SHOWN)).map((item) => {
                 const label = item.kind === "issue" ? "Issue" : "PR";
                 const Icon = item.kind === "issue" ? CircleDot : GitPullRequest;
                 return (
@@ -74,6 +79,15 @@ export function ProjectWork({
           ) : (
             <p className="muted">No suggested work right now.</p>
           )}
+          {!expanded && items.length > SHOWN ? (
+            <button
+              className="button secondary-button"
+              onClick={() => setExpanded(true)}
+              type="button"
+            >
+              Show all {items.length}
+            </button>
+          ) : null}
         </>
       )}
     </section>

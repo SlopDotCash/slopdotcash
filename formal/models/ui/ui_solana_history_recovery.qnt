@@ -245,17 +245,41 @@ module ui_solana_history_recovery {
         .with("authorized", true))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet mode = Set("connect", "check").oneOf()
-    nondet kind = signatures.oneOf()
-    nondet seedKind = Set("empty", "both-valid", "first-valid", "wrong-body", "wrong-message", "foreign", "invalid64", "noncanonical", "short", "wrong-payer", "malformed", "bad-json").oneOf()
-    nondet contextKind = Set("case", "generation", "revision", "payer", "messages").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { connected, seed(seedKind), start(id, mode), identityReply(id, yes), readCache(id), authorize(id), parentObservation(id), parentCompletion(id, yes),
-      sessionReply(id, yes), continueAuthorized(id), walletReturns(id, yes), lookup(id, yes), signatureReturns(id, kind), cacheWrite(id, yes),
-      advance(id), beginVerification(id), postIdentityObserved(id, yes), postIdentityReturned(id), dispatchCurrent(id),
-      externalEffect(id), backendRefusesStale(id), backendRefusesActor(id), verifyReturns(id, yes), serverRevisionAdvances, contextChanges(contextKind), accountChanges,
-      signOut, accessLost, unmount, parentUnmount, s' = s }
+    any {
+      connected,
+      { nondet seedKind = Set("empty", "both-valid", "first-valid", "wrong-body", "wrong-message", "foreign", "invalid64", "noncanonical", "short", "wrong-payer", "malformed", "bad-json").oneOf()
+        seed(seedKind) },
+      { nondet id = ids.oneOf() nondet mode = Set("connect", "check").oneOf() start(id, mode) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() identityReply(id, yes) },
+      { nondet id = ids.oneOf() readCache(id) },
+      { nondet id = ids.oneOf() authorize(id) },
+      { nondet id = ids.oneOf() parentObservation(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() parentCompletion(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() sessionReply(id, yes) },
+      { nondet id = ids.oneOf() continueAuthorized(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() walletReturns(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() lookup(id, yes) },
+      { nondet id = ids.oneOf() nondet kind = signatures.oneOf() signatureReturns(id, kind) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() cacheWrite(id, yes) },
+      { nondet id = ids.oneOf() advance(id) },
+      { nondet id = ids.oneOf() beginVerification(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() postIdentityObserved(id, yes) },
+      { nondet id = ids.oneOf() postIdentityReturned(id) },
+      { nondet id = ids.oneOf() dispatchCurrent(id) },
+      { nondet id = ids.oneOf() externalEffect(id) },
+      { nondet id = ids.oneOf() backendRefusesStale(id) },
+      { nondet id = ids.oneOf() backendRefusesActor(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() verifyReturns(id, yes) },
+      serverRevisionAdvances,
+      { nondet contextKind = Set("case", "generation", "revision", "payer", "messages").oneOf()
+        contextChanges(contextKind) },
+      accountChanges,
+      signOut,
+      accessLost,
+      unmount,
+      parentUnmount,
+      s' = s
+    }
   }
   val invariant = all { s.busy == s.active, not(s.badEffect), s.verifyRequests <= 3,
     s.revision <= s.serverRevision, s.serverRevision <= 3, s.serverChanges <= 1, s.refreshes <= 1,

@@ -12,6 +12,14 @@
  * the run is a full `recovery` scan.
  */
 
+import { createBuyback } from "./buyback";
+import {
+  BUYBACK_NETWORK,
+  type BuybackConfig,
+  type BuybackEnv,
+  parseBuybackConfig,
+} from "./buyback-config";
+import { D1BuybackStore } from "./buyback-store";
 import {
   type FeeConverterConfig,
   type FeeConverterEnv,
@@ -34,8 +42,27 @@ import { NativeGasJournal } from "./native-gas";
 import { createSolanaClient } from "./solana";
 import { D1ConversionStore, projectRewardTokens, projectVaults } from "./store";
 
-export interface Env extends FeeConverterEnv {
+export interface Env extends FeeConverterEnv, BuybackEnv {
   FEE_DB: FeeD1Database;
+}
+
+/**
+ * The Robinhood Chain fee wallet that receives every bridge order. A buyback
+ * that is not off needs that network enabled: SLOP is bought and burned there.
+ */
+export function buybackReceiver(
+  config: FeeConverterConfig,
+  buyback: BuybackConfig,
+): string | null {
+  if (buyback.mode === "off") return null;
+  const robinhood = config.networks.find(
+    (network) => network.network === BUYBACK_NETWORK,
+  );
+  if (!robinhood)
+    throw new TypeError(
+      "The buyback needs robinhood in FEE_CONVERTER_NETWORKS",
+    );
+  return robinhood.feeWallet;
 }
 
 /** Minutes between full recovery scans; the other cron minutes check receipts. */
@@ -57,13 +84,24 @@ export function chainClient(
     localBlockhash?: boolean;
     localGenesisHash?: string;
     nativeGas?: NativeGasJournal;
+    /** The separate native budget of Solana bridge orders. */
+    bridgeGas?: NativeGasJournal;
     now?: () => Date;
+    buyback?: BuybackConfig;
   } = {},
 ): ChainClient {
+  const buyback =
+    overrides.buyback && overrides.buyback.mode !== "off"
+      ? overrides.buyback
+      : null;
   // dry_run never loads a key, so it cannot sign even when one is present.
-  // A network without a verified USDC target never signs either: it only
+  // A network without a verified USDC target signs only for a live buyback
+  // (Robinhood Chain claims, SLOP purchases and burns); otherwise it only
   // reconciles recorded sends, which needs no key.
-  const signs = config.mode === "live" && network.definition.usdc !== null;
+  const signs =
+    config.mode === "live" &&
+    (network.definition.usdc !== null ||
+      (buyback?.mode === "live" && network.network === BUYBACK_NETWORK));
   if (signs && (!network.nativeBudget || !overrides.nativeGas))
     throw new Error(
       "Live fee signing needs native limits and the durable budget journal",
@@ -82,6 +120,13 @@ export function chainClient(
         fetch: overrides.fetch,
         nativeGas: overrides.nativeGas,
         now: overrides.now,
+        buyback:
+          buyback?.limits && buybackReceiver(config, buyback)
+            ? {
+                limits: buyback.limits,
+                receiver: buybackReceiver(config, buyback) as string,
+              }
+            : undefined,
       })
     : createSolanaClient({
         config: network,
@@ -94,6 +139,19 @@ export function chainClient(
         localGenesisHash: overrides.localGenesisHash,
         recoveryRpcUrl: env.SOLANA_RECOVERY_RPC_URL,
         nativeGas: overrides.nativeGas,
+        buyback:
+          buyback?.limits && buybackReceiver(config, buyback)
+            ? {
+                limits: buyback.limits,
+                receiver: buybackReceiver(config, buyback) as string,
+                robinhoodRpcUrl: (
+                  config.networks.find(
+                    (entry) => entry.network === BUYBACK_NETWORK,
+                  ) as NetworkConfig
+                ).rpcUrl,
+                bridgeGas: overrides.bridgeGas,
+              }
+            : undefined,
       });
 }
 
@@ -117,6 +175,19 @@ export async function runOnce(
   const config = parseConfig(env);
   if (config.mode === "off") return [];
   const store = new D1ConversionStore(env.FEE_DB);
+  // Off by default and inert when off: no buyback value is read and every
+  // network behaves exactly as without it.
+  const buyback = parseBuybackConfig(env, config.mode);
+  const receiver = buybackReceiver(config, buyback);
+  const hook =
+    buyback.mode !== "off" && buyback.limits && receiver
+      ? createBuyback({
+          mode: buyback.mode,
+          limits: buyback.limits,
+          store: new D1BuybackStore(env.FEE_DB),
+          receiver,
+        })
+      : undefined;
   const results: NetworkRunResult[] = [];
   const failures: Error[] = [];
   for (const network of config.networks) {
@@ -126,6 +197,7 @@ export async function runOnce(
           mode: config.mode,
           trigger,
           limits: config.limits,
+          buyback: hook,
           store,
           now,
           randomId: () => crypto.randomUUID(),
@@ -147,6 +219,7 @@ export async function runOnce(
           client: (n, runId) =>
             chainClient(env, config, n, {
               ...overrides,
+              buyback,
               now,
               nativeGas: n.nativeBudget
                 ? new NativeGasJournal(
@@ -158,6 +231,18 @@ export async function runOnce(
                     now,
                   )
                 : undefined,
+              bridgeGas:
+                n.network === "solana" && buyback.limits?.solanaBridgeNative
+                  ? new NativeGasJournal(
+                      env.FEE_DB,
+                      n.network,
+                      n.feeWallet,
+                      runId,
+                      buyback.limits.solanaBridgeNative,
+                      now,
+                      "bridge",
+                    )
+                  : undefined,
             }),
           log: (event) => console.log(JSON.stringify(event)),
         }),

@@ -12,6 +12,7 @@ import type { ReviewedEvmFactory } from "../../contracts/evm/factories";
 import {
   type SolanaProgramConfig,
   SolanaRpcUnavailable,
+  verifySolanaDeployment,
 } from "../../contracts/solana/adapter";
 import {
   prepareSolanaVaultCreation,
@@ -25,6 +26,8 @@ import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
   isBaseUnits,
+  type PaymentDeploymentRecord,
+  paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
 import type { PayoutPolicy } from "../../src/lib/payments/contracts";
 import type {
@@ -37,10 +40,18 @@ import type {
   VaultSetupReview,
 } from "../../src/lib/vault-setup";
 import { registryProjectDigest } from "../../src/lib/vault-setup";
+import { readDeploymentVaultTotals } from "../../workers/payments/index";
 import type { D1TransactionalDatabase } from "../d1";
 import { fail } from "../http";
+import { storeVaultSnapshot } from "../payments/vault-snapshots";
+import { securityPaymentDatabase } from "../security/payment-database";
 
 export interface OwnerVaultSetup {
+  observe(
+    project: ProjectRecord,
+    deployment: EscrowDeployment,
+    payoutPolicy?: VaultSetupInput["payoutPolicy"],
+  ): Promise<void>;
   networks(
     project: ProjectRecord,
     payoutPolicy?: PayoutPolicy,
@@ -56,6 +67,40 @@ export interface OwnerVaultSetup {
     input: VaultSetupInput,
     transactionId: string,
   ): Promise<EscrowDeployment | null>;
+}
+
+/** Bind observations to the registered chain, reviewed program and exact project. */
+export async function readRegisteredVaultTotals(
+  deployment: PaymentDeploymentRecord & { payoutPolicy?: PayoutPolicy },
+  rpcUrl: string,
+) {
+  const network = ESCROW_NETWORKS[deployment.network];
+  if (network.family === "solana") {
+    if (
+      !network.genesisHash ||
+      !deployment.programId ||
+      !deployment.projectPda ||
+      !deployment.networkDomain ||
+      !deployment.rotationAuthority ||
+      deployment.rotationDelaySeconds === null
+    )
+      throw new Error("Reviewed Solana deployment is incomplete");
+    await verifySolanaDeployment(
+      {
+        ...deployment,
+        rpcUrl,
+        genesisHash: network.genesisHash,
+        programId: deployment.programId,
+        projectPda: deployment.projectPda,
+        networkDomain: deployment.networkDomain,
+        rotationAuthority: deployment.rotationAuthority,
+        rotationDelaySeconds: deployment.rotationDelaySeconds,
+        mint: deployment.asset,
+      },
+      registryProjectDigest(deployment.projectId),
+    );
+  }
+  return readDeploymentVaultTotals(deployment, rpcUrl);
 }
 
 /**
@@ -441,6 +486,32 @@ export function ownerVaultSetupService(deps: {
     );
   }
   return {
+    async observe(project, deployment, payoutPolicy) {
+      const registered = {
+        ...paymentDeploymentRecord(project.id, deployment),
+        ...(payoutPolicy === "security-bounty" ? { payoutPolicy } : {}),
+      };
+      try {
+        const totals = await readRegisteredVaultTotals(
+          registered,
+          deps.rpcUrl(deployment.network),
+        );
+        await storeVaultSnapshot(
+          payoutPolicy === "security-bounty"
+            ? securityPaymentDatabase(deps.db)
+            : deps.db,
+          registered,
+          totals,
+          new Date().toISOString(),
+        );
+      } catch {
+        fail(
+          503,
+          "vault_snapshot_unavailable",
+          "The vault is registered. Its finalized balances could not be saved. Check again.",
+        );
+      }
+    },
     async networks(project, payoutPolicy) {
       return [
         ...new Set([

@@ -154,16 +154,22 @@ module payment_wallet_registration {
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
   action step = {
-    nondet slot = slots.oneOf()
-    nondet actor = actors.oneOf()
-    nondet chain = chains.oneOf()
-    nondet address = Set(1, 2).oneOf()
-    nondet login = Set(1, 2, 3).oneOf()
-    nondet source = Set("none", "registry", "historical").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { configure(source), tick, begin(slot, actor, chain, address, login), readTip(slot, yes), prepare(slot, yes),
-      helper(slot), helperFailure(slot), helperReply(slot, yes), readWinner(slot, yes), historicalAppend(actor, address),
-      respond(slot, yes), s' = s }
+    any {
+      { nondet source = Set("none", "registry", "historical").oneOf() configure(source) },
+      tick,
+      { nondet slot = slots.oneOf() nondet actor = actors.oneOf() nondet chain = chains.oneOf()
+        nondet address = Set(1, 2).oneOf() nondet login = Set(1, 2, 3).oneOf()
+        begin(slot, actor, chain, address, login) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readTip(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() prepare(slot, yes) },
+      { nondet slot = slots.oneOf() helper(slot) },
+      { nondet slot = slots.oneOf() helperFailure(slot) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() helperReply(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readWinner(slot, yes) },
+      { nondet actor = actors.oneOf() nondet address = Set(1, 2).oneOf() historicalAppend(actor, address) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() respond(slot, yes) },
+      s' = s
+    }
   }
   val successIsRegistry = slots.forall(slot => {
     val request = s.requests.get(slot)

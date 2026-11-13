@@ -170,16 +170,31 @@ module identity_callback_completion {
         .with("clearCookieHeader", response == "html-200"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet identity = identities.oneOf()
-    any { configure(yes, other, third), tick, cleanup, begin(id, yes, other),
-      hashReply(id, yes), claimRead(id), claimWrite(id), claimReply(id, yes, other),
-      decrypt(id, yes), resolve(id, identity), failureWrite(id), failureReply(id, yes),
-      completionClock(id), completeWrite(id), completeReply(id, yes, other),
-      awaitFailure(id), finish(id, yes), s' = s }
+    any {
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        nondet third = Set(false, true).oneOf()
+        configure(yes, other, third) },
+      tick,
+      cleanup,
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        begin(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() hashReply(id, yes) },
+      { nondet id = ids.oneOf() claimRead(id) },
+      { nondet id = ids.oneOf() claimWrite(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        claimReply(id, yes, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() decrypt(id, yes) },
+      { nondet id = ids.oneOf() nondet identity = identities.oneOf() resolve(id, identity) },
+      { nondet id = ids.oneOf() failureWrite(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() failureReply(id, yes) },
+      { nondet id = ids.oneOf() completionClock(id) },
+      { nondet id = ids.oneOf() completeWrite(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        completeReply(id, yes, other) },
+      { nondet id = ids.oneOf() awaitFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() finish(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 3, s.claims >= 0, s.claims <= 1,
@@ -201,8 +216,8 @@ module identity_callback_completion {
     }) }
 
   // Small compositional traces retain each await boundary in step.
-  action ready = init.then(configure(false, true, true))
-  action pointsReady = init.then(configure(true, true, true))
+  run ready = init.then(configure(false, true, true))
+  run pointsReady = init.then(configure(true, true, true))
   action claimed(id: int): bool = begin(id, true, false).then(hashReply(id, true))
     .then(claimRead(id)).then(claimWrite(id)).then(claimReply(id, true, true))
   action resolved(id: int, identity: str): bool = claimed(id).then(decrypt(id, true)).then(resolve(id, identity))
