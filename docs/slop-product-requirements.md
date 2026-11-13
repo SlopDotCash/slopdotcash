@@ -201,6 +201,8 @@ An optional custom project image falls back to the GitHub owner avatar. Do not u
 
 Show one setup summary with separate authority, Slopbot, security, and funding results, plus the next action. Activate after complete setup, current authority, installation, and valid admission clearance. Economic policy changes apply from the next UTC calendar month; preserve frozen terms and funded obligations.
 
+Owners may append public GitHub repositories to an existing project on its manage page. An appended repository cannot be a fork or archived, and no project may already list its permanent numeric and node IDs. The owner needs current write, maintain, or admin authority through a Slopbot installation on that repository. Its work counts from the first day of the next UTC month. An append never removes, reorders, or renames a listed repository. Each repository needs its own admission scan or owner-approved exemption, and the project is cleared only when every repository is. Appending to an active project pauses it. A clean scan of the last uncleared repository reactivates it; after an exemption, the owner runs the setup check. The monthly close skips a paused project, so if a scan has not cleared when the month closes, that month has no allocation. A flag-only pause or a moderator reinstatement needs a fresh clean scan of every repository. Proposed by the operator on 12 November 2026; approved by the owner's merge.
+
 ### Skill source and installation
 
 Generate each skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
@@ -277,7 +279,7 @@ Anyone may deposit into a vault. All deposits share one bucket. Only the owner's
 
 Support approved stablecoins, standard ERC-20 tokens, classic SPL tokens, native ETH, and native SOL. Use native coins directly, not wrapped substitutes. Separate principal from network fees and preserve Solana rent reserves.
 
-The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadata` mint extensions. Mint and freeze authorities must be disabled. Token accounts may have `ImmutableOwner` or no extensions. Reject all other or unknown extensions. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing, and other balance-changing behavior.
+The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadata` mint extensions. Mint and freeze authorities must be disabled. Metadata must be self-hosted with disabled pointer and update authorities, and the mint account cannot exceed 1,024 bytes. Token accounts may have `ImmutableOwner` or no extensions. Reject all other or unknown extensions. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing, and other balance-changing behavior.
 
 Verify the asset identity, token program, decimals, behavior, and finality throughout each flow. Use integer base units and largest-remainder allocation. Never assume six decimals, add unlike assets, or present a token amount as dollars.
 
@@ -422,6 +424,10 @@ Every accepted merge receives at least 10 Points, including a zero-size assessme
 
 Share merge credit with verified implementation authors. Credit useful reviews separately. Exclude bots, self-review, post-merge reviews, repeated comments, and duplicate or empty reviews. A useful review may validate a change without requesting corrections.
 
+Determine implementation recipients from GitHub-linked primary commit authors. Opening, recreating, updating, or merging a PR alone earns no implementation share. For a commit without an eligible linked author, retain the source PR creator as the fallback; use the original PR creator when verified retained-copy evidence binds that commit to an original PR. A reference in a PR description alone is insufficient. Commit counts do not increase the work unit's Points. Preserve frozen awards and append corrections for eligible unpaid work.
+
+Owner decision, 13 November 2026: keep the PR or grouped work unit's value score unchanged and split its implementation Points in proportion to each recipient's additions plus deletions in the unique accepted, non-merge commits, on every base branch. Exclude synchronization merges and work already credited in another accepted source. For a retained-copy claim, count the accepted copy's changed lines. Allocate whole Points by largest remainder, breaking ties by immutable GitHub actor ID; no per-recipient minimum may inflate the total. Complete zero-line evidence uses equal shares for binary or empty changes. Missing line evidence for multiple recipients holds the allocation; it never implies equal weights. A sole verified recipient receives the whole score. Rebalancing without a current value assessment preserves the complete previously recorded PR total, including a former carrier's share, and changes only its recipients. Keep original occurrence dates and append corrections; approved, funded, scheduled and paid rewards remain unchanged.
+
 Credit at most the first five distinct qualifying reviewers. Use each reviewer's highest band. The review pool is their summed bands, capped at the PR's assessed credit, with a 10-point minimum. Allocate proportionally by largest remainder in 10-point increments. Break ties by first qualifying review time, then review node ID.
 
 Use reviewed evaluation manifests only for useful work that ordinary scoring does not cover. Never reward a source twice. A merged PR later removed by GitHub retains its recorded Points and reward eligibility.
@@ -501,7 +507,7 @@ A passed scan means every defined check ran on the bound revision and found no m
 
 ### Exemptions and restrictions
 
-Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. Display an exemption, never a passed scan.
+Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. The exemption covers each project's original repositories; a repository appended later needs its own admission scan or owner-approved exemption. Display an exemption, never a passed scan.
 
 A separate owner-approved Umia fork exemption requires an audited administrator record. Bind it to the current D1 revision, permanent repository identity, steward, approving actor, reason, and time. Display **Owner-approved exemption**. Another repository or steward cannot inherit it. Other grants require a separate human owner decision. Retain previous assessments and audited revocations; revocation restores ordinary admission.
 
@@ -720,7 +726,7 @@ Native-asset and Token-2022 scope permits implementation and local testing, not 
 
 Private-report intake is approved for staging and production after the reviewed release. This standing approval does not prove deployment or successful delivery.
 
-The SLOP buyback is live in production by operator decision of 12 November 2026, at the limits the owner confirmed on 10 November 2026. The dry-run period and the small verified live order that this gate required were not run, because no fee income existed to run them. Still required: a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, and on-chain verification of the first real order's fill, purchase, and burn before any burn is published. Local fork and validator results do not qualify a live fill. Any change to the mode, the start instant, or a limit is a reviewed change.
+The production SLOP buyback configuration is live by operator decision of 12 November 2026, at the limits the owner confirmed on 10 November 2026. Live configuration is not completed operational qualification. The dry-run period and the small verified live order that this gate required were not run, because no fee income existed to run them. Still required: verification of the deployed configuration, a Robinhood Chain RPC that serves state at its finalized block, funded gas on each enabled network, and on-chain verification of the first real order's fill, purchase, and burn before any burn is published. Read-only quotes, local fork and validator results do not qualify a live fill. Missing fee income leaves that qualification pending; do not create fee records or spend unrelated wallet funds to replace it. Any change to the mode, the start instant, or a limit is a reviewed change.
 
 Fee handling on Base, Ethereum, and Robinhood requires funded fee wallets and verified limits and readiness. The fee-converter release variable must be enabled. Keep Solana outside the production network list until its independent full-history recovery RPC, first registered vault, and all readiness checks pass. A reviewed main release then activates it. The Solana controls release, existing program upgrade, and approved 0.05 SOL gas top-up are recorded as complete. Do not repeat them; consult retained execution evidence before any later operation.
 

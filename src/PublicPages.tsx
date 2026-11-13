@@ -320,6 +320,32 @@ export function HowItWorksPage() {
               </p>
             </div>
           </article>
+          <article className="faq-answer">
+            <h3>Is there a referral program?</h3>
+            <div>
+              <p>
+                Not yet. Referrals are recorded, but none pay until the program
+                is switched on.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
+                  Referral terms
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Does Slop buy back SLOP?</h3>
+            <div>
+              <p>
+                Yes. Since 12 November 2026, half of Slop&apos;s fee income buys
+                SLOP on Robinhood Chain, and half of the SLOP bought is burned.
+                It starts with the first fee, and nothing about it is
+                guaranteed.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
+                  How the buyback works
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
         </div>
       </section>
     </main>

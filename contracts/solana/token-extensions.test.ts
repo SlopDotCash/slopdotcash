@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import {
   ACCOUNT_SIZE,
@@ -13,8 +14,11 @@ import {
  * Synthetic Token-2022 mint with disabled mint and freeze authorities. Its only
  * records are MetadataPointer (18, 64 bytes) and TokenMetadata (19, 124 bytes).
  */
-const FIXTURE_MINT =
-  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCl1OgAAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARIAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqEwB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioEAAAAVEVTVAQAAABURVNUJAAAAGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL2ZpeHR1cmUvbWludAAAAAA=";
+const FIXTURE_MINT = readFileSync(
+  new URL("./integration/fixtures/token-2022-mint.bin", import.meta.url),
+)
+  .subarray(0, 362)
+  .toString("base64");
 /** A synthetic token account of that mint: account type 2 plus ImmutableOwner (7, 0 bytes). */
 const FIXTURE_ACCOUNT =
   "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB0BCDwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=";
@@ -236,6 +240,32 @@ describe("readTokenMint", () => {
     expect(() =>
       readTokenMint(account(TOKEN_2022_PROGRAM, embedded), MINT_ADDRESS),
     ).toThrow();
+  });
+
+  test("refuses mutable metadata and oversized mint accounts", () => {
+    for (const offset of [170, 238]) {
+      const mutable = mutatedMint((data) => {
+        data.fill(9, offset, offset + 32);
+        return undefined;
+      });
+      expect(() =>
+        readTokenMint(account(TOKEN_2022_PROGRAM, mutable), MINT_ADDRESS),
+      ).toThrow(/authority is not disabled/);
+    }
+    const immutable = mutatedMint((data) => {
+      data.fill(0, 170, 202);
+      data.fill(0, 238, 270);
+      return undefined;
+    });
+    expect(
+      readTokenMint(account(TOKEN_2022_PROGRAM, immutable), MINT_ADDRESS)
+        .extensions,
+    ).toEqual([18, 19]);
+    const oversized = new Uint8Array(1025);
+    oversized.set(immutable);
+    expect(() =>
+      readTokenMint(account(TOKEN_2022_PROGRAM, oversized), MINT_ADDRESS),
+    ).toThrow(/exceeds the 1024-byte limit/);
   });
 
   test("refuses malformed metadata", () => {

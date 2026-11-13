@@ -11,10 +11,12 @@ import {
 import {
   createProjectView,
   type ProjectView,
+  projectActivityCollected,
   projectCycleHasOpened,
 } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import type { CycleIndexState } from "./lib/use-cycle-index";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 import { useTimeBoundary } from "./lib/use-time-boundary";
@@ -115,11 +117,7 @@ export function CyclePage({
   // A paused project is not collected; its recorded cycles still render.
   const collected =
     state.status === "ready" &&
-    project.repositories.every((repository) =>
-      state.snapshot.repositories.some(
-        (candidate) => candidate.id === repository.id,
-      ),
-    );
+    projectActivityCollected(state.snapshot, project, cycleId);
   let view: ProjectView | null = null;
   // A month outside the snapshot window has no live view.
   if (
@@ -447,8 +445,8 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       </small>
                     </th>
                     <td>
-                      {(
-                        (contributor.scoreThirds ?? contributor.score * 3) * 10
+                      {scoreThirdsToPoints(
+                        contributor.scoreThirds ?? contributor.score * 3,
                       ).toLocaleString()}
                     </td>
                     <td>

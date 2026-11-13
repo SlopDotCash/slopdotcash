@@ -423,7 +423,9 @@ test("warm reassigned handles wait for fresh identity before wallet and history 
 
 test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   const { current } = await profileRecords(page);
-  await page.goto(`/contributors/${current.login}`);
+  await page.goto(`/contributors/${current.login}`, {
+    waitUntil: "networkidle",
+  });
   await expect(page.locator("main.profile-page")).toBeVisible();
   const history = page.getByRole("region", {
     name: "Awards and payments",
@@ -448,10 +450,14 @@ test("a renamed contributor keeps archived cycles", async ({ page }, info) => {
   await expect(pastCycle).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/cycles\/eliza\/2026-07$/u);
-  await page.goBack();
+  // Let the archived page finish its index read before testing Back. An
+  // immediate navigation can cancel that read without testing profile history.
+  await expect(page.locator("main.cycle-page")).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await page.goBack({ waitUntil: "networkidle" });
   await expect(pastCycle).toBeVisible();
   await expect(pointsLoading).toHaveCount(0);
-  await page.reload();
+  await page.reload({ waitUntil: "networkidle" });
   await expect(pastCycle).toBeVisible();
   await expectAccessible(page);
   await page.screenshot({ path: info.outputPath("renamed-profile.png") });

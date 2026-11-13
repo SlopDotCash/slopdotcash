@@ -15,13 +15,15 @@ const pages = [];
 let worker;
 try {
   let refuse = false;
+  let chainId = "0x1";
   worker = await startHandlerWorker({
     d1: "scanner-progress",
     async outbound(request) {
       assert.equal(new URL(request.url).origin, "https://rpc.invalid");
       const { method, params } = await request.json();
       let result;
-      if (method === "eth_getBlockByNumber") result = { number: "0x12c" };
+      if (method === "eth_chainId") result = chainId;
+      else if (method === "eth_getBlockByNumber") result = { number: "0x12c" };
       else {
         assert.equal(method, "eth_getLogs");
         pages.push([
@@ -51,7 +53,7 @@ import {handlePaymentsApi} from ${JSON.stringify(resolve("backend/payments/handl
 export default {async fetch(request,env) {
   if(new URL(request.url).pathname.startsWith('/api/')) return handlePaymentsApi(request,{db:env.DB});
   try {
-    await scanEvmPayments(env.DB,{projectId:'history',network:'base-mainnet',vault:'0x'+'2'.repeat(40),scanPageBlocks:'100'},'https://rpc.invalid',async()=>{throw new Error('fixture index refused')});
+    await scanEvmPayments(env.DB,{projectId:'history',network:'base-mainnet',chainId:'8453',vault:'0x'+'2'.repeat(40),scanPageBlocks:'100'},'https://rpc.invalid',async()=>{throw new Error('fixture index refused')});
     return new Response(null,{status:204});
   } catch { return new Response(null,{status:503}); }
 }};`,
@@ -70,6 +72,10 @@ export default {async fetch(request,env) {
     assert.equal(response.status, 200);
     return (await response.json()).coverage.completeThrough;
   };
+  assert.equal((await scan()).status, 503);
+  assert.equal(await coverage(), "0");
+  assert.deepEqual(pages, []);
+  chainId = "0x2105";
   const delayed = scan();
   await firstStarted;
   assert.equal((await scan()).status, 204);
@@ -98,6 +104,7 @@ export default {async fetch(request,env) {
       nativeD1: true,
       publicCoverage: "300",
       overlappingRuns: 3,
+      wrongChainCannotAdvance: true,
       oldCompletionCannotRewind: true,
       failedPageCannotAdvance: true,
       failedPageRetried: true,
