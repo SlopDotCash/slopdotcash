@@ -70,11 +70,11 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "0d8821435834ad066ee52073aed09af2762f4481d23f179c560e8ab5255d9bcf",
+      "sha256": "d8356694cb58364c6c005ae57d8b214b8e41f8af58d12aa02331dc023595ae18",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [151],
+      "candidateLines": [70, 158],
       "review": "mapped-abstraction"
     },
     {
