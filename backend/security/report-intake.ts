@@ -11,6 +11,7 @@ import { PARTICIPATION_BAN_QUERY } from "../projects/account-bans";
 import {
   ANALYSIS_TIMEOUT_MS,
   BACKGROUND_ANALYSIS_TIMEOUT_MS,
+  priorCaseSummaries,
   runAppealTriage,
   runCaseAnalysis,
   type SecurityAnalysisInput,
@@ -568,7 +569,10 @@ async function screenStoredReport(
     intakeEvent(deps, row, "screen-start", null, at),
   ]);
   if (claimed[0].meta?.changes !== 1) return;
-  row = (await storedIntake(deps, id)) as StoredIntake;
+  const claimedRevision = row.revision + 1;
+  row = await storedIntake(deps, id);
+  // A revision or replacement attempt may have advanced while the claim returned.
+  if (row?.revision !== claimedRevision) return;
   let state: IntakeState = "unavailable";
   let reason =
     "Automatic screening is unavailable. Your report is saved for retry or private human review.";
@@ -621,7 +625,9 @@ async function screenStoredReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: (
+          await priorCaseSummaries(deps.db, submission.project_id, row.case_id)
+        ).filter((entry) => entry.summary !== null),
       };
       const proposal = await deps.analyzer.screen(input, timeoutMs);
       if (
@@ -632,14 +638,25 @@ async function screenStoredReport(
         !proposal.reason.trim()
       )
         throw new Error("Invalid screening result");
-      state = proposal.decision;
-      reason = proposal.reason.trim().slice(0, 2000);
+      const overlap = proposal.duplicateCaseIds?.some((id) =>
+        input.priorCases.some((entry) => entry.id === id),
+      );
+      state = overlap ? "needs-information" : proposal.decision;
+      // Prior summaries belong to other reporters. Never return free-form
+      // model text influenced by those summaries through a reporter's receipt.
+      reason = overlap
+        ? "This report may overlap an earlier report. Provide distinct evidence, or request private maintainer review."
+        : input.priorCases.length > 0
+          ? state === "legitimate"
+            ? "Concrete security evidence merits private human review."
+            : "Provide the affected component, impact and safe reproduction for private human review."
+          : proposal.reason.trim().slice(0, 2000);
     }
   } catch {
     /* Do not expose provider errors or private evidence. */
   }
   const finished = deps.now().toISOString();
-  await deps.db.batch([
+  const completed = await deps.db.batch([
     deps.db
       .prepare(
         "UPDATE security_submission_intake SET screening_state=?,screening_reason=?,screening_finished_at=?,revision=revision+1 WHERE submission_id=? AND revision=? AND screening_state='running'",
@@ -647,6 +664,8 @@ async function screenStoredReport(
       .bind(state, reason, finished, id, row.revision),
     intakeEvent(deps, row, "screen-finish", null, finished),
   ]);
+  // A replaced screen does not own the current report's assessment or retry.
+  if (completed[0].meta?.changes !== 1) return;
   const updated = await storedIntake(deps, id);
   if (updated && intakeQualified(updated)) {
     await assess(updated);
@@ -709,7 +728,9 @@ export async function screenLegacyReport(
               lossDefinition: scope.lossDefinition,
             }
           : null,
-        priorCases: [],
+        priorCases: (await priorCaseSummaries(deps.db, projectId, null)).filter(
+          (entry) => entry.summary !== null,
+        ),
       },
       ANALYSIS_TIMEOUT_MS,
     );
@@ -720,7 +741,7 @@ export async function screenLegacyReport(
       "Automatic screening is unavailable. Your draft is kept.",
     );
   }
-  if (proposal.decision !== "legitimate")
+  if (proposal.decision !== "legitimate" || proposal.duplicateCaseIds?.length)
     fail(
       409,
       "screening_required",
