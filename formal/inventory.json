@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "354c1b5853769976682b2a06609e77254e5a226e6a4c6167e679a6cf9aca44b4",
+      "sha256": "d7ae7a96a0f091e5d83581493bf1021a968cbd7b028b9dcb5c831d12fbc91419",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,9 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
-        612, 678, 908, 936, 975, 991, 1001, 1002, 1093, 1196, 1198, 1199, 1403,
-        1486, 1639, 1641, 1671, 1779, 1801, 1872, 1883, 1908, 1979, 1992, 2005,
-        2014, 2015, 2016
+        27, 59, 157, 189, 194, 195, 249, 303, 377, 490, 496, 564, 587, 588, 609,
+        621, 687, 917, 945, 984, 1075, 1178, 1180, 1181, 1385, 1468, 1621, 1623,
+        1653, 1761, 1783, 1854, 1865, 1890, 1961, 1974, 1987, 1996, 1997, 1998
       ],
       "review": "mapped-abstraction"
     },
@@ -4116,9 +4115,12 @@
     },
     {
       "path": "scripts/prepare-vetting-public-key.ts",
-      "sha256": "0eec3a8248f4eed7cacb7cdfb3657c18718d2245b61880d090cfefec03f75369",
-      "models": ["formal/models/release/service_release_identity.qnt"],
-      "candidateLines": [3, 191, 240],
+      "sha256": "4478e14016640f2439d82780db7fa418db831e91d16bcf5feac87fb516deefd0",
+      "models": [
+        "formal/models/release/pages_metadata_retry.qnt",
+        "formal/models/release/service_release_identity.qnt"
+      ],
+      "candidateLines": [3, 141, 169, 172, 231, 280],
       "review": "mapped-abstraction"
     },
     {
@@ -13781,6 +13783,18 @@
       ]
     },
     {
+      "path": "formal/models/release/pages_metadata_retry.qnt",
+      "sha256": "1ea2e34bddc640fee9e7fe3d0fd79936f6b2e4f72202e8c87204d43dfeb598d5",
+      "sources": ["scripts/prepare-vetting-public-key.ts"],
+      "scenarios": [
+        "invalidMetadataCannotRetryTest",
+        "permanentResponseCannotRetryTest",
+        "recoveredReadCannotChangeIdentityTest",
+        "thirdTransientStopsTest",
+        "transientReadRecoversTest"
+      ]
+    },
+    {
       "path": "formal/models/release/published_census_extension.qnt",
       "sha256": "a5e2f2bf96e6d8d2ef44646fe0bc6b2fdcb89b7fd2fd84bb49e4fece1dfb6758",
       "sources": [
@@ -13862,7 +13876,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "5f863b5f0bfc1a60056c6523cbe4fcd6431cd3ad1cfd7c2618e62ff0e7d51bb1",
+      "sha256": "1f1ce8fe6aff92942c260dc08638b122c8e633c8f06363692b5e210bdd5617f8",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -13887,7 +13901,9 @@
         "partialServicePublicationTest",
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
+        "retainedSnapshotNeedsManualTest",
         "sourceAdvanceAfterUploadIsPartialTest",
+        "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
         "wrongExistingInventoryNeverUploadsTest",
         "wrongVersionOrShaCannotPromoteTest"
