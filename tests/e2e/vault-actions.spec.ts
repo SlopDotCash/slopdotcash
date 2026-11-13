@@ -2557,3 +2557,215 @@ test("owner registers a separate bounty vault through the API and funds it priva
     });
   }
 });
+
+test("depositor approves and deposits with one wallet request when the wallet batches atomically", async ({
+  page,
+}) => {
+  // The fixture stands in for a wallet's atomic batch (EIP-5792): Anvil runs
+  // the calls in order from the same account, so the vault sees the depositor
+  // as sender. A real wallet's atomic execution is not exercised here.
+  let atomic: "supported" | "ready" = "ready";
+  let refuse: number | null = null;
+  let lastBatch:
+    | {
+        from: string;
+        chainId: string;
+        atomicRequired: boolean;
+        calls: { to: string; data: string; value: string }[];
+      }
+    | undefined;
+  const batches = new Map<string, string[]>();
+  const sends: string[] = [];
+  await page.exposeFunction(
+    "vaultWalletRequest",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [donor];
+      if (method === "wallet_getCapabilities")
+        return { "0x14a34": { atomic: { status: atomic } } };
+      if (method === "wallet_sendCalls") {
+        if (refuse !== null) return { fixtureError: refuse };
+        lastBatch = params[0] as NonNullable<typeof lastBatch>;
+        const hashes: string[] = [];
+        for (const call of lastBatch.calls)
+          hashes.push(
+            await rpc("eth_sendTransaction", [
+              { from: lastBatch.from, ...call, gas: "0x100000" },
+            ]),
+          );
+        sends.push(...hashes);
+        const id = `0x${batches.size.toString(16).padStart(64, "b")}`;
+        batches.set(id, hashes);
+        return { id };
+      }
+      if (method === "wallet_getCallsStatus") {
+        const hashes = batches.get(String(params[0]));
+        if (!hashes) return { fixtureError: 5730 };
+        const receipt = await rpc("eth_getTransactionReceipt", [hashes.at(-1)]);
+        return {
+          version: "2.0.0",
+          id: params[0],
+          chainId: "0x14a34",
+          status: receipt ? 200 : 100,
+          atomic: true,
+          receipts: receipt ? [receipt] : [],
+        };
+      }
+      if (method === "eth_sendTransaction") {
+        const hash = await rpc(method, params);
+        sends.push(hash);
+        return hash;
+      }
+      return rpc(method, params);
+    },
+  );
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) => {
+          const value = await (
+            window as unknown as {
+              vaultWalletRequest: (
+                method: string,
+                params: unknown[],
+              ) => Promise<unknown>;
+            }
+          ).vaultWalletRequest(method, params);
+          const code = (value as { fixtureError?: number } | null)
+            ?.fixtureError;
+          if (typeof code === "number")
+            throw Object.assign(new Error("Wallet refused"), { code });
+          return value;
+        },
+      },
+    });
+  });
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await serveProjectMaintainer(page, () => project);
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [],
+        staleAfterMs: 60000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  const tokenRead = async (
+    functionName: "balanceOf" | "allowance",
+    args: `0x${string}`[],
+  ) =>
+    BigInt(
+      await rpc("eth_call", [
+        {
+          to: deployment.asset,
+          data: encodeFunctionData({
+            abi: parseAbi([
+              "function balanceOf(address) view returns (uint256)",
+              "function allowance(address,address) view returns (uint256)",
+            ]),
+            functionName,
+            args: args as never,
+          }),
+        },
+        "latest",
+      ]),
+    );
+  const vault = deployment.vault as `0x${string}`;
+  const pendingKey = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  const saved = () =>
+    page.evaluate((key) => sessionStorage.getItem(key), pendingKey);
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const actions = page.getByRole("region", {
+    name: "Fund or withdraw · Base Sepolia (test)",
+  });
+  const reviewDeposit = actions.getByRole("button", {
+    name: "Review deposit",
+    exact: true,
+  });
+  const separate = actions.getByRole("button", {
+    name: "Approve exact token amount in wallet",
+  });
+  const together = actions.getByRole("button", {
+    name: "Approve and deposit in wallet",
+    exact: true,
+  });
+  await actions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("3");
+  // A wallet that would first have to upgrade the account is not asked to.
+  await reviewDeposit.click();
+  await expect(separate).toBeVisible();
+  await expect(together).toHaveCount(0);
+  atomic = "supported";
+  await reviewDeposit.click();
+  await expect(together).toBeVisible();
+  await expect(separate).toHaveCount(0);
+  await expectAccessible(page);
+  // A wallet that refuses the batch sent nothing: the two requests return.
+  refuse = 5760;
+  await together.click();
+  await expect(actions.getByRole("alert")).toContainText(
+    "could not send this as one request",
+  );
+  await expect(separate).toBeVisible();
+  expect(sends).toEqual([]);
+  expect(await saved()).toBeNull();
+  refuse = 4001;
+  await reviewDeposit.click();
+  await together.click();
+  await expect(actions.getByRole("alert")).toContainText("You declined");
+  expect(sends).toEqual([]);
+  expect(await saved()).toBeNull();
+  refuse = null;
+  const before = await tokenRead("balanceOf", [vault]);
+  await reviewDeposit.click();
+  await together.click();
+  await expect.poll(() => sends.length).toBe(2);
+  expect(lastBatch?.atomicRequired).toBe(true);
+  expect(lastBatch?.chainId).toBe("0x14a34");
+  expect(lastBatch?.calls.map((call) => call.to.toLowerCase())).toEqual([
+    deployment.asset.toLowerCase(),
+    deployment.vault.toLowerCase(),
+  ]);
+  // The wallet reports the batch confirmed, but its block is not final: the
+  // automatic check names the transaction and keeps the deposit pending.
+  await expect(actions).toContainText("Deposit awaiting verification");
+  await expect(
+    actions.getByRole("link", { name: "View submitted transaction" }),
+  ).toBeVisible();
+  await expect(actions.getByText("Deposit verified")).toHaveCount(0);
+  expect(JSON.parse((await saved()) ?? "{}")).toMatchObject({
+    step: "batch",
+    hash: sends[1],
+    hashSource: "wallet",
+  });
+  await rpc("anvil_mine", ["0x40"]);
+  await expect(actions.getByRole("status")).toContainText("Deposit verified");
+  expect(await saved()).toBeNull();
+  expect(await tokenRead("balanceOf", [vault])).toBe(before + 3_000_000n);
+  expect(await tokenRead("allowance", [donor as `0x${string}`, vault])).toBe(
+    0n,
+  );
+});
