@@ -811,7 +811,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "sha256": "877f04248ef146e3ffd64aac72db59f15fc74a93f7eb8adc7a2435d23d746eab",
+      "sha256": "904c0d1a8c3c17f3f528d47d661120fcf1c1872329c5403f42abeb3c9b384e5b",
       "models": [
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
@@ -819,8 +819,8 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "candidateLines": [
-        131, 167, 171, 195, 207, 208, 256, 374, 395, 465, 508, 527, 532, 561,
-        642, 660, 706, 709
+        134, 170, 174, 198, 210, 211, 259, 377, 404, 474, 517, 536, 541, 570,
+        651, 669, 715, 718
       ],
       "review": "mapped-abstraction"
     },

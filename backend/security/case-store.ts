@@ -28,7 +28,10 @@ import type { AdvisoryReader } from "./advisories";
 import type { SecurityAnalyzer } from "./analysis";
 import type { DirectPaymentConfiguration } from "./direct-payments";
 import type { IntakeConfig } from "./intake-grant";
-import { repositoryReportingAuthority } from "./project-access";
+import {
+  reportingAuthorityUnavailable,
+  repositoryReportingAuthority,
+} from "./project-access";
 import {
   type ReportingReader,
   refreshReportingObservation,
@@ -372,23 +375,29 @@ export async function caseRoles(
     row.related_party_review === "not-applicable"
   )
     roles.delete("dispute");
-  if (
-    terms === undefined &&
-    row.reporter_github_id !== actor.githubId &&
-    !triager &&
-    !roles.has("dispute")
-  ) {
-    if (
-      project &&
-      (preloaded
-        ? await preloaded.authority()
-        : await repositoryReportingAuthority(
-            deps.repositoryAccess,
-            project.manifest,
-            actor,
-          ))
-    )
-      roles.add("security-maintainer");
+  if (terms === undefined && row.reporter_github_id !== actor.githubId) {
+    // Repository authority covers every case of the project, including one
+    // where the same account is an assigned triager or a moderator. During a
+    // permission outage that account keeps only the role it already holds.
+    let authority = false;
+    try {
+      authority =
+        project !== null &&
+        (preloaded
+          ? await preloaded.authority()
+          : await repositoryReportingAuthority(
+              deps.repositoryAccess,
+              project.manifest,
+              actor,
+            ));
+    } catch (error) {
+      if (
+        !(triager || roles.has("dispute")) ||
+        !reportingAuthorityUnavailable(error)
+      )
+        throw error;
+    }
+    if (authority) roles.add("security-maintainer");
   }
   // Finance needs nothing before the owner approved an award.
   if (!["reserved", "approved"].includes(row.award_state))
