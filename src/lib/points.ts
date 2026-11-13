@@ -782,7 +782,11 @@ export function applyPointsSnapshot(
     currentMergesBySource.set(key, rows);
   }
   for (const row of snapshot.valueAssessmentCoverage ?? []) {
-    if (row.status !== "missing" || row.recordDigest !== null) continue;
+    if (
+      !["missing", "legacy-policy"].includes(row.status) ||
+      row.recordDigest !== null
+    )
+      continue;
     const projectId = findHistoricalRepository(row.repository)?.projectId;
     if (!projectId) continue;
     const sourceKey = `${projectId}\0${row.pullRequestId}`;

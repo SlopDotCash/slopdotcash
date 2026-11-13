@@ -5926,7 +5926,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "8ca011f50d8113aeb2961f4bb88e5efe6939caa183af32729c5b7ebed064baa2",
+      "sha256": "95e2e5dfda875c64e3412acf9326986cbe015f0fe32b516006bd8b407a0bebd6",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
         71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 779, 806
@@ -5936,7 +5936,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "a7d27b711038daab5c29be267b6178254964bdbfa370bdf5c0dc9917fe526b43",
+      "sha256": "c73da57c52297023cb996d5d36a82097a3055717cd42f61ba7ca0ee404e26350",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -5953,12 +5953,12 @@
         1314, 1321, 1406, 1440, 1445, 1463, 1560, 2115, 2133, 2205, 2214, 2232,
         2241, 2249, 2271, 2286, 2295, 2303, 2349, 2399, 2449, 2504, 2521, 2522,
         2525, 2526, 2630, 2632, 2633, 2637, 2640, 2648, 2650, 2668, 2972, 2991,
-        3046, 3222, 3417, 3442, 3530, 3539, 3662, 3741, 4136, 4147, 4176, 4237,
-        4251, 4574, 4787, 4988, 5101, 5126, 5250, 5258, 5263, 5330, 5344, 6092,
-        6094, 6117, 6121, 6125, 6130, 6276, 6285, 6295, 6296, 6354, 6389, 6395,
-        6415, 6420, 6427, 6435, 6437, 6463, 6466, 6480, 6482, 6503, 6505, 6509,
-        6512, 6517, 6709, 6711, 6970, 7014, 7077, 7078, 7899, 7900, 7901, 7902,
-        7919, 7929, 7940, 7956, 8045, 8111, 8112, 8139, 8346
+        3046, 3222, 3417, 3442, 3530, 3549, 3672, 3751, 4146, 4157, 4191, 4254,
+        4268, 4591, 4804, 5005, 5118, 5143, 5267, 5275, 5280, 5347, 5361, 6109,
+        6111, 6134, 6138, 6142, 6147, 6293, 6302, 6312, 6313, 6371, 6406, 6412,
+        6432, 6437, 6444, 6452, 6454, 6480, 6483, 6497, 6499, 6520, 6522, 6526,
+        6529, 6534, 6726, 6728, 6987, 7031, 7094, 7095, 7916, 7917, 7918, 7919,
+        7936, 7946, 7957, 7973, 8062, 8128, 8129, 8156, 8363
       ],
       "review": "mapped-abstraction"
     },
@@ -6144,7 +6144,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "6b28f5c8be50adaeeb9ffc1bd90c13adcf378d870f0cb820259cb3be8bd891ab",
+      "sha256": "14c1d8abe619189b64a3a3c19c64e5abfa1b5af40263967ee7640650727ef4ee",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
@@ -6154,7 +6154,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [336, 785, 1010, 1017, 1026],
+      "candidateLines": [336, 786, 1014, 1021, 1030],
       "review": "mapped-abstraction"
     },
     {
@@ -13231,7 +13231,7 @@
     },
     {
       "path": "formal/models/points/implementation_allocation.qnt",
-      "sha256": "3b60505cd1e5465006043a42ba84f1e15bd3c23381320e91daacfec681ba3e28",
+      "sha256": "c8949c5ccfcc8736619960d90e1d057f8de3215058a6e2bb0c967b962c005e57",
       "sources": [
         "src/lib/commit-credit.ts",
         "src/lib/implementation-allocation.ts",

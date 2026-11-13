@@ -1490,7 +1490,7 @@ export function leaderboardMethodology(
   return {
     summary: valuePolicy
       ? `${policyStart}Slopbot's source-bound value assessments size each accepted pull request and value its reviews; a valid maintainer ratification is the exception that takes precedence. An accepted merge without a current assessment, or assessed at zero, keeps the 10-point minimum. Each pull request's review pool is the sum of the highest assessed bands of its first ${valuePolicy.reviewCredit.maxReviewers} distinct qualifying reviewers, capped at the pull request's assessed size and never less than 10 Points; it is split by band in 10-point increments by largest remainder. Each unreversed debit from Slopbot's published penalty table reduces its author's Points for the same project and UTC month once, never below zero; an upheld appeal or a maintainer reopen removes it, and closed reward cycles keep their recorded Points. Work accepted earlier keeps its earlier v2 and SCR-05 rules unchanged. Payout approval remains separate.`
-      : "Accepted work is grouped into logical work units and credited in 10-point increments. Claude review agents propose effort, complexity, impact, and review load; maintainers ratify the credit on GitHub. From October 2026 an unratified merge starts at 30 Points, and a formal review earns 10 Points only when the merged code answered its request for changes, once per pull request. Only the actor's aggregate is rounded down at cycle close.",
+      : "Accepted work is grouped into logical work units. Each unit's value is divided among its implementation authors by their accepted additions plus deletions, rounded in whole Points. Maintainers ratify value on GitHub. From October 2026 an unratified merge starts at 30 Points, and a formal review earns 10 Points only when the merged code answered its request for changes, once per pull request.",
     scoringRules: [
       {
         id: "merged-pull-request",
@@ -1498,8 +1498,8 @@ export function leaderboardMethodology(
           "micro 10; small 30; medium 90; large 240; XL 450; exceptional 750",
         cap: "uncapped; related or split pull requests share one workUnitId",
         qualification: provisionalValues
-          ? `${policyStart}a complete exact-head assessment or valid human ratification binds the accepted outcome. Provisional credit is shared among verified implementation identities without increasing its total. Overlapping accepted commits require joint work-unit assessment. Missing, incomplete, stale, unresolved or zero value keeps the 10-point minimum, shared at least 10 Points per credit actor. Earlier merges keep their earlier v2 provisional and ratified rules.`
-          : "Authored pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Integration-branch merge credit is split equally, at least 10 Points each, among the author and linked non-bot commit authors; each commit scores only in its earliest merged pull request.",
+          ? `${policyStart}a complete exact-head assessment or valid human ratification binds the accepted outcome. Divide its unchanged implementation Points by each primary author's accepted additions plus deletions, on every base branch, using whole-Point largest remainder. Opening or merging the PR alone earns no share. Overlapping accepted commits require joint work-unit assessment. New unassessed merges retain the 10-Point minimum; missing multi-author allocation evidence holds existing Points. Earlier unassessed PR totals are preserved when their recipients are corrected.`
+          : "Pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Divide the unchanged total by primary authors' accepted additions plus deletions on every base branch, rounding in whole Points. Each commit scores only in its earliest accepted source; opening or merging the PR alone earns no share.",
       },
       {
         id: "resolved-issue",
@@ -3531,6 +3531,16 @@ function createSnapshotWithReviewCutoff(
       !spansValuePolicyStart(joint)
     )
       continue;
+    // A complete synchronization-only range proves no ordinary implementation
+    // author. Retain prior credit until explicit joint evidence resolves it.
+    if (
+      pullRequest.commits?.length &&
+      pullRequest.commits.every((commit) => (commit.parentCount ?? 0) > 1)
+    ) {
+      attributionHeldSourceIds.add(pullRequest.id);
+      heldSourceIds.add(pullRequest.id);
+      continue;
+    }
     const valueDecision =
       valuePolicyApplies && joint === undefined
         ? input.valueDecisions?.get(pullRequest.id)
@@ -4166,8 +4176,13 @@ function createSnapshotWithReviewCutoff(
         (item) => item.sourceId === review.id,
       );
       assessedTier = unit.assessment.tier;
+      const currentActors = claims.map((claim) =>
+        workUnitCreditActorIds(joint.evidence, claim),
+      );
+      // Missing current claim identity cannot qualify a self-review as useful.
+      if (currentActors.some((actors) => actors === null)) return null;
       implementationActorNodeIds = [
-        ...new Set(claims.flatMap((claim) => claim.implementationActorNodeIds)),
+        ...new Set(currentActors.flatMap((actors) => actors ?? [])),
       ];
       if (pullRequest.author)
         implementationActorNodeIds.push(pullRequest.author.id);
@@ -4204,10 +4219,12 @@ function createSnapshotWithReviewCutoff(
       excludeReview(pullRequest, review, "review-credit-zero-share");
       return null;
     }
-    // An implementation actor of the assessed unit, or an author already
-    // credited on this pull request, reviews its own work.
+    // A primary author still reviews their own work when rounding gives them
+    // no implementation event. Retained valuation actor fields may predate
+    // the current attribution rule, so the census remains authoritative.
     if (
       implementationActorNodeIds.includes(review.author.id) ||
+      creditActorIds.get(pullRequest.id)?.has(review.author.id) ||
       hasMergeCredit(pullRequest.id, review.author.id)
     ) {
       excludeReview(pullRequest, review, "self-review");

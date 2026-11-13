@@ -45,7 +45,8 @@ module implementation_allocation {
     nondet frozen = Set(false, true).oneOf()
     choose(total, first, second, complete, frozen)
   }
-  action step = any { chooseAny, allocate, retry }
+  action step = if (s.phase == "choose") any { chooseAny, retry }
+    else any { allocate, retry }
   val invariant = all {
     s.a >= 0, s.b >= 0,
     s.written implies s.complete and not(s.frozen) and s.a + s.b == s.total,

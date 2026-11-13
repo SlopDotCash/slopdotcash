@@ -74,6 +74,23 @@ function retainCarrierValuation({
   ]);
 }
 
+test("a complete synchronization-only range cannot award its PR creator", () => {
+  const { input, pull } = sharedOutcome();
+  for (const commit of pull.commits ?? []) commit.parentCount = 2;
+  const snapshot = createLeaderboardSnapshot(input);
+  expect(
+    snapshot.ledger.filter(
+      (event) =>
+        event.source.id === pull.id && event.category === "merged-pull-request",
+    ),
+  ).toEqual([]);
+  expect(
+    snapshot.valueAssessmentCoverage?.find(
+      (row) => row.pullRequestId === pull.id,
+    )?.status,
+  ).toBe("incomplete");
+});
+
 test("accepted PR value is preserved while authors share by changed lines", () => {
   const { input, pull } = sharedOutcome();
   const snapshot = createLeaderboardSnapshot(input);

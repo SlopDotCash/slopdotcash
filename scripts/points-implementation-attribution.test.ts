@@ -361,6 +361,40 @@ test("changed lines rebalance existing equal shares without a new value assessme
   ).toBe(120);
 });
 
+test("legacy-policy recipient corrections preserve the complete recorded PR total", () => {
+  const { empty, oldSnapshot } = setup();
+  const occurredAt = "2026-10-29T12:00:00.000Z";
+  const journal = appendPointAwards(
+    empty,
+    legacyAwards(oldSnapshot).map((award) => ({
+      ...award,
+      amount: 60,
+      occurredAt,
+    })),
+    hash(oldSnapshot),
+    oldSnapshot.ruleVersion,
+    GENERATED_AT,
+  );
+  const next = input(true, REFRESHED_AT);
+  next.mergedPullRequestOutcomes[0].mergedAt = occurredAt;
+  const commits = next.mergedPullRequestOutcomes[0].commits;
+  assert(commits?.[1]);
+  commits[0].additions = 1;
+  commits[0].deletions = 0;
+  commits[1].additions = 3;
+  commits[1].deletions = 0;
+  const current = createLeaderboardSnapshot(next);
+  expect(current.valueAssessmentCoverage?.[0].status).toBe("legacy-policy");
+  const corrected = applyPointsSnapshot(
+    journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(amounts(corrected).get(PENALIZED_AUTHOR.id)).toBe(30);
+  expect(amounts(corrected).get(PROJECT_OWNER.id)).toBe(90);
+});
+
 test("an actor rounded out of the minimum pool can receive a retained larger pool share", () => {
   const { empty, oldSnapshot } = setup();
   const prior = legacyAwards(oldSnapshot).filter(
