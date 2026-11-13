@@ -35,6 +35,7 @@ import {
 } from "../../src/lib/project-schema.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
+import { formatRewardCapDisplay } from "../../src/lib/reward-amount";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAsset,
@@ -1445,13 +1446,15 @@ async function ownerVault(
         d.network === input.network &&
         d.deploymentTransaction === transactionId,
     );
-    if (existing)
+    if (existing) {
+      await deps.vaultSetup.observe(current, existing, input.payoutPolicy);
       return json(200, {
         status: "registered",
         deployment: existing,
         project: current.manifest,
         revision: current.revision,
       });
+    }
   }
   const expectedRevision = positiveInteger(
     body.expectedRevision,
@@ -1550,6 +1553,7 @@ async function ownerVault(
     reason:
       "Owner registered a finalized vault verified against the reviewed factory and project policy.",
   });
+  await deps.vaultSetup.observe(updated, deployment, input.payoutPolicy);
   return json(200, {
     status: "registered",
     deployment,
@@ -1559,7 +1563,7 @@ async function ownerVault(
     creation.manifest.reward.monthlyCapMinor !==
       updated.manifest.reward.monthlyCapMinor
       ? {
-          notice: `Creation used a monthly cap of ${creation.manifest.reward.monthlyCapDisplay}. The project now uses ${updated.manifest.reward.monthlyCapDisplay}. Use the automatic payment controls below to apply the new cap.`,
+          notice: `Creation used a monthly cap of ${formatRewardCapDisplay(creation.manifest.reward.monthlyCapDisplay, creation.manifest.rewardAsset)}. The project now uses ${formatRewardCapDisplay(updated.manifest.reward.monthlyCapDisplay, updated.manifest.rewardAsset)}. Use the automatic payment controls below to apply the new cap.`,
         }
       : {}),
   });
@@ -1776,7 +1780,79 @@ async function publishOwnerRevision(
   });
 }
 
-/** The signed-in account's projects and the applications it can still publish. */
+/** Removes public participation while preserving registry and financial history. */
+async function removeProject(
+  request: Request,
+  deps: ProjectApiDependencies,
+  projectId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  if (!PROJECT_ID.test(projectId)) fail(404, "not_found", "Project not found");
+  const body = await readStrictJsonObject(request);
+  exactKeys(body, ["expectedRevision"], []);
+  const expectedRevision = positiveInteger(
+    body.expectedRevision,
+    "expectedRevision",
+  );
+  const current = await deps.persistence.getProject(projectId);
+  if (current === null) fail(404, "not_found", "Project not found");
+  // The stored immutable repository, never submitted facts or creator status,
+  // supplies authority. Recheck even an already-removed retry.
+  requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  if (enforcedManifest(current.manifest))
+    return json(200, { project: adminProject(current) });
+  if (current.revision !== expectedRevision)
+    fail(409, "stale_revision", "The project changed since you loaded it");
+  const project = await appendRevision(request, deps, {
+    current,
+    manifest: { ...current.manifest, status: "paused", listingTier: "retired" },
+    actor,
+    reason: "Removed by a current repository maintainer",
+  });
+  return json(200, { project: adminProject(project) });
+}
+
+/** Applicant withdrawal does not require installation or repository access. */
+async function cancelPendingApplication(
+  request: Request,
+  deps: ProjectApiDependencies,
+  applicationId: string,
+): Promise<Response> {
+  const actor = actorOf(await requireSession(request, deps));
+  if (!APPLICATION_ID.test(applicationId))
+    fail(404, "not_found", "Application not found");
+  exactKeys(await readStrictJsonObject(request), [], []);
+  let application = await deps.persistence.getApplication(applicationId);
+  if (application === null || application.applicant.githubId !== actor.githubId)
+    fail(404, "not_found", "Application not found");
+  if (application.status === "cancelled")
+    return json(200, { application: publicApplication(application) });
+  if (application.status !== "pending")
+    fail(
+      409,
+      "application_decided",
+      `Application was already ${application.status}`,
+    );
+  const result = await deps.persistence.cancelApplication({
+    applicationId,
+    actor,
+    reason: "Cancelled by applicant",
+    at: deps.now().toISOString(),
+  });
+  application = await deps.persistence.getApplication(applicationId);
+  if (
+    application === null ||
+    (result === "conflict" && application.status !== "cancelled")
+  )
+    fail(
+      409,
+      "application_decided",
+      "The application changed. Reload before retrying.",
+    );
+  return json(200, { application: publicApplication(application) });
+}
+
+/** The signed-in account's projects and its cancellable pending applications. */
 async function listSetup(
   request: Request,
   deps: ProjectApiDependencies,
@@ -1795,24 +1871,21 @@ async function listSetup(
       listingTier: project.manifest.listingTier,
       revision: project.revision,
     })),
-    applications: (
-      await Promise.all(
-        applications
-          .filter((application) => application.status === "pending")
-          .map(async (application) =>
-            (await isPublishable(deps, application)) ? [application] : [],
-          ),
-      )
-    )
-      .flat()
-      .map(publicApplication),
+    applications: await Promise.all(
+      applications
+        .filter((application) => application.status === "pending")
+        .map(async (application) => ({
+          ...publicApplication(application),
+          publishable: await isPublishable(deps, application),
+        })),
+    ),
   });
 }
 
 /**
  * A stored update publishes only against its own base revision. Once another
- * revision is published it can never succeed, so setup stops offering it;
- * the owner makes the change again from the project's settings.
+ * revision is published it can never succeed. Setup keeps it cancellable,
+ * but the owner must make the change again from the project's settings.
  */
 async function isPublishable(
   deps: ProjectApiDependencies,
@@ -2944,7 +3017,8 @@ async function githubLookup(
 function isProjectRoute(parts: string[]): boolean {
   return (
     // Deeper /projects/:id/... paths belong to the trace API.
-    (parts[0] === "projects" && parts.length <= 2) ||
+    (parts[0] === "projects" &&
+      (parts.length <= 2 || (parts.length === 3 && parts[2] === "remove"))) ||
     parts[0] === "project-vaults" ||
     parts[0] === "project-github" ||
     parts[0] === "project-revisions" ||
@@ -3034,6 +3108,8 @@ export async function handleProjectApi(
         return await createProject(request, deps);
       case "PUT projects/:id":
         return await publishOwnerRevision(request, deps, parts[1]);
+      case "POST projects/:id/remove":
+        return await removeProject(request, deps, parts[1]);
       case "POST project-vaults/:id/solana-funding":
         return await ownerBountySolanaFunding(request, deps, parts[1]);
       case "GET project-vaults/:id":
@@ -3063,6 +3139,8 @@ export async function handleProjectApi(
         return await listMyApplications(request, deps);
       case "POST project-applications/:id/publish":
         return await publishPendingApplication(request, deps, parts[1]);
+      case "POST project-applications/:id/cancel":
+        return await cancelPendingApplication(request, deps, parts[1]);
       case "GET admin/projects":
         return await listAdminProjects(request, deps);
       case "PUT admin/projects/:id/manifest":

@@ -146,22 +146,34 @@ module evm_binding_consent_api {
       request.with("phase", "done").with("response", if (delivered) request.desired else "lost"))) }
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet mode = Set("challenge", "authorize").oneOf()
-    nondet claim = Set(0, 1, 2).oneOf()
-    nondet version = Set(-1, 0, 1).oneOf()
-    nondet discovered = Set(0, 1).oneOf()
-    nondet offset = offsets.oneOf()
-    nondet seed = Set("none", "valid", "invalid").oneOf()
-    nondet deployment = deploymentClasses.oneOf()
-    nondet discovery = Set("value", "missing", "error").oneOf()
-    nondet sig = signatures.oneOf()
-    nondet normalized = Set(1, 2).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { configure(seed), advance, replaceEffective, begin(id, mode, claim, version, offset), body(id, yes), deployments(id, deployment),
-      readWallet(id, yes, other), suppliedVersion(id), discoverVersion(id, discovery, discovered), binding(id), signature(id, sig, normalized),
-      insert(id, yes), insertFailure(id), writeReply(id, yes), readback(id, yes), respond(id, yes), s' = s }
+    any {
+      { nondet seed = Set("none", "valid", "invalid").oneOf() configure(seed) },
+      advance,
+      replaceEffective,
+      all { s.configured,
+        { nondet id = ids.oneOf()
+          all { s.requests.get(id).phase == "unused",
+            { nondet mode = Set("challenge", "authorize").oneOf()
+              nondet claim = Set(0, 1, 2).oneOf() nondet version = Set(-1, 0, 1).oneOf() nondet offset = offsets.oneOf()
+              begin(id, mode, claim, version, offset) } } } },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() body(id, yes) },
+      { nondet id = ids.oneOf() nondet deployment = deploymentClasses.oneOf() deployments(id, deployment) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        readWallet(id, yes, other) },
+      { nondet id = ids.oneOf() suppliedVersion(id) },
+      { nondet id = ids.oneOf() nondet discovered = Set(0, 1).oneOf()
+        nondet discovery = Set("value", "missing", "error").oneOf()
+        discoverVersion(id, discovery, discovered) },
+      { nondet id = ids.oneOf() binding(id) },
+      { nondet id = ids.oneOf() nondet sig = signatures.oneOf() nondet normalized = Set(1, 2).oneOf()
+        signature(id, sig, normalized) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() insert(id, yes) },
+      { nondet id = ids.oneOf() insertFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() writeReply(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() readback(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() respond(id, yes) },
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 601, upper + 1).contains(s.now), ids.contains(s.effective), s.rows.size() <= 3,
@@ -183,7 +195,7 @@ module evm_binding_consent_api {
   action consent(id: int, version: int, offset: int, sig: int): bool = admitted(id, "authorize", version, offset)
     .then(suppliedVersion(id)).then(binding(id)).then(signature(id, "canonical", sig))
   action completed(id: int): bool = insert(id, true).then(writeReply(id, true)).then(readback(id, true)).then(respond(id, true))
-  action fresh = init.then(configure("none"))
+  run fresh = init.then(configure("none"))
 
   run invalidBodyRefusesBeforeDeploymentReadTest = fresh.then(begin(1, "challenge", 1, 0, 601)).then(body(1, false)).then(respond(1, true))
     .expect(s.requests.get(1).response == "400-input" and s.rows == Set() and invariant)

@@ -303,7 +303,7 @@ activate intake or prove that GitHub or Surplus is available.
   them. It never sets severity, receipt, award or disclosure.
 - After verified receipt, `analysis.ts` schedules a private proposal. The
   owner selected Surplus Intelligence only, with `SURPLUS_API_KEY`. It requests
-  `claude-opus-5.5` through the Surplus Messages API. The requested model is
+  `claude-sonnet-5.5` through the Surplus Messages API. The requested model is
   not proof of the model served by the marketplace. A zero-data-retention
   agreement is not required. Retention follows the applicable account terms.
   There is no fallback: without the key every analysis is `unavailable`.
@@ -410,7 +410,7 @@ confirmed finding without an award. `uphold` restores the receipt unchanged;
 
 Slopbot triages every appeal first (PRD section 8). When the reporter files
 the appeal, the same analyzer as the report analysis (Surplus
-`claude-opus-5.5`, prompt `slop-security-appeal-triage-1`) reads the appealed
+`claude-sonnet-5.5`, prompt `slop-security-appeal-triage-1`) reads the appealed
 decision, its reason, the appeal reason, Slopbot's earlier report summary and
 the program scope from the case's recorded policy revision. Both report
 analysis and appeal triage use that revision, not later project edits. If no

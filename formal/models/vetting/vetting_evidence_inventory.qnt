@@ -85,14 +85,27 @@ module vetting_evidence_inventory {
   action response(delivered: bool): bool = all { s.request.phase == "response",
     s' = s.with("request", s.request.with("phase", "done").with("delivered", delivered and s.request.status == 200)) }
   action step = {
-    nondet actor = Set(0, 1, 2, 3).oneOf()
-    nondet count = Set(0, 1, 2).oneOf()
-    nondet headChoice = Set("valid", "missing", "corrupt").oneOf()
-    nondet outcome = Set("ok", "io-error", "layout-error").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    any { session(actor), tick, closeCase, removeRun, rows(count), changeHead(headChoice), completion(yes), corruptBytes,
-      begin(count), admit(yes), query, readRun(yes), readRows(yes), readHead(outcome), assembly(yes), audit(yes, other), finalAuth(yes), response(yes), s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2, 3).oneOf() session(actor) },
+      tick,
+      closeCase,
+      removeRun,
+      { nondet count = Set(0, 1, 2).oneOf() rows(count) },
+      { nondet headChoice = Set("valid", "missing", "corrupt").oneOf() changeHead(headChoice) },
+      { nondet yes = Set(false, true).oneOf() completion(yes) },
+      corruptBytes,
+      { nondet count = Set(0, 1, 2).oneOf() begin(count) },
+      { nondet yes = Set(false, true).oneOf() admit(yes) },
+      query,
+      { nondet yes = Set(false, true).oneOf() readRun(yes) },
+      { nondet yes = Set(false, true).oneOf() readRows(yes) },
+      { nondet outcome = Set("ok", "io-error", "layout-error").oneOf() readHead(outcome) },
+      { nondet yes = Set(false, true).oneOf() assembly(yes) },
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() audit(yes, other) },
+      { nondet yes = Set(false, true).oneOf() finalAuth(yes) },
+      { nondet yes = Set(false, true).oneOf() response(yes) },
+      s' = s
+    }
   }
   val invariant = all {
     s.request.delivered implies s.request.authorized and s.request.audit and s.request.status == 200,

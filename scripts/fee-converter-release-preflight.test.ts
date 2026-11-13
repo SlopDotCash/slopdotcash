@@ -51,18 +51,42 @@ writeFileSync(
   join(root, "workers/fee-converter/config.ts"),
   `export { parseConfig } from ${JSON.stringify(join(source, "workers/fee-converter/config.ts"))};\n`,
 );
+writeFileSync(
+  join(root, "workers/fee-converter/buyback-config.ts"),
+  `export { parseBuybackConfig } from ${JSON.stringify(join(source, "workers/fee-converter/buyback-config.ts"))};\n`,
+);
 const reviewed = readFileSync(
   join(source, "workers/fee-converter/wrangler.toml"),
   "utf8",
 );
 
-function release(mode: string, networks: string, secrets: string[]) {
-  const toml = reviewed
+function release(
+  mode: string,
+  networks: string,
+  secrets: string[],
+  buyback: Record<string, string> = {},
+) {
+  let toml = reviewed
     .replace(/^FEE_CONVERTER_MODE = ".*"$/mu, `FEE_CONVERTER_MODE = "${mode}"`)
     .replace(
       /^FEE_CONVERTER_NETWORKS = ".*"$/mu,
       `FEE_CONVERTER_NETWORKS = "${networks}"`,
     );
+  // Each case states its own buyback. The reviewed production file is live,
+  // so start from an inert buyback and apply only what the case names.
+  for (const [key, value] of Object.entries({
+    BUYBACK_MODE: "off",
+    BUYBACK_START_AT: "",
+    ...buyback,
+  }))
+    toml = toml.replace(
+      new RegExp(`^${key} = .*$`, "mu"),
+      `${key} = ${JSON.stringify(value)}`,
+    );
+  return preflightOf(toml, secrets);
+}
+
+function preflightOf(toml: string, secrets: string[]) {
   writeFileSync(join(root, "workers/fee-converter/wrangler.toml"), toml);
   const inventory = join(root, "secrets.json");
   writeFileSync(
@@ -115,4 +139,78 @@ test("the release continues when every enabled live network has its key", () => 
   ]);
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+const LIVE_BUYBACK = {
+  BUYBACK_MODE: "live",
+  BUYBACK_START_AT: "2026-11-10T00:00:00.000Z",
+};
+
+test.each([
+  [
+    "a live buyback without Robinhood enabled",
+    "base,ethereum",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ETHEREUM"],
+    LIVE_BUYBACK,
+  ],
+  [
+    "a live buyback without the Robinhood key",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE"],
+    LIVE_BUYBACK,
+  ],
+  [
+    "a buyback with no start instant",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    { BUYBACK_MODE: "live" },
+  ],
+  [
+    "a buyback with a missing limit",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    { ...LIVE_BUYBACK, BUYBACK_SHARE_BPS: "" },
+  ],
+])("the release stops before upload on %s", (_, networks, secrets, buyback) => {
+  const result = release("live", networks, secrets, buyback);
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("fee-converter upload reached");
+});
+
+test("the release continues for a complete live buyback with every key", () => {
+  const result = release(
+    "live",
+    "base,robinhood",
+    ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ROBINHOOD"],
+    LIVE_BUYBACK,
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+// The reviewed production file exactly as checked in: a live converter on
+// Base, Ethereum and Robinhood Chain with a live buyback (operator decision
+// of 12 November 2026).
+const PRODUCTION_KEYS = [
+  "FEE_WALLET_KEY_BASE",
+  "FEE_WALLET_KEY_ETHEREUM",
+  "FEE_WALLET_KEY_ROBINHOOD",
+];
+
+test("the reviewed production configuration releases with its three keys", () => {
+  const result = preflightOf(reviewed, PRODUCTION_KEYS);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain(
+    "fee-converter mode live; networks base,ethereum,robinhood",
+  );
+  expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+test("the reviewed production configuration stops without the Robinhood key", () => {
+  const result = preflightOf(
+    reviewed,
+    PRODUCTION_KEYS.filter((name) => name !== "FEE_WALLET_KEY_ROBINHOOD"),
+  );
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("fee-converter upload reached");
 });

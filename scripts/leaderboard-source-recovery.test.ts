@@ -32,6 +32,7 @@ import {
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
+  MAX_TRANSIENT_ATTEMPTS,
   runGenerator,
   writeLeaderboardAtomically,
 } from "./generate-leaderboard";
@@ -109,6 +110,7 @@ const openPull = (id: string, number: number) => ({
 });
 const stillOpenPull = openPull("PR_still_open", 81);
 const mergedAfterListing = openPull("PR_merged_after_listing", 82);
+const updatedWhileListing = openPull("PR_updated_while_listing", 83);
 const openIssueNode = (id: string, number: number, open: boolean) => ({
   __typename: "Issue",
   id,
@@ -292,7 +294,17 @@ async function nativeFileFixture(): Promise<NativeFileFixture> {
 }
 
 async function fixture(
-  mode: "removed" | "persistent" | "joint" | "healthy" | "open-closure",
+  mode:
+    | "removed"
+    | "persistent"
+    | "joint"
+    | "healthy"
+    | "open-closure"
+    | "open-files-missing"
+    | "open-files-later-missing"
+    | "open-files-later-changed"
+    | "open-reorder"
+    | "open-skip",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
@@ -303,6 +315,7 @@ async function fixture(
   let attempts = 0;
   let repositoryReads = 0;
   let forbiddenSourceReads = 0;
+  let openPullRequestListings = 0;
   const comparisonPages: number[] = [];
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
@@ -370,6 +383,7 @@ async function fixture(
             searchQuery: string;
             ids: string[];
             id: string;
+            after: string | null;
           };
         };
         requests++;
@@ -431,12 +445,49 @@ async function fixture(
             nodes,
             pageInfo: { hasNextPage: false, endCursor: null },
           };
+        } else if (
+          (mode === "open-reorder" || mode === "open-skip") &&
+          query.includes("query LeaderboardOpenPullRequest") &&
+          v.owner === repository.owner &&
+          v.name === repository.name
+        ) {
+          // GitHub lists open pull requests newest update first and pages them
+          // with a keyset cursor (one per page here). In the first listing,
+          // PR_updated_while_listing is on page two. It is updated after page
+          // one is served, so it now sorts before the cursor: page two comes
+          // back empty while totalCount stays 2. "open-skip" repeats that in
+          // every listing.
+          if (v.after === null) openPullRequestListings++;
+          const first = mode === "open-skip" || openPullRequestListings === 1;
+          const order = first
+            ? [stillOpenPull, updatedWhileListing]
+            : [updatedWhileListing, stillOpenPull];
+          const page =
+            v.after === null ? order.slice(0, 1) : first ? [] : order.slice(1);
+          data.repository = {
+            id: nodeId(v.owner, v.name),
+            pullRequests: {
+              totalCount: 2,
+              nodes: page.map((pull) => ({
+                id: pull.id,
+                updatedAt: pull.updatedAt,
+                headRefOid: pull.headRefOid,
+              })),
+              pageInfo:
+                v.after === null
+                  ? {
+                      hasNextPage: true,
+                      endCursor: `open-pulls-${openPullRequestListings}`,
+                    }
+                  : { hasNextPage: false, endCursor: null },
+            },
+          };
         } else if (query.includes("query LeaderboardOpen")) {
           const field = query.includes("query LeaderboardOpenIssue")
             ? "issues"
             : "pullRequests";
           const listed =
-            mode === "open-closure" &&
+            (mode === "open-closure" || mode.startsWith("open-files-")) &&
             v.owner === repository.owner &&
             v.name === repository.name;
           data.repository = {
@@ -460,6 +511,16 @@ async function fixture(
           data.nodes = v.ids.map((id: string, index: number) =>
             openIssueNode(id, 90 + index, id === "I_still_open"),
           );
+        } else if (query.includes("query LeaderboardMoreFiles")) {
+          data.node = {
+            state: "OPEN",
+            isDraft: false,
+            headRefOid:
+              mode === "open-files-later-changed"
+                ? "a".repeat(40)
+                : stillOpenPull.headRefOid,
+            files: null,
+          };
         } else if (
           query.includes("query LeaderboardReviewedPullRequestReferences")
         ) {
@@ -518,14 +579,31 @@ async function fixture(
         ) {
           data.nodes = v.ids.map((id: string) =>
             id === stillOpenPull.id
-              ? { ...nodeFor(stillOpenPull), state: "OPEN" }
-              : id === mergedAfterListing.id
-                ? {
-                    ...nodeFor(mergedAfterListing),
-                    mergedAt: GENERATED_AT,
-                    closedAt: GENERATED_AT,
-                  }
-                : sourceNodeFor(required(pulls.find((p) => p.id === id))),
+              ? {
+                  ...nodeFor(stillOpenPull),
+                  state: "OPEN",
+                  files:
+                    mode === "open-files-missing"
+                      ? null
+                      : mode.startsWith("open-files-later-")
+                        ? {
+                            ...connection(stillOpenPull.files ?? []),
+                            pageInfo: {
+                              hasNextPage: true,
+                              endCursor: "first-file-page",
+                            },
+                          }
+                        : nodeFor(stillOpenPull).files,
+                }
+              : id === updatedWhileListing.id
+                ? { ...nodeFor(updatedWhileListing), state: "OPEN" }
+                : id === mergedAfterListing.id
+                  ? {
+                      ...nodeFor(mergedAfterListing),
+                      mergedAt: GENERATED_AT,
+                      closedAt: GENERATED_AT,
+                    }
+                  : sourceNodeFor(required(pulls.find((p) => p.id === id))),
           );
         } else
           throw new Error(
@@ -692,6 +770,7 @@ async function fixture(
       attempts,
       repositoryReads,
       forbiddenSourceReads,
+      openPullRequestListings,
       comparisonPages,
       recoveredFiles,
       recoveryInputs,
@@ -1184,6 +1263,92 @@ test("open work that closes after the listing leaves the queue instead of stoppi
     });
     expect(f.stats().attempts).toBe(1);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+    const historical = structuredClone(snapshot);
+    delete historical.workQueue.pullRequests[0].filesAvailable;
+    assertLeaderboardSnapshot(historical);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const mode of [
+  "open-files-missing",
+  "open-files-later-missing",
+] as const) {
+  test(`${mode}: retain the source and block review selection without inventing file evidence`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(mode);
+    try {
+      const snapshot = await f.generate();
+      expect(snapshot.source.counts).toMatchObject({
+        openPullRequests: 1,
+        mergedPullRequests: 2,
+      });
+      expect(snapshot.workQueue.pullRequests).toHaveLength(1);
+      expect(snapshot.workQueue.pullRequests[0]).toMatchObject({
+        id: stillOpenPull.id,
+        isDraft: false,
+        filesAvailable: false,
+        actionability: "blocked",
+        selection: { status: "excluded", reasons: ["blocked"] },
+      });
+      assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+      expect(
+        snapshot.opportunities.filter(
+          (opportunity) => opportunity.source.id === stillOpenPull.id,
+        ),
+      ).toEqual([]);
+      const forged = structuredClone(snapshot);
+      forged.workQueue.pullRequests[0].actionability = "actionable";
+      forged.workQueue.pullRequests[0].selection = {
+        status: "candidate",
+        reasons: [],
+      };
+      expect(() => assertLeaderboardSnapshot(forged)).toThrow("actionability");
+      expect(f.stats().recoveredFiles).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("an unavailable later file page at a different head still stops publication", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-files-later-changed");
+  try {
+    await expect(f.generate()).rejects.toThrow("files must be an object");
+    expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+  } finally {
+    await f.close();
+  }
+});
+
+test("open work updated while the listing pages is listed again instead of stopping the release", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-reorder");
+  try {
+    const snapshot = await f.generate();
+    expect(
+      snapshot.workQueue.pullRequests.map((item) => item.id).sort(),
+    ).toEqual([stillOpenPull.id, updatedWhileListing.id].sort());
+    expect(snapshot.source.counts).toMatchObject({ openPullRequests: 2 });
+    expect(f.stats().openPullRequestListings).toBe(2);
+    expect(f.stats().attempts).toBe(1);
+    assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+test("an open listing that stays short still fails closed after the bounded retry", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-skip");
+  try {
+    await expect(f.generate()).rejects.toThrow(
+      `Open evidence changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive verification attempts`,
+    );
+    expect(f.stats().openPullRequestListings).toBe(MAX_TRANSIENT_ATTEMPTS);
+    expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
   } finally {
     await f.close();
   }

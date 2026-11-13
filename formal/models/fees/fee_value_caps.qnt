@@ -1,6 +1,9 @@
 // @source workers/fee-converter/core.ts
 // @source workers/fee-converter/store.ts
 // @source workers/fee-converter/verified-arithmetic.ts
+// @source workers/fee-converter/buyback.ts
+// @source workers/fee-converter/buyback-store.ts
+// @evidence workers/fee-converter/buyback.test.ts
 // Per-run and rolling 24-hour value caps of fee conversions on one network.
 //
 // runNetwork reads the day total once at run start: the quote value of live
@@ -15,6 +18,13 @@
 // send in the same run. Rows leave the window as time passes and leave the
 // count when proven failed; neither can raise the total, so the run's
 // in-memory day value only over-approximates the stored window.
+// Buyback purchases use the same budget and journal-before-broadcast rule,
+// scoped to the purchase leg. They reread the current stored day total for
+// each token. This model retains the earlier (greater or equal) day total,
+// which conservatively bounds their available budget. In both paths the
+// run's value increases immediately after the durable insert, including a
+// failed broadcast whose later status write also fails. Approvals do not
+// move the input principal and consume only the separate native budget.
 //
 // Bounds: three rows, values 1..2, run cap 3, day cap 4.
 module fee_value_caps {
@@ -76,6 +86,11 @@ module fee_value_caps {
     Ids.forall(i => s.rows.get(i).owner > 0 implies runSum(s) <= RunCap or s.rows.get(i).owner != s.runId) }
   run runCapStopsTest = init.then(start("live")).then(convert(1, 2, true)).then(convert(2, 1, true))
     .expect(remaining(s) == 0).then(skipOverCap(3, 1)).expect(s.rows.get(3).state == "skipped" and invariant)
+  // A failed broadcast/status write leaves the submitted journal row counted;
+  // it cannot free this run's cap for another input token.
+  run lostBroadcastStillCountsForNextTokenTest = init.then(start("live")).then(convert(1, 2, true))
+    .expect(s.runValue == 2 and runSum(s) == 2 and invariant)
+    .then(skipOverCap(2, 2)).then(convert(3, 1, false)).expect(s.runValue == RunCap and invariant)
   run dayCapAcrossRunsTest = init.then(start("live")).then(convert(1, 2, true)).then(convert(2, 1, false))
     .then(endRun).then(start("live")).expect(s.dayValue == 3 and remaining(s) == 1)
     .then(convert(3, 1, true)).expect(windowSum(s) == DayCap and invariant)

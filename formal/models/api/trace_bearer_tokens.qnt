@@ -77,14 +77,23 @@ module trace_bearer_tokens {
         .with("authenticated", roles.size() > 0).with("result", if (roles.size() > 0) "actor" else "null") }
   }
   action step = {
-    nondet mode = Set("sign", "verify").oneOf()
-    nondet roles = roleSets.oneOf()
-    nondet time = times.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet kind = headers.oneOf()
-    nondet result = cryptoResults.oneOf()
-    any { configure(mode, roles, time, yes), advanceNow, secret(yes), header(kind), decode(yes),
-      crypto(result), parse(yes), claims(yes), checkTime, filterRoles, s' = s }
+    any {
+      all { s.phase == "setup", {
+        nondet mode = Set("sign", "verify").oneOf() nondet roles = roleSets.oneOf() nondet time = times.oneOf()
+        nondet yes = Set(false, true).oneOf()
+        configure(mode, roles, time, yes)
+      } },
+      advanceNow,
+      { nondet yes = Set(false, true).oneOf() secret(yes) },
+      { nondet kind = headers.oneOf() header(kind) },
+      { nondet yes = Set(false, true).oneOf() decode(yes) },
+      { nondet result = cryptoResults.oneOf() crypto(result) },
+      { nondet yes = Set(false, true).oneOf() parse(yes) },
+      { nondet yes = Set(false, true).oneOf() claims(yes) },
+      checkTime,
+      filterRoles,
+      s' = s
+    }
   }
   val invariant = all {
     Set(0, 31, 602).contains(s.laterNow),
@@ -96,10 +105,10 @@ module trace_bearer_tokens {
     s.result == "token" iff s.signed,
     Set("null", "error").contains(s.result) implies not(s.signed) and not(s.authenticated) }
 
-  action verifiedClaims(roles: Set[str], time: Times, allowed: bool): bool = init
+  run verifiedClaims(roles: Set[str], time: Times, allowed: bool): bool = init
     .then(configure("verify", roles, time, allowed)).then(secret(true)).then(header("valid"))
     .then(decode(true)).then(crypto("ok")).then(parse(true)).then(claims(true))
-  action signing(roles: Set[str], time: Times): bool = init.then(configure("sign", roles, time, false))
+  run signing(roles: Set[str], time: Times): bool = init.then(configure("sign", roles, time, false))
     .then(secret(true)).then(claims(true))
 
   run validContributorReturnsActorTest = verifiedClaims(Set("contributor"), {issued:0,expires:600}, false)

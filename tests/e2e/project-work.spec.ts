@@ -157,7 +157,7 @@ test("all eligible suggestions stay reachable and long titles reflow", async ({
   diagnostics.allowPreviewApiMisses();
   const snapshot = snapshotFixture();
   const issue = snapshot.workQueue.issues[0];
-  snapshot.workQueue.issues = Array.from({ length: 4 }, (_, index) => ({
+  snapshot.workQueue.issues = Array.from({ length: 12 }, (_, index) => ({
     ...structuredClone(issue),
     id: `I_bounded_${index}`,
     number: 18003 - index,
@@ -172,9 +172,16 @@ test("all eligible suggestions stay reachable and long titles reflow", async ({
   await page.goto("/projects/eliza");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Eliza");
   const work = page.getByRole("region", { name: "Suggested work" });
-  await expect(work.getByRole("link")).toHaveCount(5);
+  // Ten suggestions show first; expanding reveals every eligible item.
+  await expect(work.getByRole("link")).toHaveCount(10);
+  const expand = work.getByRole("button", { name: "Show all 13", exact: true });
+  await expand.focus();
+  await expect(expand).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(work.getByRole("link")).toHaveCount(13);
+  await expect(work.getByRole("button", { name: /Show all/ })).toHaveCount(0);
   await expect(
-    work.getByRole("link", { name: /Suggested issue 3/ }),
+    work.getByRole("link", { name: /Suggested issue 11/ }),
   ).toBeVisible();
   await expect
     .poll(() =>

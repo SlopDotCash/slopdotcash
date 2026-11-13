@@ -187,7 +187,7 @@ export function PrivateReportForm({
     } catch {
       if (isCurrent())
         setReceiptMessage(
-          "Your report was received, but this tab could not verify your current account. Check your session to open its receipt.",
+          "This tab could not verify your current account. Try again.",
         );
       return;
     }
@@ -197,7 +197,7 @@ export function PrivateReportForm({
       hideDraft();
       setReceipt({ id: received.id, draftBytes: null });
       setReceiptMessage(
-        `Your report was received for @${login}. Your account changed or signed out. Sign in with that account, then check this receipt.`,
+        `Your account changed or signed out. Sign in as @${login} to open the receipt.`,
       );
       return;
     }
@@ -303,9 +303,7 @@ export function PrivateReportForm({
     } catch (cause) {
       if (!isCurrent()) return;
       if (accepted.current) {
-        setReceiptMessage(
-          "Your report was received, but this tab could not open its receipt. Check your session and try again.",
-        );
+        setReceiptMessage("This tab could not open the receipt. Try again.");
         return;
       }
       let current: Awaited<ReturnType<typeof currentProjectSession>>;

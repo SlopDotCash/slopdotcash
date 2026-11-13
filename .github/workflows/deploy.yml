@@ -245,6 +245,9 @@ jobs:
             assertLeaderboardSnapshot(snapshot);
             console.log(`Using published leaderboard generated at ${snapshot.generatedAt}`);
           ' "$ledger_file"
+          # A project activated after the last full collection is added with
+          # zero counts until the next collection records it.
+          bun scripts/extend-published-profiles.ts "$profiles_file"
           bun scripts/generate-profiles.ts --input "$profiles_file" --current
           cp "$ledger_file" public/data/leaderboard.json
           bun --no-env-file -e '
@@ -463,13 +466,23 @@ jobs:
           path: dist
       - name: Install Playwright system dependencies
         run: |
+          set -euo pipefail
           # The Azure mirror stalled across release and PR runners. Use Ubuntu's
           # primary archive; the runner's URI normally points to apt-mirrors.txt.
           # Keep its suites, components and signing keys unchanged.
-          sudo sed -i 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu/|' \
-            /etc/apt/sources.list.d/ubuntu.sources
-          grep -Fx 'URIs: https://archive.ubuntu.com/ubuntu/' \
-            /etc/apt/sources.list.d/ubuntu.sources
+          # On 11 November 2026 the archive's host name stopped resolving on
+          # every runner. When the index cannot be read from the primary
+          # archive, use the kernel.org mirror of the same signed archive; apt
+          # still checks every index against Ubuntu's keys.
+          for uri in https://archive.ubuntu.com/ubuntu/ https://mirrors.edge.kernel.org/ubuntu/; do
+            sudo sed -i "s|^URIs:.*|URIs: ${uri}|" /etc/apt/sources.list.d/ubuntu.sources
+            grep -Fx "URIs: ${uri}" /etc/apt/sources.list.d/ubuntu.sources
+            if sudo timeout --signal=TERM --kill-after=15s 5m \
+              apt-get update -o APT::Update::Error-Mode=any; then
+              break
+            fi
+            echo "::warning::The package index could not be read from ${uri}."
+          done
           # Run the timeout as root so it can terminate apt and its children.
           # Do not retry an interrupted package transaction on the same runner.
           # Hosted package downloads exceeded ten minutes in two release runs.
@@ -537,22 +550,54 @@ jobs:
     permissions:
       contents: read
 
+  proof-scope:
+    name: Select affected proofs
+    # Pull requests check only the state models and LemmaScript proofs their
+    # changes can affect; pushes, manual runs and promotions check all of them.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      formal_models: ${{ steps.scope.outputs.formal_models }}
+      formal_shards: ${{ steps.scope.outputs.formal_shards }}
+      lemmascript: ${{ steps.scope.outputs.lemmascript }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Select affected proofs
+        id: scope
+        run: node scripts/ci-scope.mjs
+
   state-models:
     name: Quint state models
+    needs: proof-scope
     uses: ./.github/workflows/formal.yml
+    with:
+      models: ${{ needs.proof-scope.outputs.formal_models }}
+      shards: ${{ needs.proof-scope.outputs.formal_shards }}
     permissions:
       contents: read
 
   lemmascript:
     name: LemmaScript contracts
+    needs: proof-scope
     uses: ./.github/workflows/lemmascript.yml
+    with:
+      proofs: ${{ needs.proof-scope.outputs.lemmascript }}
     permissions:
       contents: read
 
   quality:
     name: Skill, data, build, and browser checks
     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'cancelled') }}
-    needs: [prepare, check, browsers, isolated-artifact, state-models, lemmascript]
+    needs: [prepare, check, browsers, isolated-artifact, proof-scope, state-models, lemmascript]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -563,12 +608,14 @@ jobs:
           BROWSER_RESULT: ${{ needs.browsers.result }}
           SANDBOX_RESULT: ${{ needs.isolated-artifact.result }}
           SANDBOX_REQUIRED: ${{ needs.prepare.outputs.sandbox }}
+          PROOF_SCOPE_RESULT: ${{ needs.proof-scope.result }}
           QUINT_RESULT: ${{ needs.state-models.result }}
           LEMMASCRIPT_RESULT: ${{ needs.lemmascript.result }}
         run: |
           test "$PREPARE_RESULT" = success
           test "$CHECK_RESULT" = success
           test "$BROWSER_RESULT" = success
+          test "$PROOF_SCOPE_RESULT" = success
           test "$QUINT_RESULT" = success
           test "$LEMMASCRIPT_RESULT" = success
           if [ "$SANDBOX_REQUIRED" = true ]; then test "$SANDBOX_RESULT" = success; fi
@@ -913,8 +960,9 @@ jobs:
         if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled'
         timeout-minutes: 11
         env:
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
-        # This main-only environment supplies the key only to this step.
+        # This protected main-only job qualifies both gateways before publication.
         # Synthetic source and local SQLite; no production bindings or output artifacts.
         run: bun --no-env-file scripts/qualify-value-models.ts
 
@@ -1013,7 +1061,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
           SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
+          PAYMENT_RPC_URLS: ${{ secrets.PAYMENT_RPC_URLS }}
           SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
           SLOP_NOTIFY_MAIL_PILOTS: ${{ vars.SLOP_NOTIFY_MAIL_PILOTS }}
           SLOP_NOTIFY_GENERAL_EMAIL: ${{ vars.SLOP_NOTIFY_GENERAL_EMAIL }}
@@ -1136,6 +1186,9 @@ jobs:
           ./node_modules/.bin/wrangler d1 migrations apply slop-private \
             --remote \
             --config workers/identity/wrangler.toml
+          # Seed missing observations without execution or signer keys.
+          # The canonical writer protects concurrent newer observations.
+          bun --no-env-file scripts/recover-vault-observations.ts
           bun scripts/prepare-points-import.ts dist "$RUNNER_TEMP/points-import.sql"
           # D1's import API can time out on upload (504) or apply every
           # statement and then answer the final poll with "Not currently
@@ -1247,8 +1300,8 @@ jobs:
           fi
 
           # Slopbot (workers/slopbot, protocol/slopbot-v2.md). The owner creates
-          # the Worker shell, its custom domain and its secrets once, then sets
-          # the SLOPBOT_RELEASE repository variable to "enabled". Releases only
+          # the Worker shell, its custom domain and App/Surplus secrets once,
+          # then sets SLOPBOT_RELEASE to "enabled". Releases only
           # upload and promote versions. Its D1 tables come from the shared
           # slop-private migration apply above.
           if [ "$SLOPBOT_RELEASE" = "enabled" ]; then
@@ -1268,7 +1321,7 @@ jobs:
             "SLOPBOT_WEBHOOK_SECRET",
             "SURPLUS_API_KEY",
           ];
-          const allowed = new Set([...required, "SURPLUS_BASE_URL"]);
+          const allowed = new Set([...required, "ORBIO_API_KEY", "ORBIO_BASE_URL", "SURPLUS_BASE_URL"]);
           if (!required.every((name) => names.includes(name)) || !names.every((name) => allowed.has(name))) {
             throw new TypeError("slopbot Worker secret inventory is incomplete or contains unexpected entries");
           }
@@ -1276,13 +1329,29 @@ jobs:
 
           slopbot_upload="$RUNNER_TEMP/slopbot-upload.log"
           mapfile -t slopbot_value_args < "$RUNNER_TEMP/slopbot-value-args"
+          # Include the protected Orbio key in this tested version; setting a
+          # live secret separately would activate it against the previous code.
+          (
+          slopbot_secret_file="$(mktemp "$RUNNER_TEMP/slopbot-upload-secrets.XXXXXX")"
+          trap 'rm -f "$slopbot_secret_file"' EXIT
+          node - "$slopbot_secret_file" <<'NODE'
+          const { chmodSync, writeFileSync } = require("node:fs");
+          const key = process.env.ORBIO_API_KEY;
+          if (typeof key !== "string" || key.trim().length === 0) {
+            throw new TypeError("protected Orbio credential is required before Slopbot upload");
+          }
+          chmodSync(process.argv[2], 0o600);
+          writeFileSync(process.argv[2], JSON.stringify({ ORBIO_API_KEY: key }));
+          NODE
           ./node_modules/.bin/wrangler versions upload \
             --config workers/slopbot/wrangler.toml \
+            --secrets-file="$slopbot_secret_file" \
             --var="SLOPBOT_PRODUCER_REVISION:$GITHUB_SHA" \
             "${slopbot_value_args[@]}" \
             --minify \
             --tag="$GITHUB_SHA" \
             --message="slop.cash release $GITHUB_SHA" 2>&1 | tee "$slopbot_upload"
+          )
           slopbot_version_id="$(node - "$slopbot_upload" <<'NODE'
           const { readFileSync } = require("node:fs");
           const contents = readFileSync(process.argv[2], "utf8");
@@ -1293,6 +1362,30 @@ jobs:
           process.stdout.write(matches[0][1]);
           NODE
           )"
+          slopbot_uploaded_version="$(mktemp "$RUNNER_TEMP/slopbot-uploaded-version.XXXXXX")"
+          ./node_modules/.bin/wrangler versions view "$slopbot_version_id" \
+            --name slop-slopbot --json > "$slopbot_uploaded_version"
+          node - "$slopbot_uploaded_version" "$slopbot_version_id" "$GITHUB_SHA" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const version = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const bindings = version?.resources?.bindings;
+          if (version?.id !== process.argv[3] || version.annotations?.["workers/tag"] !== process.argv[4] || !Array.isArray(bindings)) {
+            throw new TypeError("uploaded Slopbot version is not bound to the tested commit and captured version id");
+          }
+          const names = bindings.filter((entry) => entry?.type === "secret_text").map((entry) => entry.name);
+          const required = [
+            "SLOPBOT_APP_ID",
+            "SLOPBOT_APP_PRIVATE_KEY",
+            "SLOPBOT_APP_USER_ID",
+            "SLOPBOT_WEBHOOK_SECRET",
+            "ORBIO_API_KEY",
+            "SURPLUS_API_KEY",
+          ];
+          const allowed = new Set([...required, "ORBIO_BASE_URL", "SURPLUS_BASE_URL"]);
+          if (new Set(names).size !== names.length || !required.every((name) => names.includes(name)) || !names.every((name) => allowed.has(name))) {
+            throw new TypeError("uploaded Slopbot secret bindings are incomplete or contain unexpected entries");
+          }
+          NODE
           ./node_modules/.bin/wrangler versions deploy \
             --name slop-slopbot \
             --version-id="$slopbot_version_id" \
@@ -1628,7 +1721,19 @@ jobs:
           // Use the Worker's actual parser: live signing on every converting
           // network requires that network's own approved native limits.
           const { parseConfig } = require("./workers/fee-converter/config.ts");
-          parseConfig(Bun.TOML.parse(toml).vars);
+          const converter = parseConfig(Bun.TOML.parse(toml).vars);
+          // The SLOP buyback uses the same parser as the Worker. A buyback
+          // that is not off needs Robinhood enabled, and a live one needs
+          // that network's own approved native limits before it can sign.
+          const { parseBuybackConfig } = require("./workers/fee-converter/buyback-config.ts");
+          const buyback = parseBuybackConfig(Bun.TOML.parse(toml).vars, mode);
+          if (buyback.mode !== "off") {
+            const robinhood = converter.networks.find((n) => n.network === "robinhood");
+            if (!robinhood) throw new TypeError("the buyback needs robinhood in FEE_CONVERTER_NETWORKS");
+            if (buyback.mode === "live" && !robinhood.nativeBudget) {
+              throw new TypeError("a live buyback lacks Robinhood native gas limits");
+            }
+          }
           if (mode === "live") {
             const missing = enabled.filter((n) => !names.includes(`FEE_WALLET_KEY_${n.toUpperCase()}`));
             if (missing.length > 0) throw new TypeError(`live fee conversion lacks keys for: ${missing.join(", ")}`);
@@ -1858,9 +1963,11 @@ jobs:
             echo "::error::Published deployment manifest did not match the verified build."
             exit 1
           fi
-          # The inventory checks /index.html; this additional request proves the
-          # public root route resolves to those same tested bytes.
-          verify_download / dist/index.html index.html
+          # Both checks use the exact approved Function-rendered root, while
+          # the deployment manifest still binds the unmodified local bundle.
+          expected_root="$RUNNER_TEMP/slop-expected-root.html"
+          node scripts/dist-manifest.mjs render-root dist https://slop.cash > "$expected_root"
+          verify_download / "$expected_root" index.html
 
       - name: Verify active private trace API boundary
         if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true'

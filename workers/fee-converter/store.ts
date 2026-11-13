@@ -75,9 +75,9 @@ const COLUMNS: [keyof ConversionRow, string][] = [
   ["nativeGasId", "native_gas_id"],
 ];
 const COLUMN = new Map(COLUMNS);
-const SELECT = COLUMNS.map(([, column]) => column).join(", ");
+export const SELECT = COLUMNS.map(([, column]) => column).join(", ");
 
-function fromRow(row: Record<string, D1Value>): ConversionRow {
+export function fromRow(row: Record<string, D1Value>): ConversionRow {
   return Object.fromEntries(
     COLUMNS.map(([key, column]) => [key, row[column] ?? null]),
   ) as unknown as ConversionRow;
@@ -405,7 +405,7 @@ export class D1ConversionStore implements ConversionStore {
          FROM fee_conversions c LEFT JOIN fee_native_gas g ON g.id=c.native_gas_id
          WHERE c.network=? AND c.token=? AND c.fee_wallet=? AND c.mode='live'
            AND ((c.kind='claim' AND c.state='finalized') OR
-                (c.kind='conversion' AND c.state IN ('quoted','submitted','unknown','finalized')))`,
+                (c.kind IN ('conversion','buyback') AND c.state IN ('quoted','submitted','unknown','finalized')))`,
       )
       .bind(network, token, feeWallet)
       .all<{
@@ -461,8 +461,24 @@ export class D1ConversionStore implements ConversionStore {
           at: row.created_at,
         });
       } else {
+        // A native buyback input spends earned native fees like a conversion.
         earnings.push({ kind: "conversion", amount: BigInt(row.amount_in) });
       }
+    }
+    // A bridge order pays its fixed protocol fee in the native asset. It is
+    // spent from the wallet, so it never remains sellable fee income.
+    const bridged = await this.db
+      .prepare(
+        `SELECT json_extract(quote,'$.nativeFee') AS native_fee FROM fee_conversions
+          WHERE network=? AND fee_wallet=? AND mode='live' AND kind='bridge'
+            AND state IN ('submitted','unknown','finalized')`,
+      )
+      .bind(network, feeWallet)
+      .all<{ native_fee: string | null }>();
+    for (const row of bridged.results) {
+      if (row.native_fee === null || !/^(0|[1-9][0-9]*)$/u.test(row.native_fee))
+        throw new Error("Bridge order has no recorded protocol fee");
+      earnings.push({ kind: "conversion", amount: BigInt(row.native_fee) });
     }
     const earned = nativeFeeEarnings(
       earnings,

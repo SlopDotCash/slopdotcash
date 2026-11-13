@@ -244,10 +244,15 @@ async function vettingFixture(page: Page, baseURL: string | undefined) {
       admin = false;
     },
     async prepare(kind: MutationKind) {
-      const reason = card.getByLabel(
-        kind === "scan" ? "Reason for the scan" : "Reason for the exemption",
-        { exact: true },
-      );
+      const field = {
+        name:
+          kind === "scan" ? "Reason for the scan" : "Reason for the exemption",
+        exact: true,
+      };
+      const form = card
+        .locator("form")
+        .filter({ has: page.getByRole("textbox", field) });
+      const reason = form.getByRole("textbox", field);
       await reason.fill(`  ${REASON}  `);
       if (kind === "grant") {
         await card
@@ -259,7 +264,6 @@ async function vettingFixture(page: Page, baseURL: string | undefined) {
           })
           .check();
       }
-      const form = card.locator("form").filter({ has: reason });
       const button = form.getByRole("button", {
         name:
           kind === "scan"

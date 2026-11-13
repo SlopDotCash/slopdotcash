@@ -120,17 +120,28 @@ module ui_identity_poll_protocol {
     s' = s.with("phase", if (s.aborted) "discarded" else "join-requested")
       .with("joinRequested", not(s.aborted)) }
   action step = {
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet third = Set(false, true).oneOf()
-    nondet interval = intervals.oneOf()
-    nondet retry = 0.to(11).oneOf()
-    nondet kind = startClasses.oneOf()
-    nondet expires = 0.to(8).oneOf()
-    any { begin(yes, other, third, interval), tick, abort, startReply(kind), saveStart(yes),
-      abortFromHook, timeInHook, authorize(yes), scheduleDelay, timerFires, requestFails,
-      pollPending(retry), pollRefuses, pollComplete(yes, expires), clearAuthorization(yes),
-      depart, parentGuard, s' = s }
+    any {
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        nondet third = Set(false, true).oneOf() nondet interval = intervals.oneOf()
+        begin(yes, other, third, interval) },
+      tick,
+      abort,
+      { nondet kind = startClasses.oneOf() startReply(kind) },
+      { nondet yes = Set(false, true).oneOf() saveStart(yes) },
+      abortFromHook,
+      timeInHook,
+      { nondet yes = Set(false, true).oneOf() authorize(yes) },
+      scheduleDelay,
+      timerFires,
+      requestFails,
+      { nondet retry = 0.to(11).oneOf() pollPending(retry) },
+      pollRefuses,
+      { nondet yes = Set(false, true).oneOf() nondet expires = 0.to(8).oneOf() pollComplete(yes, expires) },
+      { nondet yes = Set(false, true).oneOf() clearAuthorization(yes) },
+      depart,
+      parentGuard,
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 8, s.startRequests >= 0, s.startRequests <= 1,
@@ -143,8 +154,8 @@ module ui_identity_poll_protocol {
     s.phase == "discarded" implies s.returnedAssertion and s.aborted,
     s.result == "error" implies not(s.returnedAssertion) and not(s.joinRequested) }
 
-  action fresh = init.then(begin(false, true, true, 2))
-  action resumed = init.then(begin(true, true, true, 2))
+  run fresh = init.then(begin(false, true, true, 2))
+  run resumed = init.then(begin(true, true, true, 2))
   action waiting = startReply("valid").then(saveStart(true)).then(authorize(true)).then(scheduleDelay)
   action polling = waiting.then(timerFires)
 
