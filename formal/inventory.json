@@ -5518,19 +5518,21 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "03adaa1fcf389b04cfebe219defefac27b8f6d6b08acf5125de9d0454ee6a2b0",
+      "sha256": "a6edb9931c22337dcf9f949dc570871a2930a7e76a671fbe511f1d3dddf70f4c",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 29, 38, 44, 57, 59, 112, 118, 128, 131, 132, 134, 135, 136, 137, 154,
-        156, 160, 197, 219, 270, 302, 309, 316, 317, 318, 325, 326, 328, 332,
-        333, 334, 335, 357, 358, 359, 368, 376, 389, 403, 430, 446, 451, 454,
-        461, 464, 471, 472, 478, 616
+        2, 29, 38, 44, 66, 68, 121, 127, 137, 140, 141, 143, 144, 145, 146, 163,
+        165, 169, 206, 228, 279, 311, 312, 315, 324, 331, 332, 333, 340, 341,
+        343, 347, 349, 350, 351, 373, 374, 375, 385, 395, 400, 407, 421, 427,
+        428, 432, 434, 466, 480, 507, 523, 528, 531, 538, 541, 548, 549, 555,
+        693
       ],
       "review": "mapped-abstraction"
     },
@@ -5759,14 +5761,16 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "30e3fb68c1006efc4fc5029333fb361f4b01f419d3525a7625226f46ad6f6623",
+      "sha256": "19451f77e51cbf98c267cd74707cc3f9d57b2e5920973e657814741ebd5f62ca",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt"
       ],
       "candidateLines": [
-        260, 287, 308, 314, 331, 333, 334, 337, 338, 347, 348, 349, 350, 351
+        262, 264, 288, 293, 294, 303, 314, 320, 337, 339, 340, 341, 344, 345,
+        357, 358, 360, 361, 362, 363
       ],
       "review": "mapped-abstraction"
     },
@@ -6126,7 +6130,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "499342e7e6f365c7c5896bc1ff57e0c1266b8be0b8dcf07ad4144fb47763c39d",
+      "sha256": "2a5337f125293f67b12a5fec37f47195586aa411299b33e969d783c3cfa25b4e",
       "models": [
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
@@ -17857,6 +17861,19 @@
       "sha256": "81ac338b14423f7e132db94de0f5716bccfde4f3223d04416b8215e153f82a48",
       "sources": ["src/lib/browser-json.ts", "src/lib/project-api.ts"],
       "scenarios": ["bodyTimeoutTest", "invalidTest", "validTest"]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_auto_check.qnt",
+      "sha256": "55f7d4f428c52dd62c3ffb8a0e786926fee96449f0ca53471f591c7965bca961",
+      "sources": ["src/VaultActions.tsx", "src/lib/evm-vault-actions.ts"],
+      "scenarios": [
+        "approvalBeforeFinalityTest",
+        "attemptLimitTest",
+        "failedTransferTest",
+        "recoveryHashNeedsClickTest",
+        "replacedApprovalTest",
+        "transferWaitsForFinalityTest"
+      ]
     },
     {
       "path": "formal/models/ui/ui_vault_prompt_ownership.qnt",
