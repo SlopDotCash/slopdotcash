@@ -1317,16 +1317,29 @@ describe("configuration", () => {
     expect(limits().shareBps).toBe(5_000n);
   });
 
-  test("the checked-in configuration keeps the buyback off and its proposed limits complete", async () => {
+  test("the checked-in configuration is live in production, off on staging, and its limits are complete", async () => {
     for (const name of ["wrangler.toml", "wrangler.staging.toml"]) {
       const { vars } = Bun.TOML.parse(
         await Bun.file(new URL(name, import.meta.url)).text(),
       ) as { vars: Record<string, string> };
-      expect(vars.BUYBACK_MODE).toBe("off");
-      expect(parseBuybackConfig(vars, "live")).toEqual({
-        mode: "off",
-        limits: null,
-      });
+      if (name === "wrangler.toml") {
+        // Production: operator decision of 12 November 2026 (PRD section 6).
+        expect(vars.BUYBACK_MODE).toBe("live");
+        expect(vars.BUYBACK_START_AT).toBe("2026-11-12T00:00:00.000Z");
+        expect(vars.FEE_CONVERTER_MODE).toBe("live");
+        expect(vars.FEE_CONVERTER_NETWORKS.split(",")).toContain("robinhood");
+        const production = parseBuybackConfig(vars, "live");
+        expect(production.mode).toBe("live");
+        expect((production.limits as BuybackLimits).startAt).toBe(
+          "2026-11-12T00:00:00.000Z",
+        );
+      } else {
+        expect(vars.BUYBACK_MODE).toBe("off");
+        expect(parseBuybackConfig(vars, "live")).toEqual({
+          mode: "off",
+          limits: null,
+        });
+      }
       // Activation changes only the mode and the start instant.
       const active = parseBuybackConfig(
         { ...vars, BUYBACK_MODE: "live", BUYBACK_START_AT: START },
