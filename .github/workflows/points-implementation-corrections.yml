@@ -1,0 +1,178 @@
+name: Rebalance historical implementation Points
+
+# Allocation only: preserve recorded value, contribution dates, source keys and
+# frozen financial obligations. No schedule, external manifest or fork input.
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Project ID in the current D1 registry"
+        required: true
+        type: string
+      month:
+        description: "Optional single UTC census month (YYYY-MM); blank collects the complete census"
+        type: string
+      candidate_month:
+        description: "Optional correction month (YYYY-MM); other pools retain explicit dispositions"
+        type: string
+      before:
+        description: "Optional canonical UTC cutoff; blank uses the collector's historical cutoff"
+        type: string
+      resume_run:
+        description: "Optional prior run of this workflow at the exact same main SHA"
+        type: string
+      apply:
+        description: "Record eligible corrections after complete evidence and private financial checks"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: slop-historical-points-${{ inputs.project }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  BUN_VERSION: "1.3.14"
+  NODE_VERSION: "24.15.0"
+  VITE_SLOP_ENVIRONMENT: production
+
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Snapshot authoritative project registry
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
+        run: bun run projects:sync
+      - name: Install the pinned merge evidence collector
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+      - name: Restore only same-source trusted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.resume_run }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/implementation-campaign"
+          if [ -n "$RESUME_RUN" ]; then
+            [[ "$RESUME_RUN" =~ ^[0-9]+$ ]]
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN" > "$RUNNER_TEMP/resume-run.json"
+            node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/resume-run.json`, 'utf8'));
+          if (run.head_sha !== process.env.GITHUB_SHA || run.head_branch !== 'main' ||
+              run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/points-implementation-corrections.yml')
+            throw new Error('Resume evidence does not belong to the same trusted main collector');
+          NODE
+            gh run download "$RESUME_RUN" --repo "$GITHUB_REPOSITORY" \
+              --name "implementation-campaign-$GITHUB_SHA" --dir "$RUNNER_TEMP/implementation-campaign"
+          fi
+      - name: Collect and verify complete historical attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROJECT: ${{ inputs.project }}
+          MONTH: ${{ inputs.month }}
+          CANDIDATE_MONTH: ${{ inputs.candidate_month }}
+          BEFORE: ${{ inputs.before }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          if [ "$APPLY" = true ] && { [ -n "$MONTH" ] || [ -n "$CANDIDATE_MONTH" ]; }; then
+            echo "::error::Bounded month runs collect and preview only; apply the complete resumed historical campaign."
+            exit 1
+          fi
+          args=(--project "$PROJECT" --output "$RUNNER_TEMP/implementation-campaign")
+          if [ -n "$MONTH" ]; then args+=(--month "$MONTH"); fi
+          if [ -n "$CANDIDATE_MONTH" ]; then args+=(--candidate-month "$CANDIDATE_MONTH"); fi
+          if [ -n "$BEFORE" ]; then args+=(--before "$BEFORE"); fi
+          # Leave time to retain verified raw evidence and checkpoints even
+          # when the full census needs another quota window and a resumed run.
+          timeout --signal=TERM 18000 bun --no-env-file scripts/collect-implementation-corrections.ts "${args[@]}"
+      - name: Retain public source evidence and collection dispositions
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: implementation-campaign-${{ github.sha }}
+          path: ${{ runner.temp }}/implementation-campaign
+          if-no-files-found: error
+          retention-days: 30
+
+  reconcile:
+    needs: collect
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Share normal production publication's lock, including private eligibility
+    # and the atomic import. This workflow never deploys an untested bundle.
+    concurrency:
+      group: slop-production
+      cancel-in-progress: false
+    environment:
+      name: slop-production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Load this run's verified public attribution evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: implementation-campaign-${{ github.sha }}
+          path: ${{ runner.temp }}/implementation-campaign
+      - name: Snapshot authoritative project registry
+        env:
+          SLOP_API_ORIGIN: https://slop.cash
+        run: bun run projects:sync
+      - name: Protect financial state and reconcile the unchanged Points pools
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          mode=preview
+          if [ "$APPLY" = true ]; then mode=apply; fi
+          bun --no-env-file scripts/prepare-implementation-corrections.ts \
+            "$RUNNER_TEMP/implementation-campaign/manifest.json" \
+            "$RUNNER_TEMP/implementation-result" "$mode"
+      - name: Retain public reconciliation receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: implementation-result-${{ github.sha }}
+          path: ${{ runner.temp }}/implementation-result
+          if-no-files-found: warn
+          retention-days: 30

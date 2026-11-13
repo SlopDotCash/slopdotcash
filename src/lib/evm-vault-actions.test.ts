@@ -1,9 +1,16 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { toFunctionSelector } from "viem";
-import { EVM_ESCROW_EVENT_TOPICS } from "../../contracts/evm/adapter";
+import {
+  buildDepositCalldata,
+  EVM_ESCROW_EVENT_TOPICS,
+} from "../../contracts/evm/adapter";
 import type { EscrowDeployment } from "./escrow-policy.mjs";
-import { checkVaultBatch, type VaultConnection } from "./evm-vault-actions";
+import {
+  checkVaultAction,
+  checkVaultBatch,
+  type VaultConnection,
+} from "./evm-vault-actions";
 
 const address = (value: number) => `0x${value.toString(16).padStart(40, "0")}`;
 const addressWord = (value: string) =>
@@ -61,6 +68,7 @@ function fixture(
     finalized?: string;
     canonicalHash?: string;
     status?: string;
+    input?: string;
   } = {},
 ) {
   const reads: string[] = [];
@@ -98,6 +106,13 @@ function fixture(
           params[0] === "finalized" ? (options.finalized ?? "0x20") : "0x10",
         hash: options.canonicalHash ?? BLOCK,
       };
+    if (method === "eth_getTransactionByHash")
+      return {
+        from: OWNER,
+        to: VAULT,
+        input: options.input ?? "0x",
+        value: "0x0",
+      };
     if (method === "eth_getCode") return CODE;
     if (method === "eth_getStorageAt") return uintWord(0n);
     if (method === "eth_call") {
@@ -118,6 +133,8 @@ function fixture(
   return {
     reads,
     check: () => checkVaultBatch(deployment, wallet, "7", null, TRANSACTION),
+    send: () =>
+      checkVaultAction(deployment, wallet, "deposit", "7", TRANSACTION, "send"),
   };
 }
 
@@ -161,8 +178,40 @@ test("a matching event cannot replace the verified asset identity", async () => 
   await expect(check()).rejects.toThrow("does not match reviewed deployment");
 });
 
-test("a matching deposit remains pending before finality", async () => {
-  const { check } = fixture([deposited()], { finalized: "0xf" });
+test("a matching deposit is received, not verified, before finality", async () => {
+  const { check, reads } = fixture([deposited()], { finalized: "0xf" });
+  expect(await check()).toEqual({
+    status: "received",
+    transactionId: TRANSACTION,
+  });
+  // Received is display only: the deployment and amount are not verified yet.
+  expect(reads).not.toContain("eth_call");
+});
+
+test("a deposit whose unfinal block was replaced stays pending", async () => {
+  const { check } = fixture([deposited()], {
+    finalized: "0xf",
+    canonicalHash: `0x${"f".repeat(64)}`,
+  });
+  expect(await check()).toEqual({
+    status: "pending",
+    transactionId: TRANSACTION,
+  });
+});
+
+test("a reverted unfinal batch is never reported as received", async () => {
+  const { check } = fixture([deposited()], {
+    finalized: "0xf",
+    status: "0x0",
+  });
+  expect(await check()).toEqual({
+    status: "pending",
+    transactionId: TRANSACTION,
+  });
+});
+
+test("another wallet's unfinal deposit is not reported as received", async () => {
+  const { check } = fixture([deposited(OTHER)], { finalized: "0xf" });
   expect(await check()).toEqual({
     status: "pending",
     transactionId: TRANSACTION,
@@ -182,4 +231,23 @@ test("a reverted receipt never becomes a verified deposit", async () => {
     status: "failed",
     transactionId: TRANSACTION,
   });
+});
+
+test("a direct deposit is received before finality and verified after it", async () => {
+  const input = buildDepositCalldata("7");
+  const early = fixture([deposited()], { finalized: "0xf", input });
+  expect(await early.send()).toBe("received");
+  expect(early.reads).not.toContain("eth_call");
+  const final = fixture([deposited()], { input });
+  expect(await final.send()).toBe("finalized");
+  expect(final.reads).toContain("eth_call");
+});
+
+test("a reverted unfinal direct deposit is never reported as received", async () => {
+  const { send } = fixture([deposited()], {
+    finalized: "0xf",
+    status: "0x0",
+    input: buildDepositCalldata("7"),
+  });
+  expect(await send()).toBe("pending");
 });

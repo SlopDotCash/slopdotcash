@@ -1,5 +1,6 @@
 import { isCreditEligibleCommitAuthor } from "../src/lib/commit-credit";
 import { type DeploymentTier, deploymentOrigins } from "../src/lib/deployment";
+import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { workUnitCreditActorIds } from "../src/lib/implementation-lines";
 import {
   canonicalActorAvatarUrl,
@@ -1004,6 +1005,7 @@ const ACCOUNT_BAN_FEED = "https://slop.cash/api/v1/project-account-bans";
 export async function loadParticipationBans(
   github: Pick<GitHubClient, "get">,
   transport: Fetch = fetch,
+  retainedActorNodeIds: Iterable<string> = [],
 ): Promise<Map<string, string>> {
   // 404 covers the release window before the route is deployed.
   const body = await fetchAuthoritativeFeed<{
@@ -1017,6 +1019,18 @@ export async function loadParticipationBans(
   )
     throw new Error("The account ban feed has an invalid shape");
   const bans = new Map<string, string>();
+  const retained = new Map<string, Set<string>>();
+  for (const nodeId of retainedActorNodeIds) {
+    const id =
+      typeof nodeId === "string" ? githubUserIdFromNodeId(nodeId) : null;
+    if (id === null)
+      throw new Error(
+        "Retained ban identity is not a canonical GitHub user ID",
+      );
+    const aliases = retained.get(id) ?? new Set<string>();
+    aliases.add(nodeId);
+    retained.set(id, aliases);
+  }
   const seen = new Set<string>();
   for (const ban of body.bans as { githubId?: unknown; bannedAt?: unknown }[]) {
     if (
@@ -1028,17 +1042,24 @@ export async function loadParticipationBans(
     )
       throw new Error("The account ban feed has an invalid record");
     seen.add(ban.githubId);
+    const bannedAt = new Date(ban.bannedAt).toISOString();
+    // Historical proofs can still contain a deleted account's immutable ID,
+    // including an older node-ID spelling. Its ban must not disappear merely
+    // because GitHub can no longer return a live user object.
+    for (const nodeId of retained.get(ban.githubId) ?? [])
+      bans.set(nodeId, bannedAt);
     const account = await github.get<{ id: number; node_id: string }>(
       `/user/${ban.githubId}`,
     );
-    // A deleted account has no node ID, so no new event can carry it.
+    // No new live event can carry a deleted account. Retained identities were
+    // matched above without relying on the availability of that live object.
     if (account === null) continue;
     if (
       String(account.id) !== ban.githubId ||
       typeof account.node_id !== "string"
     )
       throw new Error("GitHub returned a different account for a ban");
-    bans.set(account.node_id, new Date(ban.bannedAt).toISOString());
+    bans.set(account.node_id, bannedAt);
   }
   return bans;
 }
