@@ -1857,9 +1857,9 @@
     },
     {
       "path": "contracts/solana/scripts/bootstrap-linux.sh",
-      "sha256": "3fe0a84986deca04dc3edee46120e07688d122a5fc33ed487420ceb9477e116e",
+      "sha256": "85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569",
       "models": ["formal/models/contracts/deployment_artifact.qnt"],
-      "candidateLines": [10, 14],
+      "candidateLines": [10, 17],
       "review": "mapped-abstraction"
     },
     {
@@ -11003,7 +11003,7 @@
     },
     {
       "path": "formal/models/contracts/deployment_artifact.qnt",
-      "sha256": "3eaac3b497810549a96f67fa509dd1234da770675fa258885648a289b3eb283e",
+      "sha256": "0491b12c9e2644a92f031b1be1d30d9951e5181fe54f409da09ff77a2d9bfe59",
       "sources": [
         "contracts/solana/scripts/bootstrap-linux.sh",
         "contracts/solana/scripts/build-local.sh",

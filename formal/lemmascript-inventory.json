@@ -2256,7 +2256,7 @@
 {"name":"<ArrowFunction@1671>","kind":"ArrowFunction","line":1671,"sha256":"b7ecbac89c8b62b46d8b706eababe1ecb9b4ebe2d9e5d3ef3a126284ce1a3b56","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@1704>","kind":"ArrowFunction","line":1704,"sha256":"02461aa8239b47f4d80fbeec349b1d3aa6634b1bab6467ab6949f021de27e66c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"contracts/solana/scripts/bootstrap-linux.sh","sha256":"3fe0a84986deca04dc3edee46120e07688d122a5fc33ed487420ceb9477e116e","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/scripts/bootstrap-linux.sh","sha256":"85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/scripts/build-local.sh","sha256":"0039c233cb536086ea49ebe4af1993352f3f08339ebc8967b1e1715dca75ead8","language":"shell","disposition":"outside-typescript-toolchain","functions":[
