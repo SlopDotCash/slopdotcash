@@ -16,10 +16,17 @@
     "build outputs"
   ],
   "counts": {
+<<<<<<< HEAD
     "files": 738,
     "functions": 10428,
     "selectedContractTargets": 188,
     "unprovedFunctions": 10240,
+=======
+    "files": 737,
+    "functions": 10367,
+    "selectedContractTargets": 188,
+    "unprovedFunctions": 10179,
+>>>>>>> origin/main
     "nonTypeScriptFiles": 56
   },
   "limits": [
