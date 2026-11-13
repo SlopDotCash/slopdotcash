@@ -20,6 +20,7 @@ import {
   PROJECT_SIZE,
   solanaBase58,
   solanaConfigAddress,
+  solanaVaultAddress,
 } from "../contracts/solana/adapter";
 import { buildInitializeVaultInstructions } from "../contracts/solana/owner-instructions";
 import type { ReviewedSolanaProgram } from "../contracts/solana/programs";
@@ -63,6 +64,8 @@ let createdProject:
 let creationSignature = solanaBase58(new Uint8Array(64).fill(7));
 let creationWire = new Uint8Array();
 let creationStatus: "pending" | "failed" | "valid" = "valid";
+let snapshotLimited = false;
+let snapshotWrongGenesis = false;
 const BLOCKHASH = key(9);
 const creationMethods: string[] = [];
 const config = new Uint8Array(CONFIG_SIZE);
@@ -164,7 +167,35 @@ const rpc = Bun.serve({
       }
     }
     if (mode === "program" || mode === "creation") {
-      if (method === "getGenesisHash") return answer(network.genesisHash);
+      if (method === "getGenesisHash")
+        return answer(
+          snapshotWrongGenesis ? "wrong-network" : network.genesisHash,
+        );
+      if (method === "getBlockTime") return answer(1761609600);
+      if (method === "getMultipleAccounts") {
+        if (snapshotLimited)
+          return new Response("rate limited", { status: 429 });
+        const known = accounts();
+        if (createdProject) {
+          const token = new Uint8Array(165);
+          token.set(bytes(network.asset as string));
+          token.set(bytes(createdProject.address), 32);
+          token[108] = 1;
+          known[
+            solanaVaultAddress(createdProject.programId, createdProject.address)
+          ] = {
+            owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            executable: false,
+            data: [base64(token), "base64"],
+          };
+        }
+        return answer({
+          context: { slot: 1 },
+          value: (params[0] as unknown as string[]).map(
+            (address) => known[address] ?? null,
+          ),
+        });
+      }
       if (method === "getAccountInfo")
         return answer({
           context: { slot: 1 },
@@ -409,6 +440,16 @@ test("registration tries the next reviewed Solana program for the exact creation
       body: { error: "vault_creation_failed" },
     });
     creationStatus = "valid";
+    snapshotLimited = true;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 0 });
+    snapshotLimited = false;
     expect(await vaultSetup("register")).toMatchObject({
       status: 200,
       body: {
@@ -421,9 +462,64 @@ test("registration tries the next reviewed Solana program for the exact creation
       },
     });
     expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(
+      sqlite
+        .query(
+          "SELECT vault,asset_decimals,total_deposited,block_number FROM vault_snapshots",
+        )
+        .get(),
+    ).toEqual({
+      vault: plan.vault,
+      asset_decimals: 6,
+      total_deposited: "0",
+      block_number: "1",
+    });
+    // Solana execution stays inactive; the authenticated registration retry
+    // alone can seed a previously registered vault from a finalized read.
+    sqlite.exec("DELETE FROM vault_snapshots");
+    snapshotWrongGenesis = true;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    snapshotWrongGenesis = false;
+    programCode = new Uint8Array([1, 2, 3, 5]);
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    programCode = new Uint8Array([1, 2, 3, 4]);
+    projectData[306] = 1;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    projectData[306] = 0;
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 0 });
+    snapshotLimited = true;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 503,
+      body: { error: "vault_snapshot_unavailable" },
+    });
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 0 });
+    snapshotLimited = false;
+    expect(await vaultSetup("register")).toMatchObject({
+      status: 200,
+      body: { status: "registered" },
+    });
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(2);
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 1 });
     expect(creationMethods).not.toContain("sendTransaction");
   } finally {
+    snapshotLimited = false;
     reviewedPrograms.splice(0, reviewedPrograms.length, program);
+    snapshotWrongGenesis = false;
     extraProgram = undefined;
     createdProject = undefined;
     mode = "program";

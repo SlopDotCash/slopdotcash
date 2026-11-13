@@ -19,6 +19,7 @@ import {
   knownAssetSymbol,
   type PaymentChain,
 } from "./lib/payments/contracts";
+import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { StatusBadge } from "./Presentation";
 
 type PayoutTone = "success" | "warning" | "danger" | "neutral";
@@ -172,7 +173,7 @@ export function PayoutAmount({
         <strong>{formatBaseUnits(base, decimals)}</strong>
       </span>
       {symbol ? (
-        <span className="payout-unit">{symbol}</span>
+        <span className="payout-unit">{formatAssetSymbol(symbol)}</span>
       ) : (
         <span className="payout-unit payout-token">
           <Coins aria-hidden="true" size={16} />

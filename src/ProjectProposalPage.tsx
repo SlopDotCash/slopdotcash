@@ -42,6 +42,7 @@ import {
   projectApiRequest,
   publishProjectRevision,
   type RevisionResult,
+  removeProject,
   useProjectMaintainer,
   useProjectSession,
 } from "./lib/project-api";
@@ -72,6 +73,7 @@ import {
   validIntegrationBranch,
 } from "./lib/project-schema.mjs";
 import type { ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import {
   NETWORK_NAMES,
   REWARD_ASSET_NETWORKS,
@@ -1860,7 +1862,7 @@ function ProjectProposalForm({
                       : p.fundingMode !== "monthly"
                         ? "None"
                         : pool.valid
-                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? pool.display : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
+                          ? `${p.rewardKind === "token" || p.rewardKind === "native" ? formatRewardCapDisplay(pool.display, { kind: p.rewardKind, symbol: fundingSymbol }) : formatMonthlyAmount(pool.minor, 6, fundingSymbol)} on ${SETTLEMENT_CHAIN_NAMES[p.settlementChain] ?? p.settlementChain} · pledge`
                           : "Invalid"}
                   </dd>
                 </div>
@@ -2105,6 +2107,10 @@ function ProjectUpdateForm({
     | { state: "idle" | "publishing" }
     | { state: "error"; message: string; staleRevision: boolean }
     | { state: "published"; result: RevisionResult }
+  >({ state: "idle" });
+  const [removal, setRemoval] = useState<
+    | { state: "idle" | "removing" | "removed" }
+    | { state: "error"; message: string; staleRevision: boolean }
   >({ state: "idle" });
   useEffect(() => {
     let active = true;
@@ -2420,7 +2426,10 @@ function ProjectUpdateForm({
             after:
               choice.mode === "monthly" && amount.valid
                 ? choice.assetKind === "token" || choice.assetKind === "native"
-                  ? amount.display
+                  ? formatRewardCapDisplay(amount.display, {
+                      kind: choice.assetKind,
+                      symbol: String(next.reward.currency),
+                    })
                   : formatMonthlyAmount(
                       amount.minor,
                       6,
@@ -2508,6 +2517,69 @@ function ProjectUpdateForm({
       publishInFlight.current = false;
     }
   }
+  async function remove() {
+    if (!mounted.current || publishInFlight.current || base === null) return;
+    if (
+      !window.confirm(
+        `Remove ${current.name} from Slop? This stops new work and hides its listing and skills. History, earned Points, private cases, and funded obligations remain.`,
+      )
+    )
+      return;
+    publishInFlight.current = true;
+    setRemoval({ state: "removing" });
+    try {
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
+      await removeProject(project.id, base.revision, actorId);
+      if (!mounted.current) return;
+      await requireEditorActor(actorId);
+      if (!mounted.current) return;
+      setRemoval({ state: "removed" });
+    } catch (error) {
+      if (!mounted.current) return;
+      const failure = await checkedEditorFailure(error, actorId);
+      if (!mounted.current) return;
+      if (editorAccessLost(failure)) {
+        onAccessLost();
+        return;
+      }
+      setRemoval({
+        state: "error",
+        staleRevision:
+          failure instanceof ProjectApiError &&
+          failure.code === "stale_revision",
+        message: errorMessage(
+          failure,
+          "Removal could not be confirmed. Try again.",
+        ),
+      });
+    } finally {
+      publishInFlight.current = false;
+    }
+  }
+  if (removal.state === "removed" || removal.state === "removing")
+    return (
+      <main className="shell route-main manage-page">
+        <RoutePageHeader
+          title={
+            removal.state === "removing"
+              ? "Removing project"
+              : "Project removed"
+          }
+        />
+        {removal.state === "removing" ? (
+          <p role="status">Removing {current.name}…</p>
+        ) : (
+          <>
+            <p role="status">
+              {current.name} is removed from Slop. History, earned Points,
+              private cases, and funded obligations are preserved.
+            </p>
+            <a href="/projects">Browse projects</a>
+          </>
+        )}
+      </main>
+    );
   const nextMonth = new Date();
   nextMonth.setUTCDate(1);
   nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
@@ -2519,7 +2591,8 @@ function ProjectUpdateForm({
       </p>
       <RoutePageHeader icon={<Settings2 />} title="Manage project" />
       <ProjectNav project={project} current="settings" />
-      {session.status === "signed-in" &&
+      {removal.state === "idle" &&
+      session.status === "signed-in" &&
       session.session.githubId === actorId ? (
         <ProjectSetupStatusPanel
           key={
@@ -2739,6 +2812,28 @@ function ProjectUpdateForm({
               ? "Publishing…"
               : "Publish changes"}
           </button>
+          <button
+            className="button secondary-button"
+            disabled={submission.state === "publishing" || base === null}
+            onClick={() => void remove()}
+            type="button"
+          >
+            Remove project
+          </button>
+          {removal.state === "error" ? (
+            <p className="form-error" role="alert">
+              {removal.message}{" "}
+              {removal.staleRevision ? (
+                <button
+                  className="text-button"
+                  onClick={() => setReload((count) => count + 1)}
+                  type="button"
+                >
+                  Reload
+                </button>
+              ) : null}
+            </p>
+          ) : null}
           {submission.state === "error" ? (
             <p className="form-error" role="alert">
               {submission.message}{" "}

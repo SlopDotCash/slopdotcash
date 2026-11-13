@@ -1,6 +1,7 @@
 /**
- * Creates a deterministic inventory of the Cloudflare Pages bundle and verifies
- * that every public file is served byte-for-byte after a production deploy.
+ * Creates a deterministic inventory of the raw Cloudflare Pages bundle and
+ * verifies exact public bytes, including the approved canonical-root HTML
+ * transform shared with the Pages Function.
  * Pages-only control files are excluded because Cloudflare consumes rather than
  * serves them; the manifest itself is verified separately as the release gate.
  */
@@ -10,6 +11,7 @@ import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { renderWebAnalytics } from "../src/lib/web-analytics.mjs";
 import { sha256Hex as digest } from "./sha256.mjs";
 
 export const MANIFEST_FILENAME = "deployment-manifest.json";
@@ -290,6 +292,48 @@ export async function verifyLocalBundle(distRoot) {
   return manifest.files.length;
 }
 
+async function renderedRootBytes(root, manifest, origin) {
+  const record = manifest.files.find((file) => file.path === "index.html");
+  const contents = await readFile(join(root, "index.html"));
+  // Bind this exact read too: an index changed after inventory verification
+  // must never become the authority for the expected published response.
+  if (
+    contents.byteLength !== record.bytes ||
+    digest(contents) !== record.sha256
+  )
+    throw new Error("index.html changed after local manifest verification");
+  if (origin !== CANONICAL_ORIGIN) return contents;
+  return Buffer.from(
+    renderWebAnalytics(
+      new TextDecoder("utf-8", { fatal: true }).decode(contents),
+      new URL(origin).hostname,
+    ),
+  );
+}
+
+/** Exact expected root response, optionally bound to an earlier raw capture. */
+export async function expectedPublishedRoot(
+  distRoot,
+  origin,
+  expectedRawIndexSha256,
+) {
+  if (
+    expectedRawIndexSha256 !== undefined &&
+    (typeof expectedRawIndexSha256 !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(expectedRawIndexSha256))
+  )
+    throw new TypeError("Expected raw index digest must be lowercase SHA-256");
+  const root = resolve(distRoot);
+  const { manifest } = await loadLocalManifest(root);
+  if (
+    expectedRawIndexSha256 !== undefined &&
+    manifest.files.find((file) => file.path === "index.html").sha256 !==
+      expectedRawIndexSha256
+  )
+    throw new Error("index.html changed after evidence artifact capture");
+  return renderedRootBytes(root, manifest, origin);
+}
+
 export async function createDistManifest(distRoot) {
   const root = resolve(distRoot);
   const files = await inventory(root);
@@ -479,6 +523,18 @@ export async function verifyPublishedBundle(
 
   const root = resolve(distRoot);
   const { manifest, manifestBytes } = await loadLocalManifest(root);
+  const publishedFiles = [...manifest.files];
+  if (origin === CANONICAL_ORIGIN) {
+    const contents = await renderedRootBytes(root, manifest, origin);
+    const index = publishedFiles.findIndex(
+      (file) => file.path === "index.html",
+    );
+    publishedFiles[index] = {
+      path: "index.html",
+      bytes: contents.byteLength,
+      sha256: digest(contents),
+    };
+  }
   const options = {
     concurrency,
     deadline: Date.now() + totalTimeoutMs,
@@ -505,10 +561,10 @@ export async function verifyPublishedBundle(
 
   let nextIndex = 0;
   async function worker() {
-    while (nextIndex < manifest.files.length) {
+    while (nextIndex < publishedFiles.length) {
       const index = nextIndex;
       nextIndex += 1;
-      await fetchExact(manifest.files[index], options);
+      await fetchExact(publishedFiles[index], options);
     }
   }
   await Promise.all(
@@ -521,6 +577,16 @@ export async function verifyPublishedBundle(
 
 async function main(arguments_) {
   const [command, distRoot, origin, verificationToken, ...extra] = arguments_;
+  if (
+    command === "render-root" &&
+    distRoot !== undefined &&
+    (origin === CANONICAL_ORIGIN || STAGING_ORIGIN_PATTERN.test(origin)) &&
+    verificationToken === undefined &&
+    extra.length === 0
+  ) {
+    process.stdout.write(await expectedPublishedRoot(distRoot, origin));
+    return;
+  }
   if (command === "create" && distRoot !== undefined && origin === undefined) {
     const manifest = await createDistManifest(distRoot);
     process.stdout.write(
@@ -558,7 +624,7 @@ async function main(arguments_) {
     return;
   }
   throw new TypeError(
-    `Usage: ${basename(process.argv[1])} create <dist> | verify-local <dist> | verify <dist> ${CANONICAL_ORIGIN}|<staging origin> <token>`,
+    `Usage: ${basename(process.argv[1])} create <dist> | verify-local <dist> | render-root <dist> ${CANONICAL_ORIGIN}|<staging origin> | verify <dist> ${CANONICAL_ORIGIN}|<staging origin> <token>`,
   );
 }
 

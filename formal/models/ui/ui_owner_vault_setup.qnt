@@ -137,12 +137,30 @@ module ui_owner_vault_setup {
   action callbackFailed(id:int):bool = all{s.work.get(id).phase=="callback",
     s'=s.with("work",s.work.set(id,s.work.get(id).with("phase","done")))
       .with("error",s.error or owns(id))}
-  action step={nondet id=ids.oneOf() nondet kind=Set("connect","review","recover","create").oneOf()
-    nondet ok=Set(false,true).oneOf() nondet existing=Set(false,true).oneOf() nondet outcome=Set(1,2,3).oneOf()
-    nondet hash=Set(1,2).oneOf()
-    any{begin(id,kind),connectReply(id,ok),reviewReply(id,ok,existing),walletChecked(id,ok),freshReviewReply(id,ok),
-      send(id,ok),walletReply(id,outcome,ok),depart,changeChoice,remount,userConfirmsUnsent,loadLegacy,
-      beginRegister(id,hash,ok),registerReply(id,outcome),callbackSettled(id,ok),callbackFailed(id),s'=s}}
+  action step={
+    any {
+      { nondet id = ids.oneOf() nondet kind = Set("connect","review","recover","create").oneOf() begin(id,kind) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() connectReply(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() nondet existing = Set(false,true).oneOf()
+        reviewReply(id,ok,existing) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() walletChecked(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() freshReviewReply(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() send(id,ok) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() nondet outcome = Set(1,2,3).oneOf()
+        walletReply(id,outcome,ok) },
+      depart,
+      changeChoice,
+      remount,
+      userConfirmsUnsent,
+      loadLegacy,
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() nondet hash = Set(1,2).oneOf()
+        beginRegister(id,hash,ok) },
+      { nondet id = ids.oneOf() nondet outcome = Set(1,2,3).oneOf() registerReply(id,outcome) },
+      { nondet id = ids.oneOf() nondet ok = Set(false,true).oneOf() callbackSettled(id,ok) },
+      { nondet id = ids.oneOf() callbackFailed(id) },
+      s'=s
+    }
+  }
   val invariant=all{s.epoch>=1,s.epoch<=2,s.started>=0,s.started<=7,
     s.store.hash>=0,s.store.hash<=2,s.store.id==0 implies s.store==empty,
     s.callbacks.subseteq(s.registered),s.prompts.forall(id=>s.work.get(id).captured.id==id)}

@@ -181,6 +181,8 @@ async function closedItem(cb: (run: Run) => Promise<void>) {
     readdirSync(new URL("../../migrations/", import.meta.url))
       .filter((p) => p.endsWith(".sql"))
       .sort(),
+    ":memory:",
+    () => new Date(),
   );
   let beforeAppealResolution: (() => void) | null = null;
   let beforePenaltyInsert: (() => Promise<void>) | null = null;
@@ -3818,6 +3820,62 @@ test("an author's appeal before any finding keeps the advisory label when closur
   });
 });
 
+test("an author's reopen before any finding does not exempt the revision from review", async () => {
+  await closedItem(async (run) => {
+    // The author closes and reopens their own PR before Slopbot has reviewed
+    // the revision: there is no finding to appeal and no maintainer decision.
+    const reopened = await run.reopen(AUTHOR);
+    expect(await run.deliver(reopened)).toBe("appeal");
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
+test("an author's appeal after a push does not exempt the new head from review", async () => {
+  await closedItem(async (run) => {
+    // Head b gets a spam label only: the owner has not consented to closure.
+    run.consent(false);
+    expect(await run.review()).not.toStartWith("closed");
+    expect(run.labels).toContain("slopbot: spam");
+    // The author pushes head d and then appeals. The only finding is head
+    // b's, so the appeal is processed against a head no finding covers and
+    // no human reopened: it decides nothing about head d.
+    run.head("d".repeat(40));
+    run.model("spam", 0.97);
+    await run.deliver(run.job("appeal", { senderId: AUTHOR }));
+    // Head d still gets its own review and, once the owner consents, its
+    // own close and debit.
+    run.consent(true);
+    run.model("spam", 0.97);
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
+test("an author's self-reopen after a push does not exempt the new head from review", async () => {
+  await closedItem(async (run) => {
+    expect(await run.review()).toBe("closed (spam)");
+    // The author pushes head d and then reopens their own item. The only
+    // finding is head b's, so the self-reopen is an appeal of a revision no
+    // finding covers: it decides nothing about head d.
+    run.head("d".repeat(40));
+    run.model("spam", 0.97);
+    expect(await run.deliver(await run.reopen(AUTHOR))).toBe(
+      "appeal drafted (deny)",
+    );
+    // Head d still gets its own review and its own close and debit.
+    run.model("spam", 0.97);
+    expect(await run.review()).toBe("closed (spam)");
+    expect(run.sql(PENALTY)).toMatchObject([
+      { category: "spam", debit_thirds: 3, reversal: null },
+    ]);
+  });
+});
+
 test("a retired project reverses an existing debit through a maintainer reopen, with no review or GitHub write", async () => {
   setSystemTime(new Date(CLOSED_AT));
   await closedItem(async (run) => {
@@ -4322,6 +4380,40 @@ test("an unconfirmed close keeps its slot and cannot be resent while GitHub stil
     ).toEqual([{ n: 0 }]);
   });
 }, 30000);
+
+test("a close reservation whose review lease expires while paused cannot send a GitHub close", async () => {
+  setSystemTime(new Date(CLOSED_AT));
+  await closedItem(async (run) => {
+    const paused = run.pauseNextCloseReservation();
+    const reviewing = run.review().catch((error: unknown) => error);
+    try {
+      await Promise.race([
+        paused.entered,
+        reviewing.then((result) => {
+          throw new Error(`Reservation not reached: ${result}`);
+        }),
+      ]);
+      setSystemTime(new Date(Date.parse(CLOSED_AT) + 21 * 60_000));
+    } finally {
+      paused.release();
+    }
+    expect(await reviewing).toBeInstanceOf(Error);
+    expect(run.currentState()).toBe("open");
+    expect(
+      run.writes.filter(
+        (write) => write.startsWith("PATCH ") && write.includes("/pulls/"),
+      ),
+    ).toEqual([]);
+    expect(run.sql("SELECT COUNT(*) AS n FROM slopbot_close_attempts")).toEqual(
+      [{ n: 0 }],
+    );
+    expect(
+      run.sql(
+        "SELECT COUNT(*) AS n FROM slopbot_actions WHERE action = 'close'",
+      ),
+    ).toEqual([{ n: 0 }]);
+  });
+});
 
 test("a delayed close reservation cannot win a slot another review already consumed", async () => {
   setSystemTime(new Date(CLOSED_AT));

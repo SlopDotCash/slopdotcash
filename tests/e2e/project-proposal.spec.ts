@@ -402,30 +402,24 @@ test("a stale session observation cannot authorize creation for a new actor", as
   diagnostics,
 }) => {
   let actor = "4242";
-  let replaceAfterSessionRead = false;
   let attempts = 0;
   diagnostics.allowResponse(403, "POST", "/api/v1/projects");
-  await page.route("**/api/v1/project-session", (route) => {
-    const observed = actor;
-    // Return the previous observation once; the following API request belongs
-    // to the changed actor in this explicit identity-provider double.
-    if (replaceAfterSessionRead) {
-      replaceAfterSessionRead = false;
-      actor = "4343";
-    }
-    return route.fulfill({
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
       json: {
         session: {
-          githubId: observed,
+          githubId: actor,
           githubLogin: "example-maintainer",
           admin: false,
         },
       },
-    });
-  });
+    }),
+  );
   await page.route("**/api/v1/projects", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
-    expect(actor).toBe("4343");
+    // The account changes after the editor's last session observation, so
+    // the create request still carries the previous actor.
+    actor = "4343";
     attempts += 1;
     expect(route.request().headers()["x-slop-expected-github-id"]).toBe("4242");
     await route.fulfill({
@@ -438,7 +432,6 @@ test("a stale session observation cannot authorize creation for a new actor", as
     });
   });
   await prepareCreationReview(page);
-  replaceAfterSessionRead = true;
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
@@ -900,9 +893,10 @@ test("failed or partial GitHub lookups never fill unknown facts", async ({
   diagnostics.allow(
     /^(?:console Failed to load resource: .* at |\d{3} GET )http:\/\/[^ ]+\/api\/v1\/project-github\//u,
   );
-  // A changed or cleared draft cancels its pending lookup below.
+  // The loop changes open-protein to new-project, then clears that draft.
+  // Either in-flight lookup may be canceled by that explicit next edit.
   diagnostics.allow(
-    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\/example\/open-protein$/u,
+    /^net::ERR_ABORTED GET http:\/\/[^ ]+\/api\/v1\/project-github\/repositories\/example\/(?:open-protein|new-project)$/u,
   );
   await routeGitHub(page, { repository: 404 });
   await page.goto("/projects/new", { waitUntil: "networkidle" });

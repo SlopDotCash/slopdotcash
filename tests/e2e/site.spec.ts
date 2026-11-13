@@ -93,6 +93,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
 }) => {
   let reads = 0;
   let inventoryReads = 0;
+  const readsBefore: Record<string, number> = {};
   await page.route("**/api/v1/project-session", (route) => {
     reads++;
     return route.fulfill({
@@ -101,11 +102,13 @@ test("project setup shares one sign-in read with its owner inventory", async ({
       },
     });
   });
-  await page.route("**/api/v1/project-setup", (route) =>
-    route.fulfill({ json: { projects: [], applications: [] } }),
-  );
+  await page.route("**/api/v1/project-setup", (route) => {
+    readsBefore.setup = reads;
+    return route.fulfill({ json: { projects: [], applications: [] } });
+  });
   await page.route("**/api/v1/project-github/owned-repositories", (route) => {
     inventoryReads++;
+    readsBefore.inventory = reads;
     return route.fulfill({ json: { repositories: [] } });
   });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
@@ -128,7 +131,10 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     body: String(reads),
     contentType: "text/plain",
   });
-  expect(reads).toBe(1);
+  // The setup page and its owner inventory share one sign-in read. The saved
+  // applications are private, so their reply is followed by one actor check.
+  expect(readsBefore).toEqual({ setup: 1, inventory: 1 });
+  expect(reads).toBe(2);
   expect(inventoryReads).toBe(1);
   await expectAccessible(page);
 });
@@ -2139,7 +2145,7 @@ test("an unavailable cycle index refuses a live substitute and retries the recor
   const cycle = index.cycles[0];
   let unavailable = true;
   let leaderboardReads = 0;
-  diagnostics.allowResponse(503, "GET", "/data/cycles/index.json");
+  diagnostics.allowResponse(503, "GET", "/data/cycles/index.json?attempt=0");
   await page.route("**/data/cycles/index.json?**", (route) =>
     unavailable
       ? route.fulfill({ status: 503, body: "Unavailable cycle index" })

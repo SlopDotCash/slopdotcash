@@ -66,11 +66,20 @@ module inbox_queries {
   action finish = all { s.result == "pending", s.pageDone, s.countDone,
     s' = s.with("result", "success") }
   action step = {
-    nondet row = rows.oneOf()
-    nondet actor = Set(1, 2).oneOf()
-    nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf()
-    any { insert(row), mark(row), resolveReview(row), revoke(actor), begin(actor, cursor), rejectInput,
-      observePage(cursor), observeCount, failPage, failCount, finish, s' = s }
+    any {
+      { nondet row = rows.oneOf() insert(row) },
+      { nondet row = rows.oneOf() mark(row) },
+      { nondet row = rows.oneOf() resolveReview(row) },
+      { nondet actor = Set(1, 2).oneOf() revoke(actor) },
+      { nondet actor = Set(1, 2).oneOf() nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf() begin(actor, cursor) },
+      rejectInput,
+      { nondet cursor = Set(0, 1, 2, 3, 4, 5).oneOf() observePage(cursor) },
+      observeCount,
+      failPage,
+      failCount,
+      finish,
+      s' = s
+    }
   }
   val invariant = all {
     s.requests <= 2, s.pageQueries <= s.requests, s.countQueries <= s.requests,

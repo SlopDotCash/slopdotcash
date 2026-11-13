@@ -61,10 +61,14 @@ export function isValueProducer(value: unknown): value is ValueProducer {
     Object.keys(value).sort().join() === "provider,reported,requested" &&
     typeof value.requested === "string" &&
     value.requested === value.reported &&
-    TRIAGE_ROUTE.some(
+    (TRIAGE_ROUTE.some(
       (step) =>
         step.provider === value.provider && step.model === value.requested,
-    )
+    ) ||
+      // Retained journal records keep the provider identity used at assessment.
+      // These historical models are accepted for reads, never for a new call.
+      (value.provider === "surplus" &&
+        ["claude-opus-5.5", "gpt-6.1-sol"].includes(value.requested)))
   );
 }
 

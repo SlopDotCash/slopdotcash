@@ -85,7 +85,7 @@ export async function serveProjectCycleIndex(
   projectIds: readonly string[],
 ): Promise<void> {
   const cycleIndex = JSON.parse(
-    readFileSync(join(process.cwd(), "public/data/cycles/index.json"), "utf8"),
+    readFileSync(join(process.cwd(), "dist/data/cycles/index.json"), "utf8"),
   ) as CycleIndex;
   await page.route("**/data/cycles/index.json?**", (route) =>
     route.fulfill({

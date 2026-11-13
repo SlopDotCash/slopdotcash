@@ -39,6 +39,20 @@ test("selected admin project can queue after a superseded pending scan and prese
     modelRuns: [],
     artifacts: 1,
     heldArtifacts: 1,
+    // The owner-safe facts the API derives from the recorded result
+    // (issue #1991); the card lists the owner's reasons from them.
+    scan: {
+      flaggedChecks: [],
+      checksNotRun: ["unsafe-execution"],
+      incompleteSurfaces: [{ surface: "dependencies", state: "partial" }],
+      visibilityGaps: ["Dependency source could not be inspected"],
+      openFindings: [],
+      review: {
+        primary: { status: "completed", verdict: "no-findings", risk: "low" },
+        specialist: null,
+        escalated: false,
+      },
+    },
     requestedBy: { githubLogin: "operator" },
     requestReason: "Review flagged install scripts",
     result: {
@@ -152,6 +166,18 @@ test("selected admin project can queue after a superseded pending scan and prese
   await expect(card.getByRole("table", { name: "Scan checks" })).toContainText(
     "Incomplete",
   );
+  // The same badges the owner's setup status shows.
+  await expect(
+    card
+      .getByRole("region", { name: "Why the scan did not clear" })
+      .locator(".route-badge"),
+  ).toHaveText([
+    "unsafe execution not run",
+    "dependencies partial",
+    "1 artifact held",
+    "Dependency source could not be inspected",
+    "Primary: clear",
+  ]);
   const reason = card.getByLabel("Reason for the scan");
   await expect(reason).toBeVisible();
   await card.getByRole("button", { name: "Queue scan of revision 1" }).click();

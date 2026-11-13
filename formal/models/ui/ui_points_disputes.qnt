@@ -185,15 +185,39 @@ module ui_points_disputes {
   }
   action mutationReply(id:int,outcome:int):bool=observeMutation(id,outcome)
     .then(returnMutation(id)).then(useMutation(id))
-  action step={nondet id=ids.oneOf() nondet actor=Set(0,1,2).oneOf()
-    nondet target=Set(0,1,2).oneOf() nondet outcome=Set(0,1,2,3).oneOf()
-    nondet payload=Set(1,2,3).oneOf() nondet yes=Set(false,true).oneOf()
-    nondet draft=Set(false,true).oneOf() nondet decider=Set(false,true).oneOf()
-    nondet kind=Set("create","decision","retry").oneOf()
-    any{parentLoads,parentSameActor,parentUnavailableSameActor,remount(1,target),remount(2,target),depart,cookieChanges(actor),
-      startRead(id),refusedReadHeaders(id),refusedReadBody(id),observeRead(id,outcome,payload,draft,decider),returnRead(id),useRead(id),retryRead,olderRecords,
-      chooseAward(id),editReason(yes),editDecision(yes),back,beginMutation(id,kind),
-      acceptMutation(id),refusedMutationHeaders(id),refusedMutationBody(id),observeMutation(id,outcome),returnMutation(id),useMutation(id),s'=s}}
+  action step={
+    any {
+      parentLoads,
+      parentSameActor,
+      parentUnavailableSameActor,
+      { nondet target = Set(0,1,2).oneOf() remount(1,target) },
+      { nondet target = Set(0,1,2).oneOf() remount(2,target) },
+      depart,
+      { nondet actor = Set(0,1,2).oneOf() cookieChanges(actor) },
+      { nondet id = ids.oneOf() startRead(id) },
+      { nondet id = ids.oneOf() refusedReadHeaders(id) },
+      { nondet id = ids.oneOf() refusedReadBody(id) },
+      { nondet id = ids.oneOf() nondet outcome = Set(0,1,2,3).oneOf() nondet payload = Set(1,2,3).oneOf()
+        nondet draft = Set(false,true).oneOf() nondet decider = Set(false,true).oneOf()
+        observeRead(id,outcome,payload,draft,decider) },
+      { nondet id = ids.oneOf() returnRead(id) },
+      { nondet id = ids.oneOf() useRead(id) },
+      retryRead,
+      olderRecords,
+      { nondet id = ids.oneOf() chooseAward(id) },
+      { nondet yes = Set(false,true).oneOf() editReason(yes) },
+      { nondet yes = Set(false,true).oneOf() editDecision(yes) },
+      back,
+      { nondet id = ids.oneOf() nondet kind = Set("create","decision","retry").oneOf() beginMutation(id,kind) },
+      { nondet id = ids.oneOf() acceptMutation(id) },
+      { nondet id = ids.oneOf() refusedMutationHeaders(id) },
+      { nondet id = ids.oneOf() refusedMutationBody(id) },
+      { nondet id = ids.oneOf() nondet outcome = Set(0,1,2,3).oneOf() observeMutation(id,outcome) },
+      { nondet id = ids.oneOf() returnMutation(id) },
+      { nondet id = ids.oneOf() useMutation(id) },
+      s'=s
+    }
+  }
   val invariant=all{s.epoch>=1,s.epoch<=2,s.cursor>=0,s.cursor<=1,
     s.page>=0,s.page<=2,s.detail>=0,s.detail<=3,s.accepted.subseteq(ids),
     s.mayDecide implies s.detail==2,

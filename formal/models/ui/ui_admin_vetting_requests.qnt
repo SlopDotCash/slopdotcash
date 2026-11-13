@@ -174,14 +174,32 @@ module ui_admin_vetting_requests {
     s' = s.with("mutation", s.mutation.with("phase", "done")) }
 
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet flag = Set(false, true).oneOf()
-    any { cookieChanges(actor), identityAvailability(flag), adminRole(flag), editPayload(id),
-      depart, remount, beginRead(id), observeReadIdentity(id), returnReadIdentity(id), useReadIdentity(id), dispatchRead(id),
-      readResponse(id, flag), readTemporaryFailure(id), dropRead(id), beginMutation,
-      observeMutationIdentity, returnMutationIdentity, useMutationIdentity, dispatchMutation, admitMutation(flag), mutationTemporaryFailure,
-      invokeMutationCallback(id), dropMutation, s' = s }
+    any {
+      { nondet actor = Set(0, 1, 2).oneOf() cookieChanges(actor) },
+      { nondet flag = Set(false, true).oneOf() identityAvailability(flag) },
+      { nondet flag = Set(false, true).oneOf() adminRole(flag) },
+      { nondet id = ids.oneOf() editPayload(id) },
+      depart,
+      remount,
+      { nondet id = ids.oneOf() beginRead(id) },
+      { nondet id = ids.oneOf() observeReadIdentity(id) },
+      { nondet id = ids.oneOf() returnReadIdentity(id) },
+      { nondet id = ids.oneOf() useReadIdentity(id) },
+      { nondet id = ids.oneOf() dispatchRead(id) },
+      { nondet id = ids.oneOf() nondet flag = Set(false, true).oneOf() readResponse(id, flag) },
+      { nondet id = ids.oneOf() readTemporaryFailure(id) },
+      { nondet id = ids.oneOf() dropRead(id) },
+      beginMutation,
+      observeMutationIdentity,
+      returnMutationIdentity,
+      useMutationIdentity,
+      dispatchMutation,
+      { nondet flag = Set(false, true).oneOf() admitMutation(flag) },
+      mutationTemporaryFailure,
+      { nondet id = ids.oneOf() invokeMutationCallback(id) },
+      dropMutation,
+      s' = s
+    }
   }
   val invariant = all {
     not(s.present) implies not(s.mounted),
