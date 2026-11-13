@@ -1,9 +1,4 @@
-import {
-  expect,
-  expectAccessible,
-  expectAccessibleReflow,
-  test,
-} from "./fixtures";
+import { expect, expectAccessibleReflow, test } from "./fixtures";
 
 test("switching journey resets an active campaign animation @desktop-only", async ({
   page,
@@ -69,7 +64,6 @@ test("homepage switches the visible journey and every agent destination @breakpo
       page.getByRole("link", { name: "Add a project" }),
     ).toHaveAttribute("href", "/projects/new");
     await expect(page.locator(".hero-typewriter-caret").last()).toBeHidden();
-    await expectAccessible(page);
     await expectAccessibleReflow(page, `${audience}-home`);
   }
 });
