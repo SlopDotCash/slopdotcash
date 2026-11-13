@@ -267,3 +267,92 @@ test("enforcement rebuilds preserve a populated journal and its rowid cache gene
     sqlite.close();
   }
 });
+
+test("0123 keeps legacy scans and refuses a duplicate pending scan per repository", () => {
+  const migration = "0123_vetting_assessment_repository.sql";
+  const sqlite = before(migration);
+  try {
+    // The first revision lists one repository; the second appends another.
+    const revisions = [["acme/one"], ["acme/one", "acme/two"]].map(
+      (ids, index) => ({
+        revision: index + 1,
+        manifest: JSON.stringify({
+          id: "two-repos",
+          repositories: ids.map((id) => ({ id })),
+        }),
+      }),
+    );
+    for (const { revision, manifest } of revisions)
+      sqlite
+        .query(
+          "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)",
+        )
+        .run("two-repos", revision, manifest, "a".repeat(64), "fixture", AT);
+    const columns =
+      "id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state";
+    const values = (id: string, revision: number) => [
+      id,
+      "two-repos",
+      revision,
+      "a".repeat(64),
+      "b".repeat(64),
+      "c".repeat(40),
+      "d".repeat(64),
+      "1",
+      "owner",
+      AT,
+      "Admission scan",
+      "pending",
+    ];
+    const legacy = `vet_${"0".repeat(32)}`;
+    sqlite
+      .query(
+        `INSERT INTO vetting_assessments(${columns}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(...values(legacy, 1));
+    const original = sqlite
+      .prepare("SELECT * FROM vetting_assessments")
+      .get() as Record<string, unknown>;
+    apply(sqlite, migration);
+    const upgraded = sqlite
+      .prepare("SELECT * FROM vetting_assessments")
+      .get() as Record<string, unknown>;
+    for (const [key, value] of Object.entries(original))
+      expect(upgraded[key], key).toEqual(value);
+    expect(upgraded.repository_id).toBeNull();
+    const insert = (id: string, repository: string | null, revision = 2) =>
+      sqlite
+        .query(
+          `INSERT INTO vetting_assessments(${columns},repository_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(...values(id, revision), repository);
+    // The legacy row reads as the first repository of its revision.
+    expect(() => insert(`vet_${"1".repeat(32)}`, "acme/one", 1)).toThrow(
+      /vetting_assessments.current_pending/u,
+    );
+    // Another repository of the project is queued beside it.
+    insert(`vet_${"2".repeat(32)}`, "acme/two");
+    expect(() => insert(`vet_${"3".repeat(32)}`, "acme/two")).toThrow(
+      /vetting_assessments.current_pending/u,
+    );
+    // An older application writes no repository: it is the first one.
+    expect(() => insert(`vet_${"4".repeat(32)}`, null, 1)).toThrow(
+      /vetting_assessments.current_pending/u,
+    );
+    // A row names a repository its own revision lists.
+    expect(() => insert(`vet_${"5".repeat(32)}`, "acme/three")).toThrow(
+      /repository of its revision/u,
+    );
+    expect(() => insert(`vet_${"6".repeat(32)}`, "acme/two", 1)).toThrow(
+      /repository of its revision/u,
+    );
+    expect(() =>
+      sqlite.exec(
+        `UPDATE vetting_assessments SET repository_id='acme/one' WHERE id='vet_${"2".repeat(32)}'`,
+      ),
+    ).toThrow(/immutable/u);
+    expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});

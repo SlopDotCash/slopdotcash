@@ -11,6 +11,7 @@ import {
 import {
   createProjectView,
   type ProjectView,
+  projectActivityCollected,
   projectCycleHasOpened,
 } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
@@ -116,11 +117,7 @@ export function CyclePage({
   // A paused project is not collected; its recorded cycles still render.
   const collected =
     state.status === "ready" &&
-    project.repositories.every((repository) =>
-      state.snapshot.repositories.some(
-        (candidate) => candidate.id === repository.id,
-      ),
-    );
+    projectActivityCollected(state.snapshot, project, cycleId);
   let view: ProjectView | null = null;
   // A month outside the snapshot window has no live view.
   if (

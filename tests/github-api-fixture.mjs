@@ -127,6 +127,8 @@ export function fixtureRepository(fullName) {
     full_name: `${owner.login}/${name}`,
     description: "A reproducible research tool used by the registry tests.",
     private: false,
+    fork: false,
+    archived: false,
     default_branch: "main",
     owner: { ...owner, node_id: `O_${owner.login.replaceAll("-", "_")}` },
   };

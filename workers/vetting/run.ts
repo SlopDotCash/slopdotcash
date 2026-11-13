@@ -255,11 +255,14 @@ async function acquiredInputs(directory: string) {
     await readFile(join(directory, "queued-inputs.json"), "utf8"),
   ) as {
     schema: string;
+    repository?: unknown;
     manifestText: string;
     inputs: { path: string; sha256: string }[];
   };
   if (queued.schema !== "slop-queued-inputs-v1")
     throw new Error("Unknown queued input bundle");
+  if (typeof queued.repository !== "string")
+    throw new Error("The queued input bundle names no repository");
   const templates: ScanInputFile[] = [];
   for (const input of queued.inputs)
     templates.push({
@@ -267,12 +270,10 @@ async function acquiredInputs(directory: string) {
       bytes: await readAcquiredObject(directory, input.sha256),
     });
   return {
-    // The result names the registered repository id, as the intake and an
-    // acquisition refusal do. A recorded rename is acquired under its current
-    // GitHub name, which differs from that id.
-    repository: (
-      JSON.parse(queued.manifestText) as { repositories: { id: string }[] }
-    ).repositories[0].id,
+    // The result names the registered repository id the queue assigned, as
+    // the intake and an acquisition refusal do. A recorded rename is acquired
+    // under its current GitHub name, which differs from that id.
+    repository: queued.repository,
     files: [...source.files, ...templates],
     acquisitionGaps: source.acquisitionGaps.filter(
       (gap) => !COVERED_BY_BOUNDED_SCAN.has(gap),

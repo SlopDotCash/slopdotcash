@@ -8,6 +8,8 @@ import type {
   ScoreEvent,
 } from "./leaderboard";
 import type { PenaltyHistoryRecord } from "./leaderboard-types";
+import { repositoryCountsFrom } from "./project-repositories.mjs";
+import { projectActivityCollected } from "./project-view";
 import {
   findHistoricalProject,
   findHistoricalRepository,
@@ -104,6 +106,23 @@ function exact(value: object, keys: string[]) {
   for (const key of actual)
     if (!expected.has(key)) throw new Error("Unexpected points fields");
 }
+/**
+ * An appended repository's work before its own start month counts for no Points.
+ * Repositories without a start month count exactly as before.
+ */
+export function repositoryWorkCounts(
+  event: { repository: string; occurredAt: string },
+  listed?: Parameters<typeof repositoryCountsFrom>[0] | null,
+): boolean {
+  const repository = findHistoricalRepository(event.repository);
+  const project =
+    listed ?? (repository && findHistoricalProject(repository.projectId));
+  const countsFrom = project
+    ? repositoryCountsFrom(project, event.repository)
+    : null;
+  return countsFrom === null || Date.parse(event.occurredAt) >= countsFrom;
+}
+
 export function pointRevisionId(revision: Omit<PointRevision, "id">): string {
   return sha256Hex(JSON.stringify(revision));
 }
@@ -536,6 +555,9 @@ export function reconcilePointPenalties(
     const project = findHistoricalRepository(penalty.repository);
     if (!project || penalty.actor.kind !== "User")
       throw new Error("Invalid penalty identity");
+    // Work on an appended repository before its start month counts for no Points,
+    // so a penalty on it debits none either.
+    if (!repositoryWorkCounts(penalty)) continue;
     const award: PointAward = {
       key: pointKey(
         project.projectId,
@@ -771,7 +793,9 @@ export function applyPointsSnapshot(
   const allocationAwards: PointAward[] = [];
   const allocationDecisions = new Map<string, PointDecision>();
   const snapshotAwards = snapshot.ledger
-    .filter((event) => event.actor.kind === "User")
+    .filter(
+      (event) => event.actor.kind === "User" && repositoryWorkCounts(event),
+    )
     .map(awardForScore);
   const currentMergesBySource = new Map<string, PointAward[]>();
   for (const award of snapshotAwards) {
@@ -919,6 +943,7 @@ export function applyPointsSnapshot(
   for (const event of snapshot.ledger) {
     if (
       event.actor.kind !== "User" ||
+      !repositoryWorkCounts(event) ||
       !event.scoreDecisionSourceId ||
       !event.scoreDecisionAt
     )
@@ -943,7 +968,6 @@ export function applyPointsSnapshot(
       )
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
-  const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
   const coverageByPullRequest = new Map<
     string,
     NonNullable<LeaderboardSnapshot["valueAssessmentCoverage"]>[number]
@@ -1054,7 +1078,9 @@ export function applyPointsSnapshot(
         a.occurredAt < snapshot.window.to) ||
         (a.category === "substantive-review" &&
           excludedReviews.has(`${a.projectId}\0${a.sourceId}`))) &&
-      project?.repositories.every((r) => repositoryIds.has(r.id))
+      (project === null ||
+        project === undefined ||
+        projectActivityCollected(snapshot, project, a.occurredAt.slice(0, 7)))
     ) {
       awards.push({ ...a, amount: 0 });
       const decision =
