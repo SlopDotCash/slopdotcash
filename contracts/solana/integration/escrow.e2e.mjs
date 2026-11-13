@@ -3472,7 +3472,7 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
   // The advisory's first step can no longer release only the uncommittable leaf.
   await assert.rejects(release(total, released), /InvalidAmount/);
   await assert.rejects(release(total, 0), /InvalidAmount/);
-  await leaf(2, "release");
+  await leaf(2, "release", null);
   const afterLeaf = await read();
   assert.equal(afterLeaf.reserved.toNumber(), total - released);
   assert.equal(afterLeaf.monthlyOutstanding.toNumber(), total - released);
