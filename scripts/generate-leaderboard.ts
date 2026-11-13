@@ -15,7 +15,10 @@ import {
  * becoming a plausible-looking empty snapshot.
  */
 
-import { githubIngestionReadTransport } from "./github-ingestion-read";
+import {
+  githubIngestionReadTransport,
+  githubPrimaryRateLimitDelay,
+} from "./github-ingestion-read";
 import type { ConnectionPage, PageInfo } from "./github-pagination";
 import { resolveGitHubToken } from "./github-token";
 
@@ -2021,6 +2024,16 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         continue;
       } finally {
         clearTimeout(timeout);
+      }
+      // Wait outside the request deadline. Passing a quota wait through the
+      // fetch transport would expire the 60-second request signal before the
+      // next hourly window, even though no request is still in flight.
+      const quotaDelay = restPath
+        ? githubPrimaryRateLimitDelay(response)
+        : null;
+      if (quotaDelay !== null && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        await retryDelay(quotaDelay);
+        continue;
       }
       const retryableStatus =
         GATEWAY_FAILURE_STATUSES.includes(response.status) ||
@@ -4871,8 +4884,7 @@ export async function runGenerator(
   outputPath = DEFAULT_OUTPUT_PATH,
   dependencies: GeneratorDependencies = {
     getToken: resolveGitHubToken,
-    createClient: (token) =>
-      new GitHubGraphqlClient(token, githubIngestionReadTransport()),
+    createClient: (token) => new GitHubGraphqlClient(token),
     generate: generateLeaderboardFromGitHub,
     write: writeLeaderboardAtomically,
     onCensusRetry: () => {
