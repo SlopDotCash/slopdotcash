@@ -9,9 +9,47 @@ the local evidence. The operating instructions are in the
 
 `BUYBACK_MODE` is `live` in the production Worker configuration from
 `2026-11-12T00:00:00.000Z`, by operator decision of 12 November 2026, and `off`
-on staging. The dry-run period and the small verified first order were not run:
-no fee income existed to run them. The first real order still has to be
-verified on chain (fee-converter guide, "Turn on the buyback", step 5).
+on staging. This records the configured mode, not completed operational
+qualification. The dry-run period and the small verified first order were not
+run: no fee income existed to run them. The first real order still has to be
+verified (fee-converter guide, "Turn on the buyback", steps 2–5).
+
+### Qualification review, 12 November 2026
+
+Read-only checks on 13 November UTC (12 November in New York) used
+source `c394539682694b634586f83da3bb727d7f7cf095`, the published fee wallet and
+no signing key. TLS verification remained enabled.
+
+- The locally configured Robinhood Chain endpoint returned chain 4663 and
+  contract state at finalized block `0x6bcc0a8`, hash
+  `0x525e652db8b0eae162586ee1f2c3c1904afda287af226f6844060a14ad64ffb8`.
+  The fee wallet held 0.01 ETH, zero USDG and zero SLOP at that block. This
+  proves that endpoint's read capability, not the endpoint installed in the
+  deployed Worker.
+- Prospective 500-USDC bridge quotes from Base and Ethereum named the fee
+  wallet as receiver on chain 4663. Quoted costs were below the 1.5% limit.
+  A prospective 25-USDG purchase quote stayed below the 3% price-impact limit.
+  These quotes were not submitted and were not entered as fee income.
+- A burn simulation refused with the wallet's zero SLOP balance. No approval,
+  bridge order, purchase or burn was signed or broadcast.
+- Cloudflare reported deployment `6c818831-1d58-481c-a937-6e2ed8a7932c`,
+  with version `9b96ccab-bb7f-4438-aab7-e4cab1cce05f` at 100%, annotated as
+  release `d53738061e8fef8275d0acacfd2f7fb60fa215d1`. Its buyback mode,
+  activation instant, limits and enabled networks matched the reviewed
+  configuration. This checked settings and deployment metadata; it was not
+  an independent comparison of the deployed program bytes.
+- The production fee journal and the values of the Worker's RPC secrets
+  were not accessible in this review. Eligible fee income, open orders,
+  completed sends and the installed endpoint's finalized-state capability
+  therefore remain unverified. A wallet balance alone cannot establish them.
+
+Qualification remains pending. Reconcile the production journal and deployed
+configuration first. Use only verified eligible fee income for the first
+order. Do not seed production fee records or use an unrelated deposit as
+income. Keep the approved activation instant and limits unless a reviewed
+change explicitly changes them. Check the first live deposit, actual taker
+fill, purchase and burn against finalized chain evidence before reporting
+success; prospective quotes and fork fills do not replace those checks.
 
 ## What the decision means in numbers
 
