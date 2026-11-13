@@ -2677,30 +2677,83 @@ export function readGhOpenActivity(
   };
 }
 
+const PROVIDER_MODEL_LINE_RE = /^AI provider\/model\s*:\s*(.*)$/i;
+const TERMINAL_LANE_RE = /^(?:\u2014|-)\s*\[[A-Za-z0-9][A-Za-z0-9-]{1,48}\]$/u;
+const TERMINAL_ATTRIBUTION_LABEL_RE =
+  /^(?:AI provider\/model|Client \/ agent tooling|Contribution skill revision|Skill revision|Attribution status|Compute receipt)\s*:/i;
+
+/**
+ * An exact provider/model pair, null when the line is a provider/model row
+ * that is not exact, or undefined when the line is not that row. An empty
+ * checklist row is not an attempt.
+ */
+function exactProviderModel(line) {
+  const match = line.match(PROVIDER_MODEL_LINE_RE);
+  if (!match || match[1].trim().length === 0) return undefined;
+  const pair = match[1].trim().match(/^(.+?)\s+\/\s+(.+)$/);
+  if (!pair) return null;
+  const provider = pair[1].trim();
+  const model = pair[2].trim();
+  if (
+    provider.length === 0 ||
+    model.length === 0 ||
+    isGenericProvider(provider) ||
+    isGenericModel(model) ||
+    PLACEHOLDER_RE.test(provider) ||
+    PLACEHOLDER_RE.test(model) ||
+    /[<>[\]]/.test(provider) ||
+    /[<>[\]]/.test(model)
+  ) {
+    return null;
+  }
+  return { provider, model };
+}
+
+/**
+ * The provider/model row in the contiguous attribution block that ends at the
+ * last lane signature. The legacy footer places Compute receipt between that
+ * row and the lane, so the walk continues through it. Checklist rows above
+ * that block are a different disclosure, so a placeholder there cannot erase
+ * or replace the footer. Returns undefined when no footer row is present.
+ */
+function terminalProviderModel(body, records) {
+  const lines = records.map((record) => record.normalized);
+  let laneIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (TERMINAL_LANE_RE.test(lines[index])) {
+      laneIndex = index;
+      break;
+    }
+  }
+  if (laneIndex < 0) return undefined;
+  for (let index = laneIndex - 1; index >= 0; index -= 1) {
+    if (!TERMINAL_ATTRIBUTION_LABEL_RE.test(lines[index])) break;
+    if (
+      body.slice(records[index].end, records[index + 1].start).trim().length !==
+      0
+    ) {
+      break;
+    }
+    const parsed = exactProviderModel(lines[index]);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
 export function parseModelDisclosure(text) {
   const body = nullableText(text, "disclosure text");
-  for (const line of declarationLines(body)) {
-    const match = line.match(/^AI provider\/model\s*:\s*(.+)$/i);
-    if (!match) continue;
-    const pair = match[1].match(/^(.+?)\s+\/\s+(.+)$/);
-    if (!pair) return null;
-    const provider = pair[1].trim();
-    const model = pair[2].trim();
-    if (
-      provider.length === 0 ||
-      model.length === 0 ||
-      isGenericProvider(provider) ||
-      isGenericModel(model) ||
-      PLACEHOLDER_RE.test(provider) ||
-      PLACEHOLDER_RE.test(model) ||
-      /[<>[\]]/.test(provider) ||
-      /[<>[\]]/.test(model)
-    ) {
-      return null;
-    }
-    return { provider, model };
+  const records = declarationLineRecords(body).filter(
+    (record) => record.normalized.length > 0,
+  );
+  const terminal = terminalProviderModel(body, records);
+  if (terminal !== undefined) return terminal;
+  // No footer row. A checklist placeholder must not hide a later exact row.
+  let disclosure = null;
+  for (const record of records) {
+    const parsed = exactProviderModel(record.normalized);
+    if (parsed) disclosure = parsed;
   }
-  return null;
+  return disclosure;
 }
 
 export function isBotAccount(account) {
