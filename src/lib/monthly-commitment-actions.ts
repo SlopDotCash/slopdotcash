@@ -51,14 +51,32 @@ export interface MonthlyReview {
   solanaPlan?: SolanaMonthlyPlan;
 }
 
+/** Milliseconds in the contracts' MONTHLY_CUTOFF_DELAY (72 hours). */
+const MONTHLY_CUTOFF_DELAY_MS = 72 * 60 * 60 * 1000;
+
 /**
- * The project's recorded monthly amount in the vault asset's base units.
- * The vault must use that asset and its recorded decimals.
+ * The last moment a month's pinned cap can still be committed on chain.
+ * Both vaults admit cycle `YYYY-MM` only inside `monthlyWindow`, which
+ * closes MONTHLY_CUTOFF_DELAY after the start of the month two months
+ * later; after that the pin can never be used again.
  */
-function vaultMonthlyCap(
+function pinWindowClosesAt(cycleId: string): number {
+  const year = Number(cycleId.slice(0, 4));
+  const month = Number(cycleId.slice(5, 7));
+  return Date.UTC(year, month + 1, 1) + MONTHLY_CUTOFF_DELAY_MS;
+}
+
+/**
+ * The project's recorded monthly amount in the vault asset's base units,
+ * raised to the highest month-specific cap the manifest pins for an
+ * individual month (`reward.cycleCaps`) whose commit window is still
+ * open. The vault must use that asset and its recorded decimals.
+ */
+export function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
   deployment: Pick<EscrowDeployment, "network" | "asset">,
   vaultDecimals: number,
+  now: Date = new Date(),
 ): bigint {
   if (project.reward.kind !== "monthly-pool")
     throw new Error("This project has no monthly amount.");
@@ -82,10 +100,25 @@ function vaultMonthlyCap(
     );
   if (!CANONICAL_UINT.test(project.reward.monthlyCapMinor))
     throw new Error("The project's monthly amount is invalid.");
-  return BigInt(project.reward.monthlyCapMinor);
+  // The proposal, the owner's allocation cap and the frozen total all
+  // resolve an individual month's own pinned cap, and the vault admits a
+  // month only when its gross total fits the vault's one monthly cap. The
+  // standing target therefore covers the highest pinned month as well as
+  // the monthly amount; a pin at or below the amount changes nothing, and
+  // no month can commit more than its own resolved cap. Pins are never
+  // pruned, so a pin counts only while its month can still commit: once
+  // the month's window has closed the pin can never be used on chain and
+  // no longer holds the standing target up.
+  let cap = BigInt(project.reward.monthlyCapMinor);
+  for (const entry of project.reward.cycleCaps ?? []) {
+    if (now.getTime() >= pinWindowClosesAt(entry.cycleId)) continue;
+    const pinned = BigInt(entry.monthlyCapMinor);
+    if (pinned > cap) cap = pinned;
+  }
+  return cap;
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
-function monthlyTarget(
+export function monthlyTarget(
   automatic: boolean,
   projectCap: bigint,
   current: MonthlySetting,

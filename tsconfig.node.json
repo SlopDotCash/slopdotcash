@@ -55,6 +55,7 @@
     "src/lib/browser-json.ts",
     "src/lib/owner-commitment-actions.ts",
     "src/lib/monthly-release-actions.ts",
+    "src/lib/monthly-commitment-actions.ts",
     "src/lib/solana-vault-actions.ts",
     "src/lib/project-api.ts",
     "src/lib/evm-vault-actions.ts",

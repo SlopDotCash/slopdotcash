@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 738,
-    "functions": 10427,
+    "functions": 10428,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10239,
+    "unprovedFunctions": 10240,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -8065,22 +8065,23 @@
 {"name":"<ArrowFunction@431>","kind":"ArrowFunction","line":431,"sha256":"681c6ce60f9d1a287f2ac2f0c7a1ed4aeb6e98fdfcf68fbb48edbc55f3d0aa3e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@439>","kind":"ArrowFunction","line":439,"sha256":"b6a7a67f45c1aedc96b9f5059b60867bee4b4202fca1696cdfa2cc4e31b4ce5e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
 ]},
-{"path":"src/lib/monthly-commitment-actions.ts","sha256":"63461a8c606952d4f7d5fedeeb9104e4fda09b996213ec103e51ae20656cbdaf","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"vaultMonthlyCap","kind":"FunctionDeclaration","line":58,"sha256":"d87f52a59303e0054b721e05898116248be98342345440175af0d5e4a830a550","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
-{"name":"canonical","kind":"ArrowFunction","line":67,"sha256":"20136d55f16ac7a223e3d4484c0b73900ac6210bd24e1785f0ec7c47263b5fb8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"monthlyTarget","kind":"FunctionDeclaration","line":88,"sha256":"d95eb778e8a1ee664183aa06237f5e601f117f4f84c5bfeac855d496eb7f6632","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"same","kind":"ArrowFunction","line":98,"sha256":"735b36d4c37627ccd2e8071fe2d10243356441669164b26bd165937cb6571ddf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"reviewEvmMonthlySetting","kind":"FunctionDeclaration","line":101,"sha256":"71bc1e7b5c63358abe31d5719d95b94e5c94681bfc6bb97fde1f3cb8603dbf47","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"sendEvmMonthlySetting","kind":"FunctionDeclaration","line":150,"sha256":"dc72fc0ec291f373455e51188748c065947fb3006ec2867d3e085dea5bf7c517","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"checkEvmMonthlySetting","kind":"FunctionDeclaration","line":179,"sha256":"2f7694cd54a8cd0a45597c2d54a6d81974933cc85601b849b45c8ad1f89cb479","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"<ArrowFunction@194>","kind":"ArrowFunction","line":194,"sha256":"db91edb09321fa4491500a2a9d7931702ec493fe4d25d06b1392f0233cf2ebd5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"solanaDeployment","kind":"FunctionDeclaration","line":210,"sha256":"8f99b19590e8b24c6aebdcbcc63632afc5ef55d928990657bebb0f8ae29d2e4d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"verifySolanaMonthlyPlan","kind":"FunctionDeclaration","line":221,"sha256":"0c92b4532430977b27334103800b839025d388386d609addc6e420a1fe5ab620","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"solanaRequest","kind":"FunctionDeclaration","line":258,"sha256":"010eb5f3a9087458ff93e7519ad1043d86f94689d619c9cafcbeb7678cf7857e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"isSetting","kind":"ArrowFunction","line":286,"sha256":"d152b5f9cb67f74d2f72c63bf5ee0664a08ca963ba368aabe9708d682c69e6ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"reviewSolanaMonthlySetting","kind":"FunctionDeclaration","line":297,"sha256":"734c717340d89a68c2462243caa0bb16d3a5f2ba7bb671bad8ce268782ae9b3b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"sendSolanaMonthlySetting","kind":"FunctionDeclaration","line":351,"sha256":"a8a72aeeaaacee953a6b61f3fb5aa4151ee2730d1cb7972970902a5e0f701c95","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"checkSolanaMonthlySetting","kind":"FunctionDeclaration","line":374,"sha256":"b5590ebcac25042db56108feea48704ff60b61351b897fa7becbd3e5b75a6222","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
+{"path":"src/lib/monthly-commitment-actions.ts","sha256":"c0f82ecd1c8cecb82ccae59f368ac80397fca83eb49e997a0400bc3161314def","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"pinWindowClosesAt","kind":"FunctionDeclaration","line":63,"sha256":"0dc052908ba1640c82080813f17d91a123ee2068b75f990216eed3ea250b5f52","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"vaultMonthlyCap","kind":"FunctionDeclaration","line":75,"sha256":"8f9ce23225e4241c07841e1899b6d1eeb266d3337c09f3bcf87a953149775952","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
+{"name":"canonical","kind":"ArrowFunction","line":85,"sha256":"20136d55f16ac7a223e3d4484c0b73900ac6210bd24e1785f0ec7c47263b5fb8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"monthlyTarget","kind":"FunctionDeclaration","line":121,"sha256":"7794aef3aa6ba43e8344677e0e2ad9ac778f165ab53376fc65e4b35a52c4f841","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"same","kind":"ArrowFunction","line":131,"sha256":"735b36d4c37627ccd2e8071fe2d10243356441669164b26bd165937cb6571ddf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"reviewEvmMonthlySetting","kind":"FunctionDeclaration","line":134,"sha256":"71bc1e7b5c63358abe31d5719d95b94e5c94681bfc6bb97fde1f3cb8603dbf47","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"sendEvmMonthlySetting","kind":"FunctionDeclaration","line":183,"sha256":"dc72fc0ec291f373455e51188748c065947fb3006ec2867d3e085dea5bf7c517","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"checkEvmMonthlySetting","kind":"FunctionDeclaration","line":212,"sha256":"2f7694cd54a8cd0a45597c2d54a6d81974933cc85601b849b45c8ad1f89cb479","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"<ArrowFunction@227>","kind":"ArrowFunction","line":227,"sha256":"db91edb09321fa4491500a2a9d7931702ec493fe4d25d06b1392f0233cf2ebd5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"solanaDeployment","kind":"FunctionDeclaration","line":243,"sha256":"8f99b19590e8b24c6aebdcbcc63632afc5ef55d928990657bebb0f8ae29d2e4d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"verifySolanaMonthlyPlan","kind":"FunctionDeclaration","line":254,"sha256":"0c92b4532430977b27334103800b839025d388386d609addc6e420a1fe5ab620","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"solanaRequest","kind":"FunctionDeclaration","line":291,"sha256":"010eb5f3a9087458ff93e7519ad1043d86f94689d619c9cafcbeb7678cf7857e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"isSetting","kind":"ArrowFunction","line":319,"sha256":"d152b5f9cb67f74d2f72c63bf5ee0664a08ca963ba368aabe9708d682c69e6ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"reviewSolanaMonthlySetting","kind":"FunctionDeclaration","line":330,"sha256":"734c717340d89a68c2462243caa0bb16d3a5f2ba7bb671bad8ce268782ae9b3b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"sendSolanaMonthlySetting","kind":"FunctionDeclaration","line":384,"sha256":"a8a72aeeaaacee953a6b61f3fb5aa4151ee2730d1cb7972970902a5e0f701c95","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"checkSolanaMonthlySetting","kind":"FunctionDeclaration","line":407,"sha256":"b5590ebcac25042db56108feea48704ff60b61351b897fa7becbd3e5b75a6222","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"src/lib/monthly-release-actions.ts","sha256":"b12943a194b85be3d9258dbe87351a650a5539880f168204fc33fa0d7db9a3a5","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"requestMonthlyRelease","kind":"FunctionDeclaration","line":24,"sha256":"7bb3a4231b47308a7ad833fd4b16acf9dbdfba7c28a6ad30c3f01ededc3ddce1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
