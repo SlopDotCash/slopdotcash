@@ -2,7 +2,10 @@
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
 
-import { sameRepositoryCommitHints } from "./value-commit-hints";
+import {
+  githubLinkDestinations,
+  sameRepositoryCommitHints,
+} from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
 import {
@@ -118,6 +121,81 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
+/** A direct PR reference is an acknowledgement only after GitHub resolved the
+ * same immutable accepted PR and the merger explicitly says work was retained.
+ * Link labels cannot turn a foreign destination into a local PR reference.
+ */
+function hasRetainedPullReference(
+  original: ValueEvidence,
+  body: string,
+  accepted: ValueEvidence,
+): boolean {
+  const pull = accepted.pull;
+  if (
+    !original.relatedPullRequests.some(
+      (reference) =>
+        reference.id === pull.node_id &&
+        reference.number === pull.number &&
+        reference.url === pull.html_url &&
+        reference.repository.toLowerCase() ===
+          original.repository.toLowerCase(),
+    )
+  )
+    return false;
+  const local = (repository: string, number: number) =>
+    repository.toLowerCase() === original.repository.toLowerCase() &&
+    number === pull.number;
+  // Resolve complete link destinations before splitting sentences: punctuation
+  // inside a foreign link label must not expose a local-looking #number.
+  const text = githubLinkDestinations(body).replace(
+    /\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu,
+    " ",
+  );
+  // Sentence punctuation followed by whitespace preserves dots inside URLs.
+  return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
+    if (
+      !/\b(?:commits?|changes?|work)\b/iu.test(sentence) ||
+      !/\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(sentence) ||
+      /\b(?:not|never|no|neither|without|cannot)\b|\b\p{L}+n['’]t\b/iu.test(
+        sentence,
+      )
+    )
+      return false;
+    let references = sentence;
+    // Any URI owns its whole scope, including its query and fragment. A local
+    // #number nested inside a foreign or non-HTTPS URI is never a second hint.
+    const urlPattern = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"')\]]+/giu;
+    for (const [text] of references.matchAll(urlPattern)) {
+      let url: URL;
+      try {
+        url = new URL(text.replace(/[.,;!?]+$/u, ""));
+      } catch {
+        continue;
+      }
+      const path =
+        /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/([1-9][0-9]*)(?:\/|$)/u.exec(
+          url.pathname,
+        );
+      if (
+        url.protocol === "https:" &&
+        url.hostname === "github.com" &&
+        !url.port &&
+        !url.username &&
+        !url.password &&
+        path &&
+        local(path[1], Number(path[2]))
+      )
+        return true;
+    }
+    references = references.replace(urlPattern, " ");
+    for (const match of references.matchAll(
+      /(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#([1-9][0-9]*)\b/gu,
+    ))
+      if (local(match[1] ?? original.repository, Number(match[2]))) return true;
+    return false;
+  });
+}
+
 async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
@@ -149,15 +227,20 @@ async function retainedCopySources(
         comment.user?.node_id === accepted.merged_by?.node_id &&
         Date.parse(comment.created_at) >=
           Date.parse(accepted.merged_at as string) &&
-        /\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
         // GitHub numbers PRs in creation order. A lower number proves this
         // PR existed before the accepted PR was opened. A duplicate opened
         // later, even while the accepted PR was under review, is no original.
         evidence.pull.number < accepted.number &&
-        (sameRepositoryCommitHints(evidence.repository, comment.body).some(
-          (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
-        ) ||
-          (await hasRetainedMergeReference(evidence, comment, integration)))
+        ((/\b(?:merged?|integrat(?:ed|ion))\b/iu.test(comment.body) &&
+          (sameRepositoryCommitHints(evidence.repository, comment.body).some(
+            (sha) => sha.length === 40 && sha === accepted.merge_commit_sha,
+          ) ||
+            (await hasRetainedMergeReference(
+              evidence,
+              comment,
+              integration,
+            )))) ||
+          hasRetainedPullReference(evidence, comment.body, integration))
       )
         acknowledged = true;
     }
@@ -369,7 +452,10 @@ function alreadyAcceptedPromotion(
   });
 }
 
-export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
+export async function retainedCopyBindings(
+  sources: readonly WorkUnitSource[],
+  options: { ordinaryCommitsOnly?: boolean } = {},
+) {
   const bindings = new Map<
     string,
     {
@@ -474,6 +560,10 @@ export async function retainedCopyBindings(sources: readonly WorkUnitSource[]) {
     }
     if (!integrations.length) continue;
     for (const commit of evidence.commits) {
+      // Provisional recipient lookup asks only about copied ordinary commits.
+      // A source's branch-sync merge is not one of those implementation claims.
+      // Full joint preparation retains its existing merge-resolution gate.
+      if (options.ordinaryCommitsOnly && commit.parents.length > 1) continue;
       const attribution = evidence.commitAttribution.find(
         (a) => a.sha === commit.sha,
       );

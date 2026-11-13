@@ -547,13 +547,11 @@ pub mod slop_escrow {
         });
         Ok(())
     }
-    // The owner returns `released` gross of a recorded month that can never settle (an
-    // attester fault) to free balance. The instruction just before this one must be an
-    // Ed25519 program check of the project's identity authority signature over
-    // monthly_release_message for the month's current unsettled gross, so a leaf that
-    // settles first makes it stale. Committed awards do not change. Time alone never
-    // releases a reserve, and the period stays recorded. A leaf still settles while its
-    // gross fits the unsettled remainder.
+    // The owner returns the whole reserve of a wholly untouched wrong-total allocation
+    // to free balance. The instruction just before this one must be an Ed25519 program
+    // check of the project's identity authority signature over monthly_release_message.
+    // Any settled leaf refuses aggregate release, preventing a second per-leaf release
+    // of the same gross. Time alone never releases a reserve; the period stays recorded.
     pub fn release_monthly_reserve(
         ctx: Context<ReleaseMonthlyReserve>,
         period: u32,
@@ -570,8 +568,15 @@ pub mod slop_escrow {
             unsettled == expected_unsettled,
             EscrowError::MonthlyReserveChanged
         );
+        // Aggregate release is only for a wholly untouched allocation whose authenticated
+        // root has the wrong total. A partial release could be consumed again by
+        // release_monthly_award; after any leaf settles, no aggregate release is valid.
         require!(
-            released > 0 && released <= unsettled,
+            m.committed == 0 && m.released == 0 && unsettled == m.total,
+            EscrowError::MonthlyReserveChanged
+        );
+        require!(
+            released > 0 && released == unsettled,
             EscrowError::InvalidAmount
         );
         let message = monthly_release_message(

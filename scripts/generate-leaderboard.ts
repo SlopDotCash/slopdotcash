@@ -635,7 +635,7 @@ const SEARCH_REFERENCES_QUERY = `
           commits(first: 100) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { commit { oid author { user { ...LeaderboardActor } } } }
+            nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
           }
         }
       }
@@ -656,7 +656,7 @@ const MORE_OUTCOME_COMMITS_QUERY = `
         commits(first: 100, after: $after) {
           totalCount
           pageInfo { hasNextPage endCursor }
-          nodes { commit { oid author { user { ...LeaderboardActor } } } }
+          nodes { commit { oid parents { totalCount } author { user { ...LeaderboardActor } } } }
         }
       }
     }
@@ -2397,6 +2397,9 @@ async function completeOutcomeCommits(
           return {
             commit: {
               oid: commit.sha,
+              parents: {
+                totalCount: asArray(commit.parents, `${path}.parents`).length,
+              },
               author: {
                 user:
                   author === null
@@ -2628,8 +2631,17 @@ function parseOutcomeCommits(
             child(commit, "author", commitPath).user,
             `${commitPath}.author.user`,
           );
+    const parentCount = asNumber(
+      child(commit, "parents", commitPath).totalCount,
+      `${commitPath}.parents.totalCount`,
+    );
+    if (!Number.isSafeInteger(parentCount) || parentCount < 0)
+      throw new Error(
+        `${commitPath}.parents.totalCount must be a non-negative integer`,
+      );
     return {
       oid: asFullCommitSha(commit.oid, `${commitPath}.oid`),
+      parentCount,
       // GitHub links app commits to a User whose reserved login ends in
       // "[bot]" (for example dependabot[bot]); no person can hold that login.
       author:
@@ -4423,6 +4435,7 @@ export async function generateLeaderboardFromGitHub(
     ),
     undefined,
     probeUnavailableSources,
+    dedupedOutcomes,
   );
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(

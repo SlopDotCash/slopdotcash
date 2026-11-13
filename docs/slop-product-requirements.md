@@ -277,7 +277,7 @@ Anyone may deposit into a vault. All deposits share one bucket. Only the owner's
 
 Support approved stablecoins, standard ERC-20 tokens, classic SPL tokens, native ETH, and native SOL. Use native coins directly, not wrapped substitutes. Separate principal from network fees and preserve Solana rent reserves.
 
-The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadata` mint extensions. Mint and freeze authorities must be disabled. Token accounts may have `ImmutableOwner` or no extensions. Reject all other or unknown extensions. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing, and other balance-changing behavior.
+The supported Token-2022 subset permits only `MetadataPointer` and `TokenMetadata` mint extensions. Mint and freeze authorities must be disabled. Metadata must be self-hosted with disabled pointer and update authorities, and the mint account cannot exceed 1,024 bytes. Token accounts may have `ImmutableOwner` or no extensions. Reject all other or unknown extensions. Exclude transfer-fee, rebasing, transfer-hook, confidential-transfer, interest-bearing, and other balance-changing behavior.
 
 Verify the asset identity, token program, decimals, behavior, and finality throughout each flow. Use integer base units and largest-remainder allocation. Never assume six decimals, add unlike assets, or present a token amount as dollars.
 
@@ -421,6 +421,8 @@ Only accepted-work Points for the project and period determine reward shares. Pa
 Every accepted merge receives at least 10 Points, including a zero-size assessment. Keep source, rubric, model, and corrections with the record. Group split or related PRs into one work unit. Prevent duplicate credit across commits, stacked PRs, and indirect merges. Do not apply account-level caps or diminishing credit.
 
 Share merge credit with verified implementation authors. Credit useful reviews separately. Exclude bots, self-review, post-merge reviews, repeated comments, and duplicate or empty reviews. A useful review may validate a change without requesting corrections.
+
+Determine implementation recipients from GitHub-linked primary commit authors. Opening, recreating, updating, or merging a PR alone earns no implementation share. For a commit without an eligible linked author, retain the source PR creator as the fallback; use the original PR creator when verified retained-copy evidence binds that commit to an original PR. A reference in a PR description alone is insufficient. Commit counts do not increase the work unit's Points. Preserve frozen awards and append corrections for eligible unpaid work.
 
 Credit at most the first five distinct qualifying reviewers. Use each reviewer's highest band. The review pool is their summed bands, capped at the PR's assessed credit, with a 10-point minimum. Allocate proportionally by largest remainder in 10-point increments. Break ties by first qualifying review time, then review node ID.
 
