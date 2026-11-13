@@ -653,17 +653,27 @@ export function applyPointsImplementationCorrections(
         commitIdentities.set(key, identity);
       }
   }
-  const scopes = new Map<string, Set<string>>();
+  // Existing positive pools can overlap because an ordinary PR award and a
+  // later joint award were both retained. That ambiguity withholds their
+  // connected component; it is not malformed evidence about unrelated work.
+  const ambiguous = new Set<(typeof plans)[number]>();
+  const scopes = new Map<string, Map<string, Set<(typeof plans)[number]>>>();
   for (const plan of plans)
     for (const scope of plan.proof?.scopes ?? []) {
-      const paths = scopes.get(scope.commit) ?? new Set<string>();
-      check(
-        !paths.has("*") &&
-          !paths.has(scope.path) &&
-          !(scope.path === "*" && paths.size),
-        "overlapping implementation allocation scopes",
-      );
-      paths.add(scope.path);
+      const paths =
+        scopes.get(scope.commit) ??
+        new Map<string, Set<(typeof plans)[number]>>();
+      const overlapping =
+        scope.path === "*"
+          ? [...paths.values()].flatMap((owners) => [...owners])
+          : [...(paths.get("*") ?? []), ...(paths.get(scope.path) ?? [])];
+      for (const other of overlapping) {
+        ambiguous.add(other);
+        ambiguous.add(plan);
+      }
+      const owners = paths.get(scope.path) ?? new Set<(typeof plans)[number]>();
+      owners.add(plan);
+      paths.set(scope.path, owners);
       scopes.set(scope.commit, paths);
     }
   // An earlier successful application consumes the whole manifest. It must
@@ -759,7 +769,7 @@ export function applyPointsImplementationCorrections(
     const retained = component.some(
       (plan) => !permitted.get(plan.candidate.id),
     );
-    const held = component.some((plan) => !plan.proof);
+    const held = component.some((plan) => !plan.proof || ambiguous.has(plan));
     if (retained || held) {
       for (const plan of component)
         dispositions.set(plan.candidate.id, retained ? "retained" : "held");

@@ -527,12 +527,13 @@ test("an incomplete or privately ineligible grouped member retains the entire co
   ]);
 });
 
-test("partial unit scope, wrong decision, duplicated claims, and overlapping allocations refuse", () => {
+test("partial unit scope, wrong decision, duplicated claims, and contradictory evidence refuse", () => {
   for (const failure of [
     "missing-unit",
     "scope",
     "value",
-    "overlap",
+    "duplicate-claim",
+    "immutable",
   ] as const) {
     const { journal, input } = grouped();
     const first = input.candidates[0];
@@ -547,10 +548,129 @@ test("partial unit scope, wrong decision, duplicated claims, and overlapping all
     if (failure === "missing-unit") input.candidates.pop();
     if (failure === "scope") first.proof.expectedClaimIds.push("claim_missing");
     if (failure === "value") first.proof.decisionDigest = "e".repeat(64);
-    if (failure === "overlap")
-      second.proof.claims[0] = { ...first.proof.claims[0], id: "claim_1" };
+    if (failure === "duplicate-claim") {
+      first.proof.expectedClaimIds.push("claim_duplicate");
+      first.proof.claims.push({
+        ...first.proof.claims[0],
+        id: "claim_duplicate",
+      });
+    }
+    if (failure === "immutable") second.proof.sources[0].commits[0].author = B;
     expect(() => apply(journal, input)).toThrow();
   }
+});
+
+test("overlapping grouped scopes hold their connected component", () => {
+  const { journal, input } = grouped();
+  const first = input.candidates[0];
+  const second = input.candidates[1];
+  if (
+    first.kind !== "work-unit" ||
+    first.proof.status !== "complete" ||
+    second.kind !== "work-unit" ||
+    second.proof.status !== "complete"
+  )
+    throw new Error("group fixture");
+  second.proof.claims[0] = { ...first.proof.claims[0], id: "claim_1" };
+  const result = apply(journal, input);
+  expect(result.journal).toBe(journal);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "held",
+    "held",
+  ]);
+});
+
+test("an overlapping ordinary and joint component stays unchanged while unrelated work corrects", () => {
+  const unit = `wu_${"a".repeat(64)}`;
+  const ordinary = award();
+  const joint = award(C, 7, SOURCE, unit, true);
+  const other = award(C, 9, "PR_other", "wu_other");
+  const journal = initial([ordinary, joint, other], true);
+  const predecessors = (key: string) => {
+    const previous = latestPoints(journal).get(key);
+    if (!previous) throw new Error("missing fixture predecessor");
+    return [{ key, revisionId: previous.id }];
+  };
+  const own = candidate(journal);
+  own.expectedPredecessors = predecessors(ordinary.key);
+  const groupedCandidate: PointsImplementationCorrectionCandidate = {
+    id: "correction_joint",
+    kind: "work-unit",
+    projectId: "asi",
+    sourceId: SOURCE,
+    sourceUrl: URL,
+    occurredAt: OCCURRED,
+    workUnitId: unit,
+    sourceIds: [SOURCE],
+    expectedPredecessors: predecessors(joint.key),
+    proof: {
+      status: "complete",
+      censusDigest: "c".repeat(64),
+      sources: [source()],
+      decisionDigest: VALUE,
+      expectedClaimIds: ["claim_joint"],
+      claims: [
+        {
+          id: "claim_joint",
+          sourceId: SOURCE,
+          commitSha: sha("a"),
+          path: "one.ts",
+        },
+      ],
+    },
+  };
+  const otherSource = source();
+  otherSource.sourceId = "PR_other";
+  otherSource.sourceUrl = other.sourceUrl;
+  otherSource.headSha = sha("c");
+  otherSource.commitCount = 1;
+  otherSource.commits = [
+    {
+      sha: sha("c"),
+      parentCount: 1,
+      author: B,
+      additions: 1,
+      deletions: 0,
+      firstAcceptedSourceId: "PR_other",
+    },
+  ];
+  const unrelated: PointsImplementationCorrectionCandidate = {
+    id: "correction_unrelated",
+    kind: "pull-request",
+    projectId: "asi",
+    sourceId: other.sourceId,
+    sourceUrl: other.sourceUrl,
+    occurredAt: OCCURRED,
+    workUnitId: other.workUnitId,
+    sourceIds: [other.sourceId],
+    expectedPredecessors: predecessors(other.key),
+    proof: {
+      status: "complete",
+      censusDigest: "c".repeat(64),
+      sources: [otherSource],
+    },
+  };
+  const input = manifest(journal, [own, groupedCandidate, unrelated]);
+  const result = apply(journal, input);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "held",
+    "held",
+    "applied",
+  ]);
+  expect(latestPoints(result.journal).get(ordinary.key)?.award).toEqual(
+    ordinary,
+  );
+  expect(latestPoints(result.journal).get(joint.key)?.award).toEqual(joint);
+  expect(latestPoints(result.journal).get(other.key)?.award.amount).toBe(0);
+  expect(
+    latestPoints(result.journal).get(
+      pointKey("asi", B.id, "merged-pull-request", "PR_other"),
+    )?.award.amount,
+  ).toBe(9);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(result.journal.revisions.slice(0, journal.revisions.length)).toEqual(
+    journal.revisions,
+  );
 });
 
 test("duplicate candidate pools and forged commit/file counts refuse", () => {
