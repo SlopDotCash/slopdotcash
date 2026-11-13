@@ -64,5 +64,12 @@ test("the lockfile or manifest of a recognized ecosystem is a dependency surface
 test("a plain text file stays outside the dependency surfaces", () => {
   expect(surfacesOf("notes.txt")).toEqual([]);
   expect(surfacesOf("docs/guide.txt")).toEqual([]);
-  expect(inspected("docs/guide.txt", PAYLOAD).findings).toEqual([]);
+  const result = inspected("docs/guide.txt", PAYLOAD);
+  expect(result.coverage.dependencies.items).toBe(0);
+  expect(result.findings).toContainEqual(
+    expect.objectContaining({
+      path: "docs/guide.txt",
+      category: "unsafe-execution",
+    }),
+  );
 });
