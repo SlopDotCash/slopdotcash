@@ -173,7 +173,7 @@ export interface MergedPullRequestOutcome {
   author: GitHubActor | null;
   additions: number;
   deletions: number;
-  /** Target branch; only integration-branch merges share commit credit. */
+  /** Target branch; commit ownership and allocation apply on every branch. */
   baseRefName: string;
   /** Complete commit SHAs and linked GitHub authors; null for legacy evidence or non-integration merges. */
   commits: Array<{
