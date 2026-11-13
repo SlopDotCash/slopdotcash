@@ -347,7 +347,7 @@ async function relatedPullRequests(
           } | null;
         } | null;
       }>(
-        `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}}}`,
+        `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}} rateLimit{cost limit remaining resetAt}}`,
         { owner: targetOwner, name: targetName, number: target.number },
       )
       .catch(() => null);
