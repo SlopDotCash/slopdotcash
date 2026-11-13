@@ -1,7 +1,9 @@
 import { formatBaseUnits } from "./base-units.mjs";
 import { evmExplorerOrigin } from "./payments/contracts";
+import { monthlyAmountDisplay } from "./project-schema.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
 import { formatAssetSymbol } from "./reward-asset.mjs";
+import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type {
   SecurityBountyTerms,
   SecurityProgramStatus,
@@ -59,24 +61,56 @@ export function hasProjectCardBounty(project: {
   );
 }
 
+/** The cap for the current UTC month: a mid-month change applies from the next. */
+export function currentMonthlyCapMinor(
+  project: ProjectDefinition,
+  now: Date = new Date(),
+): string {
+  return resolveRewardCapMinor(project, now.toISOString().slice(0, 7));
+}
+
+/** A $0 monthly pool pays no money; accepted work still earns points. */
+export function monthlyPoolPointsOnly(
+  project: ProjectDefinition,
+  now: Date = new Date(),
+): boolean {
+  return (
+    project.reward.kind === "monthly-pool" &&
+    currentMonthlyCapMinor(project, now) === "0"
+  );
+}
+
+/** The stored display stays valid only while the cap equals the default. */
+export function monthlyCapDisplayFor(
+  project: ProjectDefinition,
+  minor: string,
+): string {
+  return minor === project.reward.monthlyCapMinor
+    ? project.reward.monthlyCapDisplay
+    : monthlyAmountDisplay(minor, project.rewardAsset);
+}
+
+export function currentMonthlyCapDisplay(
+  project: ProjectDefinition,
+  now: Date = new Date(),
+): string {
+  return monthlyCapDisplayFor(project, currentMonthlyCapMinor(project, now));
+}
+
 export function projectRewardSummaries(
   project: ProjectDefinition,
+  now: Date = new Date(),
 ): ProjectRewardSummary[] {
   const summaries: ProjectRewardSummary[] = [];
   const { reward, rewardAsset: asset, securityBounty: bounty } = project;
+  const capMinor = currentMonthlyCapMinor(project, now);
   if (reward.kind === "external-prize-share") {
     summaries.push({
       kind: "external-prize",
       amount: reward.externalOpportunity?.advertisedAmountDisplay ?? null,
     });
-  } else if (
-    BigInt(reward.monthlyCapMinor) > 0n &&
-    bounty?.rewardMode !== "bounty-only"
-  ) {
-    const amount = formatBaseUnits(
-      reward.monthlyCapMinor,
-      asset?.decimals ?? 6,
-    );
+  } else if (BigInt(capMinor) > 0n && bounty?.rewardMode !== "bounty-only") {
+    const amount = formatBaseUnits(capMinor, asset?.decimals ?? 6);
     summaries.push(
       asset && asset.kind !== "stablecoin"
         ? {

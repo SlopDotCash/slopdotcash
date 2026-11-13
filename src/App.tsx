@@ -18,7 +18,10 @@ import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
+  currentMonthlyCapDisplay,
+  currentMonthlyCapMinor,
   hasProjectCardBounty,
+  monthlyPoolPointsOnly,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
@@ -64,7 +67,6 @@ import {
   formatDate,
   formatDateTime,
   formatMicroUsdc,
-  monthlyPoolPointsOnly,
   NotFound,
   RoutePageHeader,
   reviewBudgetLabel,
@@ -501,12 +503,9 @@ function HeroHeading() {
 
 /** A token pool names its asset; only a stablecoin pool reads as dollars. */
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
-  const reward = project.reward;
-  const minor = BigInt(reward.monthlyCapMinor);
-  const cap = formatRewardCapDisplay(
-    reward.monthlyCapDisplay,
-    project.rewardAsset,
-  );
+  const display = currentMonthlyCapDisplay(project);
+  const minor = BigInt(currentMonthlyCapMinor(project));
+  const cap = formatRewardCapDisplay(display, project.rewardAsset);
   if (project.rewardAsset?.kind === "native") return cap;
   if (project.rewardAsset?.kind === "token")
     return cap.replace(/^[\d,]+(?=\s)/u, (digits) =>
@@ -517,7 +516,7 @@ function monthlyPoolCapLabel(project: ProjectDefinition): string {
         .format(BigInt(digits.replaceAll(",", "")))
         .toLowerCase(),
     );
-  if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
+  if (minor % 1_000_000n !== 0n) return display;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
@@ -640,7 +639,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
                 ? "/ Critical"
                 : "/ Finding"}
             </span>
-          ) : monthlyPoolPointsOnly(project.reward) ||
+          ) : monthlyPoolPointsOnly(project) ||
             project.reward.kind === "external-prize-share" ? (
             <span> + points</span>
           ) : (
@@ -651,7 +650,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
           <small className="project-money-state">
             {bountyFundingLabel(bounty)}
           </small>
-        ) : monthlyPoolPointsOnly(project.reward) ? (
+        ) : monthlyPoolPointsOnly(project) ? (
           <small className="project-money-state">Points only</small>
         ) : project.reward.kind === "monthly-pool" ? null : (
           <small className="project-money-state">External prize</small>
@@ -672,7 +671,7 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
     : undefined;
   const amount = bounty
     ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
-    : monthlyPoolPointsOnly(project.reward)
+    : monthlyPoolPointsOnly(project)
       ? "Points only"
       : project.reward.kind === "monthly-pool"
         ? `${monthlyPoolCapLabel(project)}/mo`

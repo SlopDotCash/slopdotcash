@@ -535,13 +535,6 @@ export function formatPercent(partsPerMillion: number): string {
 /** A pledged pool never headlines its cap; the cap is small print only. */
 export const UNFUNDED_POOL_HEADLINE = "Not funded yet";
 
-/** A $0 monthly pool pays no money; accepted work still earns points. */
-export function monthlyPoolPointsOnly(
-  reward: Pick<ProjectDefinition["reward"], "kind" | "monthlyCapMinor">,
-): boolean {
-  return reward.kind === "monthly-pool" && reward.monthlyCapMinor === "0";
-}
-
 /** One identity header for scored, historical and newly registered contributors. */
 export function ContributorIdentity({
   actor,

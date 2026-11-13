@@ -1,5 +1,6 @@
 import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
+import { monthlyCapDisplayFor } from "./lib/project-reward-summary";
 import {
   type ProjectContributor,
   type ProjectView,
@@ -59,7 +60,16 @@ export function CycleAllocation({
           <p>
             {monthlyPoolUnfunded(view.project.reward)
               ? `${UNFUNDED_POOL_HEADLINE}.`
-              : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward, view.project.rewardAsset)}.`}
+              : `Projected from accepted work · ${monthlyPoolLabel(
+                  {
+                    ...view.project.reward,
+                    monthlyCapDisplay: monthlyCapDisplayFor(
+                      view.project,
+                      view.reward.capMinor,
+                    ),
+                  },
+                  view.project.rewardAsset,
+                )}.`}
           </p>
         ) : null}
       </div>
