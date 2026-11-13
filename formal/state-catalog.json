@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "20dce05b9b857a0b5c274e02cd7d759ffe12900d76e78aed01ae92e038dba74a",
+  "inventorySha256": "21ae7fe59a93338acb1f1a45e23fae7501cd47600eb67d8fa83134ac9bab7f20",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -242,7 +242,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 362,
+      "line": 377,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -256,7 +256,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 553,
+      "line": 609,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -270,7 +270,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 712,
+      "line": 744,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -284,7 +284,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 853,
+      "line": 885,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
