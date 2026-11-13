@@ -11,8 +11,14 @@ sudo apt-get update
 sudo apt-get install --no-install-recommends -y libudev-dev
 install_dir="$RUNNER_TEMP/slop-solana-tools"
 mkdir -p "$install_dir"
-curl --fail --location --retry 3 --output "$install_dir/solana.tar.bz2" https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
-tar -xjf "$install_dir/solana.tar.bz2" -C "$install_dir"
+archive="$install_dir/solana.tar.bz2"
+curl --fail --location --retry 3 --output "$archive" https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+# GitHub publishes no digest for this release asset; pin the bytes we verified.
+printf '%s  %s\n' 5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397 "$archive" | sha256sum --check --status || {
+  echo 'Agave archive checksum mismatch' >&2
+  exit 1
+}
+tar -xjf "$archive" -C "$install_dir"
 export PATH="$install_dir/solana-release/bin:$PATH"
 printf '%s\n' "$install_dir/solana-release/bin" >> "$GITHUB_PATH"
 [[ "$(solana --version)" == solana-cli\ 2.1.21* ]]
