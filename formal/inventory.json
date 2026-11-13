@@ -8832,13 +8832,14 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "9ef9ed33c25f4e9eb9f5c259c765a6fc4ff10e662603e2a6a1821ca1c621c002",
+      "sha256": "6c769892ccc379fd7f8986f445093bdee2040947edf1db32912838996ca97382",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_gzip_expansion.qnt"
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        245, 253, 254, 1720, 1721, 1902, 1963, 1984, 2051, 2067, 2110
+        245, 253, 254, 1725, 1726, 1907, 1968, 1989, 2056, 2072, 2115
       ],
       "review": "mapped-abstraction"
     },
@@ -18621,6 +18622,16 @@
         "staleMetadataDoesNotBlockRawPreservationTest",
         "truncatedBodyCannotProduceObservedDigestTest",
         "unavailableBodyIsNotMissingTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_path_coverage.qnt",
+      "sha256": "4e099ce87cf391f33c21cbabc155f088cc07bb1e705b900481bfcc03894b8745",
+      "sources": ["workers/vetting/bounded-scan.ts"],
+      "scenarios": [
+        "completeContentReviewTest",
+        "omittedContentCannotPublishTest",
+        "previousCoverageCannotBeReusedTest"
       ]
     },
     {
