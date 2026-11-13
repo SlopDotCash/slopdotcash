@@ -522,9 +522,12 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
+  // Included but not final: received, not yet counted.
   await expect(actions.getByRole("status")).toContainText(
-    "Waiting for finalized",
+    "Deposit received in a Base Sepolia (test) block",
   );
+  await expect(actions.getByRole("status")).toContainText(sends[1]);
+  await expect(actions.getByText("Deposit verified")).toHaveCount(0);
   await rpc("anvil_mine", ["0x40"]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
@@ -596,6 +599,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   // request pending until the block is final, then verifies it without a click.
   await page.waitForTimeout(4_000);
   await expect(actions).toContainText("Withdrawal awaiting verification");
+  await expect(actions.getByRole("status")).toContainText("Withdrawal sent");
   // An automatic check that fails says why without a click, keeps the saved
   // request, and withdraws the message once a later check works again.
   wrongNetwork = true;
@@ -2752,6 +2756,7 @@ test("depositor approves and deposits with one wallet request when the wallet ba
   // The wallet reports the batch confirmed, but its block is not final: the
   // automatic check names the transaction and keeps the deposit pending.
   await expect(actions).toContainText("Deposit awaiting verification");
+  await expect(actions.getByRole("status")).toContainText("Deposit received");
   await expect(
     actions.getByRole("link", { name: "View submitted transaction" }),
   ).toBeVisible();
