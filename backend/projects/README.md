@@ -208,7 +208,13 @@ current name and integration branch (`422 invalid_repository`, or `503
 github_unavailable` when GitHub cannot answer); and the owner needs write,
 maintain or admin access through a Slopbot installation on that repository
 (`409 slopbot_required`, `403 authority_required`). Name conflicts with other
-projects still return `409 registry_conflict`. The revision reason starts
+projects still return `409 registry_conflict`, including a name another
+project takes while the revision is written. A new project, created or
+published from a stored application, is refused the same way when another
+project appended its first repository under another name
+(`assertNewRepositoryIdentityUnlisted`). A restriction records a
+`github:<id>` key for every appended repository, so an appended repository
+renamed on GitHub stays restricted. The revision reason starts
 with `added repository <id>`, and the scan request queues only repositories
 that are not cleared. An appended repository's work counts from its
 `countsFrom` month.

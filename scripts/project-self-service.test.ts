@@ -4334,3 +4334,56 @@ test("a stored application cannot publish another project's appended repository 
   expect(published.body.error).toBe("registry_conflict");
   expect(await t.persistence.getProject("relisted")).toBeNull();
 });
+
+test("activation refused for an uncleared appended repository names that repository", async () => {
+  const t = await addRepositoryFixture({ active: false });
+  const activate = async () => {
+    const current = await t.persistence.getProject("open-registry");
+    if (!current) throw new Error("project expected");
+    return t.call("PUT", "admin/projects/open-registry/manifest", ADMIN, {
+      manifest: { ...current.manifest, status: "active" },
+      expectedRevision: current.revision,
+      reason: "Activate",
+    });
+  };
+  // One repository: the message is unchanged.
+  t.state.clearance = { state: "unscanned" };
+  const single = await activate();
+  expect(single.status).toBe(422);
+  expect(single.body).toEqual({
+    error: "vetting_required",
+    message:
+      "Security vetting is unscanned. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.",
+  });
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const multiple = await activate();
+  expect(multiple.status).toBe(422);
+  expect(multiple.body).toEqual({
+    error: "vetting_required",
+    message: `Security vetting of ${ADDED} is unscanned. A successful retained admission scan of ${ADDED} is required before activation; reinstatement requires fresh evidence.`,
+  });
+});
+
+test("an appended name another project takes during the write is a registry conflict, not a stale revision", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect(
+    (await t.create("other-registry", "example/other-registry")).status,
+  ).toBe(201);
+  const write = t.persistence.appendProjectRevision.bind(t.persistence);
+  // Another project claims the name after the handler's registry checks.
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    t.sqlite
+      .query(
+        "INSERT INTO project_repositories (repository_key, project_id) VALUES (?, 'other-registry')",
+      )
+      .run(ADDED.toLowerCase());
+    return write(input, generation);
+  };
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});

@@ -2637,11 +2637,12 @@ function ProjectUpdateForm({
         staleRevision:
           failure instanceof ProjectApiError &&
           failure.code === "stale_revision",
-        // The start month comes from this device's clock; Slop's differs.
+        // The start month is the next UTC month on Slop's clock; the month
+        // changed since this page set it.
         message:
           failure instanceof ProjectApiError &&
           failure.code === "invalid_repository_start"
-            ? "The month an added repository counts from has changed. Check this device's date, then publish again."
+            ? "The month changed, so an added repository counts from a later month. Reload the page, then publish again."
             : errorMessage(failure, "Publication could not be confirmed."),
       });
     } finally {
@@ -2885,7 +2886,8 @@ function ProjectUpdateForm({
                 <small className="field-hint">
                   Counts from {formatDate(repositoryCountsFrom)}. A security
                   scan runs before it counts; an active project pauses until the
-                  scan clears.
+                  scan clears. If the scan has not cleared when the month
+                  closes, that month has no allocation.
                 </small>
                 <button
                   aria-label={`Remove ${added.entry.id}`}

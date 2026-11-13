@@ -832,7 +832,7 @@ export class CloudflareVettingPersistence {
         for (const candidate of assessments)
           if (
             candidate.state === "clean" &&
-            findListedRepository(repositories, candidate.repositoryId)
+            findListedRepository(repositories, candidate.repositoryId ?? "")
               ?.repository.id === repository.id &&
             !(
               candidate.result &&
@@ -1063,8 +1063,8 @@ export class CloudflareVettingPersistence {
     // repository the manifest no longer lists clears nothing, but it still
     // counts against an exemption of the first repository.
     const listed = (assessment: VettingAssessment) =>
-      findListedRepository(repositories, assessment.repositoryId)?.repository
-        .id ?? null;
+      findListedRepository(repositories, assessment.repositoryId ?? "")
+        ?.repository.id ?? null;
     const own =
       entry === null
         ? context.assessments
