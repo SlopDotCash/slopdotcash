@@ -664,7 +664,10 @@ try {
   );
   // The poster and claim cache retain their registered 9,000-block pages.
   // The watcher must also reconcile this history within its wider RPC window.
-  await rpc("anvil_mine", ["0x2400"]);
+  // Keep all 9,216 blocks, but let each mining request finish before the
+  // client's timeout even when a local runner is slow.
+  for (let mined = 0; mined < 0x2400; mined += 0x100)
+    await rpc("anvil_mine", ["0x100"]);
   const tooWide = await boundedRpc(rpcUrl, {
     method: "POST",
     body: JSON.stringify({
