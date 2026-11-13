@@ -7,7 +7,6 @@ import { useNotFoundHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import { hasBountyOverview } from "./lib/home-projects";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
-import { scoreThirdsToPoints } from "./lib/score-units";
 import {
   type ProjectSessionState,
   useProjectMaintainer,
@@ -19,6 +18,7 @@ import {
   monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";

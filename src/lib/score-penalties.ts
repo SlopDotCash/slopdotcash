@@ -15,8 +15,8 @@ import type {
   PublishedPenalty,
   ScoreEvent,
 } from "./leaderboard-types";
-import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 import { scoreThirdsToPoints } from "./score-units";
+import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 /** Retained history is explicit evidence, never an absence-based reversal. */
 export function assertPenaltyHistory(

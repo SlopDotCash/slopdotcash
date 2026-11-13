@@ -4472,7 +4472,7 @@
     },
     {
       "path": "scripts/source-correction.ts",
-      "sha256": "57be58e76e28d1b9e98d721bd57a3639f94331301e336b2b7df276679db2d44d",
+      "sha256": "e37a04fa39f01e8c0393f84631987bf3dafb7f7e89074dd892f9273929ebad6b",
       "models": ["formal/models/points/source_correction_preview.qnt"],
       "candidateLines": [28, 362],
       "review": "mapped-abstraction"
@@ -5196,7 +5196,7 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "1ed5b404f10294ffda120044b4f7a03711d4ad44c8c2036d46cb1fbd32c254cd",
+      "sha256": "85625ee969a4c427e274998d070b812276386608a0ea5cccf0cf6dcdaa5f4483",
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
@@ -5671,7 +5671,7 @@
     },
     {
       "path": "src/lib/contribution-quality.ts",
-      "sha256": "8c83edd9b8ade60b11b3348586e72fe85f04ce71d809b347d246577e41583041",
+      "sha256": "dc7b9750bd1426ebd7e8ccf239149b5ea0d56fac35a4953d57323d78c28cd12b",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6144,7 +6144,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "a9caa747ce885eb4acb10d62039b288913d0ccf308154423a796247239c93f08",
+      "sha256": "6b28f5c8be50adaeeb9ffc1bd90c13adcf378d870f0cb820259cb3be8bd891ab",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
@@ -6472,7 +6472,7 @@
     },
     {
       "path": "src/lib/score-penalties.ts",
-      "sha256": "d012517f190088ac6f9118a238f2c15355ccdbf87ae03eeff8845489f9abb808",
+      "sha256": "41ab4582a1cebaae11a6e71a238ada85c1238a5dc62af42b76530663ee993530",
       "models": [
         "formal/models/points/points_journal.qnt",
         "formal/models/rewards/bucket_aggregation.qnt"

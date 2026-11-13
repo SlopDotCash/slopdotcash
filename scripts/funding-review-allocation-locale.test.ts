@@ -15,11 +15,11 @@
  * login tie break ranks first.
  */
 import { expect, spyOn, test } from "bun:test";
+import { assertQualityEvidence } from "../src/lib/contribution-quality";
 import {
   assertFundingPreparation,
   createFundingReview,
 } from "../src/lib/funding-review-data";
-import { assertQualityEvidence } from "../src/lib/contribution-quality";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
