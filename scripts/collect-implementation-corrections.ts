@@ -55,11 +55,15 @@ import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   collectSearchReferences,
+  commitStatisticsFailure,
   completeOutcomeCommits,
   GitHubGraphqlClient,
   type GraphqlExecutor,
+  GraphqlUpstreamError,
   narrowedPageSize,
+  type OutcomeCommitIdentity,
   OutcomeCommitLineLoader,
+  parseActor,
   parseSearchReference,
   resolveGitHubToken,
 } from "./generate-leaderboard";
@@ -351,7 +355,23 @@ export class CorrectionEvidenceCache {
       const completeGraphql =
         url.pathname !== "/graphql" ||
         (typeof parsed?.data === "object" && parsed.data !== null);
-      if (response.ok && validJson && completeGraphql && !parsed?.errors)
+      const graphqlRequest =
+        method === "POST" && url.pathname === "/graphql"
+          ? JSON.parse(body)
+          : null;
+      const recoverableStatistics = graphqlRequest
+        ? commitStatisticsFailure(
+            graphqlRequest.query,
+            parsed,
+            graphqlRequest.variables ?? {},
+          )
+        : null;
+      if (
+        response.ok &&
+        validJson &&
+        completeGraphql &&
+        (!parsed?.errors || recoverableStatistics)
+      )
         await atomicJson(path, {
           status: response.status,
           headers,
@@ -371,6 +391,30 @@ function cachedExecutor(
   client: GitHubGraphqlClient,
   cache: CorrectionEvidenceCache,
 ): GraphqlExecutor {
+  const requestPath = (query: string, variables: Record<string, unknown>) => {
+    const body = encode({ query, variables });
+    const key = digest(
+      encode({ url: "https://api.github.com/graphql", method: "POST", body }),
+    );
+    return resolve(cache.directory, "requests", `${key}.json`);
+  };
+  const hasNodePartition = async (
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (await readJson<CachedResponse>(requestPath(query, variables)))
+      return true;
+    const ids = variables.ids;
+    if (!Array.isArray(ids) || ids.length < 2) return false;
+    const middle = Math.ceil(ids.length / 2);
+    return (
+      (await hasNodePartition(query, {
+        ...variables,
+        ids: ids.slice(0, middle),
+      })) &&
+      (await hasNodePartition(query, { ...variables, ids: ids.slice(middle) }))
+    );
+  };
   const execute = async (
     query: string,
     variables: Record<string, unknown> = {},
@@ -380,23 +424,36 @@ function cachedExecutor(
     >[0];
     let cached: CachedResponse | null;
     for (;;) {
-      const body = encode({ query, variables: candidateVariables });
-      const key = digest(
-        encode({ url: "https://api.github.com/graphql", method: "POST", body }),
-      );
       cached = await readJson<CachedResponse>(
-        resolve(cache.directory, "requests", `${key}.json`),
+        requestPath(query, candidateVariables),
       );
       if (cached) break;
       // Canonical live retries can halve pageSize after a gateway failure.
       // Reuse only those exact request variants; the caller still validates
       // every cursor, total and final census digest from the retained bytes.
       const narrower = narrowedPageSize(candidateVariables);
-      if (!narrower)
+      if (!narrower) {
+        const splitNodeBatch =
+          Array.isArray(variables.ids) && variables.ids.length > 1;
+        if (
+          !cache.allowRequests ||
+          (splitNodeBatch && (await hasNodePartition(query, variables)))
+        ) {
+          // The live node loader can recover a failed batch by requesting its
+          // halves. Let that same loader reconstruct cached halves in order.
+          // A missing leaf remains an integrity failure, with no live read.
+          if (splitNodeBatch)
+            throw new GraphqlUpstreamError(
+              "Cached node batch requires reconstruction from retained smaller batches",
+              503,
+            );
+          throw new Error("Cached census is missing raw request evidence");
+        }
         return client.execute(
           query,
           variables as Parameters<typeof client.execute>[1],
         );
+      }
       candidateVariables = narrower;
     }
     const bytes = await readFile(
@@ -407,11 +464,17 @@ function cachedExecutor(
       "Cached GraphQL response digest mismatch",
     );
     const value = JSON.parse(bytes.toString());
+    const statisticsFailure = commitStatisticsFailure(
+      query,
+      value,
+      candidateVariables,
+    );
     requireThat(
-      value.data && !value.errors,
+      value.data && (!value.errors || statisticsFailure),
       "Cached GraphQL response is incomplete",
     );
     cache.cacheHits += 1;
+    if (statisticsFailure) throw statisticsFailure;
     return value.data;
   };
   return {
@@ -446,14 +509,118 @@ interface SourceRead {
   outcome: MergedPullRequestOutcome;
   repositoryNodeId: string;
 }
+
+/** REST aggregate counters do not depend on the separate file-pagination cap. */
+async function recoverHistoricalCommitStatistics(
+  github: Pick<GitHubClient, "get">,
+  repository: TargetRepository,
+  repositoryNodeId: string,
+  expected: OutcomeCommitIdentity,
+) {
+  requireThat(
+    repository.expectedNodeId === null ||
+      repository.expectedNodeId === repositoryNodeId,
+    "Commit statistics repository identity changed",
+  );
+  const name = `${repository.owner}/${repository.name}`;
+  const path = `/repos/${name}/commits/${expected.oid}`;
+  const value = await github.get<Record<string, unknown>>(path);
+  requireThat(
+    value &&
+      value.node_id === expected.id &&
+      value.sha === expected.oid &&
+      value.url === `https://api.github.com${path}` &&
+      value.html_url === `https://github.com/${name}/commit/${expected.oid}`,
+    "REST commit identity changed",
+  );
+  const parents = value.parents;
+  requireThat(
+    Array.isArray(parents) &&
+      parents.length === expected.parentCount &&
+      parents.every(
+        (parent) =>
+          parent &&
+          typeof parent === "object" &&
+          typeof parent.sha === "string" &&
+          /^[a-f0-9]{40}$/u.test(parent.sha),
+      ) &&
+      new Set(parents.map((parent) => parent.sha)).size === parents.length,
+    "REST commit parents do not match the census",
+  );
+  const author =
+    value.author === null
+      ? null
+      : (() => {
+          requireThat(
+            value.author &&
+              typeof value.author === "object" &&
+              !Array.isArray(value.author),
+            "REST commit author is invalid",
+          );
+          const actor = value.author as Record<string, unknown>;
+          return parseActor(
+            {
+              __typename: actor.type,
+              id: actor.node_id,
+              login: actor.login,
+              avatarUrl: actor.avatar_url,
+              url: actor.html_url,
+            },
+            "REST commit author",
+          );
+        })();
+  requireThat(
+    !author ||
+      !expected.author ||
+      (author.id === expected.author.id &&
+        author.kind === expected.author.kind),
+    "REST commit author differs from the census",
+  );
+  requireThat(
+    value.stats &&
+      typeof value.stats === "object" &&
+      !Array.isArray(value.stats),
+    "REST commit statistics are unavailable",
+  );
+  const stats = value.stats as Record<string, unknown>;
+  requireThat(
+    [stats.additions, stats.deletions, stats.total].every(
+      (count) =>
+        typeof count === "number" && Number.isSafeInteger(count) && count >= 0,
+    ) && Number(stats.additions) + Number(stats.deletions) === stats.total,
+    "REST commit statistics do not reconcile",
+  );
+  return {
+    additions: Number(stats.additions),
+    deletions: Number(stats.deletions),
+    author,
+  };
+}
+
+function historicalCommitLineLoader(
+  client: GraphqlExecutor,
+  repository: TargetRepository,
+  github: Pick<GitHubClient, "get">,
+) {
+  return new OutcomeCommitLineLoader(client, (repositoryNodeId, expected) =>
+    recoverHistoricalCommitStatistics(
+      github,
+      repository,
+      repositoryNodeId,
+      expected,
+    ),
+  );
+}
+
 async function readSources(
   client: GraphqlExecutor,
   sources: readonly PointsImplementationCorrectionCandidate[],
   repository: TargetRepository,
+  github: Pick<GitHubClient, "get">,
 ): Promise<{ complete: Map<string, SourceRead>; held: Map<string, string> }> {
   const complete = new Map<string, SourceRead>(),
     held = new Map<string, string>();
-  const loader = new OutcomeCommitLineLoader(client);
+  const loader = historicalCommitLineLoader(client, repository, github);
   for (let offset = 0; offset < sources.length; offset += 20) {
     const batch = [
       ...new Map(
@@ -944,6 +1111,7 @@ export async function collectImplementationCorrections(
   // observations cannot reset the current quota to an older, larger balance.
   const client = new GitHubGraphqlClient(token, cache.fetch);
   const executor = cachedExecutor(client, cache);
+  const github = GitHubClient.forToken(token, cache.fetch);
   const registryDigest = digest(encode(registry));
   if (campaign) {
     requireThat(
@@ -1015,7 +1183,11 @@ export async function collectImplementationCorrections(
   const missingMonths: string[] = [];
   const partDigests: string[] = [];
   for (const plan of campaign.repositories) {
-    const loader = new OutcomeCommitLineLoader(executor);
+    const loader = historicalCommitLineLoader(
+      executor,
+      plan.repository,
+      github,
+    );
     for (const interval of plan.months) {
       const partPath = resolve(
         directory,
@@ -1134,7 +1306,12 @@ export async function collectImplementationCorrections(
           repositoryIdFromUrl(c.sourceUrl).toLowerCase() ===
           plan.repository.id.toLowerCase(),
       );
-    const loaded = await readSources(executor, targets, plan.repository);
+    const loaded = await readSources(
+      executor,
+      targets,
+      plan.repository,
+      github,
+    );
     for (const [id, value] of loaded.complete) {
       requireThat(
         value.repositoryNodeId === plan.nodeId,
@@ -1144,7 +1321,6 @@ export async function collectImplementationCorrections(
     }
     for (const [id, value] of loaded.held) limitations.set(id, value);
   }
-  const github = GitHubClient.forToken(token, cache.fetch);
   const outcomesById = new Map(allOutcomes.map((o) => [o.id, o]));
   for (const pool of selected) {
     const candidate = pool.candidate;
