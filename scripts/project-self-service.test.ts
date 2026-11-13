@@ -4240,3 +4240,97 @@ test("an owner cannot append the project's own first repository under a new name
   expect(await t.persistence.getProject("open-registry")).toEqual(before);
   expect(t.state.scans).toEqual([]);
 });
+
+/** The appended repository, renamed on GitHub, as a new project's first. */
+function renamedAddedManifest(
+  id: string,
+  overrides: Parameters<typeof applicationManifest>[2] = {},
+) {
+  const renamed = "acme-tools/extra-renamed";
+  const base = applicationManifest(id, renamed, overrides);
+  return {
+    ...base,
+    authority: {
+      ...(base.authority as Record<string, unknown>),
+      repositoryId: "555000111",
+      repositoryNodeId: "R_extra",
+    },
+  };
+}
+
+test("a new project cannot list another project's appended repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const created = await t.call("POST", "projects", OTHER, {
+    manifest: renamedAddedManifest("relisted"),
+  });
+  expect(created.status).toBe(409);
+  expect(created.body.error).toBe("registry_conflict");
+  expect(String(created.body.message)).toContain("open-registry");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+  // Creation of an unlisted repository is unchanged.
+  expect((await t.create("unrelated", "example/unrelated")).status).toBe(201);
+});
+
+test("a restricted project's appended repository stays restricted after a rename", async () => {
+  const t = await addRepositoryFixture();
+  t.deps.moderatorGithubIds = new Set([ADMIN]);
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const project = await t.persistence.getProject("open-registry");
+  if (!project) throw new Error("project expected");
+  const banned = await t.call(
+    "POST",
+    "admin/projects/open-registry/enforcement",
+    ADMIN,
+    {
+      action: "quarantine",
+      reason: "Synthetic quarantine of the whole project",
+      evidenceReference: "private-case-fixture",
+      expectedRevision: project.revision,
+      expectedSequence: 1,
+    },
+  );
+  expect(banned.status).toBe(200);
+  const created = await t.call("POST", "projects", OTHER, {
+    manifest: renamedAddedManifest("relisted"),
+  });
+  expect(created.status).toBe(403);
+  expect(created.body.error).toBe("repository_restricted");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+});
+
+test("a stored application cannot publish another project's appended repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  // Submission stored the verified reward asset with the manifest.
+  const manifest = JSON.stringify(
+    renamedAddedManifest("relisted", {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: "2026-10-10T00:00:00.000Z",
+      },
+    }),
+  );
+  t.sqlite.exec(
+    `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at)
+       VALUES ('app_renamedappended01','relisted','acme-tools/extra-renamed','${manifest}','${"a".repeat(64)}','Merged pull requests','${OTHER}','other','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z')`,
+  );
+  const published = await t.call(
+    "POST",
+    "project-applications/app_renamedappended01/publish",
+    OTHER,
+    {},
+  );
+  expect(published.status).toBe(409);
+  expect(published.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+});
