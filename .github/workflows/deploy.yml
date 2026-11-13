@@ -60,8 +60,9 @@ jobs:
       group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
-    # Leave room for complete fail-closed hydration.
-    timeout-minutes: 180
+    # Complete commit attribution and value-history reads can span quota resets.
+    # The three-hour window expired before the complete census was written.
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
