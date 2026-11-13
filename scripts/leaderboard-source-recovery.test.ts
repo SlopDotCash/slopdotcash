@@ -92,6 +92,8 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
     {
       commit: {
         oid: pull.headRefOid,
+        additions: pull.additions,
+        deletions: pull.deletions,
         parents: { totalCount: 1 },
         author: { user: { ...pull.author, __typename: "User" } },
       },
@@ -172,7 +174,22 @@ type Comparison =
   | "wrong-base"
   | "changed-count"
   | "unavailable"
-  | "invalid-range";
+  | "invalid-range"
+  | "line-missing"
+  | "line-null"
+  | "line-wrong-id"
+  | "line-wrong-sha"
+  | "line-wrong-kind"
+  | "line-negative"
+  | "line-fractional"
+  | "line-overflow"
+  | "line-missing-count"
+  | "overlap-lines"
+  | "overlap-deletions"
+  | "overlap-parents"
+  | "overlap-author"
+  | "overlap-kind"
+  | "overlap-login";
 
 type NativeFileFixture = {
   directory: string;
@@ -304,6 +321,8 @@ async function fixture(
     | "open-files-missing"
     | "open-files-later-missing"
     | "open-files-later-changed"
+    | "commit-lines-missing"
+    | "commit-lines-negative"
     | "open-reorder"
     | "open-skip",
   failure?: Failure,
@@ -318,6 +337,7 @@ async function fixture(
   let forbiddenSourceReads = 0;
   let openPullRequestListings = 0;
   const comparisonPages: number[] = [];
+  const commitLineBatches: string[][] = [];
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
@@ -326,12 +346,28 @@ async function fixture(
         index === 250
           ? retained.headRefOid
           : (index + 1).toString(16).padStart(40, "0"),
+      additions: index + 1,
+      deletions: index % 3,
       parents: { totalCount: 1 },
       author: { user: { ...retained.author, __typename: "User" } },
     },
   }));
   const sourceNodeFor = (pull: (typeof pulls)[number]) => {
     const node = nodeFor(pull);
+    const firstCommit = node.commits.nodes[0] as {
+      commit: { additions?: number; deletions: number };
+    };
+    if (pull.id === retained.id && mode === "commit-lines-missing")
+      delete firstCommit.commit.additions;
+    if (pull.id === retained.id && mode === "commit-lines-negative")
+      firstCommit.commit.deletions = -1;
+    if (
+      comparison === "overlap-login" &&
+      node.author.id === retained.author?.id
+    ) {
+      node.author.login = "renamed-contributor";
+      node.author.url = "https://github.com/renamed-contributor";
+    }
     if (comparison && pull.id === retained.id)
       node.commits = {
         totalCount: range.length,
@@ -356,6 +392,8 @@ async function fixture(
           {
             commit: {
               oid: nativeFiles.head,
+              additions: nativeFiles.expected.additions,
+              deletions: nativeFiles.expected.deletions,
               parents: { totalCount: 1 },
               author: { user: { ...pull.author, __typename: "User" } },
             },
@@ -392,7 +430,45 @@ async function fixture(
         requests++;
         const data: Record<string, unknown> = {};
         let errors: unknown[] | undefined;
-        if (query.includes("query LeaderboardPreflight")) {
+        if (query.includes("query LeaderboardOutcomeCommitLines")) {
+          commitLineBatches.push(v.ids);
+          const nodes: Array<Record<string, unknown> | null> = v.ids.map(
+            (id) => {
+              const index = range.findIndex(
+                (row) => `C_${row.commit.oid}` === id,
+              );
+              const commit = required(range[index]).commit;
+              return {
+                __typename: "Commit",
+                id,
+                oid: commit.oid,
+                additions:
+                  comparison === "overlap-lines" && index >= 151
+                    ? commit.additions + 1
+                    : commit.additions,
+                deletions:
+                  comparison === "overlap-deletions" && index >= 151
+                    ? commit.deletions + 1
+                    : commit.deletions,
+              };
+            },
+          );
+          if (comparison === "line-missing") nodes.pop();
+          if (comparison === "line-null") nodes[0] = null;
+          const first = nodes[0];
+          if (first) {
+            if (comparison === "line-wrong-id") first.id = "C_wrong";
+            if (comparison === "line-wrong-sha") first.oid = "0".repeat(40);
+            if (comparison === "line-wrong-kind")
+              first.__typename = "PullRequest";
+            if (comparison === "line-negative") first.additions = -1;
+            if (comparison === "line-fractional") first.deletions = 0.5;
+            if (comparison === "line-overflow")
+              first.additions = Number.MAX_SAFE_INTEGER + 1;
+            if (comparison === "line-missing-count") delete first.deletions;
+          }
+          data.nodes = nodes;
+        } else if (query.includes("query LeaderboardPreflight")) {
           if (
             v.owner === TARGET_REPOSITORIES[0].owner &&
             v.name === TARGET_REPOSITORIES[0].name
@@ -647,14 +723,27 @@ async function fixture(
             sha: comparison === "wrong-base" ? "b".repeat(40) : "a".repeat(40),
           },
           commits: slice.map(({ commit }) => ({
+            node_id: `C_${commit.oid}`,
             sha: commit.oid,
-            parents: [{ sha: "a".repeat(40) }],
+            parents:
+              comparison === "overlap-parents"
+                ? [{ sha: "a".repeat(40) }, { sha: "b".repeat(40) }]
+                : [{ sha: "a".repeat(40) }],
             author: {
-              node_id: commit.author.user.id,
-              type: "User",
-              login: commit.author.user.login,
+              node_id:
+                comparison === "overlap-author"
+                  ? unaffected.author!.id
+                  : commit.author.user.id,
+              type: comparison === "overlap-kind" ? "Bot" : "User",
+              login:
+                comparison === "overlap-login"
+                  ? "renamed-contributor"
+                  : commit.author.user.login,
               avatar_url: commit.author.user.avatarUrl,
-              html_url: commit.author.user.url,
+              html_url:
+                comparison === "overlap-login"
+                  ? "https://github.com/renamed-contributor"
+                  : commit.author.user.url,
             },
           })),
         });
@@ -776,6 +865,7 @@ async function fixture(
       forbiddenSourceReads,
       openPullRequestListings,
       comparisonPages,
+      commitLineBatches,
       recoveredFiles,
       recoveryInputs,
     }),
@@ -1205,6 +1295,20 @@ test("a server-side comparison timeout retries without losing complete merged at
     expect(snapshot.ledger).toEqual(before.ledger);
     expect(snapshot.source.counts.mergedPullRequests).toBe(2);
     expect(f.stats().comparisonPages).toEqual([1, 1, 2, 3]);
+    expect(f.stats().commitLineBatches.map((ids) => ids.length)).toEqual([
+      100, 100, 51,
+    ]);
+    expect(
+      snapshot.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === retained.id,
+      )?.implementationAllocation?.weights,
+    ).toEqual([
+      {
+        actorNodeId: retained.author!.id,
+        actorLogin: retained.author!.login,
+        changedLines: "31876",
+      },
+    ]);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
   } finally {
     await f.close();
@@ -1220,6 +1324,99 @@ for (const comparison of ["unavailable", "invalid-range"] as const) {
       expect(f.stats().comparisonPages).toHaveLength(
         comparison === "unavailable" ? MAX_GRAPHQL_REQUEST_ATTEMPTS : 1,
       );
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const comparison of [
+  "line-missing",
+  "line-null",
+  "line-wrong-id",
+  "line-wrong-sha",
+  "line-wrong-kind",
+  "line-negative",
+  "line-fractional",
+  "line-overflow",
+  "line-missing-count",
+] as const) {
+  test(`comparison ${comparison} statistics preserve the last published snapshot`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      await expect(f.generate()).rejects.toThrow(
+        comparison === "line-missing"
+          ? "commit statistics are incomplete"
+          : comparison === "line-null"
+            ? "must be an object"
+            : ["line-wrong-id", "line-wrong-sha", "line-wrong-kind"].includes(
+                  comparison,
+                )
+              ? "commit statistics identity changed"
+              : comparison === "line-missing-count"
+                ? "must be a finite number"
+                : "line counts must be non-negative integers",
+      );
+      expect(f.stats().commitLineBatches).toHaveLength(1);
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const comparison of [
+  "overlap-lines",
+  "overlap-deletions",
+  "overlap-parents",
+  "overlap-author",
+  "overlap-kind",
+] as const) {
+  test(`comparison ${comparison} cannot contradict an already collected immutable commit`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      await expect(f.generate()).rejects.toThrow(
+        "comparison changed immutable commit metadata",
+      );
+      expect(f.stats().commitLineBatches.map((ids) => ids.length)).toEqual([
+        100, 100, 51,
+      ]);
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("comparison commit authors can retain identity after a login rename", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy", undefined, undefined, "overlap-login");
+  try {
+    const snapshot = await f.generate();
+    expect(
+      snapshot.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === retained.id,
+      )?.implementationAllocation?.weights[0],
+    ).toMatchObject({
+      actorNodeId: retained.author!.id,
+      actorLogin: "renamed-contributor",
+      changedLines: "31876",
+    });
+  } finally {
+    await f.close();
+  }
+});
+
+for (const mode of ["commit-lines-missing", "commit-lines-negative"] as const) {
+  test(`ordinary PR ${mode} statistics fail before publication`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(mode);
+    try {
+      await expect(f.generate()).rejects.toThrow();
+      expect(f.stats().comparisonPages).toEqual([]);
       expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
     } finally {
       await f.close();

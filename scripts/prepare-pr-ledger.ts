@@ -28,6 +28,7 @@ import {
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
 import { eventThirds } from "../src/lib/score-penalties";
+import { addScoreThirds } from "../src/lib/score-units";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 
 type JsonRecord = Record<string, unknown>;
@@ -281,27 +282,42 @@ function rebuildLeaders(
     for (const event of events) {
       const thirds = eventThirds(event);
       if (event.category === "merged-pull-request") {
-        pointThirds.mergedPullRequests += thirds;
+        pointThirds.mergedPullRequests = addScoreThirds(
+          pointThirds.mergedPullRequests,
+          thirds,
+        );
         acceptedOutcomes.mergedPullRequests += 1;
       } else if (event.category === "resolved-issue") {
-        pointThirds.resolvedIssues += thirds;
+        pointThirds.resolvedIssues = addScoreThirds(
+          pointThirds.resolvedIssues,
+          thirds,
+        );
         acceptedOutcomes.resolvedIssues += 1;
       } else if (event.category === "material-test-change") {
-        pointThirds.materialTestChanges += thirds;
+        pointThirds.materialTestChanges = addScoreThirds(
+          pointThirds.materialTestChanges,
+          thirds,
+        );
         acceptedOutcomes.materialTestChanges += 1;
       } else if (event.category === "evidence") {
-        pointThirds.evidence += thirds;
+        pointThirds.evidence = addScoreThirds(pointThirds.evidence, thirds);
         acceptedOutcomes.evidenceCategories += 1;
       } else if (event.category === "substantive-review") {
-        pointThirds.substantiveReviews += thirds;
+        pointThirds.substantiveReviews = addScoreThirds(
+          pointThirds.substantiveReviews,
+          thirds,
+        );
         acceptedOutcomes.substantiveReviews += 1;
       } else {
-        pointThirds.evaluatedContributions += thirds;
+        pointThirds.evaluatedContributions = addScoreThirds(
+          pointThirds.evaluatedContributions,
+          thirds,
+        );
         acceptedOutcomes.evaluatedContributions += 1;
       }
     }
     const scoreThirds = Object.values(pointThirds).reduce(
-      (total, thirds) => total + thirds,
+      (total, thirds) => addScoreThirds(total, thirds),
       0,
     );
     return {

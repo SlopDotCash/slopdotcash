@@ -283,6 +283,13 @@ real GitHub OAuth or public testnet deployment result.
 Automatic monthly payment is the PRD default for a funded project (PRD
 sections 6 and 7). Migration `0062` adds its private records.
 
+Implementation Points retain the accepted PR's value and are divided by verified
+commit additions plus deletions. An allocation-only correction conserves the
+previous PR total when a current value assessment is unavailable; it does not
+replace that total with a provisional minimum. Missing multi-author line
+evidence holds the previous allocation. Corrections append to the journal with
+the original contribution date.
+
 Points imports check these private records in the same atomic statement that
 accepts the new journal batch. A correction cannot change or add accepted-work
 Points in a frozen month, a month with an owner allocation decision, or a month
