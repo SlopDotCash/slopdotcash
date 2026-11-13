@@ -4,7 +4,7 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import { implementationCreditActors } from "../../src/lib/commit-credit";
+import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import type { TargetRepository } from "../../src/lib/repositories.mjs";
 import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
@@ -288,22 +288,21 @@ export async function prepareWorkUnitEvidence(
         }
         continue;
       }
-      const sharesCommitCredit =
-        pull.base.ref === repository.integrationBranch ||
-        matchesHistoricalIntegrationBranch(
-          evidence.historicalBranchPolicy,
-          pull.base,
-        );
-      const actors = implementationCreditActors(
-        { id: pull.user.node_id, kind: pull.user.type },
-        sharesCommitCredit
-          ? [
-              commit.author
-                ? { id: commit.author.node_id, kind: commit.author.type }
-                : null,
-            ]
-          : [],
-      ).map((actor) => actor.id);
+      const actors = new Set<string>();
+      if (pull.user.type !== "Bot") actors.add(pull.user.node_id);
+      if (
+        (pull.base.ref === repository.integrationBranch ||
+          matchesHistoricalIntegrationBranch(
+            evidence.historicalBranchPolicy,
+            pull.base,
+          )) &&
+        commit.author &&
+        isCreditEligibleCommitAuthor({
+          id: commit.author.node_id,
+          kind: commit.author.type,
+        })
+      )
+        actors.add(commit.author.node_id);
       for (const path of paths) {
         const retained = retainedPaths(commit.sha, path);
         if (!retained.length) continue;
@@ -372,6 +371,8 @@ export async function prepareWorkUnitEvidence(
       );
       if (!originCommit || !repository)
         throw new Error("Retained original identity is missing");
+      const actors = new Set<string>();
+      if (origin.pull.user.type !== "Bot") actors.add(origin.pull.user.node_id);
       // A retained copy is accepted by the integration carrier, even when
       // the original historical branch has since been renamed. Preserve a
       // linked primary author only when both immutable commits agree. An
@@ -386,17 +387,14 @@ export async function prepareWorkUnitEvidence(
         limitations.add(
           `${origin.pull.node_id}: retained primary author identity differs between commits`,
         );
-      const actors = implementationCreditActors(
-        { id: origin.pull.user.node_id, kind: origin.pull.user.type },
-        [
-          originCommit.author
-            ? {
-                id: originCommit.author.node_id,
-                kind: originCommit.author.type,
-              }
-            : null,
-        ],
-      ).map((actor) => actor.id);
+      else if (
+        originCommit.author &&
+        isCreditEligibleCommitAuthor({
+          id: originCommit.author.node_id,
+          kind: originCommit.author.type,
+        })
+      )
+        actors.add(originCommit.author.node_id);
       prepared.push({
         id: await sha256Hex(
           JSON.stringify([
