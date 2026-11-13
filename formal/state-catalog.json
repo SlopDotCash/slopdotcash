@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "ce33a06c98e283c565c6e8a1767ad4ff3c6f020734ede6a12718e0aecac4227b",
+  "inventorySha256": "bda6eecd053dfbcf2234fef5819467d715e589bb445aaa1a616ea35411014f26",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2011,7 +2011,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 230,
+      "line": 232,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2030,7 +2030,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 365,
+      "line": 367,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2059,7 +2059,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3453,
+      "line": 3455,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2078,7 +2078,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4057,
+      "line": 4059,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2120,7 +2120,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 429,
+      "line": 436,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -3756,11 +3756,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 188,
+      "line": 191,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],
       "review": "candidate-only"
     },
