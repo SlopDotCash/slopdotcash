@@ -4116,9 +4116,12 @@
     },
     {
       "path": "scripts/prepare-vetting-public-key.ts",
-      "sha256": "0eec3a8248f4eed7cacb7cdfb3657c18718d2245b61880d090cfefec03f75369",
-      "models": ["formal/models/release/service_release_identity.qnt"],
-      "candidateLines": [3, 191, 240],
+      "sha256": "5f9d4703209f73a9d2c49c93197c00203ed742935fdaeee5ed4f428cb372f99e",
+      "models": [
+        "formal/models/release/pages_metadata_retry.qnt",
+        "formal/models/release/service_release_identity.qnt"
+      ],
+      "candidateLines": [3, 127, 155, 158, 212, 261],
       "review": "mapped-abstraction"
     },
     {
@@ -13778,6 +13781,18 @@
         "productionDoesNotRetryTest",
         "sixthRootAttemptTest",
         "wrongIdentityRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/pages_metadata_retry.qnt",
+      "sha256": "3c087093722bd845a45c0e90d7f8b9774f5a001608741abad9be7ca5854803e1",
+      "sources": ["scripts/prepare-vetting-public-key.ts"],
+      "scenarios": [
+        "invalidMetadataCannotRetryTest",
+        "permanentResponseCannotRetryTest",
+        "recoveredReadCannotRotateKeyTest",
+        "thirdTransientStopsTest",
+        "transientReadRecoversTest"
       ]
     },
     {
