@@ -25,6 +25,7 @@ function fixture() {
       token = asset,
       project = "project",
       paymentVault = vault,
+      evidenceOverrides = {},
     } = {},
   ) {
     const id = `award-${n}`;
@@ -65,6 +66,7 @@ function fixture() {
       assetAddress: token,
       assetDecimals: 6,
       ...(pad ? { padding: "x".repeat(pad) } : {}),
+      ...evidenceOverrides,
     };
     sqlite
       .query(
@@ -101,10 +103,11 @@ test("public vault payments retain the recorded work month and net asset amount 
     f.payment(3, { privateBounty: true });
     f.sqlite
       .query(
-        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public,closed_at) VALUES('closed','999','closed',?,0,?)",
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public,closed_at) VALUES('private','999','private',?,0,NULL),('closed','998','closed',?,1,?)",
       )
-      .run(when, when);
+      .run(when, when, when);
     f.payment(4, { actor: "999" });
+    f.payment(5, { actor: "998" });
     f.sqlite
       .query(
         "INSERT INTO monthly_reward_bases VALUES('project','2026-11','{}',?,?, '10000',1,?)",
@@ -135,6 +138,13 @@ test("public vault payments retain the recorded work month and net asset amount 
         netBase: "9800",
         transactionId: paid.transaction,
         indexedAt: when,
+        proof: {
+          obligationId: paid.id,
+          sourceDigest: paid.digest,
+          vault,
+          grossBase: "10000",
+          feeBase: "200",
+        },
       },
     ]);
     expect(JSON.stringify(result.body)).not.toContain("githubUserId");
@@ -151,6 +161,9 @@ test("public vault payments retain the recorded work month and net asset amount 
     expect((await f.read("actors/456/vault-payments")).body).toEqual(
       hidden.body,
     );
+    expect((await f.read("actors/998/vault-payments")).body).toEqual(
+      hidden.body,
+    );
     expect((await f.read("actors/123/vault-payments")).body.payments).toEqual(
       result.body.payments,
     );
@@ -161,6 +174,53 @@ test("public vault payments retain the recorded work month and net asset amount 
     f.sqlite.close();
   }
 });
+
+test("actor-scoped payment proof excludes another recipient with the same asset and amount", async () => {
+  const f = fixture();
+  try {
+    f.payment(1, { actor: "456" });
+    const paid = f.payment(2);
+    const result = await f.read("actors/123/vault-payments");
+    expect(result.status).toBe(200);
+    expect(result.body.total).toBe(1);
+    expect(
+      result.body.payments.map((payment: { proof: unknown }) => payment.proof),
+    ).toEqual([
+      {
+        obligationId: paid.id,
+        sourceDigest: paid.digest,
+        vault,
+        grossBase: "10000",
+        feeBase: "200",
+      },
+    ]);
+    expect(JSON.stringify(result.body)).not.toContain("githubUserId");
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test.each([
+  ["sourceDigest", "f".repeat(64)],
+  ["obligationId", "different-award"],
+  ["vault", `0x${"4".repeat(40)}`],
+  ["grossMicro", "10001"],
+  ["feeMicro", "201"],
+])(
+  "public vault payments refuse a mismatched %s before publishing proof",
+  async (field, value) => {
+    const f = fixture();
+    try {
+      f.payment(1, { evidenceOverrides: { [field]: value } });
+      expect(await f.read()).toEqual({
+        status: 503,
+        body: { error: "payments_unavailable" },
+      });
+    } finally {
+      f.sqlite.close();
+    }
+  },
+);
 
 test("public vault payment pagination freezes the append boundary and never invents a missing work month", async () => {
   const f = fixture();
