@@ -206,7 +206,6 @@ test("immutable line cache checks input identity and metadata before accepting a
   for (const changed of [
     { ...identity, oid: "f".repeat(40) },
     { ...identity, parentCount: 2 },
-    { ...identity, author: null },
   ]) {
     await expect(
       f.loader.hydrate("R_line_cache", [identity, changed]),
@@ -232,6 +231,61 @@ test("immutable line cache checks input identity and metadata before accepting a
     (await f.loader.hydrate("R_line_cache", [renamed]))[0].author?.login,
   ).toBe("renamed");
   expect(f.calls).toHaveLength(1);
+});
+
+test("missing author links retain verified identities across every occurrence", async () => {
+  const identity = lineIdentity(1);
+  const missing = { ...identity, author: null };
+  const f = lineCacheFixture([identity]);
+  const first = await f.loader.hydrate("R_line_cache", [missing]);
+  expect(first[0].author).toBeNull();
+  const later = await f.loader.hydrate("R_line_cache", [identity, missing]);
+  expect(later.map((row) => row.author?.id)).toEqual([
+    identity.author?.id,
+    identity.author?.id,
+  ]);
+  expect(first[0].author?.id).toBe(identity.author?.id);
+  expect(f.calls).toHaveLength(1);
+  const reverse = lineCacheFixture([identity]);
+  expect(
+    (await reverse.loader.hydrate("R_line_cache", [missing, identity])).map(
+      (row) => row.author?.id,
+    ),
+  ).toEqual([identity.author?.id, identity.author?.id]);
+});
+
+test("conflicting linked authors cannot select a recipient or alter prior evidence", async () => {
+  const identity = lineIdentity(1);
+  const other = {
+    ...identity,
+    author: { ...required(identity.author), id: "U_other" },
+  };
+  const f = lineCacheFixture([identity]);
+  await expect(
+    f.loader.hydrate("R_line_cache", [identity, other]),
+  ).rejects.toThrow("linked commit author");
+  expect(f.calls).toHaveLength(0);
+  const prior = await f.loader.hydrate("R_line_cache", [identity]);
+  await expect(f.loader.hydrate("R_line_cache", [other])).rejects.toThrow(
+    "linked commit author",
+  );
+  expect(prior[0].author?.id).toBe(identity.author?.id);
+});
+
+test("a failed statistics load cannot publish a staged author link", async () => {
+  const identities = [lineIdentity(1), lineIdentity(2)];
+  const f = lineCacheFixture(identities);
+  const prior = await f.loader.hydrate("R_line_cache", [
+    { ...identities[0], author: null },
+  ]);
+  f.transform(() => []);
+  await expect(f.loader.hydrate("R_line_cache", identities)).rejects.toThrow(
+    "incomplete",
+  );
+  expect(prior[0].author).toBeNull();
+  f.transform((nodes) => nodes);
+  await f.loader.hydrate("R_line_cache", identities);
+  expect(prior[0].author?.id).toBe(identities[0].author?.id);
 });
 
 test("ordinary commit pagination and PR search pages share one flat statistics cache", async () => {
@@ -1685,7 +1739,9 @@ for (const comparison of [
     const f = await fixture("healthy", undefined, undefined, comparison);
     try {
       await expect(f.generate()).rejects.toThrow(
-        "comparison changed immutable commit metadata",
+        comparison === "overlap-parents"
+          ? "comparison changed immutable commit metadata"
+          : "linked commit author",
       );
       expect(f.stats().commitLineBatches).toEqual([]);
       expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
