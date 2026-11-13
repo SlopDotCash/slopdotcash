@@ -178,7 +178,8 @@ export function localInstallHelpers(files: Input[], roots: CommandSource[]) {
         return;
       }
       included.add(file.path);
-      const shellShebang = /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(
+      // The same shells as the pipe-to-shell rule, including ash, fish, csh and tcsh.
+      const shellShebang = /^#![^\n]*\b(?:ba|da|k|a|z|fi|t?c)?sh(?:\s|$)/u.test(
         file.text,
       );
       const nonShell =
@@ -328,11 +329,11 @@ export function localInstallHelpers(files: Input[], roots: CommandSource[]) {
       }
       if (
         !command.dynamic &&
-        /^(?:(?:ba|da|k|z)?sh|node(?:js)?|python[0-9.]*|ruby|perl|php|source|\.)$/u.test(
+        /^(?:(?:ba|da|k|a|z|fi|t?c)?sh|node(?:js)?|python[0-9.]*|ruby|perl|php|source|\.)$/u.test(
           name,
         )
       ) {
-        const shell = /^(?:(?:ba|da|k|z)?sh|source|\.)$/u.test(name);
+        const shell = /^(?:(?:ba|da|k|a|z|fi|t?c)?sh|source|\.)$/u.test(name);
         let inline = false;
         while (words[offset]?.value.startsWith("-")) {
           const option = words[offset++];
