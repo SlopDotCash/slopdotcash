@@ -45,6 +45,8 @@ export function workUnitLineWeights(
 ): Map<string, bigint> | null {
   const weights = new Map<string, bigint>();
   const seen = new Set<string>();
+  // A moved file has a claim for each of its two paths; count its lines once.
+  const counted = new Set<string>();
   for (const claim of claims) {
     if (seen.has(claim.id)) return null;
     seen.add(claim.id);
@@ -62,9 +64,14 @@ export function workUnitLineWeights(
     );
     if (attribution?.length !== 1 || attribution[0].limitations.length)
       return null;
-    const files = attribution[0].files?.filter(
+    const named = attribution[0].files?.filter(
       (file) => file.filename === claim.path,
     );
+    const files = named?.length
+      ? named
+      : attribution[0].files?.filter(
+          (file) => file.previous_filename === claim.path,
+        );
     if (files?.length !== 1) return null;
     const additions = valueAdditionCount(files[0]);
     const deletions = valueDeletionCount(files[0]);
@@ -76,10 +83,12 @@ export function workUnitLineWeights(
     )
       return null;
     const actorId = actors[0];
-    weights.set(
-      actorId,
-      (weights.get(actorId) ?? 0n) + BigInt(additions) + BigInt(deletions),
-    );
+    const file = JSON.stringify([sourceId, commitSha, files[0].filename]);
+    const lines = counted.has(file)
+      ? 0n
+      : BigInt(additions) + BigInt(deletions);
+    counted.add(file);
+    weights.set(actorId, (weights.get(actorId) ?? 0n) + lines);
   }
   return weights;
 }
