@@ -86,8 +86,11 @@ export class GitHubClient {
     path: string,
     body?: unknown,
   ): Promise<{ status: number; data: T | null }> {
+    // Called unbound: workerd refuses the global fetch invoked as a method of
+    // this client ("Illegal invocation"), which Bun and Node allow.
+    const transport = this.transport;
     const send = (url: string) =>
-      this.transport(url, {
+      transport(url, {
         method,
         headers: {
           ...headers(this.token),

@@ -82,6 +82,11 @@ const pooled = [
     "node",
     ["backend/security/reporting-readiness.workflow.mjs"],
   ],
+  [
+    "slopbot-github-client",
+    "node",
+    ["workers/slopbot/github-client.workflow.mjs"],
+  ],
   ["vetting-backup", "node", ["workers/vetting-backup/workflow.mjs"]],
   [
     "vetting-generation-retirement",
