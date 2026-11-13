@@ -48,6 +48,7 @@
     "src/lib/canonical-json.ts",
     "src/lib/project-revision-changes.ts",
     "src/lib/points.ts",
+    "src/lib/points-implementation-corrections.ts",
     "src/lib/payout-points.ts",
     "src/lib/allocation-funding.ts",
     "src/lib/funding-review-data.ts",
