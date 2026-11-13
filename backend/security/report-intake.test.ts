@@ -21,7 +21,7 @@ import type {
 } from "./analysis";
 import type { SecurityApiDependencies, SecurityD1Database } from "./case-store";
 import { handleSecurityApi } from "./handler";
-import { readStoredReportByCase } from "./report-intake";
+import { readStoredReportByCase, scheduleAnalysis } from "./report-intake";
 
 const ORIGIN = "https://slop.test";
 const START = "2026-10-27T12:00:00.000Z";
@@ -131,6 +131,8 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const { db, sqlite } = sqliteD1();
   const statementSql = new WeakMap<object, string>();
   let routeFails = false;
+  let afterScreenClaim: (() => Promise<void>) | null = null;
+  let afterScreenFinish: (() => Promise<void>) | null = null;
   const tracked = (
     statement: D1QueryStatement,
     sql: string,
@@ -157,7 +159,34 @@ function fixture(overrides: Record<string, unknown> = {}) {
         })
       )
         throw new Error("Fixture owner-route outage");
-      return db.batch(statements);
+      const results = await db.batch(statements);
+      if (
+        afterScreenClaim &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state='running',screening_started_at="),
+        )
+      ) {
+        const callback = afterScreenClaim;
+        afterScreenClaim = null;
+        await callback();
+      }
+      if (
+        afterScreenFinish &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state=?,screening_reason="),
+        )
+      ) {
+        const callback = afterScreenFinish;
+        afterScreenFinish = null;
+        await callback();
+      }
+      return results;
     },
   };
   const base = applicationManifest(PROJECT, REPOSITORY, {
@@ -362,6 +391,12 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     beforeScreen: (callback: (() => Promise<void>) | null) => {
       beforeScreenResult = callback;
+    },
+    afterScreenClaim: (callback: () => Promise<void>) => {
+      afterScreenClaim = callback;
+    },
+    afterScreenFinish: (callback: () => Promise<void>) => {
+      afterScreenFinish = callback;
     },
     beforeAnalysis: (callback: (() => Promise<void>) | null) => {
       beforeAnalysisResult = callback;
@@ -1061,6 +1096,104 @@ describe("durable private report controls", () => {
     expect(t.analyzed).toHaveLength(1);
   });
 
+  test("semantic overlap uses current private summaries and stays recoverable without leaking them", async () => {
+    const t = fixture();
+    const first = required(
+      (await t.create("semantic-original")).body.submission,
+    );
+    const privateSummary = `Assessment 1: ${REPORT.summary}`;
+    required(t.deps.analyzer).screen = async (input) => {
+      expect(input.priorCases).toEqual([
+        {
+          id: first.caseId,
+          rootCauseKey: null,
+          summary: privateSummary,
+        },
+      ]);
+      return {
+        decision: "legitimate",
+        reason: privateSummary,
+        duplicateCaseIds: [first.caseId],
+      };
+    };
+    const duplicate = await t.create("semantic-paraphrase", OTHER, {
+      summary: "Redeeming tiny fractions costs too few vault shares",
+      description:
+        "An independent reproduction describes the same rounding path in different words.",
+    });
+    expect(duplicate.status).toBe(201);
+    const held = required(duplicate.body.submission);
+    expect(held.intake).toMatchObject({
+      state: "needs-information",
+      canRevise: true,
+      canForward: false,
+    });
+    expect(held.intake.reason).toContain("may overlap");
+    expect(JSON.stringify(duplicate.body)).not.toContain(privateSummary);
+    expect(JSON.stringify(duplicate.body)).not.toContain(first.caseId);
+    expect(t.analyzed).toHaveLength(1);
+    const approved = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${held.id}/review`,
+      {
+        expectedRevision: held.intake.revision,
+        decision: "forward",
+        reason: "Private review establishes distinct useful evidence.",
+      },
+    );
+    expect(approved.status).toBe(200);
+    expect(required(approved.body.submission).intake.canForward).toBe(true);
+    expect(t.analyzed).toHaveLength(2);
+  });
+
+  test("screening omits stale summaries and withholds prior-derived free text", async () => {
+    const t = fixture();
+    const first = required((await t.create("context-current")).body.submission);
+    const privateSummary = `Assessment 1: ${REPORT.summary}`;
+    const stale = required(
+      (
+        await t.create("context-stale", REPORTER, {
+          ...REPORT,
+          description: "Different old reproduction pending updated evidence.",
+        })
+      ).body.submission,
+    );
+    const review = await t.call(
+      OWNER,
+      "POST",
+      `security-submissions/${stale.id}/review`,
+      {
+        expectedRevision: stale.intake.revision,
+        decision: "request-information",
+        reason:
+          "Provide a fresh reproduction before relying on the prior assessment.",
+      },
+    );
+    expect(review.status).toBe(200);
+    required(t.deps.analyzer).screen = async (input) => {
+      expect(input.priorCases).toEqual([
+        {
+          id: first.caseId,
+          rootCauseKey: null,
+          summary: privateSummary,
+        },
+      ]);
+      return {
+        decision: "legitimate",
+        reason: privateSummary,
+        duplicateCaseIds: [],
+      };
+    };
+    const response = await t.create("context-distinct", OTHER, {
+      summary: "An independent access-control flaw",
+      description: "A distinct concrete reproduction with another root cause.",
+    });
+    expect(response.status).toBe(201);
+    expect(required(response.body.submission).intake.state).toBe("legitimate");
+    expect(JSON.stringify(response.body)).not.toContain(privateSummary);
+  });
+
   test.each(["needs-information", "spam"] as const)(
     "a %s report needs explicit human forwarding before assessment",
     async (decision) => {
@@ -1386,6 +1519,237 @@ describe("durable private report controls", () => {
     });
     expect(t.analyzed).toHaveLength(2);
   });
+
+  test("a delayed screening claim cannot adopt a revised report's running attempt", async () => {
+    const t = fixture();
+    const claimed = Promise.withResolvers<void>();
+    const releaseOld = Promise.withResolvers<void>();
+    const currentScreen = Promise.withResolvers<void>();
+    const releaseCurrent = Promise.withResolvers<void>();
+    const background: Promise<unknown>[] = [];
+    t.deps.waitUntil = (work) => background.push(work);
+    t.afterScreenClaim(async () => {
+      claimed.resolve();
+      await releaseOld.promise;
+    });
+    const analyzer = required(t.deps.analyzer);
+    const screen = required(analyzer.screen);
+    let calls = 0;
+    analyzer.screen = async (input, timeoutMs) => {
+      calls++;
+      if (calls > 1) throw new Error("PRIVATE-STALE-SCREEN-ERROR");
+      currentScreen.resolve();
+      await releaseCurrent.promise;
+      return screen(input, timeoutMs);
+    };
+    try {
+      const initial = await t.create("delayed-screen-claim");
+      expect(initial.status).toBe(201);
+      await claimed.promise;
+      const submission = required(initial.body.submission);
+      const receipt = await t.call(
+        OWNER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${submission.id}/review`,
+        {
+          expectedRevision: required(receipt.body.submission).intake.revision,
+          decision: "request-information",
+          reason: "Please include the affected revision.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      const revised = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${submission.id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Revision def.`,
+          },
+        },
+      );
+      expect(revised.status).toBe(200);
+      await currentScreen.promise;
+      // The original database write succeeded, but its caller resumes only
+      // after the replacement report has claimed its own screening attempt.
+      releaseOld.resolve();
+      await background[0];
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      const final = await t.call(
+        REPORTER,
+        "GET",
+        `security-submissions/${submission.id}?view=receipt`,
+      );
+      expect(required(final.body.submission).intake).toMatchObject({
+        reportVersion: 2,
+        state: "legitimate",
+        routingState: "routed",
+        canRetryScreening: false,
+      });
+      expect(calls).toBe(1);
+      expect(t.analyzed).toHaveLength(1);
+      expect(t.analyzed[0].report.description).toEndWith("Revision def.");
+      expect(JSON.stringify(final.body)).not.toContain(
+        "PRIVATE-STALE-SCREEN-ERROR",
+      );
+      expect(t.objects.size).toBe(2);
+      expect(
+        (await t.call(OTHER, "GET", `security-submissions/${submission.id}`))
+          .status,
+      ).toBe(404);
+    } finally {
+      releaseOld.resolve();
+      releaseCurrent.resolve();
+      for (let n = 0; n < background.length; n++) await background[n];
+      t.sqlite.close();
+    }
+  });
+
+  test("a committed screen cannot adopt a replacement during delayed completion readback", async () => {
+    const t = fixture();
+    let failed = false;
+    t.beforeAnalysis(async () => {
+      if (failed) throw new Error("Fixture replacement assessment failure");
+    });
+    t.afterScreenFinish(async () => {
+      const old = required(
+        t.sqlite
+          .query(
+            "SELECT submission_id, revision FROM security_submission_intake",
+          )
+          .get() as { submission_id: string; revision: number } | null,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${old.submission_id}/review`,
+        {
+          expectedRevision: old.revision,
+          decision: "request-information",
+          reason: "Provide the current affected version.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      failed = true;
+      const replacement = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${old.submission_id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Current affected version supplied.`,
+          },
+        },
+      );
+      expect(replacement.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+    });
+    const created = await t.create("delayed-finish-readback");
+    expect(created.status).toBe(201);
+    const submission = required(created.body.submission);
+    expect(t.analyzed).toHaveLength(1);
+    // A delayed handoff must not adopt a new version or retry its failed attempt.
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 1);
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 2);
+    expect(t.analyzed).toHaveLength(1);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT attempt, report_version, state FROM security_case_analyses",
+        )
+        .all(),
+    ).toEqual([{ attempt: 1, report_version: 2, state: "failed" }]);
+  });
+
+  test.each([false, true])(
+    "a stale screen cannot retry the replacement assessment (failed=%s)",
+    async (failed) => {
+      const t = fixture();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const pending: Promise<unknown>[] = [];
+      t.deps.waitUntil = (task) => pending.push(task);
+      t.beforeScreen(async () => {
+        t.beforeScreen(null);
+        started.resolve();
+        await release.promise;
+      });
+      if (failed)
+        t.beforeAnalysis(async () => {
+          throw new Error("Fixture assessment outage");
+        });
+      try {
+        const submission = required((await t.create()).body.submission);
+        await started.promise;
+        const current = required(
+          (
+            await t.call(
+              OWNER,
+              "GET",
+              `security-submissions/${submission.id}?view=receipt`,
+            )
+          ).body.submission,
+        );
+        const review = await t.call(
+          OWNER,
+          "POST",
+          `security-submissions/${submission.id}/review`,
+          {
+            expectedRevision: current.intake.revision,
+            decision: "request-information",
+            reason: "Clarify the affected revision.",
+          },
+        );
+        expect(review.status).toBe(200);
+        const from = pending.length;
+        const revised = await t.call(
+          REPORTER,
+          "POST",
+          `security-submissions/${submission.id}/report`,
+          {
+            expectedRevision: required(review.body.submission).intake.revision,
+            report: { ...REPORT, summary: "Replacement report" },
+          },
+        );
+        expect(revised.status).toBe(200);
+        for (let n = from; n < pending.length; n++) await pending[n];
+        const analyses = () =>
+          t.sqlite
+            .query(
+              "SELECT attempt,state,report_version FROM security_case_analyses WHERE case_id=? ORDER BY attempt",
+            )
+            .all(submission.caseId);
+        const before = analyses();
+        expect(before).toEqual([
+          {
+            attempt: 1,
+            state: failed ? "failed" : "complete",
+            report_version: 2,
+          },
+        ]);
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        // No owner analysis retry occurred. The old screen did not commit a result
+        // and must not spend another provider call on the replacement report.
+        expect(analyses()).toEqual(before);
+        expect(t.analyzed).toHaveLength(1);
+      } finally {
+        release.resolve();
+        for (let n = 0; n < pending.length; n++) await pending[n];
+        t.sqlite.close();
+      }
+    },
+  );
 
   test("reporter screening retries cannot repeat a failed assessment, but the owner can retry", async () => {
     const t = fixture();

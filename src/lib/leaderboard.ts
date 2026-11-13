@@ -1,4 +1,7 @@
-import { isCreditEligibleCommitAuthor } from "./commit-credit";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "./commit-credit";
 import {
   assertExternalSourceEvidence,
   assertExternalSourcePlatform,
@@ -2738,40 +2741,58 @@ function commitCreditOwners(
 }
 
 /**
- * Returns the non-bot pull-request author first, then every other non-bot
- * GitHub author of a commit this pull request owns, in actor-ID order.
+ * Returns the authors of the implementation commits this pull request owns.
+ * Opening a replacement PR does not grant a share of another author's work.
  */
 function mergeCreditActors(
   pullRequest: MergedPullRequestOutcome,
   commitOwners: ReadonlyMap<string, string>,
+  retainedAuthors?: NonNullable<
+    LeaderboardInput["retainedCommitAuthors"]
+  > extends ReadonlyMap<string, infer T>
+    ? T
+    : never,
 ): GitHubActor[] {
   const author =
     pullRequest.author && !isBotActor(pullRequest.author)
       ? pullRequest.author
       : null;
-  const committers = new Map<string, GitHubActor>();
   const repositoryId = repositoryIdFromUrl(pullRequest.url).toLowerCase();
   // A pull request that targets another branch keeps author-only credit.
   const sharesCommitCredit =
     pullRequest.baseRefName ===
     findRegisteredRepositoryById(repositoryIdFromUrl(pullRequest.url))
       ?.integrationBranch;
-  for (const commit of sharesCommitCredit ? (pullRequest.commits ?? []) : []) {
-    if (
-      commit.author &&
-      isCreditEligibleCommitAuthor(commit.author) &&
-      commit.author.id !== author?.id &&
-      commitOwners.get(`${repositoryId}\0${commit.oid}`) === pullRequest.id
-    ) {
-      committers.set(commit.author.id, commit.author);
-    }
-  }
-  return [
-    ...(author ? [author] : []),
-    ...[...committers.values()].sort((left, right) =>
-      compareCodeUnits(left.id, right.id),
-    ),
-  ];
+  // An empty *owned* implementation set is different from missing historical
+  // commit evidence: all of this complete range was accepted by earlier PRs.
+  // Do not turn the source-creator fallback into a second award for that work.
+  if (
+    sharesCommitCredit &&
+    pullRequest.commits?.length &&
+    pullRequest.commits.every((commit) => commit.parentCount !== undefined) &&
+    pullRequest.commits.some((commit) => (commit.parentCount ?? 2) <= 1) &&
+    !pullRequest.commits.some(
+      (commit) =>
+        (commit.parentCount ?? 2) <= 1 &&
+        commitOwners.get(`${repositoryId}\0${commit.oid}`) === pullRequest.id,
+    )
+  )
+    return [];
+  const commitAuthors = sharesCommitCredit
+    ? (pullRequest.commits ?? [])
+        .filter(
+          (commit) =>
+            (commit.parentCount === undefined || commit.parentCount <= 1) &&
+            commitOwners.get(`${repositoryId}\0${commit.oid}`) ===
+              pullRequest.id,
+        )
+        .map((commit) =>
+          isCreditEligibleCommitAuthor(commit.author)
+            ? commit.author
+            : (retainedAuthors?.get(commit.oid)?.actor ?? commit.author),
+        )
+    : [];
+  return implementationCreditActors(author, commitAuthors);
 }
 
 /**
@@ -2886,9 +2907,28 @@ function createSnapshotWithReviewCutoff(
   reviewCutoff: string,
 ): LeaderboardSnapshot {
   const participationBans = input.participationBans ?? new Map();
-  const heldSourceIds = new Set(
+  const attributionHeldSourceIds = new Set(
+    input.implementationAttributionHolds?.keys(),
+  );
+  // A shared unit cannot silently score its other carriers when one member's
+  // implementation proof is unresolved. Keep every member's prior journal row.
+  for (const decision of input.jointValueDecisions?.values() ?? []) {
+    if (
+      decision.status === "assessed" &&
+      decision.record.sources.some((source) =>
+        attributionHeldSourceIds.has(source.pullRequestNodeId),
+      )
+    )
+      for (const source of decision.record.sources)
+        attributionHeldSourceIds.add(source.pullRequestNodeId);
+  }
+  const unavailableHeldSourceIds = new Set(
     (input.source.heldWorkUnits ?? []).flatMap((unit) => unit.sourceNodeIds),
   );
+  const heldSourceIds = new Set([
+    ...unavailableHeldSourceIds,
+    ...attributionHeldSourceIds,
+  ]);
   for (const unit of input.source.heldWorkUnits ?? []) {
     for (const id of unit.sourceNodeIds) {
       const decision = input.jointValueDecisions?.get(id);
@@ -3149,7 +3189,11 @@ function createSnapshotWithReviewCutoff(
     if (
       parseIsoTime(pullRequest.mergedAt) >= parseIsoTime(SCORE_V2_EFFECTIVE_AT)
     ) {
-      return mergeCreditActors(pullRequest, commitOwners);
+      return mergeCreditActors(
+        pullRequest,
+        commitOwners,
+        input.retainedCommitAuthors?.get(pullRequest.id),
+      );
     }
     return pullRequest.author && !isBotActor(pullRequest.author)
       ? [pullRequest.author]
@@ -3406,6 +3450,7 @@ function createSnapshotWithReviewCutoff(
       pullRequest.id,
       new Set(actors.map((actor) => actor.id)),
     );
+    if (attributionHeldSourceIds.has(pullRequest.id)) continue;
     // A joint member is scored by its unit, never by a superseded per-PR record.
     const joint = valuePolicyApplies
       ? input.jointValueDecisions?.get(pullRequest.id)
@@ -3524,6 +3569,19 @@ function createSnapshotWithReviewCutoff(
       if (ratification && scoreThirds === 0) continue;
       const contributionBonus =
         isAuthor && contributionRun?.traceUpload ? 1_500 : 0;
+      const retainedSources = [
+        ...new Set(
+          [
+            ...(input.retainedCommitAuthors?.get(pullRequest.id)?.values() ??
+              []),
+          ]
+            .filter((binding) => binding.actor.id === actor.id)
+            .map((binding) => binding.originalPullRequestUrl),
+        ),
+      ].sort();
+      const actorReason = retainedSources.length
+        ? `${baseReason} Original contribution retained from ${retainedSources.join(", ")}.`
+        : baseReason;
       const scored = addScore(
         entries,
         ledger,
@@ -3572,8 +3630,8 @@ function createSnapshotWithReviewCutoff(
           },
           reason:
             actors.length === 1
-              ? baseReason
-              : `${baseReason} Shared equally among ${actors.length} commit authors.`,
+              ? actorReason
+              : `${actorReason} Shared equally among ${actors.length} commit authors.`,
         },
       );
       if (scored && isAuthor) {
@@ -3584,6 +3642,12 @@ function createSnapshotWithReviewCutoff(
 
   for (const decision of jointDecisions.values()) {
     if (decision.status !== "assessed" || spansValuePolicyStart(decision))
+      continue;
+    if (
+      decision.record.sources.some((source) =>
+        attributionHeldSourceIds.has(source.pullRequestNodeId),
+      )
+    )
       continue;
     const claims = new Map(
       decision.evidence.claims.map((claim) => [claim.id, claim]),
@@ -5031,18 +5095,75 @@ function createSnapshotWithReviewCutoff(
               ? undefined
               : (input.jointValueDecisions?.get(pull.id) ??
                 input.valueDecisions?.get(pull.id));
-            return {
-              pullRequestId: pull.id,
-              repository: repositoryIdFromUrl(pull.url),
-              pullRequestNumber: pull.number,
-              status: heldSourceIds.has(pull.id)
-                ? "unresolved"
+            const status = unavailableHeldSourceIds.has(pull.id)
+              ? "unresolved"
+              : attributionHeldSourceIds.has(pull.id)
+                ? "incomplete"
                 : scoreRatifications.has(pull.id)
                   ? "human-ratified"
                   : legacy
                     ? "legacy-policy"
-                    : (decision?.status ?? "missing"),
-              recordDigest: decision?.latestDigest ?? null,
+                    : (decision?.status ?? "missing");
+            const repository = repositoryIdFromUrl(pull.url);
+            // Only complete primary-author evidence can correct a provisional
+            // PR-carrier share while the source still awaits valuation.
+            const completePrimaryAuthors =
+              status === "missing" &&
+              pull.mergedAt !== null &&
+              "commits" in pull &&
+              pull.baseRefName ===
+                findRegisteredRepositoryById(repository)?.integrationBranch &&
+              pull.commits !== null &&
+              pull.commits.length > 0 &&
+              pull.commits.every(
+                (commit) => commit.parentCount !== undefined,
+              ) &&
+              pull.commits.some((commit) => (commit.parentCount ?? 2) <= 1) &&
+              pull.commits
+                .filter((commit) => (commit.parentCount ?? 2) <= 1)
+                .every(
+                  (commit) =>
+                    isCreditEligibleCommitAuthor(commit.author) &&
+                    commitOwners.get(
+                      `${repository.toLowerCase()}\0${commit.oid}`,
+                    ) === pull.id,
+                );
+            const verifiedActors = completePrimaryAuthors
+              ? mergeCreditActorsOf(pull as MergedPullRequestOutcome).map(
+                  (actor) => actor.id,
+                )
+              : [];
+            const publishedActors = completePrimaryAuthors
+              ? publishedLedger
+                  .filter(
+                    (event) =>
+                      event.category === "merged-pull-request" &&
+                      event.source.id === pull.id,
+                  )
+                  .map((event) => event.actor.id)
+              : [];
+            const verifiedImplementationActorNodeIds =
+              verifiedActors.length > 0 &&
+              verifiedActors.length === publishedActors.length &&
+              verifiedActors.every((id) => publishedActors.includes(id))
+                ? verifiedActors
+                : undefined;
+            return {
+              pullRequestId: pull.id,
+              repository,
+              pullRequestNumber: pull.number,
+              status,
+              // An attribution hold does not revoke an earlier assessment.
+              // Omitting its digest prevents the Points reconciler treating
+              // this proof gap as an invalidation of that prior joint value.
+              recordDigest:
+                attributionHeldSourceIds.has(pull.id) &&
+                !unavailableHeldSourceIds.has(pull.id)
+                  ? null
+                  : (decision?.latestDigest ?? null),
+              ...(verifiedImplementationActorNodeIds
+                ? { verifiedImplementationActorNodeIds }
+                : {}),
             };
           }),
         }),
@@ -7522,8 +7643,10 @@ export function assertLeaderboardSnapshot(
         "snapshot.valueAssessmentCoverage record",
       );
       if (
-        Object.keys(row).sort().join(",") !==
-        "pullRequestId,pullRequestNumber,recordDigest,repository,status"
+        ![
+          "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+          "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
+        ].includes(Object.keys(row).sort().join(","))
       )
         throw new Error("Value coverage has unexpected fields");
       assertString(row.pullRequestId, "value coverage pullRequestId");
@@ -7562,6 +7685,31 @@ export function assertLeaderboardSnapshot(
         throw new Error("Value coverage digest is invalid");
       if (row.status === "assessed" && row.recordDigest === null)
         throw new Error("Assessed coverage requires a journal digest");
+      if (row.verifiedImplementationActorNodeIds !== undefined) {
+        const ids = row.verifiedImplementationActorNodeIds;
+        const sourceActors = validatedLedger
+          .filter(
+            (event) =>
+              event.category === "merged-pull-request" &&
+              event.source.id === row.pullRequestId,
+          )
+          .map((event) => event.actor.id);
+        if (
+          row.status !== "missing" ||
+          row.recordDigest !== null ||
+          !Array.isArray(ids) ||
+          ids.length === 0 ||
+          new Set(ids).size !== ids.length ||
+          ids.some(
+            (id) =>
+              typeof id !== "string" ||
+              githubUserIdFromNodeId(id) === null ||
+              !sourceActors.includes(id),
+          ) ||
+          sourceActors.length !== ids.length
+        )
+          throw new Error("Verified implementation attribution is invalid");
+      }
     }
     const counts = assertObject(
       assertObject(snapshot.source, "snapshot.source").counts,
