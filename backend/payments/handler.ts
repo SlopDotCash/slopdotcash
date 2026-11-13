@@ -1224,27 +1224,41 @@ export async function handlePaymentsApi(
         >();
       if (accountRows === null)
         throw new Error("Payment account projection is unavailable");
-      const payments = JSON.parse(accountRows.payments) as AccountPayment[];
+      // Production excludes testnet networks, mirroring the /totals, /vault,
+      // /received and /vault-payments deployment-tier rules. Staging keeps
+      // them because it pays in testnet stablecoins. Balances are derived
+      // from the filtered payments below, so no testnet balance survives.
+      const includeTestnets = deps.tier === "staging";
+      const payments = (
+        JSON.parse(accountRows.payments) as AccountPayment[]
+      ).filter(
+        (payment) => includeTestnets || !isTestnetNetwork(payment.network),
+      );
       const monthlyAwards = (
         JSON.parse(accountRows.monthlyAwards) as Omit<
           AccountMonthlyAward,
           "chain"
         >[]
-      ).map((award) => {
-        // Decimals come from the vault reading, else the proposal's verified
-        // reward asset, else the network's reference asset list.
-        const network =
-          ESCROW_NETWORKS[award.network as keyof typeof ESCROW_NETWORKS];
-        const assetDecimals =
-          award.assetDecimals ??
-          network?.assets.find(
-            (entry) =>
-              entry.address.toLowerCase() === award.assetAddress.toLowerCase(),
-          )?.decimals;
-        if (!network || !Number.isInteger(assetDecimals))
-          throw new Error(`Unreviewed monthly award asset on ${award.network}`);
-        return { ...award, assetDecimals, chain: network.chain };
-      });
+      )
+        .filter((award) => includeTestnets || !isTestnetNetwork(award.network))
+        .map((award) => {
+          // Decimals come from the vault reading, else the proposal's verified
+          // reward asset, else the network's reference asset list.
+          const network =
+            ESCROW_NETWORKS[award.network as keyof typeof ESCROW_NETWORKS];
+          const assetDecimals =
+            award.assetDecimals ??
+            network?.assets.find(
+              (entry) =>
+                entry.address.toLowerCase() ===
+                award.assetAddress.toLowerCase(),
+            )?.decimals;
+          if (!network || !Number.isInteger(assetDecimals))
+            throw new Error(
+              `Unreviewed monthly award asset on ${award.network}`,
+            );
+          return { ...award, assetDecimals, chain: network.chain };
+        });
       for (const p of payments)
         p.netBase = (BigInt(p.grossBase) - BigInt(p.feeBase)).toString();
       // One balance per network and asset: assets differ in value and in
@@ -1273,13 +1287,18 @@ export async function handlePaymentsApi(
             a.assetAddress.localeCompare(b.assetAddress),
         )
         .map(({ net, ...asset }) => ({ ...asset, netBase: net.toString() }));
+      const directTransfers = (
+        JSON.parse(accountRows.directTransfers) as DirectTransfer[]
+      ).filter(
+        (transfer) => includeTestnets || !isTestnetNetwork(transfer.network),
+      );
       const account: PaymentsAccount = {
         githubUserId: member.githubId,
         wallets: JSON.parse(accountRows.wallets),
         payments,
         monthlyAwards,
         balances,
-        directTransfers: JSON.parse(accountRows.directTransfers),
+        directTransfers,
         ...(separateDirectHistory ? { directTransfersPaged: true } : {}),
         walletObservations: JSON.parse(accountRows.walletObservations),
       };
