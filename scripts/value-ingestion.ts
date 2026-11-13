@@ -29,7 +29,14 @@ import {
   collectValueContext,
   type ValueContextSelection,
 } from "../workers/slopbot/value-context";
-import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import {
+  collectValueEvidence,
+  collectValueReferenceEvidence,
+} from "../workers/slopbot/value-evidence";
+import type {
+  Pull,
+  RelatedPullRequest,
+} from "../workers/slopbot/value-evidence-types";
 import type { valueHistory } from "../workers/slopbot/value-journal";
 import type { ValueMergeRecipe } from "../workers/slopbot/value-merge-profile";
 import {
@@ -681,14 +688,58 @@ export async function loadValueInputs(
         .map((commit) => commit.oid),
     );
     if (eligibleCommitShas.size === 0) return;
-    const accepted = await source(repositoryId, outcome.number, outcome.id);
-    const sources = [accepted];
-    for (const reference of accepted.evidence.relatedPullRequests) {
+    await repositoryIdentity(repositoryId);
+    const discovery = await collectValueReferenceEvidence(
+      github,
+      repositoryId,
+      outcome.number,
+    );
+    if (
+      discovery.pull.node_id !== outcome.id ||
+      discovery.pull.number !== outcome.number ||
+      discovery.pull.html_url !== outcome.url ||
+      discovery.pull.head.sha !== outcome.headRefOid ||
+      discovery.pull.merged_at !== outcome.mergedAt ||
+      Date.parse(discovery.pull.updated_at) !== Date.parse(outcome.updatedAt)
+    )
+      throw new Error("Attribution source changed after the outcome census");
+    if (discovery.limitations.length) {
+      implementationAttributionHolds.set(outcome.id, discovery.limitations);
+      return;
+    }
+    const originalCandidates = new Map<string, boolean>();
+    async function isOriginal(reference: RelatedPullRequest) {
       if (
         reference.repository.toLowerCase() !== repositoryId.toLowerCase() ||
         reference.number >= outcome.number
       )
-        continue;
+        return false;
+      const cached = originalCandidates.get(reference.id);
+      if (cached !== undefined) return cached;
+      const pull = await github.get<Pull>(
+        `/repos/${repositoryId}/pulls/${reference.number}`,
+      );
+      if (
+        !pull ||
+        pull.node_id !== reference.id ||
+        pull.number !== reference.number ||
+        pull.html_url !== reference.url
+      )
+        throw new Error("Original attribution source identity is unavailable");
+      const original = pull.state === "closed" && pull.merged_at === null;
+      originalCandidates.set(reference.id, original);
+      return original;
+    }
+    let hasOriginal = false;
+    for (const reference of discovery.references)
+      if (await isOriginal(reference)) hasOriginal = true;
+    // Most unlinked commits have no replaced submission. Do not collect every
+    // historical commit patch merely to discover that no claim can be made.
+    if (!hasOriginal) return;
+    const accepted = await source(repositoryId, outcome.number, outcome.id);
+    const sources = [accepted];
+    for (const reference of accepted.evidence.relatedPullRequests) {
+      if (!(await isOriginal(reference))) continue;
       const original = await source(
         repositoryId,
         reference.number,
