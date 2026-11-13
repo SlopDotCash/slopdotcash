@@ -1,4 +1,20 @@
 /** Rate-limit recovery for read-only source collection, never Worker writes. */
+export function githubPrimaryRateLimitDelay(
+  response: Response,
+  now = Date.now(),
+): number | null {
+  const reset = response.headers.get("x-ratelimit-reset");
+  if (
+    (response.status !== 403 && response.status !== 429) ||
+    response.headers.get("x-ratelimit-remaining") !== "0" ||
+    !reset ||
+    !/^\d+$/u.test(reset)
+  )
+    return null;
+  const delay = Number(reset) * 1_000 - now + 1_000;
+  return Number.isSafeInteger(delay) && delay > 0 ? delay : null;
+}
+
 export function githubIngestionReadTransport(
   transport: typeof fetch = fetch,
   now: () => number = Date.now,
@@ -26,17 +42,7 @@ export function githubIngestionReadTransport(
           (response.status !== 403 && response.status !== 429)
         )
           return response;
-        let delay: number | null = null;
-        const reset = response.headers.get("x-ratelimit-reset");
-        if (
-          response.headers.get("x-ratelimit-remaining") === "0" &&
-          reset &&
-          /^\d+$/u.test(reset)
-        ) {
-          const milliseconds = Number(reset) * 1_000 - now() + 1_000;
-          if (Number.isSafeInteger(milliseconds) && milliseconds > 0)
-            delay = milliseconds;
-        }
+        let delay = githubPrimaryRateLimitDelay(response, now());
         const retryAfter = response.headers.get("retry-after");
         if (retryAfter && /^\d+$/u.test(retryAfter)) {
           const milliseconds = Number(retryAfter) * 1_000;

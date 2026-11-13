@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "bda6eecd053dfbcf2234fef5819467d715e589bb445aaa1a616ea35411014f26",
+  "inventorySha256": "05cb60795cf8202dc404aa77f8cc16b301e72feeb0221afbf9a32172cceefd84",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2011,7 +2011,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 232,
+      "line": 235,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2030,7 +2030,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 367,
+      "line": 370,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2059,7 +2059,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3455,
+      "line": 3468,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2078,7 +2078,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4059,
+      "line": 4072,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
