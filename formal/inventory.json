@@ -8299,7 +8299,7 @@
     },
     {
       "path": "workers/slopbot/value-commit-hints.ts",
-      "sha256": "e25393fd745105cf27f8425768319a51c7036a9afd9ab80528692f49a8700d8b",
+      "sha256": "10694869796f842d1b1cdfc25438d9e1b9b7a1257c0f357611c0c7b66b90411a",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8358,12 +8358,12 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
+      "sha256": "24bf208ab068ef4ac2b3f766e3f5851ed19165fea4f57854d1acc075902daf7e",
       "models": [
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
+      "candidateLines": [61, 72, 81, 95, 561, 581, 624, 633, 652, 993, 1012],
       "review": "mapped-abstraction"
     },
     {
@@ -8554,13 +8554,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
+      "sha256": "22a03d2ecf90625054b8edd7c997b8dd45c272ab5caa4618040e7d0d914f8011",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 260, 266, 290, 324],
+      "candidateLines": [33, 60, 258, 264, 288, 322],
       "review": "mapped-abstraction"
     },
     {

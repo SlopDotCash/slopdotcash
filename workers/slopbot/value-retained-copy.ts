@@ -3,7 +3,7 @@
  */
 
 import {
-  githubLinkDestinations,
+  githubReferenceText,
   sameRepositoryCommitHints,
 } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence-types";
@@ -123,7 +123,7 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
 
 /** A direct PR reference is an acknowledgement only after GitHub resolved the
  * same immutable accepted PR and the merger explicitly says work was retained.
- * Link labels cannot turn a foreign destination into a local PR reference.
+ * Link labels and fenced samples are not that reference.
  */
 function hasRetainedPullReference(
   original: ValueEvidence,
@@ -145,12 +145,10 @@ function hasRetainedPullReference(
   const local = (repository: string, number: number) =>
     repository.toLowerCase() === original.repository.toLowerCase() &&
     number === pull.number;
-  // Resolve complete link destinations before splitting sentences: punctuation
-  // inside a foreign link label must not expose a local-looking #number.
-  const text = githubLinkDestinations(body).replace(
-    /\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu,
-    " ",
-  );
+  // Share commit and pull-request preparation: drop fenced samples and link
+  // labels before splitting sentences, so punctuation inside a foreign label
+  // cannot expose a local-looking #number. A bare GitHub destination remains.
+  const text = githubReferenceText(body);
   // Sentence punctuation followed by whitespace preserves dots inside URLs.
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
     if (
