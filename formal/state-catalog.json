@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "1cdd99014afca952ca0b196424f7d5f29ca8ed4bebb2e306339c6eb8381a02bd",
+  "inventorySha256": "b843f7ccbffa2e9b7197b929c3bd0b8dd0d37af28bd07ccef6c4959e597be1ea",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2017,11 +2017,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 217,
+      "line": 235,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2035,7 +2036,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 352,
+      "line": 370,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2045,6 +2046,7 @@
         "resolved-issues"
       ],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2063,11 +2065,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3223,
+      "line": 3468,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2081,11 +2084,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3827,
+      "line": 4072,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2122,7 +2126,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 425,
+      "line": 436,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2836,7 +2840,7 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "line": 42,
+      "line": 43,
       "name": "CycleIndexState",
       "kind": "string-union",
       "values": [
@@ -2880,7 +2884,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 196,
+      "line": 199,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
@@ -2890,7 +2894,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 344,
+      "line": 347,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
@@ -2900,7 +2904,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 495,
+      "line": 498,
       "name": "status",
       "kind": "string-union",
       "values": ["claimed", "unclaimed"],
@@ -2910,7 +2914,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 503,
+      "line": 506,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "missing", "partial"],
@@ -2920,7 +2924,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 550,
+      "line": 553,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
@@ -2930,7 +2934,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 652,
+      "line": 655,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2940,7 +2944,7 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 764,
+      "line": 777,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
@@ -2954,11 +2958,12 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4638,
+      "line": 4804,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
@@ -3230,7 +3235,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 99,
+      "line": 100,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -3250,7 +3255,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 132,
+      "line": 133,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
@@ -3781,11 +3786,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 188,
+      "line": 191,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],
       "review": "candidate-only"
     },

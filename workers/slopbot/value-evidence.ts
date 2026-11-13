@@ -1,7 +1,4 @@
-import {
-  implementationCreditActors,
-  isCreditEligibleCommitAuthor,
-} from "../../src/lib/commit-credit";
+import { isCreditEligibleCommitAuthor } from "../../src/lib/commit-credit";
 import {
   findRegisteredRepositoryById,
   type TargetRepository,
@@ -388,6 +385,44 @@ async function relatedPullRequests(
     ),
     limitations: [...new Set(limitations)],
   };
+}
+
+/** Discover retained-copy candidates before reading any commit patches.
+ * Uses the same complete discussions and reference resolver as valuation.
+ * This is discovery only; a candidate still needs full retained-copy proof.
+ */
+export async function collectValueReferenceEvidence(
+  client: EvidenceClient,
+  repository: string,
+  number: number,
+) {
+  const path = `/repos/${repository}/pulls/${number}`;
+  const pull = await client.get<Pull>(path);
+  if (!pull) throw new Error("Pull request unavailable");
+  const [reviews, comments, reviewComments] = await Promise.all([
+    pages<Review>(client, `${path}/reviews`),
+    pages<Comment>(client, `/repos/${repository}/issues/${number}/comments`),
+    pages<Comment>(client, `${path}/comments`),
+  ]);
+  const related = await relatedPullRequests(
+    client,
+    repository,
+    number,
+    pull.node_id,
+    [
+      pull.body ?? "",
+      ...reviews.map((review) => review.body),
+      ...comments.map((entry) => entry.body),
+      ...reviewComments.map((entry) => entry.body),
+    ],
+  );
+  for (const [name, actual, expected] of [
+    ["comments", comments.length, pull.comments],
+    ["review comments", reviewComments.length, pull.review_comments],
+  ] as const)
+    if (actual !== expected)
+      related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);
+  return { pull, ...related };
 }
 /** True when `id` names the repository or one of its aliases, ignoring case. */
 export function namesRepository(
@@ -886,6 +921,8 @@ export async function collectValueEvidence(
         );
   }
   // Trailer identities are source text, not credit authority under SCR-04.
+  const implementationActors = new Set<string>();
+  if (pull.user.type !== "Bot") implementationActors.add(pull.user.node_id);
   let historicalBranchPolicy: ValueBranchPolicy | undefined;
   let noChangePromotion: NoChangePromotionProof | null = null;
   try {
@@ -925,28 +962,24 @@ export async function collectValueEvidence(
       );
     }
   }
-  const sharesCommitCredit =
+  if (
     pull.base.ref === repositoryPolicy?.integrationBranch ||
-    matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base);
-  const implementationActors = new Set(
-    implementationCreditActors(
-      { id: pull.user.node_id, kind: pull.user.type },
-      sharesCommitCredit
-        ? commits
-            .filter(
-              (commit) =>
-                commit.parents.length <= 1 &&
-                (!indirect.acceptance ||
-                  indirect.acceptance.acceptedCommitShas.includes(commit.sha)),
-            )
-            .map((commit) =>
-              commit.author
-                ? { id: commit.author.node_id, kind: commit.author.type }
-                : null,
-            )
-        : [],
-    ).map((actor) => actor.id),
-  );
+    matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base)
+  ) {
+    for (const commit of commits) {
+      if (
+        commit.parents.length <= 1 &&
+        (!indirect.acceptance ||
+          indirect.acceptance.acceptedCommitShas.includes(commit.sha)) &&
+        commit.author &&
+        isCreditEligibleCommitAuthor({
+          id: commit.author.node_id,
+          kind: commit.author.type,
+        })
+      )
+        implementationActors.add(commit.author.node_id);
+    }
+  }
   for (const attribution of commitAttribution)
     limitations.push(...attribution.limitations);
   const after = await client.get<Pull>(path);

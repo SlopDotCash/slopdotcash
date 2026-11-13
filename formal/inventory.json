@@ -3791,8 +3791,9 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "7da141339979248eb96a203a05f86dfa136e624dbfca4746eb2b1cac79460b30",
+      "sha256": "e066a96b8f87427e55bf960c8ab0e7d78d1487367049a60a7b8971c90b4996da",
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -3802,15 +3803,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
-        653, 685, 881, 1116, 1178, 1186, 1244, 1297, 1300, 1493, 1502, 1507,
-        1514, 1597, 1598, 1745, 1746, 1803, 1829, 1847, 1849, 1853, 1887, 1890,
-        1891, 1894, 1896, 1907, 1930, 2137, 2140, 2451, 2470, 2568, 2581, 2592,
-        2593, 2779, 2780, 2971, 2987, 2999, 3006, 3032, 3042, 3046, 3050, 3054,
-        3109, 3128, 3155, 3172, 3206, 3207, 3209, 3225, 3242, 3243, 3244, 3253,
-        3258, 3438, 3796, 3818, 3827, 3877, 3912, 3918, 3925, 3994, 4079, 4231,
-        4447, 4457, 4459, 4472, 4501, 4503, 4504, 4508, 4512, 4567, 4621, 4672,
-        4675
+        28, 183, 194, 203, 283, 295, 297, 300, 399, 487, 508, 544, 575, 640,
+        672, 752, 785, 794, 802, 867, 1063, 1298, 1360, 1368, 1426, 1479, 1482,
+        1675, 1684, 1689, 1696, 1779, 1780, 1927, 1928, 1985, 2011, 2039, 2041,
+        2045, 2079, 2082, 2083, 2086, 2088, 2099, 2122, 2330, 2333, 2571, 2691,
+        2812, 2825, 2836, 2837, 3024, 3025, 3216, 3232, 3244, 3251, 3277, 3287,
+        3291, 3295, 3299, 3354, 3373, 3400, 3417, 3451, 3452, 3454, 3470, 3487,
+        3488, 3489, 3498, 3503, 3683, 4041, 4063, 4072, 4122, 4157, 4163, 4170,
+        4239, 4325, 4483, 4702, 4712, 4714, 4727, 4756, 4758, 4759, 4763, 4767,
+        4822, 4876, 4927, 4930
       ],
       "review": "mapped-abstraction"
     },
@@ -3841,6 +3842,13 @@
       "sha256": "07f32541fcc2307abcbdeb3984eb764f3d8c2978c44fa3c4796cfe0719ea9463",
       "models": ["formal/models/release/static_asset_generation.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/github-ingestion-read.ts",
+      "sha256": "3e3e742d98707e1a785a2b607e2c467b1c03d4a4eaffd637405db64e14e0ead7",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [8, 25, 42, 46, 52],
       "review": "mapped-abstraction"
     },
     {
@@ -4012,9 +4020,9 @@
     },
     {
       "path": "scripts/prepare-contribution-quality.ts",
-      "sha256": "9dd0dd0c9908ad2b3189a02010075a56e268aeaee47297d056e146e1b373fa14",
+      "sha256": "1fac9f8a79a52301170231ac78286615a08b1f5ef792da6e65419d7198e2d5fc",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
-      "candidateLines": [3, 26, 155, 180, 185],
+      "candidateLines": [3, 27, 158, 183, 188],
       "review": "mapped-abstraction"
     },
     {
@@ -4077,9 +4085,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "653c046883e2499484c5f3e1f40fad293abb6f631578904249b7eb9855cd1141",
+      "sha256": "9030a5f30d0815a071677fb2fc12d81c6bd52c9608514eb023c6c43b04d1d355",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 119, 232, 429, 517, 520],
+      "candidateLines": [7, 120, 233, 445, 533, 536],
       "review": "mapped-abstraction"
     },
     {
@@ -4494,9 +4502,9 @@
     },
     {
       "path": "scripts/source-correction.ts",
-      "sha256": "8f2b004814c7f304ba72daa34ced1fed6670e12b8da0628966352e918bef3117",
+      "sha256": "e37a04fa39f01e8c0393f84631987bf3dafb7f7e89074dd892f9273929ebad6b",
       "models": ["formal/models/points/source_correction_preview.qnt"],
-      "candidateLines": [24, 354],
+      "candidateLines": [28, 362],
       "review": "mapped-abstraction"
     },
     {
@@ -4564,7 +4572,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "7401911bc63a00f7b67f5d3b07a1772c46dfa9325bf50b522e9a60415f9e15b6",
+      "sha256": "9c5ca0c4c619fe2b66d30d0e85f28689d9598c503d2a40c44f56617af1a04624",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4572,8 +4580,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        54, 65, 112, 113, 114, 115, 117, 118, 185, 186, 187, 189, 190, 674, 778,
-        814, 847, 871
+        65, 76, 123, 124, 125, 126, 128, 129, 196, 197, 198, 200, 201, 729, 749,
+        856, 892, 931, 955
       ],
       "review": "mapped-abstraction"
     },
@@ -4848,7 +4856,7 @@
     },
     {
       "path": "src/CyclePages.tsx",
-      "sha256": "6d6356c8bdda72219546f85bc8ab4b913332f2d5c4469335c04b869940774e36",
+      "sha256": "25632fb1d9295845eacebfeaf9b71c152892b979e4742d2f2fa47e32fd3991fe",
       "models": [
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_cycle_publication.qnt",
@@ -4856,12 +4864,12 @@
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        2, 46, 47, 53, 54, 63, 73, 74, 80, 82, 83, 89, 106, 111, 114, 115, 118,
-        119, 124, 126, 129, 131, 154, 166, 172, 174, 204, 212, 214, 221, 237,
-        243, 279, 291, 302, 327, 351, 352, 425, 442, 443, 480, 484, 498, 503,
-        504, 506, 507, 510, 511, 517, 518, 531, 536, 545, 547, 551, 560, 562,
-        566, 567, 572, 586, 594, 595, 596, 602, 604, 610, 611, 613, 642, 652,
-        663, 688
+        2, 47, 48, 54, 55, 64, 74, 75, 81, 83, 84, 90, 107, 112, 115, 116, 119,
+        120, 125, 127, 130, 132, 155, 167, 173, 175, 205, 213, 215, 222, 238,
+        244, 280, 292, 303, 328, 352, 353, 426, 443, 444, 481, 485, 499, 504,
+        505, 507, 508, 511, 512, 518, 519, 532, 537, 546, 548, 552, 561, 563,
+        567, 568, 573, 587, 595, 596, 597, 603, 605, 611, 612, 614, 643, 653,
+        664, 689
       ],
       "review": "mapped-abstraction"
     },
@@ -5218,7 +5226,7 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "8ceb4392aeb2d594eef93483b0c0da1ba9fb3e5d9ff77c117f3c796f59e2bb2e",
+      "sha256": "85625ee969a4c427e274998d070b812276386608a0ea5cccf0cf6dcdaa5f4483",
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
@@ -5667,8 +5675,11 @@
     },
     {
       "path": "src/lib/commit-credit.ts",
-      "sha256": "25ab3825cd92d1f9ea932b61de65999da55d65b9d6e0c3d12e0b3444903315a4",
-      "models": ["formal/models/points/implementation_credit.qnt"],
+      "sha256": "bb2223a458535443f9b3b216ae57d5b0bfd3d3b8c6a1f6bbf367d3f767fa9e25",
+      "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Pure immutable actor-ID/kind eligibility predicate; no retained state or I/O. Accepted-source lifecycle is owned by the ledger."
@@ -5691,7 +5702,7 @@
     },
     {
       "path": "src/lib/contribution-quality.ts",
-      "sha256": "a903e19846d05fb02c8229a62c8908cea3b0b75cbe46e17efb2b552c3c293c7b",
+      "sha256": "dc7b9750bd1426ebd7e8ccf239149b5ea0d56fac35a4953d57323d78c28cd12b",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5718,10 +5729,10 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "sha256": "0d2e344a5d1f7953d7daf09e7343f2d942c5f1db19b728f530bc054fff291f85",
+      "sha256": "240b4a48f1e79642b28d1b395b2c1ba8e28bfbcd5580cd6230bf8c07463884d1",
       "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "candidateLines": [
-        63, 97, 391, 422, 423, 573, 603, 604, 606, 607, 616, 617, 619, 670, 746,
+        64, 98, 392, 423, 424, 574, 603, 604, 606, 607, 616, 617, 619, 670, 746,
         752, 759, 761, 762, 767, 769, 771, 777, 827, 828, 840, 850, 851, 852,
         853, 856, 858, 861, 866, 872, 878, 882, 885, 889, 891, 893, 900, 909,
         915, 918, 921, 923, 934, 940, 952, 998
@@ -5822,9 +5833,9 @@
     },
     {
       "path": "src/lib/funding-review-data.ts",
-      "sha256": "a446ecefa45104dcb6bf1d6e6ce3ca7ad3d4af7efcd41100de15235f0b939355",
+      "sha256": "4a976f47d1212d720520a31175032c2428ffd1a3baa8817c370b6cef41f4fe41",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [58, 238, 292],
+      "candidateLines": [59, 240, 294],
       "review": "mapped-abstraction"
     },
     {
@@ -5864,9 +5875,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "f4ad16de1618286612577e37a378c782d595008482663cde03ce8050531e5644",
+      "sha256": "d17f92d9f47613ec57363844e985c385b7249382ce078afc2bcc032da339865b",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [193],
+      "candidateLines": [194],
       "review": "mapped-abstraction"
     },
     {
@@ -5885,6 +5896,23 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [38, 59, 107, 135, 146, 147],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/implementation-allocation.ts",
+      "sha256": "aad8fbbd7f2e4c01f6a5376ab10be4e37a80db132a0d8e538f4270de4acd87c5",
+      "models": ["formal/models/points/implementation_allocation.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/implementation-lines.ts",
+      "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
+      "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt"
+      ],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -5932,18 +5960,19 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "f27c61e0fbb478cecd4f0d938f2e27ad089e13ad180268a6e3543fdf175e8a7e",
+      "sha256": "95e2e5dfda875c64e3412acf9326986cbe015f0fe32b516006bd8b407a0bebd6",
       "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 274, 296, 344, 376, 434, 495, 503, 510, 550, 652, 683, 766, 793
+        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 779, 806
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "815fc40573c10c79c4bdd14c12ff7e43fa19e35cbc8f91b28ba3dc36c1425abc",
+      "sha256": "c73da57c52297023cb996d5d36a82097a3055717cd42f61ba7ca0ee404e26350",
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
@@ -5954,16 +5983,16 @@
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        250, 251, 275, 281, 920, 983, 1009, 1220, 1281, 1291, 1297, 1299, 1301,
-        1303, 1310, 1395, 1429, 1434, 1452, 1549, 2091, 2109, 2181, 2190, 2208,
-        2217, 2225, 2247, 2262, 2271, 2279, 2325, 2375, 2425, 2480, 2497, 2498,
-        2501, 2502, 2606, 2608, 2609, 2613, 2616, 2624, 2626, 2644, 2917, 2936,
-        2991, 3167, 3362, 3387, 3460, 3469, 3565, 3644, 3987, 3998, 4027, 4088,
-        4102, 4425, 4638, 4839, 4952, 4977, 5098, 5106, 5111, 5155, 5871, 5873,
-        5896, 5900, 5904, 5909, 6047, 6056, 6066, 6067, 6125, 6160, 6166, 6186,
-        6191, 6198, 6206, 6208, 6234, 6237, 6251, 6253, 6274, 6276, 6280, 6283,
-        6288, 6478, 6480, 6739, 6783, 6846, 6847, 7647, 7648, 7665, 7675, 7686,
-        7698, 7764, 7765, 7792, 7999
+        261, 262, 286, 292, 931, 994, 1020, 1231, 1292, 1302, 1308, 1310, 1312,
+        1314, 1321, 1406, 1440, 1445, 1463, 1560, 2115, 2133, 2205, 2214, 2232,
+        2241, 2249, 2271, 2286, 2295, 2303, 2349, 2399, 2449, 2504, 2521, 2522,
+        2525, 2526, 2630, 2632, 2633, 2637, 2640, 2648, 2650, 2668, 2972, 2991,
+        3046, 3222, 3417, 3442, 3530, 3549, 3672, 3751, 4146, 4157, 4191, 4254,
+        4268, 4591, 4804, 5005, 5118, 5143, 5267, 5275, 5280, 5347, 5361, 6109,
+        6111, 6134, 6138, 6142, 6147, 6293, 6302, 6312, 6313, 6371, 6406, 6412,
+        6432, 6437, 6444, 6452, 6454, 6480, 6483, 6497, 6499, 6520, 6522, 6526,
+        6529, 6534, 6726, 6728, 6987, 7031, 7094, 7095, 7916, 7917, 7918, 7919,
+        7936, 7946, 7957, 7973, 8062, 8128, 8129, 8156, 8363
       ],
       "review": "mapped-abstraction"
     },
@@ -5994,7 +6023,7 @@
     },
     {
       "path": "src/lib/model-outcomes.ts",
-      "sha256": "1d021354f1d7be103f7612c45a5665b7b8257d70cdff472f4d74f34c36048f89",
+      "sha256": "8994d0f0fef4f1fabab2592ee0bc22bcd3004ad0def5550bb265ed0c03b76433",
       "models": ["formal/models/ui/ui_model_outcomes.qnt"],
       "candidateLines": [105],
       "review": "mapped-abstraction"
@@ -6149,8 +6178,9 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "172cbf4aa103d35ea63376fb488e8629b1b695b745a30ea88fb2948329158dda",
+      "sha256": "263b8a50cb47c9fe5118e3b2294b5b85bd4cf1ce83b8647731cfa532e4bbcdc3",
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
@@ -6158,7 +6188,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [353, 787, 919, 937, 944, 953],
+      "candidateLines": [355, 810, 1045, 1052, 1061],
       "review": "mapped-abstraction"
     },
     {
@@ -6368,9 +6398,9 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "sha256": "0e922c78a70a687cfeebcfe8e2086ea5bb0c2baf315af61a2f0bee3df22d4978",
+      "sha256": "9656fb8858f69f970f53b356fa5552d150dcac3ca5a21fe1eaaf512b184d0164",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [113, 121, 132, 288, 305, 331, 781, 809, 821],
+      "candidateLines": [114, 122, 133, 289, 306, 332, 791, 819, 831],
       "review": "mapped-abstraction"
     },
     {
@@ -6450,9 +6480,9 @@
     },
     {
       "path": "src/lib/reward-cycle.ts",
-      "sha256": "697597ccf2e5f19ce9857d0ebedc04c1025a9e96d15f9e7ef5f0cf6a681f345c",
+      "sha256": "ae7a8780570912333f6f5196a7488d8432c9e6602c0a75626019334e03925133",
       "models": ["formal/models/rewards/historical_reward.qnt"],
-      "candidateLines": [138, 179, 190, 248, 343, 380, 436],
+      "candidateLines": [139, 180, 191, 249, 344, 381, 437],
       "review": "mapped-abstraction"
     },
     {
@@ -6490,7 +6520,7 @@
     },
     {
       "path": "src/lib/score-penalties.ts",
-      "sha256": "10ffbb4349ff5e045b323e7bf5c8064325fa048b9850000c2349e2633351568a",
+      "sha256": "41ab4582a1cebaae11a6e71a238ada85c1238a5dc62af42b76530663ee993530",
       "models": [
         "formal/models/points/points_journal.qnt",
         "formal/models/rewards/bucket_aggregation.qnt"
@@ -6502,6 +6532,13 @@
       "path": "src/lib/score-records.ts",
       "sha256": "bce4f40c19001cba9cad6ac58d71c25e8e7486fbe772ab507834ec60c8c868f4",
       "models": ["formal/models/points/points_journal.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/score-units.ts",
+      "sha256": "dd5f52350c81762ee37e433b2c1dd1ce17123452bd7660da0072c55bd8fd8725",
+      "models": ["formal/models/points/implementation_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -8009,11 +8046,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "ed1fede597a3dee0fa61c67510de560e034ca3a75593f88ae55762e6ae105a41",
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "candidateLines": [
-        43, 74, 85, 102, 111, 112, 113, 115, 119, 120, 123, 161, 164, 217, 218,
-        249
+        43, 77, 88, 105, 114, 115, 116, 118, 122, 123, 126, 164, 167, 220, 221,
+        252
       ],
       "review": "mapped-abstraction"
     },
@@ -8307,13 +8347,12 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "c7d6928586d717c49f2cf0455ac61344075d4fabea8e8d81af945c372937a7d1",
+      "sha256": "ae46fb549ed08a8d8731900d6e4f6e5d10039149eb6da447689cb934419eb4fa",
       "models": [
-        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [64, 75, 84, 98, 524, 544, 587, 596, 615, 958, 977],
+      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
       "review": "mapped-abstraction"
     },
     {
@@ -8608,9 +8647,8 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "de7ff4f54bc63f71d090af444d1d46f7278761fd5657c5362dc4775a2f4df494",
+      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
       "models": [
-        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
@@ -13246,6 +13284,20 @@
       ]
     },
     {
+      "path": "formal/models/points/commit_line_cache.qnt",
+      "sha256": "13e23a7ead5ffefc760e8eab87030eddc54de143ebdf5ab548bc6b5ae5645a64",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "completeLoadAndReuseTest",
+        "failedLoadCannotPublishAuthorTest",
+        "invalidIdentityCannotFetchTest",
+        "lateAuthorLinkRepairsPriorOccurrenceTest",
+        "laterFailureDiscardsStagedTest",
+        "oldCacheSurvivesFailureTest",
+        "partialLoadNotPublishedTest"
+      ]
+    },
+    {
       "path": "formal/models/points/github_budget_window.qnt",
       "sha256": "dd873914f8256275f15bcabf22c961d4dbfbea2073d7f221741d0ab4cc07e61f",
       "sources": ["scripts/generate-leaderboard.ts"],
@@ -13271,16 +13323,49 @@
       ]
     },
     {
+      "path": "formal/models/points/github_ingestion_read.qnt",
+      "sha256": "29feafe43b55620b874394569d681926c42de6040413e0fdbc078fffad7d0396",
+      "sources": [
+        "scripts/github-ingestion-read.ts",
+        "workers/slopbot/github.ts"
+      ],
+      "scenarios": [
+        "authorizationDoesNotRetryTest",
+        "readResumesAfterLimitTest",
+        "repeatedLimitFailsTest",
+        "writeDoesNotRetryTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_allocation.qnt",
+      "sha256": "c8949c5ccfcc8736619960d90e1d057f8de3215058a6e2bb0c967b962c005e57",
+      "sources": [
+        "src/lib/commit-credit.ts",
+        "src/lib/implementation-allocation.ts",
+        "src/lib/implementation-lines.ts",
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts",
+        "src/lib/score-units.ts"
+      ],
+      "scenarios": [
+        "actorIdTieTest",
+        "frozenAwardHeldTest",
+        "missingEvidenceHeldTest",
+        "proportionalTest",
+        "retryIdempotentTest",
+        "zeroLineFallbackTest"
+      ]
+    },
+    {
       "path": "formal/models/points/implementation_credit.qnt",
-      "sha256": "67e7c2bd82297be5abc0576a6ed468cd1ad3ee65c094371789623d085a8b7c2c",
+      "sha256": "cf90b799d9b4c6949971a1913f51c5e5463341d53e9ca9b49f00e795fce1af8a",
       "sources": [
         "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
         "src/lib/commit-credit.ts",
-        "src/lib/leaderboard.ts",
-        "workers/slopbot/value-evidence.ts",
-        "workers/slopbot/value-work-unit.ts"
+        "src/lib/implementation-lines.ts",
+        "src/lib/leaderboard.ts"
       ],
       "scenarios": [
         "botsAndVendorAgentsCannotReceiveTest",
