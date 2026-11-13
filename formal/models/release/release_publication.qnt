@@ -38,7 +38,7 @@ module release_publication {
     if (not(value.pages) and (value.earlierWorker or value.uploaded or value.workers)) "partial-failure" else "failed")
   action disableSlopbot = all { s.stage == "new", s' = s.with("slopbotEnabled", false) }
   action prepare(main, manual, retainedData) = all {
-    s.stage == "new", retainedData implies (main and manual),
+    s.stage == "new", retainedData implies manual,
     s' = s.with("stage", "prepared").with("main", main).with("manual", manual).with("retainedData", retainedData),
   }
   action proofsPass = all {s.stage == "prepared", s' = s.with("proofs", true)}
@@ -124,7 +124,7 @@ module release_publication {
     s.verified implies (s.workers and s.pages and s.sourceMatches),
     s.stage == "superseded" implies (not(s.pages) and not(s.workers) and not(s.earlierWorker) and not(s.uploaded)),
     s.stage == "partial-failure" implies ((s.workers or s.earlierWorker or s.uploaded) and not(s.pages) and not(s.verified)),
-    s.retainedData implies (s.main and s.manual),
+    s.retainedData implies s.manual,
   }
   action prepareSecretFile(inventoryOk: bool, protectedKeyPresent: bool): bool =
     if (inventoryOk) readExistingInventory(true).then(allocateSecretFile).then(writeProtectedSecret(protectedKeyPresent))
@@ -139,6 +139,11 @@ module release_publication {
     .then(checkedVersion).then(publishWorkers).then(advanceSource).then(partialFailure).expect(not(s.verified))
   run retainedSnapshotIsExplicitTest = init.then(prepare(true, true, true)).then(proofsPass).then(qualify)
     .then(checkedVersion).then(publishWorkers).then(publishPages).then(verifyBytesAndMetadata).expect(s.retainedData and s.verified)
+  // A manual development (staging) release may retain staging's own published data;
+  // it still passes every proof and quality gate and never reaches production services.
+  run stagingRetainedSnapshotQualifiesTest = init.then(prepare(false, true, true)).then(proofsPass).then(qualify)
+    .expect(s.retainedData and not(s.main) and s.tested).then(publishWorkers.fail())
+  run retainedSnapshotNeedsManualTest = init.then(prepare(true, false, true).fail())
   run pendingProofCannotQualifyTest = init.then(prepare(true, false, false)).then(qualify.fail())
   run missingProtectedSecretNeverUploadsTest = init.then(prepare(true, false, false)).then(proofsPass).then(qualify)
     .then(prepareSecretFile(true, false)).then(cleanupSecretFile)

@@ -612,11 +612,12 @@ shared publication lock.
 
 Every release snapshots the current D1 registry, passes the full quality gate,
 and publishes through its branch's normal release job. Normal releases ingest
-live GitHub data. An explicit manual `main` run may set `use_published_data`
-to retain the last published production leaderboard and profiles after
-validation, with their original timestamps and history. This option cannot run
-on staging or with staging bootstrap; missing or invalid published data stops
-the release. It never uses the pull-request data adapter or skips code, browser,
+live GitHub data. An explicit manual `main` or `development` run may set
+`use_published_data` to retain the last leaderboard and profiles published by
+that run's own environment (production or staging) after validation, with their
+original timestamps and history (operator decision, 13 November 2026). This
+option cannot run with staging bootstrap; missing or invalid published data
+stops the release. It never uses the pull-request data adapter or skips code, browser,
 sandbox, source-identity or deployment checks. To publish new data without a
 commit, run the release workflow by hand (`workflow_dispatch`) with the option
 off. Every production release requires current main equivalence. Every
