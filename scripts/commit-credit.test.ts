@@ -1,5 +1,10 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { implementationCreditActors } from "../src/lib/commit-credit";
+import { shareImplementationPoints } from "../src/lib/implementation-allocation";
+import {
+  workUnitCreditActorIds,
+  workUnitLineWeights,
+} from "../src/lib/implementation-lines";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -27,6 +32,7 @@ import {
   repository as retainedRepository,
 } from "../tests/value-promotion-fixture";
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import { valueSourceDigest } from "../workers/slopbot/value-review";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
   RetainedAttributionIncompleteError,
@@ -133,7 +139,7 @@ test("unlinked and agent-authored commits retain the source creator fallback", (
   expect(implementationCreditActors(agent, [])).toEqual([]);
 });
 
-test("collected evidence and joint claims both exclude a carrier with no authored change", async () => {
+test("legacy valuation fields stay unchanged while current allocation excludes the carrier", async () => {
   const f = fixture({ textOnly: true, direct: true });
   const evidence = await collectValueEvidence(
     f.client,
@@ -142,15 +148,29 @@ test("collected evidence and joint claims both exclude a carrier with no authore
     repository,
   );
   expect(evidence.limitations).toEqual([]);
-  expect(evidence.implementationActorNodeIds).toEqual(["U_author"]);
+  expect(evidence.implementationActorNodeIds).toEqual([
+    "U_author",
+    "U_submitter",
+  ]);
   const joint = await prepareWorkUnitEvidence(
     [{ evidence, policy }],
     [repository],
   );
   expect(joint.limitations).toEqual([]);
   expect(joint.claims.map((claim) => claim.implementationActorNodeIds)).toEqual(
-    [["U_author"]],
+    [["U_author", "U_submitter"]],
   );
+  const originalEvidence = JSON.stringify({ evidence, joint });
+  const originalDigest = await valueSourceDigest(evidence, policy);
+  expect(workUnitCreditActorIds(joint, joint.claims[0])).toEqual(["U_author"]);
+  const weights = workUnitLineWeights(joint, joint.claims);
+  expect(weights).toEqual(new Map([["U_author", 1n]]));
+  if (!weights) throw new Error("fixture allocation lacks line evidence");
+  expect(shareImplementationPoints(30, [...weights.keys()], weights)).toEqual([
+    30,
+  ]);
+  expect(JSON.stringify({ evidence, joint })).toBe(originalEvidence);
+  expect(await valueSourceDigest(evidence, policy)).toBe(originalDigest);
 });
 
 function retainedCase() {
@@ -481,6 +501,7 @@ for (const incomplete of [false, true]) {
         headRefOid: f.pull.head.sha,
         mergedAt: f.pull.merged_at,
         updatedAt: f.pull.updated_at,
+        baseRefName: "release",
         commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
       },
     ]);
@@ -489,3 +510,44 @@ for (const incomplete of [false, true]) {
     expect(result.retainedCommitAuthors.size).toBe(0);
   });
 }
+
+test("retained attribution does not hydrate unlinked commits already accepted on another branch", async () => {
+  const read = async (): Promise<never> => {
+    throw new Error("Already accepted commits must not hydrate attribution");
+  };
+  const transport = Object.assign(read, { preconnect: fetch.preconnect });
+  const common = {
+    url: "https://github.com/SlopDotCash/asi/pull/1",
+    number: 1,
+    headRefOid: "a".repeat(40),
+    updatedAt: "2026-10-02T00:00:00Z",
+  };
+  const result = await loadValueInputs(
+    { get: read, graphql: read, fileText: read },
+    [],
+    transport,
+    undefined,
+    [
+      {
+        ...common,
+        id: "PR_first_acceptance",
+        mergedAt: "2026-10-01T00:00:00Z",
+        baseRefName: "release",
+        commits: [
+          { oid: common.headRefOid, author: PENALIZED_AUTHOR, parentCount: 1 },
+        ],
+      },
+      {
+        ...common,
+        id: "PR_later_promotion",
+        url: "https://github.com/elizaOS/asi/pull/2",
+        number: 2,
+        mergedAt: "2026-10-02T00:00:00Z",
+        baseRefName: "main",
+        commits: [{ oid: common.headRefOid, author: null, parentCount: 1 }],
+      },
+    ],
+  );
+  expect(result.retainedCommitAuthors.size).toBe(0);
+  expect(result.implementationAttributionHolds.size).toBe(0);
+});

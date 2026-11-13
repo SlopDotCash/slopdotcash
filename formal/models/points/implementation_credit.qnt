@@ -1,7 +1,6 @@
 // @source src/lib/commit-credit.ts
 // @source src/lib/leaderboard.ts
-// @source workers/slopbot/value-evidence.ts
-// @source workers/slopbot/value-work-unit.ts
+// @source src/lib/implementation-lines.ts
 // @source scripts/generate-leaderboard.ts
 // @source scripts/retained-commit-credit.ts
 // @source scripts/value-ingestion.ts
