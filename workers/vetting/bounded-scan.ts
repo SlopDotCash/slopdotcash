@@ -33,6 +33,7 @@ import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
 import type { QueuedAssessment } from "./assembly-manifest";
 import { expandGzipInputs } from "./gzip-inputs";
+import { localInstallHelpers } from "./local-install-helpers";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
@@ -551,6 +552,7 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
+    localInstallHelpers: "literal-shell-working-directory-closure-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -1689,6 +1691,36 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const texts = new Map(files.map((file) => [file.path, decode(file.bytes)]));
+  const helpers = localInstallHelpers(
+    files.map((file) => ({
+      path: file.path,
+      text: texts.get(file.path) ?? null,
+    })),
+    files.flatMap((file) => {
+      const text = texts.get(file.path);
+      if (text === null || text === undefined) return [];
+      const surfaces = surfacesOf(file.logicalPath ?? file.path);
+      const directory = file.path.includes("/")
+        ? file.path.slice(0, file.path.lastIndexOf("/"))
+        : "";
+      const commands = installHookCommands(file.path, text);
+      if (
+        (surfaces.includes("installScripts") ||
+          (surfaces.length === 0 && declaresInterpreter(file.bytes)) ||
+          gypIncludes.has(file.path) ||
+          cmakeIncludes.has(file.path)) &&
+        (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
+          /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
+      )
+        commands.push(text);
+      return commands.map((text) => ({ path: file.path, text, directory }));
+    }),
+  );
+  if (helpers.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...helpers.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
@@ -1696,7 +1728,11 @@ export function inspectRepository(input: {
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      helpers.included.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
@@ -1729,7 +1765,7 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
-    const text = decode(file.bytes);
+    const text = texts.get(file.path) ?? null;
     // Ant imports may use any filename. Its project root identifies the
     // executable build document without parsing XML or resolving entities.
     if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {

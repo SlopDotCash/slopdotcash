@@ -66,6 +66,7 @@ import {
   safeProposalHttpsUrl,
   slugify,
 } from "./lib/project-proposal";
+import { nextUtcMonthStart } from "./lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
   monthlyAmountDisplay,
@@ -92,6 +93,7 @@ import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
   Avatar,
+  formatDate,
   ProjectNav,
   RoutePageHeader,
   SignInPanel,
@@ -99,6 +101,7 @@ import {
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
+type ProjectRepositoryEntry = ProjectDefinition["repositories"][number];
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
 const LEGACY_PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 const PROPOSAL_STEP_KEY = `${LEGACY_PROPOSAL_STEP_KEY}:v2`;
@@ -1972,6 +1975,8 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  /** Pending added repositories as JSON, or "" when there are none. */
+  repositories: string;
 } & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
@@ -1988,7 +1993,55 @@ const DRAFT_FIELDS = [
   "tokenSymbol",
   "monthlyAmount",
   "note",
+  "repositories",
 ] as const;
+
+/** A repository the owner added in this edit, not yet published. */
+type PendingRepository = {
+  entry: Omit<ProjectRepositoryEntry, "countsFrom">;
+  ownDescription: boolean;
+};
+
+/**
+ * Pending repositories from the saved draft. The draft comes from this
+ * device's storage, so anything that is not exactly an added entry is
+ * dropped as a whole.
+ */
+function pendingRepositories(text: string): PendingRepository[] {
+  if (text === "") return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const valid = (item: unknown): item is PendingRepository => {
+    if (typeof item !== "object" || item === null) return false;
+    const { entry, ownDescription } = item as Record<string, unknown>;
+    if (typeof ownDescription !== "boolean") return false;
+    if (typeof entry !== "object" || entry === null) return false;
+    const fields = entry as Record<string, unknown>;
+    return (
+      Object.keys(fields).sort().join(",") ===
+        "description,displayName,githubId,githubUrl,id,integrationBranch,nodeId" &&
+      typeof fields.id === "string" &&
+      validRepositoryPath(fields.id) &&
+      fields.displayName === fields.id &&
+      fields.githubUrl === `https://github.com/${fields.id}` &&
+      typeof fields.description === "string" &&
+      typeof fields.integrationBranch === "string" &&
+      fields.integrationBranch.length > 0 &&
+      fields.integrationBranch.length <= 255 &&
+      typeof fields.githubId === "string" &&
+      /^[1-9][0-9]*$/u.test(fields.githubId) &&
+      typeof fields.nodeId === "string" &&
+      /^[A-Za-z0-9_=-]{1,100}$/u.test(fields.nodeId)
+    );
+  };
+  return Array.isArray(value) && value.length <= 19 && value.every(valid)
+    ? value
+    : [];
+}
 
 /**
  * Owners publish project changes directly (PRD section 4). The page edits the
@@ -2112,6 +2165,19 @@ function ProjectUpdateForm({
     | { state: "idle" | "removing" | "removed" }
     | { state: "error"; message: string; staleRevision: boolean }
   >({ state: "idle" });
+  // Repositories the owner adds in this edit (PRD section 4). Each counts
+  // from the next UTC month, set when the revision is built.
+  const [repositoryInput, setRepositoryInput] = useState("");
+  const [repositoryLookup, setRepositoryLookup] = useState<
+    { state: "idle" | "loading" } | { state: "error"; message: string }
+  >({ state: "idle" });
+  const repositoryLookupController = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      repositoryLookupController.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     let active = true;
     setLoadError(null);
@@ -2164,6 +2230,7 @@ function ProjectUpdateForm({
       capMinor === "0"
         ? ""
         : formatBaseUnits(capMinor, decimals, { grouping: false }),
+    repositories: "",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,
@@ -2188,7 +2255,9 @@ function ProjectUpdateForm({
             (field) =>
               typeof saved[field] === "string" &&
               (saved[field] as string).length <=
-                (field === "image" ? 16_384 : 4_000),
+                (field === "image" || field === "repositories"
+                  ? 16_384
+                  : 4_000),
           ).map((field) => [field, saved[field]]),
         )
       : null,
@@ -2229,6 +2298,19 @@ function ProjectUpdateForm({
     if (draft === null) setDraftRevision(base?.revision ?? null);
     setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
   };
+  // Pending added repositories are kept in the draft like any other edit.
+  const addedRepositories = useMemo(
+    () => pendingRepositories(value.repositories),
+    [value.repositories],
+  );
+  const changePending = (
+    change: (list: PendingRepository[]) => PendingRepository[],
+  ) => {
+    const list = change(
+      pendingRepositories(latestDraft.current?.repositories ?? ""),
+    );
+    set("repositories")(list.length > 0 ? JSON.stringify(list) : "");
+  };
   // A legacy project needs an explicit funding choice to initialize a vault.
   // Editing only its text must preserve its existing funding and fee terms.
   const assetTouched =
@@ -2268,6 +2350,12 @@ function ProjectUpdateForm({
           : lengthError(value[field], 1, 2_000),
       ]),
     ),
+    ...Object.fromEntries(
+      addedRepositories.map((added, index) => [
+        `addedRepository${index}`,
+        lengthError(added.entry.description, 12, 500),
+      ]),
+    ),
   };
   const choice: FundingChoice = {
     mode: value.fundingMode === "monthly" ? "monthly" : "none",
@@ -2300,6 +2388,7 @@ function ProjectUpdateForm({
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
+  const repositoryCountsFrom = nextUtcMonthStart(new Date());
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2334,6 +2423,18 @@ function ProjectUpdateForm({
     return {
       ...source,
       ...fundingFields,
+      ...(addedRepositories.length > 0
+        ? {
+            repositories: [
+              ...source.repositories,
+              ...addedRepositories.map(({ entry }) => ({
+                ...entry,
+                description: entry.description.trim(),
+                countsFrom: repositoryCountsFrom,
+              })),
+            ],
+          }
+        : {}),
       ...(source.slopbot !== undefined || value.automaticClosure === "true"
         ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
         : {}),
@@ -2355,6 +2456,8 @@ function ProjectUpdateForm({
       changes.executable.length +
       changes.financial.length >
     0;
+  // An added repository always needs its own scan, cleared project or not.
+  const executableCleared = scanCleared && addedRepositories.length === 0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
     minor === "0"
       ? "No monthly funding"
@@ -2386,6 +2489,12 @@ function ProjectUpdateForm({
           },
         ]
       : []),
+    {
+      field: "repositories",
+      label: "Repositories",
+      before: current.repositories.map((entry) => entry.id).join(", "),
+      after: next.repositories.map((entry) => entry.id).join(", "),
+    },
     {
       field: "headline",
       label: "Short description",
@@ -2495,7 +2604,24 @@ function ProjectUpdateForm({
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
       const editedDuringSave = latestDraft.current !== submittedDraft;
-      setDraft(editedDuringSave ? latestDraft.current : null);
+      // Published additions leave the draft; later ones stay pending.
+      const published = new Set(
+        result.project.manifest.repositories.map((entry) =>
+          entry.id.toLowerCase(),
+        ),
+      );
+      const remaining = pendingRepositories(
+        latestDraft.current?.repositories ?? "",
+      ).filter(({ entry }) => !published.has(entry.id.toLowerCase()));
+      setDraft(
+        editedDuringSave
+          ? {
+              ...latestDraft.current,
+              repositories:
+                remaining.length > 0 ? JSON.stringify(remaining) : "",
+            }
+          : null,
+      );
       setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
@@ -2511,10 +2637,75 @@ function ProjectUpdateForm({
         staleRevision:
           failure instanceof ProjectApiError &&
           failure.code === "stale_revision",
-        message: errorMessage(failure, "Publication could not be confirmed."),
+        // The start month is the next UTC month on Slop's clock; the month
+        // changed since this page set it.
+        message:
+          failure instanceof ProjectApiError &&
+          failure.code === "invalid_repository_start"
+            ? "The month changed, so an added repository counts from a later month. Reload the page, then publish again."
+            : errorMessage(failure, "Publication could not be confirmed."),
       });
     } finally {
       publishInFlight.current = false;
+    }
+  }
+  async function addRepository() {
+    const repository = normalizeRepositoryInput(repositoryInput);
+    const listed = (name: string) =>
+      [...current.repositories, ...addedRepositories.map(({ entry }) => entry)]
+        .flatMap((entry) => [entry.id, ...(entry.aliases ?? [])])
+        .some((id) => id.toLowerCase() === name.toLowerCase());
+    repositoryLookupController.current?.abort();
+    if (listed(repository)) {
+      setRepositoryLookup({
+        state: "error",
+        message: `${repository} is already listed.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    repositoryLookupController.current = controller;
+    setRepositoryLookup({ state: "loading" });
+    try {
+      const facts = await lookupGitHubRepository(repository, controller.signal);
+      if (controller.signal.aborted || !mounted.current) return;
+      const refusal =
+        facts.fork !== false
+          ? `${facts.repository} is a fork. Add the original repository instead.`
+          : facts.archived !== false
+            ? `${facts.repository} is archived on GitHub.`
+            : listed(facts.repository)
+              ? `${facts.repository} is already listed.`
+              : null;
+      if (refusal !== null) {
+        setRepositoryLookup({ state: "error", message: refusal });
+        return;
+      }
+      const description = facts.description ?? "";
+      const usable = boundedText(description, 12, 500);
+      changePending((list) => [
+        ...list,
+        {
+          entry: {
+            id: facts.repository,
+            displayName: facts.repository,
+            githubUrl: `https://github.com/${facts.repository}`,
+            description: usable ? description.trim() : "",
+            integrationBranch: facts.defaultBranch,
+            githubId: facts.numericId,
+            nodeId: facts.nodeId,
+          },
+          ownDescription: !usable,
+        },
+      ]);
+      setRepositoryInput("");
+      setRepositoryLookup({ state: "idle" });
+    } catch (error) {
+      if (controller.signal.aborted || !mounted.current) return;
+      setRepositoryLookup({
+        state: "error",
+        message: errorMessage(error, "Repository could not load."),
+      });
     }
   }
   async function remove() {
@@ -2673,6 +2864,93 @@ function ProjectUpdateForm({
             ))}
           </details>
         </details>
+        <details className="proposal-advanced">
+          <summary>Repositories</summary>
+          <ul>
+            {current.repositories.map((entry) => (
+              <li key={entry.id}>
+                {entry.id}
+                {entry.countsFrom ? (
+                  <>
+                    {" "}
+                    <small className="field-hint">
+                      Counts from {formatDate(entry.countsFrom)}
+                    </small>
+                  </>
+                ) : null}
+              </li>
+            ))}
+            {addedRepositories.map((added, index) => (
+              <li key={added.entry.id}>
+                {added.entry.id}{" "}
+                <small className="field-hint">
+                  Counts from {formatDate(repositoryCountsFrom)}. A security
+                  scan runs before it counts; an active project pauses until the
+                  scan clears. If the scan has not cleared when the month
+                  closes, that month has no allocation.
+                </small>
+                <button
+                  aria-label={`Remove ${added.entry.id}`}
+                  className="text-button"
+                  disabled={submission.state === "publishing"}
+                  onClick={() =>
+                    changePending((list) =>
+                      list.filter((_, position) => position !== index),
+                    )
+                  }
+                  type="button"
+                >
+                  Remove
+                </button>
+                {added.ownDescription ? (
+                  <TextField
+                    error={shown(`addedRepository${index}`)}
+                    label="Description"
+                    name={`addedRepository${index}`}
+                    onChange={(description) =>
+                      changePending((list) =>
+                        list.map((item, position) =>
+                          position === index
+                            ? { ...item, entry: { ...item.entry, description } }
+                            : item,
+                        ),
+                      )
+                    }
+                    value={added.entry.description}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <TextField
+            error={
+              repositoryLookup.state === "error"
+                ? repositoryLookup.message
+                : undefined
+            }
+            label="GitHub repository"
+            name="addRepository"
+            onChange={(entry) => {
+              setRepositoryInput(entry);
+              if (repositoryLookup.state === "error")
+                setRepositoryLookup({ state: "idle" });
+            }}
+            placeholder="owner/repository or GitHub URL"
+            value={repositoryInput}
+          />
+          <button
+            className="button secondary-button"
+            disabled={
+              repositoryLookup.state === "loading" ||
+              repositoryInput.trim() === "" ||
+              submission.state === "publishing"
+            }
+            onClick={() => void addRepository()}
+            type="button"
+          >
+            Add
+          </button>
+        </details>
         {monthly && !bountyOnly ? (
           <details className="proposal-advanced">
             <summary>Monthly rewards</summary>
@@ -2757,12 +3035,12 @@ function ProjectUpdateForm({
             <h2 id="update-changes">Changes</h2>
             <ul>
               {changes.presentation.length > 0 ||
-              (scanCleared && changes.executable.length > 0) ? (
+              (executableCleared && changes.executable.length > 0) ? (
                 <li>
                   Presentation and cleared contribution changes publish now.
                 </li>
               ) : null}
-              {!scanCleared && changes.executable.length > 0 ? (
+              {!executableCleared && changes.executable.length > 0 ? (
                 <li>
                   Contribution changes need a new security scan.{" "}
                   {current.status === "active"

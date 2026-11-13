@@ -6,6 +6,7 @@ import { loadValueInputs } from "./value-ingestion";
 function candidate(
   failure: "proof" | "transport" | "identity",
   baseRefName = "main",
+  related = true,
 ) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
@@ -65,7 +66,7 @@ function candidate(
             id: number === 1 ? originalId : acceptedId,
             timelineItems: {
               nodes:
-                number === 2
+                number === 2 && related
                   ? [
                       {
                         source: {
@@ -142,6 +143,18 @@ test("first-owned unlinked work on another branch still reads original attributi
   expect([...result.implementationAttributionHolds.keys()]).toEqual([
     acceptedId,
   ]);
+});
+
+test("an unreferenced unlinked commit needs no full commit or file evidence", async () => {
+  const { run, reads } = candidate("proof", "main", false);
+  const result = await run();
+  expect(result.retainedCommitAuthors.size).toBe(0);
+  expect(result.implementationAttributionHolds.size).toBe(0);
+  expect(reads.some((path) => /\/(?:files|commits)(?:\/|\?)/u.test(path))).toBe(
+    false,
+  );
+  expect(reads.some((path) => path.endsWith("/pulls/1"))).toBe(false);
+  expect(reads.some((path) => path.includes("/issues/2/comments?"))).toBe(true);
 });
 
 test("a later promotion of already accepted SHAs does not hydrate attribution again", async () => {

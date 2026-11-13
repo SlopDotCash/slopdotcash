@@ -7,6 +7,7 @@ import {
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
 } from "./value-ingestion";
+
 /**
  * Collects the rolling contribution ledger and current work queues from the
  * authenticated GitHub GraphQL API. Time slicing, cursor pagination, runtime
@@ -14,6 +15,10 @@ import {
  * becoming a plausible-looking empty snapshot.
  */
 
+import {
+  githubIngestionReadTransport,
+  githubPrimaryRateLimitDelay,
+} from "./github-ingestion-read";
 import type { ConnectionPage, PageInfo } from "./github-pagination";
 import { resolveGitHubToken } from "./github-token";
 
@@ -2019,6 +2024,16 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         continue;
       } finally {
         clearTimeout(timeout);
+      }
+      // Wait outside the request deadline. Passing a quota wait through the
+      // fetch transport would expire the 60-second request signal before the
+      // next hourly window, even though no request is still in flight.
+      const quotaDelay = restPath
+        ? githubPrimaryRateLimitDelay(response)
+        : null;
+      if (quotaDelay !== null && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        await retryDelay(quotaDelay);
+        continue;
       }
       const retryableStatus =
         GATEWAY_FAILURE_STATUSES.includes(response.status) ||
@@ -4651,7 +4666,10 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  const github = GitHubClient.forToken(options.evidenceToken ?? "");
+  const github = GitHubClient.forToken(
+    options.evidenceToken ?? "",
+    githubIngestionReadTransport(),
+  );
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {

@@ -201,6 +201,8 @@ An optional custom project image falls back to the GitHub owner avatar. Do not u
 
 Show one setup summary with separate authority, Slopbot, security, and funding results, plus the next action. Activate after complete setup, current authority, installation, and valid admission clearance. Economic policy changes apply from the next UTC calendar month; preserve frozen terms and funded obligations.
 
+Owners may append public GitHub repositories to an existing project on its manage page. An appended repository cannot be a fork or archived, and no project may already list its permanent numeric and node IDs. The owner needs current write, maintain, or admin authority through a Slopbot installation on that repository. Its work counts from the first day of the next UTC month. An append never removes, reorders, or renames a listed repository. Each repository needs its own admission scan or owner-approved exemption, and the project is cleared only when every repository is. Appending to an active project pauses it. A clean scan of the last uncleared repository reactivates it; after an exemption, the owner runs the setup check. The monthly close skips a paused project, so if a scan has not cleared when the month closes, that month has no allocation. A flag-only pause or a moderator reinstatement needs a fresh clean scan of every repository. Proposed by the operator on 12 November 2026; approved by the owner's merge.
+
 ### Skill source and installation
 
 Generate each skill from one canonical generic template and the approved D1 project revision. The same inputs must produce the same bytes. Maintainer notes cannot weaken template rules. Do not store per-project skill copies.
@@ -505,7 +507,7 @@ A passed scan means every defined check ran on the bound revision and found no m
 
 ### Exemptions and restrictions
 
-Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. Display an exemption, never a passed scan.
+Migration `0075_vetting_grandfathered_projects.sql` permanently fixes the existing-project exemption set in each environment. Those projects need no normal admission scan, including after executable changes. Later projects cannot join that set. The exemption covers each project's original repositories; a repository appended later needs its own admission scan or owner-approved exemption. Display an exemption, never a passed scan.
 
 A separate owner-approved Umia fork exemption requires an audited administrator record. Bind it to the current D1 revision, permanent repository identity, steward, approving actor, reason, and time. Display **Owner-approved exemption**. Another repository or steward cannot inherit it. Other grants require a separate human owner decision. Retain previous assessments and audited revocations; revocation restores ordinary admission.
 
