@@ -8925,14 +8925,15 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "6c769892ccc379fd7f8986f445093bdee2040947edf1db32912838996ca97382",
+      "sha256": "4fc98bc92c129a30fbc2b38352c0e80e20a82e3d05b7117cf653504acccf7c9f",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_local_helpers.qnt",
         "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        245, 253, 254, 1725, 1726, 1907, 1968, 1989, 2056, 2072, 2115
+        246, 254, 255, 1761, 1762, 1943, 2004, 2025, 2092, 2108, 2151
       ],
       "review": "mapped-abstraction"
     },
@@ -8962,6 +8963,13 @@
       "sha256": "e9cc1694f026f04194bff925220b2a68f03263eaff7a3236f7d7a8fc1b14cbcb",
       "models": ["formal/models/vetting/vetting_execution_provenance.qnt"],
       "candidateLines": [31, 36],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting/local-install-helpers.ts",
+      "sha256": "ac017199c02fbc954e797b57f3fc9b4640c1220da21e7c163ab3c842c521146b",
+      "models": ["formal/models/vetting/vetting_local_helpers.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -18808,6 +18816,19 @@
         "originalCompressedSymlinkLineageSurvivesTest",
         "payloadOnlyMissesOptionalHeaderInstructionsTest",
         "unknownAndNestedArchiveDoNotClearTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_local_helpers.qnt",
+      "sha256": "bf99a34a3dadfdd862710d8e74ee1d9b5db9f81fed60cda343883f961ce6661a",
+      "sources": [
+        "workers/vetting/bounded-scan.ts",
+        "workers/vetting/local-install-helpers.ts"
+      ],
+      "scenarios": [
+        "cyclesFinishWithoutDuplicatesTest",
+        "missingHelperKeepsGapTest",
+        "unrelatedFileNeverBecomesDownloadTest"
       ]
     },
     {
