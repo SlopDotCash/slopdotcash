@@ -75,7 +75,12 @@ every recognized event is verified and indexed. Base starts from the reviewed
 deployment transaction. EVM checkpoints cannot decrease when overlapping runs
 finish out of order; a failed page retains the last completed block. Run
 `node workers/payments/scanner-progress.workflow.mjs` for the native D1/public
-coverage regression. Solana stores one finalized signature page per run in a durable discovery
+coverage regression. Every EVM scan checks the RPC chain ID against the reviewed
+deployment before reading or advancing its cursor, including empty log pages.
+This check prevents new omissions; it does not repair a cursor advanced before
+the check was released. Audit such history from its trusted deployment boundary
+and reconcile retained events before treating that coverage as verified.
+Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
