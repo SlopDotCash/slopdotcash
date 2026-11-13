@@ -206,12 +206,25 @@ interface ParsedIssue {
   };
 }
 
+type OutcomeCommit = NonNullable<MergedPullRequestOutcome["commits"]>[number];
+
+export interface OutcomeCommitIdentity {
+  id: string;
+  oid: string;
+  parentCount: number;
+  author: GitHubActor | null;
+}
+
 interface NodeReference {
   id: string;
   kind: "Issue" | "PullRequest";
   outcome: MergedPullRequestOutcome | null;
   openVersion: string | null;
-  commitPage?: NestedPageState & { baseRefOid: string; headRefOid: string };
+  commitPage?: NestedPageState & {
+    baseRefOid: string;
+    headRefOid: string;
+    commits: OutcomeCommitIdentity[];
+  };
 }
 
 type ExpectedRecordState = "closed" | "merged" | "open";
@@ -604,6 +617,7 @@ const SEARCH_REFERENCES_QUERY = `
     $searchQuery: String!
     $after: String
     $pageSize: Int!
+    $withMergeCommits: Boolean!
   ) {
     search(
       type: ISSUE
@@ -632,10 +646,10 @@ const SEARCH_REFERENCES_QUERY = `
           baseRefName
           baseRefOid
           headRefOid
-          commits(first: 100) {
+          commits(first: 100) @include(if: $withMergeCommits) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { commit { oid additions deletions parents { totalCount } author { user { ...LeaderboardActor } } } }
+            nodes { commit { id oid parents { totalCount } author { user { ...LeaderboardActor } } } }
           }
         }
       }
@@ -653,10 +667,12 @@ const MORE_OUTCOME_COMMITS_QUERY = `
         state
         mergedAt
         baseRefName
+        baseRefOid
+        headRefOid
         commits(first: 100, after: $after) {
           totalCount
           pageInfo { hasNextPage endCursor }
-          nodes { commit { oid additions deletions parents { totalCount } author { user { ...LeaderboardActor } } } }
+          nodes { commit { id oid parents { totalCount } author { user { ...LeaderboardActor } } } }
         }
       }
     }
@@ -677,17 +693,157 @@ const PULL_REQUEST_DETAILS_QUERY = `
   ${PULL_REQUEST_FRAGMENT}
 `;
 
-// The REST comparison endpoint supplies the complete commit range, but omits
-// per-commit statistics. Resolve those immutable objects in one batch per page.
+// Keep expensive commit statistics out of nested PR search connections.
 const OUTCOME_COMMIT_LINES_QUERY = `
   query LeaderboardOutcomeCommitLines($ids: [ID!]!) {
     nodes(ids: $ids) {
       __typename
-      ... on Commit { id oid additions deletions }
+      ... on Commit { id oid additions deletions repository { id } }
     }
     rateLimit { cost limit remaining resetAt }
   }
 `;
+
+interface CachedCommitLines {
+  repositoryNodeId: string;
+  oid: string;
+  parentCount: number;
+  authorId: string | null;
+  authorKind: GitHubActorKind | null;
+  additions: number;
+  deletions: number;
+}
+
+function sameCommitIdentity(
+  left: Pick<
+    CachedCommitLines,
+    "oid" | "parentCount" | "authorId" | "authorKind"
+  >,
+  right: OutcomeCommitIdentity,
+): boolean {
+  return (
+    left.oid === right.oid &&
+    left.parentCount === right.parentCount &&
+    left.authorId === (right.author?.id ?? null) &&
+    left.authorKind === (right.author?.kind ?? null)
+  );
+}
+
+/** One collection run owns this cache; only a wholly validated load warms it. */
+export class OutcomeCommitLineLoader {
+  private readonly byId = new Map<string, CachedCommitLines>();
+  private readonly idBySha = new Map<string, string>();
+
+  constructor(private readonly client: Pick<GraphqlExecutor, "execute">) {}
+
+  async hydrate(
+    repositoryNodeId: string,
+    commits: readonly OutcomeCommitIdentity[],
+  ): Promise<OutcomeCommit[]> {
+    asString(repositoryNodeId, "commit statistics repository ID");
+    const pending = new Map<string, OutcomeCommitIdentity>();
+    const pendingBySha = new Map<string, string>();
+    for (const commit of commits) {
+      asString(commit.id, "commit statistics node ID");
+      asFullCommitSha(commit.oid, "commit statistics SHA");
+      if (!Number.isSafeInteger(commit.parentCount) || commit.parentCount < 0)
+        throw new Error("Commit parent count must be a non-negative integer");
+      const shaKey = `${repositoryNodeId}\0${commit.oid}`;
+      const knownId = this.idBySha.get(shaKey) ?? pendingBySha.get(shaKey);
+      if (knownId !== undefined && knownId !== commit.id)
+        throw new Error(
+          "Commit statistics identity changed for an immutable SHA",
+        );
+      const cached = this.byId.get(commit.id);
+      if (cached) {
+        if (
+          cached.repositoryNodeId !== repositoryNodeId ||
+          !sameCommitIdentity(cached, commit)
+        )
+          throw new Error(
+            "Commit statistics changed immutable commit metadata",
+          );
+      } else {
+        const earlier = pending.get(commit.id);
+        if (
+          earlier &&
+          (earlier.oid !== commit.oid ||
+            earlier.parentCount !== commit.parentCount ||
+            earlier.author?.id !== commit.author?.id ||
+            earlier.author?.kind !== commit.author?.kind)
+        )
+          throw new Error(
+            "Commit statistics changed immutable commit metadata",
+          );
+        pending.set(commit.id, commit);
+        pendingBySha.set(shaKey, commit.id);
+      }
+    }
+    const staged = new Map<string, CachedCommitLines>();
+    for (const batch of chunks([...pending.values()], GRAPHQL_PAGE_SIZE)) {
+      let data: JsonRecord;
+      try {
+        data = await executeNodeBatch(
+          this.client,
+          OUTCOME_COMMIT_LINES_QUERY,
+          batch.map((commit) => commit.id),
+        );
+      } catch (error) {
+        if (!(error instanceof SourceNodeUnavailableError)) throw error;
+        // Missing commit statistics are not an unavailable PR census member.
+        throw new Error("Commit statistics are unavailable", { cause: error });
+      }
+      const nodes = asArray(data.nodes, "data.nodes");
+      if (nodes.length !== batch.length)
+        throw new Error("Commit statistics are incomplete");
+      for (const [index, expected] of batch.entries()) {
+        const path = `data.nodes[${index}]`;
+        const node = asRecord(nodes[index], path);
+        if (
+          node.__typename !== "Commit" ||
+          node.id !== expected.id ||
+          node.oid !== expected.oid ||
+          child(node, "repository", path).id !== repositoryNodeId
+        )
+          throw new Error("Commit statistics identity changed");
+        const additions = asNumber(node.additions, `${path}.additions`);
+        const deletions = asNumber(node.deletions, `${path}.deletions`);
+        if (
+          !Number.isSafeInteger(additions) ||
+          additions < 0 ||
+          !Number.isSafeInteger(deletions) ||
+          deletions < 0
+        )
+          throw new Error("Commit line counts must be non-negative integers");
+        staged.set(expected.id, {
+          repositoryNodeId,
+          oid: expected.oid,
+          parentCount: expected.parentCount,
+          authorId: expected.author?.id ?? null,
+          authorKind: expected.author?.kind ?? null,
+          additions,
+          deletions,
+        });
+      }
+    }
+    for (const [id, value] of staged) {
+      this.byId.set(id, value);
+      this.idBySha.set(`${repositoryNodeId}\0${value.oid}`, id);
+    }
+    return commits.map((commit) => {
+      const lines = this.byId.get(commit.id);
+      if (!lines)
+        throw new Error("Commit statistics were not completely hydrated");
+      return {
+        oid: commit.oid,
+        parentCount: commit.parentCount,
+        author: commit.author,
+        additions: lines.additions,
+        deletions: lines.deletions,
+      };
+    });
+  }
+}
 
 const MERGED_FILE_SOURCE_QUERY = `
   query LeaderboardMergedFileSource($id: ID!) {
@@ -2107,6 +2263,7 @@ function parseSearchReference(
               child(node, "commits", path).pageInfo,
               `${path}.commits.pageInfo`,
             ),
+            commits: parseOutcomeCommits(node.commits, `${path}.commits`),
           },
         }
       : {}),
@@ -2266,6 +2423,8 @@ export async function collectSearchReferences(
     | "is:pr is:closed is:unmerged",
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
+  commitLines = new OutcomeCommitLineLoader(client),
+  repositoryNodeId = repository.expectedNodeId,
 ): Promise<NodeReference[]> {
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
@@ -2273,6 +2432,7 @@ export async function collectSearchReferences(
     searchQuery,
     after: null,
     pageSize: GRAPHQL_PAGE_SIZE,
+    withMergeCommits: qualifier === "merged",
   });
   const firstPage = parseSearchPage(firstData, (value, path) =>
     parseSearchReference(value, path, expectedKind, qualifier === "merged"),
@@ -2293,6 +2453,8 @@ export async function collectSearchReferences(
       kindQualifier,
       expectedKind,
       stats,
+      commitLines,
+      repositoryNodeId,
     );
     const right = await collectSearchReferences(
       client,
@@ -2303,6 +2465,8 @@ export async function collectSearchReferences(
       kindQualifier,
       expectedKind,
       stats,
+      commitLines,
+      repositoryNodeId,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2332,6 +2496,7 @@ export async function collectSearchReferences(
       searchQuery,
       after: pageInfo.endCursor,
       pageSize: GRAPHQL_PAGE_SIZE,
+      withMergeCommits: qualifier === "merged",
     });
     const page = parseSearchPage(data, (value, path) =>
       parseSearchReference(value, path, expectedKind, qualifier === "merged"),
@@ -2353,8 +2518,34 @@ export async function collectSearchReferences(
     // recovery. No missing record can become a successful partial snapshot.
     return collectSplitRange();
   }
+  const completed: {
+    reference: NodeReference;
+    outcome: MergedPullRequestOutcome;
+    commits: OutcomeCommitIdentity[];
+  }[] = [];
   for (const reference of deduped) {
-    await completeOutcomeCommits(client, reference, repository);
+    const commits = await completeOutcomeCommits(client, reference, repository);
+    if (commits !== null && reference.outcome)
+      completed.push({ reference, outcome: reference.outcome, commits });
+  }
+  if (completed.length > 0) {
+    if (!repositoryNodeId)
+      throw new Error(
+        "Commit statistics require a verified repository identity",
+      );
+    const hydrated = await commitLines.hydrate(
+      repositoryNodeId,
+      completed.flatMap((entry) => entry.commits),
+    );
+    let offset = 0;
+    for (const entry of completed) {
+      entry.outcome.commits = hydrated.slice(
+        offset,
+        offset + entry.commits.length,
+      );
+      offset += entry.commits.length;
+      delete entry.reference.commitPage;
+    }
   }
   return deduped;
 }
@@ -2367,18 +2558,17 @@ async function completeOutcomeCommits(
   client: GraphqlExecutor,
   reference: NodeReference,
   repository: TargetRepository,
-): Promise<void> {
+): Promise<OutcomeCommitIdentity[] | null> {
   const outcome = reference.outcome;
   const firstPage = reference.commitPage;
-  if (!outcome || !firstPage) return;
-  // Every base branch needs complete commit evidence to establish first credit.
-  // The scorer separately limits shared credit to the integration branch.
-  let commits = outcome.commits;
-  if (!commits) throw new Error(`PR #${outcome.number} has no commit evidence`);
+  if (!outcome || !firstPage) return null;
+  if (!Number.isSafeInteger(firstPage.totalCount) || firstPage.totalCount < 0)
+    throw new Error(`PR #${outcome.number} commit count is invalid`);
+  let commits = firstPage.commits;
   if (firstPage.totalCount > GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT) {
     if (!client.compareCommitPage)
       throw new Error("Complete commit comparison is unavailable");
-    const compared: NonNullable<MergedPullRequestOutcome["commits"]> = [];
+    const compared: OutcomeCommitIdentity[] = [];
     for (
       let page = 1;
       page <= Math.ceil(firstPage.totalCount / GRAPHQL_PAGE_SIZE);
@@ -2401,38 +2591,17 @@ async function completeOutcomeCommits(
       const comparisonCommits = asArray(data.commits, "comparison.commits").map(
         (value, index) => asRecord(value, `comparison.commits[${index}]`),
       );
-      const ids = comparisonCommits.map((commit, index) =>
-        asString(commit.node_id, `comparison.commits[${index}].node_id`),
-      );
-      const lineData = await client.execute(OUTCOME_COMMIT_LINES_QUERY, {
-        ids,
-      });
-      const lineNodes = asArray(lineData.nodes, "data.nodes");
-      if (lineNodes.length !== ids.length)
-        throw new Error(
-          `PR #${outcome.number} commit statistics are incomplete`,
-        );
       const nodes = comparisonCommits.map((value, index) => {
         const path = `comparison.commits[${index}]`;
         const commit = value;
-        const lines = asRecord(lineNodes[index], `data.nodes[${index}]`);
-        if (
-          lines.__typename !== "Commit" ||
-          lines.id !== ids[index] ||
-          lines.oid !== commit.sha
-        )
-          throw new Error(
-            `PR #${outcome.number} commit statistics identity changed`,
-          );
         const author =
           commit.author === null
             ? null
             : asRecord(commit.author, `${path}.author`);
         return {
           commit: {
+            id: asString(commit.node_id, `${path}.node_id`),
             oid: commit.sha,
-            additions: lines.additions,
-            deletions: lines.deletions,
             parents: {
               totalCount: asArray(commit.parents, `${path}.parents`).length,
             },
@@ -2464,9 +2633,8 @@ async function completeOutcomeCommits(
       const hydrated = known.get(commit.oid);
       if (
         !hydrated ||
+        hydrated.id !== commit.id ||
         hydrated.parentCount !== commit.parentCount ||
-        hydrated.additions !== commit.additions ||
-        hydrated.deletions !== commit.deletions ||
         hydrated.author?.id !== commit.author?.id ||
         hydrated.author?.kind !== commit.author?.kind
       )
@@ -2500,6 +2668,8 @@ async function completeOutcomeCommits(
       node.state !== "MERGED" ||
       node.mergedAt !== outcome.mergedAt ||
       node.baseRefName !== outcome.baseRefName ||
+      node.baseRefOid !== firstPage.baseRefOid ||
+      node.headRefOid !== firstPage.headRefOid ||
       connection.totalCount !== firstPage.totalCount
     ) {
       throw new Error(`PR #${outcome.number} changed during commit collection`);
@@ -2509,14 +2679,15 @@ async function completeOutcomeCommits(
   }
   if (
     commits.length !== firstPage.totalCount ||
-    new Set(commits.map((commit) => commit.oid)).size !== firstPage.totalCount
+    new Set(commits.map((commit) => commit.oid)).size !==
+      firstPage.totalCount ||
+    new Set(commits.map((commit) => commit.id)).size !== firstPage.totalCount
   ) {
     throw new Error(
       `PR #${outcome.number} commit totals do not match complete unique evidence`,
     );
   }
-  outcome.commits = commits;
-  delete reference.commitPage;
+  return commits;
 }
 
 async function countSearchResults(
@@ -2538,9 +2709,10 @@ async function countSearchResults(
     searchQuery,
     after: null,
     pageSize: 1,
+    withMergeCommits: false,
   });
   return parseSearchPage(data, (value, path) =>
-    parseSearchReference(value, path, expectedKind, qualifier === "merged"),
+    parseSearchReference(value, path, expectedKind, false),
   ).totalCount;
 }
 
@@ -2659,14 +2831,14 @@ function parsePullRequestOutcome(
     additions: asNumber(node.additions, `${path}.additions`),
     deletions: asNumber(node.deletions, `${path}.deletions`),
     baseRefName: asString(node.baseRefName, `${path}.baseRefName`),
-    commits: parseOutcomeCommits(node.commits, `${path}.commits`),
+    commits: null,
   };
 }
 
 function parseOutcomeCommits(
   value: unknown,
   path: string,
-): NonNullable<MergedPullRequestOutcome["commits"]> {
+): OutcomeCommitIdentity[] {
   const connection = asRecord(value, path);
   const nodes = asArray(connection.nodes, `${path}.nodes`);
   return nodes.map((nodeValue, index) => {
@@ -2688,22 +2860,10 @@ function parseOutcomeCommits(
       throw new Error(
         `${commitPath}.parents.totalCount must be a non-negative integer`,
       );
-    const additions = asNumber(commit.additions, `${commitPath}.additions`);
-    const deletions = asNumber(commit.deletions, `${commitPath}.deletions`);
-    if (
-      !Number.isSafeInteger(additions) ||
-      additions < 0 ||
-      !Number.isSafeInteger(deletions) ||
-      deletions < 0
-    )
-      throw new Error(
-        `${commitPath} line counts must be non-negative integers`,
-      );
     return {
+      id: asString(commit.id, `${commitPath}.id`),
       oid: asFullCommitSha(commit.oid, `${commitPath}.oid`),
       parentCount,
-      additions,
-      deletions,
       // GitHub links app commits to a User whose reserved login ends in
       // "[bot]" (for example dependabot[bot]); no person can hold that login.
       author:
@@ -4073,6 +4233,7 @@ export async function generateLeaderboardFromGitHub(
   );
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
+  const commitLines = new OutcomeCommitLineLoader(client);
   const probeUnavailableSources = async (ids: readonly string[]) => {
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
@@ -4161,6 +4322,8 @@ export async function generateLeaderboardFromGitHub(
       "is:pr is:merged",
       "PullRequest",
       stats,
+      commitLines,
+      preflight.id,
     );
     if (closedCensusFrom.getTime() < now.getTime()) {
       const closedReferences = await collectSearchReferences(
@@ -4172,6 +4335,8 @@ export async function generateLeaderboardFromGitHub(
         "is:pr is:closed is:unmerged",
         "PullRequest",
         stats,
+        commitLines,
+        preflight.id,
       );
       await ensureEstimatedBudget(client, closedReferences.length, 0, 0);
       const closed = await hydratePullRequests(
@@ -4206,6 +4371,8 @@ export async function generateLeaderboardFromGitHub(
       "is:issue is:closed",
       "Issue",
       stats,
+      commitLines,
+      preflight.id,
     );
     const repositoryOutcomes = mergedPullRequestReferences.map((reference) => {
       if (!reference.outcome) {

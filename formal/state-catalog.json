@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "09494c25c717ef4169fa40b7c0bcfdfa076f60b1b8c64ca871e983a514cbe9d9",
+  "inventorySha256": "9c0948932e8f471c0be311f064a5cfddd3f4599dfff21777964c7d8b2b6c743e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2011,11 +2011,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 217,
+      "line": 230,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2029,7 +2030,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 352,
+      "line": 365,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2039,6 +2040,7 @@
         "resolved-issues"
       ],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2057,11 +2059,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3285,
+      "line": 3445,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2075,11 +2078,12 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3889,
+      "line": 4049,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",

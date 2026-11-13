@@ -3769,8 +3769,9 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "1672c7b7a11c38229d166e11a5c20576bbb57533ca0e1df745dfc22eef80cf85",
+      "sha256": "8afabfe05d5d5a9ce10c5111401a9d7976d15e8653e836733f1e14242963c593",
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -3780,15 +3781,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
-        653, 697, 893, 1128, 1190, 1198, 1256, 1309, 1312, 1505, 1514, 1519,
-        1526, 1609, 1610, 1757, 1758, 1815, 1841, 1859, 1861, 1865, 1899, 1902,
-        1903, 1906, 1908, 1919, 1942, 2149, 2152, 2500, 2519, 2617, 2630, 2641,
-        2642, 2841, 2842, 3033, 3049, 3061, 3068, 3094, 3104, 3108, 3112, 3116,
-        3171, 3190, 3217, 3234, 3268, 3269, 3271, 3287, 3304, 3305, 3306, 3315,
-        3320, 3500, 3858, 3880, 3889, 3939, 3974, 3980, 3987, 4056, 4141, 4293,
-        4509, 4519, 4521, 4534, 4563, 4565, 4566, 4570, 4574, 4629, 4683, 4734,
-        4737
+        23, 178, 189, 198, 278, 290, 292, 295, 394, 482, 503, 539, 570, 635,
+        667, 744, 767, 778, 783, 853, 1049, 1284, 1346, 1354, 1412, 1465, 1468,
+        1661, 1670, 1675, 1682, 1765, 1766, 1913, 1914, 1971, 1997, 2015, 2017,
+        2021, 2055, 2058, 2059, 2062, 2064, 2075, 2098, 2306, 2309, 2547, 2668,
+        2789, 2802, 2813, 2814, 3001, 3002, 3193, 3209, 3221, 3228, 3254, 3264,
+        3268, 3272, 3276, 3331, 3350, 3377, 3394, 3428, 3429, 3431, 3447, 3464,
+        3465, 3466, 3475, 3480, 3660, 4018, 4040, 4049, 4099, 4134, 4140, 4147,
+        4216, 4302, 4460, 4676, 4686, 4688, 4701, 4730, 4732, 4733, 4737, 4741,
+        4796, 4850, 4901, 4904
       ],
       "review": "mapped-abstraction"
     },
@@ -13203,6 +13204,18 @@
         "retrySeedsWithoutAnotherRevisionTest",
         "unavailableReadRetainsRegistrationTest",
         "untrustedRecoveryCannotWriteTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/commit_line_cache.qnt",
+      "sha256": "7e999b109d838caffa74cefb1a4813e6d15bd7847ec951be8339603b43ec413c",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "completeLoadAndReuseTest",
+        "invalidIdentityCannotFetchTest",
+        "laterFailureDiscardsStagedTest",
+        "oldCacheSurvivesFailureTest",
+        "partialLoadNotPublishedTest"
       ]
     },
     {
