@@ -3373,10 +3373,10 @@
     },
     {
       "path": "scripts/check-referral-roots.ts",
-      "sha256": "4c6ac67749717b151294d63b2b30aa6c8bef3113932d41cda4b379bbdc1f8e62",
+      "sha256": "b8f17cbea2bf3e1bb04f692121f0e0a8d11b0d88b363cca3e752481df45c56df",
       "models": ["formal/models/payments/chain_range_scan.qnt"],
       "candidateLines": [
-        48, 381, 383, 443, 448, 461, 480, 493, 504, 521, 525, 526, 536, 540, 556
+        59, 392, 394, 456, 461, 474, 493, 506, 517, 534, 538, 539, 549, 553, 569
       ],
       "review": "mapped-abstraction"
     },
@@ -5356,11 +5356,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "a54a93cbb83345a1db2775f0332598525590dc5cfbb796eb7acb8a78b3f74b97",
+      "sha256": "03da328a786808eabbcead07c18aa6250ee1e17cf61ec91e006b7985d540334f",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        212, 297, 308, 338, 339, 341, 342, 375, 377, 388, 537, 538, 540, 541,
-        582, 672
+        212, 297, 308, 367, 368, 370, 371, 404, 406, 417, 566, 567, 569, 570,
+        611, 701
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -7760,7 +7760,7 @@
     },
     {
       "path": "workers/referral-accrual/chain-logs.ts",
-      "sha256": "e679fc39fa5669c229db06bf1de3b043d2be569de1aae67b94a3511b6371dbff",
+      "sha256": "33c1225f6fbf99fb32b2f0f56064662a5b7959b8ab6abda931988ee0ab3cf4de",
       "models": ["formal/models/payments/chain_range_scan.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -7846,9 +7846,9 @@
     },
     {
       "path": "workers/referral-accrual/wrangler.toml",
-      "sha256": "c9a01390b4ea5af19d44a6033e8e0537ec9c943b7de2c7c8c99d548c5f264e0f",
+      "sha256": "7f4965417724b0889a78bf3bf5bb7a7fb7ed4efdeb192bca2a799c66ea78d033",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
-      "candidateLines": [37, 55],
+      "candidateLines": [38, 59],
       "review": "mapped-abstraction"
     },
     {
