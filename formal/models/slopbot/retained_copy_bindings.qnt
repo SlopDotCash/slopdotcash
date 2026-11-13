@@ -4,6 +4,7 @@
 // @source workers/slopbot/value-retained-reference.ts
 // @source workers/slopbot/value-manifest-identity.ts
 // @evidence workers/slopbot/accepted-promotion.test.ts
+// @evidence scripts/retained-pr-reference.test.ts
 // Two original sources, each with one commit/path, and two candidate accepted
 // commit/path keys. Inputs classify one immutable captured evidence set; this
 // helper does not fetch new PR state or write a journal. A retained-reference
@@ -17,6 +18,9 @@
 // These are predicates, not proofs of hashes, GitHub identity or patch parsing.
 // An unacknowledged-copy predicate includes a PR relationship, matching edits
 // and absence of an independently acknowledged carrier of the same commit.
+// PR-reference proof requires explicit retained-work wording in the actual
+// merger's post-merge comment and a same-repository reference resolved to the
+// exact accepted PR node; patch and original-author checks remain independent.
 // Matching kinds preserve exact edits, manifest identity and uniquely bound
 // ancestor hunks; the low-level graph/hunk algorithms remain separate models.
 // A promotion is skipped only when it has no admitted integration. Zero/many
@@ -28,7 +32,7 @@ module retained_copy_bindings {
   val ids = Set(1, 2)
   val sourceKinds = Set("original", "accepted", "promotion")
   val identities = Set("same-source", "foreign-repository", "same-pr", "unmerged", "no-merge", "bot", "no-overlap")
-  val proofs = Set("none", "reopen", "bad-reopen", "comment", "bad-comment")
+  val proofs = Set("none", "reopen", "bad-reopen", "comment", "bad-comment", "pr-reference")
   val matchKinds = Set("none", "exact", "manifest", "ancestor", "ambiguous-hunks")
   var s: { phase: str, original: int, kind: str, inspected: Set[int],
     admitted: Set[int], unacknowledged: Set[int], matched: Set[int],
@@ -45,7 +49,7 @@ module retained_copy_bindings {
     s' = s.with("phase", "candidates").with("kind", kind).with("inspected", Set())
       .with("admitted", Set()).with("unacknowledged", Set()).with("matched", Set()).with("compared", Set()) }
   action candidate(id: int, identity: str, proof: str, unacknowledgedCopy: bool): bool = {
-    val accepted = s.kind != "accepted" and identity == "same-source" and Set("reopen", "comment").contains(proof)
+    val accepted = s.kind != "accepted" and identity == "same-source" and Set("reopen", "comment", "pr-reference").contains(proof)
     all { s.phase == "candidates", ids.contains(id), not(s.inspected.contains(id)),
       identities.contains(identity), proofs.contains(proof),
       s' = s.with("inspected", s.inspected.union(Set(id)))
@@ -108,6 +112,8 @@ module retained_copy_bindings {
   run sameAuthorReopenBindsTest = init.then(oneIntegration("original", "reopen")).then(matched("exact"))
     .then(skipLast).expect(s.owners.get(1) == 1 and s.usable and invariant)
   run authenticatedCommentBindsTest = init.then(oneIntegration("original", "comment")).then(matched("exact"))
+    .then(skipLast).expect(s.usable and invariant)
+  run authenticatedPrReferenceBindsTest = init.then(oneIntegration("original", "pr-reference")).then(matched("exact"))
     .then(skipLast).expect(s.usable and invariant)
   run manifestIdentityBindsTest = init.then(oneIntegration("original", "comment")).then(matched("manifest"))
     .then(skipLast).expect(s.owners.get(1) == 1 and invariant)

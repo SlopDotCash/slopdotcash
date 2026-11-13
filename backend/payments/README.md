@@ -75,7 +75,12 @@ every recognized event is verified and indexed. Base starts from the reviewed
 deployment transaction. EVM checkpoints cannot decrease when overlapping runs
 finish out of order; a failed page retains the last completed block. Run
 `node workers/payments/scanner-progress.workflow.mjs` for the native D1/public
-coverage regression. Solana stores one finalized signature page per run in a durable discovery
+coverage regression. Every EVM scan checks the RPC chain ID against the reviewed
+deployment before reading or advancing its cursor, including empty log pages.
+This check prevents new omissions; it does not repair a cursor advanced before
+the check was released. Audit such history from its trusted deployment boundary
+and reconcile retained events before treating that coverage as verified.
+Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
@@ -277,6 +282,14 @@ real GitHub OAuth or public testnet deployment result.
 
 Automatic monthly payment is the PRD default for a funded project (PRD
 sections 6 and 7). Migration `0062` adds its private records.
+
+Points imports check these private records in the same atomic statement that
+accepts the new journal batch. A correction cannot change or add accepted-work
+Points in a frozen month, a month with an owner allocation decision, or a month
+with a retained direct payment. A legacy obligation without an exact monthly
+binding protects the whole project; its period is never inferred from indexing
+time. A refusal stops the release before Pages publication and retains the
+previous Points history. Replaying an identical batch remains valid.
 
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on

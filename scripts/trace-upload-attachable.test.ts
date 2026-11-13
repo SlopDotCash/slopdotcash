@@ -1,9 +1,9 @@
 /**
- * Trace bodies are create-only, permanent R2 objects. An upload that cannot
- * attach to its run (a different trace already attached, or the run
- * finalized) must be refused before its bytes are written; otherwise private
- * bytes are retained with no D1 object, upload, or audit row, invisible to
- * every audited read path, while the client was told the upload failed.
+ * Trace bodies are create-only, permanent R2 objects. Refuse conflicting or
+ * finalized runs before writing. A permanent D1 reservation records each
+ * authorized write's safe metadata before R2 receives bytes, including when a
+ * later participation ban prevents attachment. Retained bytes are not proof
+ * of an uploaded or finalized run.
  */
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
@@ -757,9 +757,28 @@ test("a ban landing concurrently with trace intent creation, capability upload o
     expect(refused.status).toBe(403);
     expect(refused.json.error).toBe("participation_banned");
     expect(await t.retained(TRACE_B)).toBe(true);
+    const digest = await sha256Hex(TRACE_B);
+    // The pre-ban reservation identifies the exact retained bytes and actor
+    // even though the later attachment was refused.
     expect(
-      await t.deps.persistence.getTraceObject(await sha256Hex(TRACE_B)),
-    ).toBeNull();
+      t.sqlite
+        .query("SELECT * FROM trace_write_reservations WHERE run_id = ?")
+        .get(runId),
+    ).toEqual({
+      run_id: runId,
+      github_user_id: ACTOR,
+      trace_sha256: digest,
+      r2_key: `traces/sha256/${digest.slice(0, 2)}/${digest}`,
+      size_bytes: TRACE_B.byteLength,
+      content_type: "text/plain",
+      created_at: new Date(T0).toISOString(),
+    });
+    expect(await t.deps.persistence.getTraceObject(digest)).toBeNull();
+    expect(
+      t.sqlite
+        .query("SELECT consumed_at FROM trace_upload_intents WHERE run_id = ?")
+        .get(runId),
+    ).toEqual({ consumed_at: null });
     expect((await t.deps.persistence.getRun(runId))?.state).toBe(
       "awaiting_trace",
     );

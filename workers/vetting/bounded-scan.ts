@@ -259,7 +259,12 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
 }
 
-/** The surfaces one path belongs to; empty for non-executable content. */
+/** Match a complete directory component at the root or in a nested package. */
+function inDirectory(path: string, directory: string): boolean {
+  return path.startsWith(`${directory}/`) || path.includes(`/${directory}/`);
+}
+
+/** The review surfaces assigned to a repository path. */
 export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
@@ -275,24 +280,24 @@ export function surfacesOf(path: string): ScanSurface[] {
   if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
     surfaces.add("manifests");
   if (
+    name.endsWith(".md") ||
     AGENT_INSTRUCTIONS.has(name) ||
-    lower.startsWith(".cursor/") ||
-    lower.startsWith(".claude/") ||
-    lower.startsWith(".github/instructions/") ||
-    lower.startsWith(".github/chatmodes/") ||
-    lower.startsWith(".junie/") ||
-    lower.startsWith(".idx/") ||
-    lower.startsWith(".windsurf/") ||
-    lower.includes("/.cursor/rules/")
+    inDirectory(lower, ".cursor") ||
+    inDirectory(lower, ".claude") ||
+    inDirectory(lower, ".github/instructions") ||
+    inDirectory(lower, ".github/chatmodes") ||
+    inDirectory(lower, ".junie") ||
+    inDirectory(lower, ".idx") ||
+    inDirectory(lower, ".windsurf")
   )
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
-    lower.startsWith(".husky/") ||
-    lower.startsWith(".devcontainer/") ||
-    lower.startsWith(".vscode/") ||
+    inDirectory(lower, ".husky") ||
+    inDirectory(lower, ".devcontainer") ||
+    inDirectory(lower, ".vscode") ||
     /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
       lower,
     )
@@ -944,9 +949,9 @@ function bulkClass(
     lower.endsWith(".json") &&
     !CONFIG_JSON.test(lower) &&
     !lower.includes("/.vscode/") &&
-    !lower.startsWith(".vscode/") &&
-    !lower.startsWith(".claude/") &&
-    !lower.startsWith(".cursor/") &&
+    !inDirectory(lower, ".vscode") &&
+    !inDirectory(lower, ".claude") &&
+    !inDirectory(lower, ".cursor") &&
     !lower.startsWith(".github/")
   )
     return "data";
