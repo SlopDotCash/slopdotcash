@@ -593,6 +593,14 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   // request pending until the block is final, then verifies it without a click.
   await page.waitForTimeout(4_000);
   await expect(actions).toContainText("Withdrawal awaiting verification");
+  // An automatic check that fails says why without a click, keeps the saved
+  // request, and withdraws the message once a later check works again.
+  wrongNetwork = true;
+  await expect(actions.getByRole("alert")).toContainText("Switch your wallet");
+  await expect(actions).toContainText("Withdrawal awaiting verification");
+  wrongNetwork = false;
+  await expect(actions.getByRole("alert")).toHaveCount(0);
+  await expect(actions).toContainText("Withdrawal awaiting verification");
   await rpc("anvil_mine", ["0x40"]);
   await expect(actions.getByRole("status")).toContainText(
     "Withdrawal verified",

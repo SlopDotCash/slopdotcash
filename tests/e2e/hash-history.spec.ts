@@ -86,6 +86,11 @@ for (const pendingDestination of [false, true]) {
         ),
       )
       .toBeLessThan(2);
+    const destinationLink = page.locator('a[href="/earnings"]').last();
+    // Reaching the link can scroll a narrow page. Record the position from
+    // which the reader actually leaves, before testing history restoration.
+    await destinationLink.scrollIntoViewIfNeeded();
+    await afterPaint(page);
     const readingPosition = await page.evaluate(() => window.scrollY);
     const anchorPosition = await page
       .locator("#payments")
@@ -108,7 +113,7 @@ for (const pendingDestination of [false, true]) {
       });
     }
     try {
-      await page.locator('a[href="/earnings"]').last().click();
+      await destinationLink.click();
       await expect(page).toHaveURL(/\/earnings$/u);
       if (pendingDestination)
         await expect(

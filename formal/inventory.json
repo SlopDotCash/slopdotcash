@@ -5513,7 +5513,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "a6edb9931c22337dcf9f949dc570871a2930a7e76a671fbe511f1d3dddf70f4c",
+      "sha256": "a7253337fcf60501a9fc3ab80e4e2ecbe50aa2498bb868eeb07acdb9928d39e7",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -5523,11 +5523,11 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 29, 38, 44, 66, 68, 121, 127, 137, 140, 141, 143, 144, 145, 146, 163,
-        165, 169, 206, 228, 279, 311, 312, 315, 324, 331, 332, 333, 340, 341,
-        343, 347, 349, 350, 351, 373, 374, 375, 385, 395, 400, 407, 421, 427,
-        428, 432, 434, 466, 480, 507, 523, 528, 531, 538, 541, 548, 549, 555,
-        693
+        2, 29, 38, 44, 66, 68, 121, 127, 137, 140, 141, 143, 144, 145, 146, 166,
+        168, 172, 209, 231, 282, 314, 315, 318, 327, 334, 335, 336, 343, 344,
+        346, 350, 357, 358, 359, 381, 382, 383, 394, 404, 409, 416, 430, 436,
+        437, 441, 443, 481, 495, 522, 538, 543, 546, 553, 556, 563, 564, 570,
+        708
       ],
       "review": "mapped-abstraction"
     },
@@ -17993,11 +17993,12 @@
     },
     {
       "path": "formal/models/ui/ui_vault_auto_check.qnt",
-      "sha256": "55f7d4f428c52dd62c3ffb8a0e786926fee96449f0ca53471f591c7965bca961",
+      "sha256": "0a900004d9d4c5e5b3241e7547d1970e046fb7a2cfe1007b8f8df771d7c2c51f",
       "sources": ["src/VaultActions.tsx", "src/lib/evm-vault-actions.ts"],
       "scenarios": [
         "approvalBeforeFinalityTest",
         "attemptLimitTest",
+        "failedReadShowsThenClearsTest",
         "failedTransferTest",
         "recoveryHashNeedsClickTest",
         "replacedApprovalTest",
