@@ -399,10 +399,14 @@ export async function checkVaultBatch(
     "finalized",
   );
   if (settled !== "finalized") return { status: settled, transactionId: hash };
+  const depositor = `0x${wallet.address.slice(2).toLowerCase().padStart(64, "0")}`;
+  // A shared transaction may contain other wallets' deposits. Keep every
+  // deposit by this wallet so an ambiguous own receipt still fails closed.
   const events = receipt.logs.filter(
     (log) =>
       log.address.toLowerCase() === deployment.vault.toLowerCase() &&
-      log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.Deposited,
+      log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.Deposited &&
+      log.topics[1]?.toLowerCase() === depositor,
   );
   if (events.length !== 1)
     throw new Error("This transaction does not match the request.");
