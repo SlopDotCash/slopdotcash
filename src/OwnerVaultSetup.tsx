@@ -83,6 +83,18 @@ function restore(key: string): Pending | null {
     );
   return value;
 }
+/**
+ * A saved creation transaction is checked for registration without a click:
+ * every 10 seconds at first, then every 30, for about an hour, paused while the
+ * tab is hidden. "Check vault registration" stays for an entered hash.
+ */
+const AUTO_REGISTER_FAST_MS = 10_000;
+const AUTO_REGISTER_SLOW_MS = 30_000;
+const AUTO_REGISTER_FAST_ATTEMPTS = 6;
+const AUTO_REGISTER_ATTEMPTS = 120;
+/** A check that keeps failing is not a wait; stop asking and leave the button. */
+const AUTO_REGISTER_ERRORS = 3;
+
 export function OwnerVaultSetup({
   project,
   onRegistered,
@@ -192,11 +204,14 @@ export function OwnerVaultSetup({
       active = false;
     };
   }, [project.id, payoutPolicy, reload]);
+  /** True while the shown error came from an automatic check, not an owner action. */
+  const autoErrored = useRef(false);
   const run = (work: (current: () => boolean) => Promise<void>) => {
     if (!mounted.current) return;
     const request = ++action.current;
     const current = () => mounted.current && action.current === request;
     setNotice("");
+    autoErrored.current = false;
     return act(
       async () => {
         try {
@@ -416,8 +431,19 @@ export function OwnerVaultSetup({
         throw e;
       }
     });
-  const register = () =>
-    run(async (current) => {
+  const registering = useRef(false);
+  /**
+   * Asks the server to verify and register the saved creation. An automatic
+   * check signs nothing, shows no busy state and leaves the notice alone while
+   * the creation is not finalized.
+   */
+  const performRegister = async (
+    current: () => boolean,
+    automatic: boolean,
+  ) => {
+    if (registering.current) return;
+    registering.current = true;
+    try {
       const viewed = pending ?? review;
       if (!viewed) throw new Error("Review the existing vault first.");
       const hash = recoveryHash.trim();
@@ -456,7 +482,13 @@ export function OwnerVaultSetup({
           "The saved vault request changed. Reload before continuing.",
         );
       if (result.status === "pending") {
-        setNotice("The creation is not finalized yet. Wait, then check again.");
+        if (!automatic)
+          setNotice(
+            "The creation is not finalized yet. Wait, then check again.",
+          );
+        // The check works again: withdraw the error an earlier one showed.
+        else if (autoErrored.current) setError(null);
+        autoErrored.current = false;
         return;
       }
       if (
@@ -478,7 +510,98 @@ export function OwnerVaultSetup({
           "The saved vault request changed. Reload before continuing.",
         );
       if (current()) setReview(null);
+    } finally {
+      registering.current = false;
+    }
+  };
+  const register = () =>
+    run(async (current) => {
+      const checked = recoveryHash.trim();
+      try {
+        await performRegister(current, false);
+      } catch (caught) {
+        // The owner saw this hash fail; do not ask about it again unprompted.
+        if (mounted.current)
+          setAutoRegister((state) => ({
+            hash: checked,
+            attempts: AUTO_REGISTER_ATTEMPTS,
+            errors: 0,
+            ticks: state.ticks + 1,
+          }));
+        throw caught;
+      }
     });
+  const latestRegister = useRef(performRegister);
+  useEffect(() => {
+    latestRegister.current = performRegister;
+  });
+  // Only a saved creation the owner is not editing is checked automatically.
+  const [autoRegister, setAutoRegister] = useState({
+    hash: "",
+    attempts: 0,
+    errors: 0,
+    ticks: 0,
+  });
+  const autoHash =
+    pending?.hash &&
+    !busy &&
+    !saved.error &&
+    recoveryHash.trim() === pending.hash
+      ? pending.hash
+      : null;
+  const autoAttempts =
+    autoRegister.hash === autoHash ? autoRegister.attempts : 0;
+  const autoErrors = autoRegister.hash === autoHash ? autoRegister.errors : 0;
+  const autoTicks = autoRegister.ticks;
+  useEffect(() => {
+    if (autoHash === null || autoAttempts >= AUTO_REGISTER_ATTEMPTS) return;
+    const timer = window.setTimeout(
+      () => {
+        const done = (attempts: number, errors: number) => {
+          if (mounted.current)
+            setAutoRegister({
+              hash: autoHash,
+              attempts,
+              errors,
+              ticks: autoTicks + 1,
+            });
+        };
+        // A hidden tab asks nothing and uses no attempt; the next tick retries.
+        if (document.visibilityState === "hidden") {
+          done(autoAttempts, autoErrors);
+          return;
+        }
+        // An owner action retires this check; it never retires an owner action.
+        const token = action.current;
+        const current = () => mounted.current && action.current === token;
+        void latestRegister
+          .current(current, true)
+          .then(() => done(autoAttempts + 1, 0))
+          .catch((caught) => {
+            if (!current()) return done(autoAttempts + 1, autoErrors);
+            // Show why the check fails. A failed creation is final, and so are
+            // repeated failures; one failure is asked again and a later
+            // success withdraws the message.
+            const failed =
+              (caught as { code?: string })?.code === "vault_creation_failed";
+            const errors = autoErrors + 1;
+            autoErrored.current = true;
+            setFailedCreation(failed);
+            setError(errorMessage(caught, "The wallet request failed."));
+            done(
+              failed || errors >= AUTO_REGISTER_ERRORS
+                ? AUTO_REGISTER_ATTEMPTS
+                : autoAttempts + 1,
+              errors,
+            );
+          });
+      },
+      autoAttempts < AUTO_REGISTER_FAST_ATTEMPTS
+        ? AUTO_REGISTER_FAST_MS
+        : AUTO_REGISTER_SLOW_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [autoHash, autoAttempts, autoErrors, autoTicks, setError]);
   const active = pending ?? review;
   return (
     <section
