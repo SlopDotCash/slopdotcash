@@ -712,7 +712,7 @@ Use reviewed PRs into `development`, then batch promotions to `main`. Reviewed d
 
 Production deploys only through the checked-in main workflow and main-only production environment. Keep publication credentials out of PR runs. Use the shared publication lock and bind deployment to the tested source. Staging uses separate storage, identity, and secrets. No separate manual release approval or branch-protection rule is required. Do not add rulesets unless requested.
 
-Normal releases sync the current D1 registry and collect live GitHub data. An explicit manual main release may set `use_published_data` to retain validated production rankings and profiles. Preserve their timestamps, history, and counts. The option defaults to false and cannot run on staging or with bootstrap data. It cannot use the PR adapter or skip any code, browser, sandbox, environment, source, or deployed-byte check. Missing or invalid data stops release.
+Normal releases sync the current D1 registry and collect live GitHub data. An explicit manual main or development release may set `use_published_data` to retain the validated rankings and profiles last published by its own environment (production or staging; operator decision, 13 November 2026). Preserve their timestamps, history, and counts. The option defaults to false and cannot run with bootstrap data. It cannot use the PR adapter or skip any code, browser, sandbox, environment, source, or deployed-byte check. Missing or invalid data stops release.
 
 Install pinned publication tooling without lifecycle scripts. Do not cache dependencies in trusted publication jobs. Verify deployment identity, current-main equivalence, served bytes, DNS, TLS, redirects, and headers separately.
 

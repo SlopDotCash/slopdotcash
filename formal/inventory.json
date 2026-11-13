@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "354c1b5853769976682b2a06609e77254e5a226e6a4c6167e679a6cf9aca44b4",
+      "sha256": "c51066b7d5c390f544a5db47135b95e709ab65bf39333def6d83e0589c5b295f",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 154, 186, 191, 192, 240, 294, 368, 481, 487, 555, 578, 579, 600,
-        612, 678, 908, 936, 975, 991, 1001, 1002, 1093, 1196, 1198, 1199, 1403,
-        1486, 1639, 1641, 1671, 1779, 1801, 1872, 1883, 1908, 1979, 1992, 2005,
-        2014, 2015, 2016
+        27, 59, 157, 189, 194, 195, 249, 303, 377, 490, 496, 564, 587, 588, 609,
+        621, 687, 917, 945, 984, 1000, 1010, 1011, 1102, 1205, 1207, 1208, 1412,
+        1495, 1648, 1650, 1680, 1788, 1810, 1881, 1892, 1917, 1988, 2001, 2014,
+        2023, 2024, 2025
       ],
       "review": "mapped-abstraction"
     },
@@ -13862,7 +13862,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "5f863b5f0bfc1a60056c6523cbe4fcd6431cd3ad1cfd7c2618e62ff0e7d51bb1",
+      "sha256": "1f1ce8fe6aff92942c260dc08638b122c8e633c8f06363692b5e210bdd5617f8",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -13887,7 +13887,9 @@
         "partialServicePublicationTest",
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
+        "retainedSnapshotNeedsManualTest",
         "sourceAdvanceAfterUploadIsPartialTest",
+        "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
         "wrongExistingInventoryNeverUploadsTest",
         "wrongVersionOrShaCannotPromoteTest"
