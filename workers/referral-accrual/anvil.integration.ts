@@ -223,7 +223,9 @@ try {
     REFERRAL_DISTRIBUTOR_ADDRESS: distributor,
     REFERRAL_TOKEN_ADDRESS: token,
     REFERRAL_POST_NETWORK: "robinhood-testnet",
-    REFERRAL_MAX_NATIVE_PER_TX_WEI: "200000000000000",
+    // Anvil floors its EIP-1559 priority-fee oracle at 1 gwei. This isolated
+    // chain budget does not qualify the production network's lower fee cap.
+    REFERRAL_MAX_NATIVE_PER_TX_WEI: "1000000000000000",
     REFERRAL_MAX_NATIVE_PER_DAY_WEI: "2000000000000000",
     RPC_URL_REFERRAL: rpcUrl,
     REFERRAL_POSTER_KEY: posterKey,
@@ -256,7 +258,7 @@ try {
     BigInt(await rpc("eth_getTransactionCount", [poster, "pending"])),
     0n,
   );
-  // The same filed month posts once under the approved limits on this low-fee local chain.
+  // The same filed month posts once under the explicit local-chain fee budget.
   const first = await runOnce(env, at("2026-12-02T01:23:00.000Z"));
   assert.equal(first?.status, "ran");
   assert.deepEqual(held?.filed, [
@@ -353,28 +355,33 @@ try {
   assert.ok(watchConfig);
   const publicOrigin = "https://referral.fixture.invalid";
   const scanRanges: bigint[] = [];
-  const boundedRpc = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
-      const request = new Request(input, init);
-      assert.equal(new URL(request.url).origin, rpcUrl);
-      const body = await request.clone().json();
-      if (body.method === "eth_getLogs") {
-        const range =
-          BigInt(body.params[0].toBlock) -
-          BigInt(body.params[0].fromBlock) +
-          1n;
-        scanRanges.push(range);
-        if (range > 9000n)
-          return Response.json({
-            jsonrpc: "2.0",
-            id: body.id,
-            error: { code: -32005, message: "block range exceeds 9000" },
-          });
-      }
-      return fetch(request);
-    },
-    { preconnect: fetch.preconnect },
-  );
+  const watcherRanges: bigint[] = [];
+  const limitedRpc = (limit: bigint, ranges: bigint[]) =>
+    Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = new Request(input, init);
+        assert.equal(new URL(request.url).origin, rpcUrl);
+        const body = await request.clone().json();
+        if (body.method === "eth_getLogs") {
+          const range =
+            BigInt(body.params[0].toBlock) -
+            BigInt(body.params[0].fromBlock) +
+            1n;
+          ranges.push(range);
+          if (range > limit)
+            return Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              error: { code: -32005, message: `block range exceeds ${limit}` },
+            });
+        }
+        return fetch(request);
+      },
+      { preconnect: fetch.preconnect },
+    );
+  const boundedRpc = limitedRpc(9000n, scanRanges);
+  // The read-only watcher may use the endpoint's wider filtered-log window.
+  const watcherRpc = limitedRpc(1_000_000n, watcherRanges);
   const claimEnv = {
     ...env,
     REFERRAL_DEPLOYMENT_BLOCK: distributorBlock.toString(),
@@ -449,7 +456,7 @@ try {
       assert.ok(response);
       return response;
     }
-    return boundedRpc(request);
+    return watcherRpc(request);
   };
   const watch = (fetcher = readEvidence, now = "2026-12-02T02:00:00.000Z") =>
     checkReferralRoots({
@@ -655,9 +662,12 @@ try {
     ).state,
     "finalized",
   );
-  // Robinhood rejects unbounded history after 9,000 blocks. Both real Viem
-  // clients must still reconcile a long-lived posted root through bounded pages.
-  await rpc("anvil_mine", ["0x2400"]);
+  // The poster and claim cache retain their registered 9,000-block pages.
+  // The watcher must also reconcile this history within its wider RPC window.
+  // Keep all 9,216 blocks, but let each mining request finish before the
+  // client's timeout even when a local runner is slow.
+  for (let mined = 0; mined < 0x2400; mined += 0x100)
+    await rpc("anvil_mine", ["0x100"]);
   const tooWide = await boundedRpc(rpcUrl, {
     method: "POST",
     body: JSON.stringify({
@@ -675,6 +685,7 @@ try {
   });
   assert.equal((await tooWide.json()).error.code, -32005);
   scanRanges.length = 0;
+  watcherRanges.length = 0;
   const finalVoid = await runOnce(env, at("2026-12-02T02:20:00.000Z"), {
     fetch: boundedRpc,
   });
@@ -682,8 +693,10 @@ try {
   const voidWatch = await watch();
   assert.equal(voidWatch.status, "verified");
   assert.equal(voidWatch.mappings[0].voided, true);
-  assert.ok(scanRanges.length >= 6);
+  assert.ok(scanRanges.length >= 2);
+  assert.ok(watcherRanges.length >= 2);
   assert.ok(scanRanges.every((range) => range > 0n && range <= 9000n));
+  assert.ok(watcherRanges.every((range) => range > 0n && range <= 1_000_000n));
   assert.equal(
     (
       sqlite.query("SELECT state FROM referral_root_posts").get() as {
