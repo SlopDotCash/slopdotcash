@@ -22,6 +22,7 @@ import {
   type PublicResourceState,
   usePublicResource,
 } from "./lib/use-public-resource";
+import { useUtcDay } from "./lib/use-time-boundary";
 import { useVaultPayments } from "./lib/use-vault-payments";
 import { PaymentRecord, VaultPaymentRecord } from "./PaymentRecords";
 import {
@@ -231,6 +232,7 @@ const ACTIVITY_DAYS = 35;
 
 /** The same point awards shown in the activity timeline, grouped by UTC day. */
 function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
+  useUtcDay();
   const days = dailyPoints(awards, new Date(), ACTIVITY_DAYS);
   const max = Math.max(...days.map((entry) => entry.points));
   if (max <= 0) return null;

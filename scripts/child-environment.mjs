@@ -23,6 +23,7 @@ const INHERITED_ENVIRONMENT_NAMES = Object.freeze([
   "SLOP_E2E_ANVIL_PORT",
   "SLOP_E2E_SOLANA_VAULT",
   "SLOP_E2E_SOLANA_RPC_PORT",
+  "SLOP_SOLANA_CONTAINER_RUNTIME",
   "SLOP_PROFILES_INPUT",
   "TEMP",
   "TERM",
@@ -51,5 +52,10 @@ export function childEnvironment(source = process.env, overrides = {}) {
     }
     environment[name] = value;
   }
+  // Wrangler's banner starts an npm update request that can keep a completed
+  // local migration alive after its timeout. Local checks use pinned tools;
+  // neither update discovery nor CLI telemetry is an input to their result.
+  environment.WRANGLER_HIDE_BANNER = "true";
+  environment.WRANGLER_SEND_METRICS = "false";
   return environment;
 }

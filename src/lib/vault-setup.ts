@@ -10,6 +10,7 @@ import { ESCROW_NETWORKS, type EscrowDeployment } from "./escrow-policy.mjs";
 import { isAssetDecimals, type PayoutPolicy } from "./payments/contracts";
 import type { ProjectDefinition } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 /** Stable across revisions; the same digest binds every chain and vault purpose. */
 export const registryProjectDigest = (id: string) =>
@@ -71,20 +72,10 @@ export function solanaVaultCreationMessage(
     review.transaction.blockhash,
     plan.instructions,
   );
-  const wire = Uint8Array.from(atob(review.transaction.transaction), (c) =>
-    c.charCodeAt(0),
-  );
-  if (
-    plan.projectPda !== review.projectPda ||
-    plan.vault !== review.vault ||
-    wire.length !== msg.length + 65 ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => wire[index + 65] !== byte)
-  )
-    throw new Error(
-      "The transaction differs from the reviewed vault creation.",
-    );
+  const error = "The transaction differs from the reviewed vault creation.";
+  assertUnsignedSolanaWire(review.transaction.transaction, msg, error);
+  if (plan.projectPda !== review.projectPda || plan.vault !== review.vault)
+    throw new Error(error);
   return msg;
 }
 

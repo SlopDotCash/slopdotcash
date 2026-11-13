@@ -1,26 +1,12 @@
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
-import {
-  collectIndirectValueRetention,
-  type IndirectRetainedFile,
-} from "./value-indirect-retention";
+import type {
+  EvidenceClient,
+  IndirectValueAcceptance,
+  ValueEvidence,
+} from "./value-evidence-types";
+import { collectIndirectValueRetention } from "./value-indirect-retention";
 
 type CommitChanges = NonNullable<ValueEvidence["mergeCommitEvidence"]>;
-export interface IndirectValueAcceptance {
-  historicalHeadSha: string;
-  integrationSha: string;
-  integrationParentSha: string;
-  acceptedTipSha: string;
-  branch: string;
-  observedOnBranchAt: string;
-  observationRunId: number;
-  observationUrl: string;
-  acceptedCommitShas: string[];
-  alreadyPresentCommitShas: string[];
-  laterCommitShas: string[];
-  integrationFiles: CommitChanges["files"];
-  retainedFiles: IndirectRetainedFile[];
-}
 
 /** Text supplies discovery hints only. Acceptance requires GitHub ancestry and
  * a push-triggered observation on the registry's integration branch. Preserve

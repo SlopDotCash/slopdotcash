@@ -148,7 +148,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
         `UPDATE identity_oauth_flows
          SET status = 'callback_complete', github_actor_id = ?, github_login = ?,
              callback_completed_at = ?, github_node_id = ?
-         WHERE id = ? AND status = 'callback_processing'`,
+         WHERE id = ? AND status = 'callback_processing' AND expires_at > ?`,
       )
       .bind(
         githubActorId,
@@ -156,6 +156,7 @@ export class D1IdentityPersistence implements IdentityPersistence {
         completedAt,
         githubNodeId ?? null,
         flowId,
+        completedAt,
       )
       .run();
     return (result.meta?.changes ?? 0) === 1;
@@ -190,13 +191,23 @@ export class D1IdentityPersistence implements IdentityPersistence {
 
   async createAssertion(
     assertion: IdentityAssertion,
+    flowId: string | null,
   ): Promise<IdentityAssertion | null> {
+    // Production polls derive the same token for one flow. A delayed poll must
+    // not recreate it after issuance and expired-row cleanup. Check the parent
+    // status inside the INSERT; a separate read would leave the race open.
+    // Only the local bridge's independently random tokens omit that parent.
     const result = await this.db
       .prepare(
         `INSERT INTO identity_assertions (
           token_hash, github_actor_id, github_login, audience, created_at,
           expires_at, consumed_at, github_node_id
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?) ON CONFLICT(token_hash) DO NOTHING`,
+        ) SELECT ?, ?, ?, ?, ?, ?, NULL, ?
+          WHERE (? IS NULL OR EXISTS (
+            SELECT 1 FROM identity_oauth_flows
+            WHERE id = ? AND status = 'callback_complete'
+          ))
+          ON CONFLICT(token_hash) DO NOTHING`,
       )
       .bind(
         assertion.tokenHash,
@@ -206,6 +217,8 @@ export class D1IdentityPersistence implements IdentityPersistence {
         assertion.createdAt,
         assertion.expiresAt,
         assertion.githubNodeId ?? null,
+        flowId,
+        flowId,
       )
       .run();
     if (!result.success) return null;
@@ -234,9 +247,9 @@ export class D1IdentityPersistence implements IdentityPersistence {
       .prepare(
         `UPDATE identity_oauth_flows
          SET status = 'assertion_issued', assertion_issued_at = ?
-         WHERE id = ? AND status = 'callback_complete'`,
+         WHERE id = ? AND status = 'callback_complete' AND expires_at > ?`,
       )
-      .bind(issuedAt, flowId)
+      .bind(issuedAt, flowId, issuedAt)
       .run();
     return (result.meta?.changes ?? 0) === 1;
   }

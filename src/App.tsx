@@ -18,15 +18,16 @@ import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
+  hasProjectCardBounty,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
 import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
+import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
-import { copyText } from "./lib/copy-text";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -35,12 +36,15 @@ import {
   homeProjects,
 } from "./lib/home-projects";
 import {
+  findHistoricalProject,
   findProject,
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
@@ -349,7 +353,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
     };
   }
   if ("projectId" in route) {
-    const project = findProject(route.projectId);
+    const project =
+      findProject(route.projectId) ??
+      (route.kind === "cycle" ? findHistoricalProject(route.projectId) : null);
     if (!project) return notFound;
     if (route.kind === "cycle") {
       return {
@@ -497,21 +503,20 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
-  if (project.rewardAsset?.kind === "native") return reward.monthlyCapDisplay;
+  const cap = formatRewardCapDisplay(
+    reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  if (project.rewardAsset?.kind === "native") return cap;
   if (project.rewardAsset?.kind === "token")
-    return reward.monthlyCapDisplay
-      .replace(/^[\d,]+(?=\s)/u, (digits) =>
-        new Intl.NumberFormat("en-US", {
-          notation: "compact",
-          maximumFractionDigits: 2,
-        })
-          .format(BigInt(digits.replaceAll(",", "")))
-          .toLowerCase(),
-      )
-      .replace(
-        /\s+(\$?\S+)$/u,
-        (_, symbol: string) => ` $${symbol.replace(/^\$/u, "")}`,
-      );
+    return cap.replace(/^[\d,]+(?=\s)/u, (digits) =>
+      new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 2,
+      })
+        .format(BigInt(digits.replaceAll(",", "")))
+        .toLowerCase(),
+    );
   if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -607,7 +612,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
 }
 
 function ProjectCard({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
@@ -662,7 +667,7 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
 }
 
 function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
@@ -823,6 +828,7 @@ function HomePage() {
         <InstallPanel />
       </section>
 
+      <SecurityBounties />
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <h2 className="home-section-title">Projects</h2>
@@ -851,7 +857,6 @@ function HomePage() {
           </>
         )}
       </section>
-      <SecurityBounties />
       <section
         className="section shell home-leaderboard-section"
         id="leaderboard"
@@ -931,21 +936,7 @@ function AgentPromptBox({
   prompt: string;
   openIn?: boolean;
 }) {
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  useEffect(() => {
-    if (copy !== "copied") return;
-    const timer = window.setTimeout(() => setCopy("idle"), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [copy]);
-  const copyPrompt = async () => {
-    try {
-      await copyText(prompt);
-      setCopy("copied");
-    } catch {
-      // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
-      setCopy("error");
-    }
-  };
+  const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
     <div className="command-box agent-prompt-box">
       <output aria-label="Agent prompt" className="agent-prompt-copy">
@@ -964,7 +955,7 @@ function AgentPromptBox({
         aria-label={
           copy === "copied"
             ? "Copied agent prompt"
-            : copy === "error"
+            : copy === "failed"
               ? "Copy unavailable; select agent prompt"
               : "Copy agent prompt"
         }
@@ -973,15 +964,15 @@ function AgentPromptBox({
             ? "button primary-button agent-prompt-copied"
             : "button primary-button"
         }
-        data-copy={copy}
-        onClick={() => void copyPrompt()}
+        data-copy={copy === "failed" ? "error" : copy}
+        onClick={copyPrompt}
         type="button"
       >
         {copy === "copied" ? <Check /> : <Clipboard />}
         <span className="agent-prompt-copy-label">
           {copy === "copied"
             ? "Copied"
-            : copy === "error"
+            : copy === "failed"
               ? "Select text"
               : "Copy"}
         </span>
@@ -1193,6 +1184,9 @@ function ProjectPaymentHistory({
     right.localeCompare(left),
   );
   const historyLimited = directMonths.length > 3 || cycles.length > 3;
+  // Loading is not an empty history: wait for direct payments before saying
+  // that nothing has closed.
+  const directLoading = directState.status === "loading" && !externalPrize;
   if (
     cycles.length === 0 &&
     directMonths.length === 0 &&
@@ -1216,6 +1210,7 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
+      {directLoading ? <p role="status">Loading direct payments…</p> : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
         ([month, { amount, count, paidOn }]) => (
           <p className="money-summary" key={month}>
@@ -1233,7 +1228,9 @@ function ProjectPaymentHistory({
         ),
       )}
       {cycles.length === 0 ? (
-        <EmptyState text="No cycles have closed yet." />
+        directLoading ? null : (
+          <EmptyState text="No cycles have closed yet." />
+        )
       ) : (
         <div className="plain-table-wrap">
           <table className="plain-table">
@@ -1366,7 +1363,7 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                   <>
                     {" "}
                     <ExternalLinkAnchor href={summary.token.url}>
-                      ${summary.token.symbol}
+                      {summary.token.symbol}
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
@@ -1459,6 +1456,12 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
+        <ProjectWork
+          project={project}
+          state={state}
+          retry={retry}
+          notice={!view?.leaders.length}
+        />
         <ProjectFundsAndAwards
           key={`funding:${project.id}`}
           project={project}
@@ -1475,6 +1478,7 @@ function ProjectPage({
               projectId={project.id}
               scoreState={state}
               retryScore={retry}
+              showDataNotice
               compact
             />
           </div>
@@ -1522,10 +1526,26 @@ function AppContent({ route }: { route: Route }) {
   const blocked = Boolean(registryError) && !registryIndependent;
   const project =
     route.kind === "project" ? findProject(route.projectId) : undefined;
+  const [archive, retryArchive] = useCycleIndex(
+    route.kind === "cycle-archive" || route.kind === "cycle",
+  );
+  const cycleProjectId =
+    route.kind === "cycle"
+      ? (findProject(route.projectId)?.id ?? route.projectId)
+      : null;
+  const cycleNeedsSnapshot =
+    route.kind === "cycle" &&
+    archive.status === "ready" &&
+    !archive.cycleIndex.cycles.some(
+      (cycle) =>
+        cycle.projectId === cycleProjectId && cycle.cycleId === route.cycleId,
+    );
   const needsSnapshot =
-    !blocked && snapshot && !(project && hasBountyOverview(project));
+    !blocked &&
+    snapshot &&
+    !(project && hasBountyOverview(project)) &&
+    (route.kind !== "cycle" || cycleNeedsSnapshot);
   const [state, retry] = useSnapshot(needsSnapshot);
-  const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (blocked)
     content = (
@@ -1605,16 +1625,22 @@ function AppContent({ route }: { route: Route }) {
         state={state}
       />
     );
-  else if (route.kind === "cycle")
-    content = withProject(route, (project) => (
+  else if (route.kind === "cycle") {
+    const cycleProject =
+      findProject(route.projectId) ?? findHistoricalProject(route.projectId);
+    content = cycleProject ? (
       <CyclePage
+        archive={archive}
         cycleId={route.cycleId}
-        project={project}
+        project={cycleProject}
         retry={retry}
+        retryArchive={retryArchive}
         state={state}
       />
-    ));
-  else content = <NotFound />;
+    ) : (
+      <NotFound title="Project not found" />
+    );
+  } else content = <NotFound />;
   return (
     <>
       <Header />

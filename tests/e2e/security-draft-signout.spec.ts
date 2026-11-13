@@ -190,3 +190,71 @@ test("a confirmed account replacement cannot restore the prior reporter's draft"
     page.getByRole("textbox", { name: /^Description\b/u }),
   ).toHaveValue("");
 });
+
+test("an accepted private draft edit survives an immediate identity recheck", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  let checking = false;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (checking) await gate;
+    await route.fulfill({
+      json: { session: { githubId: "42", githubLogin: "reporter-a" } },
+    });
+  });
+  await page.route("**/api/v1/projects", (route) =>
+    route.fulfill({ json: { schemaVersion: "1", projects: [project] } }),
+  );
+  await page.route(`**/api/v1/security-programs/${projectId}/intake`, (route) =>
+    route.fulfill({
+      json: {
+        state: "unavailable",
+        storedIntake: true,
+        automaticConfigured: false,
+        checkedAt: null,
+        maxAgeSeconds: 3600,
+        paidParticipation: "closed",
+        handoffUrl: null,
+      },
+    }),
+  );
+  await page.goto(`/projects/${projectId}/security`, {
+    waitUntil: "networkidle",
+  });
+  const field = page.getByRole("textbox", { name: "Summary", exact: true });
+  await expect(field).toBeVisible();
+  checking = true;
+  try {
+    // Deliver the input and recheck in one task so a scheduling gap cannot
+    // hide a persistence regression after React accepts the edit.
+    await field.evaluate((element, value) => {
+      const input = element as HTMLInputElement;
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      if (!setValue) throw new Error("Missing native input value setter");
+      setValue.call(input, value);
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      window.dispatchEvent(new Event("focus"));
+    }, summary);
+    await expect(page.locator("form.report-composer")).toHaveCount(0);
+  } finally {
+    release();
+  }
+  await expect(field).toHaveValue(summary);
+  await expect
+    .poll(() => readDraft(page, "42"))
+    .toMatchObject({
+      draft: { summary },
+    });
+  await page.screenshot({
+    path: test.info().outputPath("draft-after-immediate-identity-recheck.png"),
+    fullPage: true,
+  });
+});

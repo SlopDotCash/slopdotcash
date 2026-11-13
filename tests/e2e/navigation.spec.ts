@@ -139,9 +139,17 @@ test("removed security fragments retain usable Settings without hidden forms", a
         .getByRole("region", { name: "Wallets", exact: true })
         .getByRole("link", { name: "Sign in with GitHub", exact: true }),
     ).toHaveAttribute("href", "/login?next=%2Faccount%23wallets");
+    // The Points membership above does not authenticate account settings.
+    // With project-session:null, the email panel must request sign-in.
+    const email = page.getByRole("region", {
+      name: "Email preferences",
+      exact: true,
+    });
+    await expect(email).toContainText("Your session expired.");
     await expect(
-      page.getByRole("switch", { name: "Activity email", exact: true }),
-    ).toBeVisible();
+      email.getByRole("link", { name: "Sign in with GitHub", exact: true }),
+    ).toHaveAttribute("href", "/login?next=%2Faccount%23notifications");
+    await expect(email.getByRole("switch")).toHaveCount(0);
   }
   await expectAccessible(page);
   await page.screenshot({

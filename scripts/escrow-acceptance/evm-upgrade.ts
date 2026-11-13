@@ -47,15 +47,13 @@ import {
   WAITING_EXIT_CODE,
   Waiting,
 } from "./shared";
-
 import {
   type PlannedTransaction,
   type Qualification,
   UPGRADE_SCHEMA as SCHEMA,
-  upgradeReader,
   type VaultRecord,
-  verifyUpgrade,
-} from "./upgrade-verification";
+} from "./upgrade-qualification";
+import { upgradeReader, verifyUpgrade } from "./upgrade-verification";
 
 const evmRoot = resolve(import.meta.dir, "..", "..", "contracts", "evm");
 const PROXY = parseAbi([

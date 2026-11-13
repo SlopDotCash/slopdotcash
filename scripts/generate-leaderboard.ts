@@ -266,11 +266,12 @@ class GraphqlResponseBoundaryError extends Error {}
 const GATEWAY_FAILURE_STATUSES: readonly number[] = [502, 503, 504];
 
 /**
- * GitHub's gateway failed a request on every bounded attempt (502, 503 or
- * 504 with a non-JSON body). For a `nodes(ids:)` batch the usual cause is the
- * batch itself: twenty-five open pull requests that each carry over a thousand
- * changed files exceed what one GraphQL request can assemble, so batch callers
- * split the ids instead of failing the run (`executeNodeBatch`).
+ * GitHub's gateway failed a request on every bounded attempt: a 502, 503 or
+ * 504 with a non-JSON body, or an HTTP 200 whose JSON body arrived empty or
+ * cut off. For a `nodes(ids:)` batch the usual cause is the batch itself:
+ * twenty-five open pull requests that each carry over a thousand changed files
+ * exceed what one GraphQL request can assemble, so batch callers split the ids
+ * instead of failing the run (`executeNodeBatch`).
  */
 export class GraphqlUpstreamError extends Error {
   readonly status: number;
@@ -989,6 +990,24 @@ function parsePageInfo(value: unknown, path: string): PageInfo {
   };
 }
 
+function parseConnection<T>(
+  value: unknown,
+  path: string,
+  parseNode: (node: JsonRecord, nodePath: string) => T,
+): ConnectionPage<T> {
+  const connection = asRecord(value, path);
+  return {
+    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
+    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
+    nodes: asArray(connection.nodes, `${path}.nodes`).map(
+      (nodeValue, index) => {
+        const nodePath = `${path}.nodes[${index}]`;
+        return parseNode(asRecord(nodeValue, nodePath), nodePath);
+      },
+    ),
+  };
+}
+
 function actorKind(value: string): GitHubActorKind {
   if (
     value === "Bot" ||
@@ -1001,19 +1020,27 @@ function actorKind(value: string): GitHubActorKind {
   return "Unknown";
 }
 
-function parseActor(value: unknown, path: string): GitHubActor | null {
+// GitHub serves some app accounts in two shapes under one immutable node ID:
+// the Copilot coding agent authors pull requests as the Bot
+// "copilot-swe-agent" but appears as the User "Copilot" in assignees and
+// commit authors. A BOT_ node ID is always an app account, so it is a Bot
+// wherever it appears and never receives person credit or claims work.
+export function parseActor(value: unknown, path: string): GitHubActor | null {
   if (value === null) {
     return null;
   }
   const actor = asRecord(value, path);
+  const id = asString(actor.id, `${path}.id`);
   return {
-    id: asString(actor.id, `${path}.id`),
+    id,
     login: asString(actor.login, `${path}.login`),
     avatarUrl: canonicalActorAvatarUrl(
       asString(actor.avatarUrl, `${path}.avatarUrl`),
     ),
     url: asString(actor.url, `${path}.url`),
-    kind: actorKind(asString(actor.__typename, `${path}.__typename`)),
+    kind: id.startsWith("BOT_")
+      ? "Bot"
+      : actorKind(asString(actor.__typename, `${path}.__typename`)),
   };
 }
 
@@ -1063,133 +1090,77 @@ function parseComments(
   path: string,
   artifactId: string,
 ): ConnectionPage<GitHubTextSource> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          artifactId,
-          kind: "comment",
-          body: asString(node.body, `${nodePath}.body`),
-          url: asString(node.url, `${nodePath}.url`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-          authorAssociation: asString(
-            node.authorAssociation,
-            `${nodePath}.authorAssociation`,
-          ),
-        };
-      },
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    artifactId,
+    kind: "comment",
+    body: asString(node.body, `${nodePath}.body`),
+    url: asString(node.url, `${nodePath}.url`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+    authorAssociation: asString(
+      node.authorAssociation,
+      `${nodePath}.authorAssociation`,
     ),
-  };
+  }));
 }
 
 function parseReviews(
   value: unknown,
   path: string,
 ): ConnectionPage<PendingPullRequestReview> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          body: asString(node.body, `${nodePath}.body`),
-          state: asString(node.state, `${nodePath}.state`),
-          submittedAt: asNullableString(
-            node.submittedAt,
-            `${nodePath}.submittedAt`,
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    body: asString(node.body, `${nodePath}.body`),
+    state: asString(node.state, `${nodePath}.state`),
+    submittedAt: asNullableString(node.submittedAt, `${nodePath}.submittedAt`),
+    url: asString(node.url, `${nodePath}.url`),
+    commitId:
+      node.commit === null
+        ? null
+        : asFullCommitSha(
+            child(node, "commit", nodePath).oid,
+            `${nodePath}.commit.oid`,
           ),
-          url: asString(node.url, `${nodePath}.url`),
-          commitId:
-            node.commit === null
-              ? null
-              : asFullCommitSha(
-                  child(node, "commit", nodePath).oid,
-                  `${nodePath}.commit.oid`,
-                ),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function parseFiles(
   value: unknown,
   path: string,
 ): ConnectionPage<PullRequestFile> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          path: asString(node.path, `${nodePath}.path`),
-          additions: asNumber(node.additions, `${nodePath}.additions`),
-          deletions: asNumber(node.deletions, `${nodePath}.deletions`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    path: asString(node.path, `${nodePath}.path`),
+    additions: asNumber(node.additions, `${nodePath}.additions`),
+    deletions: asNumber(node.deletions, `${nodePath}.deletions`),
+  }));
 }
 
 function parseClosingIssueIds(
   value: unknown,
   path: string,
 ): ConnectionPage<{ id: string }> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return { id: asString(node.id, `${nodePath}.id`) };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+  }));
 }
 
 function parseClosingPullRequests(
   value: unknown,
   path: string,
 ): ConnectionPage<IssueRecord["closedByPullRequests"][number]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          number: asNumber(node.number, `${nodePath}.number`),
-          url: asString(node.url, `${nodePath}.url`),
-          mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
-          body: asString(node.body, `${nodePath}.body`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    number: asNumber(node.number, `${nodePath}.number`),
+    url: asString(node.url, `${nodePath}.url`),
+    mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
+    body: asString(node.body, `${nodePath}.body`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function pageState<T>(page: ConnectionPage<T>): NestedPageState {
@@ -1201,10 +1172,10 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
   const id = asString(node.id, `${path}.id`);
   const comments = parseComments(node.comments, `${path}.comments`, id);
   const reviews = parseReviews(node.reviews, `${path}.reviews`);
-  // GitHub can return null for an oversized draft diff, even with zero diff
-  // counters. Retain that draft, but never represent unavailable files as [].
+  // GitHub can return null for an oversized open diff, even with zero diff
+  // counters. Retain the source, but never represent unavailable files as [].
   const files =
-    node.files === null && node.state === "OPEN" && node.isDraft === true
+    node.files === null && node.state === "OPEN"
       ? null
       : parseFiles(node.files, `${path}.files`);
   const closingIssues = parseClosingIssueIds(
@@ -1298,26 +1269,19 @@ function parseIssueReferences(
   value: unknown,
   path: string,
 ): NonNullable<ParsedIssue["references"]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map((value, index) => {
-      const nodePath = `${path}.nodes[${index}]`;
-      const node = asRecord(value, nodePath);
-      const source = child(node, "source", nodePath);
-      const kind = asString(source.__typename, `${nodePath}.source.__typename`);
-      if (kind !== "Issue" && kind !== "PullRequest")
-        throw new Error(`${nodePath} has an unsupported reference source`);
-      return {
-        id: asString(node.id, `${nodePath}.id`),
-        pullRequestId:
-          kind === "PullRequest"
-            ? asString(source.id, `${nodePath}.source.id`)
-            : null,
-      };
-    }),
-  };
+  return parseConnection(value, path, (node, nodePath) => {
+    const source = child(node, "source", nodePath);
+    const kind = asString(source.__typename, `${nodePath}.source.__typename`);
+    if (kind !== "Issue" && kind !== "PullRequest")
+      throw new Error(`${nodePath} has an unsupported reference source`);
+    return {
+      id: asString(node.id, `${nodePath}.id`),
+      pullRequestId:
+        kind === "PullRequest"
+          ? asString(source.id, `${nodePath}.source.id`)
+          : null,
+    };
+  });
 }
 
 function parseIssue(value: unknown, path: string): ParsedIssue {
@@ -1655,6 +1619,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #consumedCost = 0;
   #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
+  #waitedResetAt: number | null = null;
 
   #effectiveMaxGenerationCost(): number {
     if (!this.#rateLimit) {
@@ -1710,8 +1675,15 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${effectiveMaxGenerationCost}`,
       );
     }
+    // The window cap also counts points other consumers of the shared token
+    // spent since this run's first response in the window.
+    const windowDrain =
+      this.#startingRemaining === null
+        ? 0
+        : this.#startingRemaining - this.#rateLimit.remaining;
     const available = Math.min(
-      effectiveMaxGenerationCost - this.#windowConsumedCost,
+      effectiveMaxGenerationCost -
+        Math.max(this.#windowConsumedCost, windowDrain),
       this.#rateLimit.remaining - this.#minimumRateLimitReserve,
     );
     if (requiredCost <= available) return;
@@ -1720,7 +1692,17 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!Number.isFinite(resetAt)) {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
-    await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
+    // Another consumer of the shared token can drain the window. Wait for each
+    // reported reset; a window still exhausted after that same reset fails.
+    const budgetSummary = `${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${this.#rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve}`;
+    if (this.#waitedResetAt === resetAt) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded after waiting for the reset at ${this.#rateLimit.resetAt} (${budgetSummary})`,
+      );
+    }
+    const waitMs = Math.max(0, resetAt - Date.now() + 1_000);
+    this.#waitedResetAt = resetAt;
+    await retryDelay(waitMs);
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
     this.#rateLimit = {
@@ -1899,14 +1881,16 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           continue;
         }
         // error-policy:J2 Retain the HTTP boundary context for malformed or
-        // non-JSON API failures; exhausted malformed-JSON retries fail closed.
-        // An exhausted gateway failure keeps its status so a node batch
-        // caller can split the batch instead of failing the run.
+        // non-JSON API failures; exhausted retries fail closed. An exhausted
+        // gateway failure, and an HTTP 200 JSON answer whose body stayed
+        // unparseable on every attempt (the gateway cut it to nothing), both
+        // keep their status so a node batch caller can split the batch
+        // instead of failing the run.
         const message = retryableMalformedJson
-          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
+          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}; ${responseBody.length} body bytes)`
           : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
         if (
-          !retryableMalformedJson &&
+          retryableMalformedJson ||
           GATEWAY_FAILURE_STATUSES.includes(response.status)
         ) {
           throw new GraphqlUpstreamError(message, response.status, { cause });
@@ -1938,22 +1922,34 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (restPath) return envelope;
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
+    const resetAt = Date.parse(rateLimit.resetAt);
+    const previousResetAt = this.#rateLimit
+      ? Date.parse(this.#rateLimit.resetAt)
+      : Number.NaN;
+    // A new reported reset begins a new GitHub window. Keep cumulative run
+    // cost, but forget the previous window's limit and wait state.
+    if (
+      Number.isFinite(resetAt) &&
+      Number.isFinite(previousResetAt) &&
+      resetAt !== previousResetAt
+    ) {
+      this.#windowConsumedCost = 0;
+      this.#startingRemaining = null;
+      this.#waitedResetAt = null;
+    }
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
     this.#consumedCost += rateLimit.cost;
-    this.#windowConsumedCost = Math.max(
-      this.#windowConsumedCost + rateLimit.cost,
-      this.#startingRemaining - rateLimit.remaining,
-    );
+    this.#windowConsumedCost += rateLimit.cost;
     this.#rateLimit = {
       ...rateLimit,
       consumedDuringRun: this.#consumedCost,
     };
+    // Only this run's own reported window cost fails here. Points other
+    // consumers spent, and a remaining balance below the reserve, are answered
+    // by the next ensureBudget call, which waits for the reported reset.
     const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
-    if (
-      this.#windowConsumedCost > effectiveMaxGenerationCost ||
-      rateLimit.remaining < this.#minimumRateLimitReserve
-    ) {
+    if (this.#windowConsumedCost > effectiveMaxGenerationCost) {
       throw new Error(
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );
@@ -2311,10 +2307,15 @@ export async function collectSearchReferences(
   const references = [...firstPage.nodes];
   const expectedCount = firstPage.totalCount;
   let pageInfo = firstPage.pageInfo;
+  const visitedCursors = new Set<string>();
   while (pageInfo.hasNextPage) {
     if (!pageInfo.endCursor) {
       throw new Error("GitHub Search reported another page without a cursor");
     }
+    if (visitedCursors.has(pageInfo.endCursor)) {
+      throw new Error("GitHub Search cursor did not advance");
+    }
+    visitedCursors.add(pageInfo.endCursor);
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
@@ -2502,6 +2503,7 @@ async function collectOpenReferences(
   let after: string | null = null;
   let expectedCount: number | null = null;
   let repositoryId: string | null = null;
+  const visitedCursors = new Set<string>();
   do {
     const data = await client.execute(document, {
       owner: targetRepository.owner,
@@ -2526,6 +2528,12 @@ async function collectOpenReferences(
     if (result.page.pageInfo.hasNextPage && !result.page.pageInfo.endCursor) {
       throw new Error(`${field} reported another page without a cursor`);
     }
+    if (result.page.pageInfo.hasNextPage && result.page.pageInfo.endCursor) {
+      if (visitedCursors.has(result.page.pageInfo.endCursor)) {
+        throw new Error(`Open ${field} cursor did not advance`);
+      }
+      visitedCursors.add(result.page.pageInfo.endCursor);
+    }
     after = result.page.pageInfo.hasNextPage
       ? result.page.pageInfo.endCursor
       : null;
@@ -2536,7 +2544,7 @@ async function collectOpenReferences(
   }
   const deduped = dedupeByNodeId(references);
   if (deduped.length !== expectedCount) {
-    throw new Error(
+    throw new OpenSetChangedError(
       `Open ${field} changed during listing: expected ${expectedCount}, received ${deduped.length} unique references`,
     );
   }
@@ -2757,9 +2765,7 @@ async function completePullRequestConnections(
     if (
       node.files === null &&
       parsed.state === "OPEN" &&
-      pullRequest.isDraft &&
       node.state === "OPEN" &&
-      node.isDraft === true &&
       node.headRefOid === pullRequest.headRefOid
     ) {
       // A later page can become unavailable too. Discard the partial diff.
@@ -3787,9 +3793,9 @@ interface CandidateEvidenceVerdict {
 
 /**
  * A score-bearing artifact stayed unavailable after its transport retries.
- * Missing data is unavailable, never a fabricated zero (protocol/points-v1.md),
+ * Missing data is unavailable, never a fabricated zero (PRD section 7),
  * and incomplete evidence must fail snapshot collection
- * (protocol/scoring-v2.md), so no scored snapshot is returned or written.
+ * (PRD section 7), so no scored snapshot is returned or written.
  */
 export class EvidenceUnavailableError extends Error {
   readonly unavailable: readonly UnavailableEvidenceArtifact[];

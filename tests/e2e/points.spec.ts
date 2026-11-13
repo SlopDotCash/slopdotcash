@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import type { Page } from "@playwright/test";
 import { assertPointsJournal, pointRevisionId } from "../../src/lib/points";
 import { expect, expectAccessible, test } from "./fixtures";
 
-test("This month uses the current UTC month after a period switch", async ({
-  page,
-}) => {
+async function serveSingleAward(page: Page) {
+  await page.route("https://avatars.githubusercontent.com/**", async (route) =>
+    route.fulfill({ response: await page.request.get("/slop-mark.svg") }),
+  );
   const journal = JSON.parse(readFileSync("data/points/history.json", "utf8"));
   journal.generatedAt = "2026-07-31T23:59:00.000Z";
   const { id: _id, ...revision } = journal.revisions[0];
@@ -25,7 +27,7 @@ test("This month uses the current UTC month after a period switch", async ({
       sha256: createHash("sha256").update(text).digest("hex"),
     };
   });
-  await page.clock.install({ time: new Date("2026-07-31T23:59:59.000Z") });
+  await page.clock.install({ time: new Date("2026-07-31T00:00:00.000Z") });
   await page.route("**/data/points.json", (route) =>
     route.fulfill({
       json: {
@@ -46,7 +48,14 @@ test("This month uses the current UTC month after a period switch", async ({
       ? route.fulfill({ body: shard.text, contentType: "application/json" })
       : route.abort();
   });
-  await page.goto("/points");
+  return journal.revisions[0].award.actor.login as string;
+}
+
+test("This month updates at UTC rollover before a period switch", async ({
+  page,
+}) => {
+  await serveSingleAward(page);
+  await page.goto("/points", { waitUntil: "networkidle" });
   const table = page.getByRole("region", {
     name: "Contributor standings table",
     exact: true,
@@ -54,7 +63,11 @@ test("This month uses the current UTC month after a period switch", async ({
   await expect(
     table.getByRole("cell", { name: "10", exact: true }),
   ).toHaveCount(1);
-  await page.clock.runFor(2000);
+  await page.clock.pauseAt(new Date("2026-07-31T23:59:59.000Z"));
+  await page.clock.fastForward(1001);
+  await expect(
+    table.getByRole("cell", { name: "10", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "All time", exact: true }).click();
   await expect(
     table.getByRole("cell", { name: "10", exact: true }),
@@ -67,6 +80,7 @@ test("This month uses the current UTC month after a period switch", async ({
   await expect(
     table.getByRole("cell", { name: "10", exact: true }),
   ).toHaveCount(1);
+  await page.clock.resume();
   await expectAccessible(page);
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "200%";
@@ -336,3 +350,32 @@ test(
     });
   },
 );
+
+test("the activity chart advances its final UTC day without navigation", async ({
+  page,
+  diagnostics,
+}) => {
+  diagnostics.allowPreviewApiMisses();
+  const login = await serveSingleAward(page);
+  await page.route("**/api/v1/wallet-claims/actors/*/current", (route) =>
+    route.fulfill({ json: null }),
+  );
+  await page.goto(`/contributors/${login}`, { waitUntil: "networkidle" });
+  const chart = page.getByRole("figure", {
+    name: "Points per day, last 35 days",
+    exact: true,
+  });
+  const last = chart.locator(".activity-bars > span").last();
+  await expect(last).toHaveAttribute("title", /Jul 31, 2026/u);
+  await page.clock.pauseAt(new Date("2026-07-31T23:59:59.000Z"));
+  await page.screenshot({
+    path: test.info().outputPath("activity-july.png"),
+    fullPage: true,
+  });
+  await page.clock.fastForward(1001);
+  await expect(last).toHaveAttribute("title", /Aug 1, 2026/u);
+  await page.screenshot({
+    path: test.info().outputPath("activity-august.png"),
+    fullPage: true,
+  });
+});

@@ -6,9 +6,12 @@ import {
 } from "../../contracts/solana/token-extensions";
 import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
-import type { JupiterRouteExpectation } from "./jupiter-route";
-import type { ParsedTransaction } from "./solana";
-import type { RouteAccountObservation } from "./solana-route-accounts";
+import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
+import type {
+  JupiterRouteExpectation,
+  RouteAccountObservation,
+} from "./solana-route-types";
+import type { ParsedTransaction } from "./solana-transaction";
 export const LOOKUP_TABLE_PROGRAM =
   "AddressLookupTab1e1111111111111111111111111";
 type Rpc = <T>(method: string, params: unknown[]) => Promise<T>;
@@ -39,8 +42,7 @@ export interface SolanaAccountProof {
     accounts: RouteAccountObservation[];
   };
 }
-const hex = (data: Uint8Array) =>
-  Array.from(sha256(data), (x) => x.toString(16).padStart(2, "0")).join("");
+const hex = (data: Uint8Array) => bytesToHex(sha256(data));
 const same = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 function publicKey(value: string) {
@@ -192,9 +194,7 @@ export async function resolveSolanaAccounts(
       result.value.data?.[1] !== "base64"
     )
       throw new Error("Finalized Solana lookup table is unavailable");
-    const bytes = Uint8Array.from(atob(result.value.data[0]), (c) =>
-      c.charCodeAt(0),
-    );
+    const bytes = decodeBase64(result.value.data[0]);
     if (
       bytes.length < 56 ||
       (bytes.length - 56) % 32 !== 0 ||

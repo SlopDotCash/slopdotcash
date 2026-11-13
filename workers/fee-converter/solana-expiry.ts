@@ -1,4 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "../../src/lib/byte-encoding";
+import { expiryTraversalStep, matchingExpiryCoverage } from "./verified-expiry";
 /** Owner-approved #905 policy: two independent, history-qualified RPC observations. */
 export type RecoveryRpc = <T>(method: string, params: unknown[]) => Promise<T>;
 const MAINNET = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
@@ -29,17 +31,9 @@ export function matchingCompletedCoverage(
   a?: ExpiryCoverage,
   b?: ExpiryCoverage,
 ): boolean {
-  return (
-    !!a?.complete &&
-    !!b?.complete &&
-    a.blocks > 0 &&
-    a.txId === b.txId &&
-    a.blockhash === b.blockhash &&
-    a.blockhashSlot === b.blockhashSlot &&
-    a.tipSlot === b.tipSlot &&
-    a.tipHash === b.tipHash &&
-    a.blocks === b.blocks &&
-    a.digest === b.digest
+  return matchingExpiryCoverage(
+    a == null ? { kind: "missing" } : { kind: "present", history: a },
+    b == null ? { kind: "missing" } : { kind: "present", history: b },
   );
 }
 export interface ExpiryCoverageStore {
@@ -51,10 +45,7 @@ export interface ExpiryCoverageStore {
   ): Promise<void>;
 }
 function digest(value: unknown) {
-  return Array.from(
-    sha256(new TextEncoder().encode(JSON.stringify(value))),
-    (b) => b.toString(16).padStart(2, "0"),
-  ).join("");
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(value))));
 }
 interface HistoryBlock {
   blockhash: string;
@@ -230,21 +221,17 @@ export async function proveSolanaExpiry(
         current,
         blockOptions,
       ]);
-      if (
-        !completeBlock(block) ||
-        block.blockhash !== scan.expectedHash ||
-        current < blockhashSlot ||
-        block.signatures.includes(txId)
-      )
-        return null;
-      if (current === blockhashSlot) {
-        if (block.blockhash !== blockhash) return null;
-        scan.complete = true;
-      } else if (
-        block.parentSlot >= current ||
-        block.parentSlot < blockhashSlot
-      )
-        return null;
+      if (!completeBlock(block)) return null;
+      const step = expiryTraversalStep(
+        txId,
+        blockhash,
+        blockhashSlot,
+        current,
+        scan.expectedHash,
+        block,
+      );
+      if (step.kind === "refused") return null;
+      scan.complete = step.kind === "complete";
       const evidence = {
         slot: current,
         blockhash: block.blockhash,
@@ -257,8 +244,8 @@ export async function proveSolanaExpiry(
       scan.digest = digest({ prior: scan.digest, block: evidence });
       scan.blocks++;
       if (!scan.complete) {
-        scan.nextSlot = block.parentSlot;
-        scan.expectedHash = block.previousBlockhash;
+        scan.nextSlot = step.nextSlot;
+        scan.expectedHash = step.expectedHash;
       }
     }
     if (page.length) {

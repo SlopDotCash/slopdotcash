@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,7 @@ import {
 import type { CycleIndex } from "./lib/cycle-index";
 import { deploymentTier } from "./lib/deployment";
 import { errorMessage } from "./lib/errors";
+import { githubUserIdFromNodeId } from "./lib/github-actor";
 import { GithubIcon } from "./lib/github-icon";
 import { requestIdentityAssertion } from "./lib/identity-flow";
 import { clearAllDrafts } from "./lib/intake-drafts";
@@ -53,10 +55,14 @@ import {
 } from "./lib/points";
 import { recentPoints } from "./lib/profile-activity";
 import { profileCounts } from "./lib/profiles";
-import { useProjectSession } from "./lib/project-api";
+import {
+  notifyProjectSessionChanged,
+  useProjectSession,
+} from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
+import { useUtcDay } from "./lib/use-time-boundary";
 import {
   Avatar,
   DataNotice,
@@ -106,6 +112,7 @@ type PointsContext = {
   state: State;
   me: Membership | null;
   session: "loading" | "ready" | "error";
+  signoutRevision: number;
   refreshSession: () => void;
   refresh: () => void;
   requestPoints: () => void;
@@ -113,7 +120,7 @@ type PointsContext = {
 };
 const Context = createContext<PointsContext | null>(null);
 /** The points state of the enclosing PointsProvider; there is no default. */
-function usePoints(): PointsContext {
+export function usePoints(): PointsContext {
   const value = useContext(Context);
   if (!value) throw new Error("PointsProvider is missing");
   return value;
@@ -200,6 +207,7 @@ export function PointsProvider({
   children: ReactNode;
   enabled: boolean;
 }) {
+  const utcMonth = useUtcDay().slice(0, 7);
   const [state, setState] = useState<State>({ status: "loading" });
   const [me, setMe] = useState<Membership | null>(null);
   const [session, setSession] = useState<"loading" | "ready" | "error">(
@@ -207,6 +215,7 @@ export function PointsProvider({
   );
   const [attempt, setAttempt] = useState(0);
   const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [signoutRevision, setSignoutRevision] = useState(0);
   const [requested, setRequested] = useState(false);
   const loadedAttempt = useRef<{
     attempt: number;
@@ -219,6 +228,7 @@ export function PointsProvider({
     sessionRequest.current?.abort();
     sessionRequest.current = null;
     setMe(value);
+    if (value === null) setSignoutRevision((revision) => revision + 1);
     setSession("ready");
   }, []);
   const shouldLoad = enabled || requested;
@@ -227,16 +237,20 @@ export function PointsProvider({
     if (!shouldLoad) return;
     const loaded = loadedAttempt.current;
     const age = loaded ? Date.now() - loaded.completedAt : -1;
-    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) return;
+    if (loaded?.attempt === attempt && age >= 0 && age < 60_000) {
+      setState((current) =>
+        current.status === "ready"
+          ? { ...current, members: pointMembers(current.journal, utcMonth) }
+          : current,
+      );
+      return;
+    }
     const controller = new AbortController();
     setState({ status: "loading" });
     void loadPoints(controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
-        const members = pointMembers(
-          value,
-          new Date().toISOString().slice(0, 7),
-        );
+        const members = pointMembers(value, utcMonth);
         verifiedJournal.current = value;
         loadedAttempt.current = { attempt, completedAt: Date.now() };
         setState({
@@ -252,10 +266,7 @@ export function PointsProvider({
           setState({
             status: "ready",
             journal,
-            members: pointMembers(
-              journal,
-              new Date().toISOString().slice(0, 7),
-            ),
+            members: pointMembers(journal, utcMonth),
             stale: true,
           });
         else
@@ -265,7 +276,7 @@ export function PointsProvider({
           });
       });
     return () => controller.abort();
-  }, [shouldLoad, attempt, sessionAttempt]);
+  }, [shouldLoad, attempt, sessionAttempt, utcMonth]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionAttempt retries a failed identity read.
   useEffect(() => {
     const controller = new AbortController();
@@ -321,6 +332,7 @@ export function PointsProvider({
         state,
         me,
         session,
+        signoutRevision,
         refreshSession: () => setSessionAttempt((value) => value + 1),
         setMe: updateMembership,
         refresh: () => setAttempt((a) => a + 1),
@@ -396,6 +408,7 @@ export function PointsNav() {
         });
         clearAllDrafts();
         setMe(null);
+        notifyProjectSessionChanged();
         setOpen(false);
       },
       () => "Could not sign out. Retry.",
@@ -727,11 +740,11 @@ function JoinPoints({
 }) {
   const { me, setMe, session } = usePoints();
   const [busy, setBusy] = useState(false);
-  const [canCancel, setCanCancel] = useState(false);
+  const [waitingForGitHub, setWaitingForGitHub] = useState(false);
   const [message, setMessage] = useState("");
   const [closedAccount, setClosedAccount] = useState(false);
   const active = useRef<AbortController | null>(null);
-  useEffect(() => () => active.current?.abort(), []);
+  useLayoutEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     if (!me)
       setMessage((current) =>
@@ -781,7 +794,7 @@ function JoinPoints({
     const c = new AbortController();
     active.current = c;
     setBusy(true);
-    setCanCancel(true);
+    setWaitingForGitHub(true);
     setMessage("");
     let authorized = false;
     try {
@@ -843,7 +856,7 @@ function JoinPoints({
             throw new Error("Sign-in failed. Start again.");
           // COOP isolates the GitHub window and can report its WindowProxy as
           // closed while the user is still signing in. The bounded identity
-          // flow and explicit Cancel action determine when polling stops.
+          // flow and leaving this page determine when polling stops.
           return {
             status: response.status,
             body: body as Record<string, unknown>,
@@ -851,7 +864,7 @@ function JoinPoints({
         },
       });
       c.signal.throwIfAborted();
-      setCanCancel(false);
+      setWaitingForGitHub(false);
       const joined = await requestJson("/api/v1/points/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -887,7 +900,7 @@ function JoinPoints({
     } finally {
       if (active.current === c) {
         setBusy(false);
-        setCanCancel(false);
+        setWaitingForGitHub(false);
       }
     }
   }
@@ -929,30 +942,13 @@ function JoinPoints({
       >
         <GithubIcon aria-hidden="true" />
         {busy
-          ? canCancel
+          ? waitingForGitHub
             ? "Waiting for GitHub…"
             : "Signing in…"
           : closedAccount
             ? "Reopen account with GitHub"
             : "Continue with GitHub"}
       </button>
-      {busy && canCancel ? (
-        <button
-          type="button"
-          onClick={() => {
-            active.current?.abort();
-            active.current = null;
-            if (localBackendOrigin !== null) clearLocalFlow();
-            setBusy(false);
-            setCanCancel(false);
-            setMessage(
-              "Sign-in cancelled. Close the GitHub window and try again when ready.",
-            );
-          }}
-        >
-          Cancel sign-in
-        </button>
-      ) : null}
       <p role="status">{message}</p>
     </section>
   );
@@ -977,12 +973,63 @@ export function LoginPage() {
   );
 }
 export function AccountPage() {
-  const { me, session } = usePoints();
+  const { me, session, signoutRevision } = usePoints();
+  const [accountAttempt, setAccountAttempt] = useState(0);
   const accountSession = useProjectSession(
-    me?.actor.id ?? "signed-out",
+    `${me?.actor.id ?? "signed-out"}:${signoutRevision}:${accountAttempt}`,
     session !== "loading",
   );
   const signedIn = me !== null || accountSession.status === "signed-in";
+  const checkedEmailActor =
+    accountSession.status === "signed-in"
+      ? accountSession.session.githubId
+      : null;
+  const [lastEmailSession, setLastEmailSession] = useState({
+    actor: checkedEmailActor,
+    member: me?.actor.id ?? null,
+    signoutRevision,
+  });
+  if (
+    (accountSession.status === "signed-in" ||
+      accountSession.status === "signed-out") &&
+    (lastEmailSession.actor !== checkedEmailActor ||
+      lastEmailSession.member !== (me?.actor.id ?? null) ||
+      lastEmailSession.signoutRevision !== signoutRevision)
+  )
+    setLastEmailSession({
+      actor: checkedEmailActor,
+      member: me?.actor.id ?? null,
+      signoutRevision,
+    });
+  const pointsActor = me ? githubUserIdFromNodeId(me.actor.id) : null;
+  // Keep only the local email editor during a pending check. An independently
+  // confirmed membership change must also drop it, before this check returns.
+  const pendingMemberMatches =
+    signoutRevision === lastEmailSession.signoutRevision &&
+    (me === null ||
+      (pointsActor !== null
+        ? pointsActor === lastEmailSession.actor
+        : me.actor.id === lastEmailSession.member));
+  const emailActor =
+    accountSession.status === "checking" || accountSession.status === "error"
+      ? pendingMemberMatches
+        ? lastEmailSession.actor
+        : null
+      : checkedEmailActor;
+  const emailActorMatchesMember =
+    pointsActor === null || pointsActor === emailActor;
+  const emailFailure =
+    accountSession.status === "error"
+      ? "The account check failed."
+      : accountSession.status === "signed-in" && !emailActorMatchesMember
+        ? "The inbox account changed. Retry."
+        : undefined;
+  const emailViewKey =
+    emailActor && emailActorMatchesMember
+      ? emailActor
+      : me !== null && emailFailure !== undefined
+        ? `unverified:${me.actor.id}`
+        : null;
   const [walletEntry, setWalletEntry] = useState(
     () => window.location.hash === "#wallets",
   );
@@ -1026,21 +1073,42 @@ export function AccountPage() {
           )}
         </section>
       ) : null}
-      {signedIn ? (
+      {me !== null || emailActor ? (
         <section
           id="notifications"
           className="points-panel"
           aria-labelledby="notifications-heading"
         >
           <h2 id="notifications-heading">Email preferences</h2>
-          <InboxEmail headingId="notifications-heading" />
+          {emailViewKey ? (
+            <InboxEmail
+              key={emailViewKey}
+              headingId="notifications-heading"
+              accountActor={
+                emailActor && emailActorMatchesMember ? emailActor : undefined
+              }
+              accountChecking={accountSession.status === "checking"}
+              accountError={emailFailure}
+              onAccountRetry={() => setAccountAttempt((value) => value + 1)}
+            />
+          ) : accountSession.status === "signed-out" ? (
+            <p>
+              Your session expired.{" "}
+              <a href={loginHref("/account#notifications")}>
+                Sign in with GitHub
+              </a>
+              .
+            </p>
+          ) : (
+            <p role="status">Checking your account…</p>
+          )}
         </section>
       ) : null}
     </main>
   );
 }
 
-/** Categories from protocol/points-v1.md: activity and points. */
+/** Categories from PRD section 7: activity and points. */
 const HISTORICAL_POINT_CATEGORIES: readonly (readonly [string, string])[] = [
   ["Merged PR before scoring began", "10 each"],
   ["Verified payout", "25 per project and month"],

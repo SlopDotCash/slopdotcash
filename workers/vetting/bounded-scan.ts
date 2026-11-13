@@ -31,12 +31,14 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
-import type { QueuedAssessment } from "./queue";
+import type { QueuedAssessment } from "./assembly-manifest";
+import { expandGzipInputs } from "./gzip-inputs";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
   type ScannerEvidence,
 } from "./scanners";
+import { textPartEnds } from "./verified-text-parts";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /**
@@ -52,6 +54,9 @@ export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 export type ScanInputFile = {
   path: string;
   bytes: Uint8Array;
+  /** Trusted derived inputs retain the decoded name and exact archive lineage. */
+  logicalPath?: string;
+  parentArtifactSha256?: string;
   symlink?: {
     gitSha: string;
     sha256: string;
@@ -539,6 +544,8 @@ const RULE_POLICY_SHA256 = sha256(
     xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
     xmlElementCharacterReferences:
       "msbuild-element-text-except-exec-comments-and-cdata",
+    compressedInputs:
+      "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -919,7 +926,7 @@ const OBFUSCATION =
  * obfuscation signal in bulk content sends the model every match in context
  * (`signalExcerpt`).
  */
-export function bulkClass(
+function bulkClass(
   path: string,
   surfaces: ScanSurface[],
 ): "lockfile" | "data" | "generated" | "vendored" | null {
@@ -952,7 +959,7 @@ const SIGNAL_CONTEXT = 1536;
  * bulk file, with character offsets; null when there is none. The
  * deterministic checks still read the whole file.
  */
-export function signalExcerpt(
+function signalExcerpt(
   path: string,
   text: string,
   nonMatches?: ReadonlySet<RegExp>,
@@ -997,14 +1004,7 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
   if (bytes.length <= size) return [text];
   const parts: string[] = [];
   let start = 0;
-  while (start < bytes.length) {
-    let end = Math.min(start + size, bytes.length);
-    if (end < bytes.length) {
-      const newline = bytes.lastIndexOf(10, end - 1);
-      if (newline > start) end = newline + 1;
-      // Never split inside a UTF-8 sequence.
-      while (end > start + 1 && (bytes[end] & 0xc0) === 0x80) end -= 1;
-    }
+  for (const end of textPartEnds(bytes, size)) {
     parts.push(bytes.subarray(start, end).toString("utf8"));
     start = end;
   }
@@ -1031,6 +1031,8 @@ export type RepositoryInspection = {
   checks: VettingScanResult["checks"];
   findings: ScanFinding[];
   artifacts: VettingArtifact[];
+  /** Decoded artifact bytes that the controller must retain when named. */
+  derivedFiles?: ScanInputFile[];
   dependencyLocks: { path: string; sha256: string }[];
   visibilityGaps: string[];
   /** Download URLs install-time content references. */
@@ -1642,17 +1644,25 @@ export function inspectRepository(input: {
   /** Source the acquisition could not read; each keeps the scan incomplete. */
   acquisitionGaps?: string[];
 }): RepositoryInspection {
-  const files = [...input.files].sort((a, b) =>
+  const expanded = expandGzipInputs(
+    input.files,
+    (path) =>
+      surfacesOf(path).length > 0 ||
+      EXECUTABLE_BINARIES.test(path) ||
+      ARCHIVES.test(path),
+  );
+  const files = expanded.files.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
   const counts = Object.fromEntries(
     SCAN_SURFACES.map((surface) => [surface, 0]),
   ) as Record<ScanSurface, number>;
+  counts.downloads = expanded.archives.length;
   const partial = new Set<ScanSurface>();
-  const gaps: string[] = [...(input.acquisitionGaps ?? [])];
+  const gaps: string[] = [...(input.acquisitionGaps ?? []), ...expanded.gaps];
   if (gaps.length > 0) partial.add("source");
   const findings: ScanFinding[] = [];
-  const artifacts: VettingArtifact[] = [];
+  const artifacts: VettingArtifact[] = [...expanded.archives];
   const dependencyLocks: { path: string; sha256: string }[] = [];
   type Candidate = {
     path: string;
@@ -1675,7 +1685,7 @@ export function inspectRepository(input: {
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
   for (const file of files) {
-    const surfaces = surfacesOf(file.path);
+    const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
@@ -1697,8 +1707,8 @@ export function inspectRepository(input: {
       // quarantined until a specialist or isolated analysis releases it.
       artifacts.push({
         sha256: digest,
-        parentSha256: null,
-        origin: "repository",
+        parentSha256: file.parentArtifactSha256 ?? null,
+        origin: file.parentArtifactSha256 ? "archive" : "repository",
         path: file.path.slice(0, 500),
         type: ARCHIVES.test(file.path)
           ? "archive"
@@ -1786,7 +1796,7 @@ export function inspectRepository(input: {
   // Keep original link bytes and the resolved path in the reviewed/reused
   // identity, even when two targets happen to contain identical content.
   // The absolute ID namespace cannot collide with a repository path.
-  const links = files.flatMap((file) => {
+  const links = input.files.flatMap((file) => {
     if (!file.symlink) return [];
     return textParts(JSON.stringify({ path: file.path, ...file.symlink })).map(
       (text, index, parts) => ({
@@ -1904,6 +1914,7 @@ export function inspectRepository(input: {
     ) as VettingScanResult["checks"],
     findings,
     artifacts,
+    derivedFiles: expanded.derivedFiles,
     dependencyLocks,
     visibilityGaps: gaps,
     downloads: [...downloads].sort(),
@@ -1948,7 +1959,7 @@ export function executionInventory(inspection: RepositoryInspection) {
  * itself, with no score threshold: any suspected malice or high finding is
  * high risk, any other finding or incomplete coverage is ambiguous.
  */
-export function scanReview(evidence: ScannerEvidence): ScanReview {
+function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
   const risk = !completed
     ? null
@@ -2093,6 +2104,22 @@ export function composeScanResult(input: {
       scanner.review.inputManifestSha256 !== inspection.inventorySha256
     )
       throw new Error("A review read another inventory");
+  // The intake parser accepts at most 50 visibility gaps
+  // (parseVettingScanResult), so reserve room for the truncation notes
+  // before slicing: appending them after the slice emits 51-53 entries
+  // that no intake can record, and the assessment stays pending while
+  // every scan pass aborts on the same unpublishable result.
+  const truncationNotes = [
+    ...(inspection.dependencyLocks.length > 200
+      ? ["More than 200 dependency locks"]
+      : []),
+    ...(inspection.findings.length > 200
+      ? ["More than 200 scan findings"]
+      : []),
+    ...(inspection.artifacts.length > 500
+      ? ["More than 500 scan artifacts"]
+      : []),
+  ];
   const report = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: input.sourceInventorySha256
@@ -2138,12 +2165,15 @@ export function composeScanResult(input: {
     coverage: inspection.coverage,
     checks: inspection.checks,
     visibilityGaps: [
-      ...new Set([
-        ...inspection.visibilityGaps,
-        ...input.primary.visibilityGaps,
-        ...(input.specialist?.visibilityGaps ?? []),
-      ]),
-    ].slice(0, 50),
+      ...[
+        ...new Set([
+          ...inspection.visibilityGaps,
+          ...input.primary.visibilityGaps,
+          ...(input.specialist?.visibilityGaps ?? []),
+        ]),
+      ].slice(0, 50 - truncationNotes.length),
+      ...truncationNotes,
+    ],
     execution: input.execution ?? null,
     reusedAssessmentId: null,
     primaryReview: scanReview(input.primary),
@@ -2154,12 +2184,6 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
-  if (inspection.dependencyLocks.length > 200)
-    result.visibilityGaps.push("More than 200 dependency locks");
-  if (inspection.findings.length > 200)
-    result.visibilityGaps.push("More than 200 scan findings");
-  if (inspection.artifacts.length > 500)
-    result.visibilityGaps.push("More than 500 scan artifacts");
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {

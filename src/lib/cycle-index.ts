@@ -869,6 +869,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
       reviewEndsAt === null ||
       Date.parse(approvedAt ?? "") < Date.parse(reviewEndsAt ?? ""));
   const settlementStateInvalid =
+    (normalizedFiles.settlement !== null && state !== "paid") ||
     (normalizedFiles.settlement === null) !== (settledAt === null) ||
     (settledAt !== null &&
       approvedAt !== null &&

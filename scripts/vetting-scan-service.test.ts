@@ -21,11 +21,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { projectRestriction } from "../backend/projects/enforcement";
 import { handleProjectApi } from "../backend/projects/handler";
 import { flaggerAuthority } from "../backend/projects/setup";
-import { evidenceLocation } from "../backend/vetting/evidence-chunks";
+import {
+  EvidenceStorage,
+  type EvidenceStorageRow,
+} from "../backend/vetting/evidence-storage";
 import { githubFlaggerStanding } from "../backend/vetting/flagger-standing";
 import {
   handleProjectFlagsApi,
@@ -49,6 +53,7 @@ import {
   readAcquiredSource,
 } from "../workers/vetting/bounded-scan";
 import { publishResult } from "../workers/vetting/publication";
+import { filePublicationJournal } from "../workers/vetting/publication-journal";
 import { acquireQueuedAssessment } from "../workers/vetting/queue";
 import {
   runScanPass,
@@ -364,6 +369,14 @@ function github(url: URL): Response {
       full_name: githubName,
       private: false,
     });
+  // A second registered repository, for passes that queue two projects.
+  if (path === "/repos/example/second-registry")
+    return Response.json({
+      id: 123456790,
+      node_id: "R_second",
+      full_name: "example/second-registry",
+      private: false,
+    });
   const user = /^\/user\/([0-9]+)$/u.exec(path)?.[1];
   const actor = Object.values(ACTORS).find((entry) => entry.githubId === user);
   if (actor)
@@ -574,8 +587,8 @@ beforeEach(async () => {
         );
       }) as typeof fetch,
     },
-    primary: profile("anthropic-messages", "opus", "claude-opus-5.5"),
-    specialist: profile("openai-responses", "astra", "gpt-6.1-sol"),
+    primary: profile("anthropic-messages", "opus", "claude-sonnet-5.5"),
+    specialist: profile("openai-responses", "astra", "gpt-6.1-terra"),
     policyVersion: "scan-policy-1",
     workDirectory: join(root, "work"),
     journalDirectory: join(root, "journal"),
@@ -703,6 +716,52 @@ test("evidence beyond the former 64 MiB run cap is retained in bounded parts", a
   expect(stored.storage).toBe("content");
   expect(JSON.parse(stored.chunks)).toHaveLength(9);
 }, 180_000);
+
+test("gzip source passes the normal scan with its complete compressed evidence retained", async () => {
+  const source = '{"frozenHistory":[1,2,3]}';
+  const compressed = new Uint8Array(gzipSync(source));
+  await commit({ "fixtures/history.json.gz": compressed }, "Add gzip source");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const result = (await vetting.getAssessment(pass.assessments[0].assessmentId))
+    ?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing gzip result");
+  expect(result.artifacts).toMatchObject([
+    { sha256: digest(compressed), state: "released", analysis: "static-clean" },
+  ]);
+  expect(reviewedItems.some((item) => item.text === source)).toBe(true);
+  expect(await retained.evidence.retained(result)).toBe(true);
+});
+
+test("gzip native payload retains both exact objects and cannot clear admission", async () => {
+  const native = new Uint8Array([0x4d, 0x5a, 0, 0, 1, 2, 3, 4]);
+  const compressed = new Uint8Array(gzipSync(native));
+  await commit({ "artifacts/native.exe.gz": compressed }, "Add gzip native");
+  const pass = await runScanPass(config);
+  expect(pass.assessments[0]).toMatchObject({
+    state: "published",
+    disposition: "incomplete",
+    outcome: "accepted",
+    evidence: "retained",
+  });
+  const result = (await vetting.getAssessment(pass.assessments[0].assessmentId))
+    ?.result;
+  if (!result || !isScanResult(result)) throw new Error("Missing gzip result");
+  expect(result.artifacts).toMatchObject([
+    { sha256: digest(compressed), state: "released" },
+    {
+      sha256: digest(native),
+      parentSha256: digest(compressed),
+      state: "quarantined",
+    },
+  ]);
+  expect(await retained.evidence.retained(result)).toBe(true);
+});
 
 test("a repository beyond the former acquisition limits gets a complete batched review and clears", async () => {
   await commit(
@@ -890,6 +949,102 @@ test("a pending investigation on an exempt project recovers without changing its
   expect((await runScanPass(config)).assessments).toEqual([]);
 });
 
+test("an error that escapes one assessment leaves it pending and the pass continues to the next project", async () => {
+  // A second registered project is queued in the same pass.
+  const created = await projectApi(
+    new Request(`${ORIGIN}/api/v1/projects`, {
+      method: "POST",
+      headers: {
+        "x-test-actor": "applicant",
+        "content-type": "application/json",
+        origin: ORIGIN,
+      },
+      body: JSON.stringify({
+        manifest: applicationManifest(
+          "second-registry",
+          "example/second-registry",
+          {
+            authority: {
+              state: "unverified",
+              reason: "missing-repository-proof",
+              role: "project-steward",
+              repositoryId: "123456790",
+              repositoryNodeId: "R_second",
+              proof: null,
+            },
+          },
+        ),
+      }),
+    }),
+  );
+  expect(created.status).toBe(201);
+  // The signed service journal refuses one reservation, after the review and
+  // the evidence upload. Nothing in the assessment handles that, so the error
+  // escapes it.
+  const file = filePublicationJournal(config.journalDirectory);
+  let refusals = 1;
+  config.journal = {
+    has: (id) => file.has(id),
+    reserve: async (intent) => {
+      if (refusals > 0) {
+        refusals -= 1;
+        throw new Error("fixture: journal reservation refused");
+      }
+      await file.reserve(intent);
+    },
+    complete: (receipt) => file.complete(receipt),
+  };
+  const pass = await runScanPass(config);
+  expect(pass.refreshed).toBe(true);
+  expect(pass.assessments).toHaveLength(2);
+  const refused = pass.assessments.find((a) => a.state === "retry");
+  const published = pass.assessments.find((a) => a.state === "published");
+  if (!refused || !published) throw new Error("Both outcomes are expected");
+  // The escaped error names its step and error, never its message.
+  expect(refused).toEqual({
+    assessmentId: refused.assessmentId,
+    state: "retry",
+    step: "assessment",
+    reason: "Error",
+  });
+  expect(published).toEqual({
+    assessmentId: published.assessmentId,
+    state: "published",
+    disposition: "clean",
+    outcome: "accepted",
+    specialist: false,
+    evidence: "retained",
+  });
+  const pending = await vetting.getAssessment(refused.assessmentId);
+  const cleared = await vetting.getAssessment(published.assessmentId);
+  expect(pending?.state).toBe("pending");
+  expect(cleared?.state).toBe("clean");
+  expect(new Set([pending?.projectId, cleared?.projectId])).toEqual(
+    new Set(["open-registry", "second-registry"]),
+  );
+  // Only the published attempt is journaled; the acquired bytes are gone.
+  expect(await readdir(config.journalDirectory)).toEqual([
+    published.assessmentId,
+  ]);
+  expect(await readdir(config.workDirectory)).toEqual([]);
+  // The next pass completes the assessment whose publication was refused.
+  const next = await runScanPass(config);
+  expect(next.assessments).toEqual([
+    {
+      assessmentId: refused.assessmentId,
+      state: "published",
+      disposition: "clean",
+      outcome: "accepted",
+      specialist: false,
+      evidence: "retained",
+    },
+  ]);
+  expect((await vetting.getAssessment(refused.assessmentId))?.state).toBe(
+    "clean",
+  );
+  expect((await runScanPass(config)).assessments).toEqual([]);
+});
+
 test("a provider outage leaves the scan pending; the next pass clears the project with one Surplus review", async () => {
   provider.up = false;
   const failed = await runScanPass(config);
@@ -926,7 +1081,7 @@ test("a provider outage leaves the scan pending; the next pass clears the projec
   expect(provider.calls).toEqual([
     {
       path: "/anthropic/v1/messages",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       authorization: "Bearer fixture-surplus-key",
     },
   ]);
@@ -1007,8 +1162,8 @@ test("an ambiguous primary review runs the Surplus specialist once before public
     },
   ]);
   expect(provider.calls.map((call) => [call.path, call.model])).toEqual([
-    ["/anthropic/v1/messages", "claude-opus-5.5"],
-    ["/v1/responses", "gpt-6.1-sol"],
+    ["/anthropic/v1/messages", "claude-sonnet-5.5"],
+    ["/v1/responses", "gpt-6.1-terra"],
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   expect(assessment?.state).toBe("clean");
@@ -1500,15 +1655,19 @@ for (const kind of [
       const original = await retainedNativeFixture();
       const row = sqlite
         .query(
-          "SELECT object_key, sha256, storage, size_bytes FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
+          "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id=? AND sha256=?",
         )
-        .get(original.result.assessmentId, original[kind]) as {
-        object_key: string;
-        sha256: string;
-        storage: string;
-        size_bytes: number;
-      };
-      const key = evidenceLocation(row);
+        .get(
+          original.result.assessmentId,
+          original[kind],
+        ) as EvidenceStorageRow;
+      const key = await new EvidenceStorage(
+        retained.evidence.deps.db,
+        retained.evidence.deps.bucket!,
+        () => clock,
+        () => crypto.randomUUID(),
+      ).partKey(row);
+      if (key === null) throw new Error("Missing published evidence target");
       if (damage === "missing") await retained.bucket.delete(key);
       else {
         const object = await retained.bucket.head(key);
@@ -1702,14 +1861,17 @@ test("scan reuse requires the original report to remain in private R2", async ()
   if (!original) throw new Error("Missing original scan");
   const object = sqlite
     .query(
-      "SELECT object_key, sha256, storage FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
+      "SELECT object_key, sha256, storage, size_bytes, storage_generation FROM vetting_evidence_objects WHERE assessment_id = ? AND kind = 'trace' LIMIT 1",
     )
-    .get(original.id) as {
-    object_key: string;
-    sha256: string;
-    storage: string;
-  };
-  await retained.bucket.delete(evidenceLocation(object));
+    .get(original.id) as EvidenceStorageRow;
+  const key = await new EvidenceStorage(
+    retained.evidence.deps.db,
+    retained.evidence.deps.bucket!,
+    () => clock,
+    () => crypto.randomUUID(),
+  ).partKey(object);
+  if (key === null) throw new Error("Missing published evidence target");
+  await retained.bucket.delete(key);
   provider.calls = [];
   emptyCommit("Same source after evidence loss");
   await requestInvestigation();
@@ -2045,8 +2207,8 @@ test("an incomplete result is published although the evidence store fails, so th
   ]);
   // A binary needs the specialist; each model runs once.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   expect((await vetting.getAssessment(assessmentId))?.state).toBe("incomplete");
   provider.calls = [];
@@ -2079,8 +2241,8 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   ]);
   // The specialist runs only because the primary review was high risk.
   expect(provider.calls.map((call) => call.model)).toEqual([
-    "claude-opus-5.5",
-    "gpt-6.1-sol",
+    "claude-sonnet-5.5",
+    "gpt-6.1-terra",
   ]);
   const assessment = await vetting.getAssessment(assessmentId);
   const result = assessment?.result;
@@ -2090,7 +2252,7 @@ test("malicious-code detection: risky new content is flagged, escalated to the s
   expect(result.primaryReview.risk).toBe("high");
   expect(result.specialistReview).toMatchObject({
     provider: "surplus",
-    model: "gpt-6.1-sol",
+    model: "gpt-6.1-terra",
   });
   // A model label alone never bans: a moderator confirms malice.
   expect(result.confirmation).toBeNull();
@@ -2199,15 +2361,15 @@ test("an unpinned endpoint or model fails closed before the queue or any provide
       config.primary,
       { ...config.specialist, endpoint: "https://api.openai.com/v1/responses" },
     ],
-    [{ ...config.primary, model: "claude-opus-5" }, config.specialist],
-    [config.primary, { ...config.specialist, model: "gpt-6.1" }],
+    [{ ...config.primary, model: "claude-opus-5.5" }, config.specialist],
+    [config.primary, { ...config.specialist, model: "gpt-6.1-sol" }],
     // The specialist never stands in for the primary review.
     [config.specialist, config.primary],
   ] as [ScannerProfile, ScannerProfile][]) {
     await expect(
       runScanPass({ ...config, connection: counting, primary, specialist }),
     ).rejects.toThrow(
-      /Unapproved scanner profile|must be Surplus claude-opus-5\.5/,
+      /Unapproved scanner profile|must be Surplus claude-sonnet-5\.5/,
     );
   }
   expect(contacted).toEqual([]);

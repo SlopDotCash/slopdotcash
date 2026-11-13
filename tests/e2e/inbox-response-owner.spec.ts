@@ -525,3 +525,104 @@ for (const mismatch of ["submissions", "cases"] as const) {
     });
   });
 }
+
+test("Inbox focus during a write retains the completed mutation readback", async ({
+  page,
+}) => {
+  let read = false;
+  let posted!: () => void;
+  let finish!: () => void;
+  const started = new Promise<void>((resolve) => {
+    posted = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let reads = 0;
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/projects")
+      return route.fulfill({ json: { schemaVersion: "1", projects: [] } });
+    if (path === "/api/v1/project-session")
+      return route.fulfill({
+        json: { session: { githubId: "42", githubLogin: "viewer-42" } },
+      });
+    if (path === "/api/v1/security-cases")
+      return route.fulfill({
+        json: {
+          viewer: { githubId: "42", githubLogin: "viewer-42" },
+          programs: [],
+          cases: [],
+        },
+      });
+    if (path === "/api/v1/security-submissions")
+      return route.fulfill({
+        json: { recipientGithubId: "42", automatic: false, submissions: [] },
+      });
+    // Ordering barrier: answered after any request the focus handler issued.
+    if (path === "/api/v1/__focus-barrier") return route.fulfill({ json: {} });
+    if (path === "/api/v1/notifications/read" && request.method() === "POST") {
+      expect(request.headers()["x-slop-expected-github-id"]).toBe("42");
+      expect(request.postDataJSON()).toEqual({
+        eventKeys: ["project-ready:focus-fixture"],
+      });
+      posted();
+      await pending;
+      read = true;
+      return route.fulfill({ json: { ok: true } });
+    }
+    if (path === "/api/v1/notifications") {
+      reads++;
+      return route.fulfill({
+        json: {
+          recipientGithubId: "42",
+          unread: read ? 0 : 1,
+          nextCursor: null,
+          notifications: [
+            {
+              eventKey: "project-ready:focus-fixture",
+              kind: "project_ready",
+              subject: "focus-fixture",
+              detail: "The project is ready",
+              actionPath: "/projects",
+              sourceAt: "2026-10-27T12:00:00.000Z",
+              createdAt: "2026-10-27T12:00:00.000Z",
+              readAt: read ? "2026-10-27T12:01:00.000Z" : null,
+            },
+          ],
+        },
+      });
+    }
+    throw new Error(
+      `Unexpected focus fixture request: ${request.method()} ${path}`,
+    );
+  });
+  try {
+    await page.goto("/inbox", { waitUntil: "networkidle" });
+    await expect(page.getByText("1 unread", { exact: true })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Mark shown as read", exact: true })
+      .click();
+    await started;
+    await page.evaluate(async () => {
+      window.dispatchEvent(new Event("focus"));
+      // A focus refresh starts its read synchronously; this later request
+      // returns only after the browser has dispatched any such read.
+      await (await fetch("/api/v1/__focus-barrier")).json();
+    });
+    // The write is still pending, so focus must not read the pre-write state.
+    expect(reads).toBe(1);
+    finish();
+    await expect(page.getByText("All read.", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Marked as read." }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Mark shown as read", exact: true }),
+    ).toHaveCount(0);
+    expect(reads).toBe(2);
+  } finally {
+    finish();
+  }
+});

@@ -17,9 +17,7 @@ import {
   renderProjectSkill,
 } from "./project-skill.mjs";
 
-export { sha256Hex } from "./async-sha256.mjs";
-
-export const SOURCE_REPOSITORY = "SlopDotCash/slopdotcash";
+const SOURCE_REPOSITORY = "SlopDotCash/slopdotcash";
 /** Generated skills always name the canonical site as their authority. */
 export const PUBLIC_SITE_ORIGIN = "https://slop.cash";
 /** Files the bootstrap skill fetches to rebuild an install guide. */
@@ -62,7 +60,7 @@ function comparePaths(left, right) {
  * 1980-01-01 time, mode 0644 and no comments or extra fields, so equal
  * inputs give equal bytes and the installer's strict archive checks pass.
  */
-export function storedZip(entries) {
+function storedZip(entries) {
   const sorted = [...entries].sort((left, right) =>
     comparePaths(left.path, right.path),
   );

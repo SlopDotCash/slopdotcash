@@ -11,6 +11,7 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type {
   GithubActor,
   ProjectRecord,
@@ -33,9 +34,9 @@ import {
   exactKeys,
   fail,
   isSameOriginJsonWrite,
-  json as jsonResponse,
   PROJECT_ID,
   pathParts,
+  requireActor,
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
@@ -51,9 +52,13 @@ import {
   type ScanRequester,
   setupAuthority,
 } from "../projects/setup";
-import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
+import {
+  isRecord,
+  readLimitedBody,
+  readStrictJsonObject,
+} from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
-import type { ProjectFlagStore } from "./flags";
+import { json, type ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
   summarize,
@@ -82,7 +87,11 @@ export type VettingApiDependencies = {
   sandbox?: { fetch(request: Request): Promise<Response> };
   projects: Pick<
     ProjectPersistence,
-    "getProject" | "listProjects" | "enforcementGeneration" | "listEnforcements"
+    | "getProject"
+    | "listProjects"
+    | "projectCreator"
+    | "enforcementGeneration"
+    | "listEnforcements"
   >;
   /** Contributor flags, shown to administrators beside each project. */
   flags?: Pick<ProjectFlagStore, "activeFlags">;
@@ -106,15 +115,11 @@ export type VettingApiDependencies = {
   refreshSetup?: (projectId: string) => Promise<ProjectSetupStatus | null>;
 };
 
-function json(status: number, body: Record<string, unknown>): Response {
-  return jsonResponse(status, body, { cacheControl: "no-store" });
-}
-
 function base64Bytes(value: string): Uint8Array | null {
   const normal = value.trim().replaceAll("-", "+").replaceAll("_", "/");
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(normal)) return null;
   try {
-    return Uint8Array.from(atob(normal), (char) => char.charCodeAt(0));
+    return decodeBase64(normal);
   } catch {
     return null;
   }
@@ -225,6 +230,7 @@ async function requireAdmin(
 ): Promise<WebSession> {
   const session = await deps.session(request);
   if (session === null) fail(401, "unauthorized", "Sign in with GitHub");
+  await requireActor(request, { sessionActor: async () => session });
   if (!session.admin) fail(403, "forbidden", "Admin access is required");
   return session;
 }
@@ -338,7 +344,7 @@ async function grantExemption(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, [
     "projectId",
     "revision",
@@ -376,40 +382,64 @@ async function grantExemption(
     githubId: session.githubId,
     githubLogin: session.githubLogin,
   };
-  const checked = await readRepositoryAccess(
-    deps.repositoryAccess,
-    project.manifest,
-    actor,
-  );
-  const authority = setupAuthority(
-    checked,
-    actor,
-    project.manifest.repositories[0].id,
-  );
-  if (authority.state === "retry")
-    fail(503, "github_unavailable", authority.message);
-  if (authority.state !== "verified")
+  // The administrator approves admission; the registered maintainer's live
+  // repository authority is a separate fact. Never impersonate that maintainer
+  // as the approving actor (PRD section 8, owner decision 11 November 2026).
+  const creator = await deps.projects.projectCreator(project.id);
+  const maintainers: GithubActor[] = creator ? [creator] : [];
+  const steward = project.manifest.steward.github;
+  if (
+    steward.type === "User" &&
+    !maintainers.some(
+      (entry) =>
+        entry.githubId === steward.actorId &&
+        entry.githubLogin.toLowerCase() === steward.login.toLowerCase(),
+    )
+  )
+    maintainers.push({ githubId: steward.actorId, githubLogin: steward.login });
+  let verified = false;
+  let unavailable: string | undefined;
+  for (const maintainer of maintainers) {
+    const checked = await readRepositoryAccess(
+      deps.repositoryAccess,
+      project.manifest,
+      maintainer,
+    );
+    const authority = setupAuthority(
+      checked,
+      maintainer,
+      project.manifest.repositories[0].id,
+    );
+    if (authority.state === "retry") {
+      unavailable = authority.message;
+      continue;
+    }
+    if (authority.state !== "verified") continue;
+    if (
+      checked.state !== "read" ||
+      checked.access.installation !== "installed" ||
+      !checked.access.repository
+    ) {
+      unavailable = "Current immutable repository identity is unavailable.";
+      continue;
+    }
+    if (!manifestMatchesRepository(project.manifest, checked.access.repository))
+      fail(
+        409,
+        "repository_mismatch",
+        "The repository identity no longer matches the registered project.",
+      );
+    verified = true;
+    break;
+  }
+  if (!verified) {
+    if (unavailable) fail(503, "github_unavailable", unavailable);
     fail(
       403,
       "forbidden",
-      "The approving administrator needs current repository authority.",
+      "The registered project creator or individual steward needs current repository write or maintain authority.",
     );
-  if (
-    checked.state !== "read" ||
-    checked.access.installation !== "installed" ||
-    !checked.access.repository
-  )
-    fail(
-      503,
-      "github_unavailable",
-      "Current immutable repository identity is unavailable.",
-    );
-  if (!manifestMatchesRepository(project.manifest, checked.access.repository))
-    fail(
-      409,
-      "repository_mismatch",
-      "The repository identity no longer matches the registered project.",
-    );
+  }
   const generation = await deps.projects.enforcementGeneration();
   if (
     publicRestrictionOf(project, await deps.projects.listEnforcements())
@@ -487,7 +517,7 @@ async function revokeExemption(
   id: string,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["reason", "decisionReference", "confirmation"]);
   const reason = exemptionReason(body);
   if (!/^vex_[A-Za-z0-9_-]{4,76}$/u.test(id))
@@ -513,7 +543,7 @@ async function requestAssessment(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body).sort().join(",");
   if (keys !== "projectId,reason,revision")
     fail(400, "invalid_request", "Send projectId, revision and reason");

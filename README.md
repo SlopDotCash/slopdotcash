@@ -96,8 +96,7 @@ Slop shows one public measure: Points. Slopbot reviews each accepted pull
 request, estimates its size and value, and assigns accepted-work Points. A
 maintainer `slop-score` record can correct that assessment. Useful reviews earn
 separate credit. Usage evidence is diagnostic and never changes Points, rank,
-reward share, or payment. See the [scoring contract](protocol/scoring-v2.md)
-and the [Points rules](protocol/points-v1.md).
+reward share, or payment. See the [Points and scoring rules](docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).
 
 ## What the public record means
 
@@ -215,8 +214,14 @@ Install the lockfile before preparing the ledger input:
 
 ```bash
 bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 ```
+
+The setup command installs the pinned Dafny prover for the source contracts.
+It checks the official archive checksum and reuses a valid local installation.
+See the [LemmaScript report](https://github.com/SlopDotCash/slopdotcash/blob/22b0fd511aa8cc8c8e5810fdb979b40a03c5a5f9/docs/lemmascript-research.md) for supported platforms,
+proof scope and the contract-update process.
 
 The registry sync reads the public D1 API without credentials, as PR CI does.
 Award and skill validation need those project identities; the committed empty
@@ -267,6 +272,11 @@ All code, browser, sandbox, build and production release checks still run.
 Missing or invalid published data stops the release. The option defaults to
 `false`; normal releases continue to collect fresh data.
 
+Before the first verification run, install the pinned local prover with
+`bun run lemmascript:setup`. It downloads and checks the Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH`.
+
 After the chosen preparation succeeds, run:
 
 ```bash
@@ -275,7 +285,8 @@ bun run format:check
 bun run test:e2e
 ```
 
-`bun run verify` checks the committed source records (brand tokens, projects,
+`bun run verify` checks selected LemmaScript contracts, the Quint state models,
+and the committed source records (brand tokens, projects,
 evaluations, disclosures, contribution quality, cycles, and protocol identity);
 audits dependencies; runs type and lint checks, smart-contract unit tests, and
 the database, API, CLI and Worker integration suites; and produces the static build.
@@ -285,7 +296,9 @@ by `bun run test:e2e`.
 CI selects browser coverage from the changed files: preview and Pages for UI,
 registry for API changes, and a short smoke pass for documentation and release
 promotion. Installer and isolated-sandbox checks run when their sources change.
-The fast type, lint, unit, integration and build gates remain in place.
+Pushes to `development` and `main` run every browser lane, the installer and the
+isolated sandbox. The fast type, lint, unit, integration and build gates remain
+in place.
 
 When GitHub cannot return a merged pull request's file list, the collector
 reads the complete changes from public Git objects with the pinned Git tool.

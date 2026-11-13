@@ -7,6 +7,7 @@ import {
   type VaultSnapshot,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import { firstDecreasedCounter, vaultCounterHeader } from "./verified-evidence";
 
 /** One finalized vault read, as both chain adapters' `readVaultTotals` return it. */
 export type { VaultTotals };
@@ -19,7 +20,7 @@ export interface SnapshotDeployment {
   /** Solana only: the adapter reads, and reports as `vault`, the project PDA. */
   projectPda?: string | null;
 }
-export type VaultTotalsReader<D extends SnapshotDeployment> = (
+type VaultTotalsReader<D extends SnapshotDeployment> = (
   deployment: D,
   rpcUrl: string,
 ) => Promise<VaultTotals>;
@@ -93,16 +94,28 @@ export async function storeVaultSnapshot(
     .bind(deployment.projectId, deployment.network, deployment.vault)
     .first<Record<string, string | number | null>>();
   if (prior) {
-    if (BigInt(totals.blockNumber) < BigInt(prior.block_number as string))
-      return "older";
-    if (
-      prior.asset_address !== deployment.asset ||
-      prior.asset_decimals !== totals.decimals
-    )
-      throw new Error("Vault asset changed");
-    for (const key of CUMULATIVE)
-      if (BigInt(totals[key]) < BigInt(prior[COLUMNS[key]] as string))
-        throw new Error("Vault counter decreased");
+    const header = vaultCounterHeader(
+      {
+        block: BigInt(totals.blockNumber),
+        asset: deployment.asset,
+        decimals: totals.decimals,
+      },
+      {
+        block: BigInt(prior.block_number as string),
+        asset: prior.asset_address as string,
+        decimals: prior.asset_decimals as number,
+      },
+    );
+    if (header === "older") return "older";
+    if (header === "asset-changed") throw new Error("Vault asset changed");
+    const incomingCounters: bigint[] = [],
+      priorCounters: bigint[] = [];
+    for (const key of CUMULATIVE) {
+      incomingCounters.push(BigInt(totals[key]));
+      priorCounters.push(BigInt(prior[COLUMNS[key]] as string));
+    }
+    if (firstDecreasedCounter(incomingCounters, priorCounters) >= 0)
+      throw new Error("Vault counter decreased");
   }
   const blockTime = new Date(totals.blockTime).toISOString();
   const keys = [...CUMULATIVE, ...CURRENT];

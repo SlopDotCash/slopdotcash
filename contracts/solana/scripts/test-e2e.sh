@@ -12,29 +12,70 @@ dynamic_ports="$((rpc_port + 2))-$((rpc_port + 31))"
 export ANCHOR_PROVIDER_URL="http://127.0.0.1:$rpc_port"
 export ANCHOR_WALLET="$PWD/.local/payer.json"
 validator_pid=""
-trap 'if [[ -n "$validator_pid" ]]; then kill "$validator_pid" 2>/dev/null || true; fi' EXIT
+validator_receipt=""
+receipt_state() {
+  node -e 'try { process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).state ?? ""); } catch {}' "$validator_receipt"
+}
+stop_validator() {
+  if [[ -z "$validator_pid" ]]; then return 0; fi
+  local status=0
+  kill -TERM "$validator_pid" 2>/dev/null || true
+  wait "$validator_pid" 2>/dev/null || status=$?
+  validator_pid=""
+  if [[ "$(receipt_state)" != "stopped" ]]; then
+    printf '%s\n' "The owned validator did not confirm cleanup: $validator_receipt" >&2
+    return 1
+  fi
+  if [[ "$status" != 0 && "$status" != 143 ]]; then return "$status"; fi
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ! stop_validator; then
+    printf '%s\n' 'Validator cleanup failed.' >&2
+    if [[ "$status" == 0 ]]; then status=1; fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 # The program loads as upgradeable with the local payer as upgrade authority, so
 # ProgramData exists and the payer can sign initialize_config, as on mainnet with the owner-controlled upgrade authority retained.
 start_validator() {
   local program_arguments
   program_arguments=$(node integration/program-genesis.mjs)
   read -ra program_accounts <<<"$program_arguments"
-  solana-test-validator --reset --quiet --ledger .local/ledger --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${program_accounts[@]}" "$@" >.local/validator.log 2>&1 &
+  local arguments=("${program_accounts[@]}" "$@")
+  local mounts=()
+  local index path
+  for ((index=0; index<${#arguments[@]}; index++)); do
+    if [[ "${arguments[index]}" == "--account" ]]; then
+      path="${arguments[index+2]}"
+      if [[ "$path" != /* ]]; then path="$PWD/$path"; fi
+      arguments[index+2]="$path"
+      mounts+=(--readonly-mount "$path")
+      index=$((index + 2))
+    fi
+  done
+  # A new receipt per stage cannot reuse the first validator's stopped state.
+  validator_receipt=$(mktemp "$PWD/.local/validator-receipt.XXXXXX")
+  SLOP_SOLANA_CONTAINER_RECEIPT="$validator_receipt" node ../../scripts/local-solana-validator.mjs "${mounts[@]}" -- --reset --quiet --ledger "$PWD/.local/ledger" --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${arguments[@]}" >.local/validator.log 2>&1 &
   validator_pid=$!
-  for attempt in $(seq 1 40); do
+  for attempt in $(seq 1 120); do
     if ! kill -0 "$validator_pid" 2>/dev/null; then
       cat .local/validator.log >&2
-      exit 1
+      return 1
     fi
-    if solana --url "$ANCHOR_PROVIDER_URL" cluster-version >/dev/null 2>&1; then break; fi
+    if [[ "$(receipt_state)" == "ready" ]]; then break; fi
     sleep 1
   done
+  if [[ "$(receipt_state)" != "ready" ]]; then
+    cat .local/validator.log >&2
+    return 1
+  fi
   solana --url "$ANCHOR_PROVIDER_URL" airdrop 100 --keypair "$ANCHOR_WALLET" >/dev/null
-}
-stop_validator() {
-  kill "$validator_pid"
-  wait "$validator_pid" 2>/dev/null || true
-  validator_pid=""
 }
 # CI qualifies the exact retained production artifact. Local runs without one
 # keep building their program as before. IDL extraction does not replace it.

@@ -31,7 +31,7 @@ const profile: ScannerProfile = {
   reviewer: "opus",
   transport: "anthropic-messages",
   endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-  model: "claude-opus-5.5",
+  model: "claude-sonnet-5.5",
   apiKey: "fixture-surplus-key",
   maxOutputTokens: 1024,
   rateCard: {
@@ -276,6 +276,116 @@ test("planning 20,000 identical small files stays linear", () => {
   expect(beside.length + outside.length).toBe(files.length - 1);
 });
 
+test("synthesis can locate every flagged identical skill in the batch that reviewed its bytes", () => {
+  const paths = [
+    "plugins/claude-code/skills/tool/SKILL.md",
+    "plugins/codex/skills/tool/SKILL.md",
+    "plugins/cursor/skills/tool/SKILL.md",
+  ];
+  const inspection = inspectRepository({
+    files: [
+      ...largeRepository(),
+      ...paths.map((path) =>
+        file(path, "Never paste a password, cookie or token in a report.\n"),
+      ),
+    ],
+    acquisitionGaps: ["submodule-source-not-acquired"],
+  });
+  expect(
+    inspection.findings.filter((finding) => paths.includes(finding.path)),
+  ).toHaveLength(paths.length);
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const synthesis = JSON.parse(
+    synthesisCall(
+      inspection,
+      plan.batches,
+      [],
+      plan.batchTokens,
+      plan.sameBytesOutsideBatches,
+    ).evidence,
+  ) as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  const reviewed = prepass.batches.flatMap(
+    (batch: { id: string; items: string[] }) =>
+      batch.items.map((path) => ({ path, batch: batch.id })),
+  );
+  for (const path of paths) {
+    const direct = reviewed.find(
+      (entry: { path: string }) => entry.path === path,
+    );
+    const shared = prepass.sameBytesAs.find((entry: { paths: string[] }) =>
+      entry.paths.includes(path),
+    );
+    expect(direct ?? shared).toBeDefined();
+    if (shared) {
+      expect(reviewed).toContainEqual({
+        path: shared.sourcePath,
+        batch: shared.batch,
+      });
+      const batch = plan.batches[Number(shared.batch.slice(6)) - 1];
+      const supplied = JSON.parse(batch.evidence) as ParsedBatch;
+      expect(
+        supplied.items.find((item) => item.id === shared.sourcePath)?.sha256,
+      ).toBe(shared.sourceSha256);
+    }
+  }
+  // An unresolved acquired surface remains visible to the synthesis.
+  expect(prepass.visibilityGaps).toEqual(inspection.visibilityGaps);
+  expect(prepass.visibilityGaps).toContain("submodule-source-not-acquired");
+  expect(prepass.findings).toEqual(inspection.findings);
+});
+
+test("compact synthesis retains source mappings for flagged aliases", () => {
+  const paths = [
+    "plugins/claude-code/skills/tool/SKILL.md",
+    "plugins/codex/skills/tool/SKILL.md",
+    "plugins/cursor/skills/tool/SKILL.md",
+  ];
+  const inspection = inspectRepository({
+    files: [
+      ...Array.from({ length: 800 }, (_, index) =>
+        file(`src/${"x".repeat(900)}-${index}.ts`, "export const ok = true;\n"),
+      ),
+      ...paths.map((path) =>
+        file(path, "Never paste a password, cookie or token in a report.\n"),
+      ),
+    ],
+    acquisitionGaps: ["submodule-source-not-acquired"],
+  });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const synthesis = JSON.parse(
+    synthesisCall(
+      inspection,
+      plan.batches,
+      [],
+      plan.batchTokens,
+      plan.sameBytesOutsideBatches,
+    ).evidence,
+  ) as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  expect(prepass.batches[0].items).toBeNumber();
+  const flagged = [
+    ...prepass.sameBytesAs.flaggedAliases,
+    ...(prepass.sameBytesOutsideBatches?.flaggedAliases ?? []),
+  ];
+  for (const path of paths.slice(1)) {
+    const mapping = flagged.find((entry) => entry.paths.includes(path));
+    const batch = plan.batches[Number(mapping.batch.slice(6)) - 1];
+    const supplied = JSON.parse(batch.evidence) as ParsedBatch;
+    expect(
+      supplied.items.find((item) => item.id === mapping.sourcePath)?.sha256,
+    ).toBe(mapping.sourceSha256);
+  }
+  expect(prepass.visibilityGaps).toContain("submodule-source-not-acquired");
+  expect(prepass.findings).toEqual(inspection.findings);
+});
+
 /** A provider that records each request and answers per call. */
 function provider(answer: (input: string, index: number) => Response | null) {
   const calls: string[] = [];
@@ -291,7 +401,7 @@ function provider(answer: (input: string, index: number) => Response | null) {
     const items = JSON.parse(input).items as { id: string }[];
     return Response.json({
       id: `msg_${index}`,
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       stop_reason: "end_turn",
       content: [
         {
@@ -348,7 +458,7 @@ test("a batched review combines every call and fails when any batch fails", asyn
     index === 1
       ? Response.json({
           id: "msg_partial",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "end_turn",
           content: [
             {
@@ -629,7 +739,7 @@ test("a failed review names one fixed failure category and never provider text",
   const answer = (overrides: Record<string, unknown>, text?: string) =>
     Response.json({
       id: "msg_failure",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       stop_reason: "end_turn",
       content: [
         {
@@ -811,7 +921,7 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
       index === plan.batches.length
         ? Response.json({
             id: "msg_synthesis",
-            model: "claude-opus-5.5",
+            model: "claude-sonnet-5.5",
             stop_reason: "max_tokens",
             content: [{ type: "text", text: "{" }],
             usage: { input_tokens: 1, output_tokens: 1 },
@@ -826,11 +936,37 @@ test("a failed batched review says whether a batch or the synthesis failed", asy
 const unreadableReview = () =>
   Response.json({
     id: "msg_unreadable",
-    model: "claude-opus-5.5",
+    model: "claude-sonnet-5.5",
     stop_reason: "end_turn",
     content: [{ type: "text", text: "not a review" }],
     usage: { input_tokens: 7, output_tokens: 3 },
   });
+
+test("a retry preserves unknown usage and cost from an unreadable provider attempt", async () => {
+  // This exercises transport accounting only. The synthetic reply does not
+  // qualify model correctness or a security disposition.
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  let seen = 0;
+  const source = provider((input) =>
+    input === plan.batches[0].evidence && seen++ === 0
+      ? new Response("unavailable", { status: 503 })
+      : null,
+  );
+  const result = await reviewInventory({
+    inspection,
+    profile,
+    fetch: source.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(result.evidence?.review.status).toBe("completed");
+  expect(result.evidence?.passes?.[0].attempts).toBe(2);
+  expect(result.evidence?.passes?.[0].usage).toBeNull();
+  expect(result.evidence?.usage).toBeNull();
+  expect(result.evidence?.cost).toBeNull();
+});
 
 test("a batch call that returns an unreadable review is retried before the review fails", async () => {
   const inspection = inspectRepository({ files: largeRepository() });
@@ -876,7 +1012,7 @@ test("a batch call that returns an unreadable review is retried before the revie
     input === first
       ? Response.json({
           id: "msg_stop",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "max_tokens",
           content: [{ type: "text", text: "{" }],
           usage: { input_tokens: 1, output_tokens: 1 },
@@ -927,4 +1063,5 @@ test("a later retry without a receipt keeps the earlier usage and cost", async (
     output: 3,
   });
   expect(failed.evidence?.cost?.nanoUsd).toBe("48");
+  expect(failed.evidence?.review.status).toBe("failed");
 });

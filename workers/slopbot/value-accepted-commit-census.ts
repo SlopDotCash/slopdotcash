@@ -1,4 +1,4 @@
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import type { ValueClient } from "./value-publication";
 
 interface Carrier {

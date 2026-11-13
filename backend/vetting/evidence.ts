@@ -21,21 +21,23 @@ import {
   isSameOriginJsonWrite,
   JSON_HEADERS,
   json as jsonResponse,
+  requireActor,
 } from "../http";
 import type { ProjectD1Database } from "../projects/cloudflare-persistence";
 import type { R2Bucket } from "../trace/cloudflare-persistence";
-import { isRecord, readJsonObject } from "../trace/validation";
+import { isRecord, readStrictJsonObject } from "../trace/validation";
 import {
   chunkKey,
   chunkLayout,
   EVIDENCE_CHUNK_BYTES,
   type EvidenceChunk,
+  EvidenceCorruptionError,
   evidenceLocation,
-  evidenceObjectKey,
   verifiedPart,
-  verifyParts,
+  verifyPartSequence,
 } from "./evidence-chunks";
 import { PERMANENT_ADMISSION_EVIDENCE_SQL } from "./evidence-retention";
+import { EvidenceStorage } from "./evidence-storage";
 import type { VettingResult } from "./result";
 import {
   isScanResult,
@@ -175,12 +177,23 @@ type ObjectRow = {
   chunks: string | null;
   /** "content" since migration 0107; earlier rows are run-scoped. */
   storage?: string | null;
+  /** Immutable physical generation; null identifies pre-0119 evidence. */
+  storage_generation?: string | null;
 };
 const headers = { ...JSON_HEADERS, "x-robots-tag": "noindex" };
 const json = (status: number, body: unknown) =>
   jsonResponse(status, body, { headers: { "x-robots-tag": "noindex" } });
 export class VettingEvidence {
   constructor(readonly deps: EvidenceDependencies) {}
+  private storage() {
+    const { bucket } = this.configuration();
+    return new EvidenceStorage(
+      this.deps.db,
+      bucket,
+      () => this.deps.now(),
+      () => this.deps.randomId(),
+    );
+  }
   private signed(request: Request, maximum: number) {
     if (!this.deps.signed)
       fail(
@@ -227,8 +240,9 @@ export class VettingEvidence {
       .run();
   }
   async operator(request: Request) {
-    const actor = await this.deps.session?.(request);
-    if (!actor) fail(401, "unauthorized", "Sign in with GitHub");
+    const actor = await requireActor(request, {
+      sessionActor: async (value) => this.deps.session?.(value) ?? null,
+    });
     const { policy } = this.configuration();
     if (!policy.operatorGithubIds.includes(actor.githubId))
       fail(403, "forbidden", "Designated vetting operator access is required");
@@ -266,7 +280,7 @@ export class VettingEvidence {
         "forbidden",
         "Only the evidence policy owner may close an exception case",
       );
-    const body = await readJsonObject(request);
+    const body = await readStrictJsonObject(request);
     exact(body, ["reason"]);
     const reason = text(body.reason, 1000);
     const state = await this.deps.db
@@ -287,9 +301,10 @@ export class VettingEvidence {
           "INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(?,?,?,?) ON CONFLICT(assessment_id) DO NOTHING",
         )
         .bind(assessment, at, actor.githubId, reason),
+      // A replay keeps the original closure, so it records no second close.
       this.deps.db
         .prepare(
-          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,reason,created_at) VALUES(?,?,?,?,?,?)",
+          "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,reason,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM vetting_evidence_case_closures WHERE assessment_id=? AND closed_at=?) AND NOT EXISTS (SELECT 1 FROM vetting_evidence_audit WHERE assessment_id=? AND action='close-case')",
         )
         .bind(
           this.deps.randomId(),
@@ -298,6 +313,9 @@ export class VettingEvidence {
           assessment,
           reason,
           at,
+          assessment,
+          at,
+          assessment,
         ),
     ]);
     const closure = await this.deps.db
@@ -352,23 +370,18 @@ export class VettingEvidence {
     }
   }
   async bytes(row: ObjectRow, run: Run): Promise<Uint8Array> {
-    const bucket = this.readable(run);
+    this.readable(run);
     if (row.size_bytes > EVIDENCE_CHUNK_BYTES)
       fail(
         413,
         "evidence_oversize",
         "Large evidence requires a streamed download",
       );
-    return verifiedPart(
-      bucket,
-      evidenceLocation(row),
-      row.sha256,
-      row.size_bytes,
-    );
+    return this.storage().readPart(row);
   }
   async verify(row: ObjectRow, run: Run, requireComplete = true) {
-    const bucket = this.readable(run),
-      chunks = this.layout(row);
+    this.readable(run);
+    const chunks = this.layout(row);
     if (!chunks) {
       await this.bytes(row, run);
       return;
@@ -387,7 +400,10 @@ export class VettingEvidence {
         "evidence_pending",
         "Chunked evidence has not completed whole-file verification",
       );
-    await verifyParts(bucket, evidenceLocation(row), chunks, row.sha256);
+    const storage = this.storage();
+    await verifyPartSequence(chunks, row.sha256, (part) =>
+      storage.readPart(row, part),
+    );
   }
   /**
    * The complete bytes of a JSON report or inventory that the intake must
@@ -417,19 +433,12 @@ export class VettingEvidence {
         "evidence_pending",
         "Chunked evidence has not completed whole-file verification",
       );
-    const bucket = this.readable(run);
+    this.readable(run);
+    const storage = this.storage();
     const whole = new Uint8Array(row.size_bytes);
     let offset = 0;
     for (const chunk of chunks) {
-      whole.set(
-        await verifiedPart(
-          bucket,
-          chunkKey(evidenceLocation(row), chunk),
-          chunk.sha256,
-          chunk.sizeBytes,
-        ),
-        offset,
-      );
+      whole.set(await storage.readPart(row, chunk), offset);
       offset += chunk.sizeBytes;
     }
     if ((await sha256Hex(whole)) !== row.sha256)
@@ -1206,14 +1215,8 @@ export class VettingEvidence {
         objects,
       }),
       digest = await sha256Hex(new TextEncoder().encode(manifest));
-    const previous = await this.deps.db
-      .prepare(
-        "SELECT manifest_sha256 FROM vetting_evidence_runs WHERE assessment_id=? AND run_id=?",
-      )
-      .bind(assessment, runId)
-      .first<{ manifest_sha256: string }>();
-    if (previous) {
-      if (previous.manifest_sha256 !== digest)
+    const replay = async (registeredDigest: string) => {
+      if (registeredDigest !== digest)
         fail(
           409,
           "evidence_conflict",
@@ -1222,9 +1225,18 @@ export class VettingEvidence {
       return json(200, {
         manifestSha256: digest,
         replayed: true,
-        stored: await this.stored(objects),
+        stored: await this.stored(assessment, runId),
       });
-    }
+    };
+    const registered = () =>
+      this.deps.db
+        .prepare(
+          "SELECT manifest_sha256 FROM vetting_evidence_runs WHERE assessment_id=? AND run_id=?",
+        )
+        .bind(assessment, runId)
+        .first<{ manifest_sha256: string }>();
+    const previous = await registered();
+    if (previous) return replay(previous.manifest_sha256);
     const at = this.deps.now();
     try {
       await this.deps.db.batch([
@@ -1245,10 +1257,11 @@ export class VettingEvidence {
             ).toISOString(),
             input.assemblySha256 ?? null,
           ),
-        ...objects.map((o) =>
+        ...objects.flatMap((o) => [
+          ...this.storage().registrationStatements(o.sha256, at.toISOString()),
           this.deps.db
             .prepare(
-              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage) VALUES(?,?,?,?,?,?,?,?,?,'content')",
+              "INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation) VALUES(?,?,?,?,?,?,?,?,?,'content',(SELECT id FROM vetting_evidence_generations WHERE sha256=? AND state='active'))",
             )
             .bind(
               assessment,
@@ -1260,8 +1273,9 @@ export class VettingEvidence {
               o.contentType,
               `vetting/${assessment}/${runId}/${o.sha256}`,
               o.chunks ? JSON.stringify(o.chunks) : null,
+              o.sha256,
             ),
-        ),
+        ]),
         this.deps.db
           .prepare(
             "INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(?,?,?,?,?,?)",
@@ -1276,6 +1290,10 @@ export class VettingEvidence {
           ),
       ]);
     } catch (error) {
+      // A concurrent registration may win after our initial read. Its full
+      // manifest/object/audit batch is the authority for replay or conflict.
+      const winner = await registered();
+      if (winner) return replay(winner.manifest_sha256);
       if (String(error).includes("evidence cleanup in progress"))
         fail(
           409,
@@ -1286,7 +1304,7 @@ export class VettingEvidence {
     }
     return json(201, {
       manifestSha256: digest,
-      stored: await this.stored(objects),
+      stored: await this.stored(assessment, runId),
     });
   }
   /**
@@ -1296,31 +1314,29 @@ export class VettingEvidence {
    * retention still rereads and hashes every byte, and a chunked object
    * still needs this run's finalization.
    */
-  private async stored(
-    objects: { sha256: string; sizeBytes: number; chunks?: EvidenceChunk[] }[],
-  ): Promise<string[]> {
-    const { bucket } = this.configuration();
+  private async stored(assessment: string, runId: string): Promise<string[]> {
+    const storage = this.storage();
+    const objects =
+      (
+        await this.deps.db
+          .prepare(
+            "SELECT * FROM vetting_evidence_objects WHERE assessment_id=? AND run_id=? ORDER BY sha256",
+          )
+          .bind(assessment, runId)
+          .all<ObjectRow>()
+      ).results ?? [];
     // Reread and hash each part (one part buffered at a time), so a missing
     // or corrupt copy is uploaded again instead of referenced.
-    const present = (key: string, sha: string, size: number) =>
-      verifiedPart(bucket, key, sha, size).then(
+    const present = (row: ObjectRow, part?: EvidenceChunk) =>
+      storage.readPart(row, part).then(
         () => true,
         () => false,
       );
     const stored: string[] = [];
     for (const object of objects) {
-      const key = evidenceObjectKey(object.sha256);
       let complete = true;
-      for (const part of object.chunks ?? [
-        { index: -1, sha256: object.sha256, sizeBytes: object.sizeBytes },
-      ])
-        if (
-          !(await present(
-            part.index === -1 ? key : chunkKey(key, part),
-            part.sha256,
-            part.sizeBytes,
-          ))
-        ) {
+      for (const part of this.layout(object) ?? [undefined])
+        if (!(await present(object, part))) {
           complete = false;
           break;
         }
@@ -1330,10 +1346,11 @@ export class VettingEvidence {
   }
   /**
    * Create-only write of bytes already checked against `sha`, then a full
-   * reread. A content-addressed key holds only the bytes its digest names, so
-   * when the existing copy is missing or fails verification it is replaced
-   * with these verified bytes; a valid copy is never overwritten. Run-scoped
-   * keys keep the strict create-only rule.
+   * reread. Only bytes verified against the key's digest may be written.
+   * A missing or corrupt copy can be repaired with these verified bytes.
+   * Repair compares the ETag of the actual corrupt
+   * response; missing copies retry create-only. Unknown reads authorize no
+   * replacement. Run-scoped keys keep the strict create-only rule.
    */
   private async store(
     bucket: R2Bucket,
@@ -1354,14 +1371,19 @@ export class VettingEvidence {
     try {
       await verifiedPart(bucket, key, sha, body.byteLength);
     } catch (error) {
-      if (!content) throw error;
-      // The one deliberate overwrite: verified bytes replace a missing or
-      // corrupt copy at the key their own digest names.
-      await bucket.put(
-        key,
-        body,
-        options as unknown as Parameters<R2Bucket["put"]>[2],
-      );
+      if (!content || !(error instanceof Error)) throw error;
+      let onlyIf: Parameters<R2Bucket["put"]>[2]["onlyIf"];
+      if (error instanceof EvidenceCorruptionError) {
+        if (error.observedEtag === undefined) throw error;
+        onlyIf = { etagMatches: error.observedEtag };
+      } else if (
+        (error as Error & { code?: string }).code === "evidence_missing"
+      ) {
+        onlyIf = { etagDoesNotMatch: "*" };
+      } else throw error;
+      await bucket.put(key, body, { ...options, onlyIf });
+      // A concurrent writer may have won the condition. Accept only a fresh
+      // verified copy, never the success/missing result of the PUT alone.
       await verifiedPart(bucket, key, sha, body.byteLength);
     }
   }
@@ -1392,15 +1414,25 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the complete declared bytes",
       );
-    await this.store(
-      bucket,
-      evidenceLocation(object),
-      body,
-      sha,
-      object.content_type,
-      object.storage === "content",
-    );
+    if (object.storage_generation) {
+      await this.storage().storePart(
+        object,
+        body,
+        undefined,
+        object.content_type,
+      );
+    } else {
+      await this.store(
+        bucket,
+        evidenceLocation(object),
+        body,
+        sha,
+        object.content_type,
+        object.storage === "content",
+      );
+    }
     await this.bytes(object, run);
+    this.readable(await this.run(assessment, runId));
     await this.audit(`service:${keySha256}`, "upload", assessment, runId, sha);
     return json(200, { sha256: sha, sizeBytes: body.byteLength });
   }
@@ -1430,15 +1462,26 @@ export class VettingEvidence {
         "digest_mismatch",
         "Upload must match the exact declared chunk bytes",
       );
-    const key = chunkKey(evidenceLocation(object), chunk);
-    await this.store(
-      bucket,
-      key,
-      body,
-      chunk.sha256,
-      "application/octet-stream",
-      object.storage === "content",
-    );
+    if (object.storage_generation) {
+      await this.storage().storePart(
+        object,
+        body,
+        chunk,
+        "application/octet-stream",
+      );
+    } else {
+      await this.store(
+        bucket,
+        chunkKey(evidenceLocation(object), chunk),
+        body,
+        chunk.sha256,
+        "application/octet-stream",
+        object.storage === "content",
+      );
+    }
+    // Storage may have waited across the access deadline. Re-read closure
+    // state before recording an accepted upload; retained bytes are separate.
+    this.readable(await this.run(assessment, runId));
     await this.audit(
       `service:${keySha256}`,
       "upload-chunk",
@@ -1475,6 +1518,8 @@ export class VettingEvidence {
         "Only chunked evidence requires finalization",
       );
     await this.verify(object, run, false);
+    // Whole-file I/O does not reserve the captured run's access window.
+    this.readable(await this.run(assessment, runId));
     // No partial completion state: concurrent/repeated finalization has one immutable receipt.
     const at = this.deps.now().toISOString();
     const [recorded] = await this.deps.db.batch([
@@ -1532,6 +1577,7 @@ export class VettingEvidence {
       const objects = [];
       for (const row of rows) {
         const chunks = this.layout(row);
+        const key = chunks ? null : await this.storage().partKey(row);
         const head = chunks
           ? await this.deps.db
               .prepare(
@@ -1539,7 +1585,9 @@ export class VettingEvidence {
               )
               .bind(run.assessment_id, run.run_id, row.sha256)
               .first<{ completed_at: string }>()
-          : await bucket.head(evidenceLocation(row));
+          : key === null
+            ? null
+            : await bucket.head(key);
         const state =
           run.expires_at !== null &&
           Date.parse(run.expires_at) <= this.deps.now().getTime()
@@ -1615,6 +1663,10 @@ export class VettingEvidence {
       null,
       "Inspect registered vetting evidence",
     );
+    // Inventory construction and its audit may outlive the admitting session.
+    const currentActor = await this.operator(request);
+    if (currentActor.githubId !== actor.githubId)
+      fail(403, "forbidden", "The evidence operator changed");
     return json(200, {
       runs: result,
       policy,
@@ -1630,7 +1682,7 @@ export class VettingEvidence {
     download = false,
   ) {
     const actor = await this.operator(request),
-      body = await readJsonObject(request);
+      body = await readStrictJsonObject(request);
     exact(body, ["reason"]);
     const reason = text(body.reason);
     if (reason.trim().length < 8)
@@ -1749,6 +1801,13 @@ export class VettingEvidence {
       object = await this.object(assessment, runId, sha),
       bytes = await this.bytes(object, run);
     await this.audit(actor.githubId, "read", assessment, runId, sha, reason);
+    // Storage and audit writes can outlive the session that consumed the
+    // grant. Recheck immediately before releasing the buffered private bytes.
+    const currentRun = await this.run(assessment, runId);
+    const currentActor = await this.operator(request);
+    if (currentActor.githubId !== actor.githubId)
+      fail(403, "forbidden", "The evidence operator changed");
+    this.readable(currentRun);
     return new Response(bytes as Uint8Array<ArrayBuffer>, {
       headers: {
         ...headers,
@@ -1763,11 +1822,11 @@ export class VettingEvidence {
     assessment: string,
     runId: string,
     sha: string,
-    token = "",
-    maxAge = 0,
+    token: string,
+    maxAge: number,
   ) {
     const path = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download`;
-    return `__Secure-vetting-read-grant=${token}; Path=${path}; Max-Age=${token ? maxAge : 0}; Secure; HttpOnly; SameSite=Strict`;
+    return `__Secure-vetting-read-grant=${token}; Path=${path}; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=Strict`;
   }
   async download(
     request: Request,
@@ -1814,36 +1873,52 @@ export class VettingEvidence {
       fail(409, "evidence_pending", "Whole-file verification is incomplete");
     let index = 0,
       started = false,
-      ended = false;
+      ended = false,
+      cancelled = false;
     const audit = (action: string) =>
       this.audit(actor.githubId, action, assessment, runId, sha, reason);
+    const authorizePart = async () => {
+      const current = await this.operator(request);
+      if (current.githubId !== actor.githubId)
+        fail(403, "forbidden", "The download operator changed");
+    };
     await audit("download-authorized");
     const stream = new ReadableStream<Uint8Array>(
       {
         pull: async (controller) => {
           try {
-            const bucket = this.readable(run);
+            await authorizePart();
+            if (ended) return;
+            const currentRun = await this.run(assessment, runId);
+            this.readable(currentRun);
             if (index >= (chunks?.length ?? 1)) {
-              await audit("download-finished");
               if (ended) return;
+              // Claim the terminal outcome before yielding to the audit write.
+              // A concurrent cancellation must not append a second outcome.
               ended = true;
-              controller.close();
+              try {
+                await audit("download-finished");
+              } catch (error) {
+                controller.error(error);
+                return;
+              }
+              if (!cancelled) controller.close();
               return;
             }
             const part = chunks?.[index];
             const bytes = part
-              ? await verifiedPart(
-                  bucket,
-                  chunkKey(evidenceLocation(object), part),
-                  part.sha256,
-                  part.sizeBytes,
-                )
-              : await this.bytes(object, run);
+              ? await this.storage().readPart(object, part)
+              : await this.bytes(object, currentRun);
             if (ended) return;
             if (!started) {
               await audit("download-started");
               started = true;
             }
+            if (ended) return;
+            // Session revocation or expiry during R2 I/O must win before
+            // private bytes leave this request. The grant remains consumed.
+            await authorizePart();
+            this.readable(currentRun);
             if (ended) return;
             index++;
             controller.enqueue(bytes);
@@ -1858,6 +1933,7 @@ export class VettingEvidence {
           }
         },
         cancel: async () => {
+          cancelled = true;
           if (!ended) {
             ended = true;
             await audit("download-cancelled");
@@ -1941,22 +2017,18 @@ export class VettingEvidence {
       )
         return await this.grant(request, assessment, run, sha, true);
       if (operator && path.length === 6 && action === "download") {
-        let response: Response;
+        // A delayed response must not clear a newer grant's same-path cookie.
+        // D1 consumes each grant once; its original cookie TTL still applies.
         try {
           if (request.method !== "GET")
             fail(405, "method_not_allowed", "Native downloads require GET");
-          response = await this.download(request, assessment, run, sha);
+          return await this.download(request, assessment, run, sha);
         } catch (error) {
-          response = apiErrorResponse(error, {
+          return apiErrorResponse(error, {
             label: "vetting evidence API failure",
             respond: json,
           });
         }
-        response.headers.set(
-          "set-cookie",
-          this.downloadCookie(assessment, run, sha),
-        );
-        return response;
       }
       if (
         operator &&

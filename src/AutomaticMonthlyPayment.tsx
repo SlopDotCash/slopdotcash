@@ -22,31 +22,34 @@ import {
   formatBaseUnits,
   transactionUrl,
 } from "./lib/payments/contracts";
+import {
+  type PendingAttempt,
+  validPendingAttemptId,
+} from "./lib/pending-attempt";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
 import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
-import {
-  PendingTransaction,
-  UnsentTransactionRecovery,
-} from "./OwnerPresentation";
+import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
-type Pending = {
+type Pending = PendingAttempt & {
   version: 1;
   wallet: string;
   cap: string;
   enabled: boolean;
   decimals: number;
   hash: string | null;
+  hashSource?: "wallet" | "recovery";
   solanaBlockhash?: string;
 };
-function readPending(key: string, solana: boolean): Pending | null {
-  const text = sessionStorage.getItem(key);
-  if (!text) return null;
+function readPending(text: string | null, solana: boolean): Pending | null {
+  if (text === null) return null;
   const value = JSON.parse(text) as Pending;
   if (
     value.version !== 1 ||
+    !validPendingAttemptId(value.attemptId) ||
     !isWalletAddress(solana ? "solana" : "base", value.wallet) ||
     typeof value.cap !== "string" ||
     !/^(0|[1-9][0-9]{0,38})$/.test(value.cap) ||
@@ -59,7 +62,10 @@ function readPending(key: string, solana: boolean): Pending | null {
     (value.hash !== null &&
       !(solana
         ? isSolanaTransactionId(value.hash)
-        : /^0x[0-9a-fA-F]{64}$/.test(value.hash)))
+        : /^0x[0-9a-fA-F]{64}$/.test(value.hash))) ||
+    (value.hashSource !== undefined &&
+      (value.hash === null ||
+        !["wallet", "recovery"].includes(value.hashSource)))
   )
     throw new Error(
       "The saved monthly payment request cannot be read. Check your wallet activity before starting a new one.",
@@ -85,33 +91,31 @@ export function AutomaticMonthlyPayment({
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
   const key = `slop:vault-monthly:v1:${deployment.network}:${deployment.vault}`;
-  const [saved] = useState(() => {
-    try {
-      return { pending: readPending(key, solana), error: "" };
-    } catch (error) {
-      return {
-        pending: null,
-        error: errorMessage(error, "The wallet request failed."),
-      };
-    }
-  });
-  const [pending, setPending] = useState<Pending | null>(saved.pending);
-  const [storageError, setStorageError] = useState(Boolean(saved.error));
+  const {
+    mounted,
+    saved,
+    storedPending,
+    pending,
+    storageError,
+    clear,
+    submit,
+    recordRecoveryHash,
+    clearUnreadable,
+  } = usePendingWalletAttempt<Pending>(
+    key,
+    (raw) => readPending(raw, solana),
+    (error) => errorMessage(error, "The wallet request failed."),
+  );
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [automatic, setAutomatic] = useState(true);
   const [review, setReview] = useState<MonthlyReview | null>(null);
   const [notice, setNotice] = useState("");
-  const [recoveryHash, setRecoveryHash] = useState("");
+  const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const wallets = usePayoutWallets().filter((entry) =>
     solana
       ? entry.family === "solana" && entry.solanaFunding
       : entry.family === "evm",
   );
-  const remember = (value: Pending | null) => {
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
-    else sessionStorage.removeItem(key);
-    setPending(value);
-  };
   const { busy, error, run: act } = useAction(saved.error);
   const run = (action: () => Promise<void>) => {
     setNotice("");
@@ -122,6 +126,7 @@ export function AutomaticMonthlyPayment({
   const connect = (provider: PayoutWallet) =>
     run(async () => {
       const connection = await provider.connect();
+      if (!mounted.current) return;
       if (pending && !sameWallet(connection.address, pending.wallet))
         throw new Error(
           `Reconnect the wallet that submitted this setting: ${pending.wallet}`,
@@ -132,26 +137,21 @@ export function AutomaticMonthlyPayment({
   const inspect = () =>
     run(async () => {
       if (!wallet) throw new Error("Choose a wallet first.");
-      setReview(
-        solana
-          ? await reviewSolanaMonthlySetting(
-              project,
-              deployment,
-              wallet,
-              automatic,
-            )
-          : await reviewEvmMonthlySetting(
-              project,
-              deployment,
-              wallet,
-              automatic,
-            ),
-      );
+      const result = solana
+        ? await reviewSolanaMonthlySetting(
+            project,
+            deployment,
+            wallet,
+            automatic,
+          )
+        : await reviewEvmMonthlySetting(project, deployment, wallet, automatic);
+      if (mounted.current) setReview(result);
     });
   const send = () =>
     run(async () => {
       if (!wallet || !review?.changes || pending || storageError) return;
       const intent: Pending = {
+        attemptId: crypto.randomUUID(),
         version: 1,
         wallet: wallet.address,
         cap: review.target.cap,
@@ -162,46 +162,33 @@ export function AutomaticMonthlyPayment({
           ? { solanaBlockhash: review.solanaPlan.transaction.blockhash }
           : {}),
       };
-      let requested = false;
-      try {
-        const beforeSend = () => {
-          remember(intent);
-          requested = true;
-        };
-        const hash = solana
-          ? await sendSolanaMonthlySetting(
-              deployment,
-              wallet,
-              review,
-              beforeSend,
-            )
-          : await sendEvmMonthlySetting(deployment, wallet, review, beforeSend);
-        const submitted = { ...intent, hash };
-        setPending(submitted);
-        try {
-          remember(submitted);
-        } catch {
-          setNotice(
-            `Submitted: ${hash}. Keep this hash; browser storage could not save it.`,
-          );
-        }
-        setReview(null);
-      } catch (caught) {
-        if ((caught as { code?: unknown } | null)?.code === 4001) {
-          remember(null);
-          throw new Error("You declined the wallet request. Nothing was sent.");
-        }
-        if (requested)
-          throw new Error(
+      await submit(
+        intent,
+        (beforeSend) =>
+          solana
+            ? sendSolanaMonthlySetting(deployment, wallet, review, beforeSend)
+            : sendEvmMonthlySetting(deployment, wallet, review, beforeSend),
+        {
+          submitted: (hash) => ({ ...intent, hash, hashSource: "wallet" }),
+          notify: setNotice,
+          onBeforeSend: () => setRecoveryHash(""),
+          unclear:
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
-          );
-        throw caught;
-      }
+        },
+      );
+      if (mounted.current) setReview(null);
     });
   const check = () =>
     run(async () => {
       if (!pending || !wallet) return;
-      const hash = pending.hash ?? recoveryHash.trim();
+      const captured = storedPending.current;
+      if (!captured)
+        throw new Error("The saved request changed. Reload before continuing.");
+      // Legacy records do not identify who supplied their hash. Keep them
+      // editable; only a hash returned by this wallet request is fixed.
+      const hash =
+        pending.hashSource === "wallet" ? pending.hash : recoveryHash.trim();
+      if (!hash) throw new Error("Enter the transaction from your wallet.");
       const target: MonthlySetting = {
         cap: pending.cap,
         enabled: pending.enabled,
@@ -216,12 +203,30 @@ export function AutomaticMonthlyPayment({
             hash,
           )
         : await checkEvmMonthlySetting(deployment, wallet, target, hash);
-      if (!pending.hash) remember({ ...pending, hash });
+      if (!mounted.current) return;
       if (result === "pending") {
-        setNotice("Submitted. Waiting for finalized chain evidence.");
+        if (pending.hashSource !== "wallet") {
+          const candidate: Pending = {
+            ...pending,
+            hash,
+            hashSource: "recovery",
+          };
+          if (!recordRecoveryHash(captured, candidate)) {
+            setNotice(
+              `Not saved on this device. Keep this ${solana ? "signature" : "hash"}: ${hash}.`,
+            );
+            return;
+          }
+        }
+        setNotice(
+          pending.hashSource === "wallet"
+            ? "Submitted. Waiting for finalized chain evidence."
+            : "Waiting for finalized chain evidence.",
+        );
         return;
       }
-      remember(null);
+      clear(captured);
+      setRecoveryHash("");
       setReview(null);
       if (result === "failed") {
         setNotice(
@@ -294,12 +299,7 @@ export function AutomaticMonthlyPayment({
         <button
           type="button"
           disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              sessionStorage.removeItem(key);
-              setStorageError(false);
-            })
-          }
+          onClick={() => void run(async () => clearUnreadable())}
         >
           I checked wallet activity; clear the unreadable local record
         </button>
@@ -320,52 +320,31 @@ export function AutomaticMonthlyPayment({
         onConnect={(provider) => void connect(provider)}
       />
       {pending ? (
-        <PendingTransaction>
+        <PendingWalletCheck
+          link={link}
+          hashSource={pending.hashSource}
+          solana={solana}
+          recoveryHash={recoveryHash}
+          onRecoveryHash={setRecoveryHash}
+          busy={busy}
+          canCheck={!!wallet}
+          onCheck={() => void check()}
+          unsent={!pending.hash}
+          onClear={() =>
+            void run(async () => {
+              clear(storedPending.current ?? pending);
+              setReview(null);
+              setNotice("Local request cleared. Review again before sending.");
+            })
+          }
+        >
           <p>
             {pending.enabled
               ? `Turning on automatic monthly payment, up to ${formatted(pending.cap, pending.decimals)} each month,`
               : "Turning off automatic monthly payment"}{" "}
             awaiting verification. Do not send it again.
           </p>
-          {link ? (
-            <p>
-              <a href={link} target="_blank" rel="noreferrer">
-                View submitted transaction
-              </a>
-            </p>
-          ) : (
-            <label>
-              Transaction {solana ? "signature" : "hash"} from your wallet
-              <input
-                value={recoveryHash}
-                onChange={(event) => setRecoveryHash(event.target.value)}
-                spellCheck={false}
-              />
-            </label>
-          )}
-          <button
-            type="button"
-            className="button primary-button"
-            disabled={busy || !wallet}
-            onClick={() => void check()}
-          >
-            Check transaction
-          </button>
-          {!pending.hash ? (
-            <UnsentTransactionRecovery
-              disabled={busy}
-              onClear={() =>
-                void run(async () => {
-                  remember(null);
-                  setReview(null);
-                  setNotice(
-                    "Local request cleared. Review again before sending.",
-                  );
-                })
-              }
-            />
-          ) : null}
-        </PendingTransaction>
+        </PendingWalletCheck>
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>

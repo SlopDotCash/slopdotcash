@@ -7,15 +7,26 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "./Link";
 import "./owner-review.css";
 import { errorMessage } from "./lib/errors";
-import { checkProjectSetup } from "./lib/project-api";
+import {
+  checkProjectSetup,
+  currentProjectSession,
+  ProjectApiError,
+} from "./lib/project-api";
 import type { ProjectSetupStatus } from "./lib/project-contracts";
 import { formatMonthlyAmount } from "./lib/project-proposal";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { NetworkName, StatusBadge } from "./Presentation";
+import { ScanClearanceBadges } from "./ScanClearanceBadges";
 
 const HEADINGS: Record<ProjectSetupStatus["state"], string> = {
   ready: "Ready",
@@ -79,50 +90,134 @@ function SetupBadge({
  * action and each check, with funding shown separately. Checking runs every
  * setup check on the server; a project that passes activates then.
  */
-export function ProjectSetupStatusPanel({
+type ProjectSetupStatusProps = {
+  actorId: string;
+  projectId: string;
+  initial?: ProjectSetupStatus;
+  /** Clear the parent's setup projection when its private access is lost. */
+  onSetup?: (setup: ProjectSetupStatus | null) => void;
+  showProjectLink?: boolean;
+  compact?: boolean;
+};
+
+export function ProjectSetupStatusPanel(props: ProjectSetupStatusProps) {
+  return (
+    <ProjectSetupStatusForActor
+      key={`${props.projectId}:${props.actorId}`}
+      {...props}
+    />
+  );
+}
+
+function ProjectSetupStatusForActor({
+  actorId,
   projectId,
   initial,
   onSetup,
   showProjectLink = true,
   compact = false,
-}: {
-  projectId: string;
-  initial?: ProjectSetupStatus;
-  /** Tells the page the current setup, such as the scan exemption. */
-  onSetup?: (setup: ProjectSetupStatus) => void;
-  showProjectLink?: boolean;
-  compact?: boolean;
-}) {
+}: ProjectSetupStatusProps) {
   const [setup, setSetup] = useState<ProjectSetupStatus | null>(
     initial ?? null,
   );
   useEffect(() => {
-    if (setup !== null) onSetup?.(setup);
+    onSetup?.(setup);
   }, [onSetup, setup]);
   const [busy, setBusy] = useState(initial === undefined);
   const [error, setError] = useState<string | null>(null);
-  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  const generation = useRef(0);
+  const inFlight = useRef<number | null>(null);
   const check = useCallback(
     (requestScan = false) => {
-      if (inFlight.current) return;
-      inFlight.current = true;
+      if (!mounted.current || inFlight.current !== null) return;
+      const request = ++generation.current;
+      inFlight.current = request;
+      const owns = () => mounted.current && inFlight.current === request;
+      const requireActor = async () => {
+        let session;
+        try {
+          session = await currentProjectSession();
+        } catch {
+          throw new ProjectApiError(
+            0,
+            "identity_unavailable",
+            "Your account could not be checked. Try again.",
+          );
+        }
+        if (session?.githubId !== actorId)
+          throw new ProjectApiError(
+            409,
+            "actor_changed",
+            "Your account changed. Reload the project setup.",
+          );
+      };
       setBusy(true);
       setError(null);
-      void checkProjectSetup(projectId, requestScan)
-        .then(
-          (body) => setSetup(body.setup),
-          (caught: unknown) =>
-            setError(errorMessage(caught, "The setup check did not finish.")),
-        )
-        .finally(() => {
-          inFlight.current = false;
-          setBusy(false);
-        });
+      void (async () => {
+        try {
+          await requireActor();
+          if (!owns()) return;
+          const body = await checkProjectSetup(projectId, requestScan, actorId);
+          if (!owns()) return;
+          await requireActor();
+          if (!owns()) return;
+          if (body.setup.projectId !== projectId)
+            throw new ProjectApiError(
+              0,
+              "invalid_response",
+              "The setup response did not match this project. Try again.",
+            );
+          setSetup(body.setup);
+        } catch (caught) {
+          if (!owns()) return;
+          const accessLost =
+            caught instanceof ProjectApiError &&
+            ([401, 403, 404, 410].includes(caught.status) ||
+              [
+                "actor_changed",
+                "identity_unavailable",
+                "invalid_response",
+              ].includes(caught.code));
+          if (accessLost) {
+            setSetup(null);
+          } else {
+            try {
+              await requireActor();
+            } catch (identityError) {
+              if (!owns()) return;
+              setSetup(null);
+              setError(
+                errorMessage(
+                  identityError,
+                  "Your account could not be checked.",
+                ),
+              );
+              return;
+            }
+            if (!owns()) return;
+          }
+          setError(errorMessage(caught, "The setup check did not finish."));
+        } finally {
+          if (owns()) {
+            inFlight.current = null;
+            setBusy(false);
+          }
+        }
+      })();
     },
-    [projectId],
+    [actorId, projectId],
   );
-  useEffect(() => {
+  // Suspense preserves state but retires layout effects while vault controls
+  // load. Restart an empty status check on reveal as well as the first mount.
+  useLayoutEffect(() => {
+    mounted.current = true;
     if (initial === undefined) check();
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      inFlight.current = null;
+    };
   }, [check, initial]);
   useEffect(() => {
     if (!setup || setup.state === "ready" || setup.state === "restricted")
@@ -163,7 +258,12 @@ export function ProjectSetupStatusPanel({
       ) : (
         <>
           {setup.state !== "ready" ? (
-            <p role="status">{setup.nextAction.message}</p>
+            <>
+              <p role="status">{setup.nextAction.message}</p>
+              {setup.checks.scan.clearance ? (
+                <ScanClearanceBadges view={setup.checks.scan.clearance} />
+              ) : null}
+            </>
           ) : showProjectLink ? (
             <Link href={`/projects/${setup.slug}`}>View project</Link>
           ) : null}
@@ -190,7 +290,8 @@ export function ProjectSetupStatusPanel({
               </button>
             ) : null}
             {setup.nextAction.kind !== "none" &&
-            setup.nextAction.kind !== "restricted" ? (
+            setup.nextAction.kind !== "restricted" &&
+            setup.nextAction.kind !== "complete_skill_fields" ? (
               <button
                 className="button secondary-button"
                 disabled={busy}

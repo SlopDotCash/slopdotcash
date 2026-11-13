@@ -118,7 +118,10 @@ export async function handleNotificationsApi(
     const moderator = deps.moderatorGithubIds?.has(actor.githubId) === true;
     if (scamRoute) {
       // Moderator access is rechecked on every open (owner decision D4). The
-      // target is only ever a path stored on the actor's own notice.
+      // target is only ever a path stored on the actor's own notice, and the
+      // penalty must still stand: a reversed scam closure retires the notice
+      // from the list, the unread count and this route, exactly as the mail
+      // worker already suppresses its email ("only while its penalty stands").
       if (!moderator) return json(403, { error: "not_authorized" });
       const target = scamReviewGitHubUrl(url.pathname);
       if (target === null) return json(404, { error: "not_found" });
@@ -127,7 +130,9 @@ export async function handleNotificationsApi(
         JOIN slopbot_penalties p
           ON n.event_key = 'slopbot-scam-review:' || p.item_node_id
         WHERE n.recipient_github_id = ? AND n.kind = 'slopbot_scam_review'
-          AND n.action_path = ? AND p.author_github_id <> ?`)
+          AND n.action_path = ? AND p.author_github_id <> ?
+          AND p.category = 'scam' AND p.moderator_review = 1
+          AND p.reversed_at IS NULL`)
         .bind(actor.githubId, url.pathname, actor.githubId)
         .all<{ found: number }>();
       if (!rows.results[0]) return json(404, { error: "not_found" });
@@ -210,6 +215,7 @@ export async function handleNotificationsApi(
                FROM notifications WHERE recipient_github_id = ?
                 AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
+                AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))
                 ${cursor ? "AND (source_at < ? OR (source_at = ? AND event_key > ?))" : ""}
               ORDER BY source_at DESC, event_key LIMIT ?`,
           )
@@ -225,7 +231,8 @@ export async function handleNotificationsApi(
             `SELECT COUNT(*) AS count FROM notifications
               WHERE recipient_github_id = ? AND read_at IS NULL
                 AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
-                  OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))`,
+                  OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
+                AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))`,
           )
           .bind(actor.githubId, moderator ? 1 : 0)
           .all<{ count: number }>(),
@@ -301,6 +308,7 @@ export async function handleNotificationsApi(
           WHERE recipient_github_id = ? AND read_at IS NULL
             AND (kind NOT IN ('slopbot_appeal_review', 'slopbot_scam_review') OR ? = 1
                   OR EXISTS(SELECT 1 FROM points_disputes p WHERE notifications.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved') AND p.appellant_github_id = notifications.recipient_github_id))
+            AND (kind <> 'slopbot_scam_review' OR EXISTS(SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(notifications.event_key, length('slopbot-scam-review:') + 1) AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL))
             AND event_key IN (SELECT value FROM json_each(?))`,
       )
       .bind(

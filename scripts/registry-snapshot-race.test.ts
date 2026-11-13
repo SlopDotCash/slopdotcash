@@ -1,19 +1,55 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   cachedPublicResponse,
   type EdgeCache,
 } from "../backend/projects/edge-cache";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
-import { fixtureCheckout } from "../tests/fixture-checkout";
 import { fixtureProject } from "../tests/fixture-overlay.mjs";
 import { childEnvironment } from "./child-environment.mjs";
 import {
   renderProjectRegistry,
   renderProjectRevisions,
 } from "./sync-project-registry.mjs";
+
+/** The real registry CLI needs its schema modules, not a full history copy. */
+function registryFixture() {
+  const repository = resolve(import.meta.dir, "..");
+  const root = mkdtempSync(join(tmpdir(), "registry-read-race-"));
+  try {
+    mkdirSync(join(root, "scripts"));
+    cpSync(join(repository, "src/lib"), join(root, "src/lib"), {
+      recursive: true,
+    });
+    for (const path of [
+      "package.json",
+      "scripts/sync-project-registry.mjs",
+      "scripts/sha256.mjs",
+    ])
+      copyFileSync(join(repository, path), join(root, path));
+    symlinkSync(
+      join(repository, "node_modules"),
+      join(root, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    return root;
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 for (const outcome of [
   "updated",
@@ -22,7 +58,7 @@ for (const outcome of [
   "unavailable",
 ] as const) {
   test(`registry sync handles independently cached reads: ${outcome}`, async () => {
-    const root = fixtureCheckout("registry-read-race-");
+    const root = registryFixture();
     const oldProjects = assertProjectRegistry([
       { ...fixtureProject("eliza"), status: "paused" },
     ]);
@@ -99,17 +135,14 @@ for (const outcome of [
           : undefined;
     }
     try {
-      const child = Bun.spawn(
-        [process.execPath, "scripts/sync-project-registry.mjs"],
-        {
-          cwd: root,
-          env: childEnvironment(process.env, {
-            SLOP_API_ORIGIN: server.url.origin,
-          }),
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
+      const child = Bun.spawn(["node", "scripts/sync-project-registry.mjs"], {
+        cwd: root,
+        env: childEnvironment(process.env, {
+          SLOP_API_ORIGIN: server.url.origin,
+        }),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [code, stdout, stderr] = await Promise.all([
         child.exited,
         new Response(child.stdout).text(),

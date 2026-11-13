@@ -47,7 +47,7 @@ import {
   projectRestriction,
   repositoryIdentity,
 } from "../projects/enforcement";
-import { readJsonObject } from "../trace/validation";
+import { readStrictJsonObject } from "../trace/validation";
 import type {
   FlaggerStanding,
   FlaggerStandingReader,
@@ -73,7 +73,7 @@ function flagCutoff(at: Date): string {
 const MIN_EVIDENCE = 20;
 const MAX_EVIDENCE = 4000;
 
-export type ProjectFlag = {
+type ProjectFlag = {
   id: string;
   projectId: string;
   reporter: GithubActor;
@@ -132,7 +132,7 @@ const GITHUB_ID = (column: string) =>
   `typeof(${column}) = 'text' AND length(${column}) BETWEEN 1 AND 20
    AND ${column} GLOB '[1-9]*' AND ${column} NOT GLOB '*[^0-9]*'`;
 
-export type FiledFlag = {
+type FiledFlag = {
   flag: ProjectFlag;
   /** The enforcement record this flag completed, or null. */
   pauseRecordId: string | null;
@@ -227,7 +227,8 @@ export class ProjectFlagStore {
              created_at
            )
            SELECT ?, id, ?, ?, revision, manifest_sha256, ?, ?, ?, ?
-             FROM projects WHERE id = ? AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
+             FROM projects WHERE id = ? AND revision = ? AND manifest_sha256 = ?
+               AND NOT EXISTS (${PARTICIPATION_BAN_QUERY})`,
         )
         .bind(
           input.flagId,
@@ -238,6 +239,8 @@ export class ProjectFlagStore {
           input.evidenceUrl,
           input.at,
           input.project.id,
+          input.project.revision,
+          input.project.manifestSha256,
           input.reporter.githubId,
         ),
       this.db
@@ -384,7 +387,8 @@ type ProjectFlagApiDependencies = {
   cache?: EdgeCache;
 };
 
-function json(status: number, body: Record<string, unknown>): Response {
+/** A vetting API response; it is never cached. */
+export function json(status: number, body: Record<string, unknown>): Response {
   return jsonResponse(status, body, { cacheControl: "no-store" });
 }
 
@@ -545,7 +549,7 @@ async function file(
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
   await deps.flags.assertCanFile(actor.githubId);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body);
   if (
     keys.some((key) => !["category", "evidence", "evidenceUrl"].includes(key))
@@ -626,7 +630,7 @@ async function withdraw(
   projectId: string,
 ): Promise<Response> {
   const actor = await requireActor(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   if (Object.keys(body).length !== 0)
     fail(400, "invalid_request", "Send an empty JSON object");
   const project = await readProject(deps, projectId);

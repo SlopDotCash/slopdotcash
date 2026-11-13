@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { REWARD_ASSET_NETWORKS } from "../../src/lib/reward-asset.mjs";
+import { enlargeText } from "../text-size";
 import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
 
 // PRD section 6: the admin page reads the private fee-conversion route of the
@@ -105,21 +106,18 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
     path: info.outputPath("admin-fee-conversions.png"),
     fullPage: true,
   });
-  // 200% zoom keeps every network inside the viewport; 320 px is the mobile limit.
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth + 1,
-        ),
-      )
-      .toBe(true);
-    await section.scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: info.outputPath("admin-fee-conversions-zoom.png"),
-    });
-  }
+  // Check every network with 200% text at the current CSS viewport.
+
+  await enlargeText(page.locator("body"));
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+  await section.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath("admin-fee-conversions-text-200.png"),
+  });
 });

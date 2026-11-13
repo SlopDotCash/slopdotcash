@@ -7,13 +7,14 @@ import {
   type NotificationsDependencies,
 } from "../../backend/notifications/handler";
 import {
-  handleSecurityApi,
   inboxStatements,
   type SecurityD1Database,
-} from "../../backend/security/handler";
+} from "../../backend/security/case-store";
+import { handleSecurityApi } from "../../backend/security/handler";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import {
+  claimDueDeliveries,
   destinationDigest,
   dispatchSecurityMail,
   parseSecurityMailConfig,
@@ -266,6 +267,218 @@ test("a case change queues once, sends generic per-role mail once, and needs exp
   expect(h.rows()[0].state).toBe("delivered");
   h.sqlite.close();
 });
+
+test("acknowledgment during a failed send prevents a later backup notice", async () => {
+  const h = await setup();
+  try {
+    const original = h
+      .rows()
+      .find((row) => row.recipient_github_id === owner.githubId);
+    if (!original) throw new Error("Owner notice missing");
+    const send = h.deps.sendEmail;
+    h.deps.sendEmail = async (from, to, mime) => {
+      if (to !== h.deps.config.recipients[owner.githubId].email)
+        return send(from, to, mime);
+      const acknowledged = await h.call(
+        owner,
+        `security-cases/${h.caseId}/acknowledge`,
+        { eventKey: original.event_key },
+      );
+      expect(acknowledged?.status).toBe(200);
+      throw new Error("Provider outcome is unknown after acknowledgment");
+    };
+    await dispatchSecurityMail(h.deps);
+    expect(h.rows().find((row) => row.id === original.id)).toMatchObject({
+      state: "ambiguous",
+      acknowledged_at: at,
+    });
+    expect(h.rows().filter((row) => row.escalation_of === original.id)).toEqual(
+      [],
+    );
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test.each([
+  { receipt: true, overdue: false, outcome: "delivered", backupCount: 0 },
+  { receipt: false, overdue: false, outcome: "delivered", backupCount: 0 },
+  { receipt: false, overdue: true, outcome: "delivered", backupCount: 1 },
+  { receipt: true, overdue: false, outcome: "not-accepted", backupCount: 0 },
+  { receipt: true, overdue: false, outcome: "suppressed", backupCount: 1 },
+] as const)(
+  "reconciliation $outcome during backup access keeps current eligibility (receipt=$receipt, overdue=$overdue)",
+  async ({ receipt, overdue, outcome, backupCount }) => {
+    const h = await setup();
+    let entered = () => {};
+    let release = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dispatch: Promise<void> | undefined;
+    try {
+      if (receipt) {
+        h.sqlite
+          .query(
+            "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+          )
+          .run(at, at, owner.githubId, h.caseId);
+        await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+      }
+      const primaryId = receipt ? reporter.githubId : owner.githubId;
+      const primary = h
+        .rows()
+        .find((row) => row.recipient_github_id === primaryId);
+      if (!primary) throw new Error("Primary notice missing");
+      const backupId = h.deps.config.recipients[primaryId].backupGithubId;
+      h.sqlite
+        .query(
+          "UPDATE security_notification_outbox SET state='suppressed' WHERE id<>?",
+        )
+        .run(primary.id);
+      if (overdue) h.advance(2 * 3600_000);
+      let holdAccess = false;
+      h.deps.db = {
+        ...h.db,
+        prepare(query: string) {
+          const statement = h.db.prepare(query);
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async first<T>() {
+                  if (
+                    holdAccess &&
+                    query.startsWith("SELECT login FROM (") &&
+                    values[0] === backupId
+                  ) {
+                    holdAccess = false;
+                    entered();
+                    await held;
+                  }
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      };
+      h.deps.sendEmail = async () => {
+        holdAccess = true;
+        throw new Error("Unknown provider result");
+      };
+      dispatch = dispatchSecurityMail(h.deps);
+      await waiting;
+      const delivery = h.sqlite
+        .query(
+          "SELECT attempts,destination_digest FROM security_notification_outbox WHERE id=?",
+        )
+        .get(primary.id) as { attempts: number; destination_digest: string };
+      expect(
+        await reconcileSecurityMail(h.deps, {
+          deliveryId: primary.id,
+          attempt: delivery.attempts,
+          destinationDigest: delivery.destination_digest,
+          outcome,
+          evidenceReference: `current-escalation-${receipt}-${overdue}-${outcome}`,
+        }),
+      ).toBe(true);
+      release();
+      await dispatch;
+      expect(h.rows().find((row) => row.id === primary.id)?.state).toBe(
+        outcome === "not-accepted" ? "retrying" : outcome,
+      );
+      expect(
+        h.rows().filter((row) => row.escalation_of === primary.id),
+      ).toHaveLength(backupCount);
+    } finally {
+      release();
+      await dispatch?.catch(() => {});
+      h.sqlite.close();
+    }
+  },
+);
+
+test.each(["destination", "final check"] as const)(
+  "a security attempt retired before its %s does not send",
+  async (stage) => {
+    const h = await setup();
+    try {
+      const original = h
+        .rows()
+        .find((row) => row.recipient_github_id === owner.githubId);
+      if (!original) throw new Error("Owner notice missing");
+      h.sqlite
+        .query(
+          "UPDATE security_notification_outbox SET state='suppressed' WHERE id<>?",
+        )
+        .run(original.id);
+      let retired = false;
+      let staleClaims = 0;
+      const retire = async () => {
+        if (retired) return;
+        retired = true;
+        h.advance(300_001);
+        for await (const _row of claimDueDeliveries(
+          h.db,
+          "security",
+          h.deps.now,
+        ))
+          staleClaims += 1;
+      };
+      h.deps.db = {
+        ...h.db,
+        prepare(query: string) {
+          const statement = h.db.prepare(query);
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async run() {
+                  if (
+                    stage === "destination" &&
+                    query.startsWith(
+                      "UPDATE security_notification_outbox SET destination_digest",
+                    )
+                  )
+                    await retire();
+                  return bound.run();
+                },
+                async first<T>() {
+                  if (
+                    stage === "final check" &&
+                    query.startsWith(
+                      "SELECT id FROM security_notification_outbox",
+                    )
+                  )
+                    await retire();
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      };
+      await dispatchSecurityMail(h.deps);
+      expect(retired).toBe(true);
+      expect(staleClaims).toBe(0);
+      expect(h.sent).toEqual([]);
+      expect(h.rows().find((row) => row.id === original.id)).toMatchObject({
+        state: "ambiguous",
+        attempts: 1,
+      });
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
 
 test("direct payment progress and completion notify the other case roles once without disclosing payment details", async () => {
   const finance = { githubId: "104", githubLogin: "finance" };
@@ -1066,6 +1279,180 @@ test("pre-pilot inbox history is not mailed and does not expose a dead acknowled
   expect(body.notifications).toHaveLength(1);
   expect(Object.hasOwn(body.notifications[0], "acknowledgedAt")).toBe(false);
   h.sqlite.close();
+});
+
+test("populated mail upgrades preserve history and bind only future notices to new consent", async () => {
+  const h = await setup(true);
+  try {
+    const notices = () =>
+      h.sqlite.query("SELECT * FROM notifications ORDER BY event_key").all();
+    const securityQueue = () =>
+      h.sqlite
+        .query(
+          "SELECT id,event_key,recipient_github_id,case_id,template_version,state,attempts,next_attempt_at,claimed_at,destination_digest,provider_reference,acknowledged_at,created_at,updated_at,escalation_checked_at,escalation_of FROM security_notification_outbox ORDER BY id",
+        )
+        .all();
+    const activityQueue = () =>
+      h.sqlite
+        .query("SELECT * FROM activity_notification_outbox ORDER BY id")
+        .all();
+    const securityEvidence = () =>
+      h.sqlite
+        .query(
+          "SELECT * FROM security_notification_delivery_events ORDER BY id",
+        )
+        .all();
+    const activityEvidence = () =>
+      h.sqlite
+        .query(
+          "SELECT * FROM activity_notification_delivery_events ORDER BY id",
+        )
+        .all();
+    const apply = (name: string) =>
+      h.sqlite.exec(readFileSync(`migrations/${name}`, "utf8"));
+    h.sqlite
+      .query("UPDATE notifications SET read_at=? WHERE recipient_github_id=?")
+      .run(at, backup.githubId);
+    const prePilot = notices();
+    expect(prePilot).toHaveLength(2);
+    expect(
+      prePilot.map((row) => (row as { read_at: string | null }).read_at).sort(),
+    ).toEqual([at, null].sort());
+    apply("0030_security_notification_outbox.sql");
+    expect(notices()).toEqual(prePilot);
+    expect(securityQueue()).toEqual([]);
+
+    const oldVersion = "b".repeat(64);
+    h.sqlite
+      .query(
+        "INSERT INTO notification_email_preferences(github_id,enabled,destination_version,updated_at) VALUES(?,1,?,?)",
+      )
+      .run(reporter.githubId, oldVersion, at);
+    h.sqlite
+      .query(
+        "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('security-case:old-queued',?,'security_case',?,'/security',?,?)",
+      )
+      .run(reporter.githubId, h.caseId, at, at);
+    h.sqlite
+      .query(
+        "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES('project-revision:old-delivered',?,'project_revision','bounty','/projects/bounty',?,?)",
+      )
+      .run(reporter.githubId, at, at);
+    h.sqlite.exec(`
+      UPDATE security_notification_outbox SET state='retrying',attempts=1,destination_digest='${oldVersion}';
+      INSERT INTO security_notification_delivery_events(delivery_id,state,evidence_reference,attempt,destination_digest,at)
+        SELECT id,'retrying','old-security-evidence',1,destination_digest,created_at FROM security_notification_outbox;
+      UPDATE activity_notification_outbox SET state='provider-accepted',attempts=1,provider_reference='old-provider',destination_digest='${oldVersion}';
+      INSERT INTO activity_notification_delivery_events(delivery_id,state,evidence_reference,attempt,destination_digest,at)
+        SELECT id,'provider-accepted','old-activity-evidence',1,destination_digest,created_at FROM activity_notification_outbox;
+    `);
+    const populatedNotices = notices();
+    const oldSecurity = securityQueue();
+    const oldActivity = activityQueue();
+    const oldSecurityEvidence = securityEvidence();
+    const oldActivityEvidence = activityEvidence();
+    expect(oldSecurity).toHaveLength(1);
+    expect(oldActivity).toHaveLength(1);
+    for (const name of [
+      "0063_account_closure_notification_events.sql",
+      "0065_slopbot_appeal_notifications.sql",
+      "0079_slopbot_scam_review_notifications.sql",
+    ]) {
+      apply(name);
+      expect(notices()).toEqual(populatedNotices);
+      expect(securityQueue()).toEqual(oldSecurity);
+      expect(activityQueue()).toEqual(oldActivity);
+      expect(securityEvidence()).toEqual(oldSecurityEvidence);
+      expect(activityEvidence()).toEqual(oldActivityEvidence);
+    }
+    apply("0111_verified_notification_email.sql");
+    expect(notices()).toEqual(populatedNotices);
+    expect(securityQueue()).toEqual(oldSecurity);
+    const boundVersions = () =>
+      h.sqlite
+        .query(
+          "SELECT id,destination_version FROM security_notification_outbox ORDER BY id",
+        )
+        .all();
+    const unboundHistory = oldSecurity.map((row) => ({
+      id: (row as { id: string }).id,
+      destination_version: null,
+    }));
+    expect(boundVersions()).toEqual(unboundHistory);
+    expect(activityQueue()).toEqual(oldActivity);
+    expect(securityEvidence()).toEqual(oldSecurityEvidence);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT security_enabled FROM notification_email_preferences WHERE github_id=?",
+        )
+        .get(reporter.githubId),
+    ).toEqual({ security_enabled: null });
+    expect(
+      h.sqlite
+        .query("SELECT COUNT(*) AS n FROM notification_email_destinations")
+        .get(),
+    ).toEqual({ n: 0 });
+
+    const currentVersion = "c".repeat(64);
+    h.sqlite
+      .query("INSERT INTO notification_email_destinations VALUES(?,?,?,?)")
+      .run(reporter.githubId, "new-reporter@example.com", currentVersion, at);
+    h.sqlite
+      .query(
+        "UPDATE notification_email_preferences SET security_enabled=1,destination_version=? WHERE github_id=?",
+      )
+      .run(currentVersion, reporter.githubId);
+    // Opt-in binds no historical queue rows and creates no retrospective mail.
+    expect(securityQueue()).toEqual(oldSecurity);
+    expect(boundVersions()).toEqual(unboundHistory);
+    expect(activityQueue()).toEqual(oldActivity);
+    await dispatchSecurityMail({ ...h.deps, generalEmail: true });
+    expect(h.sent).toHaveLength(0);
+    expect(h.rows()[0].state).toBe("suppressed");
+
+    h.sqlite
+      .query(
+        "UPDATE security_cases SET submission_state='verified',received_at=?,verified_at=?,verified_by_github_id=? WHERE id=?",
+      )
+      .run(at, at, owner.githubId, h.caseId);
+    for (let replay = 0; replay < 2; replay++)
+      await h.db.batch([notifySecurityReportReceived(h.db, h.caseId)]);
+    expect(
+      h.sqlite
+        .query(
+          "SELECT destination_version FROM security_notification_outbox WHERE event_key=?",
+        )
+        .get(`security-receipt:${h.caseId}`),
+    ).toEqual({ destination_version: currentVersion });
+    expect(securityQueue()).toHaveLength(2);
+    await dispatchSecurityMail({ ...h.deps, generalEmail: true });
+    expect(h.sent.map((mail) => mail.to)).toEqual(["new-reporter@example.com"]);
+    expect(securityEvidence()[0]).toEqual(oldSecurityEvidence[0]);
+    expect(activityEvidence()).toEqual(oldActivityEvidence);
+    expect(
+      notices().filter(
+        (row) =>
+          (row as { event_key: string }).event_key !==
+          `security-receipt:${h.caseId}`,
+      ),
+    ).toEqual(populatedNotices);
+    expect(() =>
+      h.sqlite
+        .query(
+          "UPDATE notifications SET detail='rewritten' WHERE recipient_github_id=?",
+        )
+        .run(backup.githubId),
+    ).toThrow("notifications change only from unread to read");
+    expect(() =>
+      h.sqlite.exec(
+        "DELETE FROM security_notification_delivery_events WHERE evidence_reference='old-security-evidence'",
+      ),
+    ).toThrow("delivery evidence is append-only");
+  } finally {
+    h.sqlite.close();
+  }
 });
 
 test("a negative receipt cannot reconcile a later attempt or append duplicate evidence", async () => {

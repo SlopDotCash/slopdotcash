@@ -17,7 +17,6 @@ playwright-report/
 test-results/
 evidence/
 plans/
-public/brand/
 public/downloads/
 public/skill.md
 public/mission.md
@@ -37,6 +36,9 @@ public/skill-templates/
 
 .points-build/
 
+# Retained cycle-publication recovery files are local build state.
+src/lib/.cycle-promotion-*/
+
 # Local smart-contract invariant runs
 /cache/
 
@@ -45,3 +47,16 @@ workers/operator-keeper/wrangler.operator.toml
 
 # Local development backend data (scripts/dev-backend.ts).
 .slop-dev/
+
+# Local formal verification results
+evidence/formal/
+_apalache-out/
+
+# Local pinned LemmaScript prover and regeneration scratch state.
+.tools/
+*.dfy.base
+*.dfy.merged
+
+test-results/
+_apalache-out/
+dist/

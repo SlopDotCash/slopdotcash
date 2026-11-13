@@ -186,6 +186,7 @@ test("release carries the checked D1 registry and history into mainnet and stagi
         "scripts/sync-project-registry.mjs",
         "scripts/sha256.mjs",
         "scripts/prepare-payment-deployments.ts",
+        "scripts/worker-release.mjs",
         "workers/payment-executor/configure.mjs",
         "workers/payment-executor/release-plan.mjs",
         "workers/payment-executor/release-staging.mjs",

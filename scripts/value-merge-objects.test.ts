@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ValueEvidence } from "../workers/slopbot/value-evidence";
+import type { ValueEvidence } from "../workers/slopbot/value-evidence-types";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 import { createValueMergeBundle } from "./create-value-merge-bundle";
 import {

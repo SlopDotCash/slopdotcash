@@ -1,10 +1,20 @@
 /** Byte encodings shared by Worker authentication protocols. */
 export { bytesToHex } from "@noble/hashes/utils.js";
 
-export function encodeBase64Url(bytes: Uint8Array): string {
+/** Standard padded base64 of the bytes. */
+export function encodeBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
+  return btoa(binary);
+}
+
+/** Bytes of standard base64, with the platform `atob` acceptance rules. */
+export function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+export function encodeBase64Url(bytes: Uint8Array): string {
+  return encodeBase64(bytes)
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/u, "");

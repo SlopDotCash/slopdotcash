@@ -4,6 +4,7 @@ export declare function formatBaseUnits(
   decimals: number,
   options?: { grouping?: boolean },
 ): string;
+/** Requires unsigned decimal digit components and integer precision from 0 to 36. */
 export declare function decimalBaseUnits(
   whole: string,
   fraction: string,

@@ -10,9 +10,11 @@
  * or recorded with the plan as sharing its reviewed bytes, and the review is
  * complete only when every call completed.
  */
+
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
+import { boundedReviewTimeout } from "../verified-budget";
 import {
   DETERMINISTIC_COVERAGE_ID,
   INVENTORY_SCHEMA,
@@ -31,9 +33,13 @@ import {
   type ScannerProfile,
   SYNTHESIS_PROMPT_REVISION,
 } from "./scanners";
+import {
+  fittedAliasCount,
+  layoutReviewBatches,
+} from "./verified-review-batches";
 
 /** Default input budget of one batch call, in estimated tokens. */
-export const DEFAULT_BATCH_TOKENS = 150_000;
+const DEFAULT_BATCH_TOKENS = 150_000;
 /** Conservative estimate for source text; real tokenizers yield fewer tokens. */
 export const BYTES_PER_TOKEN = 3;
 /** Fixed per-item JSON framing, counted like the single-call envelope. */
@@ -50,7 +56,7 @@ type Inventory = {
   visibilityGaps: string[];
 };
 
-export type PlannedCall = {
+type PlannedCall = {
   evidence: string;
   inputSha256: string;
   items: number;
@@ -61,13 +67,13 @@ export type PlannedCall = {
  * batch. They share that item's reviewed bytes (the same SHA-256), so they are
  * covered by its review without another model call.
  */
-export type SameBytesOutsideBatches = {
+type SameBytesOutsideBatches = {
   sourcePath: string;
   sourceSha256: string;
   batch: string;
   paths: string[];
 }[];
-export type ReviewPlan =
+type ReviewPlan =
   | { mode: "single"; call: PlannedCall }
   | {
       mode: "batched";
@@ -87,8 +93,8 @@ const plannedItemBytes = ({ item, aliases }: PlannedItem) =>
   itemBytes(item) + aliasBytes(item.id, aliases);
 const tokens = (bytes: number) => Math.ceil(bytes / BYTES_PER_TOKEN);
 /** A larger input gets more time; an outage still fails as a retry. */
-export const callTimeoutMs = (estimatedTokens: number) =>
-  Math.min(600_000, 120_000 + estimatedTokens);
+const callTimeoutMs = (estimatedTokens: number) =>
+  boundedReviewTimeout(estimatedTokens);
 
 function planned(evidence: string, items: number): PlannedCall {
   return {
@@ -246,54 +252,37 @@ export function planReview(
    * widest index and count), plus each alias's JSON bytes and its comma.
    */
   const fittedAliases = (item: Item, aliases: string[]): string[] => {
-    let size = Buffer.byteLength(
+    const size = Buffer.byteLength(
       batchEvidence(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, [item], {
         [item.id]: [],
       }),
     );
-    let fitted = 0;
-    for (const alias of aliases) {
-      size += Buffer.byteLength(JSON.stringify(alias)) + (fitted > 0 ? 1 : 0);
-      if (size > limit) break;
-      fitted += 1;
-    }
-    return aliases.slice(0, fitted);
+    return aliases.slice(0, fittedAliasCount(size, aliases, limit));
   };
-  const groups: PlannedItem[][] = [];
-  const outside: { item: Item; group: number; paths: string[] }[] = [];
-  let current: PlannedItem[] = [];
-  let bytes = BATCH_OVERHEAD_BYTES;
-  const flush = () => {
-    if (current.length > 0) groups.push(current);
-    current = [];
-    bytes = BATCH_OVERHEAD_BYTES;
-  };
-  for (const item of ordered) {
+  const prepared = ordered.map((item) => {
     const aliases = sameBytes.get(item.id) ?? [];
     const fitted = aliases.length > 0 ? fittedAliases(item, aliases) : aliases;
-    if (fitted.length < aliases.length) {
-      // The reviewed copy fills its own batch; the remaining identical paths
-      // share its reviewed bytes and are recorded outside the model batches.
-      flush();
-      groups.push([{ item, aliases: fitted }]);
-      outside.push({
-        item,
-        group: groups.length,
-        paths: aliases.slice(fitted.length),
-      });
-      continue;
-    }
-    const plannedItem: PlannedItem = { item, aliases };
-    const size = plannedItemBytes(plannedItem);
-    if (
-      current.length > 0 &&
-      (bytes + size > limit || current.length >= MAX_INVENTORY_ITEMS)
-    )
-      flush();
-    current.push(plannedItem);
-    bytes += size;
-  }
-  flush();
+    const plannedItem: PlannedItem = { item, aliases: fitted };
+    return {
+      plannedItem,
+      paths: aliases.slice(fitted.length),
+      layout: {
+        bytes:
+          fitted.length < aliases.length ? 0 : plannedItemBytes(plannedItem),
+        aliases: aliases.length,
+        fitted: fitted.length,
+      },
+    };
+  });
+  const layout = layoutReviewBatches(
+    prepared.map((entry) => entry.layout),
+    BATCH_OVERHEAD_BYTES,
+    limit,
+    MAX_INVENTORY_ITEMS,
+  );
+  const groups = layout.spans.map(({ start, end }) =>
+    prepared.slice(start, end).map(({ plannedItem }) => plannedItem),
+  );
   const batches = groups.map((plannedItems, index) => {
     const items = plannedItems.map(({ item }) => item);
     const aliases = Object.fromEntries(
@@ -306,12 +295,18 @@ export function planReview(
       items.length,
     );
   });
-  const sameBytesOutsideBatches = outside.map(({ item, group, paths }) => ({
-    sourcePath: item.id,
-    sourceSha256: item.sha256,
-    batch: `batch-${group}`,
-    paths,
-  }));
+  const sameBytesOutsideBatches = prepared.flatMap((entry, index) =>
+    entry.paths.length > 0
+      ? [
+          {
+            sourcePath: entry.plannedItem.item.id,
+            sourceSha256: entry.plannedItem.item.sha256,
+            batch: `batch-${layout.groupOf[index] + 1}`,
+            paths: entry.paths,
+          },
+        ]
+      : [],
+  );
   return { mode: "batched", batches, batchTokens, sameBytesOutsideBatches };
 }
 
@@ -329,6 +324,46 @@ export function synthesisCall(
   const inventory = JSON.parse(
     new TextDecoder().decode(inspection.inventory),
   ) as Inventory;
+  const batchInputs = batches.map(
+    (batch) =>
+      JSON.parse(batch.evidence) as Inventory & {
+        sameBytesAs?: Record<string, string[]>;
+      },
+  );
+  // A model read these aliases beside their byte-identical source item.
+  // The synthesis also needs that mapping: otherwise a flagged alias path
+  // appears in the pre-pass but nowhere in its list of reviewed content.
+  const sameBytesInBatches = batchInputs.flatMap((batch, index) =>
+    batch.items.flatMap((item) => {
+      const paths = batch.sameBytesAs?.[item.id] ?? [];
+      return paths.length === 0
+        ? []
+        : [
+            {
+              sourcePath: item.id,
+              sourceSha256: item.sha256,
+              batch: `batch-${index + 1}`,
+              paths,
+            },
+          ];
+    }),
+  );
+  const risky = new Set(inspection.riskSignals);
+  const summarizedAliases = (entries: SameBytesOutsideBatches) => {
+    // Keep exact mappings for risk signals even when ordinary path lists
+    // need a compact representation. Those paths also appear in findings.
+    const flaggedAliases = entries.flatMap((entry) => {
+      const paths = entry.paths.filter((path) =>
+        risky.has(path.replace(/(?:#(?:part-\d+-of-\d+|signals))+$/u, "")),
+      );
+      return paths.length === 0 ? [] : [{ ...entry, paths }];
+    });
+    return {
+      sources: entries.length,
+      paths: entries.reduce((sum, entry) => sum + entry.paths.length, 0),
+      ...(flaggedAliases.length > 0 ? { flaggedAliases } : {}),
+    };
+  };
   const listing = (full: boolean) => ({
     inventorySha256: inspection.inventorySha256,
     coverage: inspection.coverage,
@@ -345,9 +380,19 @@ export function synthesisCall(
     batches: batches.map((batch, index) => ({
       id: `batch-${index + 1}`,
       items: full
-        ? (JSON.parse(batch.evidence) as Inventory).items.map((item) => item.id)
+        ? batchInputs[index].items.map((item) => item.id)
         : batch.items,
     })),
+    ...(sameBytesInBatches.length > 0
+      ? {
+          sameBytesAs: full
+            ? sameBytesInBatches
+            : {
+                ...summarizedAliases(sameBytesInBatches),
+                note: "Paths byte-identical to a reviewed item, supplied beside that item in the retained batch inventories",
+              },
+        }
+      : {}),
     // Identical paths that did not fit beside their reviewed copy; each one
     // shares the bytes reviewed in the named batch.
     ...(sameBytesOutsideBatches.length > 0
@@ -355,11 +400,7 @@ export function synthesisCall(
           sameBytesOutsideBatches: full
             ? sameBytesOutsideBatches
             : {
-                sources: sameBytesOutsideBatches.length,
-                paths: sameBytesOutsideBatches.reduce(
-                  (sum, entry) => sum + entry.paths.length,
-                  0,
-                ),
+                ...summarizedAliases(sameBytesOutsideBatches),
                 note: "Paths byte-identical to a reviewed item, listed in the retained inventory",
               },
         }
@@ -423,7 +464,7 @@ const retryable = (failure: string | undefined) =>
     failure === "response-unreadable" ||
     /^provider-http-(?:429|5\d\d)(?:-|$)/u.test(failure));
 
-/** The retried call's evidence, carrying the usage and cost of every attempt. */
+/** A completed call's total, or a failed call's observed accounting subtotal. */
 function withEarlierAttempts(
   last: ScannerEvidence,
   earlier: ScannerEvidence[],
@@ -436,7 +477,12 @@ function withEarlierAttempts(
   let output = 0;
   let costBasis: NonNullable<ScannerEvidence["cost"]> | null = null;
   let nanoUsd = 0n;
-  for (const attempt of [...earlier, last]) {
+  const attempts = [...earlier, last];
+  // A failed review exposes diagnostics only and is neither cached nor
+  // published. Keep its known subtotal even when another attempt was silent.
+  // A completed review can expose a total only when every attempt is known.
+  const failed = last.review.status === "failed";
+  for (const attempt of attempts) {
     if (attempt.usage) {
       hasUsage = true;
       uncachedInput += attempt.usage.uncachedInput;
@@ -451,10 +497,16 @@ function withEarlierAttempts(
   }
   return {
     ...last,
-    usage: hasUsage
-      ? { uncachedInput, cachedInput, cacheCreation, output }
-      : null,
-    cost: costBasis ? { ...costBasis, nanoUsd: nanoUsd.toString() } : null,
+    usage:
+      hasUsage &&
+      (failed || attempts.every((attempt) => attempt.usage !== null))
+        ? { uncachedInput, cachedInput, cacheCreation, output }
+        : null,
+    cost:
+      costBasis &&
+      (failed || attempts.every((attempt) => attempt.cost !== null))
+        ? { ...costBasis, nanoUsd: nanoUsd.toString() }
+        : null,
   };
 }
 

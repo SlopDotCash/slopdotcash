@@ -42,8 +42,10 @@ current behavior.
    yield free advisory results when closure is unavailable. A potentially
    closable result still goes through model triage and independent confirmation;
    model verdicts replace the hint.
-6. **Models.** `models.ts` triages with Surplus `claude-opus-5.5`, then Surplus
-   `gpt-6.1-sol` as fallback. Every call is written to `slopbot_costs` with its
+6. **Models.** `models.ts` starts with Orbio `anthropic/claude-sonnet-5.5`.
+   Any Orbio failure, including exhausted credits, goes directly to Surplus
+   `claude-sonnet-5.5`, then Surplus `gpt-6.1-terra`. Missing provider keys skip
+   that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
    internal provider cost and a zero billed amount.
 7. **Close gates.** A close needs all of the following (`review.ts`,
    `closure-eligibility.ts`, `penalties.ts`, `contracts.ts`):
@@ -65,8 +67,25 @@ current behavior.
    - no reopen-rate breaker (`REOPEN_BREAKER_RATIO = 0.1` over 7 days of
      maintainer reopen or upheld appeal reversals) and no repository
      `dailyCloseCap` hit;
-   - a confirming second Surplus verdict; no unresolved limitations; unchanged
+   - a confirming second model verdict; no unresolved limitations; unchanged
      item just before acting.
+
+   The daily close slot is reserved in D1 before the GitHub request. Confirmed
+   closes in the rolling day and every unresolved close attempt consume
+   capacity. Confirmation records the action and settles its reservation in
+   one transaction, so they count once. The new-author review cap similarly
+   counts live review leases and unresolved closes, not only finished reviews.
+   A verified prior merge preserves the existing new-author cap exemption.
+
+   A timeout or lost response does not release a close slot. Replay the
+   original review job to reconcile GitHub's immutable actor, revision and
+   close-time evidence; replay does not send another close. If that evidence
+   remains unavailable, retain the pending attempt for operator investigation.
+   Do not delete it or expire it merely because the review lease ended.
+   A definitive GitHub 401, 403, 404, 410, 422 or 429 refusal records a rejected
+   attempt and releases its slot. A later retry creates a new attempt; it does
+   not rewrite that history. Expired ordinary reviews without a pending close
+   also release their author slot.
 
    Otherwise the bot only comments and labels. Eligible full reviews with no
    finding still update the bot's single review comment. An uncertain finding
@@ -116,12 +135,29 @@ present but invalid, review falls back to label-only with no closure.
 
 ## Free reviews, budget blocks, spend
 
-Provider budget blocks are durable in `budget-blocks.ts` and resume when the
-provider window opens. A provider spending denial is not a paid value attempt:
+Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
+provider window opens. Orbio errors, including credit exhaustion, try Surplus
+immediately. A Surplus spending denial is not a paid value attempt:
 the request waits as `budget` and does not use one of the three attempts per
 inference key (`value-inference.ts`). Free reviews still record provider cost
-rows with zero customer charge. Spend alerts live in `spend-alerts.ts`; failure
+rows with zero customer charge. Whole-micro Orbio `usage.cost` receipts are
+retained as actual cost; fractional-micro or missing receipts keep actual cost
+unknown. Release qualification uses a rounded-up fractional receipt only as a
+spending bound, never as a reconciled ledger charge. Spend alerts live in `spend-alerts.ts`; failure
 alerts in `failure-alerts.ts`.
+
+Every reservation occupies that three-attempt limit until recorded calls prove
+the whole attempt was a free denial, or an immutable completion and a zero-call,
+zero-cost reconciliation prove that no provider request started. A missing
+response or unfinished result stays reserved. An immutable attempt-completion
+record is written only after
+call records and any valid retained result are stored; it does not assert that
+provider cost amounts are known or reconciled. A full limit with unfinished
+attempts returns `attempts-pending` and keeps the request on its existing
+retry schedule. Only three completed non-free attempts permit terminal
+`attempts-exhausted`, and a retained result is read again before that decision
+is returned. Completion, cost reconciliation and journal publication are
+separate facts; no reservation is refunded or expired by a timer.
 
 ## Value assessment
 
@@ -205,9 +241,18 @@ Do these in order. Each step names who does it and how to verify it.
    - `SLOPBOT_APP_PRIVATE_KEY` (the PKCS#8 PEM)
    - `SURPLUS_API_KEY`
 
-   Both models use the same Surplus key. The default Anthropic-compatible base
-   URL is `https://api.surplusintelligence.ai/anthropic`. Optionally set
-   `SURPLUS_BASE_URL` for another verified Surplus Anthropic endpoint.
+   Orbio is primary; Surplus is backup. Each provider serves both models with
+   its own key. The default Anthropic-compatible bases are
+   `https://api.orbio.so/api` and
+   `https://api.surplusintelligence.ai/anthropic`. Optional `ORBIO_BASE_URL`
+   and `SURPLUS_BASE_URL` overrides must name verified endpoints for that
+   provider. See the [Orbio authentication guide](https://www.orbio.so/developers/authentication)
+   and [live model catalogue](https://api.orbio.so/api/v1/models).
+   The protected `slop-production` GitHub environment requires both provider
+   keys. Its release uploads `ORBIO_API_KEY` together with the tested Worker
+   source in one version, retaining the existing App and Surplus secrets. It
+   verifies that version's ID, release tag, and all six secret bindings before
+   promotion. Do not set the Orbio key separately on the old live version.
 5. **Create the queues** in the production Cloudflare account (the account in
    `CLOUDFLARE_ACCOUNT_ID`, which also holds `slop-private`):
    `bunx wrangler queues create slopbot-jobs` and

@@ -29,13 +29,15 @@ import {
 import { paymentDeploymentRecord } from "../../src/lib/escrow-policy.mjs";
 import { reconcileBindingWinner } from "./binding-recovery";
 import {
-  type BindingCandidate,
-  bindStoredDestination,
   type ExecutorEnvironment,
   type JournalStore,
+  STORED_BINDING,
+} from "./binding-shared";
+import {
+  type BindingCandidate,
+  bindStoredDestination,
   pendingStoredBindings,
   runStoredBindings,
-  STORED_BINDING,
 } from "./core";
 import { privateScopeJournal, testBindingNonceLimit } from "./index";
 
@@ -83,6 +85,18 @@ const nonce = async () =>
   Number(
     BigInt(await rpc("eth_getTransactionCount", [attester.address, "latest"])),
   );
+
+async function bindingExpiry() {
+  // Expiry cases deliberately advance Anvil beyond the wall clock. Later
+  // independent cases still need a live consent to reach their intended race.
+  const block = await rpc<{ timestamp: string }>("eth_getBlockByNumber", [
+    "latest",
+    false,
+  ]);
+  const chainClock = BigInt(block.timestamp);
+  const wallClock = BigInt(Math.floor(Date.now() / 1000));
+  return String((chainClock > wallClock ? chainClock : wallClock) + 86400n);
+}
 
 function calldata(signature: string, args: string[]) {
   const encoded = execFileSync("cast", ["calldata", signature, ...args], {
@@ -483,7 +497,7 @@ async function fixture(
       "INSERT INTO payment_obligations(id,project_id,github_user_id,network,chain,vault,asset_address,asset_decimals,gross_base,fee_base,source_digest,state,created_at) VALUES(?,?,?,?,'base',?,?,6,'1000000','20000',?,'reserved',?)",
     )
     .run(award, projectId, actor, network, vault, asset, source.slice(2), now);
-  const expires = String(Math.floor(Date.now() / 1000) + 86400);
+  const expires = await bindingExpiry();
   const typed = evmBindingTypedData(chainId, vault, {
     githubUserId: actor,
     destination,
@@ -694,7 +708,7 @@ async function successorClaim(fixture: Fixture): Promise<BindingCandidate> {
       challenge,
       await wallet.signMessage({ message }),
     );
-  const expires = String(Math.floor(Date.now() / 1000) + 86400);
+  const expires = await bindingExpiry();
   const typed = evmBindingTypedData(chainId, fixture.vault, {
     githubUserId: old.githubUserId,
     destination: old.destination,
@@ -1200,6 +1214,56 @@ try {
       assert(
         await active.env.JOURNAL.get(original.value.bindingConsentBudgetKey),
       );
+    },
+  );
+  await run(
+    "wallet replacement during the final budget read holds the signed binding",
+    async () => {
+      active = await fixture("136", "consent");
+      const current = active;
+      const before = await nonce();
+      const journal = current.env.JOURNAL;
+      let replaced = false;
+      current.env.JOURNAL = {
+        ...journal,
+        async get<T>(key: string): Promise<T | undefined> {
+          const value = await journal.get<T>(key);
+          // This read occurs after signing has committed. Before the fix,
+          // the final current-wallet check had already returned at this point.
+          if (
+            !replaced &&
+            key.startsWith("bind:consent-nonce:") &&
+            current.journal
+              .entries()
+              .some((row) => row.key.startsWith(STORED_BINDING))
+          ) {
+            replaced = true;
+            await successorClaim(current);
+          }
+          return value;
+        },
+      };
+      await assert.rejects(
+        bindStoredDestination(current.env, current.candidate),
+        /Current approved wallet\/attempt unavailable/,
+      );
+      assert(replaced, "The race must occur after signed bytes are retained");
+      assert.equal(current.signatures(), 1);
+      assert.equal(current.broadcasts, 0);
+      assert.equal(await nonce(), before);
+      const original = current.journal
+        .entries()
+        .find((row) => row.key.startsWith(STORED_BINDING));
+      assert(original);
+      assert(await journal.get(original.value.bindingConsentBudgetKey));
+      assert((await pendingStoredBindings(journal)).includes(original.key));
+      await assert.rejects(
+        bindStoredDestination(current.env, current.candidate),
+        /Current approved wallet\/attempt unavailable/,
+      );
+      assert.equal(current.signatures(), 1);
+      assert.equal(current.broadcasts, 0);
+      assert.deepEqual(await journal.get(original.key), original.value);
     },
   );
   console.log(

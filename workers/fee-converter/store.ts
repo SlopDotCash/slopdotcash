@@ -13,6 +13,7 @@ import {
   solanaBase58,
 } from "../../contracts/solana/adapter";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type { Network } from "./config";
 import type {
   ConversionRow,
@@ -20,33 +21,24 @@ import type {
   FeeVault,
   SendReplacement,
 } from "./core";
+import { LOCK_MS } from "./core";
+import type { D1Value, FeeD1Database } from "./d1";
 import { assertJupiterRoute } from "./jupiter-route";
-import {
-  JUPITER_PROGRAM,
-  parseTransaction as parseSolanaTransaction,
-} from "./solana";
 import {
   retainedRouteExpectation,
   type SolanaAccountProof,
   verifySolanaAccountProof,
 } from "./solana-accounts";
-
-type D1Value = string | number | null;
-interface D1Statement {
-  bind(...values: D1Value[]): D1Statement;
-  first<T>(): Promise<T | null>;
-  all<T>(): Promise<{ results: T[] }>;
-  run(): Promise<{ meta?: { changes?: number } }>;
-}
-export interface FeeD1Database {
-  prepare(query: string): D1Statement;
-}
-
-/**
- * One lease covers a whole run. core.ts sizes its own renewal interval from
- * this so a run never signs after the lease it holds has expired.
- */
-export const LOCK_MS = 14 * 60 * 1000;
+import {
+  JUPITER_PROGRAM,
+  parseTransaction as parseSolanaTransaction,
+} from "./solana-transaction";
+import {
+  type NativeFeeEarning,
+  type NativeLiabilityEntry,
+  nativeFeeEarnings,
+  nativeFeeRemainder,
+} from "./verified-native-liability";
 
 const COLUMNS: [keyof ConversionRow, string][] = [
   ["id", "id"],
@@ -83,9 +75,9 @@ const COLUMNS: [keyof ConversionRow, string][] = [
   ["nativeGasId", "native_gas_id"],
 ];
 const COLUMN = new Map(COLUMNS);
-const SELECT = COLUMNS.map(([, column]) => column).join(", ");
+export const SELECT = COLUMNS.map(([, column]) => column).join(", ");
 
-function fromRow(row: Record<string, D1Value>): ConversionRow {
+export function fromRow(row: Record<string, D1Value>): ConversionRow {
   return Object.fromEntries(
     COLUMNS.map(([key, column]) => [key, row[column] ?? null]),
   ) as unknown as ConversionRow;
@@ -115,7 +107,7 @@ export class D1ConversionStore implements ConversionStore {
     if (!reserved || !rawTx)
       throw new Error("Native reservation lacks its signed intent");
     if (reserved.network === "solana") {
-      const raw = Uint8Array.from(atob(rawTx), (c) => c.charCodeAt(0));
+      const raw = decodeBase64(rawTx);
       const parsed = parseSolanaTransaction(raw);
       if (
         !parsed.legacy ||
@@ -413,7 +405,7 @@ export class D1ConversionStore implements ConversionStore {
          FROM fee_conversions c LEFT JOIN fee_native_gas g ON g.id=c.native_gas_id
          WHERE c.network=? AND c.token=? AND c.fee_wallet=? AND c.mode='live'
            AND ((c.kind='claim' AND c.state='finalized') OR
-                (c.kind='conversion' AND c.state IN ('quoted','submitted','unknown','finalized')))`,
+                (c.kind IN ('conversion','buyback') AND c.state IN ('quoted','submitted','unknown','finalized')))`,
       )
       .bind(network, token, feeWallet)
       .all<{
@@ -423,9 +415,7 @@ export class D1ConversionStore implements ConversionStore {
         amount_out: string | null;
         created_at: string;
       }>();
-    let balance = 0n;
-    let firstReceipt: string | null = null;
-    let hasDirectCredit = false;
+    const earnings: NativeFeeEarning[] = [];
     // A completed direct award proves its exact fee transfer without a vault claim.
     // The worker reads only the fee fields, never private report or payer data.
     const direct = await this.db
@@ -450,10 +440,13 @@ export class D1ConversionStore implements ConversionStore {
           ? row.recipient === feeWallet
           : row.recipient.toLowerCase() === feeWallet.toLowerCase();
       if (!sameWallet) continue;
-      balance += BigInt(row.fee_base);
-      hasDirectCredit = true;
-      if (firstReceipt === null || row.prepared_at < firstReceipt)
-        firstReceipt = row.prepared_at;
+      earnings.push({
+        kind: "direct",
+        recipient:
+          network === "solana" ? row.recipient : row.recipient.toLowerCase(),
+        amount: BigInt(row.fee_base),
+        at: row.prepared_at,
+      });
     }
     for (const row of results) {
       if (row.kind === "claim") {
@@ -462,14 +455,38 @@ export class D1ConversionStore implements ConversionStore {
           !/^(0|[1-9][0-9]*)$/u.test(row.amount_out)
         )
           throw new Error("Finalized native claim has no verified amount");
-        balance += BigInt(row.amount_out);
-        if (firstReceipt === null || row.created_at < firstReceipt)
-          firstReceipt = row.created_at;
+        earnings.push({
+          kind: "claim",
+          amount: BigInt(row.amount_out),
+          at: row.created_at,
+        });
       } else {
-        balance -= BigInt(row.amount_in);
+        // A native buyback input spends earned native fees like a conversion.
+        earnings.push({ kind: "conversion", amount: BigInt(row.amount_in) });
       }
     }
-    if (firstReceipt === null) return 0n;
+    // A bridge order pays its fixed protocol fee in the native asset. It is
+    // spent from the wallet, so it never remains sellable fee income.
+    const bridged = await this.db
+      .prepare(
+        `SELECT json_extract(quote,'$.nativeFee') AS native_fee FROM fee_conversions
+          WHERE network=? AND fee_wallet=? AND mode='live' AND kind='bridge'
+            AND state IN ('submitted','unknown','finalized')`,
+      )
+      .bind(network, feeWallet)
+      .all<{ native_fee: string | null }>();
+    for (const row of bridged.results) {
+      if (row.native_fee === null || !/^(0|[1-9][0-9]*)$/u.test(row.native_fee))
+        throw new Error("Bridge order has no recorded protocol fee");
+      earnings.push({ kind: "conversion", amount: BigInt(row.native_fee) });
+    }
+    const earned = nativeFeeEarnings(
+      earnings,
+      network === "solana" ? feeWallet : feeWallet.toLowerCase(),
+    );
+    if (earned.receipt.kind === "absent") return 0n;
+    const firstReceipt = earned.receipt.at;
+    const hasDirectCredit = earned.hasDirectCredit;
     const { results: gas } = await this.db
       .prepare(
         `SELECT id,nonce,maximum_wei,actual_wei FROM fee_native_gas
@@ -489,17 +506,25 @@ export class D1ConversionStore implements ConversionStore {
         maximum_wei: string;
         actual_wei: string | null;
       }>();
-    const liabilities = new Map<string, bigint>();
+    const buckets = new Map<string, number>();
+    const liabilities: NativeLiabilityEntry[] = [];
     for (const row of gas) {
       const amount = BigInt(row.actual_wei ?? row.maximum_wei);
       // EVM replacements consume one account nonce. Each Solana signed
       // transaction has its own reservation and incurs its own fee.
       const attempt = network === "solana" ? row.id : String(row.nonce);
-      if ((liabilities.get(attempt) ?? 0n) < amount)
-        liabilities.set(attempt, amount);
+      let bucket = buckets.get(attempt);
+      if (bucket === undefined) {
+        bucket = buckets.size;
+        buckets.set(attempt, bucket);
+      }
+      liabilities.push({
+        kind: "unsettled",
+        bucket,
+        maximum: amount > 0n ? amount : 0n,
+      });
     }
-    for (const amount of liabilities.values()) balance -= amount;
-    return balance > 0n ? balance : 0n;
+    return nativeFeeRemainder(earned.amount, buckets.size, liabilities);
   }
 }
 

@@ -200,6 +200,14 @@ stored row stays. An older block never replaces a newer one. The ledger then
 takes each award's asset and decimals from that row, so an award is indexed
 only after its vault was read.
 
+Owner vault registration also saves the first finalized observation after its
+immutable registry revision. An unavailable read leaves that registration intact;
+the owner's authenticated registration retry can save the missing observation
+without another revision. This also works when payout execution is inactive.
+The protected main release repairs missing ordinary Solana observations through
+the same adapters and monotonic writer. It retains existing rows and never signs,
+submits a transaction, enables execution, or changes a scheduler.
+
 `GET /api/v1/payments/projects/<id>/vault` serves these rows with
 `staleAfterMs` (30 minutes). A page view reads D1 or the edge cache
 (`caches.default`, 60 seconds), never a chain RPC. The project page shows
@@ -287,8 +295,8 @@ sections 6 and 7). Migration `0062` adds its private records.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
-2. **Private changes.** The owner, with current GitHub write, maintain or
-   admin permission on the immutable repository, changes amounts through
+2. **Private changes.** The owner, the project steward or a current admin of
+   the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
    `POST .../monthly/:YYYY-MM/allocations` (`githubUserId`, `grossBase`,
    `expectedSequence`). The month's total never exceeds its monthly amount, so
@@ -296,7 +304,9 @@ sections 6 and 7). Migration `0062` adds its private records.
    allocation. Each change is an append-only `monthly_allocation_changes` row
    kept only for dispute handling and reconciliation; no route returns it and
    no public reason exists. `POST .../monthly-settings` (`automatic`) turns
-   the automatic default off or on again.
+   the automatic default off or on again. Write or maintain permission can
+   read the month and prepare its commitment, but cannot change allocations,
+   the automatic default, finalization or reserve release.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
    (`expectedSequence`) freezes the current allocations now. Otherwise the
    payments Worker's scheduled coordinator freezes them at the cutoff,

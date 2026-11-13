@@ -26,6 +26,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -77,7 +78,7 @@ import {
 } from "./lib/project-api";
 import type { GithubActor } from "./lib/project-contracts";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
-import type { RewardAsset } from "./lib/reward-asset.mjs";
+import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
@@ -85,6 +86,8 @@ import {
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
 import { useAction } from "./lib/use-action";
+import { useTimeBoundary } from "./lib/use-time-boundary";
+import { securityBountyShares } from "./lib/verified-security-split";
 import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
@@ -176,7 +179,7 @@ function UnsignedPaymentRequest({
                 </span>
                 <strong>
                   {formatBaseUnits(transfer.amountBase, direct.asset.decimals)}{" "}
-                  {direct.asset.symbol}
+                  {formatAssetSymbol(direct.asset.symbol)}
                 </strong>
                 <CopyIdentifier
                   label={`${transfer.role === "fee" ? "Slop fee" : "researcher"} wallet`}
@@ -670,6 +673,10 @@ export function SecurityProgramPage({
     revision: number;
   } | null>(null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
+  const refreshIdentity = useCallback(
+    () => setSessionEpoch((value) => value + 1),
+    [],
+  );
   const session = useProjectSession(sessionEpoch);
   usePrivateDraftSession(session);
   useEffect(() => {
@@ -699,6 +706,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -872,6 +880,7 @@ export function SecurityProgramPage({
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
           key={project.id}
+          onIdentityChange={refreshIdentity}
           onProjectChange={setProject}
           onPublishedRevision={(revision) =>
             setPublished({ projectId: project.id, revision })
@@ -1108,8 +1117,13 @@ type Loaded<T> =
   | { status: "error"; message: string }
   | { status: "ready"; value: T; refreshError?: string };
 
-const PrivateRequestContext =
-  createContext<typeof projectApiRequest>(projectApiRequest);
+type PrivateRequest = <T>(
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  body?: unknown,
+  options?: { expectedActorGithubId?: string; isCurrent?: () => boolean },
+) => Promise<T>;
+const PrivateRequestContext = createContext<PrivateRequest>(projectApiRequest);
 
 function usePrivateRequest() {
   return useContext(PrivateRequestContext);
@@ -1117,24 +1131,36 @@ function usePrivateRequest() {
 
 function useSecurityData<T>(
   path: string | null,
-): [Loaded<T>, () => void, (value: T) => void] {
+): [
+  Loaded<T>,
+  () => void,
+  (value: T, accept?: (previous: T) => boolean | "refresh") => void,
+] {
   const privateRequest = usePrivateRequest();
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
+  const mounted = useRef(false);
   const generation = useRef(0);
+  const activeRead = useRef<number | null>(null);
+  const accepted = useRef<{ value: T } | null>(null);
   const load = useCallback(() => {
-    if (path === null) return;
+    if (!mounted.current || path === null) return;
     const current = ++generation.current;
+    activeRead.current = current;
     // A refresh keeps the loaded view, so an open case stays mounted.
     setState((previous) =>
       previous.status === "ready" ? previous : { status: "loading" },
     );
     privateRequest<T>("GET", path).then(
       (value) => {
-        if (generation.current === current)
+        if (generation.current === current) {
+          activeRead.current = null;
+          accepted.current = { value };
           setState({ status: "ready", value });
+        }
       },
       (error: unknown) => {
         if (generation.current !== current) return;
+        activeRead.current = null;
         if (error instanceof ProjectApiError && error.status === 401) {
           setState({ status: "signed-out" });
           return;
@@ -1152,14 +1178,35 @@ function useSecurityData<T>(
     );
   }, [path, privateRequest]);
   useEffect(() => {
+    mounted.current = true;
     load();
     return () => {
+      mounted.current = false;
       generation.current += 1;
+      activeRead.current = null;
     };
   }, [load]);
   const replace = useCallback(
-    (value: T) => setState({ status: "ready", value }),
-    [],
+    (value: T, accept?: (previous: T) => boolean | "refresh") => {
+      if (!mounted.current) return;
+      const decision =
+        accepted.current !== null && accept
+          ? accept(accepted.current.value)
+          : true;
+      if (decision === "refresh") {
+        // Keep current projections until a fresh read answers. An existing
+        // current read already owns that work; do not cancel it and start over.
+        if (activeRead.current !== generation.current) load();
+        return;
+      }
+      if (!decision) return;
+      // An action result supersedes every read started before it.
+      generation.current += 1;
+      activeRead.current = null;
+      accepted.current = { value };
+      setState({ status: "ready", value });
+    },
+    [load],
   );
   return [state, load, replace];
 }
@@ -1238,6 +1285,7 @@ const EVENT_LABELS: Record<string, string> = {
   triage: "Triage state changed",
   "next-action": "Next action set",
   "request-information": "Owner asked for information",
+  "report-revised": "Reporter revised the report",
   decide: "Finding decided",
   award: "Award decided",
   remediation: "Remediation state changed",
@@ -1382,26 +1430,43 @@ function ClaimForm({
         projects={programProjects}
         value={projectId}
       />
-      <label>
-        GitHub advisory ID
-        <input
-          autoComplete="off"
-          onChange={(event) => setAdvisory(event.target.value)}
-          pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
-          placeholder="GHSA-xxxx-xxxx-xxxx"
-          required
-          spellCheck={false}
-          value={advisory}
-        />
-        <small className="field-hint">
-          Only the ID. Do not paste report details here.
-        </small>
-      </label>
+      <AdvisoryIdField
+        hint="Only the ID. Do not paste report details here."
+        onChange={setAdvisory}
+        value={advisory}
+      />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
         {busy ? "Linking…" : "Link my GitHub report"}
       </button>
     </form>
+  );
+}
+
+/** A reporter's GHSA advisory ID input; only the ID, never report details. */
+function AdvisoryIdField({
+  hint,
+  onChange,
+  value,
+}: {
+  hint: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label>
+      GitHub advisory ID
+      <input
+        autoComplete="off"
+        onChange={(event) => onChange(event.target.value)}
+        pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
+        placeholder="GHSA-xxxx-xxxx-xxxx"
+        required
+        spellCheck={false}
+        value={value}
+      />
+      <small className="field-hint">{hint}</small>
+    </label>
   );
 }
 
@@ -1458,21 +1523,11 @@ function DirectVerifyForm({
         projects={programProjects}
         value={projectId}
       />
-      <label>
-        GitHub advisory ID
-        <input
-          autoComplete="off"
-          onChange={(event) => setAdvisory(event.target.value)}
-          pattern="GHSA-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}-[2-9cfghjmpqrvwx]{4}"
-          placeholder="GHSA-xxxx-xxxx-xxxx"
-          required
-          spellCheck={false}
-          value={advisory}
-        />
-        <small className="field-hint">
-          Only the ID. Slop checks with GitHub that you are its author.
-        </small>
-      </label>
+      <AdvisoryIdField
+        hint="Only the ID. Slop checks with GitHub that you are its author."
+        onChange={setAdvisory}
+        value={advisory}
+      />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
         {busy ? "Opening GitHub…" : "Authorize GitHub and verify"}
@@ -1603,8 +1658,17 @@ function PrivateReportDetail({
               </button>
             </p>
           ) : null}
-          <h4>{detail.value.report.summary}</h4>
-          <pre className="security-report-text">
+          <h4 id={`report-summary-${submission.id}`}>
+            {detail.value.report.summary}
+          </h4>
+          {/* biome-ignore lint/a11y/useSemanticElements: This named scroll region must preserve the report's preformatted text. */}
+          <pre
+            className="security-report-text"
+            role="region"
+            aria-labelledby={`submission-${submission.id} report-summary-${submission.id}`}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the complete private report.
+            tabIndex={0}
+          >
             {detail.value.report.description}
           </pre>
           {detail.value.report.severity ? (
@@ -1694,6 +1758,11 @@ function SubmissionCard({
   onOpenCase: (caseId: string) => void;
 }) {
   const privateRequest = usePrivateRequest();
+  useTimeBoundary(
+    submission.state === "uncertain" && submission.reconcileAfter
+      ? Date.parse(submission.reconcileAfter)
+      : null,
+  );
   const [draft, setDraft] = useState<ReportDraft>(
     () => loadDraft(submission.id) ?? EMPTY_DRAFT,
   );
@@ -2884,8 +2953,12 @@ function ActionForm({
             field.decimals,
           );
           const fullAward = isFullAwardSplit(record.terms?.split);
-          const exact =
-            minor !== null && (fullAward || BigInt(minor) % 4n === 0n);
+          const shares =
+            minor !== null &&
+            BigInt(minor) > 0n &&
+            (fullAward || BigInt(minor) % 4n === 0n)
+              ? securityBountyShares(BigInt(minor), fullAward)
+              : null;
           return (
             <label key={field.name}>
               {field.label}
@@ -2900,10 +2973,10 @@ function ActionForm({
               {hint}
               {minor !== null && record.terms ? (
                 <small className="field-hint" role="status">
-                  {exact
+                  {shares
                     ? fullAward
-                      ? `Researcher ${money(minor, record.terms)} · no Slop share`
-                      : `Researcher ${money(((BigInt(minor) * 3n) / 4n).toString(), record.terms)} · Slop ${money((BigInt(minor) / 4n).toString(), record.terms)}`
+                      ? `Researcher ${money(shares.researcher.toString(), record.terms)} · no Slop share`
+                      : `Researcher ${money(shares.researcher.toString(), record.terms)} · Slop ${money(shares.slop.toString(), record.terms)}`
                     : "This amount cannot be split exactly 75/25."}
                 </small>
               ) : null}
@@ -3314,8 +3387,17 @@ function CaseDetail({
 }) {
   const privateRequest = usePrivateRequest();
   const recoveryAction = useAction();
-  const [state, reload, replace] = useSecurityData<{ case: SecurityCase }>(
-    `security-cases/${encodeURIComponent(caseId)}`,
+  const [state, reload, replaceData] = useSecurityData<{
+    case: SecurityCase;
+  }>(`security-cases/${encodeURIComponent(caseId)}`);
+  const replace = useCallback(
+    (value: { case: SecurityCase }) =>
+      replaceData(value, (previous) =>
+        value.case.revision === previous.case.revision
+          ? "refresh"
+          : value.case.revision > previous.case.revision,
+      ),
+    [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
   if (state.status === "loading")
@@ -3365,11 +3447,42 @@ function CaseDetail({
     record.settlement?.generation !== undefined &&
     typeof directRequest?.solana?.transaction === "string" &&
     typeof directRequest.solana.messageId === "string";
-  const authorizeExistingPayment = async () => {
+  /** Refuses a recovery signature once the request shown has changed. */
+  const stillRecoverable = async (
+    request: (
+      recovery: NonNullable<SecurityCase["settlement"]>["recovery"],
+    ) => unknown,
+    message: string,
+    isCurrent?: () => boolean,
+  ) => {
     const current = await privateRequest<{ case: SecurityCase }>(
       "GET",
       `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
+    if (
+      current.case.revision !== record.revision ||
+      !current.case.allowedActions.includes("recover-payment") ||
+      current.case.settlement?.recovery?.generation !==
+        record.settlement?.recovery?.generation ||
+      JSON.stringify(request(current.case.settlement?.recovery)) !==
+        JSON.stringify(request(record.settlement?.recovery))
+    ) {
+      replace(current);
+      onChanged();
+      throw new Error(message);
+    }
+  };
+  const authorizeExistingPayment = async (isCurrent?: () => boolean) => {
+    const current = await privateRequest<{ case: SecurityCase }>(
+      "GET",
+      `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
+    );
+    if (isCurrent && !isCurrent()) return;
     if (
       !current.case.allowedActions.includes("verify-payment") ||
       current.case.settlement?.generation !== record.settlement?.generation
@@ -3379,11 +3492,17 @@ function CaseDetail({
       throw new Error("The payment state changed. Review the current case.");
     }
   };
-  const verifyExistingPayment = async (hashes: string[]) => {
+  const verifyExistingPayment = async (
+    hashes: string[],
+    isCurrent?: () => boolean,
+  ) => {
     const current = await privateRequest<{ case: SecurityCase }>(
       "GET",
       `security-cases/${encodeURIComponent(record.id)}`,
+      undefined,
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
     if (
       !current.case.allowedActions.includes("verify-payment") ||
       current.case.settlement?.generation !== record.settlement?.generation
@@ -3402,7 +3521,9 @@ function CaseDetail({
         transactionIds: hashes,
         confirmation: true,
       },
+      { isCurrent },
     );
+    if (isCurrent && !isCurrent()) return;
     replace(response);
     onChanged();
   };
@@ -3642,35 +3763,18 @@ function CaseDetail({
                 <SolanaBountyRecovery
                   key={`history:${record.id}:${record.settlement.recovery.generation}`}
                   caseId={record.id}
+                  revision={record.revision}
                   generation={record.settlement.recovery.generation}
                   payer={record.settlement.recovery.payer}
                   messages={record.settlement.recovery.messages}
-                  authorize={async () => {
-                    const current = await privateRequest<{
-                      case: SecurityCase;
-                    }>(
-                      "GET",
-                      `security-cases/${encodeURIComponent(record.id)}`,
-                    );
-                    if (
-                      !current.case.allowedActions.includes(
-                        "recover-payment",
-                      ) ||
-                      current.case.settlement?.recovery?.generation !==
-                        record.settlement?.recovery?.generation ||
-                      JSON.stringify(
-                        current.case.settlement?.recovery?.messages,
-                      ) !==
-                        JSON.stringify(record.settlement?.recovery?.messages)
-                    ) {
-                      replace(current);
-                      onChanged();
-                      throw new Error(
-                        "The recovery request changed. Refresh before signing.",
-                      );
-                    }
-                  }}
-                  verify={async (signatures) => {
+                  authorize={(isCurrent) =>
+                    stillRecoverable(
+                      (recovery) => recovery?.messages,
+                      "The recovery request changed. Refresh before signing.",
+                      isCurrent,
+                    )
+                  }
+                  verify={async (signatures, isCurrent) => {
                     const response = await privateRequest<{
                       case: SecurityCase;
                     }>(
@@ -3683,7 +3787,9 @@ function CaseDetail({
                         confirmation: true,
                         signatures,
                       },
+                      { isCurrent },
                     );
+                    if (isCurrent && !isCurrent()) return;
                     replace(response);
                     onChanged();
                   }}
@@ -3712,34 +3818,12 @@ function CaseDetail({
                       record.settlement.recovery.cancellationRequest,
                     ]}
                     cancellation
-                    authorize={async () => {
-                      const current = await privateRequest<{
-                        case: SecurityCase;
-                      }>(
-                        "GET",
-                        `security-cases/${encodeURIComponent(record.id)}`,
-                      );
-                      if (
-                        !current.case.allowedActions.includes(
-                          "recover-payment",
-                        ) ||
-                        current.case.settlement?.recovery?.generation !==
-                          record.settlement?.recovery?.generation ||
-                        JSON.stringify(
-                          current.case.settlement?.recovery
-                            ?.cancellationRequest,
-                        ) !==
-                          JSON.stringify(
-                            record.settlement?.recovery?.cancellationRequest,
-                          )
-                      ) {
-                        replace(current);
-                        onChanged();
-                        throw new Error(
-                          "The recovery request changed. Refresh the case before signing.",
-                        );
-                      }
-                    }}
+                    authorize={() =>
+                      stillRecoverable(
+                        (recovery) => recovery?.cancellationRequest,
+                        "The recovery request changed. Refresh the case before signing.",
+                      )
+                    }
                     authorizeVerification={async () => {
                       const current = await privateRequest<{
                         case: SecurityCase;
@@ -4038,7 +4122,7 @@ export function SecurityInbox({
   usePrivateDraftSession(session);
   const [problem, setProblem] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -4069,7 +4153,13 @@ export function SecurityInbox({
       method: "GET" | "POST" | "PUT",
       path: string,
       body?: unknown,
+      options?: { expectedActorGithubId?: string; isCurrent?: () => boolean },
     ): Promise<T> => {
+      const assertCurrent = () => {
+        if (!mounted.current || options?.isCurrent?.() === false)
+          throw new Error("This private report action was closed.");
+      };
+      assertCurrent();
       if (actorId === null)
         throw new Error("Sign in before accessing private reports.");
       const verifyIdentity = async () => {
@@ -4077,14 +4167,14 @@ export function SecurityInbox({
         try {
           current = await currentProjectSession();
         } catch {
+          assertCurrent();
           if (mounted.current)
             setProblem(
               "Your private session could not be verified. Retry before viewing reports.",
             );
           throw new Error("Your private session could not be verified.");
         }
-        if (!mounted.current)
-          throw new Error("This private report view was closed.");
+        assertCurrent();
         if (!current || current.githubId !== actorId) {
           clearAllDrafts();
           setProblem(
@@ -4095,12 +4185,14 @@ export function SecurityInbox({
         }
       };
       await verifyIdentity();
+      assertCurrent();
       let value: T;
       try {
         value = await projectApiRequest<T>(method, path, body, {
           expectedActorGithubId: actorId,
         });
       } catch (cause) {
+        assertCurrent();
         const missingReceipt =
           method === "GET" &&
           /^security-submissions\/ss_[A-Za-z0-9_-]+\?view=receipt$/u.test(
@@ -4127,9 +4219,12 @@ export function SecurityInbox({
         // A missing receipt may be a stale deep link. Keep the fresh list,
         // or a transient view, only after verifying the same account again.
         await verifyIdentity();
+        assertCurrent();
         throw cause;
       }
+      assertCurrent();
       await verifyIdentity();
+      assertCurrent();
       const identity = value as {
         recipientGithubId?: string;
         viewer?: { githubId?: string };
@@ -4236,16 +4331,17 @@ function SecurityInboxContent({
     };
   });
   const openCase = useCallback(
-    (caseId: string) => {
+    (caseId: string | null) => {
       setSelected(caseId);
       const query = new URLSearchParams(window.location.search);
-      query.set("case", caseId);
+      if (caseId) query.set("case", caseId);
+      else query.delete("case");
       window.history.replaceState(
         window.history.state,
         "",
         `${embedded ? "/inbox" : "/security"}?${query}`,
       );
-      reload();
+      if (caseId) reload();
     },
     [reload, embedded],
   );
@@ -4328,7 +4424,7 @@ function SecurityInboxContent({
               value={filter}
               onChange={(event) => {
                 setFilter(event.target.value as ReportFilter);
-                setSelected(null);
+                openCase(null);
               }}
             >
               <option value="all">All reports</option>
@@ -4388,7 +4484,7 @@ function SecurityInboxContent({
                       <button
                         aria-pressed={selected === record.id}
                         className="security-case-choice"
-                        onClick={() => setSelected(record.id)}
+                        onClick={() => openCase(record.id)}
                         type="button"
                       >
                         <span>{record.projectId}</span>
@@ -4405,16 +4501,7 @@ function SecurityInboxContent({
                 <button
                   type="button"
                   className="text-button"
-                  onClick={() => {
-                    setSelected(null);
-                    const query = new URLSearchParams(window.location.search);
-                    query.delete("case");
-                    window.history.replaceState(
-                      window.history.state,
-                      "",
-                      `${window.location.pathname}?${query}`,
-                    );
-                  }}
+                  onClick={() => openCase(null)}
                 >
                   Back to reports
                 </button>

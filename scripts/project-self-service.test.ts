@@ -26,6 +26,7 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import {
   assertEscrowPolicy,
   type EscrowDeployment,
@@ -218,6 +219,284 @@ test("an admin revision still replaces the listed project with that id", async (
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
 });
 
+function firstPublicationManifest(id: string) {
+  // Historical applications already contain the verified asset fields.
+  return applicationManifest(id, `example/${id}`, {
+    rewardAsset: {
+      network: "ethereum",
+      kind: "stablecoin",
+      address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      symbol: "USDC",
+      decimals: 6,
+      chainId: "1",
+      cluster: null,
+      verifiedAt: NOW,
+    },
+  });
+}
+
+test("an owner publication returns its committed revision when another writer advances the head", async () => {
+  const t = registry();
+  await t.create("publication-receipt", "example/publication-receipt");
+  const initial = await t.persistence.getProject("publication-receipt");
+  if (!initial) throw new Error("Missing project");
+  const editedDuringSave = {
+    ...initial.manifest,
+    headline: "A further unsaved owner edit.",
+  };
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  let interleave = true;
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    const result = await append(input, generation);
+    if (interleave && result === "updated") {
+      interleave = false;
+      const manifest = {
+        ...input.manifest,
+        description: "A separate maintainer updated this description.",
+      };
+      const text = JSON.stringify(manifest);
+      expect(
+        await append(
+          {
+            projectId: input.projectId,
+            expectedRevision: input.expectedRevision + 1,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
+            reason: "Concurrent reviewed maintainer revision",
+            actor: { githubId: ADMIN, githubLogin: "admin" },
+            at: NOW,
+          },
+          generation,
+        ),
+      ).toBe("updated");
+    }
+    return result;
+  };
+  try {
+    const published = await t.call(
+      "PUT",
+      "projects/publication-receipt",
+      OWNER,
+      {
+        expectedRevision: initial.revision,
+        manifest: {
+          ...initial.manifest,
+          headline: "The submitted owner edit.",
+        },
+      },
+    );
+    expect(published.status).toBe(200);
+    const receipt = published.body.project as {
+      revision: number;
+      manifest: ProjectDefinition;
+    };
+    expect(receipt.revision).toBe(2);
+    expect(receipt.manifest.headline).toBe("The submitted owner edit.");
+    expect(receipt.manifest.description).toBe(initial.manifest.description);
+    const latest = await t.persistence.getProject(initial.id);
+    expect(latest?.revision).toBe(3);
+    expect(latest?.manifest.description).toBe(
+      "A separate maintainer updated this description.",
+    );
+    const retry = await t.call("PUT", "projects/publication-receipt", OWNER, {
+      expectedRevision: receipt.revision,
+      manifest: editedDuringSave,
+    });
+    expect(retry.status).toBe(409);
+    expect(retry.body.error).toBe("stale_revision");
+    expect((await t.persistence.getProject(initial.id))?.revision).toBe(3);
+  } finally {
+    t.persistence.appendProjectRevision = append;
+    t.sqlite.close();
+  }
+});
+
+test.each(["create", "stored application"] as const)(
+  "a concurrent maintainer ban refuses %s before first publication",
+  async (flow) => {
+    const t = registry();
+    const id = "enforcement-race";
+    const manifest = firstPublicationManifest(id);
+    const applicationId = "app_enforcementrace0001";
+    if (flow === "stored application") {
+      const text = JSON.stringify(manifest);
+      t.sqlite
+        .query(
+          `INSERT INTO project_applications
+           (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+            applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+           VALUES(?,?,?,?,?,?,?,?,?,'pending','pending')`,
+        )
+        .run(
+          applicationId,
+          id,
+          `example/${id}`,
+          text,
+          await sha256Hex(new TextEncoder().encode(text)),
+          "Accepted useful contributions",
+          OWNER,
+          "owner",
+          NOW,
+        );
+    }
+    const control = t.deps.repositoryControl;
+    let banPending = true;
+    t.deps.repositoryControl = async (...args) => {
+      const result = await control(...args);
+      if (banPending) {
+        banPending = false;
+        seedParticipationBan(
+          t.sqlite,
+          { githubId: OWNER, githubLogin: "owner" },
+          { githubId: ADMIN, githubLogin: "admin" },
+          NOW,
+        );
+      }
+      return result;
+    };
+    try {
+      const publish = () =>
+        flow === "create"
+          ? t.call("POST", "projects", OWNER, { manifest })
+          : t.call(
+              "POST",
+              `project-applications/${applicationId}/publish`,
+              OWNER,
+              {},
+            );
+      const refused = await publish();
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toBe("registry_conflict");
+      expect(await t.persistence.getProject(id)).toBeNull();
+      expect(
+        t.sqlite
+          .query("SELECT COUNT(*) n FROM project_revisions WHERE project_id=?")
+          .get(id),
+      ).toEqual({ n: 0 });
+      expect(
+        t.sqlite
+          .query(
+            "SELECT COUNT(*) n FROM project_repositories WHERE project_id=?",
+          )
+          .get(id),
+      ).toEqual({ n: 0 });
+      if (flow === "stored application")
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("pending");
+      const next = await publish();
+      expect(next.status).toBe(403);
+      expect(next.body.error).toBe("maintainer_banned");
+    } finally {
+      t.deps.repositoryControl = control;
+      t.sqlite.close();
+    }
+  },
+);
+
+test.each(["create", "stored application"] as const)(
+  "accepted %s keeps its own setup revision when another writer advances the head",
+  async (flow) => {
+    const t = registry();
+    const id = "creation-receipt";
+    const applicationId = "app_creationreceipt0001";
+    const manifest = firstPublicationManifest(id);
+    if (flow === "stored application") {
+      const text = JSON.stringify(manifest);
+      t.sqlite
+        .query(
+          `INSERT INTO project_applications
+           (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,
+            applicant_github_id,applicant_github_login,submitted_at,status,admin_notification)
+           VALUES(?,?,?,?,?,?,?,?,?,'pending','pending')`,
+        )
+        .run(
+          applicationId,
+          id,
+          `example/${id}`,
+          text,
+          await sha256Hex(new TextEncoder().encode(text)),
+          "Accepted useful contributions",
+          OWNER,
+          "owner",
+          NOW,
+        );
+    }
+    const create = t.persistence.createProject.bind(t.persistence);
+    const publish = t.persistence.publishApplication.bind(t.persistence);
+    let committedManifestText: string | null = null;
+    const advance = async () => {
+      const current = await t.persistence.getProject(id);
+      if (!current) throw new Error("Accepted creation is missing");
+      committedManifestText =
+        (await t.persistence.getRevisionText(id, 1))?.manifestText ?? null;
+      const later = {
+        ...current.manifest,
+        headline: "A later independent revision.",
+      };
+      const text = JSON.stringify(later);
+      expect(
+        await t.persistence.appendProjectRevision(
+          {
+            projectId: id,
+            expectedRevision: 1,
+            manifest: later,
+            manifestText: text,
+            manifestSha256: await sha256Hex(new TextEncoder().encode(text)),
+            reason: "Independent change after first publication",
+            actor: { githubId: ADMIN, githubLogin: "admin" },
+            at: NOW,
+          },
+          await t.persistence.enforcementGeneration(),
+        ),
+      ).toBe("updated");
+    };
+    t.persistence.createProject = async (...args) => {
+      const result = await create(...args);
+      if (result === "created") await advance();
+      return result;
+    };
+    t.persistence.publishApplication = async (...args) => {
+      const result = await publish(...args);
+      if (result === "published") await advance();
+      return result;
+    };
+    t.state.clearance = CLEARED;
+    try {
+      const result =
+        flow === "create"
+          ? await t.call("POST", "projects", OWNER, { manifest })
+          : await t.call(
+              "POST",
+              `project-applications/${applicationId}/publish`,
+              OWNER,
+              {},
+            );
+      // Activation uses captured revision 1 and refuses the later revision 2.
+      // The accepted first publication is durable despite this response error.
+      expect(result.status).toBe(409);
+      expect(result.body.error).toBe("stale_revision");
+      expect(t.state.scans).toEqual([
+        expect.stringMatching(/^creation-receipt@1:/u),
+      ]);
+      expect((await t.persistence.getProject(id))?.revision).toBe(2);
+      expect(committedManifestText).not.toBeNull();
+      expect<string | null | undefined>(
+        (await t.persistence.getRevisionText(id, 1))?.manifestText,
+      ).toBe(committedManifestText);
+      if (flow === "stored application")
+        expect(
+          (await t.persistence.getApplication(applicationId))?.status,
+        ).toBe("approved");
+    } finally {
+      t.persistence.createProject = create;
+      t.persistence.publishApplication = publish;
+      t.sqlite.close();
+    }
+  },
+);
+
 test("creation requires the Slopbot installation, then queues the first scan and returns one status", async () => {
   const { create, persistence, state } = registry();
   // Owner decision D11: no installation read, no project.
@@ -331,6 +610,82 @@ test("setup activates a project only with installation write access and a clean 
     activatedRevision: null,
   });
   expect((await persistence.getProject("open-registry"))?.revision).toBe(2);
+});
+
+test("setup distinguishes a confirmed identity mismatch from a provider outage without weakening write refusals", async () => {
+  const t = registry();
+  try {
+    await t.create("identity-status", "example/identity-status");
+    t.state.clearance = CLEARED;
+    t.state.scans = [];
+    const initial = await t.persistence.getProject("identity-status");
+    if (!initial) throw new Error("Project missing");
+    const reason = "Repository or steward facts do not match GitHub";
+    t.state.control = { state: "mismatch", reason };
+    const denied = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(denied.status).toBe(200);
+    expect(denied.body.setup).toMatchObject({
+      revision: 1,
+      status: "paused",
+      state: "action_required",
+      nextAction: { kind: "ask_maintainer", message: reason },
+      checks: {
+        authority: { state: "denied", message: reason },
+        installation: { state: "installed" },
+      },
+      activatedRevision: null,
+    });
+    const write = await t.call("PUT", "projects/identity-status", OWNER, {
+      expectedRevision: initial.revision,
+      manifest: {
+        ...initial.manifest,
+        headline: "A changed project headline.",
+      },
+    });
+    expect(write.status).toBe(422);
+    expect(write.body.error).toBe("invalid_manifest");
+
+    t.deps.repositoryControl = async () => {
+      throw new Error("Synthetic GitHub outage");
+    };
+    const unavailable = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(unavailable.status).toBe(200);
+    expect(unavailable.body.setup).toMatchObject({
+      state: "retry",
+      nextAction: { kind: "retry_installation" },
+      checks: {
+        authority: { state: "retry" },
+        installation: { state: "retry" },
+      },
+      activatedRevision: null,
+    });
+    expect(t.state.scans).toEqual([]);
+    expect((await t.persistence.getProject(initial.id))?.revision).toBe(1);
+    t.deps.repositoryControl = async () => ({ state: "matched" });
+    const recovered = await t.call(
+      "POST",
+      "project-setup/identity-status/check",
+      OWNER,
+      {},
+    );
+    expect(recovered.body.setup).toMatchObject({
+      state: "ready",
+      revision: 2,
+      activatedRevision: 2,
+    });
+  } finally {
+    t.sqlite.close();
+  }
 });
 
 test("an owner records and revokes explicit closure consent with current authority and immutable revisions", async () => {
@@ -928,9 +1283,14 @@ test("a stored update whose base revision moved on is not offered for publicatio
     expectedRevision: base.revision,
   });
   expect(moved.status).toBe(200);
-  // The stale update is no longer offered as publishable...
+  // The stale update remains cancellable but cannot be published...
   expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
-    [],
+    [
+      expect.objectContaining({
+        id: "app_storedupdate00001",
+        publishable: false,
+      }),
+    ],
   );
   // ...and a direct publication explains that it must be made again.
   const refused = await call(
@@ -945,6 +1305,372 @@ test("a stored update whose base revision moved on is not offered for publicatio
   expect(
     (await persistence.getProject("open-registry"))?.manifest.headline,
   ).toBe("A newer published headline.");
+  expect(
+    (
+      await call(
+        "POST",
+        "project-applications/app_storedupdate00001/cancel",
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(200);
+  expect((await call("GET", "project-setup", OWNER)).body.applications).toEqual(
+    [],
+  );
+});
+
+test("a current maintainer removes a project with one retained revision and setup cannot reactivate it", async () => {
+  const t = registry();
+  await t.create("remove-project", "example/remove-project");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-project/check", OWNER, {});
+  const before = await t.persistence.getProject("remove-project");
+  if (!before) throw new Error("Project missing");
+  expect(before.status).toBe("active");
+  const removed = await t.call(
+    "POST",
+    "projects/remove-project/remove",
+    OTHER,
+    {
+      expectedRevision: before.revision,
+    },
+  );
+  expect(removed.status).toBe(200);
+  const after = await t.persistence.getProject("remove-project");
+  expect(after).toMatchObject({
+    revision: before.revision + 1,
+    status: "paused",
+  });
+  expect(after?.manifest).toEqual({
+    ...before.manifest,
+    status: "paused",
+    listingTier: "retired",
+  });
+  expect(
+    await t.persistence.getRevisionText(before.id, before.revision),
+  ).toMatchObject({
+    manifestSha256: before.manifestSha256,
+  });
+  expect((await t.call("GET", "projects/remove-project", "")).status).toBe(404);
+  expect(
+    (await t.call("POST", "project-setup/remove-project/check", OWNER, {}))
+      .status,
+  ).toBe(200);
+  expect((await t.persistence.getProject(before.id))?.revision).toBe(
+    after?.revision,
+  );
+  // A lost response can be retried without appending another revision.
+  expect(
+    (
+      await t.call("POST", "projects/remove-project/remove", OTHER, {
+        expectedRevision: before.revision,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await t.persistence.getProject(before.id))?.revision).toBe(
+    after?.revision,
+  );
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  expect(
+    (
+      await t.call("POST", "projects/remove-project/remove", OTHER, {
+        expectedRevision: before.revision,
+      })
+    ).status,
+  ).toBe(403);
+});
+
+test("removal refuses stale revisions, missing authority, unavailable proof and cross-origin writes", async () => {
+  const t = registry();
+  await t.create("remove-project", "example/remove-project");
+  const path = "projects/remove-project/remove";
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 2 })).status,
+  ).toBe(409);
+  t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 1 })).status,
+  ).toBe(403);
+  t.deps.repositoryAccess = async () => {
+    throw new Error("GitHub unavailable");
+  };
+  expect(
+    (await t.call("POST", path, OWNER, { expectedRevision: 1 })).status,
+  ).toBe(503);
+  const crossOrigin = await handleProjectApi(
+    new Request(`https://slop.cash/api/v1/${path}`, {
+      method: "POST",
+      headers: {
+        origin: "https://other.example",
+        "content-type": "application/json",
+        "x-test-actor": OWNER,
+      },
+      body: JSON.stringify({ expectedRevision: 1 }),
+    }),
+    t.deps,
+  );
+  expect(crossOrigin?.status).toBe(403);
+  expect(
+    (await t.persistence.getProject("remove-project"))?.manifest.listingTier,
+  ).toBe("community");
+  expect(await t.persistence.listRevisions()).toHaveLength(1);
+});
+
+test("removing a registered project in setup stops later clearance from activating it", async () => {
+  const t = registry();
+  await t.create("remove-review", "example/remove-review");
+  const before = await t.persistence.getProject("remove-review");
+  expect(before?.status).toBe("paused");
+  expect(
+    (
+      await t.call("POST", "projects/remove-review/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = CLEARED;
+  expect(
+    (await t.call("POST", "project-setup/remove-review/check", OWNER, {}))
+      .status,
+  ).toBe(200);
+  expect(await t.persistence.getProject("remove-review")).toMatchObject({
+    revision: 2,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect(t.state.scans).toHaveLength(1);
+});
+
+test("an intervening revision refuses removal without overwriting the newer project", async () => {
+  const t = registry();
+  await t.create("remove-race", "example/remove-race");
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    const manifest = {
+      ...input.manifest,
+      listingTier: "community" as const,
+      headline: "Newer maintainer edit.",
+    };
+    const manifestText = JSON.stringify(manifest);
+    expect(
+      await append(
+        {
+          ...input,
+          manifest,
+          manifestText,
+          manifestSha256: await sha256Hex(
+            new TextEncoder().encode(manifestText),
+          ),
+        },
+        generation,
+      ),
+    ).toBe("updated");
+    return append(input, generation);
+  };
+  expect(
+    (
+      await t.call("POST", "projects/remove-race/remove", OWNER, {
+        expectedRevision: 1,
+      })
+    ).status,
+  ).toBe(409);
+  expect(await t.persistence.getProject("remove-race")).toMatchObject({
+    revision: 2,
+    manifest: { listingTier: "community", headline: "Newer maintainer edit." },
+  });
+  expect(await t.persistence.listRevisions()).toHaveLength(2);
+});
+
+function storeCancellableApplication(
+  t: ReturnType<typeof registry>,
+  id = "app_cancellation00001",
+) {
+  const manifest = applicationManifest(
+    "cancel-project",
+    "example/cancel-project",
+    {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: NOW,
+      },
+    },
+  );
+  t.sqlite
+    .query(`INSERT INTO project_applications
+    (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria,
+     applicant_github_id, applicant_github_login, submitted_at, status, admin_notification)
+    VALUES (?, 'cancel-project', 'example/cancel-project', ?, ?, 'Merged pull requests', ?, 'owner', ?, 'pending', 'pending')`)
+    .run(id, JSON.stringify(manifest), "a".repeat(64), OWNER, NOW);
+  return id;
+}
+
+test("only the applicant cancels, with no GitHub access, and the cancelled record remains immutable", async () => {
+  const t = registry();
+  const id = storeCancellableApplication(t);
+  const path = `project-applications/${id}/cancel`;
+  expect((await t.call("POST", path, OTHER, {})).status).toBe(404);
+  expect((await t.call("POST", path, "", {})).status).toBe(401);
+  t.deps.repositoryAccess = async () => {
+    throw new Error("No GitHub access");
+  };
+  expect(await t.call("POST", path, OWNER, {})).toMatchObject({
+    status: 200,
+    body: {
+      application: { id, status: "cancelled", decidedBy: { githubId: OWNER } },
+    },
+  });
+  expect((await t.call("POST", path, OWNER, {})).status).toBe(200);
+  expect(
+    (await t.call("GET", "project-setup", OWNER)).body.applications,
+  ).toEqual([]);
+  expect(
+    (await t.call("GET", "project-applications/mine", OWNER)).body.applications,
+  ).toEqual([
+    expect.objectContaining({ id, status: "cancelled", decidedAt: NOW }),
+  ]);
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(await t.persistence.getProject("cancel-project")).toBeNull();
+  expect(() =>
+    t.sqlite
+      .query("UPDATE project_applications SET status = 'approved' WHERE id = ?")
+      .run(id),
+  ).toThrow(/immutable/);
+  expect(() =>
+    t.sqlite.query("DELETE FROM project_applications WHERE id = ?").run(id),
+  ).toThrow(/permanent/);
+  // Cancellation also releases the pending-only uniqueness slots.
+  storeCancellableApplication(t, "app_cancellation00002");
+});
+
+test("cancellation and stored project publication arbitrate at the database write", async () => {
+  const t = registry();
+  const id = storeCancellableApplication(t);
+  const batch = t.db.batch.bind(t.db);
+  let publicationBatchReached = false;
+  t.db.batch = async (statements) => {
+    // Publication has read the pending application and built its writes.
+    // Cancel now, so only the atomic batch's pending predicates can refuse it.
+    publicationBatchReached = true;
+    t.db.batch = batch;
+    expect(await t.persistence.getApplication(id)).toMatchObject({
+      status: "pending",
+    });
+    expect(
+      await t.persistence.cancelApplication({
+        applicationId: id,
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        reason: null,
+        at: NOW,
+      }),
+    ).toBe("cancelled");
+    return batch(statements);
+  };
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(publicationBatchReached).toBe(true);
+  expect(await t.persistence.getProject("cancel-project")).toBeNull();
+  expect(await t.persistence.listRevisions()).toEqual([]);
+  expect(await t.persistence.getApplication(id)).toMatchObject({
+    status: "cancelled",
+  });
+  expect(
+    t.sqlite.query("SELECT COUNT(*) AS n FROM project_repositories").get(),
+  ).toEqual({ n: 0 });
+
+  const publishedFirst = registry();
+  const otherId = storeCancellableApplication(publishedFirst);
+  expect(
+    (
+      await publishedFirst.call(
+        "POST",
+        `project-applications/${otherId}/publish`,
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await publishedFirst.call(
+        "POST",
+        `project-applications/${otherId}/cancel`,
+        OWNER,
+        {},
+      )
+    ).status,
+  ).toBe(409);
+  expect(
+    await publishedFirst.persistence.getApplication(otherId),
+  ).toMatchObject({ status: "approved" });
+  expect(
+    await publishedFirst.persistence.getProject("cancel-project"),
+  ).not.toBeNull();
+});
+
+test("cancellation during a stored update prevents its revision from landing", async () => {
+  const t = registry();
+  await t.create("cancel-project", "example/cancel-project");
+  const before = await t.persistence.getProject("cancel-project");
+  if (!before) throw new Error("Project missing");
+  const id = storeCancellableApplication(t);
+  const manifestText = JSON.stringify({
+    ...before.manifest,
+    headline: "A stored update.",
+  });
+  t.sqlite
+    .query(
+      "UPDATE project_applications SET expected_revision = ?, change_reason = 'Stored update', manifest = ?, manifest_sha256 = ? WHERE id = ?",
+    )
+    .run(
+      before.revision,
+      manifestText,
+      await sha256Hex(new TextEncoder().encode(manifestText)),
+      id,
+    );
+  const append = t.persistence.appendProjectRevision.bind(t.persistence);
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    expect(input.applicationId).toBe(id);
+    expect(
+      await t.persistence.cancelApplication({
+        applicationId: id,
+        actor: { githubId: OWNER, githubLogin: "owner" },
+        reason: null,
+        at: NOW,
+      }),
+    ).toBe("cancelled");
+    return append(input, generation);
+  };
+  expect(
+    (await t.call("POST", `project-applications/${id}/publish`, OWNER, {}))
+      .status,
+  ).toBe(409);
+  expect(await t.persistence.getApplication(id)).toMatchObject({
+    status: "cancelled",
+  });
+  expect(await t.persistence.getProject("cancel-project")).toEqual(before);
+  expect(await t.persistence.listRevisions()).toHaveLength(1);
 });
 
 test("an explicit moderator ban blocks new contribution intake without blaming the original applicant", async () => {
@@ -2446,6 +3172,7 @@ test.each(["vault verification", "owner update"])(
       finish = resolve;
     });
     t.deps.vaultSetup = {
+      observe: async () => {},
       networks: async () => ["ethereum"],
       review: async () => {
         throw new Error("Not used");
@@ -2569,6 +3296,7 @@ test("only the steward or a repository admin can register the project vault", as
   ).toBe(200);
   const registered: string[] = [];
   t.deps.vaultSetup = {
+    observe: async () => {},
     networks: async () => ["ethereum"],
     review: async () => {
       throw new Error("Not used");
@@ -2648,6 +3376,7 @@ test("an EVM vault creation hash registers in any letter case", async () => {
   ).toBe(200);
   const verified: string[] = [];
   t.deps.vaultSetup = {
+    observe: async () => {},
     networks: async () => ["ethereum"],
     review: async () => {
       throw new Error("Not used");
@@ -2974,4 +3703,110 @@ test("a steward who is also a moderator cannot decide the appeal they filed", as
   );
   expect(independent.status).toBe(409);
   expect(independent.body).toMatchObject({ error: "revision_pending" });
+});
+
+test("both project revision routes reject overlapping aliases of one excluded GitHub account", async () => {
+  const { persistence, call, create } = registry();
+  await create("exclusion-alias", "example/exclusion-alias");
+  const nodeBytes = Buffer.alloc(7);
+  nodeBytes[0] = 0x92;
+  nodeBytes[1] = 0;
+  nodeBytes[2] = 0xce;
+  nodeBytes.writeUInt32BE(Number(OTHER), 3);
+  const modern = `U_${nodeBytes.toString("base64url")}`;
+  for (const [path, actor] of [
+    ["projects/exclusion-alias", OWNER],
+    ["admin/projects/exclusion-alias/manifest", ADMIN],
+  ]) {
+    const current = await persistence.getProject("exclusion-alias");
+    if (!current) throw new Error("project expected");
+    const exclusion = {
+      actorId: OTHER,
+      login: "other",
+      relationship: "funded-employee",
+      fromCycle: "2026-11",
+      untilCycle: null,
+    };
+    const response = await call("PUT", path, actor, {
+      manifest: {
+        ...current.manifest,
+        reward: {
+          ...current.manifest.reward,
+          payoutExclusions: [
+            { ...exclusion, nodeId: btoa(`04:User${OTHER}`) },
+            { ...exclusion, nodeId: modern, relationship: "related-party" },
+          ],
+        },
+      },
+      expectedRevision: current.revision,
+      reason: "Reject overlapping aliases of one excluded account",
+    });
+    expect(response.status).toBe(422);
+    expect(response.body.error).toBe("invalid_manifest");
+    expect((await persistence.getProject("exclusion-alias"))?.revision).toBe(
+      current.revision,
+    );
+  }
+});
+
+// PRD section 8: activation requires current admission clearance. An
+// investigation or exemption revocation that lands after the activation check
+// fences the guarded write, so the project stays paused.
+test("an admission investigation queued during the activation check prevents activation", async () => {
+  const t = registry();
+  await t.create("clearance-race", "example/clearance-race");
+  const project = await t.persistence.getProject("clearance-race");
+  if (!project) throw new Error("Project required");
+  let calls = 0;
+  t.deps.vettingClearance = async () => {
+    calls += 1;
+    // The second read is the guarded revision's own gate. The investigation
+    // lands right after it answers with the earlier clean result.
+    if (calls === 2)
+      t.sqlite
+        .prepare(
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        )
+        .run(
+          "vet_00000000000000000000000000000099",
+          project.id,
+          project.revision,
+          project.manifestSha256,
+          "c".repeat(64),
+          "a".repeat(40),
+          "d".repeat(64),
+          ADMIN,
+          "admin",
+          NOW,
+          "Explicit security investigation",
+        );
+    return CLEARED;
+  };
+  const result = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(calls).toBe(2);
+  expect(result.status).toBe(409);
+  expect(result.body.error).toBe("stale_revision");
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 1,
+    status: "paused",
+  });
+  // Without a change after the check, the same activation applies.
+  t.deps.vettingClearance = async () => CLEARED;
+  const retried = await t.call(
+    "POST",
+    "project-setup/clearance-race/check",
+    OWNER,
+    {},
+  );
+  expect(retried.status).toBe(200);
+  expect(await t.persistence.getProject(project.id)).toMatchObject({
+    revision: 2,
+    status: "active",
+  });
 });

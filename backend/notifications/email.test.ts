@@ -10,9 +10,12 @@ import {
   dispatchActivityMail,
   parseActivityMailConfig,
 } from "../../workers/notify/activity";
-import { reconcileSecurityMail } from "../../workers/notify/security";
+import {
+  claimDueDeliveries,
+  reconcileSecurityMail,
+} from "../../workers/notify/security";
 import { CloudflareProjectPersistence } from "../projects/cloudflare-persistence";
-import type { SecurityD1Database } from "../security/handler";
+import type { SecurityD1Database } from "../security/case-store";
 import { ProjectFlagStore } from "../vetting/flags";
 import { handleEmailPreferences } from "./email";
 import { notifyProjectEnforcement, notifyVettingBanAudience } from "./events";
@@ -446,6 +449,69 @@ test("optional-mail ambiguity retries only with attempt-bound independent eviden
   h.sqlite.close();
 });
 
+test.each(["destination", "final check"] as const)(
+  "an activity attempt retired before its %s does not send",
+  async (stage) => {
+    const h = setup();
+    try {
+      h.event("retired-before-send", "wallet_changed");
+      let retired = false;
+      let staleClaims = 0;
+      const retire = async () => {
+        if (retired) return;
+        retired = true;
+        h.advance(300_001);
+        for await (const _row of claimDueDeliveries(h.db, "activity", h.now))
+          staleClaims += 1;
+      };
+      h.mail.db = {
+        ...h.db,
+        prepare(query: string) {
+          const statement = h.db.prepare(query);
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async run() {
+                  if (
+                    stage === "destination" &&
+                    query.startsWith(
+                      "UPDATE activity_notification_outbox SET destination_digest",
+                    )
+                  )
+                    await retire();
+                  return bound.run();
+                },
+                async first<T>() {
+                  if (
+                    stage === "final check" &&
+                    query.startsWith(
+                      "SELECT id FROM activity_notification_outbox",
+                    )
+                  )
+                    await retire();
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      };
+      await dispatchActivityMail(h.mail);
+      expect(retired).toBe(true);
+      expect(staleClaims).toBe(0);
+      expect(h.sent).toEqual([]);
+      expect(h.rows()).toEqual([
+        expect.objectContaining({ state: "ambiguous", attempts: 1 }),
+      ]);
+    } finally {
+      h.sqlite.close();
+    }
+  },
+);
+
 test("an essential notice retries a not-yet-effective destination on a bounded schedule; optional mail does not", async () => {
   const h = setup();
   const initial = await h.call("GET");
@@ -779,7 +845,7 @@ test("vetting ban mail rechecks affected contributors and current staff after an
         .run(body, "a".repeat(64), at, at);
       h.sqlite
         .query(
-          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('affected','101','affected',?,0)",
+          "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('U_kgDOAAAAZQ','101','affected',?,0)",
         )
         .run(at);
       h.sqlite
@@ -790,7 +856,8 @@ test("vetting ban mail rechecks affected contributors and current staff after an
           at,
           JSON.stringify({
             award: {
-              actor: { id: "affected" },
+              // The award keeps the legacy spelling of member 101's node ID.
+              actor: { id: "MDQ6VXNlcjEwMQ==" },
               projectId: "affected-project",
               amount: 10,
             },

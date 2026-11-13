@@ -40,15 +40,18 @@ async function createPaused(
 ) {
   const text = JSON.stringify(manifest);
   expect(
-    await persistence.createProject({
-      manifest,
-      manifestText: text,
-      manifestSha256: sha(text),
-      reason: "Created through self-service setup",
-      actor: ACTOR,
-      at: T,
-      referrer: null,
-    }),
+    await persistence.createProject(
+      {
+        manifest,
+        manifestText: text,
+        manifestSha256: sha(text),
+        reason: "Created through self-service setup",
+        actor: ACTOR,
+        at: T,
+        referrer: null,
+      },
+      await persistence.enforcementGeneration(),
+    ),
   ).toBe("created");
 }
 

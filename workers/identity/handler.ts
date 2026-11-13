@@ -1,6 +1,6 @@
-import { type ApiError, cookieValue, fail } from "../../backend/http";
+import { apiErrorResponse, cookieValue, fail } from "../../backend/http";
 import { readLimitedBody } from "../../backend/trace/validation";
-import brand from "../../brand/tokens.json" with { type: "json" };
+import { brandTokens as brand } from "../../src/brand-tokens";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   type DeploymentTier,
@@ -370,10 +370,14 @@ async function oauthCallback(
       identity.githubNodeId,
     );
     if (!completed) {
+      // This request holds the only claim, so the flow expired while GitHub
+      // answered. End it, so the original tab stops polling a flow that can
+      // no longer complete.
+      await deps.persistence.failCallback(flow.id);
       return html(
-        409,
-        "Sign-in failed",
-        "The sign-in flow was already completed.",
+        410,
+        "Sign-in expired",
+        "The sign-in took too long. Start again from your original tab or terminal.",
         siteOf(deps),
       );
     }
@@ -444,7 +448,10 @@ async function pollFlow(
     if (!flow.githubNodeId)
       fail(502, "identity_incomplete", "GitHub identity is incomplete");
     if (
-      !(await deps.persistence.markAssertionIssued(flow.id, now.toISOString()))
+      !(await deps.persistence.markAssertionIssued(
+        flow.id,
+        deps.now().toISOString(),
+      ))
     )
       fail(410, "flow_consumed", "Identity flow was already consumed");
     return json(200, {
@@ -462,16 +469,19 @@ async function pollFlow(
     deps.assertionSecret,
   );
   const expiresAt = new Date(now.getTime() + ASSERTION_TTL_SECONDS * 1000);
-  const storedAssertion = await deps.persistence.createAssertion({
-    tokenHash: await sha256Hex(assertion),
-    githubActorId: flow.githubActorId,
-    githubLogin: flow.githubLogin,
-    audience: flow.audience,
-    ...(flow.githubNodeId ? { githubNodeId: flow.githubNodeId } : {}),
-    createdAt: now.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    consumedAt: null,
-  });
+  const storedAssertion = await deps.persistence.createAssertion(
+    {
+      tokenHash: await sha256Hex(assertion),
+      githubActorId: flow.githubActorId,
+      githubLogin: flow.githubLogin,
+      audience: flow.audience,
+      ...(flow.githubNodeId ? { githubNodeId: flow.githubNodeId } : {}),
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      consumedAt: null,
+    },
+    flow.id,
+  );
   const storedCreatedAt = Date.parse(storedAssertion?.createdAt ?? "");
   const storedExpiresAt = Date.parse(storedAssertion?.expiresAt ?? "");
   if (
@@ -487,7 +497,7 @@ async function pollFlow(
   }
   const issued = await deps.persistence.markAssertionIssued(
     flow.id,
-    now.toISOString(),
+    deps.now().toISOString(),
   );
   if (!issued) fail(410, "flow_consumed", "Identity flow was already consumed");
   return json(200, {
@@ -572,28 +582,9 @@ async function handleIdentityRequestCore(
     }
     return json(404, { error: "not_found" });
   } catch (caught) {
-    const error =
-      typeof caught === "object" && caught !== null
-        ? (caught as Partial<ApiError>)
-        : {};
-    const status =
-      Number.isSafeInteger(error.status) &&
-      Number(error.status) >= 400 &&
-      Number(error.status) <= 599
-        ? Number(error.status)
-        : 500;
-    const code =
-      typeof error.code === "string" &&
-      /^[a-z][a-z0-9_]{1,63}$/u.test(error.code)
-        ? error.code
-        : "internal_error";
-    if (status >= 500) console.error("slop identity request failed");
-    return json(status, {
-      error: code,
-      message:
-        status >= 500 || typeof error.message !== "string"
-          ? "Internal error"
-          : error.message,
+    return apiErrorResponse(caught, {
+      label: "slop identity request failed",
+      respond: json,
     });
   }
 }

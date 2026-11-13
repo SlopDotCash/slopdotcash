@@ -30,6 +30,7 @@ import { apiRequest } from "./project-api";
 import type { ProjectDefinition } from "./projects.mjs";
 import { CANONICAL_UINT } from "./record-validation.mjs";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export interface MonthlySetting {
   /** Token base units as decimal text. */
@@ -71,7 +72,7 @@ function pinWindowClosesAt(cycleId: string): number {
  * individual month (`reward.cycleCaps`) whose commit window is still
  * open. The vault must use that asset and its recorded decimals.
  */
-export function vaultMonthlyCap(
+function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
   deployment: Pick<EscrowDeployment, "network" | "asset">,
   vaultDecimals: number,
@@ -117,7 +118,7 @@ export function vaultMonthlyCap(
   return cap;
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
-export function monthlyTarget(
+function monthlyTarget(
   automatic: boolean,
   projectCap: bigint,
   current: MonthlySetting,
@@ -250,7 +251,7 @@ function solanaDeployment(deployment: EscrowDeployment) {
   };
 }
 /** Rebuilds the reviewed message locally and requires the prepared wire bytes to match it. */
-export function verifySolanaMonthlyPlan(
+function verifySolanaMonthlyPlan(
   deployment: EscrowDeployment,
   plan: SolanaMonthlyPlan,
   wallet: string,
@@ -280,18 +281,11 @@ export function verifySolanaMonthlyPlan(
     enabled: target.enabled,
     blockhash: transaction.blockhash,
   });
-  const wire = Uint8Array.from(atob(transaction.transaction), (c) =>
-    c.charCodeAt(0),
+  assertUnsignedSolanaWire(
+    transaction.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed setting.",
   );
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((byte) => byte !== 0) ||
-    msg.some((byte, index) => byte !== wire[index + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed setting.",
-    );
   return msg;
 }
 async function solanaRequest(

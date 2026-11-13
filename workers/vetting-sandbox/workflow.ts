@@ -7,6 +7,7 @@ import {
   type VettingApiDependencies,
 } from "../../backend/vetting/handler";
 import { CloudflareVettingPersistence } from "../../backend/vetting/persistence";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { signedServiceHeaders } from "../vetting/service";
 import { qualifySandbox } from "./probes";
@@ -32,7 +33,7 @@ let forwarded = 0;
 const dependencies: VettingApiDependencies = {
   vetting: new CloudflareVettingPersistence(database.db, async () => false),
   projects: new CloudflareProjectPersistence(database.db),
-  resultPublicKeys: btoa(String.fromCharCode(...raw)),
+  resultPublicKeys: encodeBase64(raw),
   now: () => new Date(),
   randomId: () => crypto.randomUUID(),
   session: async () => null,
