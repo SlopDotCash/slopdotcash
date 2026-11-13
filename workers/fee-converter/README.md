@@ -679,8 +679,10 @@ Owner decision of 10 November 2026 (PRD section 6, "SLOP buyback and burn";
 [design and review](../../docs/slop-buyback.md)). Half of all fee income buys
 SLOP (`0xfeb4…67ae` on Robinhood Chain); half of the SLOP acquired is sent to
 the burn address and the rest stays in the Robinhood Chain fee wallet. The
-buyback is `off` in the checked-in configuration. Off reads no buyback value
-and leaves every network exactly as described above.
+buyback is `live` in the production configuration from
+`2026-11-12T00:00:00.000Z` (operator decision of 12 November 2026) and `off`
+on staging. Off reads no buyback value and leaves every network exactly as
+described above.
 
 The buyback runs inside each network's existing lease, after that network's
 reconciliation, claims and conversions, and only on a recovery scan. It uses
@@ -772,12 +774,12 @@ its receipt must show exactly that amount leaving the wallet for that address.
 
 Every value is required once `BUYBACK_MODE` is not `off`; the code has no
 fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD section 6);
-`BUYBACK_START_AT` is set at activation.
+`BUYBACK_START_AT` was set at activation on 12 November 2026.
 
 | Var                              | Checked-in value               | Meaning                                                                                          |
 | -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `BUYBACK_MODE`                   | `off`                          | `off`, `dry_run` or `live`. Live needs `FEE_CONVERTER_MODE = "live"` and Robinhood enabled.      |
-| `BUYBACK_START_AT`               | empty                          | UTC instant from which fee income counts.                                                        |
+| `BUYBACK_MODE`                   | `live` (staging `off`)         | `off`, `dry_run` or `live`. Live needs `FEE_CONVERTER_MODE = "live"` and Robinhood enabled.      |
+| `BUYBACK_START_AT`               | `2026-11-12T00:00:00.000Z`     | UTC instant from which fee income counts.                                                        |
 | `BUYBACK_SHARE_BPS`              | `5000`                         | Share of fee income that funds the buyback.                                                      |
 | `BUYBACK_BURN_BPS`               | `5000`                         | Share of acquired SLOP that is burned.                                                           |
 | `BUYBACK_MIN_BRIDGE_MICRO`       | `500000000`                    | Minimum order (500 USDC).                                                                        |
@@ -801,6 +803,15 @@ purpose `bridge` and their own daily total, so a bridge neither borrows from
 nor exhausts the fee-conversion budget.
 
 ### Turn on the buyback
+
+Status, 12 November 2026: production is `live` from
+`2026-11-12T00:00:00.000Z` by operator decision at the confirmed limits.
+Steps 4 and 5 were not run, because no fee income existed to quote or spend.
+Step 2 was not verified: the Worker holds an `RPC_URL_ROBINHOOD` secret, and
+whether it serves state at the finalized block is unconfirmed. The first real
+order must still be verified as step 5 describes, and no burn is published
+before its finalized receipt. The steps below remain the procedure for any
+later activation, including staging.
 
 1. Confirm every limit above and the activation instant with the owner, and
    record the confirmation in the activating pull request.
