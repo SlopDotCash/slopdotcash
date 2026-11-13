@@ -2627,7 +2627,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         "/.well-known/slop/projects.json",
         `/projects/${a.id}/security`,
         "/",
-      ].map(async (path) => (await request.get(path)).text()),
+      ].map(async (path) => {
+        const response = await request.get(path, { maxRetries: 1 });
+        expect(response.status(), path).toBe(200);
+        return response.text();
+      }),
     );
     for (const text of outputs) {
       expect(text).not.toContain("GHSA-");
