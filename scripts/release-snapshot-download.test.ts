@@ -13,7 +13,7 @@ const workflow = await readFile(
 const step = (name: string) =>
   workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
 const publishedDataGuard = step(
-  "Require manual main release for published data",
+  "Require manual main or development release for published data",
 ).split("        run: |\n")[1];
 for (const [name, event, ref, bootstrap, accepted] of [
   ["manual main", "workflow_dispatch", "refs/heads/main", "false", true],
@@ -23,9 +23,24 @@ for (const [name, event, ref, bootstrap, accepted] of [
     "workflow_dispatch",
     "refs/heads/development",
     "false",
+    true,
+  ],
+  ["staging push", "push", "refs/heads/development", "false", false],
+  [
+    "manual feature branch",
+    "workflow_dispatch",
+    "refs/heads/feature",
+    "false",
     false,
   ],
   ["staging bootstrap", "workflow_dispatch", "refs/heads/main", "true", false],
+  [
+    "staging bootstrap on development",
+    "workflow_dispatch",
+    "refs/heads/development",
+    "true",
+    false,
+  ],
 ] as const) {
   test(`published data release ${accepted ? "accepts" : "refuses"} ${name}`, async () => {
     const process = Bun.spawn([bashCommand(), "-euc", publishedDataGuard], {
