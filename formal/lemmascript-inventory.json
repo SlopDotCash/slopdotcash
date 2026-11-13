@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 745,
-    "functions": 10668,
+    "files": 746,
+    "functions": 10672,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10480,
+    "unprovedFunctions": 10484,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -2318,6 +2318,12 @@
 {"name":"<ArrowFunction@1671>","kind":"ArrowFunction","line":1671,"sha256":"b7ecbac89c8b62b46d8b706eababe1ecb9b4ebe2d9e5d3ef3a126284ce1a3b56","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@1704>","kind":"ArrowFunction","line":1704,"sha256":"02461aa8239b47f4d80fbeec349b1d3aa6634b1bab6467ab6949f021de27e66c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
+{"path":"contracts/solana/scripts/airdrop-local.mjs","sha256":"9a262d0052fb541544e48d748850f40a8cac5af63ebfdc4c2094739877d56f73","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"airdropLocalPayer","kind":"FunctionDeclaration","line":18,"sha256":"ee7e6276257b4062d19f6df57d265118abb3cb13db56c96461e3998c00c60d27","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"onStdout","kind":"ArrowFunction","line":56,"sha256":"14ea064406a120b5ffc3d2532d74cbb99930aa6105fc787dcb70c00c1a3be9a4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"onStderr","kind":"ArrowFunction","line":57,"sha256":"14ea064406a120b5ffc3d2532d74cbb99930aa6105fc787dcb70c00c1a3be9a4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"onExit","kind":"ArrowFunction","line":58,"sha256":"6f995a686b99f75d1a7dedb4236fd2e01a3cd661113374c2058e459bc125afa4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+]},
 {"path":"contracts/solana/scripts/bootstrap-linux.sh","sha256":"85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
@@ -2367,7 +2373,7 @@
 {"path":"contracts/solana/scripts/run-test-stage.sh","sha256":"adaade297256078ebeea26ac1f3f094b02885bcfced64175e2b09bae7d82c8f5","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/solana/scripts/test-e2e.sh","sha256":"8ee02b34f9ad23a08d6b1a2ed6a85b85f394058f5d31e6eb9b0ecf4c39d0f5f4","language":"shell","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/solana/scripts/test-e2e.sh","sha256":"35c01981fa352a272a3495a22e34c9bcb732be6f1676ae0207f5660691ac2374","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/solana/token-extensions.ts","sha256":"0a8fddf8372b4b8b905995e8abc46914941ec0b57b230222a61a1447f1ef92dd","language":"typescript","disposition":"callables-inventoried","functions":[

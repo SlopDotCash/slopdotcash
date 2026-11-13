@@ -1867,6 +1867,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "contracts/solana/scripts/airdrop-local.mjs",
+      "sha256": "9a262d0052fb541544e48d748850f40a8cac5af63ebfdc4c2094739877d56f73",
+      "models": [
+        "formal/models/contracts/solana_validator_callers.qnt",
+        "formal/models/tooling/formal_process.qnt"
+      ],
+      "candidateLines": [37, 39, 66, 77, 81, 86, 99],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "contracts/solana/scripts/bootstrap-linux.sh",
       "sha256": "85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569",
       "models": ["formal/models/contracts/deployment_artifact.qnt"],
@@ -1929,7 +1939,7 @@
     },
     {
       "path": "contracts/solana/scripts/test-e2e.sh",
-      "sha256": "8ee02b34f9ad23a08d6b1a2ed6a85b85f394058f5d31e6eb9b0ecf4c39d0f5f4",
+      "sha256": "35c01981fa352a272a3495a22e34c9bcb732be6f1676ae0207f5660691ac2374",
       "models": [
         "formal/models/contracts/deployment_artifact.qnt",
         "formal/models/contracts/solana_validator_callers.qnt"
@@ -11481,8 +11491,9 @@
     },
     {
       "path": "formal/models/contracts/solana_validator_callers.qnt",
-      "sha256": "52fca3e9a8e0f09aa01b7a6afe99af0677e31919b7b588a20b94259a96d13358",
+      "sha256": "91b33055c4f3cac1c6db6b5b9509fa7468e6a77e056364c050174a5b37775ed3",
       "sources": [
+        "contracts/solana/scripts/airdrop-local.mjs",
         "contracts/solana/scripts/test-e2e.sh",
         "scripts/escrow-acceptance/local.ts",
         "scripts/local-solana-validator.mjs"
@@ -11492,10 +11503,14 @@
         "badExitCannotPassWithStoppedReceiptTest",
         "canceledStartupStillWaitsForOwnedStopTest",
         "cleanupFailureCannotPassTest",
+        "eachShellStageRequiresItsOwnFundingTest",
         "foreignRpcCannotAdmitTestsTest",
         "lateReadyIsNotAStopReceiptTest",
+        "localAirdropFailureSurvivesValidatorCleanupFailureTest",
+        "localAirdropTimeoutStillWaitsForValidatorStopTest",
         "oldStoppedReceiptCannotAdmitSecondStageTest",
         "primaryFailureSurvivesCleanupFailureTest",
+        "readyReceiptStillRequiresLocalFundingTest",
         "receiptDoesNotReplaceAwaitedStopTest",
         "twoIndependentStagesRequireTwoCurrentReceiptsTest"
       ]
@@ -15565,8 +15580,9 @@
     },
     {
       "path": "formal/models/tooling/formal_process.qnt",
-      "sha256": "4fcb0132b6f0d0ed48571a558581485ae5f6b12aece89a1f28aab5252ec79b45",
+      "sha256": "c2ea55da758b483d4f232bf9ebaa916e8f744c97ec8c523d2227f394f61f4143",
       "sources": [
+        "contracts/solana/scripts/airdrop-local.mjs",
         "scripts/browser-process-ownership.mjs",
         "scripts/check-formal.mjs",
         "scripts/check-lemmascript.mjs",
@@ -15590,6 +15606,7 @@
         "forcedBrowserCleanupStopsCapturedGroupTest",
         "interruptedCheckpointIoFailureClosesObservedServerTest",
         "interruptedExitCheckpointClosesRetainedServerTest",
+        "localAirdropDeadlineEscalatesAfterGraceTest",
         "missingExitCheckpointCannotPassTest",
         "normalBrowserClosesManagedServerTest",
         "normalExitCheckpointRetainsDetachedServerTest",
