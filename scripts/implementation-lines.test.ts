@@ -5,6 +5,9 @@ import {
   PENALIZED_AUTHOR,
   PROJECT_OWNER,
 } from "../tests/penalty-score-fixture";
+import { fixture, policy, repository } from "../tests/value-binary-fixture";
+import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import type {
   WorkUnitClaim,
   WorkUnitEvidence,
@@ -141,4 +144,33 @@ test("current primary commit authors allocate a retained valuation without chang
     new Map([[PROJECT_OWNER.id, 10n]]),
   );
   expect(claim.implementationActorNodeIds).toEqual([PENALIZED_AUTHOR.id]);
+});
+
+test("a renamed file's changed lines count once across its new and old path claims", async () => {
+  const f = fixture({ textOnly: true, direct: true });
+  // GitHub lists an edited rename once, naming the old path previous_filename.
+  Object.assign(f.files[0], { status: "renamed", previous_filename: "old.ts" });
+  const evidence = await collectValueEvidence(
+    f.client,
+    repository.id,
+    1,
+    repository,
+  );
+  const joint = await prepareWorkUnitEvidence(
+    [{ evidence, policy }],
+    [repository],
+  );
+  expect(joint.limitations).toEqual([]);
+  // The producer claims both paths of the renamed file for its commit.
+  expect(joint.claims.map((claim) => claim.path).sort()).toEqual([
+    "fix.ts",
+    "old.ts",
+  ]);
+  expect(workUnitLineWeights(joint, joint.claims)).toEqual(
+    new Map([["U_author", 1n]]),
+  );
+  for (const claim of joint.claims)
+    expect(workUnitLineWeights(joint, [claim])).toEqual(
+      new Map([["U_author", 1n]]),
+    );
 });
