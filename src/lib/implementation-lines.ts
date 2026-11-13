@@ -23,7 +23,10 @@ export function workUnitCreditActorIds(
   const commits = source.commits.filter(
     (commit) => commit.sha === claim.commitSha,
   );
-  if (commits.length !== 1 || commits[0].parents.length > 1) return null;
+  if (commits.length !== 1) return null;
+  // A synchronization merge, including its verified conflict resolution,
+  // credits nobody: the split uses the unique accepted, non-merge commits.
+  if (commits[0].parents.length > 1) return [];
   const commit = commits[0];
   return implementationCreditActors(
     { id: source.pull.user.node_id, kind: source.pull.user.type },
