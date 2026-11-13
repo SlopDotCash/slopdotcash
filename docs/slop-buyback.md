@@ -38,10 +38,12 @@ no signing key. TLS verification remained enabled.
   activation instant, limits and enabled networks matched the reviewed
   configuration. This checked settings and deployment metadata; it was not
   an independent comparison of the deployed program bytes.
-- The production fee journal and the values of the Worker's RPC secrets
-  were not accessible in this review. Eligible fee income, open orders,
-  completed sends and the installed endpoint's finalized-state capability
-  therefore remain unverified. A wallet balance alone cannot establish them.
+- The authenticated production admin report returned no recorded
+  fee-conversion or buyback rows and no totals. This is an empty recorded
+  journal, not proof that no unrecorded chain activity occurred. The values of
+  the Worker's RPC secrets remain unreadable, so its installed endpoint's
+  finalized-state capability is still unverified. No eligible fee income was
+  established for a live qualification order.
 
 Qualification remains pending. Reconcile the production journal and deployed
 configuration first. Use only verified eligible fee income for the first
