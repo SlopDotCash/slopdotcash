@@ -491,7 +491,7 @@ async function reserveBindingConsentBudget(
     prefix: "bind:",
     limit: 1000,
   });
-  if (!(requested instanceof Map))
+  if (!(requested instanceof Map) || requested.size >= 1000)
     throw new Error("Binding consent history exceeds review bound");
   const prior = new Map<string, Attempt | null>(stored);
   for (const [key, attempt] of requested) {
