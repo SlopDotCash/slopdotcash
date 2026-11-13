@@ -514,7 +514,7 @@ test("a browser without Web Locks cannot send or reset a claim", async ({
   await page.getByRole("button", { name: "Review with MetaMask" }).click();
   await page.getByRole("button", { name: "Confirm claim in wallet" }).click();
   await expect(page.getByRole("alert")).toContainText(
-    "cannot coordinate claim requests",
+    "can't handle claims safely",
   );
   expect(h.calls).not.toContain("eth_sendTransaction");
   await page.evaluate(
@@ -530,7 +530,7 @@ test("a browser without Web Locks cannot send or reset a claim", async ({
     .getByRole("button", { name: "I checked wallet activity. Review again" })
     .click();
   await expect(page.getByRole("alert")).toContainText(
-    "cannot coordinate claim requests",
+    "can't handle claims safely",
   );
   expect(
     await page.evaluate((key) => localStorage.getItem(key), claimKey),

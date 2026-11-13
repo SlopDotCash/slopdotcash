@@ -1,0 +1,43 @@
+# Source-bound formal report aggregation
+
+PRD section12,STATE-04/05. The prior workflow accepted synthetic reports with
+empty tool digests and rows marked `passed: true` even when their exit code
+was1 and their command was `false`. The regression executes the original
+workflow's actual aggregation code; it does not execute those fake commands.
+Existing genuine graph receipts remain evidence at their recorded sources.
+
+The producer and consumer now share one pure contract for canonical command
+arguments, tool-file lists and per-model resource allowances. All original
+model domains, scenario seed,100-sample test limit,500-sample simulation
+limit,60-step limit and invariant/temporal selection are preserved. The final port
+retains all32 resource allowances from merged development dabd9d893, including
+its15 newer600-second exceptions beyond this candidate's original317 base.
+These are resource allowances, not graph-completion claims. The producer includes this contract's digest in every new report.
+
+Aggregation requires exact current tool and mapped-source key sets/digests;
+the expected report mode, translation, pinned Quint version and Java metadata;
+all and only the expected ordered stages; successful exit/no error; the exact
+command tail, seed, bounds and property; expected finite transition, requested
+and applied safety metadata; and the current resource allowance. It retains
+the previous current-checkout, model census, all-shard and inventory checks.
+Unknown/missing/extra fields in bound key maps fail instead of passing vacuously.
+
+The trusted producer and aggregate jobs use the same checkout workspace.
+Quint and its loader must match that expected current checkout root exactly.
+Only the producer's absolute Node installation path may differ from the
+aggregation job's path. The workflow pins Node24.15.0 and Bun1.3.14. Java
+metadata accepts the same major-21 forms as the producer, including bare21.
+The applied overlay digest must match the closed reviewed adapter/overlay
+pair. A test computes the actual deterministic VIEW-only patch of the pinned
+official adapter; an unknown adapter requires renewed review. The aggregate
+job needs no dependency installation to check this pin.
+
+Tests mutate individual report obligations and execute the actual workflow
+heredoc with complete and malformed temporary receipts. A native-enabled
+integration runs the real canonical producer's scenarios/sampling and a tiny
+two-state TLC graph, then feeds its unmodified reports to the actual workflow.
+Synthetic validator fixtures are never evidence of application behavior.
+
+This checks consistency and source binding inside the trusted workflow's
+artifact boundary. JSON metadata alone is not an independent execution
+attestation, a machine-checked source refinement, or provider evidence.

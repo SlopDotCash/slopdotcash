@@ -132,19 +132,30 @@ module received_totals {
     .with("response", if (delivered) s.status else "lost").with("ready", delivered and s.status == "200") }
   action cachedRead = all { s.phase == "done", s.cache, not(s.cacheServed), s' = s.with("cacheServed", true) }
   action step = {
-    nondet nv = Set(0, 1, 2, 3, 4).oneOf()
-    nondet nd = Set(0, 1, 2, 3).oneOf()
-    nondet vp = prefixes.oneOf()
-    nondet dp = prefixes.oneOf()
-    nondet badV = Set(0, 1, 2, 3).oneOf()
-    nondet badD = Set(0, 1, 2, 3).oneOf()
-    nondet mode = Set(0, 1, 2, 3).oneOf()
-    nondet who = actors.oneOf()
-    nondet name = Set(1, 2).oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { configure(nv, nd, vp, dp, badV, badD, yes), membership(mode), rename(who, name),
-      appendVault, appendDirect, vaultBoundary, vaultPage, directBoundary, directPage, readFailure,
-      validateDirect, validateVault, cacheWrite(yes), respond(yes), cachedRead, s' = s }
+    any {
+      // configure's own first guard, repeated so that a configured state
+      // refuses this branch before its 5,760 choices are enumerated.
+      all { not(s.configured),
+        { nondet nv = Set(0, 1, 2, 3, 4).oneOf() nondet nd = Set(0, 1, 2, 3).oneOf() nondet vp = prefixes.oneOf()
+          nondet dp = prefixes.oneOf() nondet badV = Set(0, 1, 2, 3).oneOf() nondet badD = Set(0, 1, 2, 3).oneOf()
+          nondet yes = Set(false, true).oneOf()
+          configure(nv, nd, vp, dp, badV, badD, yes) } },
+      { nondet mode = Set(0, 1, 2, 3).oneOf() membership(mode) },
+      { nondet who = actors.oneOf() nondet name = Set(1, 2).oneOf() rename(who, name) },
+      appendVault,
+      appendDirect,
+      vaultBoundary,
+      vaultPage,
+      directBoundary,
+      directPage,
+      readFailure,
+      validateDirect,
+      validateVault,
+      { nondet yes = Set(false, true).oneOf() cacheWrite(yes) },
+      { nondet yes = Set(false, true).oneOf() respond(yes) },
+      cachedRead,
+      s' = s
+    }
   }
   val invariant = all {
     s.v.seen.subseteq(s.vault), s.d.seen.subseteq(s.direct), not(s.v.seen.contains(4)),
@@ -159,7 +170,7 @@ module received_totals {
       s.vaultUsd == s.vaultPrefix + s.acceptedVault.filter(row => row != 2).fold(0, (sum, row) => sum + vaultAmount(row))
     }, s.ready implies s.response == "200", s.cache implies s.status == "200",
     s.cacheServed implies s.cache }
-  action small(vp: int, dp: int): bool = init.then(configure(1, 1, vp, dp, 0, 0, false))
+  run small(vp: int, dp: int): bool = init.then(configure(1, 1, vp, dp, 0, 0, false))
   action scanSmall = vaultBoundary.then(vaultPage).then(vaultPage).then(directBoundary).then(directPage).then(directPage)
   action finish = validateDirect.then(validateVault).then(cacheWrite(false)).then(respond(true))
 

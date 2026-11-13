@@ -216,19 +216,38 @@ module identity_assertion_lifecycle {
     s' = s.with("cleanupPhase", "done")
       .with("assertionPresent", s.assertionPresent and s.cleanupStamp < s.assertionExpiry) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet status = statuses.oneOf()
-    nondet reply = insertReplies.oneOf()
-    nondet mark = markReplies.oneOf()
-    nondet input = consumeInputs.oneOf()
-    any { configure(yes, other, status, false), configure(false, yes, "callback_complete", true), tick,
-      beginPoll(id, yes, true, true, other), beginPoll(id, true, false, true, other), beginPoll(id, true, true, false, other),
-      flowHash(id, yes), readFlow(id), derive(id, yes), assertionHash(id, yes), insertAssertion(id), insertReply(id, reply),
-      readAssertion(id, yes), validateAssertion(id, yes), issueClock(id), issueWrite(id), issueReply(id, mark), pollFailure(id),
-      finishPoll(id, yes), beginConsume(id, input), consumeHash(id, yes), consumeWrite(id), consumeFailure(id), consumeReply(id, yes),
-      beginCleanup, cleanupFlow, cleanupAssertion, s' = s }
+    any {
+      { nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf() nondet status = statuses.oneOf()
+        configure(yes, other, status, false) },
+      { nondet yes = Set(false, true).oneOf() configure(false, yes, "callback_complete", true) },
+      tick,
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        beginPoll(id, yes, true, true, other) },
+      { nondet id = ids.oneOf() nondet other = Set(false, true).oneOf() beginPoll(id, true, false, true, other) },
+      { nondet id = ids.oneOf() nondet other = Set(false, true).oneOf() beginPoll(id, true, true, false, other) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() flowHash(id, yes) },
+      { nondet id = ids.oneOf() readFlow(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() derive(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() assertionHash(id, yes) },
+      { nondet id = ids.oneOf() insertAssertion(id) },
+      { nondet id = ids.oneOf() nondet reply = insertReplies.oneOf() insertReply(id, reply) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() readAssertion(id, yes) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() validateAssertion(id, yes) },
+      { nondet id = ids.oneOf() issueClock(id) },
+      { nondet id = ids.oneOf() issueWrite(id) },
+      { nondet id = ids.oneOf() nondet mark = markReplies.oneOf() issueReply(id, mark) },
+      { nondet id = ids.oneOf() pollFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() finishPoll(id, yes) },
+      { nondet id = ids.oneOf() nondet input = consumeInputs.oneOf() beginConsume(id, input) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() consumeHash(id, yes) },
+      { nondet id = ids.oneOf() consumeWrite(id) },
+      { nondet id = ids.oneOf() consumeFailure(id) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() consumeReply(id, yes) },
+      beginCleanup,
+      cleanupFlow,
+      cleanupAssertion,
+      s' = s
+    }
   }
   val tokenOnce = s.consumeCommits <= 1
   val invariant = all {
@@ -248,7 +267,7 @@ module identity_assertion_lifecycle {
         call.response == "200" implies call.accepted }
     }) }
 
-  action browser = init.then(configure(false, true, "callback_complete", false))
+  run browser = init.then(configure(false, true, "callback_complete", false))
   action pollSnapshot(id: int): bool = beginPoll(id, true, true, true, false).then(flowHash(id, true)).then(readFlow(id))
   action insertionReady(id: int): bool = pollSnapshot(id).then(derive(id, true)).then(assertionHash(id, true))
   action stored(id: int): bool = insertionReady(id).then(insertAssertion(id)).then(insertReply(id, "ok"))

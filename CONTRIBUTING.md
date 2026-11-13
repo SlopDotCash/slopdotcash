@@ -156,8 +156,8 @@ files. Never commit a value. Use test or staging credentials only.
 | --- | --- | --- |
 | `GITHUB_TOKEN` or `GH_TOKEN` | ingestion, leaderboard, live GitHub checks | Required for `leaderboard:generate` and live checks. Read-only public scope is sufficient. |
 | `SOLANA_RPC_URL` | `fee-converter:dry-run` | Optional. Defaults to public mainnet RPC; set a private RPC for heavy use. |
-| `OPENAI_API_KEY` | slopbot fallback model (`.dev.vars`) | Required to test the slopbot model route. |
-| `SURPLUS_API_KEY`, `SURPLUS_BASE_URL` | slopbot primary model (`.dev.vars`) | Required to test the primary slopbot model route. |
+| `ORBIO_API_KEY`, `ORBIO_BASE_URL` | slopbot primary models (`.dev.vars`) | Use a test key for real Orbio calls. The base URL is optional. |
+| `SURPLUS_API_KEY`, `SURPLUS_BASE_URL` | slopbot backup models (`.dev.vars`) | Use a test key for real Surplus calls. The base URL is optional. |
 | `SLOPBOT_WEBHOOK_SECRET`, `SLOPBOT_APP_ID`, `SLOPBOT_APP_USER_ID`, `SLOPBOT_APP_PRIVATE_KEY` | slopbot GitHub App (`.dev.vars`) | Only with your own test GitHub App. See `workers/slopbot/README.md`. |
 | `IDENTITY_STATE_KEY`, `IDENTITY_ASSERTION_KEY`, `TRACE_AUTH_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | identity Worker (`.dev.vars`) | Only for local identity and trace-upload tests. Generate your own random values and use your own OAuth app. |
 | `VITE_SLOP_ENVIRONMENT` | browser build | Optional. Point a local build at staging identity. |

@@ -4,31 +4,38 @@ import Anthropic from "@anthropic-ai/sdk";
 import { type Usage, VERDICT_SCHEMA, validateVerdict } from "./contracts";
 
 export type ModelEnv = {
+  ORBIO_API_KEY?: string;
+  ORBIO_BASE_URL?: string;
   SURPLUS_API_KEY?: string;
   SURPLUS_BASE_URL?: string;
 };
 
 type Step = {
-  provider: "surplus";
+  provider: "orbio" | "surplus";
   model: string;
   priceKey: string;
 };
 
-const SURPLUS: Step = {
-  provider: "surplus",
-  model: "claude-opus-5.5",
-  priceKey: "surplus/claude-opus-5.5",
-};
-const FALLBACK: Step = {
-  provider: "surplus",
-  model: "gpt-6.1-sol",
-  priceKey: "surplus/gpt-6.1-sol",
-};
-
-// Owner decision (10 October 2026): Surplus serves both Opus 5.5 and
-// the GPT-6.1 Sol fallback. Confirmation reuses this route as a second,
-// independent call at higher effort, not a different seller guarantee.
-export const TRIAGE_ROUTE = [SURPLUS, FALLBACK];
+// Owner decision (11 November 2026): any Orbio failure tries Surplus next,
+// including exhausted credits. Confirmation reuses this route as a second
+// independent call at higher effort.
+export const TRIAGE_ROUTE: Step[] = [
+  {
+    provider: "orbio",
+    model: "anthropic/claude-sonnet-5.5",
+    priceKey: "orbio/anthropic/claude-sonnet-5.5",
+  },
+  {
+    provider: "surplus",
+    model: "claude-sonnet-5.5",
+    priceKey: "surplus/claude-sonnet-5.5",
+  },
+  {
+    provider: "surplus",
+    model: "gpt-6.1-terra",
+    priceKey: "surplus/gpt-6.1-terra",
+  },
+];
 
 export type CallRecord = {
   routeStep: number;
@@ -126,6 +133,10 @@ export async function runStructuredRoute<T>(
 }> {
   const calls: CallRecord[] = [];
   for (const [index, step] of route.entries()) {
+    // An absent credential makes this gateway unavailable, not a provider call.
+    const key =
+      step.provider === "orbio" ? env.ORBIO_API_KEY : env.SURPLUS_API_KEY;
+    if (!key) continue;
     // Recheck after a failed provider call, before starting the fallback.
     try {
       if (!(await mayCall()))
@@ -147,7 +158,7 @@ export async function runStructuredRoute<T>(
       providerRequestId: null,
     };
     try {
-      const result = await callClaude(env, step, prompt, effort, output);
+      const result = await callModel(env, step, prompt, effort, output);
       record.usage = result.usage;
       record.providerCostMicroUsd = result.providerCostMicroUsd;
       record.providerRequestId = result.providerRequestId;
@@ -176,10 +187,11 @@ export async function runStructuredRoute<T>(
         record.providerCostMicroUsd = providerCost(
           headers,
           (error as { error?: unknown }).error,
+          step.provider,
         );
         record.providerRequestId = providerRequestId(headers);
       }
-      const resetAt = budgetResetAt(error);
+      const resetAt = step.provider === "surplus" ? budgetResetAt(error) : null;
       if (resetAt !== null) {
         record.failure = PROVIDER_BUDGET_EXHAUSTED;
         calls.push(record);
@@ -219,7 +231,22 @@ function parseJson(text: string | undefined): unknown {
   }
 }
 
-export function providerCost(headers: Headers, body?: unknown): number | null {
+export function providerCost(
+  headers: Headers,
+  body?: unknown,
+  provider: Step["provider"] = "surplus",
+): number | null {
+  if (provider === "orbio") {
+    // Orbio reports its charged USD amount in usage.cost. Live checks matched
+    // this field to the account's available_micro delta on 11 November 2026.
+    const cost = (body as { usage?: { cost?: unknown } } | null)?.usage?.cost;
+    if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0)
+      return null;
+    const micro = Math.round(cost * 1_000_000);
+    return Number.isSafeInteger(micro) && micro / 1_000_000 === cost
+      ? micro
+      : null;
+  }
   const usage = (body as { usage?: { buyer_cost_micro?: unknown } } | null)
     ?.usage;
   // Surplus's canonical receipt is in the body on both fast and long calls.
@@ -243,29 +270,32 @@ export function providerCost(headers: Headers, body?: unknown): number | null {
 }
 
 function providerRequestId(headers: Headers): string | null {
-  // This is Surplus's receipt identity. The model response body's id identifies
-  // a different upstream object and cannot be used for cost reconciliation.
+  // Keep the gateway request identity. The response body's id may identify an
+  // upstream object instead and is not a replacement for a gateway receipt.
   const id = headers.get("x-request-id");
   return id !== null && /^[A-Za-z0-9_-]{1,128}$/u.test(id) ? id : null;
 }
 
-async function callClaude(
+async function callModel(
   env: ModelEnv,
   step: Step,
   prompt: Prompt,
   effort: "medium" | "high",
   output: { name: string; schema: Record<string, unknown> },
 ): Promise<CallResult> {
-  const key = env.SURPLUS_API_KEY;
+  const key =
+    step.provider === "orbio" ? env.ORBIO_API_KEY : env.SURPLUS_API_KEY;
   if (key === undefined || key === "")
-    throw new Error("surplus key not configured");
-  // Surplus exposes an Anthropic Messages endpoint; it is a reseller, so the
-  // request goes through the official SDK with only the base URL changed.
+    throw new Error("provider key not configured");
+  // Both gateways expose Anthropic Messages. The SDK appends /v1/messages.
   const client = new Anthropic({
     apiKey: null,
     authToken: key,
     baseURL:
-      env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/anthropic",
+      step.provider === "orbio"
+        ? (env.ORBIO_BASE_URL ?? "https://api.orbio.so/api")
+        : (env.SURPLUS_BASE_URL ??
+          "https://api.surplusintelligence.ai/anthropic"),
     // Each explicit route attempt gets its own cost record. SDK retries hide
     // extra provider requests from that ledger.
     maxRetries: 0,
@@ -305,15 +335,19 @@ async function callClaude(
       },
     } as unknown as Anthropic.MessageCreateParamsNonStreaming)
     .withResponse();
-  // The SDK preserves Surplus's additive fields even though its types do not
+  // The SDK preserves additive gateway fields even though its types do not
   // declare them. Read the receipt before handling a committed error response.
-  const surplusResponse = response as Anthropic.Message & {
+  const gatewayResponse = response as Anthropic.Message & {
     error?: unknown;
     surplus?: { truncated?: unknown };
   };
-  const providerCostMicroUsd = providerCost(transport.headers, response);
+  const providerCostMicroUsd = providerCost(
+    transport.headers,
+    response,
+    step.provider,
+  );
   const requestId = providerRequestId(transport.headers);
-  if (Object.hasOwn(surplusResponse, "error")) {
+  if (Object.hasOwn(gatewayResponse, "error")) {
     // Reuse the SDK-error path so receipts and structured budget denials get
     // the same handling even when the HTTP status was committed early.
     throw new Anthropic.APIError(
@@ -324,8 +358,9 @@ async function callClaude(
     );
   }
   const truncated =
-    surplusResponse.surplus?.truncated === true ||
-    transport.headers.get("x-si-truncated") === "1";
+    step.provider === "surplus" &&
+    (gatewayResponse.surplus?.truncated === true ||
+      transport.headers.get("x-si-truncated") === "1");
   const usage: Usage = {
     input: response.usage.input_tokens,
     cacheWrite: response.usage.cache_creation_input_tokens ?? 0,

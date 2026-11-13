@@ -174,17 +174,31 @@ module vetting_upload_completion {
   action reply = all { s.phase == "reply",
     s' = s.with("phase", "done").with("result", if (s.mode == "finalize") s.result else "accepted") }
   action step = {
-    nondet mode = Set("single", "chunk", "finalize").oneOf()
-    nondet storage = Set("content", "run").oneOf()
-    nondet runId = runs.oneOf()
-    nondet part = parts.oneOf()
-    nondet kind = Set("valid", "corrupt").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet result = Set("ok", "lost-before", "lost-after").oneOf()
-    any { begin(mode, storage, runId, part), expire(runId), preflight(yes), preload(part, kind),
-      corrupt(part), metadataCorrupt(part), concurrentRepair, concurrentCorrupt, removePart, putRecord(result),
-      storeRead(yes), storeReadWithTag(true, false), singleRead(yes), verifyPart(yes),
-      wrongWhole, whole, postcheck, audit(result), batch(result), reply, s' = s }
+    any {
+      { nondet mode = Set("single", "chunk", "finalize").oneOf() nondet storage = Set("content", "run").oneOf()
+        nondet runId = runs.oneOf() nondet part = parts.oneOf()
+        begin(mode, storage, runId, part) },
+      { nondet runId = runs.oneOf() expire(runId) },
+      { nondet yes = Set(false, true).oneOf() preflight(yes) },
+      { nondet part = parts.oneOf() nondet kind = Set("valid", "corrupt").oneOf() preload(part, kind) },
+      { nondet part = parts.oneOf() corrupt(part) },
+      { nondet part = parts.oneOf() metadataCorrupt(part) },
+      concurrentRepair,
+      concurrentCorrupt,
+      removePart,
+      { nondet result = Set("ok", "lost-before", "lost-after").oneOf() putRecord(result) },
+      { nondet yes = Set(false, true).oneOf() storeRead(yes) },
+      storeReadWithTag(true, false),
+      { nondet yes = Set(false, true).oneOf() singleRead(yes) },
+      { nondet yes = Set(false, true).oneOf() verifyPart(yes) },
+      wrongWhole,
+      whole,
+      postcheck,
+      { nondet result = Set("ok", "lost-before", "lost-after").oneOf() audit(result) },
+      { nondet result = Set("ok", "lost-before", "lost-after").oneOf() batch(result) },
+      reply,
+      s' = s
+    }
   }
   val resurrectedAfterRetirement = s.retired and s.wroteAfterRetirement and parts.exists(part => s.disk.get(part) == "valid")
   val invariant = all { s.attempt <= 2, s.completed.subseteq(s.proved),

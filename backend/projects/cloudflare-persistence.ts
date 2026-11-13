@@ -64,6 +64,7 @@ type ApplicationRow = {
   applicant_github_login: string;
   submitted_at: string;
   status: ApplicationStatus;
+  applicant_cancelled_at: string | null;
   admin_notification: AdminNotification;
   admin_notification_at: string | null;
   decided_at: string | null;
@@ -78,7 +79,7 @@ type ApplicationRow = {
 const PROJECT_COLUMNS =
   "id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login";
 const APPLICATION_COLUMNS =
-  "id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason, github_check, expected_revision, change_reason, referrer_github_id, referrer_github_login";
+  "id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason, github_check, expected_revision, change_reason, referrer_github_id, referrer_github_login, applicant_cancelled_at";
 
 function referrerFromRow(row: {
   referrer_github_id: string | null;
@@ -125,7 +126,7 @@ function applicationFromRow(row: ApplicationRow): ProjectApplication {
       githubLogin: row.applicant_github_login,
     },
     submittedAt: row.submitted_at,
-    status: row.status,
+    status: row.applicant_cancelled_at === null ? row.status : "cancelled",
     adminNotification: row.admin_notification,
     adminNotificationAt: row.admin_notification_at,
     decidedAt: row.decided_at,
@@ -538,6 +539,32 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
       if (isConstraintConflict(error)) return "conflict";
       throw error;
     }
+  }
+
+  async cancelApplication(
+    input: DecisionInput,
+  ): Promise<"cancelled" | "conflict"> {
+    // Keep the original status CHECK and pending uniqueness indexes intact.
+    // The marker distinguishes an applicant withdrawal from a rejection on
+    // reads. One conditional write arbitrates cancellation against publication.
+    const result = await this.db
+      .prepare(
+        `UPDATE project_applications
+            SET status = 'rejected', applicant_cancelled_at = ?, decided_at = ?,
+                decided_by_github_id = ?, decided_by_github_login = ?,
+                decision_reason = 'Cancelled by applicant'
+          WHERE id = ? AND status = 'pending' AND applicant_github_id = ?`,
+      )
+      .bind(
+        input.at,
+        input.at,
+        input.actor.githubId,
+        input.actor.githubLogin,
+        input.applicationId,
+        input.actor.githubId,
+      )
+      .run();
+    return result.meta?.changes === 1 ? "cancelled" : "conflict";
   }
 
   async appendProjectRevision(

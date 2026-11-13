@@ -118,19 +118,29 @@ module solana_history_retirement {
     s' = done("history-check") }
   action finish = all { s.phase == "finish", s' = done(if (s.found.size() > 0) "payment-found" else if (s.incomplete) "history-check" else "retired") }
   action step = {
-    nondet kind = Set("valid", "empty", "over-plans", "over-signatures").oneOf()
-    nondet plans = planIds.oneOf()
-    nondet supplied = selections.oneOf()
-    nondet invalid = Set("none", "unknown", "duplicate", "invalid").oneOf()
-    nondet message = Set("valid", "wire", "hash", "anchor", "duplicate").oneOf()
-    nondet pairKind = Set("independent", "local-nonmainnet", "local-mainnet", "missing", "same", "unknown", "invalid-url").oneOf()
-    nondet value = Set(-1, 1, 2, 3).oneOf()
-    nondet valid = Set(false, true).oneOf()
-    nondet validityKind = Set("false", "true", "missing-value", "bad-context").oneOf()
-    nondet observationKind = Set("absent", "candidate-failure", "found").oneOf()
-    any { input(kind, plans, supplied, invalid), payer(valid), messages(message), providerPair(pairKind),
-      genesis(valid), anchor(valid), validity(validityKind), height(value), signatures, historyStatus(valid),
-      observation(observationKind), failureProof(valid, plans), planResult, retainScan(plans), coverage(valid), caughtFailure, finish, s' = s }
+    any {
+      { nondet kind = Set("valid", "empty", "over-plans", "over-signatures").oneOf() nondet plans = planIds.oneOf()
+        nondet supplied = selections.oneOf() nondet invalid = Set("none", "unknown", "duplicate", "invalid").oneOf()
+        input(kind, plans, supplied, invalid) },
+      { nondet valid = Set(false, true).oneOf() payer(valid) },
+      { nondet message = Set("valid", "wire", "hash", "anchor", "duplicate").oneOf() messages(message) },
+      { nondet pairKind = Set("independent", "local-nonmainnet", "local-mainnet", "missing", "same", "unknown", "invalid-url").oneOf()
+        providerPair(pairKind) },
+      { nondet valid = Set(false, true).oneOf() genesis(valid) },
+      { nondet valid = Set(false, true).oneOf() anchor(valid) },
+      { nondet validityKind = Set("false", "true", "missing-value", "bad-context").oneOf() validity(validityKind) },
+      { nondet value = Set(-1, 1, 2, 3).oneOf() height(value) },
+      signatures,
+      { nondet valid = Set(false, true).oneOf() historyStatus(valid) },
+      { nondet observationKind = Set("absent", "candidate-failure", "found").oneOf() observation(observationKind) },
+      { nondet plans = planIds.oneOf() nondet valid = Set(false, true).oneOf() failureProof(valid, plans) },
+      planResult,
+      { nondet plans = planIds.oneOf() retainScan(plans) },
+      { nondet valid = Set(false, true).oneOf() coverage(valid) },
+      caughtFailure,
+      finish,
+      s' = s
+    }
   }
   val expectedPairs = s.plans.fold(Set(), (pairs, plan) => pairs.union(Set(pair(plan, 1), pair(plan, 2))))
   val invariant = all {
@@ -141,12 +151,12 @@ module solana_history_retirement {
       and s.supplied == s.plans and s.found == Set() and not(s.incomplete) and s.proofs == s.plans,
     s.result == "payment-found" implies s.found.size() > 0 and s.signaturesChecked,
     s.signaturesChecked implies s.expired == expectedPairs }
-  action ready(plans: int, supplied: Set[int], invalid: str): bool = init.then(input("valid", plans, supplied, invalid))
+  run ready(plans: int, supplied: Set[int], invalid: str): bool = init.then(input("valid", plans, supplied, invalid))
     .then(payer(true)).then(messages("valid")).then(providerPair("independent"))
   action expiredPlan = anchor(true).then(validity("false")).then(height(3))
   action expiredOne = genesis(true).then(expiredPlan).then(genesis(true)).then(expiredPlan)
   action expiredTwo = genesis(true).then(expiredPlan).then(expiredPlan).then(genesis(true)).then(expiredPlan).then(expiredPlan)
-  action historyReady = ready(2, planIds, "none").then(expiredTwo).then(signatures)
+  run historyReady = ready(2, planIds, "none").then(expiredTwo).then(signatures)
   action absent = historyStatus(true).then(observation("absent"))
   action failed(identity: int): bool = historyStatus(true).then(observation("candidate-failure")).then(failureProof(true, identity))
   action found = historyStatus(true).then(observation("found"))

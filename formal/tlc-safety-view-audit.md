@@ -102,13 +102,17 @@ fingerprints the configured view while retaining a full representative state.
 
 ## Strict version and tool binding
 
-`formal/tlc-safety-views.json` permits only the version-4 request ID, exact
+The journal entry in `formal/tlc-safety-views.json` permits only the version-4 request ID, exact
 model path and source hash, module, operator, explicit hash-normalization mode, the explicit memory-candidate policy, ordered field expressions,
 two named clause expressions, original generated-TLA hash and final view-TLA hash. The helper
 checks that exact schema and projection. Unknown requests, operators, source,
 TLA, projection or temporal changes fail before TLC. There is no fallback
-after a rejected projection request. Unselected models use the unchanged
-full-state official runner. The checker clears inherited view requests and
+after a rejected projection request. The separately audited owner-vault terminal, project-lookup legacy-cache and
+[admin mutation continuation](admin-mutation-continuation-view-audit.md) views have their own hardcoded operators,
+expressions, source and translation bindings; their arguments and limitations
+are documented in [the model guide](README.md#owner-vault-terminal-requests).
+No manifest entry can authorize another projection. Unselected models use the
+unchanged full-state official runner. The checker clears inherited view requests and
 requires the exact view evidence it requested.
 
 The original generated TLA remains SHA-256
@@ -147,3 +151,221 @@ changed input or nonempty work queue is incomplete. Exact source, tool and
 projection hashes, effective limit and output belong in `evidence/formal/`.
 Do not replace failed receipts with a claim about a different representation.
 Browser, database, chain and implementation-conformance checks are separate.
+
+## Security-settings lifetime view
+
+The separately allowlisted `ui-security-settings-lifetime-safety-v2` applies
+only to the unchanged `ui_security_settings_lifetime` model. Whole-source
+SHA-256 remains
+`5dfb3b1c648c9792524106c6ff425bf869c7649356ce54b25b4449ee7c60cd10`.
+The complete production verify TLA remains
+`1f03e2459080252441a5f0720ee3bad56e8901a21b9d554056a4e20f5090fb5d`;
+inserting only `SlopSecuritySettingsLifetimeViewV2` before its full terminator
+gives `aeb4fe4113d16530466ad71fa56c9be1286bc0301ffdc479eb2985106a7678d0`.
+The concrete model, schemas, initial state, domains, invariant, scenarios and
+runtime sources stay unchanged. The existing official-adapter VIEW emission
+line is unchanged. Earlier V1 runs at 600 and 1200 seconds remain incomplete
+receipts, with nonempty queues; they are never relabeled by a later result.
+
+Version 2 retains version 1's publication projection without further erasure.
+It normalizes only write-only globals error/success/serverBody and stored
+publication body, retains phase for unused/done publications, retains every
+other live publication field exactly, and keeps each publication index's
+independently computed `accepted implies cookie == actor` truth value. False
+values and independent false-slot healing remain exact. All other globals,
+including read/active pointers, actor/cookie/life, mounted, gate/editor,
+server/base/parent and identityRefresh, remain exact.
+
+Read records are projected in this order:
+
+| Read class | Retained observation |
+| --- | --- |
+| unused or done | Exact phase; reuse requires complete beginRead reset. |
+| live and read unequal to this index, at HTTP | Exact phase and exact admitted predicate `(kind = revision) or (cookie = actor)`, including false. |
+| other live phase and read unequal to this index | Exact phase only. |
+| current pre/dispatch | Exact phase, kind, actor and lifetime. |
+| current HTTP | Those four fields plus exact cookie. |
+| current post | Those four fields plus exact ok and revision, for every kind. |
+| any other current phase | Complete record, conservatively. |
+
+Let R be the resulting state observation and I the complete per-index
+publication-identity Boolean map. P(s) = (R(s), I(s)). No actor, slot or revision
+identity is renamed, and every index and map domain remains exact. The original
+invariant is precisely the retained server bounds, parent/server ordering,
+editor/mounted/gate implication and conjunction of I. Every false clause is
+therefore observable without assuming the invariant already holds. The stale
+HTTP admitted predicate additionally preserves action enabledness; it is not
+an authorization assertion supplied by a caller.
+
+The action and future-read audit is:
+
+| Action or helper | Reads and projected successor |
+| --- | --- |
+| `beginRead` | The only writer assigning a nonzero read pointer. It requires unused/done phase, then replaces the full record with kind/current actor/life and default cookie/ok/revision. Reusing done does not carry an old admission predicate or identity. |
+| stale `readPreflight` | Phase and observed-actor argument domain remain exact. It takes not-owns, marks only this record done and preserves all globals, including another current read pointer. |
+| stale `readDispatch`, `wrongPermissionViewer` | Ownership is false because read differs from the index, so neither is enabled, independently of erased payloads. |
+| stale `readReply` | Phase/outcome domain and success-admitted guard remain exact. Success needs the retained bit even before ownership; other outcomes are enabled unchanged. Every admitted continuation takes not-owns and marks done without clearing the current pointer. |
+| stale `readPostflight` | Phase and observed argument domain remain exact. It takes not-owns and marks done without copying ok/revision or clearing another pointer. |
+| current `readPreflight` | Every identity/ownership comparison remains exact. Cookie/ok/revision are unread. Outcome phase/rights/refresh changes agree. |
+| current `readDispatch` | Uses exact ownership and phase, captures exact global cookie, enters HTTP. Previous captured cookie is overwritten before use. |
+| current `readReply` | Retains every admission/ownership input. Refusal or stale ownership ends the record. The post continuation overwrites ok and revision from outcome/server; their old HTTP values cannot affect the successor. |
+| current `readPostflight`, `wrongPermissionViewer` | Kind, identity, ok and revision remain exact. All rights/base/parent updates agree. Cookie is no longer read. |
+| publication actions and helpers | Identical to V1: ownership/admission/expected-revision/accepted/result fields remain exact while live; body flows only to erased serverBody. Completion retains the exact per-index I value. |
+| `deny`, `identityDeny`, `depart`, `parentIdentityReply` | Read retained globals and clear pointers/rights as in the concrete model. A current HTTP read becoming stale derives the same admitted bit from its exact captured kind/cookie/actor. |
+| `cookieChanges`, `remount`, stutter | Carry read records; change only exact globals or erased diagnostics. Current identity/lifetime remains exact through hypothetical ownership recovery. |
+
+A stale live read cannot regain the pointer in its current phase. Only
+`beginRead` assigns its index, and requires unused/done; no live continuation
+returns to unused. After completion, beginRead fully resets every field before
+reuse. Stale dispatch cannot progress and remains exactly that phase. Stale
+HTTP admission is a predicate of captured record fields only, which do not
+change before completion. Its false/true value and revision-kind bypass must
+remain; replacing it with an assumed-true flag would change success enabledness.
+Each stale slot retains its own predicate rather than one combined conjunction.
+
+Current actor/life cannot be erased merely because ownership currently fails.
+Security remount changes mounted/life/actor/error only; it preserves read and
+active. In a hypothetical detached current read with captured actor/lifetime
+two, remount(2) may restore ownership. The projection retains its identity and
+post payload. This argument does not assume such a state is reachable or that
+any invariant holds. Conversely, read-pointer inequality remains true until
+phase completion/reset even through remount. Unknown current phases retain
+full records rather than depending on an unstated phase restriction.
+
+For equal P states, the same concrete action parameters consequently have
+equal enabledness and projected successors. From the unchanged initial state,
+the quotient is exactly the projection of reachable full states, and invariant
+counterexamples cannot disappear. This is a manually reviewed strong finite
+safety-congruence argument, not a machine-checked refinement proof, concrete
+presentation-byte or stale-payload equivalence, temporal/unbounded guarantee
+or implementation conformance result.
+
+The dedicated `scripts/security-settings-safety-view.test.ts` binds the whole
+model and the complete audited schema/initializer/domain/helper/transition/
+invariant prefix. Future pointer restoration, post-cookie or pre-ok/revision
+reads, extra stale-HTTP admission conditions, cross-slot dead reads, terminal
+reuse and new invariant observations refuse the existing VIEW. Projection,
+translated TLA, final bytes and temporal drift also refuse. Native tests derive
+complete production TLA under the native flag and use actual applySafetyView
+with the full terminator; no ignored local file is a committed test dependency.
+
+The inherited reset witness observes only retained pre kind/phase/actor/life;
+real post-publication controls retain ok/revision checks. Native negatives
+retain every original invariant false class and publication identity healing,
+and add independent stale-admission false/healing classes, revision-kind
+bypass, current-cookie/ok consumption, hypothetical remount identity recovery
+and stale callbacks preserving globals. Every negative uses only
+`q_inv == ~SlopControlWitness`; unrelated invariant failures cannot satisfy it.
+Positive controls coalesce only the audited phase-specific dead payloads,
+check disabled stale dispatch and complete done reuse before new HTTP admission.
+No-VIEW future-read and future-pointer controls expose changes the static
+source guards separately refuse. Controls validate adapter observations, not
+the manual proof, and do not replace a completed unchanged finite V2 graph.
+Held, timed-out, canceled or nonempty-queue verification remains incomplete.
+
+## Contributor-allocation view
+
+The separately allowlisted `ui-contributor-allocation-safety-v2` binds only the
+unchanged `ui_contributor_allocation` model, SHA-256
+`767f463c4c1243d01ac4e0ca77316869af0c5e9441d1d96d911c27fdf077ad59`.
+The exact complete production verify TLA remains
+`c1dd49b06bbf150ee35e1b28fd796fc20d2568224454d46b5a24f937041080ed`;
+inserting only `SlopContributorAllocationViewV2` before the full module
+terminator produces
+`c3c7da3bd3645e1fd1fa872f42e6fd00dac225a11e00e5ef8337d998227a184a`.
+The source model, initial state, domains, legal choices, invariant, scenarios
+and runtime sources remain unchanged. The official adapter's only alteration
+remains its existing source-bound VIEW config emission line. The earlier V1
+180-second graph with 219,779 queued states remains an incomplete receipt.
+
+Let N map each indexed wallet set to `{"on-time"}` if it contains that member,
+or `{"none"}` otherwise. The sole read of a wallet set is that membership in
+`eligibleWallet`; keeping both indexed memberships handles account changes.
+Let P apply N while retaining every other global exactly, including mounted,
+actor, active, life, document/error, current masks and closed state,
+publishedBy/publishedLife, load scheduling, deadline/render observations and
+both timer flags. Every map domain and slot index remains exact. Project each
+request as follows, in order:
+
+| Request class | Retained fields |
+| --- | --- |
+| unused or done | Exact phase. |
+| any other phase with active unequal to this index | Exact phase. |
+| current HTTP or body | Exact phase and lifetime. |
+| current decoded valid | All fields exactly. |
+| current decoded absent | Exact phase, lifetime, absent outcome and closed; normalize masks to zero. |
+| current decoded error | Exact phase and lifetime; one error outcome class; normalize ignored masks/closed. |
+| any other current phase | Complete record, conservatively. |
+
+No invariant reads request payloads. Every original invariant expression is a
+function of retained globals and per-account wallet membership. Its life/actor
+and mask domains, transfer subset, row/amount and disposition rules, link
+exclusion, publication identity/lifetime and detached-state rule therefore
+remain exact, including all false classes. No invariant truth is assumed.
+
+The complete action and future-read audit is:
+
+| Action or helper | Reads and projected successor |
+| --- | --- |
+| `maskContains`, `subset`, `hasRow`, `rowActor`, `displayedAmount`, `state`, links | Read exact globals and on-time membership only. Every derived output and invariant observation agrees. |
+| `beginRead` | The only writer assigning a nonzero active index. It requires unused phase and completely resets that record to current life and HTTP defaults. A previously current request at another index becomes permanently stale. |
+| stale `headers`, `body`, `requestFails` | Required phase and argument domains stay exact. These actions change only that record. Result phases agree; all their payload remains stale and is unobserved. |
+| stale `publish` | Active differs from the slot, so ownership is false regardless of mounted state or captured lifetime. It changes phase to done and preserves every global, including another current active pointer. |
+| current `headers` | Reads HTTP phase and the argument. It overwrites outcome. Success enters body, where all snapshot fields will be overwritten; failure enters an error class whose payload publication ignores. Lifetime is retained. |
+| current `body`, `requestFails` | Body overwrites outcome, both masks and closed from unchanged validated arguments. Failure overwrites outcome with an error whose remaining snapshot payload is ignored. Both keep exact lifetime until publish. |
+| current `publish` | Only decoded phase continues. Ownership depends on retained mounted/active/life. Valid copies all exact snapshots; absent zeroes masks but copies exact closed; error copies none. Each branch produces exact global output/identity/timer updates and done phase. |
+| `walletsChange` | Same unchanged parameters replace one wallet set; N of that replacement agrees, as does exact renderedExpired. Other indexed membership remains separate. |
+| `retry`, `accountChanges`, timer actions | Read and write retained globals only. Account changes select the separately retained membership of the new account. |
+| `depart`, `remount` | Depart clears active to zero. Remount does not assign active. Exact globals and retained current lifetime handle hypothetical remount recovery; stale slots remain stale. |
+| `step` stutter | Carries the complete state and P class. |
+
+A nonunused stale slot cannot regain current status: only `beginRead` can
+assign its index to active, and it requires unused phase. No transition resets
+a nonunused slot to unused, and done absorbs. This argument applies without
+assuming reachability or invariant truth. In particular, use active inequality,
+not failed ownership, as the stale criterion. In a hypothetical detached state
+with active equal to the slot and a captured lifetime of two, remount from life
+one to two can restore ownership and publish its valid snapshot. P retains
+that current lifetime and snapshot. Stale phases are not collapsed together:
+headers, body, failure and consumption still have their exact enabledness.
+
+Current predecoded payloads cannot reach a successful publication without
+complete body overwrite; header/failure paths either overwrite again or ignore
+them at error publication. Current decoded records have no header/body/failure
+continuation. Error outcomes are distinguished only by exclusion from valid
+and absent, and their snapshot fields are ignored. Absent closed remains live
+because publication copies it even when document becomes none. All global
+outputs stay exact. No cross-slot helper reads an erased payload.
+
+Thus equal P states have the same original invariant truth and, for the same
+concrete action arguments, equal enabledness and projected successors. From
+the unchanged initial state, the quotient is exactly the projection of
+reachable concrete states and cannot lose an invariant counterexample. This
+is a manually reviewed strong safety-congruence argument, not a machine-checked
+refinement proof, exact dead-payload byte equivalence, temporal guarantee or
+statement about an unbounded product or chain payment.
+
+`scripts/contributor-allocation-safety-view.test.ts` binds the entire schema,
+initializer, domains, helpers, concrete transition relation and invariant
+prefix in addition to the whole-model hash. Future active restoration,
+other-class/whole-set wallet reads, predecoded payload or absent-mask reads,
+distinct error branches, cross-slot consumed-snapshot reads, done-slot reuse
+and invariant changes require renewed review. Source/TLA/projection/final-byte
+or temporal drift refuses; there is no stale-pin fallback. Native tests derive
+complete production TLA under the native flag and apply the actual helper to
+its full terminator; no ignored local artifact is a committed dependency.
+
+The controls retain all V1 independently falsifiable invariant witnesses,
+both accounts' membership changes, valid decoded snapshots and global timer,
+identity and output observations. The active-pointer case now uses concrete
+request replacement and stale consumption, rather than artificially restoring
+a stale index and claiming its payload is live. Added negative controls cover
+absent.closed, current-lifetime recovery on hypothetical remount, error
+publication, stale phase progress and stale remount consumption. Positive
+controls coalesce only reviewed stale/predecoded/error/absent-mask payloads.
+Every negative uses `q_inv == ~SlopControlWitness` alone; unrelated invariant
+failures cannot satisfy it. No-VIEW native controls expose deliberately new
+wallet reads and active restoration, which the source guards separately
+refuse. These controls validate the adapter and observations, not the manual
+proof. Native controls and a completed finite graph remain separate required
+receipts; held, timed-out, canceled and nonempty-queue runs stay incomplete.

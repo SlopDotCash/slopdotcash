@@ -162,18 +162,28 @@ module trace_run_creation {
         if (row.state == "awaiting_trace") "trace_uploaded" else "finalized"))) }
   }
   action step = {
-    nondet slot = slots.oneOf()
-    nondet actor = actors.oneOf()
-    nondet key = keyIds.oneOf()
-    nondet payload = payloads.oneOf()
-    nondet login = logins.oneOf()
-    nondet yes = Set(false, true).oneOf()
-    nondet other = Set(false, true).oneOf()
-    nondet body = bodyResults.oneOf()
-    any { tick, ban(actor), reinstate(actor), begin(slot, actor, key, payload, login), initialBanRead(slot, yes),
-      readBody(slot, body), prepare(slot, yes, other), readExisting(slot, yes), insert(slot), insertFailure(slot),
-      insertResult(slot, yes), raceRead(slot, yes), createdRead(slot, yes), conflictBanRead(slot, yes), respond(slot, yes),
-      advanceRun(actor, key), s' = s }
+    any {
+      tick,
+      { nondet actor = actors.oneOf() ban(actor) },
+      { nondet actor = actors.oneOf() reinstate(actor) },
+      { nondet slot = slots.oneOf() nondet actor = actors.oneOf() nondet key = keyIds.oneOf()
+        nondet payload = payloads.oneOf() nondet login = logins.oneOf()
+        begin(slot, actor, key, payload, login) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() initialBanRead(slot, yes) },
+      { nondet slot = slots.oneOf() nondet body = bodyResults.oneOf() readBody(slot, body) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() nondet other = Set(false, true).oneOf()
+        prepare(slot, yes, other) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() readExisting(slot, yes) },
+      { nondet slot = slots.oneOf() insert(slot) },
+      { nondet slot = slots.oneOf() insertFailure(slot) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() insertResult(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() raceRead(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() createdRead(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() conflictBanRead(slot, yes) },
+      { nondet slot = slots.oneOf() nondet yes = Set(false, true).oneOf() respond(slot, yes) },
+      { nondet actor = actors.oneOf() nondet key = keyIds.oneOf() advanceRun(actor, key) },
+      s' = s
+    }
   }
   val invariant = all {
     s.now >= 0, s.now <= 2, s.insertions == rowKeys.filter(key => s.rows.get(key).exists).size(), s.insertions <= 2,

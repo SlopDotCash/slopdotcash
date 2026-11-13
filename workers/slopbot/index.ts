@@ -163,9 +163,11 @@ export function jobFor(
     ).exec(text);
     const command = APPEAL_COMMANDS.find((name) => name === commandMatch?.[1]);
     if (command === undefined || commandMatch === null) return null;
-    const target = text
-      .slice(commandMatch.index + commandMatch[0].length)
-      .trim();
+    const target =
+      text
+        .slice(commandMatch.index + commandMatch[0].length)
+        .trim()
+        .split(/\s+/u)[0] ?? "";
     if (
       /^(?:appeal|value-appeal):/u.test(target) &&
       !/^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u.test(target)

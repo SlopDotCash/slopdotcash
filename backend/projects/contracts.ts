@@ -61,6 +61,8 @@ export interface ProjectPersistence {
     input: DecisionInput,
     expectedEnforcementGeneration: number,
   ): Promise<"published" | "conflict">;
+  /** Withdraws only a pending application by its own immutable applicant ID. */
+  cancelApplication(input: DecisionInput): Promise<"cancelled" | "conflict">;
   /**
    * Appends the revision only while the project is at `expectedRevision`
    * and the enforcement generation is still `expectedEnforcementGeneration`.
