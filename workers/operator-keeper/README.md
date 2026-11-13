@@ -39,6 +39,11 @@ run must resume from the journal; it is not proof of payment. Use the existing
 `perRun` bound and the operator's spending limits. A provider failure or missing
 receipt remains unavailable work.
 
+An unavailable scheduled run logs only grouped operation, state, fixed cause
+labels and counts before raising its existing failure. It logs no project or
+wallet IDs, amounts, configuration or raw error text. Successful runs stay
+silent. Unknown categories are recorded as `other`.
+
 ## Local durability qualification
 
 Run the actual keeper against Anvil and a native Workerd SQLite Durable Object:
