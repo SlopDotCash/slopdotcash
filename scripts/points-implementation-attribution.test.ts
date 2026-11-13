@@ -395,6 +395,39 @@ test("legacy-policy recipient corrections preserve the complete recorded PR tota
   expect(amounts(corrected).get(PROJECT_OWNER.id)).toBe(90);
 });
 
+test("legacy-policy missing weights retain both prior awards across replay", () => {
+  const { empty, oldSnapshot } = setup();
+  const occurredAt = "2026-10-29T12:00:00.000Z";
+  const journal = appendPointAwards(
+    empty,
+    legacyAwards(oldSnapshot).map((award) => ({
+      ...award,
+      amount: 60,
+      occurredAt,
+    })),
+    hash(oldSnapshot),
+    oldSnapshot.ruleVersion,
+    GENERATED_AT,
+  );
+  const next = input(true, REFRESHED_AT);
+  next.mergedPullRequestOutcomes[0].mergedAt = occurredAt;
+  const current = createLeaderboardSnapshot(next);
+  const coverage = current.valueAssessmentCoverage?.[0];
+  assert(coverage?.status === "legacy-policy");
+  delete coverage.implementationAllocation;
+  const corrected = applyPointsSnapshot(
+    journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(corrected.revisions).toEqual(journal.revisions);
+  expect(
+    applyPointsSnapshot(corrected, current, hash(current), REFRESHED_AT)
+      .revisions,
+  ).toEqual(journal.revisions);
+});
+
 test("an actor rounded out of the minimum pool can receive a retained larger pool share", () => {
   const { empty, oldSnapshot } = setup();
   const prior = legacyAwards(oldSnapshot).filter(
