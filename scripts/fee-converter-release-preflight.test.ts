@@ -72,11 +72,21 @@ function release(
       /^FEE_CONVERTER_NETWORKS = ".*"$/mu,
       `FEE_CONVERTER_NETWORKS = "${networks}"`,
     );
-  for (const [key, value] of Object.entries(buyback))
+  // Each case states its own buyback. The reviewed production file is live,
+  // so start from an inert buyback and apply only what the case names.
+  for (const [key, value] of Object.entries({
+    BUYBACK_MODE: "off",
+    BUYBACK_START_AT: "",
+    ...buyback,
+  }))
     toml = toml.replace(
       new RegExp(`^${key} = .*$`, "mu"),
       `${key} = ${JSON.stringify(value)}`,
     );
+  return preflightOf(toml, secrets);
+}
+
+function preflightOf(toml: string, secrets: string[]) {
   writeFileSync(join(root, "workers/fee-converter/wrangler.toml"), toml);
   const inventory = join(root, "secrets.json");
   writeFileSync(
@@ -176,4 +186,31 @@ test("the release continues for a complete live buyback with every key", () => {
   );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+// The reviewed production file exactly as checked in: a live converter on
+// Base, Ethereum and Robinhood Chain with a live buyback (operator decision
+// of 12 November 2026).
+const PRODUCTION_KEYS = [
+  "FEE_WALLET_KEY_BASE",
+  "FEE_WALLET_KEY_ETHEREUM",
+  "FEE_WALLET_KEY_ROBINHOOD",
+];
+
+test("the reviewed production configuration releases with its three keys", () => {
+  const result = preflightOf(reviewed, PRODUCTION_KEYS);
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toContain(
+    "fee-converter mode live; networks base,ethereum,robinhood",
+  );
+  expect(result.stdout).toContain("fee-converter upload reached");
+});
+
+test("the reviewed production configuration stops without the Robinhood key", () => {
+  const result = preflightOf(
+    reviewed,
+    PRODUCTION_KEYS.filter((name) => name !== "FEE_WALLET_KEY_ROBINHOOD"),
+  );
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("fee-converter upload reached");
 });
