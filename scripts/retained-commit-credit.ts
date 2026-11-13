@@ -42,7 +42,9 @@ export async function retainedCommitCreditSources(
         ),
       ),
     );
-  const retained = await retainedCopyBindings(sources);
+  const retained = await retainedCopyBindings(sources, {
+    ordinaryCommitsOnly: true,
+  });
   if (retained.limitations.length)
     throw new RetainedAttributionIncompleteError(
       `Retained attribution is unresolved: ${retained.limitations.join("; ")}`,
