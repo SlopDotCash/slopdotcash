@@ -1803,9 +1803,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     waitUntil: "networkidle",
   });
   const reviewed = page.locator(".project-setup-status");
-  await expect(reviewed.locator("h2")).toHaveText(
-    "Setup status: Action needed",
-  );
+  await expect(reviewed.locator("h2")).toHaveText(/^Setup\s*Action needed$/u);
   await expect(reviewed.getByRole("status")).toContainText(
     "Findings in Slop's skill template block clearance. Check for an updated skill template before requesting a new scan.",
   );
@@ -1825,10 +1823,8 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
     path: test.info().outputPath("scan-reasons.png"),
     fullPage: true,
   });
-  await reviewed.getByRole("button", { name: "Request a new scan" }).click();
-  await expect(reviewed.locator("h2")).toHaveText(
-    "Setup status: Waiting for the security scan",
-  );
+  await reviewed.getByRole("button", { name: "Rescan", exact: true }).click();
+  await expect(reviewed.locator("h2")).toHaveText(/^Setup\s*Scanning$/u);
   await expect(
     reviewed.getByRole("list", { name: "Why the scan did not clear" }),
   ).toHaveCount(0);

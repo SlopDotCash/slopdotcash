@@ -104,7 +104,7 @@ test("a resumed setup check restarts after vault setup suspends and reveals the 
     );
     reveal();
     await expect(page.locator(".project-setup-status h2")).toHaveText(
-      "Setup status: Waiting for the security scan",
+      /^Setup\s*Scanning$/u,
     );
     expect(checks).toBe(2);
     await expect(
