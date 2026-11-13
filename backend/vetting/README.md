@@ -80,6 +80,23 @@ including after repository changes. Pending or incomplete normal investigations
 do not remove that exemption; confirmed malicious findings still ban the project
 until the required independent reinstatement decision.
 
+### Reconcile an omitted review surface
+
+After fixing a scanner coverage defect, compare the retained inventory with a
+rebuilt inventory of the same immutable repository commit. Record newly
+classified paths, changed surfaces, content hashes, review results and any
+remaining source, dependency or artifact gaps. Keep that follow-up evidence
+separate from the original immutable assessment; never rewrite an incomplete
+result as clean.
+
+Routine admission does not queue a rescan. An explicit investigation can use
+the existing administrator assessment route after the corrected scanner is
+released. A request after an owner-approved exemption controls clearance and
+can hold the project while review is incomplete. Read-only coverage
+reconciliation does not revoke the exemption, release artifacts or establish
+a passed scan. Preserve the original exemption decision and distinguish the
+content it reviewed from the content still awaiting review.
+
 ### Explicit owner-approved admission exemptions
 
 A platform administrator may record an explicit human owner decision through

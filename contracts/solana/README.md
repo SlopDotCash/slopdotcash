@@ -572,6 +572,9 @@ reads keys or sends a transaction. Its output omits the RPC URL. The checked-in
 IDL is generated from the program; regenerate it after instruction layout changes.
 
 `bootstrap-linux.sh` installs the pinned Linux x86_64 GitHub Actions toolchain.
+It checks the Agave archive's recorded SHA-256 before extraction and accepts only
+HTTPS downloads and redirects. The digest pins the bytes observed from the
+upstream release; it does not prove an independent build or producer signature.
 It is not a mainnet deployment path. The separate Node SDK package is used only
 for local integration and unsigned operator tools. Its upstream dependency audit
 has unresolved advisories; lifecycle scripts are disabled and the bigint code
