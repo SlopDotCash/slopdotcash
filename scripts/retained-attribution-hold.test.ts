@@ -128,3 +128,31 @@ test("repository identity failures do not become successful attribution holds", 
     "Value ingestion requires the registered public repository",
   );
 });
+
+test("branch promotions do not hydrate unused provisional commit attribution", async () => {
+  const github = {
+    async get<T>(): Promise<T | null> {
+      throw new Error("Promotion attribution must not read GitHub");
+    },
+    async graphql<T>(): Promise<T> {
+      throw new Error("Promotion attribution must not read GitHub");
+    },
+    async fileText(): Promise<{ text: string; truncated: boolean } | null> {
+      throw new Error("Promotion attribution must not read GitHub");
+    },
+  };
+  const result = await loadValueInputs(github, [], undefined, undefined, [
+    {
+      id: "PR_promotion",
+      number: 123,
+      url: "https://github.com/SlopDotCash/asi/pull/123",
+      baseRefName: "production-promotion",
+      headRefOid: "a".repeat(40),
+      mergedAt: "2026-10-11T00:00:00Z",
+      updatedAt: "2026-10-11T00:00:00Z",
+      commits: [{ oid: "a".repeat(40), author: null, parentCount: 1 }],
+    },
+  ]);
+  expect(result.retainedCommitAuthors.size).toBe(0);
+  expect(result.implementationAttributionHolds.size).toBe(0);
+});

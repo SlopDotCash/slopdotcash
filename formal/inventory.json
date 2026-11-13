@@ -4327,10 +4327,11 @@
     },
     {
       "path": "scripts/retained-commit-credit.ts",
-      "sha256": "8d183b422a05ab7b73b427b9e278491a625c05bfb379cac7101e12af7ac6c82b",
+      "sha256": "9430f2d50e9a91d34cac28d5dc9c41cecac56effce9805325c7827fb4603fefb",
       "models": [
         "formal/models/points/implementation_credit.qnt",
-        "formal/models/points/implementation_credit_gate.qnt"
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4541,7 +4542,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "063ec1f9b0f06a0e7eecb19fcc84567db8123fb75030a31af1a023ed55e6ed70",
+      "sha256": "1a7e69cab0f91fa2f0a12ec209c87c0cbbcc77fdb24af456ad4baacc19b27fa5",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4549,8 +4550,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        53, 64, 111, 112, 113, 114, 116, 117, 185, 186, 187, 189, 190, 667, 771,
-        807, 840, 864
+        53, 64, 111, 112, 113, 114, 116, 117, 185, 186, 187, 189, 190, 674, 778,
+        814, 847, 871
       ],
       "review": "mapped-abstraction"
     },
@@ -8466,12 +8467,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "ea75bb8b113c645e87199ede5605a3a8c4d5a4077a8492814954ed43f71bcd5d",
+      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
-        "formal/models/slopbot/retained_copy_bindings.qnt"
+        "formal/models/slopbot/retained_copy_bindings.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [30, 57, 177, 183, 207, 241],
+      "candidateLines": [33, 60, 260, 266, 290, 324],
       "review": "mapped-abstraction"
     },
     {
@@ -15057,7 +15059,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6ac25853c3ea9fda64176dae0da31ede00cf0557a09e2c244c39ebf4f99c0c63",
+      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -15070,6 +15072,7 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
@@ -15087,6 +15090,19 @@
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/retained_recipient_scope.qnt",
+      "sha256": "0b13eec1e4789b1d8f7c9b517b287ca95a468c093e4db88c90ef3f1f8f2f0f35",
+      "sources": [
+        "scripts/retained-commit-credit.ts",
+        "workers/slopbot/value-retained-copy.ts"
+      ],
+      "scenarios": [
+        "fullAssessmentStillRequiresMergeProofTest",
+        "missingOrdinaryProofNeverCreditsTest",
+        "ordinaryRecipientCanIgnoreUnclaimedSyncTest"
       ]
     },
     {

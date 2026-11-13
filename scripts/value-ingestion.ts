@@ -427,6 +427,7 @@ type AttributionOutcome = Pick<
   mergedAt: string | null;
   closedAt?: string | null;
   commits?: MergedPullRequestOutcome["commits"];
+  baseRefName?: string;
 };
 
 export async function loadValueInputs(
@@ -643,6 +644,12 @@ export async function loadValueInputs(
   ) {
     if (
       !outcome.mergedAt ||
+      // This lookup changes only the integration branch's provisional
+      // recipients. Promotions keep their existing branch policy and must not
+      // hydrate thousands of imported commits for an unused attribution map.
+      (outcome.baseRefName !== undefined &&
+        outcome.baseRefName !==
+          findRegisteredRepositoryById(repositoryId)?.integrationBranch) ||
       !outcome.commits?.some(
         (commit) =>
           (commit.parentCount === undefined || commit.parentCount <= 1) &&
