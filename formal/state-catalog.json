@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "3f5fbc6f95b4f47d17b5a72bb335362fdb9b8a81fb91c3aa9468fa52a1b3cb29",
+  "inventorySha256": "d548f346438a49f26cfeb99902138ca0fc790fabfcccb4cb7d42bc52ea5b0e28",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -242,7 +242,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 377,
+      "line": 362,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -256,7 +256,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 609,
+      "line": 553,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -270,7 +270,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 744,
+      "line": 712,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -284,7 +284,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 885,
+      "line": 853,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -298,7 +298,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 109,
+      "line": 106,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -313,7 +313,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 681,
+      "line": 672,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -4049,14 +4049,13 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 691,
+      "line": 686,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_gzip_expansion.qnt",
-        "formal/models/vetting/vetting_path_coverage.qnt"
+        "formal/models/vetting/vetting_gzip_expansion.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cdata",
