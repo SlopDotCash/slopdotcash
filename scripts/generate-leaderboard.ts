@@ -221,7 +221,7 @@ export interface OutcomeCommitIdentity {
   author: GitHubActor | null;
 }
 
-interface NodeReference {
+export interface NodeReference {
   id: string;
   kind: "Issue" | "PullRequest";
   outcome: MergedPullRequestOutcome | null;
@@ -2260,7 +2260,7 @@ function midpoint(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.max(1, seconds) * 1000);
 }
 
-function parseSearchReference(
+export function parseSearchReference(
   value: unknown,
   path: string,
   expectedKind: NodeReference["kind"],
@@ -2583,7 +2583,7 @@ export async function collectSearchReferences(
 // endpoint can paginate the complete immutable base/head range beyond that.
 const GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT = 250;
 
-async function completeOutcomeCommits(
+export async function completeOutcomeCommits(
   client: GraphqlExecutor,
   reference: NodeReference,
   repository: TargetRepository,
