@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "33ba52c0af3c7b7ebb6334d620152ecfabed717966e84d86ee2bb60c6801b0a2",
+  "inventorySha256": "2db3e35fad6e28886933555b8894a6677a58e0fd7327bf494da2bb8f82b961ea",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2787,7 +2787,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 365,
+      "line": 368,
       "name": "result",
       "kind": "string-union",
       "values": [
