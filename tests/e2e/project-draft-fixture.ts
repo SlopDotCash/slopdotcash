@@ -15,20 +15,50 @@ export async function holdProjectSessionUntilUnmount(
         release: () => {},
       };
       Object.assign(window, { heldEditorSession: state });
+      const hold = () => {
+        state.waiting = true;
+        return new Promise<void>((resolve) => {
+          state.release = () => {
+            state.released = true;
+            resolve();
+          };
+        });
+      };
       const readJson = Response.prototype.json;
       Response.prototype.json = async function (this: Response) {
         const value = await readJson.call(this);
-        if (!state.waiting && this.url.endsWith(pathSuffix)) {
-          state.waiting = true;
-          await new Promise<void>((resolve) => {
-            state.release = () => {
-              state.released = true;
-              resolve();
-            };
-          });
-        }
+        if (!state.waiting && this.url.endsWith(pathSuffix)) await hold();
         return value;
       };
+      // Bounded readers parse the body stream instead of calling json().
+      const readBody = Object.getOwnPropertyDescriptor(
+        Response.prototype,
+        "body",
+      )?.get;
+      if (!readBody) throw new Error("Response body getter is unavailable");
+      const heldBodies = new WeakMap<Response, ReadableStream<Uint8Array>>();
+      Object.defineProperty(Response.prototype, "body", {
+        configurable: true,
+        get(this: Response) {
+          const held = heldBodies.get(this);
+          if (held) return held;
+          const body = readBody.call(this) as ReadableStream<Uint8Array> | null;
+          if (!body || state.waiting || !this.url.endsWith(pathSuffix))
+            return body;
+          const reader = body.getReader();
+          const parsed = hold().then(() => reader);
+          const stream = new ReadableStream<Uint8Array>({
+            async pull(controller) {
+              const chunk = await (await parsed).read();
+              if (chunk.done) controller.close();
+              else controller.enqueue(chunk.value);
+            },
+            cancel: async (reason) => (await parsed).cancel(reason),
+          });
+          heldBodies.set(this, stream);
+          return stream;
+        },
+      });
       // A native history transition commits outside the discrete click that
       // starts the request. Release before a later passive cleanup task runs.
       const observer = new MutationObserver(() => {

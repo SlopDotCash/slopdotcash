@@ -371,40 +371,45 @@ for (const withObligations of [false, true])
       holdCompletedPoll = true;
       const initialPendingReplies = pendingReplies;
       const initialJoins = joins;
-      const cancelledPopup = page.waitForEvent("popup");
+      const departedPopup = page.waitForEvent("popup");
       await page
         .getByRole("button", { name: "Continue with GitHub", exact: true })
         .click();
-      const cancelledWindow = await cancelledPopup;
+      const departedWindow = await departedPopup;
       await expect(
-        cancelledWindow.getByRole("button", {
+        departedWindow.getByRole("button", {
           name: "Authorize synthetic GitHub",
         }),
       ).toBeVisible();
-      expect(await cancelledWindow.evaluate(() => window.opener)).toBeNull();
+      expect(await departedWindow.evaluate(() => window.opener)).toBeNull();
       await expect
         .poll(() => pendingReplies)
         .toBeGreaterThan(initialPendingReplies);
-      await cancelledWindow
+      await departedWindow
         .getByRole("button", { name: "Authorize synthetic GitHub" })
         .click();
       await expect.poll(() => completedPollHeld).toBe(true);
-      const cancel = page.getByRole("button", {
-        name: "Cancel sign-in",
-        exact: true,
-      });
-      await cancel.focus();
+      await expect(
+        page.getByRole("button", { name: "Waiting for GitHub…", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("button", { name: "Cancel sign-in", exact: true }),
+      ).toHaveCount(0);
+      await page
+        .getByRole("link", { name: "How it works", exact: true })
+        .focus();
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("status")).toBeVisible();
+      await expect(page.locator(".login-page")).toHaveCount(0);
       holdCompletedPoll = false;
       releasePoll();
-      await expect.poll(() => cancelledWindow.isClosed()).toBe(true);
+      await expect.poll(() => departedWindow.isClosed()).toBe(true);
       expect(joins).toBe(initialJoins);
       expect((await readState()).assertions).toContainEqual({
         github_actor_id: "4200",
         consumed_at: null,
       });
       otherIdentity = false;
+      await page.goto(`${SITE}/login?next=${encodeURIComponent(destination)}`);
       const retryPendingReplies = pendingReplies;
       const returnPopup = page.waitForEvent("popup");
       await page

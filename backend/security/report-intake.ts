@@ -242,6 +242,7 @@ function decorateStoredSubmission(
   view.canRevise =
     (view.canRevise || record.receipt_state === "needs-information") &&
     roles.has("reporter") &&
+    row.advisory_ghsa === null &&
     ["draft", "failed"].includes(row.state) &&
     ["received", "needs-information", "triaging"].includes(
       record.receipt_state,

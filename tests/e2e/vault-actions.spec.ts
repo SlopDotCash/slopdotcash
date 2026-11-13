@@ -462,16 +462,28 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Approve exact token amount in wallet" })
     .click();
   await expect.poll(() => sends.length).toBe(1);
-  await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
+  // The approval is included but not finalized: no block is mined here. The
+  // view checks it without a click and opens the deposit review itself.
+  const approval = await rpc("eth_getTransactionReceipt", [sends[0]]);
+  const finalizedAtApproval = await rpc("eth_getBlockByNumber", [
+    "finalized",
+    false,
+  ]);
+  expect(BigInt(approval.blockNumber)).toBeGreaterThan(
+    BigInt(finalizedAtApproval.number),
+  );
   await expect(actions.getByRole("status")).toContainText(
     "no funds have been deposited yet",
   );
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await expect(
+    actions.getByRole("button", { name: "Check transaction", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("region", { name: "Review vault action" }),
+  ).toContainText("no refund right");
+  await expect(actions.getByLabel("Token amount", { exact: true })).toHaveValue(
+    "10",
+  );
   ambiguous = true;
   await actions
     .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
@@ -577,10 +589,11 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await expect(confirmWithdrawal).toBeFocused();
   await page.keyboard.press("Enter");
   await expect.poll(() => sends.length).toBe(3);
+  // A transfer of funds still needs finality: the automatic check keeps the
+  // request pending until the block is final, then verifies it without a click.
+  await page.waitForTimeout(4_000);
+  await expect(actions).toContainText("Withdrawal awaiting verification");
   await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
   await expect(actions.getByRole("status")).toContainText(
     "Withdrawal verified",
   );
@@ -611,9 +624,6 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect.poll(() => sends.length).toBe(4);
   await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
   await expect(actions.getByRole("status")).toContainText(
     "The transaction failed.",
   );
@@ -1765,7 +1775,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       await page.request.get(`${origin}/__fixture`)
     ).json();
     expect(afterEdit.project.revision).toBe(2);
-    await expect(setup.getByText("1,000 TEST", { exact: true })).toBeVisible();
+    await expect(setup.getByText("1,000 $TEST", { exact: true })).toBeVisible();
     expectedRecoveryRejection = true;
     await setup
       .getByLabel("Creation transaction hash")
@@ -1794,7 +1804,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
         .getByRole("status")
         .filter({ hasText: "Creation used a monthly cap" }),
     ).toHaveText(
-      "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
+      "Creation used a monthly cap of 1,000 $TEST. The project now uses 2,000 $TEST. Use the automatic payment controls below to apply the new cap.",
     );
     await recoveryPage
       .locator("summary")
@@ -1894,20 +1904,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
-    await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding.getByRole("status")).toContainText(
       "no funds have been deposited yet",
     );
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
     await funding
       .getByRole("button", { name: "Confirm deposit in wallet" })
       .click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding).toContainText("finalized");
     expect(
       BigInt(
@@ -2256,17 +2260,11 @@ test("owner registers a separate bounty vault through the API and funds it priva
       .click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
-    await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
     await funding
       .getByRole("button", { name: "Confirm deposit in wallet" })
       .click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding).toContainText("finalized");
     const scan = await page.request.post(`${origin}/__fixture`, {
       data: { scanSecurity: true },

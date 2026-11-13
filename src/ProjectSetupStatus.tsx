@@ -26,6 +26,7 @@ import type { ProjectSetupStatus } from "./lib/project-contracts";
 import { formatMonthlyAmount } from "./lib/project-proposal";
 import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { NetworkName, StatusBadge } from "./Presentation";
+import { ScanClearanceBadges } from "./ScanClearanceBadges";
 
 const HEADINGS: Record<ProjectSetupStatus["state"], string> = {
   ready: "Ready",
@@ -127,14 +128,6 @@ function ProjectSetupStatusForActor({
   const mounted = useRef(true);
   const generation = useRef(0);
   const inFlight = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      generation.current += 1;
-      inFlight.current = null;
-    };
-  }, []);
   const check = useCallback(
     (requestScan = false) => {
       if (!mounted.current || inFlight.current !== null) return;
@@ -215,8 +208,16 @@ function ProjectSetupStatusForActor({
     },
     [actorId, projectId],
   );
-  useEffect(() => {
+  // Suspense preserves state but retires layout effects while vault controls
+  // load. Restart an empty status check on reveal as well as the first mount.
+  useLayoutEffect(() => {
+    mounted.current = true;
     if (initial === undefined) check();
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      inFlight.current = null;
+    };
   }, [check, initial]);
   useEffect(() => {
     if (!setup || setup.state === "ready" || setup.state === "restricted")
@@ -257,7 +258,12 @@ function ProjectSetupStatusForActor({
       ) : (
         <>
           {setup.state !== "ready" ? (
-            <p role="status">{setup.nextAction.message}</p>
+            <>
+              <p role="status">{setup.nextAction.message}</p>
+              {setup.checks.scan.clearance ? (
+                <ScanClearanceBadges view={setup.checks.scan.clearance} />
+              ) : null}
+            </>
           ) : showProjectLink ? (
             <Link href={`/projects/${setup.slug}`}>View project</Link>
           ) : null}

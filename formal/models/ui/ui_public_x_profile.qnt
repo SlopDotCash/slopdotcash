@@ -153,14 +153,27 @@ module ui_public_x_profile {
     view == "ready", s' = s.with("opened", current.account)
   }
   action step = {
-    nondet id = ids.oneOf()
-    nondet actor = Set(0, 1, 2).oneOf()
-    nondet row = Set("public", "link-private", "member-private", "link-missing", "member-missing").oneOf()
-    any { publication(id, row), viewerChanges(actor), previewOrigin,
-      suppressQuery, changeActorProp, startRead(id), replaceProfile(id),
-      normalizedKeyUnchanged, depart, observePublicQuery(id), queueSuccess(id),
-      queueMalformed(id), queueFailure(id), deliverSuccess(id),
-      deliverFailure(id), openPublicLink, s' = s }
+    any {
+      { nondet id = ids.oneOf()
+        nondet row = Set("public", "link-private", "member-private", "link-missing", "member-missing").oneOf()
+        publication(id, row) },
+      { nondet actor = Set(0, 1, 2).oneOf() viewerChanges(actor) },
+      previewOrigin,
+      suppressQuery,
+      changeActorProp,
+      { nondet id = ids.oneOf() startRead(id) },
+      { nondet id = ids.oneOf() replaceProfile(id) },
+      normalizedKeyUnchanged,
+      depart,
+      { nondet id = ids.oneOf() observePublicQuery(id) },
+      { nondet id = ids.oneOf() queueSuccess(id) },
+      { nondet id = ids.oneOf() queueMalformed(id) },
+      { nondet id = ids.oneOf() queueFailure(id) },
+      { nondet id = ids.oneOf() deliverSuccess(id) },
+      { nondet id = ids.oneOf() deliverFailure(id) },
+      openPublicLink,
+      s' = s
+    }
   }
   val invariant = all {
     ids.contains(s.active), Set(0, 1, 2).contains(s.viewer),

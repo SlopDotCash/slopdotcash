@@ -67,9 +67,25 @@ module vetting_flag_reinstatement {
   action confirmedMalice=all{s.pending,
     s'=s.with("pending",false).with("result","malicious").with("restriction","banned").with("everBanned",true)
       .with("restrictionEpoch",if(s.restriction=="banned")s.restrictionEpoch else s.restrictionEpoch+1)}
-  action step={nondet reporter=Set(1,2,3).oneOf() nondet id=ids.oneOf()
-    any{flag(reporter),withdraw(reporter),expire(id),requestScan,revise,presentationRevision,advancePin,
-      pinUnavailable,pinAvailable,completeClean,completeCleanWithReuse(true),retryReinstatement,incomplete,confirmedMalice,s'=s}}
+  action step={
+    any {
+      { nondet reporter = Set(1,2,3).oneOf() flag(reporter) },
+      { nondet reporter = Set(1,2,3).oneOf() withdraw(reporter) },
+      { nondet id = ids.oneOf() expire(id) },
+      requestScan,
+      revise,
+      presentationRevision,
+      advancePin,
+      pinUnavailable,
+      pinAvailable,
+      completeClean,
+      completeCleanWithReuse(true),
+      retryReinstatement,
+      incomplete,
+      confirmedMalice,
+      s'=s
+    }
+  }
   val invariant=all{s.created>=0,s.created<=4,s.revision>=1,s.revision<=3,s.restrictionEpoch<=3,
     s.flags==ids.filter(id=>s.history.get(id)=="active"),
     s.flags.size()>=2 implies s.restriction!="clear",

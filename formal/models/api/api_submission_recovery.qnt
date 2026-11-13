@@ -174,15 +174,39 @@ module api_submission_recovery {
   action abandon = all { Set("draft", "failed").contains(s.phase), s.idleExpired, not(s.saved), s.revision < 12,
     s' = s.with("phase", "abandoned").with("revision", s.revision + 1) }
   action step = {
-    nondet id = ids.oneOf()
-    nondet reply = replies.oneOf()
-    nondet outcome = Set("created", "uncertain", "throttled", "terminal", "retryable").oneOf()
-    nondet yes = Set(false, true).oneOf()
-    any { save, ban, changeGate, reverseCopyOrder, read(id), claimSend(id), claimReply(id, reply), claimReadback(id, yes), providerStart(id), land(id),
-      providerResult(id, outcome, yes), commitOutcome(id), outcomeReply(id, reply), outcomeReadback(id, yes), age, idleExpires,
-      fallbackRead(id), fallbackWrite(id),
-      interrupted, reconcileFound, reconcileEmpty, reconcileInconclusive, contactsUnavailable, verify, loseReceiptReply,
-      verificationExpires, abandon, s' = s }
+    any {
+      save,
+      ban,
+      changeGate,
+      reverseCopyOrder,
+      { nondet id = ids.oneOf() read(id) },
+      { nondet id = ids.oneOf() claimSend(id) },
+      { nondet id = ids.oneOf() nondet reply = replies.oneOf() claimReply(id, reply) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() claimReadback(id, yes) },
+      { nondet id = ids.oneOf() providerStart(id) },
+      { nondet id = ids.oneOf() land(id) },
+      { nondet id = ids.oneOf()
+        nondet outcome = Set("created", "uncertain", "throttled", "terminal", "retryable").oneOf()
+        nondet yes = Set(false, true).oneOf()
+        providerResult(id, outcome, yes) },
+      { nondet id = ids.oneOf() commitOutcome(id) },
+      { nondet id = ids.oneOf() nondet reply = replies.oneOf() outcomeReply(id, reply) },
+      { nondet id = ids.oneOf() nondet yes = Set(false, true).oneOf() outcomeReadback(id, yes) },
+      age,
+      idleExpires,
+      { nondet id = ids.oneOf() fallbackRead(id) },
+      { nondet id = ids.oneOf() fallbackWrite(id) },
+      interrupted,
+      reconcileFound,
+      reconcileEmpty,
+      reconcileInconclusive,
+      contactsUnavailable,
+      verify,
+      loseReceiptReply,
+      verificationExpires,
+      abandon,
+      s' = s
+    }
   }
   val ownClaimOnly = ids.forall(id => {
     val sender = s.senders.get(id)

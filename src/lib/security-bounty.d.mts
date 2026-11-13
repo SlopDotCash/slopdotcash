@@ -113,7 +113,7 @@ export declare function formatSecurityAmount(
   amount: {
     currency: string;
     decimals: number;
-    asset?: Pick<RewardAsset, "symbol">;
+    asset?: Pick<RewardAsset, "symbol"> & Partial<Pick<RewardAsset, "kind">>;
   },
 ): string;
 export declare function assertSecurityBountyTerms(

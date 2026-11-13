@@ -19,7 +19,11 @@ Migrations `0019_project_registry.sql`,
   with applicant identity, referrer (PRJ-05, migration
   `0055_project_referrer.sql`), status, decision and admin email outcome.
   No route creates one now. A pending application is published by its own
-  applicant (see Migration below); decided ones stay as history.
+  applicant (see Migration below); decided ones stay as history. Migration
+  `0121_project_application_cancellation.sql` retains applicant withdrawals
+  with an immutable `applicant_cancelled_at` marker. The API exposes them as
+  `cancelled`. Their internal compatibility status is `rejected`, so existing
+  pending-only uniqueness indexes and publication guards remain effective.
 - `project_revisions`: the append-only manifest history. Triggers refuse
   update and delete.
 - `projects`: the current pointer to the newest revision, plus the referrer
@@ -45,6 +49,7 @@ points and profiles still validate.
 | `GET /api/v1/projects/:id` | public, edge cached | One current manifest, revision and digest |
 | `POST /api/v1/projects` | session, current authority | Creates a paused project at once (`manifest`, optional `referrer`), queues its first scan and returns the setup status |
 | `PUT /api/v1/projects/:id` | session, current authority | Publishes an owner revision (`manifest`, `expectedRevision`, optional `reason`) and returns the classified changes and setup status |
+| `POST /api/v1/projects/:id/remove` | session, current authority | Appends a paused, retired revision (`expectedRevision`); preserves history and existing obligations |
 | `GET /api/v1/project-setup` | session | The account's projects and its pending stored applications |
 | `POST /api/v1/project-setup/:id/check` | session | Runs every setup check, queues a needed scan, activates a project that passes (optional `requestScan` after an incomplete scan) |
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
@@ -57,6 +62,7 @@ points and profiles still validate.
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
 | `GET /api/v1/project-applications/mine` | session | The account's stored applications, as history |
 | `POST /api/v1/project-applications/:id/publish` | session, its applicant | Publishes a pending stored application without entering it again |
+| `POST /api/v1/project-applications/:id/cancel` | session, its applicant | Cancels a pending application or update without GitHub access; retains the terminal record |
 | `GET /api/v1/admin/projects` | admin | Registry with revisions |
 | `PUT /api/v1/admin/projects/:id/manifest` | admin | Appends an exception revision (`manifest`, `expectedRevision`, `reason`) |
 | `POST /api/v1/admin/projects/:id/enforcement-preview` | moderator | Plans an enforcement action and writes nothing |
@@ -68,7 +74,18 @@ appeal state and start time of every quarantined or banned project, and
 treats those projects as paused and retired. `GET /api/v1/projects/:id`
 answers HTTP 410 for a restricted project.
 
-Deeper `/api/v1/projects/:id/...` paths belong to the private trace API.
+Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
+
+Removal checks the current GitHub authority against the stored repository,
+including on retries. It uses the ordinary revision and enforcement fences,
+changes only status and listing tier, and never invokes setup activation.
+Retired projects publish no skills and cannot reactivate through setup checks.
+The registry API keeps their manifests for historical validation; discovery
+readers exclude the retired tier. Cancellation competes atomically with both
+first publication and update publication. A cancelled application cannot be
+rewritten or deleted. Repeating the applicant's cancellation succeeds without
+changing its original decision evidence. Setup retains stale pending updates
+with `publishable: false` so their applicants can still cancel them.
 
 The site catch-all Function (`functions/[[path]].ts`, `skill-publication.ts`)
 serves these public artifacts from the current D1 revision:

@@ -2223,6 +2223,44 @@ describe("durable private report controls", () => {
     },
   );
 
+  test("an attached advisory closes the reporter revision window while the case needs information", async () => {
+    const t = fixture();
+    t.decision("needs-information");
+    const accepted = await t.create();
+    const created = required(accepted.body.submission);
+    expect(created.intake.canRevise).toBe(true);
+    const requested = await t.caseAction(created.caseId, {
+      action: "request-information",
+      reason: "One more reproduction detail is required.",
+    });
+    expect(requested.status).toBe(200);
+    t.sqlite
+      .query(
+        "UPDATE security_submissions SET advisory_ghsa=?, revision=revision+1 WHERE id=?",
+      )
+      .run("GHSA-2345-2345-2345", created.id);
+    const view = await t.call(
+      REPORTER,
+      "GET",
+      `security-submissions/${created.id}`,
+    );
+    expect(required(view.body.submission).intake.canRevise).toBe(false);
+    const revised = await t.call(
+      REPORTER,
+      "POST",
+      `security-submissions/${created.id}/report`,
+      {
+        expectedRevision: required(view.body.submission).intake.revision,
+        report: {
+          ...REPORT,
+          description: `${REPORT.description} Appended after the advisory.`,
+        },
+      },
+    );
+    expect(revised.status).toBe(409);
+    expect(revised.body.error).toBe("report_not_editable");
+  });
+
   test("a stale model answer cannot override the owner's information request or block revision", async () => {
     const t = fixture();
     let reviewed = false;

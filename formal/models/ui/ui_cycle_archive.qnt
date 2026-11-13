@@ -86,24 +86,39 @@ module ui_cycle_archive {
     s' = s.with("route", "detail").with("target", id).with("scheduled", 0) }
   action openProject(id: int): bool = all { s.mounted, ids.contains(id),
     s' = s.with("route", "project").with("target", id).with("scheduled", 0) }
+  // Same-route navigation keeps the mounted archive and its timestamp effect.
+  // Only leaving that component cancels its timer; a subsequent modeled render
+  // may refresh paintedAt and replace the boundary (useTimeBoundary).
   action openArchive = all { s.mounted,
-    s' = s.with("route", "archive").with("scheduled", 0) }
+    s' = if (s.route == "archive") s
+      else s.with("route", "archive").with("scheduled", 0) }
   action snapshotReady = all { needsSnapshot, s' = s.with("snapshot", "ready") }
   action publishedDuringSnapshot = all { needsSnapshot, ids.contains(s.target),
     s' = s.with("snapshot", "ready").with("bundledRecords", Set(s.target)) }
   action snapshotFailure = all { needsSnapshot, s' = s.with("snapshot", "error") }
   action depart = s' = s.with("mounted", false).with("scheduled", 0)
   action step = {
-    nondet id = ids.oneOf()
-    nondet projectFilter = Set(0, 1, 2, 3).oneOf()
-    nondet monthFilter = Set(0, 1, 2, 3).oneOf()
-    nondet stateFilter = Set(0, 1, 2, 3).oneOf()
-    nondet target = Set(1, 2, 3).oneOf()
-    nondet records = Set(Set(), Set(1), Set(2), ids).oneOf()
-    any { indexReady(s.generation, records), indexFailure(s.generation), refresh,
-      requestFilters(projectFilter, monthFilter, stateFilter), synchronizeFilters, renderArchive,
-      advanceClock, deliverTimer, retire(id), openDetail(target), openProject(id),
-      openArchive, snapshotReady, publishedDuringSnapshot, snapshotFailure, depart, s' = s }
+    any {
+      { nondet records = Set(Set(), Set(1), Set(2), ids).oneOf() indexReady(s.generation, records) },
+      indexFailure(s.generation),
+      refresh,
+      { nondet projectFilter = Set(0, 1, 2, 3).oneOf() nondet monthFilter = Set(0, 1, 2, 3).oneOf()
+        nondet stateFilter = Set(0, 1, 2, 3).oneOf()
+        requestFilters(projectFilter, monthFilter, stateFilter) },
+      synchronizeFilters,
+      renderArchive,
+      advanceClock,
+      deliverTimer,
+      { nondet id = ids.oneOf() retire(id) },
+      { nondet target = Set(1, 2, 3).oneOf() openDetail(target) },
+      { nondet id = ids.oneOf() openProject(id) },
+      openArchive,
+      snapshotReady,
+      publishedDuringSnapshot,
+      snapshotFailure,
+      depart,
+      s' = s
+    }
   }
   val invariant = all {
     s.records.subseteq(ids), s.generation >= 1, s.generation <= 2,
@@ -149,6 +164,12 @@ module ui_cycle_archive {
   run delayedTimerCatchesAllBoundariesTest = init.then(indexReady(1, ids)).then(renderArchive)
     .then(advanceClock).then(advanceClock).then(advanceClock).then(deliverTimer)
     .expect(displayedReviews == ids and displayedStale)
+  run sameArchiveNavigationKeepsBoundaryTest = init.then(indexReady(1, ids)).then(renderArchive)
+    .then(openArchive).expect(s.scheduled == 1)
+    .then(advanceClock).then(deliverTimer).expect(displayedReviews == Set(1))
+  run sameArchiveNavigationCannotCancelElapsedBoundaryTest = init.then(indexReady(1, ids)).then(renderArchive)
+    .then(advanceClock).then(openArchive).expect(s.scheduled == 1 and s.paintedAt == 0)
+    .then(deliverTimer).expect(displayedReviews == Set(1) and s.scheduled == 2)
   run retiredRecordLinkResolvesTest = init.then(indexReady(1, ids)).then(retire(2)).then(openDetail(2))
     .expect(display == "record" and not(needsSnapshot) and projectLink == "filtered-archive")
   run listedRecordKeepsProjectLinkTest = init.then(indexReady(1, ids)).then(openDetail(1))

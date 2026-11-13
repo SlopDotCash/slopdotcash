@@ -87,7 +87,14 @@ The flow for one queued assessment:
    carries acquisition gaps (submodules, links, LFS) into the scan.
 2. `inspectRepository` sorts files into surfaces and runs every deterministic
    check over the whole of every file, whatever its size. It is pure and
-   deterministic. A text file over 256 KiB is reviewed in consecutive parts.
+   deterministic. Complete gzip streams are decoded before classification;
+   every input byte, member and checksum must validate. Their payloads receive
+   the ordinary source checks, while unknown or native payloads remain held.
+   Every member's optional header text is also checked for instructions;
+   its original bytes and offsets remain in the inventory.
+   Retain the original compressed bytes and any named derived artifact with
+   their digest lineage; gzip header names never choose an extraction path.
+   A text file over 256 KiB is reviewed in consecutive parts.
    Content that does not decode or was not acquired is a visibility gap,
    never a silent skip. When the inventory exceeds one review call (1 MiB or
    1,024 items), bulk content (dependency locks, data JSON, generated
@@ -104,7 +111,9 @@ The flow for one queued assessment:
    risk-signal content first, then source grouped by directory, then tests,
    docs and locks. Identical bytes are reviewed once. One synthesis call
    (`slop-scan-synthesis-1`) then reads the deterministic pre-pass and every
-   batch result. The combined review is complete only if every call
+   batch result. Its pre-pass also maps byte-identical aliases to the source
+   digest and batch that reviewed them, including aliases supplied beside
+   that source. The combined review is complete only if every call
    completed; its coverage is the weakest of any call. Risk is read from the
    review itself: any suspected malice or high finding is `high`; any other
    finding or partial coverage is `ambiguous`; otherwise `low`. No score
@@ -229,9 +238,10 @@ SURPLUS_API_KEY=... SLOP_VETTING_SIGNING_JWK='{"kty":"OKP","crv":"Ed25519","x":"
 
 The configuration file names `origin`, `policyVersion`, `workDirectory`,
 `journalDirectory`, and the `primary` and `specialist` profiles without
-keys. Owner decision D16 pins the primary to the Surplus Anthropic Messages
-endpoint with `claude-opus-5.5` and the specialist to the Surplus OpenAI
-Responses endpoint with `gpt-6.1-sol`. Both use `SURPLUS_API_KEY`. The
+keys. Owner decision D16 pins the transports. The 11 November 2026 model decision
+pins the primary to the Surplus Anthropic Messages
+endpoint with `claude-sonnet-5.5` and the specialist to the Surplus OpenAI
+Responses endpoint with `gpt-6.1-terra`. Both use `SURPLUS_API_KEY`. The
 service refuses to start, and a scan pass refuses to contact the queue or a
 provider, when either profile names another endpoint, model or reviewer, so
 the key never reaches any other endpoint. The output lists safe assessment
@@ -447,7 +457,7 @@ only in the disposable Cloudflare sandbox described below.
 | Item | Requirement or decision |
 | --- | --- |
 | Scanner service deployment | `run.ts` is the service source; this source does not deploy it. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the in-source evidence policy (`EVIDENCE_POLICY` in `evidence.ts`). |
-| Provider and model | Owner decision D16: Surplus `claude-opus-5.5` is the primary model and Surplus `gpt-6.1-sol` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
+| Provider and model | Model decision of 11 November 2026: Surplus `claude-sonnet-5.5` is the primary model and Surplus `gpt-6.1-terra` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
 | Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. `workers/vetting-sandbox` implements it; see [Private artifact execution](#private-artifact-execution). |
 | Specialist authority | Owner decision D3: moderators confirm malice and release quarantined artifacts. A model label alone cannot; a signed malicious result restricts the project until a moderator decides. |
 | Live acceptance | Prove the clean, incomplete, malicious, flag and reinstatement paths on staging with the real services (PRD section 11). |
