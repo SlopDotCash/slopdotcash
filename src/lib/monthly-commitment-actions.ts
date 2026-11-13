@@ -72,7 +72,7 @@ function pinWindowClosesAt(cycleId: string): number {
  * individual month (`reward.cycleCaps`) whose commit window is still
  * open. The vault must use that asset and its recorded decimals.
  */
-function vaultMonthlyCap(
+export function vaultMonthlyCap(
   project: Pick<ProjectDefinition, "reward" | "rewardAsset">,
   deployment: Pick<EscrowDeployment, "network" | "asset">,
   vaultDecimals: number,
@@ -118,7 +118,7 @@ function vaultMonthlyCap(
   return cap;
 }
 /** On uses the project's monthly amount; off keeps the cap the vault already holds. */
-function monthlyTarget(
+export function monthlyTarget(
   automatic: boolean,
   projectCap: bigint,
   current: MonthlySetting,
