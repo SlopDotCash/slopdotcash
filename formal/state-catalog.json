@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "23a737695e263e452c662a2d9e58947994bfc225f8c61cb9d6dba9e5212d85ad",
+  "inventorySha256": "f0cbfaea0008adf437abf3239030e7c7e78102f53f5839db17d3c1223cf291d9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2017,7 +2017,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 235,
+      "line": 236,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2036,14 +2036,17 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 370,
+      "line": 371,
       "name": "phase",
       "kind": "string-union",
       "values": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
@@ -2056,16 +2059,19 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "review": "candidate-only"
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3468,
+      "line": 3473,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2084,7 +2090,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4072,
+      "line": 4077,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2143,6 +2149,21 @@
         "updatedAt",
         "url"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/value-ingestion.ts",
+      "line": 445,
+      "name": "phase",
+      "kind": "string-union",
+      "values": ["commit-attributions", "value-histories"],
+      "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/slopbot/value_ingestion.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["commit-attributions", "value-histories"],
       "review": "candidate-only"
     },
     {
@@ -2217,7 +2238,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1088,
+      "line": 1091,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],

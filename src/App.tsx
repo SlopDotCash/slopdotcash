@@ -764,6 +764,9 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
+        <Link className="button primary-button" href="/projects/new">
+          <Plus aria-hidden="true" /> Add a bounty
+        </Link>
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
