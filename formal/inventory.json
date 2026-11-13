@@ -1009,7 +1009,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "9c78487e42d9c0d07cd14790bf6b7222a9a404254229c1f5526c29c10a4b91f7",
+      "sha256": "560978be97005fa3b8f8404224add91a6c3eeb3c4b8aa803a07eb374adc7be07",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -1021,10 +1021,10 @@
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
-        66, 103, 130, 149, 154, 175, 182, 199, 206, 247, 356, 363, 444, 457,
-        499, 509, 524, 531, 555, 566, 582, 584, 610, 650, 656, 668, 670, 673,
-        674, 855, 873, 884, 889, 894, 963, 1106, 1184, 1199, 1239, 1275, 1281,
-        1295, 1300, 1312, 1317, 1322
+        68, 105, 132, 151, 156, 177, 184, 201, 208, 249, 358, 365, 446, 459,
+        501, 511, 526, 533, 557, 568, 584, 586, 612, 652, 658, 670, 672, 675,
+        676, 857, 875, 886, 891, 896, 965, 1196, 1274, 1289, 1329, 1365, 1371,
+        1385, 1390, 1402, 1407, 1412
       ],
       "review": "mapped-abstraction"
     },
@@ -1040,14 +1040,14 @@
     },
     {
       "path": "backend/security/submission-store.ts",
-      "sha256": "5b6df422dea92483378593d0c550882772d71085502eaedda3626e0481d113e4",
+      "sha256": "7df0935d12ffe50671430abbdea0eb25e80bbb015061ca57ac5c1e2cebb91794",
       "models": [
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_submission_recovery.qnt"
       ],
       "candidateLines": [
         26, 60, 67, 80, 83, 96, 110, 130, 141, 148, 152, 155, 160, 166, 178,
-        208, 228, 235, 239, 241, 246, 253, 256, 259
+        208, 231, 238, 242, 244, 249, 256, 259, 262
       ],
       "review": "mapped-abstraction"
     },
