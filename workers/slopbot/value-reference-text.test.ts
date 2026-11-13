@@ -38,6 +38,42 @@ test("a fenced sample is not a commit hint and a bare digest still is", () => {
   ).toEqual([label]);
 });
 
+test("a fence under alternating list and blockquote markers is not a commit hint", () => {
+  expect(
+    sameRepositoryCommitHints(
+      repositoryId,
+      ["- > ```", `merged ${label}`, "> ```", `merged ${local}`].join("\n"),
+    ),
+  ).toEqual([local]);
+  expect(
+    sameRepositoryCommitHints(
+      repositoryId,
+      ["> - ```", `merged ${label}`, "- ```"].join("\n"),
+    ),
+  ).toEqual([]);
+});
+
+test("a backtick inside a fence info string does not open a fence", () => {
+  expect(
+    sameRepositoryCommitHints(
+      repositoryId,
+      ["``` ``foo``", `merged ${label}`, "```", `merged ${local}`].join("\n"),
+    ),
+  ).toEqual([label]);
+  expect(
+    sameRepositoryCommitHints(
+      repositoryId,
+      ["```ts", `merged ${label}`, "```"].join("\n"),
+    ),
+  ).toEqual([]);
+  expect(
+    sameRepositoryCommitHints(
+      repositoryId,
+      ["~~~ ``foo``", `merged ${label}`, "~~~"].join("\n"),
+    ),
+  ).toEqual([]);
+});
+
 test("fork and reference-style commit labels keep their destination scope", () => {
   expect(sameRepositoryCommitHints(repositoryId, `other@${label}`)).toEqual([]);
   expect(

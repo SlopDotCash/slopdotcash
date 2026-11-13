@@ -35,31 +35,45 @@ export function githubLinkDestinations(text: string): string {
 
 const label = (text: string) => text.trim().replace(/\s+/gu, " ").toLowerCase();
 
-/** Fenced samples are not references. GitHub does not autolink inside them,
- * including a fence quoted or opened under a list marker. */
+/** Fenced samples are not references. GitHub does not autolink inside them.
+ * Blockquote and list markers may alternate before the fence. A backtick
+ * fence whose info string contains a backtick is not a fence. */
 function withoutFencedCode(text: string): string {
   let fence: { marker: string; length: number } | null = null;
   const kept: string[] = [];
   for (const physical of text.split("\n")) {
     const carriage = physical.endsWith("\r");
     const line = carriage ? physical.slice(0, -1) : physical;
+    const blank = carriage ? "\r" : "";
     const delimiter =
-      /^ {0,3}(?:> {0,3})*(?:(?:[-*+]|\d+[.)])\s+)?(`{3,}|~{3,})(.*)$/u.exec(
+      /^ {0,3}(?:(?:> {0,3})|(?:(?:[-*+]|\d+[.)])\s+))*(`{3,}|~{3,})(.*)$/u.exec(
         line,
       );
     if (delimiter) {
       const marker = delimiter[1];
-      if (fence === null) fence = { marker: marker[0], length: marker.length };
-      else if (
+      const rest = delimiter[2];
+      const backtickInfo = marker[0] === "`" && rest.includes("`");
+      if (fence === null && !backtickInfo) {
+        fence = { marker: marker[0], length: marker.length };
+        kept.push(blank);
+        continue;
+      }
+      if (
+        fence !== null &&
         marker[0] === fence.marker &&
         marker.length >= fence.length &&
-        delimiter[2].trim().length === 0
-      )
+        rest.trim().length === 0
+      ) {
         fence = null;
-      kept.push(carriage ? "\r" : "");
-      continue;
+        kept.push(blank);
+        continue;
+      }
+      if (fence !== null) {
+        kept.push(blank);
+        continue;
+      }
     }
-    kept.push(fence === null ? physical : carriage ? "\r" : "");
+    kept.push(fence === null ? physical : blank);
   }
   return kept.join("\n");
 }

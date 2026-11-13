@@ -291,6 +291,39 @@ test("a closed promotion of previously accepted same-author commits adds no attr
   expect(before).toEqual([original, promotion, integration]);
 });
 
+test("a fenced retained-copy sample is not an acknowledgement", async () => {
+  const acknowledge = (body: string) => {
+    const { original, promotion, integration } = fixture();
+    promotion.evidence.comments = [
+      {
+        node_id: "IC_retained",
+        html_url: `https://github.com/${repository.id}/pull/2#issuecomment-1`,
+        body,
+        user: actor,
+        created_at: "2026-10-04T10:00:00Z",
+        updated_at: "2026-10-04T10:00:00Z",
+      },
+    ];
+    promotion.evidence.pull.comments = 1;
+    return retainedCopyBindings([original, promotion, integration]);
+  };
+  const sample = await acknowledge(
+    ["```", "#3 changes retained", "```"].join("\n"),
+  );
+  expect(sample.limitations).toEqual([]);
+  expect([...sample.bindings.values()]).toEqual([]);
+  const stated = await acknowledge("#3 changes retained");
+  expect(stated.limitations).toEqual([]);
+  expect([...stated.bindings.values()]).toMatchObject([
+    {
+      originalCommitSha: accepted,
+      acceptedCommitSha: accepted,
+      path: file.filename,
+      original: { evidence: { pull: { node_id: "PR_closed_promotion" } } },
+    },
+  ]);
+});
+
 test("an existing authenticated retention acknowledgement keeps its binding", async () => {
   const { original, promotion, integration } = fixture();
   promotion.evidence.comments = [
