@@ -1,6 +1,7 @@
 import { compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
 import { periodBounds } from "./payments/monthly-allocation";
+import { repositoriesCountedFor } from "./project-repositories.mjs";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. November 2026 and
@@ -475,6 +476,33 @@ export function projectCycleHasOpened(
   return window.to >= window.from;
 }
 
+/**
+ * The project repositories whose work counts in the cycle: an appended
+ * repository counts from its own start month, never earlier.
+ */
+export function projectCountedRepositories(
+  snapshot: LeaderboardSnapshot,
+  project: ProjectDefinition,
+  requestedCycleId?: string,
+): ProjectDefinition["repositories"] {
+  return repositoriesCountedFor(
+    project,
+    projectCycleWindow(snapshot, project, requestedCycleId).calendar.from,
+  );
+}
+
+/** Reports whether the snapshot collected every repository counted that cycle. */
+export function projectActivityCollected(
+  snapshot: LeaderboardSnapshot,
+  project: ProjectDefinition,
+  requestedCycleId?: string,
+): boolean {
+  return projectCountedRepositories(snapshot, project, requestedCycleId).every(
+    (repository) =>
+      snapshot.repositories.some((collected) => collected.id === repository.id),
+  );
+}
+
 export function createProjectView(
   snapshot: LeaderboardSnapshot,
   projectId: ProjectId,
@@ -489,14 +517,7 @@ export function createProjectView(
   if (project && project.id !== projectId)
     throw new Error("Archived project identity mismatch");
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
-  if (
-    project.repositories.some(
-      (repository) =>
-        !snapshot.repositories.some(
-          (collected) => collected.id === repository.id,
-        ),
-    )
-  ) {
+  if (!projectActivityCollected(snapshot, project, requestedCycleId)) {
     throw new TypeError(`Snapshot has not collected activity for ${projectId}`);
   }
   const snapshotTo = Date.parse(snapshot.window.to);
@@ -512,7 +533,9 @@ export function createProjectView(
   }
 
   const repositoryIds = new Set(
-    project.repositories.map((repository) => repository.id),
+    projectCountedRepositories(snapshot, project, requestedCycleId).map(
+      (repository) => repository.id,
+    ),
   );
   // Cache only this cycle's matching events for the sort below.
   const occurredAtMs = new Map<ScoreEvent, number>();

@@ -275,7 +275,7 @@ test("the Pages picker ignores legacy repository cache bytes and caches its node
   const cacheDescriptor = Object.getOwnPropertyDescriptor(globalThis, "caches");
   const cachePrefix = `${ORIGIN}/__slop-cache/projects-v1/api/v1/project-github`;
   const legacyKey = `${cachePrefix}/repositories/example/open-registry`;
-  const currentKey = `${cachePrefix}/repository-node-v1/example/open-registry`;
+  const currentKey = `${cachePrefix}/repository-node-v2/example/open-registry`;
   const entries = new Map<string, Response>([
     [legacyKey, Response.json({ repository: { branches: ["legacy-mixed"] } })],
   ]);

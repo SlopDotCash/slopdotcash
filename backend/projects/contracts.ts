@@ -66,11 +66,13 @@ export interface ProjectPersistence {
   /**
    * Appends the revision only while the project is at `expectedRevision`
    * and the enforcement generation is still `expectedEnforcementGeneration`.
+   * `repository_conflict` means another project holds a repository path
+   * the manifest claims.
    */
   appendProjectRevision(
     input: ProjectRevisionInput,
     expectedEnforcementGeneration: number,
-  ): Promise<"updated" | "conflict">;
+  ): Promise<"updated" | "conflict" | "repository_conflict">;
   /**
    * Changes whenever an admission assessment of the project is created or
    * changes state, or an admission exemption is granted or revoked. A revision

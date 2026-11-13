@@ -14,6 +14,7 @@
  * reviewed exception paths.
  */
 import { canonicalJson } from "./canonical-json";
+import { appendedRepositories } from "./project-repositories.mjs";
 import type { ProjectDefinition } from "./projects.mjs";
 
 const PRESENTATION_FIELDS = [
@@ -93,6 +94,13 @@ export function classifyRevisionChanges(
       )
     )
       continue;
+    if (
+      field === "repositories" &&
+      (appendedRepositories(previous, next)?.length ?? 0) > 0
+    ) {
+      changes.executable.push(field);
+      continue;
+    }
     const kind = CLASS_OF.get(field);
     if (kind === undefined || OWNER_FIXED_FIELDS.has(field))
       changes.restricted.push(field);

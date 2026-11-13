@@ -57,7 +57,7 @@ points and profiles still validate.
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
 | `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
 | `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
-| `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
+| `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` and repositories added on the manage page |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
 | `GET /api/v1/project-applications/mine` | session | The account's stored applications, as history |
@@ -154,10 +154,10 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
 
 - presentation (`name`, `eyebrow`, `headline`, `description`, `links`)
   publishes as it is and keeps the scan clearance;
-- executable content (`contribution`; `repositories`, `skill` and
-  `reviewSkill` never change by owner revision) pauses an active project
-  and queues a new scan; a clean result reactivates it on the next setup
-  check;
+- executable content (`contribution`, or appended `repositories`; `skill`
+  and `reviewSkill` never change by owner revision) pauses an active
+  project and queues a new scan; a clean result reactivates it on the next
+  setup check;
 - financial policy applies from the next UTC calendar month: a new monthly
   amount pins every month from the reward start through the open UTC cycle
   that has no `reward.cycleCaps` entry to the previous amount, so a closed
@@ -191,6 +191,33 @@ browser never guesses a token's decimals.
 
 Steward, authority, terms, status, listing tier and other fields return
 `422 owner_field_restricted`; they stay with the admin exception path.
+
+An owner revision may append repositories after the listed ones; it never
+removes, reorders or edits a listed entry (`appendedRepositories` in
+`src/lib/project-repositories.mjs`, `assertRepositoryTransition` in
+`src/lib/project-policy.mjs`). Each appended entry carries its own
+`githubId`, `nodeId` and `countsFrom`, and its `displayName` equals its `id`.
+Before anything is written, `assertAppendedIdentitiesUnlisted` refuses an
+appended `githubId` that any project, this one included, already lists under
+any name (`409 registry_conflict`). `verifyAppendedRepositories`
+(`appended-repositories.ts`) then checks each entry in manifest order:
+`countsFrom` must be the first instant of the next UTC month by the server
+clock (`422 invalid_repository_start`); GitHub must report a public,
+non-fork, non-archived repository with the entry's numeric id, node id,
+current name and integration branch (`422 invalid_repository`, or `503
+github_unavailable` when GitHub cannot answer); and the owner needs write,
+maintain or admin access through a Slopbot installation on that repository
+(`409 slopbot_required`, `403 authority_required`). Name conflicts with other
+projects still return `409 registry_conflict`, including a name another
+project takes while the revision is written. A new project, created or
+published from a stored application, is refused the same way when another
+project appended its first repository under another name
+(`assertNewRepositoryIdentityUnlisted`). A restriction records a
+`github:<id>` key for every appended repository, so an appended repository
+renamed on GitHub stays restricted. The revision reason starts
+with `added repository <id>`, and the scan request queues only repositories
+that are not cleared. An appended repository's work counts from its
+`countsFrom` month.
 
 ### Migration of stored applications
 
@@ -264,7 +291,9 @@ public access, without private-repository or organization authority; its
 deployment scope is an external assumption, not inferred from its name.
 Local fixture transports may inject a synthetic token. No failed public read
 falls back to a Slopbot installation token. The browser never calls
-`api.github.com` for setup.
+`api.github.com` for setup. A repository answer also reports `fork` and
+`archived`, which read as true unless GitHub says otherwise, and a private
+repository answers `404 not_found`.
 
 ## Trust rules
 
