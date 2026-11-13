@@ -2618,3 +2618,154 @@ test("failed report-version insertion rolls back the case revision and both even
       .get(submission.id),
   ).toEqual({ report_version: 2 });
 });
+
+// A registered project without paid terms grants technical case access from
+// current repository authority (README "Roles"). An account that also holds a
+// triager or moderator role on one case keeps that authority there.
+describe("repository authority on a project without paid terms", () => {
+  const repositoryAccess = (permission: "admin" | "read") => ({
+    installation: "installed" as const,
+    installationId: 1,
+    permission,
+    roleName: permission,
+    repository: {
+      id: 123456789,
+      node_id: "R_example",
+      full_name: REPOSITORY,
+      private: false,
+      owner: {
+        id: 987654321,
+        node_id: "O_example",
+        login: "example",
+        type: "Organization" as const,
+      },
+    },
+  });
+  const rejection = {
+    action: "decide",
+    outcome: "rejected",
+    severity: "low",
+    loss: "not-verified",
+    inScope: false,
+    reason: "The owner could not reproduce this report.",
+    relatedParty: false,
+  };
+
+  test("a repository admin who is also a moderator decides again after a returned appeal", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    // OWNER administers the repository and is a moderator; OTHER is a
+    // moderator without repository authority.
+    t.deps.repositoryAccess = async (_repository, actor) =>
+      repositoryAccess(actor.githubId === OWNER.githubId ? "admin" : "read");
+    t.deps.moderatorGithubIds = new Set([OWNER.githubId, OTHER.githubId]);
+    const caseId = required(
+      (await t.create("unpaid-moderator-admin")).body.submission,
+    ).caseId;
+    const first = await t.call(OWNER, "GET", `security-cases/${caseId}`);
+    expect(required(first.body.case).allowedActions).toContain("decide");
+    expect((await t.caseAction(caseId, rejection)).status).toBe(200);
+    const rejected = await t.call(REPORTER, "GET", `security-cases/${caseId}`);
+    const appealed = await t.call(
+      REPORTER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "appeal",
+        expectedRevision: required(rejected.body.case).revision,
+        idempotencyKey: "unpaid-appeal-000000001",
+        reason: "The reproduction works on the stated commit; please recheck.",
+      },
+    );
+    expect(appealed.status).toBe(200);
+    const open = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    // OWNER now holds dispute beside security-maintainer, but made the
+    // technical decision, so the appeal goes to another moderator.
+    const conflicted = await t.call(
+      OWNER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "decide-appeal",
+        expectedRevision: required(open.body.case).revision,
+        idempotencyKey: "unpaid-conflict-0000001",
+        outcome: "uphold",
+        reason: "The owner upholds their own rejection.",
+      },
+    );
+    expect(conflicted.status).toBe(403);
+    expect(conflicted.body.error).toBe("conflicted");
+    const returned = await t.call(
+      OTHER,
+      "POST",
+      `security-cases/${caseId}/actions`,
+      {
+        action: "decide-appeal",
+        expectedRevision: required(open.body.case).revision,
+        idempotencyKey: "unpaid-return-000000001",
+        outcome: "return",
+        reason: "Decide again with the reporter's commit.",
+      },
+    );
+    expect(returned.status).toBe(200);
+    const after = await t.call(OWNER, "GET", `security-cases/${caseId}`);
+    expect(after.status).toBe(200);
+    expect(required(after.body.case).allowedActions).toContain("decide");
+  });
+
+  test("a repository admin assigned as triager keeps the maintainer actions", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    // OWNER and OTHER both administer the repository.
+    t.deps.repositoryAccess = async () => repositoryAccess("admin");
+    const caseId = required(
+      (await t.create("unpaid-triager-admin")).body.submission,
+    ).caseId;
+    const before = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(required(before.body.case).allowedActions).toContain("decide");
+    const assigned = await t.caseAction(caseId, {
+      action: "assign-triager",
+      githubId: OTHER.githubId,
+      githubLogin: OTHER.githubLogin,
+    });
+    expect(assigned.status).toBe(200);
+    const after = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(after.status).toBe(200);
+    expect(required(after.body.case).allowedActions).toContain("decide");
+    const listed = await t.call(OTHER, "GET", "security-cases");
+    expect(listed.status).toBe(200);
+    const row = listed.body.cases?.find((entry) => entry.id === caseId);
+    expect(required(row).allowedActions).toContain("decide");
+  });
+
+  test("an authority outage keeps an assigned triager's own role", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    t.removePaidTerms();
+    t.deps.repositoryAccess = async (_repository, actor) =>
+      repositoryAccess(actor.githubId === OWNER.githubId ? "admin" : "read");
+    const caseId = required(
+      (await t.create("unpaid-triager-outage")).body.submission,
+    ).caseId;
+    const assigned = await t.caseAction(caseId, {
+      action: "assign-triager",
+      githubId: OTHER.githubId,
+      githubLogin: OTHER.githubLogin,
+    });
+    expect(assigned.status).toBe(200);
+    t.deps.repositoryAccess = async () => {
+      throw new Error("Fixture authority outage");
+    };
+    const read = await t.call(OTHER, "GET", `security-cases/${caseId}`);
+    expect(read.status).toBe(200);
+    expect(required(read.body.case).allowedActions).toEqual([
+      "request-information",
+      "remediation",
+    ]);
+    const listed = await t.call(OTHER, "GET", "security-cases");
+    expect(listed.status).toBe(200);
+    expect(listed.body.cases?.map((entry) => entry.id)).toEqual([caseId]);
+  });
+});
