@@ -348,6 +348,29 @@ export function assertPointsJournal(
   assertRevisionChain(p, 0, new Map(), new Set());
   assertJournalCoverage(p);
 }
+/** Refuse a publication that omits any previously public revision or coverage. */
+export function assertPointsJournalExtension(
+  previous: PointsJournal,
+  candidate: PointsJournal,
+): void {
+  assertPointsJournal(previous);
+  assertPointsJournal(candidate);
+  if (
+    candidate.revisions.length < previous.revisions.length ||
+    previous.revisions.some(
+      (revision, index) =>
+        JSON.stringify(revision) !== JSON.stringify(candidate.revisions[index]),
+    )
+  )
+    throw new Error(
+      "Points publication does not contain the complete journal prefix",
+    );
+  const coverage = new Set(
+    candidate.coverage.map((entry) => JSON.stringify(entry)),
+  );
+  if (previous.coverage.some((entry) => !coverage.has(JSON.stringify(entry))))
+    throw new Error("Points publication lost source coverage");
+}
 /**
  * Validate a journal whose first `prefix` revisions were already asserted
  * in this call chain and carried over unmodified: the append paths assert
