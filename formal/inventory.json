@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "347be9e7b21a109b3821998200192313c25392c342b9659dd5a1d666674e0584",
+      "sha256": "acd00c2aa5b10a5a7c5d35d133d985a9c0b62d0dd7950faaeada90764b243434",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,8 +24,8 @@
       ],
       "candidateLines": [
         27, 59, 158, 190, 195, 196, 250, 304, 378, 491, 497, 565, 588, 589, 610,
-        622, 688, 918, 946, 985, 1076, 1179, 1181, 1182, 1386, 1469, 1622, 1624,
-        1654, 1762, 1784, 1855, 1866, 1891, 1962, 1975, 1988, 1997, 1998, 1999
+        622, 688, 918, 946, 985, 1076, 1182, 1184, 1185, 1389, 1472, 1625, 1627,
+        1657, 1765, 1787, 1858, 1869, 1894, 1965, 1978, 1991, 2000, 2001, 2002
       ],
       "review": "mapped-abstraction"
     },
@@ -66,6 +66,15 @@
       "sha256": "548c23bcc6d8a21a22a3f0293563da90d09f387395c0c51ab6d2971c56eb11a4",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [52, 58, 61, 150],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": ".github/workflows/points-implementation-corrections.yml",
+      "sha256": "d8356694cb58364c6c005ae57d8b214b8e41f8af58d12aa02331dc023595ae18",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [70, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -3445,6 +3454,18 @@
       "statelessReason": "Pure advisory string classifier over supplied discussion bodies/completeness. No state persists, and no moderation, scoring or payment action is performed."
     },
     {
+      "path": "scripts/collect-implementation-corrections.ts",
+      "sha256": "2acf0bc6d04562161aff9196349a572cfc152b507d82777295616baafe93f44a",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [
+        4, 11, 13, 77, 157, 194, 210, 211, 221, 224, 295, 318, 348, 376, 381,
+        490, 501, 666, 947, 1351, 1409, 1445, 1470, 1498, 1500
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/collect-quality-census.ts",
       "sha256": "fe06a32095abc67e2b85092855e6cd75870e3af47c4173f1ae0d8522babdc749",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
@@ -3790,7 +3811,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "2c75c55c3de1595ac8715b822ead4940215e4c3324f05ac8a468a2101986cb7e",
+      "sha256": "890f46db96ba447085c8c843e52eb696144c3db453ea777a0f98c21732899ecb",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3802,30 +3823,31 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 404, 492, 513, 549, 580, 645,
-        677, 757, 790, 799, 807, 872, 1068, 1303, 1365, 1373, 1431, 1484, 1487,
-        1680, 1689, 1694, 1701, 1784, 1785, 1932, 1933, 1990, 2016, 2044, 2046,
-        2050, 2084, 2087, 2088, 2091, 2093, 2104, 2127, 2335, 2338, 2576, 2696,
-        2817, 2830, 2841, 2842, 3029, 3030, 3221, 3237, 3249, 3256, 3282, 3292,
-        3296, 3300, 3304, 3359, 3378, 3405, 3422, 3456, 3457, 3459, 3475, 3492,
-        3493, 3494, 3503, 3508, 3688, 4046, 4068, 4077, 4127, 4162, 4168, 4175,
-        4244, 4330, 4488, 4712, 4722, 4724, 4737, 4767, 4769, 4770, 4774, 4778,
-        4834, 4888, 4939, 4942, 4957
+        29, 184, 195, 204, 284, 296, 298, 301, 493, 581, 602, 638, 669, 734,
+        766, 856, 889, 898, 907, 926, 1016, 1212, 1447, 1509, 1517, 1575, 1628,
+        1631, 1824, 1833, 1838, 1845, 1928, 1929, 2076, 2077, 2134, 2160, 2188,
+        2190, 2194, 2228, 2231, 2232, 2235, 2237, 2248, 2275, 2484, 2487, 2736,
+        2856, 2977, 2990, 3001, 3002, 3189, 3190, 3381, 3397, 3409, 3416, 3442,
+        3452, 3456, 3460, 3464, 3519, 3538, 3565, 3582, 3616, 3617, 3619, 3635,
+        3652, 3653, 3654, 3663, 3668, 3848, 4206, 4228, 4237, 4287, 4322, 4328,
+        4335, 4404, 4490, 4648, 4872, 4882, 4884, 4897, 4927, 4929, 4930, 4934,
+        4938, 4994, 5048, 5099, 5102, 5117
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "dafbef9cd51fca55f428dd16b6e6dc096fe4d0daeb050d5ea46fdad3aea1b390",
+      "sha256": "811d28039e65358d56284f39d50eeb0408fe13ea1b9b573d2ab7721ae22fc984",
       "models": [
+        "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 245, 282, 288, 291,
-        295, 296, 297, 298, 387, 662, 669, 670, 672, 677, 681, 685
+        2, 36, 63, 100, 122, 125, 138, 145, 154, 162, 170, 246, 278, 284, 287,
+        291, 292, 293, 294, 383, 658, 665, 666, 668, 673, 677, 681
       ],
       "review": "mapped-abstraction"
     },
@@ -3999,6 +4021,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/points-protection-sql.ts",
+      "sha256": "c99faa1aa420adfd67d891bd821900f60589f15ed60008f840ec4a786cc0a65b",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [22],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/pr-evidence-artifacts.mjs",
       "sha256": "19bb617705b8c07e5b199c4235e0798bed7373a53a7ef1620372a009b1b21b61",
       "models": ["formal/models/contributor/artifact_transport.qnt"],
@@ -4042,6 +4073,18 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/prepare-implementation-corrections.ts",
+      "sha256": "d44654ff84297c1445aee7095d8961b1c093b93df31681c092108dc4955c4eac",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [
+        4, 29, 40, 238, 301, 335, 347, 348, 349, 358, 363, 367, 369, 381, 382,
+        398, 404, 414
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/prepare-leaderboard-transport.mjs",
       "sha256": "07d1f27a923ef54217b190544a8984b4a0fac6827cdc8dcbe511dd6b4f1e08e1",
       "models": ["formal/models/points/leaderboard_transport.qnt"],
@@ -4077,9 +4120,12 @@
     },
     {
       "path": "scripts/prepare-points-import.ts",
-      "sha256": "f3b19c877d8a4044c6447e7620d4b47fd5fd8dea2ed0247cde6436a0ceeb02e3",
-      "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [1, 17],
+      "sha256": "b4a28b4b2b4df77f79d7fb9ce813da8f225a23aab3d1cfdf649cfc2d13e11a95",
+      "models": [
+        "formal/models/points/journal_publication.qnt",
+        "formal/models/points/source_import.qnt"
+      ],
+      "candidateLines": [1, 33],
       "review": "mapped-abstraction"
     },
     {
@@ -4574,7 +4620,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "aab43c0e9ac7bc66844b076f5fbb2a786f68c907c736c250f2f98b919d389f70",
+      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4582,8 +4628,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        65, 76, 123, 124, 125, 126, 128, 129, 196, 197, 198, 200, 201, 736, 756,
-        878, 914, 953, 977
+        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
+        879, 915, 954, 978
       ],
       "review": "mapped-abstraction"
     },
@@ -5979,7 +6025,7 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "a1970da5d7ecc27fa93ac293e378b9fa635acbd75d9ce55fd65624038c8b9ec6",
+      "sha256": "13d9845a433db2c3b29ffb3d912211179ee65bd271b345b18b13c9a675db2fa5",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -6178,6 +6224,18 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/points-implementation-corrections.ts",
+      "sha256": "5fb22145fe1ef43ca8d7c941a0beaa5a923a51e767db8d8864edb7e44f8c962f",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [
+        83, 91, 102, 116, 123, 243, 400, 559, 564, 659, 731, 766, 794, 895, 896,
+        897
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/points-summary.ts",
       "sha256": "d76e32eb79853776299155aa7b78fd18041091ee2dae10eb321625bc11a7d276",
       "models": [],
@@ -6187,9 +6245,10 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "263b8a50cb47c9fe5118e3b2294b5b85bd4cf1ce83b8647731cfa532e4bbcdc3",
+      "sha256": "0f7bb496f9744cf73eabdec0c7b0b2e1eea140d349e3bd45f10568cd27048a6c",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/journal_publication.qnt",
         "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
@@ -6197,7 +6256,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [355, 810, 1045, 1052, 1061],
+      "candidateLines": [378, 833, 1068, 1075, 1084],
       "review": "mapped-abstraction"
     },
     {
@@ -13358,6 +13417,29 @@
       ]
     },
     {
+      "path": "formal/models/points/historical_implementation_allocation.qnt",
+      "sha256": "fdd3e11c9680b44501ae2daf20c6a641399c4fb24f3cd8de1b76c32229aa967b",
+      "sources": [
+        ".github/workflows/points-implementation-corrections.yml",
+        "scripts/collect-implementation-corrections.ts",
+        "scripts/generate-points.ts",
+        "scripts/points-protection-sql.ts",
+        "scripts/prepare-implementation-corrections.ts",
+        "src/lib/points-implementation-corrections.ts"
+      ],
+      "scenarios": [
+        "changedPredecessorRefusesImportTest",
+        "incompleteConnectedProofHeldTest",
+        "privateProtectedPoolHeldTest",
+        "protectionBypassNegativeControlTest",
+        "protectionRaceBeforeAtomicImportTest",
+        "replayAfterRevocationNeverRestoresTest",
+        "replayResurrectionNegativeControlTest",
+        "revaluationNegativeControlTest",
+        "unchangedPoolAndAppendOnlyTest"
+      ]
+    },
+    {
       "path": "formal/models/points/implementation_allocation.qnt",
       "sha256": "c8949c5ccfcc8736619960d90e1d057f8de3215058a6e2bb0c967b962c005e57",
       "sources": [
@@ -13428,19 +13510,22 @@
     },
     {
       "path": "formal/models/points/journal_publication.qnt",
-      "sha256": "f77f81f6e4568c79452ad3330615ffef3739b434e9dbdfff3869e55618d8d36a",
+      "sha256": "515102c904c4b4474305c60c7dff4484d5e304e2506ce0ce7c01551d127f0840",
       "sources": [
         "migrations/0037_points_batch_prefix.sql",
         "migrations/0038_points_coverage_staging.sql",
         "migrations/0044_points_immutable_history.sql",
         "scripts/generate-points.ts",
-        "scripts/prepare-pr-ledger.ts"
+        "scripts/prepare-points-import.ts",
+        "scripts/prepare-pr-ledger.ts",
+        "src/lib/points.ts"
       ],
       "scenarios": [
         "duplicateCannotReplaceRecordTest",
         "extendsExactPrefixTest",
         "interruptedStagePreservesPublicationTest",
-        "reorderIsRejectedTest"
+        "reorderIsRejectedTest",
+        "stalePreparedPublicationIsRejectedTest"
       ]
     },
     {

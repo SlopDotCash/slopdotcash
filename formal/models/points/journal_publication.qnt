@@ -3,6 +3,9 @@
 // @source migrations/0044_points_immutable_history.sql
 // @source scripts/generate-points.ts
 // @source scripts/prepare-pr-ledger.ts
+// @source scripts/prepare-points-import.ts
+// @source src/lib/points.ts
+// @evidence scripts/prepare-points-import.test.ts
 // Three immutable record identities stand for their complete canonical bytes.
 // Staging is invisible; a committed batch must extend the exact public prefix.
 module journal_publication {
@@ -31,6 +34,8 @@ module journal_publication {
     .then(stage(List(1, 2, 3))).then(commit).expect(published == List(1, 2, 3))
   run reorderIsRejectedTest = init.then(stage(List(1, 2))).then(commit)
     .then(stage(List(2, 1))).then(reject).expect(published == List(1, 2))
+  run stalePreparedPublicationIsRejectedTest = init.then(stage(List(1, 2))).then(commit)
+    .then(stage(List(1))).then(reject).expect(published == List(1, 2))
   run interruptedStagePreservesPublicationTest = init.then(stage(List(1, 2))).then(interrupt)
     .expect(published == List(1))
   run duplicateCannotReplaceRecordTest = init.then(stage(List(1, 1))).then(reject).expect(published == List(1))

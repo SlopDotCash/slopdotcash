@@ -1172,7 +1172,10 @@ jobs:
           # Seed missing observations without execution or signer keys.
           # The canonical writer protects concurrent newer observations.
           bun --no-env-file scripts/recover-vault-observations.ts
-          bun scripts/prepare-points-import.ts dist "$RUNNER_TEMP/points-import.sql"
+          # A known old batch may be replayed by SQL, but its old Pages shards
+          # must never overwrite a later historical correction or publication.
+          bun scripts/prepare-points-import.ts dist "$RUNNER_TEMP/points-import.sql" \
+            --current-origin https://slop.cash
           # D1's import API can time out on upload (504) or apply every
           # statement and then answer the final poll with "Not currently
           # importing anything". A failed import rolls back, and every
