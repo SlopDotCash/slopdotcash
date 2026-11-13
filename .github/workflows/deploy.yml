@@ -994,34 +994,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/eliza-computer-pages-project.json"
-          status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 1048576 \
-              --output "$response" \
-              --write-out "%{http_code}" \
-              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/eliza-computer"
-          )"
-          if [ "$status" != "200" ]; then
-            echo "::error::The reviewed eliza-computer Pages project is unavailable (HTTP $status); routine release code will not create or reconfigure it."
-            exit 1
-          fi
-          node - "$response" <<'NODE'
-          const { readFileSync } = require("node:fs");
-          const value = JSON.parse(readFileSync(process.argv[2], "utf8"));
-          if (
-            value?.success !== true ||
-            value?.result?.name !== "eliza-computer" ||
-            value?.result?.production_branch !== "main"
-          ) {
-            throw new TypeError("the reviewed eliza-computer Pages project contract drifted");
-          }
-          NODE
+        run: bun --no-env-file scripts/prepare-vetting-public-key.ts preflight production
 
       - name: Validate optional Slopbot value scoring settings
         if: steps.release-input.outputs.superseded != 'true'
