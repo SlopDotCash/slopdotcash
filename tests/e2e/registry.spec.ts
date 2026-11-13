@@ -1805,7 +1805,7 @@ test("an owner installs Slopbot before creation and resumes setup; a failed scan
   const reviewed = page.locator(".project-setup-status");
   await expect(reviewed.locator("h2")).toHaveText(/^Setup\s*Action needed$/u);
   await expect(reviewed.getByRole("status")).toContainText(
-    "Findings in Slop's skill template block clearance. Check for an updated skill template before requesting a new scan.",
+    "Findings in Slop's skill template block clearance.",
   );
   const reasons = reviewed.getByRole("region", {
     name: "Why the scan did not clear",
