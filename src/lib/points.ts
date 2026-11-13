@@ -556,6 +556,9 @@ export function reconcilePointPenalties(
     const project = findHistoricalRepository(penalty.repository);
     if (!project || penalty.actor.kind !== "User")
       throw new Error("Invalid penalty identity");
+    // Work on an appended repository before its start month earns no Points,
+    // so a penalty on it debits none either.
+    if (!repositoryWorkCounts(penalty)) continue;
     const award: PointAward = {
       key: pointKey(
         project.projectId,
