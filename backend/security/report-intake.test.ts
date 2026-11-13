@@ -21,7 +21,7 @@ import type {
 } from "./analysis";
 import type { SecurityApiDependencies, SecurityD1Database } from "./case-store";
 import { handleSecurityApi } from "./handler";
-import { readStoredReportByCase } from "./report-intake";
+import { readStoredReportByCase, scheduleAnalysis } from "./report-intake";
 
 const ORIGIN = "https://slop.test";
 const START = "2026-10-27T12:00:00.000Z";
@@ -132,6 +132,7 @@ function fixture(overrides: Record<string, unknown> = {}) {
   const statementSql = new WeakMap<object, string>();
   let routeFails = false;
   let afterScreenClaim: (() => Promise<void>) | null = null;
+  let afterScreenFinish: (() => Promise<void>) | null = null;
   const tracked = (
     statement: D1QueryStatement,
     sql: string,
@@ -170,6 +171,19 @@ function fixture(overrides: Record<string, unknown> = {}) {
       ) {
         const callback = afterScreenClaim;
         afterScreenClaim = null;
+        await callback();
+      }
+      if (
+        afterScreenFinish &&
+        results[0]?.meta?.changes === 1 &&
+        statements.some((statement) =>
+          statementSql
+            .get(statement)
+            ?.includes("SET screening_state=?,screening_reason="),
+        )
+      ) {
+        const callback = afterScreenFinish;
+        afterScreenFinish = null;
         await callback();
       }
       return results;
@@ -380,6 +394,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
     },
     afterScreenClaim: (callback: () => Promise<void>) => {
       afterScreenClaim = callback;
+    },
+    afterScreenFinish: (callback: () => Promise<void>) => {
+      afterScreenFinish = callback;
     },
     beforeAnalysis: (callback: (() => Promise<void>) | null) => {
       beforeAnalysisResult = callback;
@@ -1594,6 +1611,64 @@ describe("durable private report controls", () => {
       for (let n = 0; n < background.length; n++) await background[n];
       t.sqlite.close();
     }
+  });
+
+  test("a committed screen cannot adopt a replacement during delayed completion readback", async () => {
+    const t = fixture();
+    let failed = false;
+    t.beforeAnalysis(async () => {
+      if (failed) throw new Error("Fixture replacement assessment failure");
+    });
+    t.afterScreenFinish(async () => {
+      const old = required(
+        t.sqlite
+          .query(
+            "SELECT submission_id, revision FROM security_submission_intake",
+          )
+          .get() as { submission_id: string; revision: number } | null,
+      );
+      const reviewed = await t.call(
+        OWNER,
+        "POST",
+        `security-submissions/${old.submission_id}/review`,
+        {
+          expectedRevision: old.revision,
+          decision: "request-information",
+          reason: "Provide the current affected version.",
+        },
+      );
+      expect(reviewed.status).toBe(200);
+      failed = true;
+      const replacement = await t.call(
+        REPORTER,
+        "POST",
+        `security-submissions/${old.submission_id}/report`,
+        {
+          expectedRevision: required(reviewed.body.submission).intake.revision,
+          report: {
+            ...REPORT,
+            description: `${REPORT.description} Current affected version supplied.`,
+          },
+        },
+      );
+      expect(replacement.status).toBe(200);
+      expect(t.analyzed).toHaveLength(1);
+    });
+    const created = await t.create("delayed-finish-readback");
+    expect(created.status).toBe(201);
+    const submission = required(created.body.submission);
+    expect(t.analyzed).toHaveLength(1);
+    // A delayed handoff must not adopt a new version or retry its failed attempt.
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 1);
+    await scheduleAnalysis(t.deps, submission.caseId, null, 5000, 2);
+    expect(t.analyzed).toHaveLength(1);
+    expect(
+      t.sqlite
+        .query(
+          "SELECT attempt, report_version, state FROM security_case_analyses",
+        )
+        .all(),
+    ).toEqual([{ attempt: 1, report_version: 2, state: "failed" }]);
   });
 
   test.each([false, true])(

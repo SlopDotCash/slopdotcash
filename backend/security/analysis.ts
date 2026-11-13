@@ -524,6 +524,8 @@ export async function runCaseAnalysis(
   caseId: string,
   received: SecurityAnalysisReport | null,
   timeoutMs: number,
+  /** Automatic screening owns one report version and never retries an assessment. */
+  expectedReportVersion?: number,
 ): Promise<void> {
   const row = await deps.db
     .prepare(
@@ -548,6 +550,11 @@ export async function runCaseAnalysis(
     }>();
   if (row === null || row.submission_state !== "verified") return;
   if (
+    expectedReportVersion !== undefined &&
+    row.report_version !== expectedReportVersion
+  )
+    return;
+  if (
     row.report_version !== null &&
     row.review_decision !== "forward" &&
     (row.review_decision !== null || row.screening_state !== "legitimate")
@@ -562,7 +569,7 @@ export async function runCaseAnalysis(
   if (
     latest !== null &&
     latest.report_version === row.report_version &&
-    !retryable(latest, deps.now())
+    (expectedReportVersion !== undefined || !retryable(latest, deps.now()))
   )
     return;
   const attempt = (latest?.attempt ?? 0) + 1;

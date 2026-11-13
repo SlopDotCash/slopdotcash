@@ -541,7 +541,13 @@ async function screenStoredReport(
     const remaining = deps.waitUntil
       ? Math.max(1, Math.floor(timeoutMs - (performance.now() - started) - 500))
       : undefined;
-    await scheduleAnalysis(deps, qualified.case_id, null, remaining);
+    await scheduleAnalysis(
+      deps,
+      qualified.case_id,
+      null,
+      remaining,
+      qualified.report_version,
+    );
   };
   let row = await storedIntake(deps, id);
   if (!row) return;
@@ -665,9 +671,10 @@ async function screenStoredReport(
     intakeEvent(deps, row, "screen-finish", null, finished),
   ]);
   // A replaced screen does not own the current report's assessment or retry.
-  if (completed[0].meta?.changes !== 1) return;
+  if (completed[0].meta?.changes !== 1 || state !== "legitimate") return;
   const updated = await storedIntake(deps, id);
-  if (updated && intakeQualified(updated)) {
+  if (updated?.report_version !== row.report_version) return;
+  if (intakeQualified(updated)) {
     await assess(updated);
     await routedNotice(deps, updated, null);
   }
@@ -1354,9 +1361,16 @@ export async function scheduleAnalysis(
   caseId: string,
   report: SecurityAnalysisReport | null,
   timeoutMs?: number,
+  expectedReportVersion?: number,
 ): Promise<void> {
   const run = (timeoutMs: number) =>
-    runCaseAnalysis(analysisDependencies(deps), caseId, report, timeoutMs);
+    runCaseAnalysis(
+      analysisDependencies(deps),
+      caseId,
+      report,
+      timeoutMs,
+      expectedReportVersion,
+    );
   if (deps.waitUntil)
     deps.waitUntil(run(timeoutMs ?? BACKGROUND_ANALYSIS_TIMEOUT_MS));
   else await run(timeoutMs ?? ANALYSIS_TIMEOUT_MS);
