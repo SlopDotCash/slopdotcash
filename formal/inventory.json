@@ -8201,7 +8201,7 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "a2b623fe0f651448768b7a4fb454b665731e0272f1308cfa84a50215fbb40ecf",
+      "sha256": "d2762311aa4939faaa4664848ac3a4a91a65cc0379bbb4fdca8f6862ffc4202f",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_commit_census_fallback.qnt"
@@ -8310,7 +8310,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "ae46fb549ed08a8d8731900d6e4f6e5d10039149eb6da447689cb934419eb4fa",
+      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
       "models": [
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
