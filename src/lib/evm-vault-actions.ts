@@ -58,7 +58,8 @@ async function atomicBatchSupported(
     return Object.entries(capabilities).some(
       ([chain, value]) =>
         /^0x[0-9a-fA-F]+$/.test(chain) &&
-        BigInt(chain) === chainId &&
+        // "0x0" carries capabilities that apply to every chain (EIP-5792).
+        (BigInt(chain) === chainId || BigInt(chain) === 0n) &&
         (value as { atomic?: { status?: unknown } } | null)?.atomic?.status ===
           "supported",
     );
