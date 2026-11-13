@@ -11,7 +11,11 @@ sudo apt-get update
 sudo apt-get install --no-install-recommends -y libudev-dev
 install_dir="$RUNNER_TEMP/slop-solana-tools"
 mkdir -p "$install_dir"
-curl --fail --location --retry 3 --output "$install_dir/solana.tar.bz2" https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+# Archive observed from the HTTPS release for source commit
+# 8a085eebcb901b6846d1f82f4636667742146545. This pins artifact bytes;
+# it is not an independent build or a producer signature.
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --retry 3 --output "$install_dir/solana.tar.bz2" https://github.com/anza-xyz/agave/releases/download/v2.1.21/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+printf '%s  %s\n' '5da3359e296f1e6c13522b874317cb4cfe33e73301a9dc60b1e1435cc133b397' "$install_dir/solana.tar.bz2" | sha256sum --check --strict
 tar -xjf "$install_dir/solana.tar.bz2" -C "$install_dir"
 export PATH="$install_dir/solana-release/bin:$PATH"
 printf '%s\n' "$install_dir/solana-release/bin" >> "$GITHUB_PATH"

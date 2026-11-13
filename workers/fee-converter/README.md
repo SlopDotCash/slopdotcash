@@ -802,14 +802,23 @@ nor exhausts the fee-conversion budget.
 
 ### Turn on the buyback
 
-Status, 12 November 2026: production is `live` from
+Status, 12 November 2026: the production configuration selects `live` from
 `2026-11-12T00:00:00.000Z` by operator decision at the confirmed limits.
+This mode does not establish a deployed or qualified live trade.
 Steps 4 and 5 were not run, because no fee income existed to quote or spend.
 Step 2 was not verified: the Worker holds an `RPC_URL_ROBINHOOD` secret, and
 whether it serves state at the finalized block is unconfirmed. The first real
 order must still be verified as step 5 describes, and no burn is published
 before its finalized receipt. The steps below remain the procedure for any
 later activation, including staging.
+
+When eligible fee income is absent, keep the first-order qualification
+pending. Read-only prospective quotes can check route availability and limits,
+but do not seed the production fee journal or spend unrelated deposits to
+make a qualification pass. Reconcile the deployed configuration, production
+journal and finalized wallet state before choosing the first order. See the
+[12 November review](../../docs/slop-buyback.md#qualification-review-12-november-2026)
+for the current evidence and its limits.
 
 1. Confirm every limit above and the activation instant with the owner, and
    record the confirmation in the activating pull request.

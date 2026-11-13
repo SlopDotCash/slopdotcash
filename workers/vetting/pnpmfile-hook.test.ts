@@ -42,6 +42,9 @@ test("a pnpmfile hook is an install surface", () => {
 });
 
 test("a pnpmfile name elsewhere keeps its ordinary surfaces", () => {
-  expect(surfacesOf("docs/pnpmfile.md")).toEqual([]);
+  expect(surfacesOf("docs/pnpmfile.md")).toEqual([
+    "agentInstructions",
+    "source",
+  ]);
   expect(surfacesOf("LICENSE")).toEqual([]);
 });

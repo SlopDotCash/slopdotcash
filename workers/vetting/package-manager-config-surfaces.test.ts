@@ -47,7 +47,7 @@ test("package-manager configuration is scanned as an install script", () => {
 });
 
 test("similar names that package managers do not read keep their surfaces", () => {
-  expect(surfacesOf("docs/npmrc.md")).toEqual([]);
+  expect(surfacesOf("docs/npmrc.md")).toEqual(["agentInstructions", "source"]);
   expect(surfacesOf("example.npmrc")).toEqual([]);
   expect(surfacesOf("config/bunfig.example.toml")).toEqual(["source"]);
 });

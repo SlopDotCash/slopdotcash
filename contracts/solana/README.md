@@ -8,10 +8,12 @@ ordinary and bounty projects for the same digest (owner decision D13, 24
 October 2026). `initialize` is permissionless: the signing owner pays and owns
 the project. Classic SPL mints retain their existing behavior. Token-2022 mints
 must have disabled mint and freeze authorities and may contain only
-`MetadataPointer` and `TokenMetadata`; token accounts may contain only
-`ImmutableOwner`, or no extensions. Unknown extensions, transfer fees, transfer
-hooks and rebasing behavior remain unsupported (PRD section 6, owner decision
-26 October 2026). The program and TypeScript adapter both check this subset.
+`MetadataPointer` and `TokenMetadata`. Metadata must be self-hosted, both
+metadata authorities must be disabled, and the mint account cannot exceed 1,024
+bytes. Token accounts may contain only `ImmutableOwner`, or no extensions.
+Unknown extensions, transfer fees, transfer hooks and rebasing behavior remain
+unsupported (PRD section 6, owner decision 26 October 2026). The program and
+TypeScript adapter both check this subset.
 Every transfer uses the mint's own token program and decimals with
 `transfer_checked`, so the vault receives the exact amount sent.
 
@@ -287,15 +289,18 @@ source_digest]` marker.
    an admitted award's source by hand and strand its reserve. Anyone, including
    the owner, can clear the gate by committing the remaining awards. Time and
    owner opt-out never remove the gate or release funds. Later monthly admissions,
-   funded payments and withdrawals of free funds remain available. If part of a
-   month can never settle (an attester fault), the owner calls
-   `release_monthly_reserve(period, expected_unsettled, released)` after an
-   Ed25519 check of the project's identity authority signature over
-   `"slop-monthly-release-v1"`, the program, project, period, root, total,
-   unsettled and released gross, and network. The signature binds the exact
-   unsettled gross (`total - committed`). The released gross returns to free
-   balance and is added to `committed` and `released`; committed awards do not
-   change. See `docs/escrow-unsettleable-month-release.md`.
+   funded payments and withdrawals of free funds remain available. If the
+   complete retained allocation has the wrong authenticated total and no leaf
+   has settled, the owner calls
+   `release_monthly_reserve(period, expected_unsettled, released)` with
+   `released == expected_unsettled == total` after an Ed25519 check of the
+   project's identity authority signature over `"slop-monthly-release-v1"`, the
+   program, project, period, root, total, unsettled and released gross, and
+   network. Partial or partly settled allocations refuse aggregate release.
+   This prevents the same gross also being consumed by `release_monthly_award`.
+   The released gross returns to free balance and is added to `committed` and
+   `released`; committed awards do not change. See
+   `docs/escrow-unsettleable-month-release.md`.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
 proof)`, passing the source's `origin`, its `monthly-source` marker and the
@@ -572,6 +577,9 @@ reads keys or sends a transaction. Its output omits the RPC URL. The checked-in
 IDL is generated from the program; regenerate it after instruction layout changes.
 
 `bootstrap-linux.sh` installs the pinned Linux x86_64 GitHub Actions toolchain.
+It checks the Agave archive's recorded SHA-256 before extraction and accepts only
+HTTPS downloads and redirects. The digest pins the bytes observed from the
+upstream release; it does not prove an independent build or producer signature.
 It is not a mainnet deployment path. The separate Node SDK package is used only
 for local integration and unsigned operator tools. Its upstream dependency audit
 has unresolved advisories; lifecycle scripts are disabled and the bigint code
