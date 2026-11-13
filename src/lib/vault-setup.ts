@@ -100,9 +100,7 @@ export function checkedVaultSetupReview(
       ? a === b
       : a.toLowerCase() === b?.toLowerCase());
   const invalid = () =>
-    new Error(
-      "The vault request does not match the displayed project, wallet and payment policy. Reload and review again.",
-    );
+    new Error("Vault request mismatch. Reload and review again.");
   if (review?.family === "solana") {
     const creation = review.creation;
     if (

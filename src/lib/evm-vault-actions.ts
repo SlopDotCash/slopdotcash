@@ -100,9 +100,7 @@ export async function reviewVaultAction(
     if (wallet.address.toLowerCase() !== deployment.owner.toLowerCase())
       throw new Error("Only the vault owner's wallet can withdraw free funds.");
     if (totals.freeBalance === null || gross > BigInt(totals.freeBalance))
-      throw new Error(
-        "The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.",
-      );
+      throw new Error("Amount exceeds the vault's free balance.");
   } else {
     const request = wallet.evmRequest;
     if (!request) throw new Error("Choose an EVM wallet.");
@@ -216,9 +214,7 @@ export async function sendVaultAction(
   beforeSend();
   const hash = await request("eth_sendTransaction", [transaction]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
-    throw new Error(
-      "The wallet did not return a transaction hash. Check wallet activity before another attempt.",
-    );
+    throw new Error("No transaction hash returned. Check wallet activity.");
   return hash;
 }
 
@@ -333,9 +329,7 @@ export async function readFinalizedWalletTransaction(
     transaction.input.toLowerCase() !== expectedInput.toLowerCase() ||
     BigInt(transaction.value) !== expectedValue
   )
-    throw new Error(
-      "This transaction does not match the pending wallet action. Check its hash in your wallet.",
-    );
+    throw new Error("Transaction does not match the pending wallet action.");
   if (evidence === "finalized") {
     const finalized = (await request("eth_getBlockByNumber", [
       "finalized",

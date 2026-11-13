@@ -137,30 +137,33 @@ test("admin search finds a project by name or repository and Keep listed leaves 
   await search.fill(repository);
   await openSecond.click();
   await expect(page).toHaveURL(`/admin?project=${second.id}`);
-  const delist = page.getByRole("button", { name: "Delist", exact: true });
+  const delist = page
+    .getByRole("button", { name: "Delist", exact: true })
+    .and(page.locator(".ghost-button"));
+  const confirmDelist = page
+    .getByRole("button", { name: "Confirm delist", exact: true })
+    .and(page.locator(".danger-button"));
   await delist.click();
-  const question = page.getByText("Hide this project everywhere?", {
-    exact: true,
-  });
+  const question = page.getByText("Delist?", { exact: true });
+  await expect(confirmDelist).toBeVisible();
   await expect(question).toBeVisible();
   await page.screenshot({
     path: info.outputPath("delist-confirmation.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Keep listed", exact: true }).click();
+  await question
+    .locator("..")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   await expect(question).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Delist project", exact: true }),
-  ).toHaveCount(0);
+  await expect(confirmDelist).toHaveCount(0);
   await expect(delist).toBeVisible();
   expect(sent).toHaveLength(0);
   expect(delistMethods).toHaveLength(0);
 
   // Confirming afterwards still sends exactly one retiring revision.
   await delist.click();
-  await page
-    .getByRole("button", { name: "Delist project", exact: true })
-    .click();
+  await confirmDelist.click();
   await expect(page.getByRole("status")).toContainText("Saved.");
   expect(delistMethods).toEqual(["PUT"]);
   expect(delists[0]).toMatchObject({
@@ -223,22 +226,21 @@ test("canceling an enforcement preview returns to an editable form without recor
   const panel = page.locator("section.admin-enforcement");
   const reason = panel.getByRole("textbox", { name: "Reason", exact: true });
   const evidence = panel.getByRole("textbox", {
-    name: "Evidence link or case ID",
+    name: "Evidence",
     exact: true,
   });
   const action = panel.getByRole("combobox", { name: "Action", exact: true });
   await action.selectOption({ label: "Quarantine" });
   await reason.fill("Synthetic flagged release under review.");
   await evidence.fill("case-e2e-preview-cancel");
-  await panel
-    .getByRole("button", { name: "Preview action", exact: true })
-    .click();
+  await panel.getByRole("button", { name: "Preview", exact: true }).click();
   const preview = panel.getByRole("group", { name: "Preview", exact: true });
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("No restriction → Quarantined");
   await expect(preview).toContainText("1 → 2");
+  await expect(preview).toContainText(/Quarantine · record \d+/u);
   await expect(
-    preview.getByRole("button", { name: "Confirm: Quarantine", exact: true }),
+    preview.getByRole("button", { name: /^Confirm: /u }),
   ).toBeVisible();
   await expect(reason).toHaveAttribute("readonly", "");
   await expect(action).toBeDisabled();
@@ -259,7 +261,7 @@ test("canceling an enforcement preview returns to an editable form without recor
   await preview.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(preview).toHaveCount(0);
   await expect(
-    panel.getByRole("button", { name: "Preview action", exact: true }),
+    panel.getByRole("button", { name: "Preview", exact: true }),
   ).toBeVisible();
   // The entered reason and evidence stay, and the form is editable again.
   await expect(reason).toHaveValue("Synthetic flagged release under review.");

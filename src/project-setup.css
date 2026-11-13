@@ -160,6 +160,7 @@
 
 .project-image-field-compact {
   position: relative;
+  width: fit-content;
 }
 
 .project-image-upload {
@@ -196,7 +197,8 @@
   cursor: pointer;
 }
 
-.proposal-page.setup-compact .project-image-remove {
+.proposal-page.setup-compact .project-image-remove,
+.manage-page .project-image-remove {
   position: absolute;
   top: -12px;
   right: -14px;
@@ -270,6 +272,16 @@
   border-radius: 8px;
   background: var(--surface);
   font-size: 0.85rem;
+}
+
+/* A network mark and its name sit inside the option's own tile. */
+.setup-choice-options span span {
+  display: inline-flex;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
 }
 
 .proposal-page.setup-compact .funding-mode .checkbox-field {

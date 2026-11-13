@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import {
   type PublicPaymentScope,
@@ -13,19 +14,26 @@ export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
   return (
     <section className="section" aria-label="Finalized project payments">
       <div className="profile-card-heading">
-        <h2>Finalized project payments</h2>
+        <h2>Payments</h2>
       </div>
       {state.status === "loading" ? (
-        <p role="status">Loading project payments…</p>
+        <p aria-label="Loading project payments" role="status">
+          <LoaderCircle aria-hidden="true" className="wallet-spin" size={18} />
+        </p>
       ) : state.status === "error" ? (
         <p role="status">
-          Project payment records unavailable.{" "}
-          <button type="button" className="text-button" onClick={retry}>
-            Retry project payments
+          Payments unavailable ·{" "}
+          <button
+            aria-label="Retry project payments"
+            type="button"
+            className="text-button"
+            onClick={retry}
+          >
+            Retry
           </button>
         </p>
       ) : state.payments.length === 0 ? (
-        <p>No finalized project-vault payments recorded.</p>
+        <p>No payments yet</p>
       ) : (
         <>
           <ul className="payment-records">
@@ -42,9 +50,7 @@ export function VaultPaymentHistory({ scope }: { scope: PublicPaymentScope }) {
               aria-expanded={showAll}
               onClick={() => setShowAll(!showAll)}
             >
-              {showAll
-                ? "Show recent payments"
-                : `Show all ${state.payments.length} payments`}
+              {showAll ? "Show less" : `All ${state.payments.length}`}
             </button>
           ) : null}
         </>

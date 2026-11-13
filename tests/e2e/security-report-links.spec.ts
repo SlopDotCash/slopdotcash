@@ -132,7 +132,7 @@ async function serveSecurity(page: Page, fixture: Fixture) {
 
 async function openLinkOptions(page: Page) {
   const options = page.locator("details.security-reference").filter({
-    has: page.getByText("Link or import a GitHub report", { exact: true }),
+    has: page.locator("summary").getByText("Link report", { exact: true }),
   });
   if ((await options.getAttribute("open")) === null)
     await options.locator("summary").first().click();
@@ -174,19 +174,16 @@ test("a reporter links a GitHub report and a maintainer records a verified one",
   await serveSecurity(page, fixture);
   await page.goto("/security", { waitUntil: "networkidle" });
   const options = await openLinkOptions(page);
-  const link = options.locator("section").filter({
-    has: page.getByRole("heading", {
-      name: "Link a report you submitted on GitHub",
-    }),
+  const link = options.getByRole("region", {
+    name: "Link a GitHub report",
+    exact: true,
   });
   const advisory = link.getByRole("textbox", {
     name: "GitHub advisory ID",
   });
   // Report details are refused by the advisory ID pattern before sending.
   await advisory.fill("The vault rounding bug");
-  await link
-    .getByRole("button", { name: "Link my GitHub report", exact: true })
-    .click();
+  await link.getByRole("button", { name: "Link report", exact: true }).click();
   expect(
     await advisory.evaluate(
       (input: HTMLInputElement) => input.validity.patternMismatch,
@@ -194,9 +191,7 @@ test("a reporter links a GitHub report and a maintainer records a verified one",
   ).toBe(true);
   expect(fixture.posts).toEqual([]);
   await advisory.fill("GHSA-2c3f-4g5h-6j7m");
-  await link
-    .getByRole("button", { name: "Link my GitHub report", exact: true })
-    .click();
+  await link.getByRole("button", { name: "Link report", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Report saved." }),
   ).toBeVisible();
@@ -220,25 +215,17 @@ test("a reporter links a GitHub report and a maintainer records a verified one",
     fullPage: true,
   });
 
-  const record = options.locator("section").filter({
-    has: page.getByRole("heading", { name: "Reports sent on GitHub directly" }),
-  });
+  const record = options.getByRole("region", { name: "Import", exact: true });
   await record
     .getByRole("textbox", { name: "GitHub advisory ID" })
     .fill("GHSA-3c4f-5g6h-7j8m");
+  await record.getByRole("textbox", { name: "Reporter ID" }).fill("900000123");
   await record
-    .getByRole("textbox", { name: "Reporter GitHub account ID" })
-    .fill("900000123");
-  await record
-    .getByRole("textbox", { name: "Reporter GitHub login" })
+    .getByRole("textbox", { name: "Reporter login" })
     .fill("fixture-researcher");
-  await record
-    .getByLabel("Time GitHub received the report (UTC)")
-    .fill("2026-10-30T14:05");
+  await record.getByLabel("Received (UTC)").fill("2026-10-30T14:05");
   await record.getByRole("checkbox").check();
-  await record
-    .getByRole("button", { name: "Record verified report", exact: true })
-    .click();
+  await record.getByRole("button", { name: "Record", exact: true }).click();
   await expect(
     page.locator(`[aria-labelledby="case-${recorded.id}"]`),
   ).toBeVisible();
@@ -291,19 +278,17 @@ test("a maintainer brings in GitHub private reports after GitHub was unavailable
   await page.goto("/security", { waitUntil: "networkidle" });
   const options = await openLinkOptions(page);
   const bring = options.getByRole("button", {
-    name: "Bring in GitHub private reports",
+    name: "Import from GitHub",
     exact: true,
   });
   await bring.click();
   await expect(options.getByRole("alert")).toContainText(
-    "Slop could not read the repository's private reports on GitHub. Nothing changed; try again later.",
+    "GitHub read failed. Retry.",
   );
   const readsBefore = fixture.caseReads;
   await expect(bring).toBeEnabled();
   await bring.click();
-  await expect(options.getByRole("status")).toHaveText(
-    "1 new private report recorded.",
-  );
+  await expect(options.getByRole("status")).toHaveText("1 imported");
   await expect(options.getByRole("alert")).toHaveCount(0);
   // The case list reloads and shows the imported report.
   await expect.poll(() => fixture.caseReads).toBeGreaterThan(readsBefore);

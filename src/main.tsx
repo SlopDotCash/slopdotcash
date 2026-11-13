@@ -6,6 +6,7 @@
 import "@fontsource-variable/bricolage-grotesque/opsz.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/700.css";
+import { LoaderCircle } from "lucide-react";
 import { type ComponentType, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -50,7 +51,7 @@ function RegistryBoot() {
           // error-policy:J3 no last good registry; project routes show the
           // failure and account routes remain available.
           projects = [];
-          registryError = "Project data could not load.";
+          registryError = "Projects unavailable";
         }
       }
       if (!active) return;
@@ -73,7 +74,15 @@ function RegistryBoot() {
   return (
     <main className="shell route-main boot-state">
       {state.status === "loading" ? (
-        <p role="status">Loading projects…</p>
+        <p
+          role="status"
+          aria-label="Loading"
+          title="Loading"
+          style={{ textAlign: "center" }}
+        >
+          <img src="/slop-mark.svg" alt="" width={40} height={40} />{" "}
+          <LoaderCircle className="wallet-spin" aria-hidden="true" />
+        </p>
       ) : (
         <div role="alert">
           <h1>Slop could not load.</h1>
@@ -82,7 +91,7 @@ function RegistryBoot() {
             onClick={() => window.location.reload()}
             type="button"
           >
-            Try again
+            Reload
           </button>
         </div>
       )}

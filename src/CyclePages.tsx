@@ -1,4 +1,4 @@
-import { CalendarDays, CircleAlert } from "lucide-react";
+import { CalendarDays, CircleAlert, History, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "./Link";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -138,14 +138,10 @@ export function CyclePage({
     return (
       <NotFound title={`No ${formatCycleMonth(cycleId)} cycle record`}>
         <p>
-          {collected
-            ? ""
-            : "Activity for this project has not been collected yet. "}
-          See the{" "}
+          {collected ? "" : "Not collected yet · "}
           <Link href={projectHref}>
-            {listedProject ? "project page" : "cycle archive"}
+            {listedProject ? "Project" : "Archive"}
           </Link>
-          .
         </p>
       </NotFound>
     );
@@ -190,33 +186,34 @@ export function CyclePage({
           "Review",
           record?.reviewEndsAt
             ? `${reviewClosed ? "Ended" : "Ends"} ${formatDate(record.reviewEndsAt)}`
-            : "Not started",
+            : "—",
         ],
     [
       "Approval",
       record?.approvedAt
         ? `Approved ${formatDate(record.approvedAt)}`
         : reviewClosed
-          ? "Awaiting owner approval"
-          : "Not approved",
+          ? "Awaiting owner"
+          : "—",
     ],
     [
       "Payment",
       record?.settledAt
         ? `Paid ${formatDate(record.settledAt)}`
         : record?.state === "settlement-planned"
-          ? "Ready; payment not verified"
-          : "Payment not verified",
+          ? "Ready"
+          : "Unverified",
     ],
   ];
   const terminalMessage =
     record?.kind === "external-prize-share"
-      ? "External prize shares. Not paid through Slop."
-      : record?.state === "closed-no-awards"
-        ? "Closed without awards. No payment is due."
-        : record?.state === "wound-up"
-          ? "The vault was returned. Approved awards are held unfunded."
-          : null;
+      ? "External prize · not paid by Slop"
+      : record?.state === "wound-up"
+        ? "Vault returned · awards unfunded"
+        : null;
+  // A terminal cycle has no stage progress; the status badge names its state.
+  const terminal =
+    terminalMessage !== null || record?.state === "closed-no-awards";
   const headlineAmount = record
     ? record.kind === "external-prize-share"
       ? `${(record.reward.sharePartsPerMillion ?? 0) / 10_000}%`
@@ -238,8 +235,7 @@ export function CyclePage({
       {record && recordIndex ? (
         stale(recordIndex) ? (
           <p className="data-notice data-stale" role="status">
-            Cycle history may be outdated · updated{" "}
-            {formatDate(recordIndex.generatedAt)}
+            Cycles stale · {formatDate(recordIndex.generatedAt)}
           </p>
         ) : null
       ) : (
@@ -280,22 +276,22 @@ export function CyclePage({
           <strong>{headlineAmount}</strong>
           <span>
             {record?.state === "paid"
-              ? "paid principal"
+              ? "paid"
               : record?.kind === "external-prize-share" ||
                   view?.reward.kind === "external-prize-share"
-                ? "provisional shares assigned"
+                ? "shares"
                 : record
                   ? record.approvedAt !== null
-                    ? "approved principal"
-                    : "suggested principal"
-                  : "projected principal"}
+                    ? "approved"
+                    : "suggested"
+                  : "projected"}
           </span>
           {record?.kind === "monthly-pool" &&
           record.state !== "paid" &&
           record.reward.fundingBasis &&
           (record.reward.fundingBasis.fundingState !== "committed" ||
             record.reward.fundingBasis.committedMinor === "0") ? (
-            <p>No funding committed for this cycle.</p>
+            <StatusBadge tone="warning">Unfunded</StatusBadge>
           ) : null}
         </div>
       </section>
@@ -305,46 +301,33 @@ export function CyclePage({
           role="status"
         >
           <CircleAlert aria-hidden="true" size={18} />
-          <span>
-            {reminder.message}{" "}
-            {listedProject ? (
-              <Link href={`/projects/${project.slug}/funding`}>
-                View project funding
-              </Link>
-            ) : null}
-          </span>
+          {listedProject ? (
+            <Link href={`/projects/${project.slug}/funding`}>
+              Check funding →
+            </Link>
+          ) : (
+            <span>Funding unverified</span>
+          )}
         </div>
       ) : null}
-      {terminalMessage ? (
-        <p>{terminalMessage}</p>
-      ) : (
-        <p className="cycle-current-stage">
-          <strong>{stages[currentStage]?.[0]}</strong> ·{" "}
-          {stages[currentStage]?.[1]}
-        </p>
+      {terminalMessage ? <p>{terminalMessage}</p> : null}
+      {terminal ? null : (
+        <ol className="cycle-status-grid" aria-label="Cycle progress">
+          {stages.map(([label, description], index) => (
+            <li
+              key={label}
+              aria-current={index === currentStage ? "step" : undefined}
+            >
+              <strong>{label}</strong>
+              <p>{description}</p>
+            </li>
+          ))}
+        </ol>
       )}
-      {!terminalMessage || record?.reward.lines ? (
-        <details className="cycle-history">
-          <summary>Cycle history</summary>
-          {!terminalMessage ? (
-            <ol className="cycle-status-grid" aria-label="Cycle progress">
-              {stages.map(([label, description], index) => (
-                <li
-                  key={label}
-                  aria-current={index === currentStage ? "step" : undefined}
-                >
-                  <strong>{label}</strong>
-                  <p>{description}</p>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-          {record?.reward.lines ? (
-            <section className="cycle-breakdown">
-              <h3>Historical pool breakdown</h3>
-              <CycleAmountHistory amounts={record.reward} />
-            </section>
-          ) : null}
+      {record?.reward.lines ? (
+        <details className="cycle-breakdown">
+          <summary>Breakdown</summary>
+          <CycleAmountHistory amounts={record.reward} />
         </details>
       ) : null}
       {record ? (
@@ -399,7 +382,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
         <h2>Contributors</h2>
       </div>
       {cycle.contributors.length === 0 ? (
-        <EmptyState text="This cycle closed with no accepted awards." />
+        <EmptyState text="No awards" />
       ) : (
         <section
           className="plain-table-wrap cycle-contributor-table"
@@ -416,9 +399,7 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                 <th scope="col">Contributor</th>
                 <th scope="col">Points</th>
                 <th scope="col">
-                  {cycle.kind === "external-prize-share"
-                    ? "External prize share"
-                    : "Amount"}
+                  {cycle.kind === "external-prize-share" ? "Share" : "Amount"}
                 </th>
               </tr>
             </thead>
@@ -463,7 +444,12 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                             <strong>{formatMicroUsdc(contributor[key])}</strong>
                           </span>
                           <details className="cycle-row-history">
-                            <summary>Amount history</summary>
+                            <summary
+                              aria-label="Amount history"
+                              title="Amount history"
+                            >
+                              <History aria-hidden="true" size={14} />
+                            </summary>
                             <CycleAmountHistory amounts={contributor} />
                           </details>
                         </>
@@ -595,7 +581,13 @@ export function CycleArchivePage({
     <main className="shell evidence-page route-cycle-archive">
       <RoutePageHeader title="Payment cycles" icon={<CalendarDays />}>
         {state.status === "loading" ? (
-          <p role="status">Loading cycle history…</p>
+          <p aria-label="Loading cycle history" role="status">
+            <LoaderCircle
+              aria-hidden="true"
+              className="wallet-spin"
+              size={18}
+            />
+          </p>
         ) : state.status === "error" ? (
           <div role="alert">
             Cycle history unavailable.{" "}
@@ -608,12 +600,11 @@ export function CycleArchivePage({
             </button>
           </div>
         ) : all.length === 0 ? (
-          <p>No published cycles yet.</p>
+          <p>No cycles yet</p>
         ) : null}
         {state.status === "ready" && stale(state.cycleIndex) ? (
           <p className="data-notice data-stale" role="status">
-            Cycle history may be outdated · updated{" "}
-            {formatDate(state.cycleIndex.generatedAt)}
+            Cycles stale · {formatDate(state.cycleIndex.generatedAt)}
           </p>
         ) : null}
       </RoutePageHeader>
@@ -649,13 +640,13 @@ export function CycleArchivePage({
       ) : null}
       {all.length > 0 && cycles.length === 0 ? (
         <p>
-          No cycles match these filters.{" "}
+          No matches ·{" "}
           <button
             className="text-button"
             onClick={() => setFilters({ project: "", month: "", state: "" })}
             type="button"
           >
-            Clear filters
+            Clear
           </button>
         </p>
       ) : null}
@@ -697,7 +688,7 @@ export function CycleArchivePage({
               {cycle.kind === "external-prize-share" ? (
                 <dl>
                   <div>
-                    <dt>External prize share</dt>
+                    <dt>Share</dt>
                     <dd>
                       {(cycle.reward.sharePartsPerMillion ?? 0) / 10_000}%
                     </dd>

@@ -332,23 +332,43 @@ test("payout rows distinguish test networks and retain exact award details at 20
     [1, "Base Sepolia (test)", "Held"],
   ] as const) {
     const row = rows.nth(index);
-    await expect(row.locator(".payout-main")).toContainText(network);
+    await expect(row.locator(".payout-network")).toHaveAttribute(
+      "aria-label",
+      network,
+    );
+    // Only a test network is named in text; a main network is its icon.
+    if (index === 1)
+      await expect(row.locator(".payout-main")).toContainText(network);
+    else await expect(row.locator(".payout-main")).not.toContainText("(test)");
     await expect(
       row
         .locator(".payout-main")
         .getByRole("link", { name: "eliza", exact: true }),
     ).toHaveAttribute("href", "/projects/eliza");
     await expect(row.getByText(amount, { exact: true })).toBeVisible();
-    await expect(row.getByText(token, { exact: true })).toBeVisible();
-    await expect(row.locator(".payout-pill")).toHaveText(state);
-    await expect(row.locator(".payout-amount small")).toContainText("Gross");
-    await expect(row.locator(".payout-amount small")).toContainText(
-      "fee 2,469,135,780,246,913.562469135780246914",
+    await expect(row.locator(".payout-token code")).toHaveAttribute(
+      "title",
+      token,
     );
+    await expect(
+      row.getByText(`Token ${token}`, { exact: true }),
+    ).toBeAttached();
+    await expect(row.locator(".payout-pill")).toHaveText(state);
+    await expect(
+      row.locator(".payout-amount small").getByRole("img", {
+        name: /^Gross 123,456,789,012,345,678\.123456789012345678 /u,
+      }),
+    ).toBeVisible();
+    await expect(
+      row.locator(".payout-amount small").getByRole("region", {
+        name: "Fee amount",
+        exact: true,
+      }),
+    ).toHaveText(/^−2,469,135,780,246,913\.562469135780246914 .*fee$/u);
   }
   await enlargeText(page.locator(".earnings-page"));
   for (const row of await rows.all()) {
-    for (const label of ["Exact amount", "Gross amount", "Fee amount"]) {
+    for (const label of ["Exact amount", "Fee amount"]) {
       const region = row.getByRole("region", { name: label, exact: true });
       expect(
         await region.evaluate((node) => {
@@ -398,12 +418,11 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
       .locator(".payout-row")
       .getByRole("link", { name: "eliza", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza");
-  const gross = page.getByRole("region", { name: "Gross amount", exact: true });
+  const gross = page.getByRole("img", { name: "Gross 1 USDC", exact: true });
   const fee = page.getByRole("region", { name: "Fee amount", exact: true });
   await expect(gross).toBeVisible();
-  await expect(gross).toHaveText("Gross 1 USDC");
   await expect(fee).toBeVisible();
-  await expect(fee).toHaveText("fee 0.02 USDC");
+  await expect(fee).toHaveText("−0.02 USDC fee");
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {
     name: "Authorize payout wallet",
@@ -412,7 +431,9 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   await expect(
     review.getByText(recipient.address, { exact: true }),
   ).toBeVisible();
-  await expect(review).toContainText("Base");
+  await expect(
+    review.getByRole("img", { name: "Base", exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
   const restoreText = await enlargeText(review);
   await expect(review.getByText(vault, { exact: true })).toBeVisible();
@@ -439,7 +460,7 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
   ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("status").filter({ hasText: "Wallet consent saved" }),
+    page.getByRole("status").filter({ hasText: "Authorized · pending" }),
   ).toBeVisible();
   expect(authorized()).toBe(1);
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
@@ -459,7 +480,7 @@ for (const fault of ["account", "domain", "reject"] as const) {
       fault === "account"
         ? "account changed"
         : fault === "domain"
-          ? "different account"
+          ? "Consent mismatch"
           : "rejected",
     );
     expect(authorized()).toBe(0);
@@ -769,7 +790,7 @@ test("Solana recipient co-signs only the prepared binding and waits for payment 
     .getByRole("button", { name: "Sign with Binding test wallet" })
     .click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Binding submitted" }),
+    page.getByRole("status").filter({ hasText: "Submitted · pending" }),
   ).toBeVisible();
   expect(completed).toBe(1);
   expect(

@@ -102,30 +102,27 @@ test("a request for more evidence sends the reason and revision and closes the h
   await page.goto("/inbox?view=reports", { waitUntil: "networkidle" });
   const report = page.locator("article").filter({
     has: page.getByRole("heading", {
-      name: `Private report · ${projectId}`,
+      name: projectId,
       exact: true,
     }),
   });
   await expect(report).toHaveCount(1);
-  await expect(
-    report.getByText(
-      "Held as spam or unsupported; available for owner review.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  await expect(report.locator("summary.private-report-summary")).toHaveText(
+    "Held",
+  );
   // A held report that the viewer can route opens without a click.
-  await report.getByText("Read private report", { exact: true }).click();
+  await report.getByText("Report", { exact: true }).click();
   await expect(
     report.getByText("Synthetic private evidence held by screening.", {
       exact: true,
     }),
   ).toBeVisible();
   const ask = report.getByRole("button", {
-    name: "Request more evidence",
+    name: "Request evidence",
     exact: true,
   });
   const approve = report.getByRole("button", {
-    name: "Approve for owner review",
+    name: "Forward to owner",
     exact: true,
   });
   // A routing decision needs a reason of at least eight characters.
@@ -147,11 +144,9 @@ test("a request for more evidence sends the reason and revision and closes the h
         reason: "Attach a reproduction against the current release.",
       },
     ]);
-  await expect(
-    report.getByText("More evidence needed before owner review.", {
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(report.locator("summary.private-report-summary")).toHaveText(
+    "Needs evidence",
+  );
   await expect(ask).toHaveCount(0);
   await expect(approve).toHaveCount(0);
   expect(reviews).toHaveLength(1);

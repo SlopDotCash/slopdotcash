@@ -103,7 +103,7 @@ test("vault setup removes owner controls after the session ends", async ({
     exact: true,
   });
   await expect(
-    setup.getByRole("combobox", { name: "Automatic monthly payment" }),
+    setup.getByRole("switch", { name: "Auto-pay monthly", exact: true }),
   ).toBeVisible();
   await setup.screenshot({
     path: test.info().outputPath("1935-active-setup.png"),
@@ -119,10 +119,10 @@ test("vault setup removes owner controls after the session ends", async ({
     setup.getByRole("link", { name: "Sign in with GitHub" }),
   ).toBeVisible();
   await expect(
-    setup.getByRole("combobox", { name: "Automatic monthly payment" }),
+    setup.getByRole("switch", { name: "Auto-pay monthly", exact: true }),
   ).toHaveCount(0);
   await expect(
-    setup.getByRole("group", { name: "Connect your confirmed owner wallet" }),
+    setup.getByRole("group", { name: "Owner wallet", exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await setup.screenshot({

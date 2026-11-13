@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Check, ExternalLink, LoaderCircle, Lock } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import type { MonthlyCommitmentInput } from "../backend/payments/monthly";
 import { decodeBase58Bytes } from "./lib/base58";
 import { errorMessage } from "./lib/errors";
@@ -13,7 +14,11 @@ import {
   reviewEvmCommitment,
   sendEvmCommitment,
 } from "./lib/owner-commitment-actions";
-import { formatBaseUnits, transactionUrl } from "./lib/payments/contracts";
+import {
+  formatBaseUnits,
+  knownAssetSymbol,
+  transactionUrl,
+} from "./lib/payments/contracts";
 import {
   type PendingAttempt,
   validPendingAttemptId,
@@ -28,12 +33,22 @@ import {
 import { useAction } from "./lib/use-action";
 import { usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
-import { isWalletAddress } from "./lib/wallets";
+import { isWalletAddress, shortAddress } from "./lib/wallets";
+import { CompactIdentifier } from "./Operations";
 import {
   PendingTransaction,
   UnsentTransactionRecovery,
 } from "./OwnerPresentation";
-import { NoWalletFound, WalletConnection } from "./Presentation";
+import {
+  NetworkName,
+  NoWalletFound,
+  StatusBadge,
+  WalletConnection,
+} from "./Presentation";
+
+const spinner = (
+  <LoaderCircle className="wallet-spin" aria-hidden="true" size={14} />
+);
 
 type Pending = PendingAttempt & {
   plan: OwnerCommitmentPlan;
@@ -60,9 +75,7 @@ export function recoverOwnerCommitments(projectId: string) {
       key !==
         `slop:award-commitment:v2:${projectId}:${plan.cycleId}:${plan.deployment.network}:${plan.award.githubUserId}`
     )
-      throw new Error(
-        "A saved commitment cannot be read. Check wallet activity before starting another request.",
-      );
+      throw new Error("Saved request unreadable. Check wallet activity.");
     pending.push({
       cycleId: plan.cycleId,
       expected: {
@@ -126,8 +139,7 @@ export default function OwnerCommitment({
       } else evmCommitmentIntent(value.plan);
       return value;
     },
-    () =>
-      "The saved commitment cannot be read. Check wallet activity before clearing it.",
+    () => "Saved request unreadable. Check wallet activity.",
   );
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [review, setReview] = useState<{
@@ -135,7 +147,7 @@ export default function OwnerCommitment({
     decimals: number;
     freeBalance: string;
   } | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const [recoveryHash, setRecoveryHash] = useState("");
   const wallets = usePayoutWallets().filter((entry) => entry.family === family);
   const { busy, error, run: act } = useAction(saved.error);
@@ -192,8 +204,7 @@ export default function OwnerCommitment({
         {
           submitted: (hash) => ({ ...intent, hash }),
           notify: setNotice,
-          unclear:
-            "The wallet result is unclear. Check wallet activity and enter the transaction hash before another attempt.",
+          unclear: "Result unclear. Enter the transaction hash.",
         },
       );
       if (mounted.current) setReview(null);
@@ -217,15 +228,35 @@ export default function OwnerCommitment({
         : await checkEvmCommitment(pending.plan, wallet, hash);
       if (!mounted.current) return;
       if (status === "pending") {
-        setNotice("The commitment is not finalized yet. Check again later.");
+        setNotice(<>{spinner} Finalizing</>);
         return;
       }
       clear(captured);
       setReview(null);
+      const verified = transactionUrl(expected.network, hash);
       setNotice(
-        status === "failed"
-          ? "The transaction failed. The award was not reserved. Review again before retrying."
-          : `Award reserved on the finalized chain: ${hash}. Not yet paid.`,
+        status === "failed" ? (
+          "Transaction failed. Not reserved."
+        ) : (
+          <>
+            <StatusBadge tone="success" icon={<Check size={12} />}>
+              Reserved
+            </StatusBadge>{" "}
+            {verified ? (
+              <a
+                href={verified}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="View transaction"
+                title="View transaction"
+              >
+                <ExternalLink aria-hidden="true" size={14} />
+              </a>
+            ) : (
+              <code>{hash}</code>
+            )}
+          </>
+        ),
       );
     });
   const activePlan = pending?.plan ?? review?.plan;
@@ -234,8 +265,18 @@ export default function OwnerCommitment({
     : null;
   return (
     <section aria-label="Authorize award commitment" className="section">
-      <h2>Reserve this award</h2>
-      <p>Network: {networkLabel(expected.network)}</p>
+      <h2>
+        Reserve{activePlan ? ` · ${activePlan.award.login}` : ""}{" "}
+        <NetworkName
+          chain={
+            ESCROW_NETWORKS[expected.network as keyof typeof ESCROW_NETWORKS]
+              ?.chain ?? ""
+          }
+          iconOnly
+        >
+          {networkLabel(expected.network)}
+        </NetworkName>
+      </h2>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       {storageError && (
@@ -244,16 +285,14 @@ export default function OwnerCommitment({
           disabled={busy}
           onClick={() => void run(async () => clearUnreadable())}
         >
-          I checked wallet activity; clear the unreadable local record
+          Clear saved record
         </button>
       )}
       <WalletConnection
         address={wallet?.address ?? null}
         wallets={wallets}
         disabled={busy || storageError}
-        legend={
-          pending ? "Reconnect the owner wallet" : "Choose the owner wallet"
-        }
+        legend="Owner wallet"
         empty={<NoWalletFound solana={solana} />}
         onConnect={(provider) =>
           void run(async () => {
@@ -276,7 +315,7 @@ export default function OwnerCommitment({
       />
       {pending ? (
         <PendingTransaction>
-          <p>Commitment awaiting verification. Do not send it again.</p>
+          <p>{spinner} Pending · don't resend</p>
           {link ? (
             <p>
               <a href={link} target="_blank" rel="noreferrer">
@@ -285,7 +324,7 @@ export default function OwnerCommitment({
             </p>
           ) : (
             <label>
-              Commitment transaction hash
+              Transaction hash
               <input
                 value={recoveryHash}
                 onChange={(event) => setRecoveryHash(event.target.value)}
@@ -321,17 +360,23 @@ export default function OwnerCommitment({
             disabled={busy}
             onClick={() => void inspect()}
           >
-            Verify award and funding
+            Review
           </button>
           {review && (
             <section aria-label="Commitment review">
               <h3>{review.plan.award.login}</h3>
               <dl>
-                <dt>Gross reserved</dt>
+                <dt>Gross</dt>
                 <dd>
-                  {formatBaseUnits(review.plan.award.gross, review.decimals)}
+                  {formatBaseUnits(review.plan.award.gross, review.decimals)}{" "}
+                  <span title="Reserved funds cannot be withdrawn">
+                    <Lock
+                      aria-label="Reserved funds cannot be withdrawn"
+                      size={14}
+                    />
+                  </span>
                 </dd>
-                <dt>Contributor amount</dt>
+                <dt>Net</dt>
                 <dd>
                   {formatBaseUnits(review.plan.award.net, review.decimals)}
                 </dd>
@@ -339,29 +384,38 @@ export default function OwnerCommitment({
                 <dd>
                   {formatBaseUnits(review.plan.award.fee, review.decimals)}
                 </dd>
-                <dt>Free balance</dt>
+                <dt>Free</dt>
                 <dd>{formatBaseUnits(review.freeBalance, review.decimals)}</dd>
               </dl>
-              <p>
-                Token: <code>{review.plan.deployment.asset}</code>
-              </p>
-              <p>Reserved funds cannot be withdrawn.</p>
+              <CompactIdentifier
+                label="token address"
+                value={review.plan.deployment.asset}
+                preview={
+                  knownAssetSymbol(
+                    review.plan.deployment.network,
+                    review.plan.deployment.asset,
+                    review.decimals,
+                  ) ?? `Token ${shortAddress(review.plan.deployment.asset)}`
+                }
+              />
               <button
                 className="button primary-button"
                 type="button"
                 disabled={busy}
                 onClick={() => void send()}
               >
-                Authorize this award in wallet
+                Reserve in wallet
               </button>
             </section>
           )}
         </>
       ) : null}
       {activePlan && (
-        <p>
-          Vault: <code>{activePlan.deployment.vault}</code>
-        </p>
+        <CompactIdentifier
+          label="vault address"
+          value={activePlan.deployment.vault}
+          preview={`Vault ${shortAddress(activePlan.deployment.vault)}`}
+        />
       )}
       {wallet && !pending && (
         <button

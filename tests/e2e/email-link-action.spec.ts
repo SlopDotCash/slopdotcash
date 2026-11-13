@@ -64,9 +64,7 @@ async function serveDepartingEmailAction(page: Page) {
     page.getByRole("heading", { name: "Inbox", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".inbox-empty")).toBeVisible();
-  await expect(
-    page.getByText("You have no private reports yet.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("No reports", { exact: true })).toBeVisible();
   await page.waitForLoadState("networkidle");
   return posts;
 }
@@ -390,9 +388,7 @@ for (const oldFails of [false, true]) {
         await expect(button).toBeEnabled();
         await button.focus();
         await page.keyboard.press("Enter");
-        await expect(action.getByRole("status")).toHaveText(
-          "Email notifications stopped.",
-        );
+        await expect(action.getByRole("status")).toHaveText("Unsubscribed");
         expect(
           posts.filter((post) => post.path.endsWith("/unsubscribe")),
         ).toEqual([

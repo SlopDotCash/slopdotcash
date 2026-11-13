@@ -18,6 +18,13 @@ const actor = {
 };
 const at = "2026-10-31T23:59:30.000Z";
 
+/** The retained-journal notice: a "Stale" status beside the retry control. */
+const staleNotice = (page: Page) =>
+  page.getByRole("status").filter({
+    has: page.getByRole("button", { name: "Retry points", exact: true }),
+    hasText: /^\s*Stale\s*$/u,
+  });
+
 /** One valid October award, published through the real sixteen-shard format. */
 function pointsFixture() {
   const sourceId = "PR_points_refresh_fixture";
@@ -173,9 +180,7 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
     page.getByRole("button", { name: "Retry points", exact: true }),
   ).toBeVisible();
   await expect(total).toHaveText("10");
-  await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
-  ).toBeVisible();
+  await expect(staleNotice(page)).toBeVisible();
   expect(fixture.reads()).toBe(3);
   await page.screenshot({
     path: info.outputPath("points-stale.png"),
@@ -203,9 +208,7 @@ test("a failed Points refresh keeps verified totals, marks them stale and retrie
   const readsBeforeRetry = fixture.reads();
   fixture.recover();
   await page.getByRole("button", { name: "Retry points", exact: true }).click();
-  await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(staleNotice(page)).toHaveCount(0);
   await expect(
     table.getByRole("row").filter({ hasText: actor.login }),
   ).toContainText("10");
@@ -225,9 +228,7 @@ test("an initial Points failure remains unavailable without a verified journal",
   await expect(
     page.getByText("Points could not load.", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText("Points may be outdated.", { exact: true }),
-  ).toHaveCount(0);
+  await expect(staleNotice(page)).toHaveCount(0);
   await expect(
     page.getByRole("region", {
       name: "Contributor standings table",

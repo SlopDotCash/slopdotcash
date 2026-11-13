@@ -51,7 +51,7 @@ test("verified activity email preference persists and can be withdrawn @registry
     .getByRole("link", { name: "Email preferences", exact: true })
     .click();
   await expect(page).toHaveURL(/account#notifications$/);
-  const preferences = page.getByRole("region", { name: "Email preferences" });
+  const preferences = page.getByRole("region", { name: "Email", exact: true });
   await expect(preferences).toHaveCount(1);
   await expect(
     page.locator("#wallets > summary, #notifications > summary"),
@@ -62,7 +62,10 @@ test("verified activity email preference persists and can be withdrawn @registry
   await expect(page.getByText(/Local preview only/u)).toHaveCount(0);
   await expect(page.locator(".wallet-note")).toHaveCount(0);
   await expect(preferences).toContainText("applicant@example.com");
-  const toggle = preferences.getByRole("switch", { name: "Activity email" });
+  const toggle = preferences.getByRole("switch", {
+    name: "Activity",
+    exact: true,
+  });
   // Restore opt-out before exercising the complete consent workflow.
   if ((await toggle.getAttribute("aria-checked")) === "true")
     await toggle.click();

@@ -10,13 +10,28 @@
  */
 
 import {
+  ArrowLeft,
   ArrowRight,
+  Bot,
+  Check,
   CircleAlert,
+  Clock,
   Download,
+  Ellipsis,
   ExternalLink,
+  Eye,
+  EyeOff,
+  Hourglass,
+  Info,
+  LoaderCircle,
   LockKeyhole,
+  Pencil,
+  Receipt,
   RotateCcw,
   ShieldCheck,
+  Sparkles,
+  UserRound,
+  Wallet,
 } from "lucide-react";
 import {
   createContext,
@@ -58,6 +73,7 @@ import "./operations-design.css";
 import "./private-report-design.css";
 import { decimalBaseUnits, formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
+import { GithubIcon } from "./lib/github-icon";
 import {
   clearAllDrafts,
   clearDraft,
@@ -92,11 +108,16 @@ import { CopyButton, CopyIdentifier } from "./Operations";
 import {
   ExternalLinkAnchor,
   formatNullableUtc as formatUtc,
+  MetricGrid,
+  MetricTile,
+  NetworkName,
   ProjectNav,
   RoutePageHeader,
   SignInPanel,
   StatusBadge,
 } from "./Presentation";
+
+type Tone = "neutral" | "success" | "warning" | "danger" | "info";
 
 function FormError({ message }: { message: string | null }) {
   return message ? (
@@ -104,6 +125,86 @@ function FormError({ message }: { message: string | null }) {
       <CircleAlert aria-hidden="true" /> {message}
     </p>
   ) : null;
+}
+
+/** A loading state: a spinner with its meaning kept for assistive technology. */
+function Spinner({ label }: { label: string }) {
+  return (
+    <p className="admin-status" role="status" title={label}>
+      <LoaderCircle aria-hidden="true" className="wallet-spin" size={16} />
+      <span className="visually-hidden">{label}</span>
+    </p>
+  );
+}
+
+/** An icon that carries a short explanation as its name and tooltip. */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span role="img" aria-label={text} title={text}>
+      <Info aria-hidden="true" size={14} />
+    </span>
+  );
+}
+
+function RetryButton({
+  label,
+  onClick,
+  busy = false,
+}: {
+  label: string;
+  onClick: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className="text-button"
+      disabled={busy}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <RotateCcw aria-hidden="true" />
+    </button>
+  );
+}
+
+/** A failed refresh: the loaded view stays and is marked stale. */
+function StaleNotice({
+  error,
+  onRetry,
+}: {
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <p className="admin-status" role="alert">
+      <StatusBadge tone="warning" icon={<CircleAlert />} title={error}>
+        Stale
+      </StatusBadge>{" "}
+      <span className="visually-hidden">{error}</span>
+      <RetryButton label="Retry" onClick={onRetry} />
+    </p>
+  );
+}
+
+const SEVERITY_TONES: Record<string, Tone> = {
+  critical: "danger",
+  high: "danger",
+  medium: "warning",
+  low: "info",
+};
+
+function SeverityChip({ severity }: { severity: string }) {
+  return (
+    <StatusBadge tone={SEVERITY_TONES[severity] ?? "neutral"} title="Severity">
+      {severity}
+    </StatusBadge>
+  );
+}
+
+function shortAddress(value: string): string {
+  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
 }
 
 type DirectOwnerRequest = {
@@ -136,7 +237,12 @@ function UnsignedPaymentRequest({
 }: {
   request: Record<string, unknown>;
 }) {
-  const [feedback, setFeedback] = useState("");
+  const [downloaded, setDownloaded] = useState(false);
+  useEffect(() => {
+    if (!downloaded) return;
+    const timer = window.setTimeout(() => setDownloaded(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [downloaded]);
   const text = JSON.stringify(request, null, 2);
   const direct =
     request.rail === "direct"
@@ -147,13 +253,9 @@ function UnsignedPaymentRequest({
       className="security-unsigned-payment"
       aria-label="Unsigned owner request"
     >
-      <h5>{direct ? "Transfers still due" : "Unsigned owner request"}</h5>
+      <h5>{direct ? "Transfers due" : "Unsigned request"}</h5>
       {direct ? (
         <>
-          <p>
-            Send these transfers with your external wallet, then verify the
-            transaction IDs.
-          </p>
           <dl className="operations-facts">
             <Fact term="From">
               <CopyIdentifier
@@ -203,11 +305,7 @@ function UnsignedPaymentRequest({
         </>
       ) : null}
       <div className="operations-file-actions">
-        <CopyButton
-          label="unsigned request"
-          text={text}
-          successMessage="Request copied."
-        />
+        <CopyButton label="unsigned request" text={text} />
         <button
           className="text-button operations-copy-button"
           type="button"
@@ -222,13 +320,21 @@ function UnsignedPaymentRequest({
             link.download = "private-payment-request.json";
             link.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
-            setFeedback("Request download started.");
+            setDownloaded(true);
           }}
         >
-          <Download aria-hidden="true" />
+          {downloaded ? (
+            <Check aria-hidden="true" />
+          ) : (
+            <Download aria-hidden="true" />
+          )}
         </button>
+        {downloaded ? (
+          <span className="visually-hidden" role="status">
+            Download started.
+          </span>
+        ) : null}
       </div>
-      <p role="status">{feedback}</p>
       {direct ? null : (
         <textarea
           className="security-payment-request"
@@ -251,12 +357,12 @@ function amounts(terms: SecurityBountyTerms) {
   };
 }
 
-const PROGRAM_STATUS_LABELS: Record<SecurityBountyTerms["status"], string> = {
-  draft: "Not open for paid reports",
-  "pending-approval": "Not open for paid reports",
-  open: "Open for paid reports",
-  paused: "Paused — no new paid reports",
-  closed: "Closed — no new paid reports",
+const PROGRAM_STATUS: Record<SecurityBountyTerms["status"], [string, Tone]> = {
+  draft: ["Draft", "neutral"],
+  "pending-approval": ["Draft", "neutral"],
+  open: ["Open", "success"],
+  paused: ["Paused", "warning"],
+  closed: ["Closed", "neutral"],
 };
 
 type Readiness = {
@@ -284,10 +390,9 @@ type ReadinessState =
     };
 
 const BLOCKED_INTAKE: Record<Exclude<Readiness["state"], "ready">, string> = {
-  disabled:
-    "GitHub private vulnerability reporting is turned off for this repository.",
-  forbidden: "GitHub refused the private reporting check.",
-  unavailable: "Private reporting status is unavailable.",
+  disabled: "GitHub reporting off",
+  forbidden: "GitHub check refused",
+  unavailable: "Status unavailable",
 };
 
 /**
@@ -349,14 +454,11 @@ function IntakeHandoff({
     return () => window.clearTimeout(timer);
   }, [state]);
   const checkAgain = (busy: boolean) => (
-    <button
-      className="text-button"
-      disabled={busy}
+    <RetryButton
+      busy={busy}
+      label={busy ? "Checking…" : "Check again"}
       onClick={() => void check()}
-      type="button"
-    >
-      <RotateCcw aria-hidden="true" /> {busy ? "Checking…" : "Check again"}
-    </button>
+    />
   );
   return (
     <section
@@ -364,33 +466,23 @@ function IntakeHandoff({
       className="admin-card security-intake-card"
     >
       <h2 id="security-report">Private report</h2>
-      <p className="operations-caution">
-        <LockKeyhole aria-hidden="true" />
-        Never post exploit details publicly.
+      <p>
+        <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
       </p>
       {state.status === "checked" && state.value.storedIntake === true ? (
         <AutomaticReportForm session={session} project={project} />
       ) : state.status === "checking" ? (
-        <p role="status">Checking private intake…</p>
+        <Spinner label="Checking private intake…" />
       ) : (
-        <p role="status">
-          Slop private intake is unavailable. The private GitHub route below
-          remains separate; never post a public report.
-        </p>
+        <p role="status">Slop intake unavailable</p>
       )}
       <details
         className="security-reference"
         open={state.status !== "checked" || state.value.storedIntake !== true}
       >
-        <summary>
-          {state.status === "checked" && state.value.storedIntake === true
-            ? "Optional private GitHub delivery"
-            : "Private reporting options"}
-        </summary>
+        <summary>GitHub option</summary>
         {state.status === "checking" ? (
-          <p aria-live="polite" className="admin-status">
-            Loading private reporting status…
-          </p>
+          <Spinner label="Loading private reporting status…" />
         ) : state.status === "error" ? (
           <div className="form-error" role="alert">
             <CircleAlert aria-hidden="true" /> {state.message}
@@ -399,30 +491,28 @@ function IntakeHandoff({
         ) : state.value.state === "ready" && state.value.handoffUrl ? (
           <div aria-live="polite" className="security-handoff">
             {state.stale ? (
-              <div className="form-error" role="alert">
-                <CircleAlert aria-hidden="true" /> Private reporting status from{" "}
-                {state.value.checkedAt
-                  ? formatUtc(state.value.checkedAt)
-                  : "an unknown time"}{" "}
-                is out of date.
-                {session.status === "signed-in" ? " Your draft is kept." : ""}
+              <div className="admin-status" role="alert">
+                <StatusBadge tone="warning" icon={<CircleAlert />}>
+                  Stale ·{" "}
+                  {state.value.checkedAt
+                    ? formatUtc(state.value.checkedAt)
+                    : "unknown time"}
+                </StatusBadge>{" "}
                 {checkAgain(state.rechecking)}
               </div>
             ) : (
               <p className="admin-status security-readiness">
-                <StatusBadge tone="success" icon={<ShieldCheck />}>
-                  GitHub private reporting is on
-                </StatusBadge>{" "}
-                <span>
-                  (checked{" "}
-                  {state.value.checkedAt
-                    ? formatUtc(state.value.checkedAt)
-                    : "an unknown time"}
-                  ).
-                  {state.value.paidParticipation === "open"
-                    ? ""
-                    : " No new paid reports now."}
-                </span>
+                <StatusBadge
+                  tone="success"
+                  icon={<ShieldCheck />}
+                  title={`Checked ${
+                    state.value.checkedAt
+                      ? formatUtc(state.value.checkedAt)
+                      : "at an unknown time"
+                  }`}
+                >
+                  GitHub on
+                </StatusBadge>
               </p>
             )}
             {state.stale ? null : (
@@ -436,31 +526,33 @@ function IntakeHandoff({
                 rel="noreferrer"
                 target="_blank"
               >
-                {state.value.automatic === "ready"
-                  ? "Or report directly on GitHub"
-                  : "Report privately on GitHub"}{" "}
-                <ExternalLink aria-hidden="true" />
+                Report on GitHub <ExternalLink aria-hidden="true" />
               </a>
             )}
           </div>
         ) : (
-          <div className="form-error" role="alert">
-            <CircleAlert aria-hidden="true" />{" "}
-            {
-              BLOCKED_INTAKE[
-                state.value.state as Exclude<Readiness["state"], "ready">
-              ]
-            }{" "}
-            {state.stale && state.value.checkedAt
-              ? ` Status from ${formatUtc(state.value.checkedAt)} is out of date.`
-              : ""}
-            Check again later.
+          <div className="admin-status" role="alert">
+            <StatusBadge tone="danger" icon={<CircleAlert />}>
+              {
+                BLOCKED_INTAKE[
+                  state.value.state as Exclude<Readiness["state"], "ready">
+                ]
+              }
+            </StatusBadge>{" "}
+            {state.stale && state.value.checkedAt ? (
+              <>
+                <StatusBadge tone="warning">
+                  Stale · {formatUtc(state.value.checkedAt)}
+                </StatusBadge>{" "}
+              </>
+            ) : null}
             {checkAgain(state.rechecking)}
           </div>
         )}
         <p>
-          Already reported on GitHub?{" "}
-          <Link href="/security#security-link">Verify the private report</Link>.
+          <Link href="/security#security-link">
+            Verify a GitHub report <ArrowRight aria-hidden="true" size={14} />
+          </Link>
         </p>
       </details>
     </section>
@@ -491,28 +583,14 @@ const LINK_FALLBACK_FAILURES: readonly string[] = [
 ];
 
 /** The report text must survive the GitHub authorization redirect. */
-const DRAFT_STORAGE_ERROR =
-  "This browser could not keep your report during GitHub authorization. Allow site storage for this tab, then try again.";
+const DRAFT_STORAGE_ERROR = "Allow site storage, then retry.";
 
 /** One consent line before the fields. */
 function IntakeConsent({ login }: { login: string | null }) {
   return (
     <p>
-      The Slop private intake app will file this on GitHub as{" "}
-      {login ? `@${login}` : "you"} with your authorization, as a private report
-      only you and the repository’s administrators and security managers can
-      read.
-    </p>
-  );
-}
-
-/** One optional explanation after the action (PRD section 7). */
-function IntakeReferenceNote() {
-  return (
-    <p className="field-hint">
-      Slop stores no report text. It adds a “Report reference:” line with a
-      random code to your description. The line names neither you nor Slop and
-      stays if the advisory is published.
+      <LockKeyhole aria-hidden="true" size={14} /> Filed privately as{" "}
+      {login ? `@${login}` : "you"}
     </p>
   );
 }
@@ -555,26 +633,21 @@ function ReportFields({
           maxLength={65000}
           minLength={20}
           onChange={(event) => set("description")(event.target.value)}
+          placeholder="Revision, impact, repro steps"
           required
           rows={10}
           value={draft.description}
         />
-        <small className="field-hint">
-          Include the affected revision, impact and safe reproduction steps. Do
-          not include credentials or cause a real loss of funds.
-        </small>
       </label>
       <details
         className="security-classification"
         open={classificationOpen}
         onToggle={(event) => setClassificationOpen(event.currentTarget.open)}
       >
-        <summary>
-          Additional classification <span>Optional</span>
-        </summary>
+        <summary>Classification</summary>
         <div>
           <label>
-            Severity (optional)
+            Severity
             <select
               disabled={disabled || draft.cvss.trim() !== ""}
               onChange={(event) => set("severity")(event.target.value)}
@@ -588,7 +661,7 @@ function ReportFields({
             </select>
           </label>
           <label>
-            CVSS vector (optional, instead of severity)
+            CVSS vector
             <input
               autoComplete="off"
               disabled={disabled}
@@ -599,7 +672,7 @@ function ReportFields({
             />
           </label>
           <label>
-            CWE IDs (optional)
+            CWE IDs
             <input
               autoComplete="off"
               disabled={disabled}
@@ -631,7 +704,7 @@ function AutomaticReportForm({
       <SignInPanel
         state={session}
         next={`/projects/${project.slug}/security`}
-        purpose="Sign in to report through Slop."
+        purpose="Sign in to report"
       />
     );
   return (
@@ -648,7 +721,7 @@ function AutomaticReportForm({
   );
 }
 
-function Fact({ term, children }: { term: string; children: ReactNode }) {
+function Fact({ term, children }: { term: ReactNode; children: ReactNode }) {
   return (
     <div>
       <dt>{term}</dt>
@@ -693,15 +766,20 @@ export function SecurityProgramPage({
           icon={<ShieldCheck />}
           title={
             <>
-              Report a security issue in{" "}
-              <Link href={`/projects/${project.slug}`}>{project.name}</Link>
+              <Link href={`/projects/${project.slug}`}>{project.name}</Link>{" "}
+              security
             </>
           }
-          lead="No published bounty terms, so no award is promised."
-        />
+        >
+          <StatusBadge>No bounty</StatusBadge>
+        </RoutePageHeader>
         <ProjectNav project={project} current="security" />
         {published?.projectId === project.id ? (
-          <p role="status">Published revision {published.revision}.</p>
+          <p role="status">
+            <StatusBadge tone="success" icon={<Check />}>
+              Rev {published.revision}
+            </StatusBadge>
+          </p>
         ) : null}
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
@@ -723,49 +801,44 @@ export function SecurityProgramPage({
     <main className="shell route-main admin-page security-page operations-page security-program">
       <RoutePageHeader
         icon={<ShieldCheck />}
-        title={<>{project.name} security bounty</>}
-        lead={<>{money.gross} security bounty</>}
+        title={<>{project.name} security</>}
+        titleAction={
+          <ExternalLinkAnchor
+            href={project.links.repository}
+            label="View in GitHub"
+          >
+            <GithubIcon aria-hidden="true" size={20} />
+          </ExternalLinkAnchor>
+        }
       >
-        <StatusBadge tone={terms.status === "open" ? "success" : "warning"}>
-          {PROGRAM_STATUS_LABELS[terms.status]}
+        <MetricGrid>
+          <MetricTile label="Bounty" value={money.gross} />
+        </MetricGrid>
+        <StatusBadge tone={PROGRAM_STATUS[terms.status][1]}>
+          {PROGRAM_STATUS[terms.status][0]}
         </StatusBadge>
       </RoutePageHeader>
       {!hasBountyOverview(project) ? (
         <ProjectNav project={project} current="security" />
       ) : null}
       {published?.projectId === project.id ? (
-        <p role="status">Published revision {published.revision}.</p>
+        <p role="status">
+          <StatusBadge tone="success" icon={<Check />}>
+            Rev {published.revision}
+          </StatusBadge>
+        </p>
       ) : null}
-      <p>
-        Find{" "}
-        {terms.eligibility === "critical-loss-of-funds"
-          ? "a critical"
-          : "an in-scope"}{" "}
-        security vulnerability in {project.name}
-      </p>
-      <p>
-        <ExternalLinkAnchor href={project.links.repository}>
-          View in GitHub <ExternalLink aria-hidden="true" size={14} />
-        </ExternalLinkAnchor>
-      </p>
       <section className="install-panel" aria-labelledby="bounty-agent-setup">
         <h2 id="bounty-agent-setup">Agent setup</h2>
-        <p>Copy this into your agent.</p>
         <div className="command-box agent-prompt-box">
           <code>{agentPrompt}</code>
           <CopyButton label="agent prompt" text={agentPrompt} />
         </div>
       </section>
-      <p>
-        <a href="#security-scope">
-          Check covered source and safe testing rules
-        </a>
-      </p>
       <div className="security-program-terms">
         <details className="security-reference">
-          <summary>Full award terms</summary>
+          <summary id="security-terms">Terms</summary>
           <section aria-labelledby="security-terms" className="admin-card">
-            <h2 id="security-terms">Award terms</h2>
             <SecurityOffer project={project} />
             <section className="security-award-split" aria-label="Award split">
               <div>
@@ -787,34 +860,33 @@ export function SecurityProgramPage({
                 {terms.amount.network ? ` on ${terms.amount.network}` : ""}
               </Fact>
               <Fact term="Funding">
-                {terms.funding.state === "pledged"
-                  ? "Pledged. Awards require owner approval."
-                  : `Verified available on ${formatUtc(terms.funding.verifiedAt)}: ${terms.funding.evidence}`}
+                {terms.funding.state === "pledged" ? (
+                  <StatusBadge tone="warning">Pledged</StatusBadge>
+                ) : (
+                  <StatusBadge
+                    tone="success"
+                    icon={<Check />}
+                    title={terms.funding.evidence}
+                  >
+                    Verified {formatUtc(terms.funding.verifiedAt)}
+                  </StatusBadge>
+                )}
               </Fact>
-              <Fact term="Capacity">
+              <Fact term="Awards">
                 {terms.capacity.awards === null
-                  ? "No fixed award count; each first qualifying finding is reviewed separately"
-                  : `${terms.capacity.awards} award${terms.capacity.awards === 1 ? "" : "s"} at the published amount`}
+                  ? "Unlimited"
+                  : terms.capacity.awards}
                 {terms.capacity.closesAt
-                  ? `; closes ${formatUtc(terms.capacity.closesAt)}`
+                  ? ` · closes ${formatUtc(terms.capacity.closesAt)}`
                   : ""}
-                . {terms.capacity.exhaustionRule}
               </Fact>
-              <Fact term="Other work">
-                {terms.rewardMode === "bounty-only"
-                  ? "Bounty only. Other work, including fixes, earns no monthly pool cash."
-                  : "Contribution rewards are separate; one outcome is never paid twice."}
-              </Fact>
+              {terms.rewardMode === "bounty-only" ? (
+                <Fact term="Other work">
+                  <StatusBadge>Bounty only</StatusBadge>
+                </Fact>
+              ) : null}
             </dl>
-            <p>
-              Awards are discretionary. The owner decides whether to award;
-              fixed after-approval awards use the amount published at receipt.{" "}
-              {terms.eligibility === "critical-loss-of-funds"
-                ? "Critical bugs and potential loss of funds are priorities, not an automatic payout."
-                : "Findings must meet the published scope and acceptance criteria."}{" "}
-              No other payout fee applies. The terms in force when Slop receives
-              your report apply to your case.
-            </p>
+            <p>Owner decides awards.</p>
           </section>
         </details>
         <section aria-labelledby="security-scope" className="admin-card">
@@ -833,49 +905,60 @@ export function SecurityProgramPage({
                 ))}
               </ul>
             </Fact>
-            <Fact term="Deployments">
-              {scope.deployments.length === 0 ? (
-                "None listed"
-              ) : (
+            {scope.deployments.length === 0 ? null : (
+              <Fact term="Deployments">
                 <ul>
                   {scope.deployments.map((deployment) => (
                     <li key={`${deployment.network}:${deployment.address}`}>
-                      {deployment.network}: <code>{deployment.address}</code>
-                      {deployment.codeIdentity
-                        ? ` (${deployment.codeIdentity})`
-                        : ""}
+                      <NetworkName chain={deployment.network} iconOnly>
+                        {deployment.network}
+                      </NetworkName>{" "}
+                      <span className="operations-identifier">
+                        <code
+                          title={
+                            deployment.codeIdentity
+                              ? `${deployment.address} (${deployment.codeIdentity})`
+                              : deployment.address
+                          }
+                        >
+                          {shortAddress(deployment.address)}
+                        </code>
+                        <CopyButton
+                          label={`${deployment.network} deployment address`}
+                          text={deployment.address}
+                        />
+                      </span>
                     </li>
                   ))}
                 </ul>
-              )}
-            </Fact>
+              </Fact>
+            )}
             <Fact term="Included assets">
               {scope.includedAssets.join("; ")}
             </Fact>
-            <Fact term="Excluded dependencies">
-              {scope.excludedDependencies.length === 0
-                ? "None listed"
-                : scope.excludedDependencies.join("; ")}
-            </Fact>
-            <Fact term="Testing permission">{scope.testingPermission}</Fact>
-            <Fact term="Severity rubric">{scope.severityRubric}</Fact>
-            <Fact
-              term={
-                terms.eligibility === "critical-loss-of-funds"
-                  ? "Loss of funds"
-                  : "Impact"
-              }
-            >
-              {scope.lossDefinition}
-            </Fact>
+            {scope.excludedDependencies.length === 0 ? null : (
+              <Fact term="Excluded dependencies">
+                {scope.excludedDependencies.join("; ")}
+              </Fact>
+            )}
           </dl>
-          <p>
-            Do not exploit a production system, move another person's funds,
-            reveal keys or cause damage. A local fork or isolated test can show
-            potential{" "}
-            {terms.eligibility === "critical-loss-of-funds" ? "loss" : "impact"}
-            .
-          </p>
+          <details className="security-reference">
+            <summary>Testing</summary>
+            <p>{scope.testingPermission}</p>
+          </details>
+          <details className="security-reference">
+            <summary>Severity</summary>
+            <p>{scope.severityRubric}</p>
+          </details>
+          <details className="security-reference">
+            <summary>
+              {terms.eligibility === "critical-loss-of-funds"
+                ? "Loss"
+                : "Impact"}
+            </summary>
+            <p>{scope.lossDefinition}</p>
+          </details>
+          <p>Test on a fork only.</p>
         </section>
         <IntakeHandoff project={project} session={session} />
         <ProjectSecuritySettings
@@ -889,35 +972,39 @@ export function SecurityProgramPage({
           session={session}
         />
         <details className="security-reference">
-          <summary>Response, disclosure and researcher terms</summary>
+          <summary id="security-trust">Process</summary>
           <section aria-labelledby="security-trust" className="admin-card">
-            <h2 id="security-trust">Decisions, disputes and disclosure</h2>
             <dl className="admin-facts">
-              <Fact term="Findings and awards">
-                {people(terms.approvers.technical)}
-              </Fact>
+              <Fact term="Reviewers">{people(terms.approvers.technical)}</Fact>
               <Fact term="Payment">{people(terms.approvers.financial)}</Fact>
               <Fact term="Disputes">
-                Contact {people(terms.approvers.dispute)}.{" "}
-                {terms.dispute.process} A Slop moderator decides escalated
-                appeals.
+                {people(terms.approvers.dispute)}{" "}
+                <InfoTip text={terms.dispute.process} />
               </Fact>
               <Fact term="Response targets">
-                Acknowledge within {terms.responseTargets.acknowledgeHours}{" "}
-                hours; first triage within{" "}
-                {terms.responseTargets.triageBusinessDays} business days;
-                updates every {terms.responseTargets.updateIntervalDays} days. A
-                missed target never publishes a report or approves an award.
+                <StatusBadge>
+                  {terms.responseTargets.acknowledgeHours}h ack
+                </StatusBadge>{" "}
+                <StatusBadge>
+                  {terms.responseTargets.triageBusinessDays}d triage
+                </StatusBadge>{" "}
+                <StatusBadge>
+                  {terms.responseTargets.updateIntervalDays}d updates
+                </StatusBadge>
               </Fact>
-              <Fact term="Disclosure">{terms.disclosure}</Fact>
-              <Fact term="Safe harbor">{terms.safeHarbor}</Fact>
             </dl>
+            <details className="security-reference">
+              <summary>Disclosure</summary>
+              <p>{terms.disclosure}</p>
+            </details>
+            <details className="security-reference">
+              <summary>Safe harbor</summary>
+              <p>{terms.safeHarbor}</p>
+            </details>
             <p>
-              Slop never publishes cases; rejected, duplicate, disputed and paid
-              reports stay private, and you decide separately whether your name
-              is public. Repository administrators and security managers can
-              read the advisory on GitHub. A public-chain payment shows its
-              addresses, amount and time.
+              <StatusBadge icon={<LockKeyhole />}>
+                Cases stay private
+              </StatusBadge>
             </p>
           </section>
         </details>
@@ -1232,75 +1319,114 @@ function decimalToMinor(text: string, decimals: number): string | null {
 }
 
 const RECEIPT_LABELS: Record<string, string> = {
-  received: "Received — waiting for the owner",
-  triaging: "Under review",
-  "needs-information": "The owner asked for more information",
+  received: "Received",
+  triaging: "In review",
+  "needs-information": "Info needed",
   confirmed: "Confirmed",
-  duplicate: "Duplicate of an earlier report",
+  duplicate: "Duplicate",
   "out-of-scope": "Out of scope",
-  rejected: "Not accepted",
-  disputed: "Under appeal",
+  rejected: "Rejected",
+  disputed: "Appeal",
+};
+
+const RECEIPT_TONES: Record<string, Tone> = {
+  "needs-information": "warning",
+  confirmed: "success",
+  rejected: "danger",
 };
 
 const AWARD_LABELS: Record<string, string> = {
-  "not-applicable": "No paid program was open when this report was received",
-  pending: "Award not decided yet",
-  ineligible: "No award",
+  "not-applicable": "No program",
+  pending: "Pending",
+  ineligible: "None",
   reserved: "Reserved",
-  "capacity-exhausted": "Waiting for the owner's award decision",
-  approved: "Approved and reserved",
+  "capacity-exhausted": "Pending",
+  approved: "Approved",
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
-  "not-applicable": "No approved award",
-  "rail-unavailable": "Approved, not paid yet",
-  "awaiting-owner-commitment": "Waiting for the vault owner",
-  "needs-wallet": "Wallet required",
-  uncertain: "Submission outcome not yet confirmed",
-  ready: "Ready for payment",
-  processing: "Payment in progress",
-  submitted: "Waiting for finality",
-  held: "Payment held",
+  "not-applicable": "No award",
+  "rail-unavailable": "Unpaid",
+  "awaiting-owner-commitment": "Owner",
+  "needs-wallet": "Wallet",
+  uncertain: "Unconfirmed",
+  ready: "Ready",
+  processing: "Sending",
+  submitted: "Finalizing",
+  held: "Held",
   paid: "Paid",
 };
 
-const SUBMISSION_LABELS: Record<SecurityCase["submissionState"], string> = {
-  claimed: "Confirming with GitHub",
-  verified: "Received by GitHub",
-  "link-rejected": "Not confirmed by GitHub",
+const SUBMISSION_LABELS: Record<
+  SecurityCase["submissionState"],
+  [string, Tone]
+> = {
+  claimed: ["Checking", "warning"],
+  verified: ["Received", "success"],
+  "link-rejected": ["Unconfirmed", "danger"],
 };
 
 const EVENT_LABELS: Record<string, string> = {
-  submit: "Reporter submitted privately; GitHub receipt verified",
-  "submit-direct":
-    "Reporter linked their GitHub report; GitHub receipt verified",
-  claim: "Reporter linked the GitHub report",
-  record: "Maintainer recorded the GitHub report",
-  "verify-link": "Maintainer verified the GitHub report",
-  "reject-link": "Maintainer rejected the link",
-  receive: "GitHub receipt verified",
-  "receipt-mismatch": "GitHub did not confirm this link",
-  "assign-triager": "Triager assigned",
-  "revoke-triager": "Triager removed",
-  triage: "Triage state changed",
-  "next-action": "Next action set",
-  "request-information": "Owner asked for information",
-  "report-revised": "Reporter revised the report",
-  decide: "Finding decided",
+  submit: "Submitted",
+  "submit-direct": "Linked",
+  claim: "Linked",
+  record: "Recorded",
+  "verify-link": "Verified",
+  "reject-link": "Link rejected",
+  receive: "Receipt verified",
+  "receipt-mismatch": "Receipt mismatch",
+  "assign-triager": "Triager +",
+  "revoke-triager": "Triager −",
+  triage: "Triage",
+  "next-action": "Next action",
+  "request-information": "Info requested",
+  "report-revised": "Revised",
+  decide: "Decided",
   award: "Award decided",
-  remediation: "Remediation state changed",
-  disclosure: "Disclosure decision recorded",
-  recognition: "Recognition choice changed",
-  appeal: "Appeal sent",
+  remediation: "Remediation",
+  disclosure: "Disclosure",
+  recognition: "Recognition",
+  appeal: "Appealed",
   "decide-appeal": "Appeal decided",
   "approve-award": "Award approved",
-  "consent-payment": "Reporter accepted chain visibility",
-  "prepare-payment": "Unsigned payment prepared",
+  "consent-payment": "Visibility accepted",
+  "prepare-payment": "Payment prepared",
   "verify-payment": "Payment checked",
-  "recover-payment": "Payment wallet recovered",
-  "decide-related-party": "Related-party award reviewed",
-  "reserve-award": "Award reserved with raised capacity",
+  "recover-payment": "Wallet recovered",
+  "decide-related-party": "Related-party review",
+  "reserve-award": "Award reserved",
 };
+
+/** Who acted, shown as an icon before the event's verb. */
+const REPORTER_EVENTS = new Set([
+  "submit",
+  "submit-direct",
+  "claim",
+  "report-revised",
+  "recognition",
+  "appeal",
+  "consent-payment",
+]);
+const GITHUB_EVENTS = new Set(["receive", "receipt-mismatch"]);
+
+function EventActor({ kind }: { kind: string }) {
+  const label = REPORTER_EVENTS.has(kind)
+    ? "Reporter"
+    : GITHUB_EVENTS.has(kind)
+      ? "GitHub"
+      : "Program team";
+  const Icon =
+    label === "Reporter"
+      ? UserRound
+      : label === "GitHub"
+        ? GithubIcon
+        : ShieldCheck;
+  return (
+    <span role="img" aria-label={label} title={label}>
+      <Icon aria-hidden="true" size={14} />
+    </span>
+  );
+}
 
 /** The owner's latest words to the reporter, from the case history. */
 const RESPONSE_KINDS = new Set([
@@ -1356,14 +1482,8 @@ function ImportReports({
         received: number;
       }>("POST", "security-cases", { mode: "import", projectId });
       if (body.state === "unavailable")
-        throw new Error(
-          "Slop could not read the repository's private reports on GitHub. Nothing changed; try again later.",
-        );
-      setNote(
-        body.received === 0
-          ? "Every private report on GitHub already has a case."
-          : `${body.received} new private report${body.received === 1 ? "" : "s"} recorded.`,
-      );
+        throw new Error("GitHub read failed. Retry.");
+      setNote(body.received === 0 ? "Up to date" : `${body.received} imported`);
       onImported();
     });
   };
@@ -1383,7 +1503,7 @@ function ImportReports({
       ) : null}
       <FormError message={error} />
       <button className="button secondary-button" disabled={busy} type="submit">
-        {busy ? "Reading GitHub…" : "Bring in GitHub private reports"}
+        {busy ? "Importing…" : "Import from GitHub"}
       </button>
     </form>
   );
@@ -1402,9 +1522,7 @@ function ClaimForm({
   const [key, setKey] = useState(requestKey);
   const { busy, error, run } = useAction();
   if (programProjects.length === 0)
-    return (
-      <p className="admin-status">No project runs a security program yet.</p>
-    );
+    return <p className="admin-status">No programs yet</p>;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
@@ -1430,14 +1548,10 @@ function ClaimForm({
         projects={programProjects}
         value={projectId}
       />
-      <AdvisoryIdField
-        hint="Only the ID. Do not paste report details here."
-        onChange={setAdvisory}
-        value={advisory}
-      />
+      <AdvisoryIdField onChange={setAdvisory} value={advisory} />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Linking…" : "Link my GitHub report"}
+        {busy ? "Linking…" : "Link report"}
       </button>
     </form>
   );
@@ -1445,11 +1559,9 @@ function ClaimForm({
 
 /** A reporter's GHSA advisory ID input; only the ID, never report details. */
 function AdvisoryIdField({
-  hint,
   onChange,
   value,
 }: {
-  hint: string;
   onChange: (value: string) => void;
   value: string;
 }) {
@@ -1465,7 +1577,6 @@ function AdvisoryIdField({
         spellCheck={false}
         value={value}
       />
-      <small className="field-hint">{hint}</small>
     </label>
   );
 }
@@ -1488,9 +1599,7 @@ function DirectVerifyForm({
   const [key] = useState(requestKey);
   const { busy, error, run } = useAction();
   if (programProjects.length === 0)
-    return (
-      <p className="admin-status">No project runs a security program yet.</p>
-    );
+    return <p className="admin-status">No programs yet</p>;
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
@@ -1523,29 +1632,15 @@ function DirectVerifyForm({
         projects={programProjects}
         value={projectId}
       />
-      <AdvisoryIdField
-        hint="Only the ID. Slop checks with GitHub that you are its author."
-        onChange={setAdvisory}
-        value={advisory}
-      />
+      <AdvisoryIdField onChange={setAdvisory} value={advisory} />
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Opening GitHub…" : "Authorize GitHub and verify"}
+        <GithubIcon aria-hidden="true" size={16} />{" "}
+        {busy ? "Opening…" : "Verify"}
       </button>
     </form>
   );
 }
-
-/** One wording for how the GitHub receipt time was established. */
-const RECEIVED_AT_SOURCE_LABELS: Record<
-  "github-verified" | "maintainer-attested" | "slop-received" | "unknown",
-  string
-> = {
-  "github-verified": " (verified from GitHub)",
-  "slop-received": " (received privately by Slop)",
-  "maintainer-attested": " (maintainer-attested)",
-  unknown: "",
-};
 
 type PrivateReport = {
   summary: string;
@@ -1575,7 +1670,9 @@ function RevisePrivateReport({
   const { busy, error, run } = useAction();
   return (
     <details className="security-reference">
-      <summary>Add evidence or correct report</summary>
+      <summary>
+        <Pencil aria-hidden="true" size={14} /> Edit report
+      </summary>
       <form
         className="security-form"
         onSubmit={(event) => {
@@ -1593,13 +1690,9 @@ function RevisePrivateReport({
           });
         }}
       >
-        <p>
-          The new version is screened again. Your original receipt time and
-          terms stay the same.
-        </p>
         <ReportFields draft={draft} onChange={setDraft} disabled={busy} />
         <button className="button primary-button" disabled={busy} type="submit">
-          {busy ? "Saving…" : "Save and screen again"}
+          {busy ? "Saving…" : "Save"}
         </button>
         <FormError message={error} />
       </form>
@@ -1644,23 +1737,24 @@ function PrivateReportDetail({
       open={opened}
       onToggle={(event) => setOpened(event.currentTarget.open)}
     >
-      <summary>Read private report</summary>
+      <summary>
+        <LockKeyhole aria-hidden="true" size={14} /> Report
+      </summary>
       {!opened ? null : detail.status === "loading" ? (
-        <p role="status">Loading private report…</p>
+        <Spinner label="Loading private report…" />
       ) : detail.status === "ready" ? (
         <>
           {detail.refreshError ? (
-            <p className="form-error" role="alert">
-              <CircleAlert aria-hidden="true" /> {detail.refreshError} Showing
-              the last loaded report.{" "}
-              <button className="text-button" onClick={reload} type="button">
-                <RotateCcw aria-hidden="true" /> Retry
-              </button>
-            </p>
+            <StaleNotice error={detail.refreshError} onRetry={reload} />
           ) : null}
           <h4 id={`report-summary-${submission.id}`}>
             {detail.value.report.summary}
           </h4>
+          {detail.value.report.severity ? (
+            <p>
+              <SeverityChip severity={detail.value.report.severity} />
+            </p>
+          ) : null}
           {/* biome-ignore lint/a11y/useSemanticElements: This named scroll region must preserve the report's preformatted text. */}
           <pre
             className="security-report-text"
@@ -1671,9 +1765,6 @@ function PrivateReportDetail({
           >
             {detail.value.report.description}
           </pre>
-          {detail.value.report.severity ? (
-            <p>Reported severity: {detail.value.report.severity}</p>
-          ) : null}
           {submission.intake?.canRevise ? (
             <RevisePrivateReport
               key={submission.intake.revision}
@@ -1704,7 +1795,7 @@ function PrivateReportDetail({
                   type="button"
                   onClick={() => review("forward")}
                 >
-                  Approve for owner review
+                  Forward to owner
                 </button>
                 <button
                   className="button secondary-button"
@@ -1712,23 +1803,15 @@ function PrivateReportDetail({
                   type="button"
                   onClick={() => review("request-information")}
                 >
-                  Request more evidence
+                  Request evidence
                 </button>
               </div>
-              <p className="field-hint">
-                This routes the private report. It does not approve a bounty or
-                payment.
-              </p>
             </div>
           ) : null}
         </>
       ) : (
         <div role="alert">
-          <p>
-            {detail.status === "error"
-              ? detail.message
-              : "Sign in again to read this report."}
-          </p>
+          <p>{detail.status === "error" ? detail.message : "Sign in again"}</p>
           <button className="text-button" type="button" onClick={reload}>
             Retry
           </button>
@@ -1839,7 +1922,7 @@ function SubmissionCard({
     >
       <header className="private-report-heading">
         <h3 id={`submission-${submission.id}`}>
-          Private report · {submission.projectId}
+          <LockKeyhole aria-hidden="true" size={16} /> {submission.projectId}
           {reportReference ? (
             <>
               {" · "}
@@ -1863,15 +1946,16 @@ function SubmissionCard({
         <div className="private-report-next">
           <p className="security-next-step">
             <ArrowRight aria-hidden="true" />
-            <span>
-              <strong>Next step:</strong> {caseRecord.nextStep}
-            </span>
+            <span>{caseRecord.nextStep}</span>
           </p>
           <p className="inbox-meta">
-            Award: {awardText(caseRecord)}
-            {caseRecord.nextStepDueAt
-              ? ` · Due ${formatUtc(caseRecord.nextStepDueAt)}`
-              : ""}
+            <StatusBadge title="Award">{awardShort(caseRecord)}</StatusBadge>
+            {caseRecord.nextStepDueAt ? (
+              <>
+                {" "}
+                <DueChip at={caseRecord.nextStepDueAt} />
+              </>
+            ) : null}
           </p>
         </div>
       ) : null}
@@ -1887,8 +1971,10 @@ function SubmissionCard({
         </summary>
         {submission.intake ? (
           <>
-            <p className="field-hint">
-              Slop receipt · {formatUtc(submission.intake.receivedAt)}
+            <p className="field-hint" title="Slop receipt">
+              <Receipt aria-hidden="true" size={14} />{" "}
+              <span className="visually-hidden">Slop receipt</span>
+              {formatUtc(submission.intake.receivedAt)}
             </p>
             {submission.intake.reason ? (
               <p>{submission.intake.reason}</p>
@@ -1900,8 +1986,18 @@ function SubmissionCard({
             />
             {submission.intake.canRetryScreening ? (
               <button
+                aria-label={
+                  submission.intake.canForward
+                    ? "Retry owner notification"
+                    : "Retry screening"
+                }
                 className="text-button"
                 disabled={busy}
+                title={
+                  submission.intake.canForward
+                    ? "Retry owner notification"
+                    : "Retry screening"
+                }
                 type="button"
                 onClick={() =>
                   run("screen", {
@@ -1909,10 +2005,7 @@ function SubmissionCard({
                   })
                 }
               >
-                <RotateCcw aria-hidden="true" />{" "}
-                {submission.intake.canForward
-                  ? "Retry owner notification"
-                  : "Retry screening"}
+                <RotateCcw aria-hidden="true" /> Retry
               </button>
             ) : null}
             {submission.intake.canForward &&
@@ -1923,30 +2016,30 @@ function SubmissionCard({
                 submission.advisory === null)) ? (
               <details className="security-reference">
                 <summary>
-                  {submission.state === "failed"
-                    ? "Retry private GitHub delivery"
-                    : "Also send privately to GitHub"}
+                  <GithubIcon aria-hidden="true" size={14} />{" "}
+                  {submission.state === "failed" ? "Retry" : "Send to GitHub"}
                 </summary>
-                <p>
-                  Optional: authorize GitHub to submit the saved report as you.
-                  Your original Slop receipt and review status are retained.
-                </p>
-                <button
-                  className="button secondary-button"
-                  disabled={busy}
-                  type="button"
-                  onClick={authorize}
-                >
-                  Authorize private GitHub delivery
-                </button>
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  type="button"
-                  onClick={() => run("send", { expectedRevision })}
-                >
-                  Send saved report to GitHub
-                </button>
+                <div className="report-form-actions">
+                  <button
+                    title="Authorize private GitHub delivery"
+                    className="button secondary-button"
+                    disabled={busy}
+                    type="button"
+                    onClick={authorize}
+                  >
+                    1 Authorize
+                  </button>
+                  <ArrowRight aria-hidden="true" size={14} />
+                  <button
+                    title="Send saved report to GitHub"
+                    className="button secondary-button"
+                    disabled={busy}
+                    type="button"
+                    onClick={() => run("send", { expectedRevision })}
+                  >
+                    2 Send
+                  </button>
+                </div>
               </details>
             ) : null}
           </>
@@ -1985,7 +2078,6 @@ function SubmissionCard({
                 ? "Fix and resend"
                 : "Submit privately"}
             </button>
-            <IntakeReferenceNote />
           </form>
         ) : null}
         {submission.origin === "direct" && submission.state === "draft" ? (
@@ -2010,16 +2102,16 @@ function SubmissionCard({
           </button>
         ) : null}
         {needsGrant ? (
-          <div className="form-error" role="alert">
-            <CircleAlert aria-hidden="true" /> Authorize GitHub for this report
-            first.
+          <div role="alert">
             <button
-              className="text-button"
+              aria-label="Authorize GitHub to submit as you"
+              className="button secondary-button"
               disabled={busy}
               onClick={authorize}
+              title="Authorize GitHub to submit as you"
               type="button"
             >
-              Authorize GitHub to submit as you
+              <GithubIcon aria-hidden="true" size={16} /> Authorize
             </button>
           </div>
         ) : null}
@@ -2089,7 +2181,7 @@ function SubmissionsPanel({
       .then(async (body) => {
         if (current !== generation.current) return;
         if (body.recipientGithubId !== session.session.githubId)
-          throw new Error("Your account changed. Reload your private reports.");
+          throw new Error("Account changed. Reload.");
         // Keep the successful list if a stale receipt link is no longer readable.
         setSubmissions(body.submissions);
         setAuthorityUnavailable(body.authorityUnavailable === true);
@@ -2135,14 +2227,13 @@ function SubmissionsPanel({
         </button>
       </div>
     );
-  if (submissions === null)
-    return <p role="status">Loading private reports…</p>;
+  if (submissions === null) return <Spinner label="Loading private reports…" />;
   const shown = submissions.filter(
     (entry) => entry.state !== "abandoned" || entry.id === focusId,
   );
   if (shown.length === 0 && !grantError && !authorityUnavailable && !error)
     return cases.length === 0 ? (
-      <p className="admin-status">You have no private reports yet.</p>
+      <p className="admin-status">No reports</p>
     ) : null;
   const ordered = shown
     .filter((submission) => {
@@ -2176,34 +2267,27 @@ function SubmissionsPanel({
     <section aria-labelledby="security-submissions" className="admin-section">
       <div className="section-heading">
         <h2 id="security-submissions">Private reports</h2>
-        <button className="text-button" onClick={load} type="button">
-          <RotateCcw aria-hidden="true" /> Refresh reports
-        </button>
+        <RetryButton label="Refresh reports" onClick={load} />
       </div>
       {authorityUnavailable ? (
-        <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Some maintainer access could not be
-          checked. Your own reports are shown.{" "}
-          <button className="text-button" onClick={load} type="button">
-            Retry access check
-          </button>
+        <p className="admin-status" role="status">
+          <StatusBadge
+            tone="warning"
+            icon={<CircleAlert />}
+            title="Some maintainer access could not be checked"
+          >
+            Partial list
+          </StatusBadge>{" "}
+          <RetryButton label="Retry access check" onClick={load} />
         </p>
       ) : null}
-      {error ? (
-        <p className="form-error" role="alert">
-          Report status could not refresh. The previous status is shown. {error}
-        </p>
-      ) : null}
+      {error ? <StaleNotice error={error} onRetry={load} /> : null}
       {grantError ? (
         <p className="form-error" role="alert">
           <CircleAlert aria-hidden="true" />{" "}
           {GRANT_ERRORS[grantError] ?? GRANT_ERRORS.grant_exchange_failed}
         </p>
       ) : null}
-      <p className="field-hint">
-        Screening assists review; owners decide awards. GitHub delivery is
-        optional.
-      </p>
       {ordered.map(renderSubmission)}
     </section>
   );
@@ -2264,7 +2348,7 @@ function RecordForm({
         />
       </label>
       <label>
-        Reporter GitHub account ID
+        Reporter ID
         <input
           inputMode="numeric"
           onChange={(event) => setReporterId(event.target.value)}
@@ -2273,7 +2357,7 @@ function RecordForm({
         />
       </label>
       <label>
-        Reporter GitHub login
+        Reporter login
         <input
           onChange={(event) => setReporterLogin(event.target.value)}
           required
@@ -2281,7 +2365,7 @@ function RecordForm({
         />
       </label>
       <label>
-        Time GitHub received the report (UTC)
+        Received (UTC)
         <input
           onChange={(event) => setReceivedAt(event.target.value)}
           required
@@ -2295,12 +2379,11 @@ function RecordForm({
           onChange={(event) => setConfirmed(event.target.checked)}
           type="checkbox"
         />
-        I checked on GitHub that this advisory exists and that this reporter
-        submitted it.
+        Verified on GitHub
       </label>
       <FormError message={error} />
       <button className="button primary-button" disabled={busy} type="submit">
-        {busy ? "Recording…" : "Record verified report"}
+        {busy ? "Recording…" : "Record"}
       </button>
     </form>
   );
@@ -2311,8 +2394,12 @@ type FieldSpec =
       name: string;
       label: string;
       kind: "text" | "textarea";
-      hint?: string;
+      placeholder?: string;
+      /** Marks a field whose content only authorized reviewers read. */
+      private?: boolean;
       optional?: boolean;
+      /** Required while another select has one of these values. */
+      requiredWhen?: { field: string; values: string[] };
       initial?: string;
       when?: { field: string; values: string[] };
     }
@@ -2328,6 +2415,10 @@ type FieldSpec =
       name: string;
       label: string;
       kind: "checkbox";
+      /** A short explanation carried by an info icon. */
+      info?: string;
+      /** The consent reveals data publicly. */
+      publicNotice?: boolean;
       when?: { field: string; values: string[] };
     }
   | {
@@ -2341,7 +2432,8 @@ type FieldSpec =
       label: string;
       kind: "amount";
       decimals: number;
-      hint?: string;
+      /** A short fact shown as a chip under the input. */
+      chip?: string;
       initial?: string;
       readOnly?: boolean;
       when?: { field: string; values: string[] };
@@ -2351,9 +2443,9 @@ type ActionSpec = { title: string; submit: string; fields: FieldSpec[] };
 
 const REASON: FieldSpec = {
   name: "reason",
-  label: "Private reason",
+  label: "Reason",
   kind: "textarea",
-  hint: "Do not name another reporter or quote another report.",
+  private: true,
 };
 
 const SEVERITY_OPTIONS: [string, string][] = [
@@ -2371,17 +2463,17 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
   switch (action) {
     case "verify-link":
       return {
-        title: "Verify the GitHub report",
+        title: "Verify report",
         submit: "Verify report",
         fields: [
           {
             name: "receivedAt",
-            label: "Time GitHub received the report (UTC)",
+            label: "Received (UTC)",
             kind: "utc",
           },
           {
             name: "confirmation",
-            label: `I checked on GitHub that ${record.advisory?.ghsa ?? "this advisory"} exists and that @${record.reporter?.githubLogin ?? "the reporter"} submitted it.`,
+            label: `Verified on GitHub: ${record.advisory?.ghsa ?? "this advisory"} by @${record.reporter?.githubLogin ?? "the reporter"}`,
             kind: "checkbox",
           },
         ],
@@ -2394,22 +2486,19 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       };
     case "request-information":
       return {
-        title: "Ask the reporter for information",
+        title: "Request info",
         submit: "Ask for information",
         fields: [
           {
             name: "reason",
             label: "What you need",
             kind: "textarea",
-            hint: record.advisory
-              ? "The reporter answers in the private GitHub advisory."
-              : "Use the private report review to request further evidence.",
           },
         ],
       };
     case "decide":
       return {
-        title: "Decide the finding",
+        title: "Decide",
         submit: "Record decision",
         fields: [
           {
@@ -2435,20 +2524,20 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             kind: "select",
             options: [
               ["unresolved", "Unresolved"],
-              ["verified-potential", "Verified potential loss"],
-              ["verified-actual", "Verified actual loss"],
-              ["not-verified", "Not verified"],
+              ["verified-potential", "Potential"],
+              ["verified-actual", "Actual"],
+              ["not-verified", "None"],
             ],
           },
           {
             name: "inScope",
-            label: "The affected asset is in scope",
+            label: "In scope",
             kind: "checkbox",
           },
           {
             name: "relatedParty",
-            label:
-              "The reporter is a related party (owner, employee, sponsor or approver). An independent reviewer must then approve any award.",
+            label: "Related party",
+            info: "Owner, employee, sponsor or approver",
             kind: "checkbox",
           },
           {
@@ -2457,7 +2546,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             kind: "text",
             optional: true,
             initial: proposal?.rootCauseKey ?? "",
-            hint: "Lowercase words and hyphens. Required to confirm.",
+            placeholder: "root-cause-key",
           },
           {
             name: "duplicateOf",
@@ -2468,7 +2557,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "evidenceReference",
-            label: "Private evidence reference (optional)",
+            label: "Evidence ref",
             kind: "text",
             optional: true,
           },
@@ -2482,20 +2571,17 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       const direct = record.paymentRail === "direct";
       const available = record.awardFunds
         ? money(record.awardFunds.availableMinor, record.awardFunds)
-        : "no verified funds";
+        : null;
       return {
         title: "Award",
-        submit: "Record award decision",
+        submit: "Save",
         fields: [
           {
             name: "decision",
             label: "Decision",
             kind: "select",
             options: [
-              [
-                "amount",
-                fixed ? "Award the published amount" : "Award an amount",
-              ],
+              ["amount", "Award"],
               ["none", "No award"],
             ],
           },
@@ -2510,13 +2596,11 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
                 })
               : undefined,
             readOnly: fixed,
-            hint: direct
-              ? fixed
-                ? "The published award is fixed."
-                : undefined
-              : fixed
-                ? `The published award is fixed. Available to reserve: ${available}. Without funds, it stays selected and unpaid.`
-                : `Available to reserve: ${available}.`,
+            chip: direct
+              ? undefined
+              : available
+                ? `Available ${available}`
+                : "No verified funds",
             when: { field: "decision", values: ["amount"] },
           },
           {
@@ -2527,7 +2611,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
           },
           {
             name: "confirmation",
-            label: `I approve this award for @${record.reporter?.githubLogin ?? "the reporter"}.${direct ? "" : fixed ? " It remains unpaid until verified funds cover the award." : " Approval reserves the amount now."}`,
+            label: `Approve award for @${record.reporter?.githubLogin ?? "the reporter"}`,
             kind: "checkbox",
             when: { field: "decision", values: ["amount"] },
           },
@@ -2546,19 +2630,22 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             kind: "select",
             options: [
               ["investigating", "Investigating"],
-              ["fixing", "Fixing in a private workspace"],
+              ["fixing", "Fixing"],
               ["retest", "Retest"],
-              ["resolved", "Resolved (fix merged)"],
-              ["mitigation-verified", "Deployed mitigation verified"],
+              ["resolved", "Resolved"],
+              ["mitigation-verified", "Mitigated"],
               ["reopened", "Reopened"],
             ],
           },
           {
             name: "evidenceReference",
-            label: "Private test or deployment evidence",
+            label: "Evidence ref",
             kind: "text",
             optional: true,
-            hint: "Required for resolved and for deployed mitigation.",
+            requiredWhen: {
+              field: "remediationState",
+              values: ["resolved", "mitigation-verified"],
+            },
           },
           { ...REASON, optional: true } as FieldSpec,
         ],
@@ -2574,29 +2661,30 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             kind: "select",
             options: [
               ["embargoed", "Embargoed"],
-              ["redaction-approved", "Redacted text approved"],
-              ["disclosed", "Disclosed by the security maintainer"],
+              ["redaction-approved", "Redaction approved"],
+              ["disclosed", "Disclosed"],
             ],
           },
           {
             name: "evidenceReference",
-            label: "Private disclosure approval evidence",
+            label: "Approval ref",
             kind: "text",
-            hint: "Reference the approval in the private advisory. Do not paste the content here.",
           },
           {
             name: "redactedContentDigest",
-            label: "Approved redacted content SHA-256",
+            label: "Redacted SHA-256",
             kind: "text",
             optional: true,
-            hint: "Required when approving redacted text or recording disclosure.",
+            requiredWhen: {
+              field: "disclosureState",
+              values: ["redaction-approved", "disclosed"],
+            },
           },
           {
             name: "embargoChange",
-            label: "Approved embargo change",
+            label: "Embargo change",
             kind: "textarea",
             optional: true,
-            hint: "Leave blank if unchanged.",
           },
           REASON,
         ],
@@ -2608,10 +2696,10 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
         fields: [
           {
             name: "githubId",
-            label: "Triager GitHub account ID",
+            label: "GitHub ID",
             kind: "text",
           },
-          { name: "githubLogin", label: "Triager GitHub login", kind: "text" },
+          { name: "githubLogin", label: "Login", kind: "text" },
         ],
       };
     case "revoke-triager": {
@@ -2642,13 +2730,13 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
         fields: [
           {
             name: "recognition",
-            label: "Show my name publicly",
+            label: "Public name",
             kind: "select",
             // The current choice is listed first, so the form shows it.
             options: (
               [
-                ["private", "No, keep my identity private"],
-                ["opt-in", "Yes, after authorized disclosure"],
+                ["private", "Off"],
+                ["opt-in", "On"],
               ] as [string, string][]
             ).sort(([value]) => (value === record.recognition ? -1 : 1)),
           },
@@ -2656,14 +2744,14 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       };
     case "appeal":
       return {
-        title: "Appeal this decision",
+        title: "Appeal",
         submit: "Send appeal",
         fields: [
           {
             name: "reason",
-            label: "Why the decision is wrong",
+            label: "Reason",
             kind: "textarea",
-            hint: "An independent reviewer reads this privately.",
+            private: true,
           },
         ],
       };
@@ -2677,8 +2765,8 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label: "Outcome",
             kind: "select",
             options: [
-              ["uphold", "Uphold the original decision"],
-              ["return", "Return the case for a new decision"],
+              ["uphold", "Uphold"],
+              ["return", "Return"],
             ],
           },
           REASON,
@@ -2686,7 +2774,7 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       };
     case "decide-related-party":
       return {
-        title: "Related-party award review",
+        title: "Related-party review",
         submit: "Record review",
         fields: [
           {
@@ -2696,9 +2784,11 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             options: [
               [
                 "approve",
-                `Approve ${record.award && record.terms ? money(record.award.grossMinor, record.terms) : "the proposed award"}${record.paymentRail === "direct" ? "" : " and reserve it if funds remain"}`,
+                record.award && record.terms
+                  ? `Approve ${money(record.award.grossMinor, record.terms)}`
+                  : "Approve",
               ],
-              ["refuse", "Refuse: the reporter is not eligible for this award"],
+              ["refuse", "Refuse"],
             ],
           },
           REASON,
@@ -2710,20 +2800,20 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
       return {
         title:
           action === "consent-payment"
-            ? "Accept payment visibility"
+            ? "Visibility"
             : record.settlement
-              ? "Refresh payment request"
+              ? "Refresh payment"
               : "Prepare payment",
         submit:
           action === "consent-payment"
-            ? "Accept visibility"
+            ? "Accept"
             : record.settlement
-              ? "Refresh unsigned payment"
-              : "Prepare unsigned payment",
+              ? "Refresh"
+              : "Prepare",
         fields: [
           {
             name: "network",
-            label: "Payment network",
+            label: "Network",
             kind: "select",
             options: record.paymentNetworks.map((n) => [n, n]),
           },
@@ -2732,9 +2822,10 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             label:
               action === "consent-payment"
                 ? record.paymentRail === "direct"
-                  ? "I understand that chain transactions reveal my wallet, time and amounts. My report stays private."
-                  : "I understand that chain transactions reveal my GitHub actor number, wallet, time and amounts. My report stays private."
-                : `I approve ${awardText(record)} on this network. This prepares an unsigned request; it does not pay.`,
+                  ? "On-chain: wallet, time, amount public"
+                  : "On-chain: GitHub ID, wallet, time, amount public"
+                : `Approve ${awardAmounts(record) ?? awardText(record)}`,
+            publicNotice: action === "consent-payment",
             kind: "checkbox",
           },
         ],
@@ -2748,11 +2839,11 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             name: "transactionIds",
             label: "Transaction IDs",
             kind: "textarea",
-            hint: "One per line.",
+            placeholder: "One per line",
           },
           {
             name: "confirmation",
-            label: "These transactions pay the approved award.",
+            label: "Pays this award",
             kind: "checkbox",
           },
         ],
@@ -2777,12 +2868,11 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
         title: "Recover payment",
         submit:
           recovery.mode === "resume-original"
-            ? "Resume original wallet"
-            : recovery.mode === "cancellation-required"
-              ? "Verify cancellation"
-              : recovery.mode === "retirement-required"
-                ? "Verify previous transaction"
-                : "Check payment recovery",
+            ? "Resume"
+            : recovery.mode === "cancellation-required" ||
+                recovery.mode === "retirement-required"
+              ? "Verify"
+              : "Check",
         fields: [
           ...(["cancellation-required", "retirement-required"].includes(
             recovery.mode,
@@ -2790,17 +2880,14 @@ function actionSpec(action: string, record: SecurityCase): ActionSpec | null {
             ? [
                 {
                   name: "cancellationTransactionId",
-                  label:
-                    recovery.mode === "retirement-required"
-                      ? `Previous ${recovery.role === "fee" ? "fee" : "researcher"} transaction ID`
-                      : "Cancellation transaction ID",
+                  label: "Transaction ID",
                   kind: "text" as const,
                 },
               ]
             : []),
           {
             name: "confirmation",
-            label: "I approve recovery to the payout wallet shown above.",
+            label: "Approve recovery to this wallet",
             kind: "checkbox",
           },
         ],
@@ -2885,10 +2972,7 @@ function ActionForm({
         `security-cases/${encodeURIComponent(record.id)}/actions`,
         body,
       );
-      onDone(
-        "allowedActions" in response.case ? response.case : null,
-        `${spec.title}: saved.`,
-      );
+      onDone("allowedActions" in response.case ? response.case : null, "Saved");
     });
   };
   const formId = `${record.id}-${action}`;
@@ -2911,8 +2995,24 @@ function ActionForm({
                 onChange={(event) => set(event.target.checked)}
                 type="checkbox"
               />
+              {field.publicNotice ? <Eye aria-hidden="true" size={14} /> : null}
               {field.label}
+              {field.info ? <InfoTip text={field.info} /> : null}
             </label>
+          );
+        if (
+          field.kind === "select" &&
+          field.name === "network" &&
+          field.options.length === 1
+        )
+          return (
+            <p key={field.name}>
+              <StatusBadge title={field.label}>
+                <NetworkName chain={field.options[0][0]}>
+                  {field.options[0][1]}
+                </NetworkName>
+              </StatusBadge>
+            </p>
           );
         if (field.kind === "select")
           return (
@@ -2943,10 +3043,6 @@ function ActionForm({
               />
             </label>
           );
-        const hint =
-          "hint" in field && field.hint ? (
-            <small className="field-hint">{field.hint}</small>
-          ) : null;
         if (field.kind === "amount") {
           const minor = decimalToMinor(
             String(values[field.name]),
@@ -2961,7 +3057,14 @@ function ActionForm({
               : null;
           return (
             <label key={field.name}>
-              {field.label}
+              <span>
+                {field.label}{" "}
+                {field.readOnly ? (
+                  <span role="img" aria-label="Fixed" title="Fixed">
+                    <LockKeyhole aria-hidden="true" size={14} />
+                  </span>
+                ) : null}
+              </span>
               <input
                 autoComplete="off"
                 inputMode="decimal"
@@ -2970,43 +3073,63 @@ function ActionForm({
                 required
                 value={String(values[field.name])}
               />
-              {hint}
+              {field.chip ? (
+                <small className="field-hint">
+                  <StatusBadge>{field.chip}</StatusBadge>
+                </small>
+              ) : null}
               {minor !== null && record.terms ? (
                 <small className="field-hint" role="status">
                   {shares
                     ? fullAward
-                      ? `Researcher ${money(shares.researcher.toString(), record.terms)} · no Slop share`
-                      : `Researcher ${money(shares.researcher.toString(), record.terms)} · Slop ${money(shares.slop.toString(), record.terms)}`
-                    : "This amount cannot be split exactly 75/25."}
+                      ? `100% researcher ${money(shares.researcher.toString(), record.terms)}`
+                      : `75% researcher ${money(shares.researcher.toString(), record.terms)} | 25% Slop ${money(shares.slop.toString(), record.terms)}`
+                    : "Not divisible 75/25"}
                 </small>
               ) : null}
             </label>
           );
         }
+        const required =
+          !field.optional ||
+          (field.requiredWhen?.values.includes(
+            String(values[field.requiredWhen.field]),
+          ) ??
+            false);
+        const label = (
+          <span>
+            {field.label}{" "}
+            {field.private ? (
+              <span role="img" aria-label="Private" title="Private">
+                <LockKeyhole aria-hidden="true" size={14} />
+              </span>
+            ) : null}
+          </span>
+        );
         if (field.kind === "textarea")
           return (
             <label key={field.name}>
-              {field.label}
+              {label}
               <textarea
                 onChange={(event) => set(event.target.value)}
-                required={!field.optional}
+                placeholder={field.placeholder}
+                required={required}
                 rows={3}
                 value={String(values[field.name])}
               />
-              {hint}
             </label>
           );
         return (
           <label key={field.name}>
-            {field.label}
+            {label}
             <input
               autoComplete="off"
               onChange={(event) => set(event.target.value)}
-              required={!field.optional}
+              placeholder={field.placeholder}
+              required={required}
               spellCheck={false}
               value={String(values[field.name])}
             />
-            {hint}
           </label>
         );
       })}
@@ -3025,45 +3148,81 @@ function caseTitle(record: {
   return record.advisory?.ghsa ?? `Case ${record.id.slice(-8)}`;
 }
 
+/** The gross award with its researcher and Slop parts, or null without one. */
+function awardAmounts(record: SecurityCase): string | null {
+  if (record.award === null || record.terms === null) return null;
+  return `${money(record.award.grossMinor, record.terms)} (${money(record.award.researcherMinor, record.terms)} + ${money(record.award.slopMinor, record.terms)} Slop)`;
+}
+
+/** Why a selected award is not yet approved, or null once it is decided. */
+function awardPending(record: SecurityCase): string | null {
+  if (record.award === null || record.awardState !== "pending") return null;
+  return record.relatedPartyReview === "pending"
+    ? "In review"
+    : record.paymentRail === "direct"
+      ? "Awaiting approval"
+      : "Unfunded";
+}
+
 function awardText(record: SecurityCase): string {
-  if (record.award === null || record.terms === null)
+  const amount = awardAmounts(record);
+  if (amount === null)
     return record.paymentRail === "direct" && record.awardState === "approved"
       ? "Approved"
       : (AWARD_LABELS[record.awardState] ?? record.awardState);
-  const amount = `${money(record.award.researcherMinor, record.terms)} to the researcher · ${money(record.award.slopMinor, record.terms)} to Slop · ${money(record.award.grossMinor, record.terms)} gross`;
-  return record.awardState === "pending"
-    ? `${record.relatedPartyReview === "pending" ? "Proposed; awaiting independent review" : record.paymentRail === "direct" ? "Selected; awaiting payment approval" : "Selected; awaiting verified funding"} · ${amount}`
-    : amount;
+  const pending = awardPending(record);
+  return pending ? `${pending} · ${amount}` : amount;
+}
+
+/** The award as a list chip: its state, then the gross amount when one exists. */
+function awardShort(record: SecurityCase): string {
+  if (record.award === null || record.terms === null) return awardText(record);
+  const gross = money(record.award.grossMinor, record.terms);
+  const pending = awardPending(record);
+  return pending ? `${pending} · ${gross}` : gross;
+}
+
+function DueChip({ at }: { at: string }) {
+  return (
+    <StatusBadge icon={<Clock />} title="Due">
+      <span className="visually-hidden">Due </span>
+      {formatUtc(at)}
+    </StatusBadge>
+  );
 }
 
 function paymentLabel(record: SecurityCase): string {
   if (
     record.paymentRail === "direct" &&
     record.settlement?.state === "awaiting-external-payment"
-  )
-    return (record.settlement.confirmedTransactionIds?.length ?? 0) > 0
-      ? "Partly paid"
-      : "Ready for external payment";
+  ) {
+    const confirmed = record.settlement.confirmedTransactionIds?.length ?? 0;
+    return confirmed > 0
+      ? `${confirmed}/${confirmed + (record.settlement.remainingTransfers?.length ?? 0)} paid`
+      : "Ready";
+  }
   if (
     record.paymentRail === "direct" &&
     record.paymentState === "awaiting-owner-commitment"
   )
-    return "Waiting for the payer";
+    return "Payer";
   return PAYMENT_LABELS[record.paymentState] ?? record.paymentState;
 }
 
-const RELATED_PARTY_LABELS: Record<SecurityCase["relatedPartyReview"], string> =
-  {
-    "not-applicable": "No related-party review",
-    pending: "Waiting for an independent reviewer",
-    approved: "Approved by an independent reviewer",
-    refused: "Refused by an independent reviewer",
-  };
+const RELATED_PARTY_LABELS: Record<
+  SecurityCase["relatedPartyReview"],
+  [string, Tone]
+> = {
+  "not-applicable": ["None", "neutral"],
+  pending: ["Pending", "warning"],
+  approved: ["Approved", "success"],
+  refused: ["Refused", "danger"],
+};
 
-const LOSS_LABELS: Record<string, string> = {
-  likely: "Likely path to loss of funds",
-  unlikely: "No path to loss of funds found",
-  unclear: "Loss of funds unclear",
+const LOSS_LABELS: Record<string, [string, Tone]> = {
+  likely: ["Likely", "danger"],
+  unlikely: ["Unlikely", "success"],
+  unclear: ["Unclear", "neutral"],
 };
 
 /** The automatic private analysis, for the owner and triagers only. */
@@ -3090,15 +3249,15 @@ function AnalysisPanel({
       );
       onRetry();
     });
+  const canRun = record.allowedActions.includes("analyze");
+  if (analysis === null && !canRun) return null;
   return (
     <section aria-labelledby={`analysis-${record.id}`}>
-      <h4 id={`analysis-${record.id}`}>Advisory assessment</h4>
-      {analysis === null ? (
-        <p className="admin-status">No analysis yet.</p>
-      ) : analysis.state === "running" ? (
-        <p aria-live="polite" className="admin-status">
-          Analyzing the private report…
-        </p>
+      <h4 id={`analysis-${record.id}`}>
+        <Sparkles aria-hidden="true" size={16} /> AI summary
+      </h4>
+      {analysis === null ? null : analysis.state === "running" ? (
+        <Spinner label="Analyzing the private report…" />
       ) : analysis.state === "complete" ? (
         <>
           <p>{analysis.summary}</p>
@@ -3107,9 +3266,13 @@ function AnalysisPanel({
               {analysis.proposedSeverity ?? "—"}
             </Fact>
             <Fact term="Loss of funds">
-              {analysis.potentialLoss
-                ? LOSS_LABELS[analysis.potentialLoss]
-                : "—"}
+              {analysis.potentialLoss ? (
+                <StatusBadge tone={LOSS_LABELS[analysis.potentialLoss][1]}>
+                  {LOSS_LABELS[analysis.potentialLoss][0]}
+                </StatusBadge>
+              ) : (
+                "—"
+              )}
             </Fact>
             <Fact term="Possible duplicates">
               {analysis.duplicateCaseIds.length === 0
@@ -3118,27 +3281,26 @@ function AnalysisPanel({
             </Fact>
             <Fact term="Remediation">{analysis.remediation ?? "—"}</Fact>
           </dl>
-          <p className="field-hint">
-            AI proposal. The report text can try to influence it; you decide.
+          <p>
+            <StatusBadge>AI</StatusBadge>{" "}
+            <InfoTip text="AI proposal; you decide" />
           </p>
         </>
+      ) : analysis.state === "unavailable" ? (
+        <p className="admin-status">
+          <StatusBadge>Unavailable</StatusBadge>
+        </p>
       ) : (
         <p className="admin-status">
-          {analysis.state === "unavailable"
-            ? "Analysis unavailable. Run it again later."
-            : "The analysis failed."}
+          <StatusBadge tone="danger">Failed</StatusBadge>
         </p>
       )}
-      {record.allowedActions.includes("analyze") ? (
-        <button
-          className="text-button"
-          disabled={busy}
+      {canRun ? (
+        <RetryButton
+          busy={busy}
+          label={busy ? "Starting…" : "Run the analysis again"}
           onClick={retry}
-          type="button"
-        >
-          <RotateCcw aria-hidden="true" />{" "}
-          {busy ? "Starting…" : "Run the analysis again"}
-        </button>
+        />
       ) : null}
       <FormError message={error} />
     </section>
@@ -3177,57 +3339,60 @@ function AppealTriagePanel({
       );
       onRetry();
     });
+  const canRun = record.allowedActions.includes("triage-appeal");
+  if (triage === null && !canRun) return null;
+  const confidence =
+    triage?.confidence == null ? null : Math.round(triage.confidence * 100);
   return (
     <section aria-labelledby={`appeal-triage-${record.id}`}>
-      <h4 id={`appeal-triage-${record.id}`}>Slopbot appeal triage</h4>
-      {triage === null ? (
-        <p className="admin-status">No appeal triage yet.</p>
-      ) : triage.state === "running" ? (
-        <p aria-live="polite" className="admin-status">
-          Slopbot is drafting a resolution…
-        </p>
+      <h4 id={`appeal-triage-${record.id}`}>
+        <Bot aria-hidden="true" size={16} /> Appeal draft
+      </h4>
+      {triage === null ? null : triage.state === "running" ? (
+        <Spinner label="Slopbot is drafting a resolution…" />
       ) : triage.state === "complete" ? (
         <>
-          <dl className="admin-facts">
-            <Fact term="Drafted resolution">
-              {triage.proposedOutcome === "return"
-                ? "Return the case for a new technical review"
-                : "Keep the decision"}
-            </Fact>
-            <Fact term="Confidence">
-              {triage.confidence === null
-                ? "—"
-                : `${Math.round(triage.confidence * 100)}%`}
-            </Fact>
-            <Fact term="Escalated to a moderator">
-              {triage.escalationReasons
+          <p>
+            <StatusBadge title="Drafted resolution">
+              {triage.proposedOutcome === "return" ? "Return" : "Uphold"}
+            </StatusBadge>{" "}
+            {confidence === null ? null : (
+              <>
+                <meter
+                  aria-label="Confidence"
+                  max={100}
+                  min={0}
+                  title="Confidence"
+                  value={confidence}
+                />{" "}
+                {confidence}%{" "}
+              </>
+            )}
+            <StatusBadge
+              title={triage.escalationReasons
                 .map((reason) => ESCALATION_LABELS[reason] ?? reason)
                 .join("; ")}
-            </Fact>
-          </dl>
-          <p>{triage.rationale}</p>
-          <p className="field-hint">
-            Slopbot draft. The appeal text can try to influence it; a moderator
-            decides.
+            >
+              Moderator decides
+            </StatusBadge>
           </p>
+          <p>{triage.rationale}</p>
         </>
+      ) : triage.state === "unavailable" ? (
+        <p className="admin-status">
+          <StatusBadge>Unavailable</StatusBadge>
+        </p>
       ) : (
         <p className="admin-status">
-          {triage.state === "unavailable"
-            ? "Slopbot triage is unavailable. A moderator decides without a draft."
-            : "The appeal triage failed. A moderator decides without a draft."}
+          <StatusBadge tone="danger">Failed</StatusBadge>
         </p>
       )}
-      {record.allowedActions.includes("triage-appeal") ? (
-        <button
-          className="text-button"
-          disabled={busy}
+      {canRun ? (
+        <RetryButton
+          busy={busy}
+          label={busy ? "Starting…" : "Run the appeal triage again"}
           onClick={retry}
-          type="button"
-        >
-          <RotateCcw aria-hidden="true" />{" "}
-          {busy ? "Starting…" : "Run the appeal triage again"}
-        </button>
+        />
       ) : null}
       <FormError message={error} />
     </section>
@@ -3281,7 +3446,7 @@ function CaseActions({
   return (
     <section className="security-actions" aria-label="Case actions">
       <fieldset className="report-form-actions">
-        <legend>Review actions</legend>
+        <legend className="visually-hidden">Review actions</legend>
         {actions
           .filter((action) => PRIMARY_ACTIONS.includes(action))
           .map((action) => (
@@ -3299,9 +3464,11 @@ function CaseActions({
       </fieldset>
       {actions.some((action) => !PRIMARY_ACTIONS.includes(action)) ? (
         <details open={!PRIMARY_ACTIONS.includes(active)}>
-          <summary>Other case actions</summary>
+          <summary aria-label="Other case actions" title="Other case actions">
+            <Ellipsis aria-hidden="true" />
+          </summary>
           <label>
-            Action
+            <span className="visually-hidden">Action</span>
             <select
               value={active}
               onChange={(event) => setSelected(event.target.value)}
@@ -3324,58 +3491,92 @@ function CaseActions({
   );
 }
 
-function recoveryMessage(
-  mode: string,
-  payer: boolean,
-  reporter: boolean,
-): string {
+const CASE_CHANGED = "Changed — review and retry.";
+
+type RecoveryParty = "Reporter" | "Payer" | "Slop review";
+
+/** The recovery step and who must take it. */
+function recoveryStep(mode: string): [RecoveryParty | null, string] {
   switch (mode) {
     case "wallet-required":
-      return reporter
-        ? "Confirm your payout wallet in Settings."
-        : "Waiting for the reporter's verified payout wallet.";
+      return ["Reporter", "Confirm wallet"];
     case "consent-required":
-      return reporter
-        ? "Accept payment visibility for this payout wallet."
-        : "Waiting for the reporter to accept payment visibility for this wallet.";
+      return ["Reporter", "Accept visibility"];
     case "fee-pending":
-      return payer
-        ? "Pay and verify the unchanged fee first."
-        : "Waiting for the payer to verify the unchanged fee.";
+      return ["Payer", "Verify fee"];
     case "retirement-required":
-      return payer
-        ? "This wallet nonce was used. Verify its failed or cancelled transaction before preparing a replacement."
-        : "Waiting for verification of the previous wallet transaction.";
+      return ["Payer", "Verify old transaction"];
     case "retirement-unproven":
-      return payer
-        ? "Verify any payment already sent. This consumed wallet nonce needs manual review before a replacement."
-        : "The previous wallet transaction needs review.";
     case "payer-review":
-      return "The payer wallet needs manual review before recovery. Existing payments can still be verified.";
     case "legacy-manual":
-      return "This older payment request requires manual review. Existing transfers can still be verified.";
+      return ["Slop review", "Manual review"];
     case "resume-original":
-      return payer
-        ? "Resume the original verified payout wallet."
-        : "Waiting for the payer to resume the original wallet.";
+      return ["Payer", "Resume wallet"];
     case "cancellation-required":
-      return payer
-        ? "Cancel the old transfer before sending to this wallet."
-        : "Waiting for the payer to cancel the old transfer.";
+      return ["Payer", "Cancel old transfer"];
     case "payment-found":
-      return payer
-        ? "An existing payment was found. Verify it before continuing."
-        : "Waiting for verification of an existing payment.";
+      return ["Payer", "Verify found payment"];
     case "signature-required":
     case "history-check":
-      return payer
-        ? "Check the finalized history of the expired request."
-        : "Waiting for the payer to check the expired request.";
+      return ["Payer", "Check expired request"];
     default:
-      return payer
-        ? "Wait for the old transaction to expire, then check payment recovery."
-        : "Waiting for the old transaction to expire.";
+      return [null, "Awaiting expiry"];
   }
+}
+
+function WalletLink() {
+  return (
+    <Link href="/account#wallets">
+      <Wallet aria-hidden="true" size={14} /> Wallet
+    </Link>
+  );
+}
+
+function PaymentProgress({
+  confirmed,
+  remaining,
+}: {
+  confirmed: number;
+  remaining: number;
+}) {
+  const total = confirmed + remaining;
+  return (
+    <>
+      <progress
+        aria-label="Transfers confirmed"
+        max={total}
+        value={confirmed}
+      />{" "}
+      {confirmed}/{total}
+    </>
+  );
+}
+
+function RecoveryStatus({
+  mode,
+  payer,
+  reporter,
+}: {
+  mode: string;
+  payer: boolean;
+  reporter: boolean;
+}) {
+  const [party, step] = recoveryStep(mode);
+  const mine =
+    (party === "Payer" && payer) || (party === "Reporter" && reporter);
+  return (
+    <p role="status">
+      {party && !mine ? (
+        <>
+          <StatusBadge icon={<Hourglass />} title={`Waiting on ${party}`}>
+            <span className="visually-hidden">Waiting on </span>
+            {party}
+          </StatusBadge>{" "}
+        </>
+      ) : null}
+      {step}
+    </p>
+  );
 }
 
 function CaseDetail({
@@ -3400,17 +3601,15 @@ function CaseDetail({
     [replaceData],
   );
   const [note, setNote] = useState<string | null>(null);
-  if (state.status === "loading")
-    return (
-      <p aria-live="polite" className="admin-status">
-        Loading case…
-      </p>
-    );
+  if (state.status === "loading") return <Spinner label="Loading case…" />;
   if (state.status === "signed-out")
     return (
-      <p className="form-error" role="alert">
-        <CircleAlert aria-hidden="true" /> Your session ended. Sign in again.
-      </p>
+      <div role="alert">
+        <SignInPanel
+          next={`${window.location.pathname}${window.location.search}`}
+          state={{ status: "signed-out" }}
+        />
+      </div>
     );
   if (state.status === "error")
     return (
@@ -3489,7 +3688,7 @@ function CaseDetail({
     ) {
       replace(current);
       onChanged();
-      throw new Error("The payment state changed. Review the current case.");
+      throw new Error(CASE_CHANGED);
     }
   };
   const verifyExistingPayment = async (
@@ -3509,7 +3708,7 @@ function CaseDetail({
     ) {
       replace(current);
       onChanged();
-      throw new Error("The payment state changed. Review the current case.");
+      throw new Error(CASE_CHANGED);
     }
     const response = await privateRequest<{ case: SecurityCase }>(
       "POST",
@@ -3530,6 +3729,9 @@ function CaseDetail({
   const response = [...(record.events ?? [])]
     .reverse()
     .find((event) => RESPONSE_KINDS.has(event.kind) && event.reason);
+  const activeTriagers = (record.triagers ?? []).filter(
+    (entry) => entry.revokedAt === null,
+  );
   // Disclosure is shown once a fix exists or a decision was recorded.
   const disclosureRelevant =
     ["resolved", "mitigation-verified"].includes(
@@ -3544,95 +3746,155 @@ function CaseDetail({
         <h3 id={`case-${record.id}`}>
           {caseTitle(record)} · {record.projectId}
         </h3>
-        <StatusBadge icon={<LockKeyhole />}>Private case</StatusBadge>
+        <span role="img" aria-label="Private" title="Private">
+          <LockKeyhole aria-hidden="true" size={16} />
+        </span>
       </header>
       {note ? (
         <p className="admin-status" role="status">
-          {note}
+          <StatusBadge tone="success" icon={<Check />}>
+            {note}
+          </StatusBadge>
         </p>
       ) : null}
       {state.refreshError ? (
-        <p className="form-error" role="alert">
-          <CircleAlert aria-hidden="true" /> {state.refreshError} Showing the
-          last loaded case.{" "}
-          <button className="text-button" onClick={reload} type="button">
-            <RotateCcw aria-hidden="true" /> Retry
-          </button>
-        </p>
+        <StaleNotice error={state.refreshError} onRetry={reload} />
       ) : null}
       <p className="security-next-step">
         <ArrowRight aria-hidden="true" />
         <span>
-          <strong>Next step:</strong> {record.nextStep}
+          {record.nextStep}
           {record.nextStepDueAt ? (
-            <span className="security-due">
+            <>
               {" "}
-              Due {formatUtc(record.nextStepDueAt)}.
-            </span>
+              <DueChip at={record.nextStepDueAt} />
+            </>
           ) : null}
         </span>
       </p>
       <dl className="admin-facts">
         <Fact term="Receipt">
-          <StatusBadge
-            tone={record.submissionState === "verified" ? "success" : "warning"}
-          >
-            {record.receivedAtSource === "slop-received"
-              ? "Received by Slop"
-              : SUBMISSION_LABELS[record.submissionState]}
-          </StatusBadge>
-          {record.receivedAt
-            ? ` ${formatUtc(record.receivedAt)}${record.receivedAtSource === "maintainer-attested" ? RECEIVED_AT_SOURCE_LABELS["maintainer-attested"] : ""}`
-            : ""}
+          {record.receivedAtSource === "slop-received" ? (
+            <StatusBadge
+              tone={
+                record.submissionState === "verified" ? "success" : "warning"
+              }
+              icon={<ShieldCheck />}
+            >
+              Slop received
+            </StatusBadge>
+          ) : (
+            <StatusBadge
+              tone={SUBMISSION_LABELS[record.submissionState][1]}
+              icon={<GithubIcon />}
+            >
+              {SUBMISSION_LABELS[record.submissionState][0]}
+            </StatusBadge>
+          )}
+          {record.receivedAt ? ` ${formatUtc(record.receivedAt)}` : ""}
+          {record.receivedAt &&
+          record.receivedAtSource === "maintainer-attested" ? (
+            <>
+              {" "}
+              <span
+                role="img"
+                aria-label="Maintainer-attested"
+                title="Maintainer-attested"
+              >
+                <UserRound aria-hidden="true" size={14} />
+              </span>
+            </>
+          ) : null}
           {record.advisory ? (
             <>
-              {" · "}
-              <ExternalLinkAnchor href={record.advisory.url}>
-                GitHub advisory
+              {" "}
+              <ExternalLinkAnchor
+                href={record.advisory.url}
+                label="GitHub advisory"
+              >
+                <GithubIcon aria-hidden="true" size={16} />
               </ExternalLinkAnchor>
             </>
           ) : null}
         </Fact>
         {record.receiptState ? (
           <Fact term="Owner response">
-            {RECEIPT_LABELS[record.receiptState] ?? record.receiptState}
-            {response?.reason ? ` — “${response.reason}”` : ""}
+            <StatusBadge tone={RECEIPT_TONES[record.receiptState] ?? "neutral"}>
+              {RECEIPT_LABELS[record.receiptState] ?? record.receiptState}
+            </StatusBadge>
+            {response?.reason ? (
+              <>
+                {" "}
+                <q>{response.reason}</q>
+              </>
+            ) : null}
           </Fact>
         ) : null}
-        <Fact term="Award">{awardText(record)}</Fact>
+        {record.award && record.terms ? null : (
+          <Fact term="Award">
+            <StatusBadge>{awardText(record)}</StatusBadge>
+          </Fact>
+        )}
         {record.relatedParty === "related" &&
         record.relatedPartyReview !== "not-applicable" ? (
           <Fact term="Related party">
-            {RELATED_PARTY_LABELS[record.relatedPartyReview]}
+            <StatusBadge
+              tone={RELATED_PARTY_LABELS[record.relatedPartyReview][1]}
+            >
+              {RELATED_PARTY_LABELS[record.relatedPartyReview][0]}
+            </StatusBadge>
           </Fact>
         ) : null}
         <Fact term="Payout">
           <StatusBadge
-            tone={record.paymentState === "paid" ? "success" : "neutral"}
+            tone={
+              record.paymentState === "paid"
+                ? "success"
+                : record.paymentState === "held"
+                  ? "warning"
+                  : "neutral"
+            }
           >
             {paymentLabel(record)}
           </StatusBadge>
-          {record.paymentDeadline
-            ? ` · deadline ${formatUtc(record.paymentDeadline)}`
-            : ""}
+          {record.paymentDeadline ? (
+            <>
+              {" "}
+              <StatusBadge icon={<Clock />} title="Payment deadline">
+                <span className="visually-hidden">Deadline </span>
+                {formatUtc(record.paymentDeadline)}
+              </StatusBadge>
+            </>
+          ) : null}
         </Fact>
       </dl>
       {record.award && record.terms ? (
         <section className="security-offer" aria-label="Award and payment">
-          <h4>Award and payment</h4>
-          <dl className="admin-facts">
-            <Fact term="Researcher receives">
-              {money(record.award.researcherMinor, record.terms)}
-            </Fact>
-            <Fact term="Total award">
-              {money(record.award.grossMinor, record.terms)}
-            </Fact>
-            <Fact term="Slop share">
-              {money(record.award.slopMinor, record.terms)}
-            </Fact>
-            <Fact term="Payment status">{paymentLabel(record)}</Fact>
-          </dl>
-          <p>Approval and funding are separate from finalized payment.</p>
+          <MetricGrid>
+            <MetricTile
+              label="Award"
+              value={money(record.award.grossMinor, record.terms)}
+              detail={
+                awardPending(record) ? (
+                  <StatusBadge tone="warning">
+                    {awardPending(record)}
+                  </StatusBadge>
+                ) : undefined
+              }
+            />
+          </MetricGrid>
+          <div className="security-award-split">
+            <div>
+              <span>Researcher</span>
+              <strong>
+                {money(record.award.researcherMinor, record.terms)}
+              </strong>
+            </div>
+            <div>
+              <span>Slop</span>
+              <strong>{money(record.award.slopMinor, record.terms)}</strong>
+            </div>
+          </div>
         </section>
       ) : null}
       {owner ? (
@@ -3661,23 +3923,29 @@ function CaseDetail({
           aria-label="Private payment"
           className="security-payment-panel"
         >
-          <h4>Payment</h4>
-          <p className="operations-muted">{record.settlement.privacyNotice}</p>
+          <h4>
+            Payment{" "}
+            <NetworkName chain={record.settlement.network} iconOnly>
+              {record.settlement.network}
+            </NetworkName>{" "}
+            <InfoTip text={record.settlement.privacyNotice} />
+          </h4>
           {record.viewerRoles.includes("reporter") &&
           record.settlement.state !== "paid" ? (
             <p>
-              <Link href="/account#wallets">Review your payout wallet</Link>
+              <WalletLink />
             </p>
           ) : null}
           <dl className="operations-facts">
-            <Fact term="Network">{record.settlement.network}</Fact>
             {record.paymentRail === "direct" &&
             record.settlement.remainingTransfers ? (
               <Fact term="Progress">
-                {record.settlement.confirmedTransactionIds?.length ?? 0}{" "}
-                transaction(s) confirmed ·{" "}
-                {record.settlement.remainingTransfers.length} transfer(s)
-                remaining
+                <PaymentProgress
+                  confirmed={
+                    record.settlement.confirmedTransactionIds?.length ?? 0
+                  }
+                  remaining={record.settlement.remainingTransfers.length}
+                />
               </Fact>
             ) : null}
             {(
@@ -3686,7 +3954,14 @@ function CaseDetail({
                 ? [record.settlement.transactionId]
                 : [])
             ).map((transactionId) => (
-              <Fact term="Finalized transaction" key={transactionId}>
+              <Fact
+                term={
+                  <span role="img" aria-label="Finalized" title="Finalized">
+                    <Check aria-hidden="true" size={14} />
+                  </span>
+                }
+                key={transactionId}
+              >
                 <CopyIdentifier
                   label="payment transaction ID"
                   value={transactionId}
@@ -3710,15 +3985,13 @@ function CaseDetail({
                   value={record.settlement.recovery.target.address}
                 />
               ) : null}
-              <p role="status">
-                {recoveryMessage(
-                  record.settlement.recovery.mode,
-                  canPay,
-                  record.viewerRoles.includes("reporter"),
-                )}
-              </p>
+              <RecoveryStatus
+                mode={record.settlement.recovery.mode}
+                payer={canPay}
+                reporter={record.viewerRoles.includes("reporter")}
+              />
               {record.settlement.recovery.mode === "wallet-required" ? (
-                <Link href="/account#wallets">Review payout wallet</Link>
+                <WalletLink />
               ) : null}
               {record.settlement.recovery.mode === "payment-found" &&
               record.settlement.recovery.transactionIds?.length &&
@@ -3749,7 +4022,7 @@ function CaseDetail({
                     })
                   }
                 >
-                  Verify found payment
+                  Verify
                 </button>
               ) : null}
               <FormError message={recoveryAction.error} />
@@ -3770,7 +4043,7 @@ function CaseDetail({
                   authorize={(isCurrent) =>
                     stillRecoverable(
                       (recovery) => recovery?.messages,
-                      "The recovery request changed. Refresh before signing.",
+                      CASE_CHANGED,
                       isCurrent,
                     )
                   }
@@ -3821,7 +4094,7 @@ function CaseDetail({
                     authorize={() =>
                       stillRecoverable(
                         (recovery) => recovery?.cancellationRequest,
-                        "The recovery request changed. Refresh the case before signing.",
+                        CASE_CHANGED,
                       )
                     }
                     authorizeVerification={async () => {
@@ -3845,9 +4118,7 @@ function CaseDetail({
                       ) {
                         replace(current);
                         onChanged();
-                        throw new Error(
-                          "The recovery changed. Review its current state.",
-                        );
+                        throw new Error(CASE_CHANGED);
                       }
                     }}
                     verify={async (hashes) => {
@@ -3933,9 +4204,7 @@ function CaseDetail({
                     ) {
                       replace(current);
                       onChanged();
-                      throw new Error(
-                        "The payment request changed. Refresh the case before signing.",
-                      );
+                      throw new Error(CASE_CHANGED);
                     }
                   }}
                   authorizeVerification={authorizeExistingPayment}
@@ -3977,9 +4246,7 @@ function CaseDetail({
                     ) {
                       replace(current);
                       onChanged();
-                      throw new Error(
-                        "The payment request changed. Review its current state before signing.",
-                      );
+                      throw new Error(CASE_CHANGED);
                     }
                   }}
                   authorizeVerification={authorizeExistingPayment}
@@ -4001,67 +4268,124 @@ function CaseDetail({
         }}
       />
       <details className="security-reference">
-        <summary>Case details and history</summary>
+        <summary>History</summary>
+        {record.receiptState ? (
+          <p>
+            {record.severity ? (
+              <>
+                <SeverityChip severity={record.severity} />{" "}
+              </>
+            ) : null}
+            {record.lossFinding ? (
+              <>
+                <StatusBadge title="Loss of funds">
+                  {record.lossFinding}
+                </StatusBadge>{" "}
+              </>
+            ) : null}
+            {record.remediationState ? (
+              <>
+                <StatusBadge title="Remediation">
+                  {record.remediationState}
+                </StatusBadge>{" "}
+              </>
+            ) : null}
+            {record.disclosureState ? (
+              <>
+                <StatusBadge
+                  icon={
+                    record.disclosureState === "disclosed" ? (
+                      <Eye />
+                    ) : (
+                      <LockKeyhole />
+                    )
+                  }
+                  title="Disclosure"
+                >
+                  {record.disclosureState}
+                </StatusBadge>{" "}
+              </>
+            ) : null}
+            {record.recognition ? (
+              <>
+                <StatusBadge
+                  icon={record.recognition === "opt-in" ? <Eye /> : <EyeOff />}
+                  title="Recognition"
+                >
+                  {record.recognition}
+                </StatusBadge>{" "}
+              </>
+            ) : null}
+            {record.appealState && record.appealState !== "none" ? (
+              <StatusBadge title="Appeal">
+                Appeal {record.appealState}
+              </StatusBadge>
+            ) : null}
+          </p>
+        ) : null}
         <dl className="admin-facts">
           <Fact term="Case">
             <CopyIdentifier label="case ID" value={record.id} />
           </Fact>
-          <Fact term="Program terms at receipt">
+          <Fact term="Terms">
             {record.terms
-              ? `${money(record.terms.grossMinor, record.terms)} published gross per finding (policy revision ${record.policyRevision ?? "—"})`
-              : `No paid program was open (policy revision ${record.policyRevision ?? "—"})`}
+              ? money(record.terms.grossMinor, record.terms)
+              : "None"}{" "}
+            · rev {record.policyRevision ?? "—"}
           </Fact>
-          {record.receiptState ? (
-            <>
-              <Fact term="Severity">{record.severity ?? "—"}</Fact>
-              <Fact term="Loss of funds">{record.lossFinding ?? "—"}</Fact>
-              <Fact term="Remediation">{record.remediationState}</Fact>
-              <Fact term="Disclosure">{record.disclosureState}</Fact>
-              <Fact term="Recognition">{record.recognition}</Fact>
-              <Fact term="Appeal">{record.appealState}</Fact>
-            </>
-          ) : null}
           {record.reporter ? (
             <Fact term="Reporter">@{record.reporter.githubLogin}</Fact>
           ) : null}
           {record.payee ? (
             <Fact term="Payee">@{record.payee.githubLogin}</Fact>
           ) : null}
-          {owner ? (
-            <>
-              <Fact term="Root cause">{record.rootCauseKey ?? "—"}</Fact>
-              <Fact term="Duplicate of">{record.duplicateOf ?? "—"}</Fact>
-              <Fact term="Triagers">
-                {(record.triagers ?? [])
-                  .filter((entry) => entry.revokedAt === null)
-                  .map((entry) => `@${entry.githubLogin}`)
-                  .join(", ") || "None"}
-              </Fact>
-            </>
+          {owner && record.rootCauseKey ? (
+            <Fact term="Root cause">{record.rootCauseKey}</Fact>
+          ) : null}
+          {owner && record.duplicateOf ? (
+            <Fact term="Duplicate of">{record.duplicateOf}</Fact>
+          ) : null}
+          {owner && activeTriagers.length > 0 ? (
+            <Fact term="Triagers">
+              {activeTriagers
+                .map((entry) => `@${entry.githubLogin}`)
+                .join(", ")}
+            </Fact>
           ) : null}
         </dl>
         {record.events && record.events.length > 0 ? (
           <ol className="security-history">
-            {record.events.map((event) => (
-              <li key={event.revision}>
-                {formatUtc(event.at)} ·{" "}
-                {event.kind === "submit" &&
-                record.receivedAtSource === "slop-received"
-                  ? "Reporter submitted privately to Slop"
-                  : (EVENT_LABELS[event.kind] ?? event.kind)}
-                {event.reason ? ` — ${event.reason}` : ""}
-                {event.evidenceReference
-                  ? ` (evidence: ${event.evidenceReference})`
-                  : ""}
-                {event.kind === "disclosure" &&
-                event.detail?.redactedContentDigest
-                  ? ` (approved content SHA-256: ${event.detail.redactedContentDigest})`
-                  : ""}
-                {event.kind === "disclosure" && event.detail?.embargoChange
-                  ? ` (embargo change: ${event.detail.embargoChange})`
-                  : ""}
-              </li>
-            ))}
+            {record.events.map((event) => {
+              const digest =
+                event.kind === "disclosure"
+                  ? event.detail?.redactedContentDigest
+                  : null;
+              const embargo =
+                event.kind === "disclosure"
+                  ? event.detail?.embargoChange
+                  : null;
+              return (
+                <li key={event.revision}>
+                  <EventActor kind={event.kind} />{" "}
+                  <strong>{EVENT_LABELS[event.kind] ?? event.kind}</strong>{" "}
+                  {formatUtc(event.at)}
+                  {event.reason ||
+                  event.evidenceReference ||
+                  digest ||
+                  embargo ? (
+                    <details>
+                      <summary>Details</summary>
+                      {event.reason ? <p>{event.reason}</p> : null}
+                      {event.evidenceReference ? (
+                        <p>Evidence: {event.evidenceReference}</p>
+                      ) : null}
+                      {digest ? <p>SHA-256: {digest}</p> : null}
+                      {embargo ? <p>Embargo: {embargo}</p> : null}
+                    </details>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         ) : null}
       </details>
@@ -4100,7 +4424,8 @@ function CheckReceipt({
         onClick={check}
         type="button"
       >
-        {busy ? "Checking GitHub…" : "Confirm with GitHub"}
+        <GithubIcon aria-hidden="true" size={16} />{" "}
+        {busy ? "Checking…" : "Confirm"}
       </button>
       <FormError message={error} />
     </div>
@@ -4168,18 +4493,13 @@ export function SecurityInbox({
           current = await currentProjectSession();
         } catch {
           assertCurrent();
-          if (mounted.current)
-            setProblem(
-              "Your private session could not be verified. Retry before viewing reports.",
-            );
+          if (mounted.current) setProblem("Session check failed.");
           throw new Error("Your private session could not be verified.");
         }
         assertCurrent();
         if (!current || current.githubId !== actorId) {
           clearAllDrafts();
-          setProblem(
-            "Your account changed or signed out. Reload your private reports.",
-          );
+          setProblem(current ? "Account switched." : "Signed out.");
           onIdentityChange?.(current?.githubId ?? null);
           throw new Error("Your account changed or signed out.");
         }
@@ -4207,7 +4527,7 @@ export function SecurityInbox({
         ) {
           if (mounted.current) {
             setProblem(
-              "Private report access changed. Reload your private reports.",
+              cause.status === 401 ? "Signed out." : "Access revoked.",
             );
             if (cause.status === 401) {
               clearAllDrafts();
@@ -4235,9 +4555,7 @@ export function SecurityInbox({
           identity.recipientGithubId !== actorId) ||
           (identity.viewer?.githubId && identity.viewer.githubId !== actorId))
       ) {
-        setProblem(
-          "This private response belongs to another account. Reload your private reports.",
-        );
+        setProblem("Account mismatch.");
         throw new Error("Private report account mismatch.");
       }
       return value;
@@ -4250,7 +4568,7 @@ export function SecurityInbox({
       <div className="form-error" role="alert">
         <p>{problem}</p>
         <button className="text-button" type="button" onClick={refreshIdentity}>
-          Retry private session
+          Reload
         </button>
       </div>
     );
@@ -4268,12 +4586,11 @@ export function SecurityInbox({
       </PrivateRequestContext.Provider>
     );
   else if (session.status === "checking" || session.status === "signed-in")
-    body = <p role="status">Checking private session…</p>;
+    body = <Spinner label="Checking private session…" />;
   else
     body = (
       <SignInPanel
         next={embedded ? "/inbox?view=reports" : "/security"}
-        purpose="Sign in to see your security cases."
         state={session}
       />
     );
@@ -4356,13 +4673,7 @@ function SecurityInboxContent({
   );
   let body: ReactNode;
   if (session.status !== "signed-in") {
-    body = (
-      <SignInPanel
-        next="/security"
-        purpose="Sign in to see your security cases."
-        state={session}
-      />
-    );
+    body = <SignInPanel next="/security" state={session} />;
   } else if (list.status === "signed-out") {
     body = (
       <SignInPanel
@@ -4372,11 +4683,7 @@ function SecurityInboxContent({
       />
     );
   } else if (list.status === "loading") {
-    body = (
-      <p aria-live="polite" className="admin-status">
-        Loading your cases…
-      </p>
-    );
+    body = <Spinner label="Loading your cases…" />;
   } else if (list.status === "error") {
     body = (
       <div className="form-error" role="alert">
@@ -4389,13 +4696,13 @@ function SecurityInboxContent({
   } else if (list.value.viewer.githubId !== session.session.githubId) {
     body = (
       <div className="form-error" role="alert">
-        Your account changed. Reload this page to view your private cases.
+        Account changed.{" "}
         <button
           className="text-button"
           type="button"
           onClick={() => window.location.reload()}
         >
-          Reload private cases
+          Reload
         </button>
       </div>
     );
@@ -4405,21 +4712,17 @@ function SecurityInboxContent({
         .filter((entry) => entry.roles.includes("security-maintainer"))
         .map((entry) => entry.projectId),
     );
+    const filterCount = (kind: ReportFilter) =>
+      list.value.cases.filter((record) => matchesReport(record, kind)).length;
     body = (
       <>
         {note ? <p role="status">{note}</p> : null}
         {list.refreshError ? (
-          <p className="form-error" role="alert">
-            <CircleAlert aria-hidden="true" /> {list.refreshError} Showing the
-            last loaded cases.{" "}
-            <button className="text-button" onClick={reload} type="button">
-              <RotateCcw aria-hidden="true" /> Retry
-            </button>
-          </p>
+          <StaleNotice error={list.refreshError} onRetry={reload} />
         ) : null}
         {maintained.size > 0 ? (
           <label>
-            Show reports
+            <span className="visually-hidden">Show reports</span>
             <select
               value={filter}
               onChange={(event) => {
@@ -4427,11 +4730,11 @@ function SecurityInboxContent({
                 openCase(null);
               }}
             >
-              <option value="all">All reports</option>
-              <option value="review">Needs your review</option>
-              <option value="waiting">Waiting for researcher</option>
-              <option value="award">Award and payment</option>
-              <option value="resolved">Paid or ineligible</option>
+              <option value="all">All</option>
+              <option value="review">Review {filterCount("review")}</option>
+              <option value="waiting">Waiting {filterCount("waiting")}</option>
+              <option value="award">Award {filterCount("award")}</option>
+              <option value="resolved">Closed {filterCount("resolved")}</option>
             </select>
           </label>
         ) : null}
@@ -4454,21 +4757,21 @@ function SecurityInboxContent({
           (record) => !knownSubmissionCases.includes(record.id),
         ) ? (
           <section aria-labelledby="security-cases" className="admin-section">
-            <h2 id="security-cases">Decisions and payments</h2>
+            <h2 id="security-cases">Cases</h2>
             {list.value.authorityUnavailable ? (
-              <p className="form-error" role="status">
-                Some maintainer access could not be checked.{" "}
-                <button className="text-button" onClick={reload} type="button">
-                  Retry access check
-                </button>
+              <p className="admin-status" role="status">
+                <StatusBadge
+                  tone="warning"
+                  icon={<CircleAlert />}
+                  title="Some maintainer access could not be checked"
+                >
+                  Partial list
+                </StatusBadge>{" "}
+                <RetryButton label="Retry access check" onClick={reload} />
               </p>
             ) : null}
             {list.value.cases.length === 0 ? (
-              <p className="admin-status">
-                {list.value.authorityUnavailable
-                  ? "No cases to show. Retry the access check."
-                  : "You have no private security cases."}
-              </p>
+              <p className="admin-status">No cases</p>
             ) : (
               <ul
                 className={`security-case-list${selected ? " security-case-list-selected" : ""}`}
@@ -4489,8 +4792,25 @@ function SecurityInboxContent({
                       >
                         <span>{record.projectId}</span>
                         <strong title={record.id}>{caseTitle(record)}</strong>
-                        <span>{record.nextStep}</span>
-                        <span>Award: {awardText(record)}</span>
+                        <span>
+                          <StatusBadge
+                            tone={
+                              RECEIPT_TONES[record.receiptState ?? ""] ??
+                              "neutral"
+                            }
+                          >
+                            {record.receiptState
+                              ? (RECEIPT_LABELS[record.receiptState] ??
+                                record.receiptState)
+                              : SUBMISSION_LABELS[record.submissionState][0]}
+                          </StatusBadge>{" "}
+                          <small>{record.nextStep}</small>
+                        </span>
+                        <span>
+                          <StatusBadge title="Award">
+                            {awardShort(record)}
+                          </StatusBadge>
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -4499,11 +4819,13 @@ function SecurityInboxContent({
             {selected ? (
               <>
                 <button
+                  aria-label="Back to reports"
                   type="button"
                   className="text-button"
+                  title="Back to reports"
                   onClick={() => openCase(null)}
                 >
-                  Back to reports
+                  <ArrowLeft aria-hidden="true" />
                 </button>
                 <CaseDetail
                   caseId={selected}
@@ -4523,15 +4845,15 @@ function SecurityInboxContent({
               window.location.hash === "#security-link"
             }
           >
-            <summary>Link or import a GitHub report</summary>
+            <summary>
+              <GithubIcon aria-hidden="true" size={14} /> Link report
+            </summary>
             {automatic ? (
               <section
-                aria-labelledby="security-link"
+                aria-label="Verify a GitHub report"
                 className="admin-section"
+                id="security-link"
               >
-                <h2 id="security-link">
-                  Already reported on GitHub? Verify it
-                </h2>
                 <DirectVerifyForm
                   onUnavailable={() => setDirectUnavailable(true)}
                   programProjects={programProjects}
@@ -4539,8 +4861,7 @@ function SecurityInboxContent({
                 {linkFallback || directUnavailable ? (
                   <>
                     <p className="admin-status">
-                      GitHub could not verify this report. Link it for a
-                      maintainer to verify.
+                      Not verified. Link for maintainer review:
                     </p>
                     <ClaimForm
                       onCreated={created}
@@ -4551,13 +4872,10 @@ function SecurityInboxContent({
               </section>
             ) : automatic === false ? (
               <section
-                aria-labelledby="security-link"
+                aria-label="Link a GitHub report"
                 className="admin-section"
+                id="security-link"
               >
-                <h2 id="security-link">
-                  Link a report you submitted on GitHub
-                </h2>
-                <p className="admin-status">A maintainer verifies the link.</p>
                 <ClaimForm
                   onCreated={created}
                   programProjects={programProjects}
@@ -4569,7 +4887,7 @@ function SecurityInboxContent({
                 aria-labelledby="security-import"
                 className="admin-section"
               >
-                <h2 id="security-import">Reports sent on GitHub directly</h2>
+                <h2 id="security-import">Import</h2>
                 {automatic === false ? (
                   <RecordForm
                     onCreated={created}

@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  LoaderCircle,
+  LogIn,
+  RotateCcw,
+  TriangleAlert,
+  Wallet,
+} from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { loginHref } from "./lib/browser-deployment";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
@@ -29,9 +36,13 @@ import {
 } from "./lib/vault-setup";
 import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
+import { CopyIdentifier } from "./Operations";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
 import { NetworkName, WalletConnection } from "./Presentation";
 
+const spinner = (
+  <LoaderCircle className="wallet-spin" aria-hidden="true" size={14} />
+);
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 type Pending = PendingAttempt & {
   version: 1;
@@ -57,8 +68,8 @@ async function request(path: string, body?: unknown) {
       new Error(
         result.message ??
           (response.status === 401
-            ? "Sign in with GitHub to set up the project vault."
-            : "Vault setup could not be loaded. Retry."),
+            ? "Sign in with GitHub"
+            : "Setup unavailable. Retry."),
       ),
       { code: result.error },
     );
@@ -78,9 +89,7 @@ function restore(key: string): Pending | null {
     !Object.hasOwn(ESCROW_NETWORKS, value.input.network) ||
     (value.hash !== null && !isVaultCreationId(value.input.network, value.hash))
   )
-    throw new Error(
-      "The saved request cannot be read. Check your wallet activity before creating a vault.",
-    );
+    throw new Error("Saved request unreadable. Check wallet activity.");
   return value;
 }
 export function OwnerVaultSetup({
@@ -133,7 +142,7 @@ export function OwnerVaultSetup({
   const createButton = useRef<HTMLButtonElement>(null);
   const hashInput = useRef<HTMLInputElement>(null);
   const [failedCreation, setFailedCreation] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const [reload, setReload] = useState(0);
   const solana =
@@ -256,10 +265,7 @@ export function OwnerVaultSetup({
   const reviewCreation = (existingOnly = false) =>
     run(async (current) => {
       const selectedClaim = existingOnly ? recoveryClaim : claim;
-      if (!info || !selectedClaim)
-        throw new Error(
-          "Confirm this wallet in your account, then reload the setup options.",
-        );
+      if (!info || !selectedClaim) throw new Error("Wallet not confirmed");
       const input = {
         network: network as EscrowDeployment["network"],
         claimId: selectedClaim.claimId,
@@ -279,9 +285,7 @@ export function OwnerVaultSetup({
         selectedClaim.address,
       );
       if (existingOnly && !checked.existingVault)
-        throw new Error(
-          "No existing vault was found for your confirmed wallet. Connect it to create one.",
-        );
+        throw new Error("No vault found for this wallet.");
       setReview({ version: 1, input, review: checked, hash: null });
     });
   const create = () =>
@@ -318,9 +322,7 @@ export function OwnerVaultSetup({
         wallet.address,
       );
       if (fresh.review.existingVault)
-        throw new Error(
-          "This vault already exists. Recover its creation transaction instead of sending another.",
-        );
+        throw new Error("Vault exists. Recover it instead.");
       if (
         fresh.review.family !== review.review.family ||
         (fresh.review.family === "evm" &&
@@ -346,10 +348,7 @@ export function OwnerVaultSetup({
           throw new Error(
             "The vault setup view was closed. Review before sending.",
           );
-        if (!attempt.begin())
-          throw new Error(
-            "The saved vault request changed. Reload before continuing.",
-          );
+        if (!attempt.begin()) throw new Error("Request changed. Reload.");
         storedPending.current = ready;
         if (current()) setPending(ready);
         requested = true;
@@ -377,27 +376,29 @@ export function OwnerVaultSetup({
           typeof hash !== "string" ||
           !isVaultCreationId(ready.input.network, hash)
         )
-          throw new Error(
-            "The wallet did not return a transaction hash. Recover it from wallet activity.",
-          );
+          throw new Error("No hash returned. Check wallet activity.");
         const submitted = { ...ready, hash };
         try {
           if (attempt.submitted(hash)) {
             storedPending.current = submitted;
             if (current()) {
               setPending(submitted);
-              setNotice(
-                "Creation sent. Check registration once it is finalized.",
-              );
+              setNotice(<>{spinner} Finalizing · don't resend</>);
             }
           } else if (current())
             setNotice(
-              `Creation sent: ${hash}. The saved request changed. Keep this hash with your wallet activity.`,
+              <>
+                Not saved. Keep this {solana ? "signature" : "hash"}:{" "}
+                <CopyIdentifier label="transaction hash" value={hash} />
+              </>,
             );
         } catch {
           if (current())
             setNotice(
-              `Creation sent: ${hash}. Keep this hash; browser storage could not save it.`,
+              <>
+                Not saved. Keep this {solana ? "signature" : "hash"}:{" "}
+                <CopyIdentifier label="transaction hash" value={hash} />
+              </>,
             );
         }
         if (current()) {
@@ -426,19 +427,14 @@ export function OwnerVaultSetup({
           "Enter the creation transaction hash from your wallet.",
         );
       const captured = storedPending.current;
-      if (pending && !captured)
-        throw new Error(
-          "The saved vault request changed. Reload before continuing.",
-        );
+      if (pending && !captured) throw new Error("Request changed. Reload.");
       const submitted: Pending = {
         ...viewed,
         ...(pending ? {} : { attemptId: crypto.randomUUID() }),
         hash,
       };
       if (!remember(submitted, current, captured ?? undefined))
-        throw new Error(
-          "The saved vault request changed. Reload before continuing.",
-        );
+        throw new Error("Request changed. Reload.");
       const result = (await request(`project-vaults/${project.id}`, {
         ...submitted.input,
         step: "register",
@@ -452,11 +448,9 @@ export function OwnerVaultSetup({
       };
       if (!current()) return;
       if (JSON.stringify(restore(key)) !== JSON.stringify(submitted))
-        throw new Error(
-          "The saved vault request changed. Reload before continuing.",
-        );
+        throw new Error("Request changed. Reload.");
       if (result.status === "pending") {
-        setNotice("The creation is not finalized yet. Wait, then check again.");
+        setNotice(<>{spinner} Finalizing · don't resend</>);
         return;
       }
       if (
@@ -474,9 +468,7 @@ export function OwnerVaultSetup({
         Number(result.revision),
       );
       if (!clear(submitted, current) && current())
-        throw new Error(
-          "The saved vault request changed. Reload before continuing.",
-        );
+        throw new Error("Request changed. Reload.");
       if (current()) setReview(null);
     });
   const active = pending ?? review;
@@ -485,22 +477,25 @@ export function OwnerVaultSetup({
       className="section"
       aria-label={bounty ? "Set up bounty vault" : "Set up project vault"}
     >
-      <h3>{bounty ? "Set up your bounty vault" : "Set up your vault"}</h3>
-      <p>Your wallet creates and owns the vault.</p>
+      <h3>{bounty ? "Bounty vault" : "Create vault"}</h3>
       {signInRequired ? (
         <p>
           <a
+            className="button secondary-button"
+            aria-label="Sign in with GitHub"
             href={loginHref(
               `/projects/${project.slug}/${bounty ? "manage" : "funding"}`,
             )}
           >
-            Sign in with GitHub
-          </a>{" "}
-          to set up the vault.
+            <LogIn aria-hidden="true" size={16} /> Sign in
+          </a>
         </p>
       ) : null}
       {!info && !error && !signInRequired ? (
-        <p role="status">Loading setup options…</p>
+        <p role="status">
+          {spinner}
+          <span className="visually-hidden">Loading setup options</span>
+        </p>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
       {notice ? <p role="status">{notice}</p> : null}
@@ -511,15 +506,13 @@ export function OwnerVaultSetup({
             void run(async (current) => {
               const captured = storedPending.current;
               if (captured && !clear(captured, current))
-                throw new Error(
-                  "The saved vault request changed. Reload before continuing.",
-                );
+                throw new Error("Request changed. Reload.");
               setReview(null);
               setFailedCreation(false);
             })
           }
         >
-          Review a new creation request
+          Start over
         </button>
       ) : null}
       {saved.error ? (
@@ -528,20 +521,18 @@ export function OwnerVaultSetup({
           onClick={() =>
             void run(async () => {
               if (sessionStorage.getItem(key) !== saved.raw)
-                throw new Error(
-                  "The saved vault request changed. Reload before continuing.",
-                );
+                throw new Error("Request changed. Reload.");
               sessionStorage.removeItem(key);
               location.reload();
             })
           }
         >
-          I checked wallet activity; clear the unreadable saved request
+          Clear saved request
         </button>
       ) : null}
       {!active && !signInRequired && info ? (
         info.networks.length === 0 ? (
-          <p>Vault creation is not available on this network yet.</p>
+          <p>Not available on this network</p>
         ) : (
           <>
             {info.networks.length === 1 ? (
@@ -577,11 +568,10 @@ export function OwnerVaultSetup({
               address={wallet?.address ?? null}
               wallets={wallets}
               disabled={busy}
-              legend="Connect your confirmed owner wallet"
+              legend="Owner wallet"
               empty={
                 <p>
-                  Open this page in your wallet app or install a compatible
-                  wallet.
+                  <Wallet aria-hidden="true" size={16} /> No wallet found
                 </p>
               }
               onConnect={(provider) => void connect(provider)}
@@ -601,35 +591,33 @@ export function OwnerVaultSetup({
             ) : null}
             {wallet && !claim ? (
               <p>
-                <a href="/account#wallets">
-                  Confirm this wallet in your account
-                </a>
-                , then reload the setup options.
+                <TriangleAlert aria-hidden="true" size={14} />{" "}
+                <a href="/account#wallets">Confirm wallet</a>
               </p>
             ) : null}
             {!bounty ? (
               <>
-                <label>
-                  Automatic monthly payment
-                  <select
-                    value={automatic ? "on" : "off"}
+                <label className="checkbox-field">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={automatic}
+                    className="email-switch"
                     disabled={busy}
-                    onChange={(e) => {
+                    onClick={() => {
                       action.current += 1;
-                      setAutomatic(e.target.value === "on");
+                      setAutomatic(!automatic);
                     }}
-                  >
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
+                  />
+                  Auto-pay monthly
                 </label>
                 <p>
-                  Monthly cap:{" "}
+                  Cap{" "}
                   {formatRewardCapDisplay(
                     project.reward.monthlyCapDisplay,
                     project.rewardAsset,
                   )}
-                  . You can change this later.
+                  /mo
                 </p>
               </>
             ) : null}
@@ -639,32 +627,23 @@ export function OwnerVaultSetup({
               disabled={busy || !claim || Boolean(saved.error)}
               onClick={() => void reviewCreation()}
             >
-              Review vault creation
+              Review
             </button>
             {!wallet ? (
               <details className="owner-vault-recovery">
-                <summary>Recover an existing vault</summary>
+                <summary>Recover vault</summary>
                 {recoveryClaim ? (
-                  <>
-                    <p>
-                      Recover without reconnecting your confirmed wallet.
-                      {!bounty
-                        ? " Use the automatic monthly payment setting selected at creation."
-                        : null}
-                    </p>
-                    <button
-                      className="button secondary-button"
-                      type="button"
-                      disabled={busy || Boolean(saved.error)}
-                      onClick={() => void reviewCreation(true)}
-                    >
-                      Recover existing vault
-                    </button>
-                  </>
+                  <button
+                    className="button secondary-button"
+                    type="button"
+                    disabled={busy || Boolean(saved.error)}
+                    onClick={() => void reviewCreation(true)}
+                  >
+                    Recover existing vault
+                  </button>
                 ) : (
                   <p>
-                    <a href="/account#wallets">Confirm a wallet</a> for this
-                    network, then reload the setup options.
+                    <a href="/account#wallets">Confirm wallet</a>
                   </p>
                 )}
               </details>
@@ -696,13 +675,13 @@ export function OwnerVaultSetup({
               </>
             ) : (
               <>
-                <dt>Payment policy</dt>
-                <dd>Security bounty: 75% researcher, 25% Slop</dd>
+                <dt>Split</dt>
+                <dd>75% researcher · 25% Slop</dd>
               </>
             )}
             {active.review.family === "solana" && active.review.transaction && (
               <>
-                <dt>Estimated network fee</dt>
+                <dt>Network fee</dt>
                 <dd>
                   {formatBaseUnits(
                     active.review.transaction.networkFeeLamports,
@@ -721,13 +700,13 @@ export function OwnerVaultSetup({
               onClick={() => void create()}
               ref={createButton}
             >
-              Create vault in wallet
+              Create vault
             </button>
           ) : null}
           {pending || active.review.existingVault ? (
             <>
               <label>
-                Creation transaction {solana ? "signature" : "hash"}{" "}
+                Transaction {solana ? "signature" : "hash"}{" "}
                 <input
                   ref={hashInput}
                   value={recoveryHash}
@@ -744,7 +723,7 @@ export function OwnerVaultSetup({
                 disabled={busy}
                 onClick={() => void register()}
               >
-                Check vault registration
+                Check
               </button>
               {pending && !pending.hash ? (
                 <UnsentTransactionRecovery
@@ -752,14 +731,10 @@ export function OwnerVaultSetup({
                   onClear={() =>
                     void run(async (current) => {
                       if (!clear(pending, current))
-                        throw new Error(
-                          "The saved vault request changed. Reload before continuing.",
-                        );
+                        throw new Error("Request changed. Reload.");
                       setReview(null);
                       setRecoveryHash("");
-                      setNotice(
-                        "Local request cleared. Review again before sending.",
-                      );
+                      setNotice("Cleared.");
                     })
                   }
                 />
@@ -784,7 +759,9 @@ export function OwnerVaultSetup({
       {!pending ? (
         <button
           type="button"
-          className="button secondary-button"
+          className="button secondary-button icon-button"
+          aria-label="Reload setup options"
+          title="Reload"
           disabled={busy}
           onClick={() => {
             action.current += 1;
@@ -792,7 +769,7 @@ export function OwnerVaultSetup({
             setReload((n) => n + 1);
           }}
         >
-          Reload setup options
+          <RotateCcw aria-hidden="true" />
         </button>
       ) : null}
     </section>

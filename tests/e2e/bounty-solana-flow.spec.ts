@@ -355,14 +355,12 @@ async function exerciseNativeSolana(
     await form.getByLabel(/^Outcome/u).selectOption("confirmed");
     await form.getByLabel(/^Severity/u).selectOption("high");
     await form.getByLabel(/^Loss of funds/u).selectOption("not-verified");
-    await form
-      .getByLabel("The affected asset is in scope", { exact: true })
-      .check();
+    await form.getByLabel("In scope", { exact: true }).check();
     await form
       .getByLabel(/^Root cause key/u)
       .fill(`solana-authorization-${suffix}`);
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill(
         "Confirmed the private authorization defect with synthetic local accounts.",
       );
@@ -371,9 +369,9 @@ async function exerciseNativeSolana(
     await form
       .getByLabel("Payment deadline (UTC)", { exact: true })
       .fill(new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 16));
-    await form.getByLabel(/^I approve this award/u).check();
+    await form.getByLabel(/^Approve award for @/u).check();
     await form
-      .getByLabel(/^Private reason/u)
+      .getByLabel(/^Reason/u)
       .fill(
         "Approve the published native SOL award for this qualifying finding.",
       );
@@ -383,14 +381,12 @@ async function exerciseNativeSolana(
       waitUntil: "networkidle",
     });
     form = await action(reporter.page, "consent-payment");
-    await form
-      .getByLabel(/^I understand that chain transactions reveal my wallet/u)
-      .check();
+    await form.getByLabel(/On-chain: wallet, time, amount public$/u).check();
     await submit(reporter.page, "consent-payment");
     await owner.page.bringToFront();
     await owner.page.reload({ waitUntil: "networkidle" });
     form = await action(owner.page, "prepare-payment");
-    await form.getByLabel(/^I approve .* on this network/u).check();
+    await form.getByLabel(/^Approve \S/u).check();
     await submit(owner.page, "prepare-payment");
     const beforeReporter = await balance(info.reporter),
       beforeFee = await balance(info.fee);
@@ -499,7 +495,7 @@ async function exerciseNativeSolana(
           .locator(`[aria-labelledby="submission-${submission}"]`)
           .getByRole("button", { name: "Open case", exact: true })
           .click();
-        const field = pay.getByLabel("Transaction signature from your wallet", {
+        const field = pay.getByLabel("Transaction signature", {
           exact: true,
         });
         await expect(field).toBeVisible();
@@ -551,7 +547,7 @@ async function exerciseNativeSolana(
         expect((await readPending())?.signature).toBe(submittedSignature);
         await owner.page.reload({ waitUntil: "networkidle" });
         await pay
-          .getByLabel("Transaction signature from your wallet", {
+          .getByLabel("Transaction signature", {
             exact: true,
           })
           .fill(submittedSignature);
@@ -561,7 +557,7 @@ async function exerciseNativeSolana(
         );
         expect((await readPending())?.signature).toBeNull();
         await expect(
-          pay.getByLabel("Transaction signature from your wallet", {
+          pay.getByLabel("Transaction signature", {
             exact: true,
           }),
         ).toHaveValue(submittedSignature);
@@ -613,7 +609,7 @@ async function exerciseNativeSolana(
       });
       return;
     }
-    await expect(pay.getByRole("alert")).toContainText("uncertain", {
+    await expect(pay.getByRole("alert")).toContainText("Result unknown", {
       timeout: 180_000,
     });
     expect(sent).toBe(1);

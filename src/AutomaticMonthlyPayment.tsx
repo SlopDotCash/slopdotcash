@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { ArrowRight, Check, ExternalLink, LoaderCircle } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -30,9 +31,23 @@ import type { ProjectDefinition } from "./lib/projects.mjs";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
-import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
+import {
+  isWalletAddress,
+  sameWalletAddress,
+  shortAddress,
+} from "./lib/wallets";
+import { CompactIdentifier } from "./Operations";
 import { PendingWalletCheck } from "./OwnerPresentation";
-import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
+import {
+  NetworkName,
+  NoWalletFound,
+  StatusBadge,
+  WalletConnection,
+} from "./Presentation";
+
+const spinner = (
+  <LoaderCircle className="wallet-spin" aria-hidden="true" size={14} />
+);
 
 type Pending = PendingAttempt & {
   version: 1;
@@ -67,9 +82,7 @@ function readPending(text: string | null, solana: boolean): Pending | null {
       (value.hash === null ||
         !["wallet", "recovery"].includes(value.hashSource)))
   )
-    throw new Error(
-      "The saved monthly payment request cannot be read. Check your wallet activity before starting a new one.",
-    );
+    throw new Error("Saved request unreadable. Check wallet activity.");
   return value;
 }
 
@@ -109,7 +122,7 @@ export function AutomaticMonthlyPayment({
   const [wallet, setWallet] = useState<VaultConnection | null>(null);
   const [automatic, setAutomatic] = useState(true);
   const [review, setReview] = useState<MonthlyReview | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const wallets = usePayoutWallets().filter((entry) =>
     solana
@@ -172,8 +185,7 @@ export function AutomaticMonthlyPayment({
           submitted: (hash) => ({ ...intent, hash, hashSource: "wallet" }),
           notify: setNotice,
           onBeforeSend: () => setRecoveryHash(""),
-          unclear:
-            "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+          unclear: "Result unclear. Enter the transaction hash.",
         },
       );
       if (mounted.current) setReview(null);
@@ -218,26 +230,39 @@ export function AutomaticMonthlyPayment({
             return;
           }
         }
-        setNotice(
-          pending.hashSource === "wallet"
-            ? "Submitted. Waiting for finalized chain evidence."
-            : "Waiting for finalized chain evidence.",
-        );
+        setNotice(<>{spinner} Finalizing</>);
         return;
       }
       clear(captured);
       setRecoveryHash("");
       setReview(null);
       if (result === "failed") {
-        setNotice(
-          "The transaction failed. The setting did not change. Review again before retrying.",
-        );
+        setNotice("Transaction failed. Nothing changed.");
         return;
       }
+      const verified = transactionUrl(deployment.network, hash);
       setNotice(
-        pending.enabled
-          ? `Automatic monthly payment is on, verified on the finalized chain. ${hash}`
-          : `Automatic monthly payment is off, verified on the finalized chain. ${hash}`,
+        <>
+          <StatusBadge
+            tone={pending.enabled ? "success" : "neutral"}
+            icon={<Check size={12} />}
+          >
+            {pending.enabled ? "On" : "Off"}
+          </StatusBadge>{" "}
+          {verified ? (
+            <a
+              href={verified}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="View transaction"
+              title="View transaction"
+            >
+              <ExternalLink aria-hidden="true" size={14} />
+            </a>
+          ) : (
+            <code>{hash}</code>
+          )}
+        </>,
       );
       onFinalized();
     });
@@ -248,17 +273,15 @@ export function AutomaticMonthlyPayment({
       assetDecimals: decimals,
     });
   const describe = (setting: MonthlySetting, decimals: number) =>
-    setting.enabled
-      ? `On, up to ${formatted(setting.cap, decimals)} each month`
-      : "Off";
+    setting.enabled ? `On · ${formatted(setting.cap, decimals)}/mo` : "Off";
   const link = transactionUrl(deployment.network, pending?.hash ?? null);
   const signLabel = !review
     ? ""
     : !review.target.enabled
-      ? "Turn off automatic monthly payment in wallet"
+      ? "Turn off"
       : review.current.enabled
-        ? "Update the monthly cap in wallet"
-        : "Turn on automatic monthly payment in wallet";
+        ? "Update cap"
+        : "Turn on";
   return (
     <section
       id={`vault-monthly-${deployment.network}-${deployment.vault}`}
@@ -266,29 +289,17 @@ export function AutomaticMonthlyPayment({
       aria-label={`Vault monthly authorization · ${networkLabel(deployment.network)}`}
     >
       <h3>
-        Vault monthly authorization ·{" "}
-        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
+        Auto-pay{" "}
+        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain} iconOnly>
           {networkLabel(deployment.network)}
         </NetworkName>
       </h3>
-      <p>
-        Commits each month&apos;s awards after the month ends (UTC), up to the
-        monthly amount. Only the vault owner can change it.
-      </p>
-      <details
-        className="vault-contract-details"
+      <CompactIdentifier
+        label="owner address"
+        value={deployment.owner}
+        preview={`Owner ${shortAddress(deployment.owner)}`}
         open={Boolean(review || pending)}
-      >
-        <summary>Owner details</summary>
-        <dl className="vault-addresses">
-          <div>
-            <dt>Owner</dt>
-            <dd>
-              <code>{deployment.owner}</code>
-            </dd>
-          </div>
-        </dl>
-      </details>
+      />
       {error && (
         <p role="alert" className="form-error">
           {error}
@@ -301,7 +312,7 @@ export function AutomaticMonthlyPayment({
           disabled={busy}
           onClick={() => void run(async () => clearUnreadable())}
         >
-          I checked wallet activity; clear the unreadable local record
+          Clear saved record
         </button>
       ) : null}
       <WalletConnection
@@ -309,11 +320,7 @@ export function AutomaticMonthlyPayment({
         wallets={wallets}
         disabled={busy || storageError}
         className="admin-fieldset"
-        legend={
-          pending
-            ? "Reconnect to check this transaction"
-            : "Connect the vault owner's wallet"
-        }
+        legend={pending ? "Reconnect wallet" : "Owner wallet"}
         // The funding card above shows the missing wallet once; a saved
         // request still needs it here to explain the disabled check.
         empty={pending ? <NoWalletFound solana={solana} /> : undefined}
@@ -334,80 +341,74 @@ export function AutomaticMonthlyPayment({
             void run(async () => {
               clear(storedPending.current ?? pending);
               setReview(null);
-              setNotice("Local request cleared. Review again before sending.");
+              setNotice("Cleared.");
             })
           }
         >
           <p>
-            {pending.enabled
-              ? `Turning on automatic monthly payment, up to ${formatted(pending.cap, pending.decimals)} each month,`
-              : "Turning off automatic monthly payment"}{" "}
-            awaiting verification. Do not send it again.
+            {spinner} Pending: {describe(pending, pending.decimals)} · don't
+            resend
           </p>
         </PendingWalletCheck>
       ) : wallet && !storageError ? (
         <>
-          <fieldset className="admin-fieldset" disabled={busy}>
-            <legend>Vault monthly authorization</legend>
+          <fieldset
+            className="admin-fieldset"
+            aria-label="Auto-pay"
+            disabled={busy}
+          >
             <label className="checkbox-field">
-              <input
-                type="checkbox"
-                checked={automatic}
-                onChange={(event) => {
-                  setAutomatic(event.target.checked);
+              <button
+                type="button"
+                role="switch"
+                aria-checked={automatic}
+                className="email-switch"
+                onClick={() => {
+                  setAutomatic(!automatic);
                   setReview(null);
                 }}
-              />{" "}
-              Pay contributors automatically each month
+              />
+              Auto-pay monthly
             </label>
             <button
               type="button"
               className="button secondary-button"
               onClick={() => void inspect()}
             >
-              Review monthly payment setting
+              Review
             </button>
           </fieldset>
           {review ? (
             <section aria-label="Review monthly payment setting">
-              <dl>
-                <dt>Current setting</dt>
-                <dd>{describe(review.current, review.decimals)}</dd>
-                <dt>After signing</dt>
-                <dd>{describe(review.target, review.decimals)}</dd>
-                {review.solanaPlan?.transaction && (
-                  <>
-                    <dt>Estimated network fee</dt>
-                    <dd>
-                      {formatBaseUnits(
-                        review.solanaPlan.transaction.networkFeeLamports,
-                        9,
-                      )}{" "}
-                      SOL
-                    </dd>
-                  </>
-                )}
-              </dl>
+              <p>
+                {describe(review.current, review.decimals)}{" "}
+                <ArrowRight aria-hidden="true" size={14} />
+                <span className="visually-hidden">to</span>{" "}
+                {describe(review.target, review.decimals)}
+              </p>
+              {review.solanaPlan?.transaction && (
+                <dl>
+                  <dt>Estimated network fee</dt>
+                  <dd>
+                    {formatBaseUnits(
+                      review.solanaPlan.transaction.networkFeeLamports,
+                      9,
+                    )}{" "}
+                    SOL
+                  </dd>
+                </dl>
+              )}
               {review.changes ? (
-                <>
-                  <p>
-                    {review.target.enabled
-                      ? "Each month's commitment is limited to this cap and the vault's free funds. No funds move now."
-                      : "While off, no new monthly awards are committed. Committed awards stay committed."}
-                  </p>
-                  <button
-                    type="button"
-                    className="button primary-button"
-                    disabled={busy}
-                    onClick={() => void send()}
-                  >
-                    {signLabel}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="button primary-button"
+                  disabled={busy}
+                  onClick={() => void send()}
+                >
+                  {signLabel}
+                </button>
               ) : (
-                <p role="status">
-                  The vault already has this setting. Nothing to sign.
-                </p>
+                <p role="status">No change</p>
               )}
             </section>
           ) : null}
@@ -424,7 +425,12 @@ export function AutomaticMonthlyPayment({
           </button>
         </>
       ) : null}
-      {busy && <p role="status">Waiting for wallet or chain response…</p>}
+      {busy && (
+        <p role="status">
+          {spinner}
+          <span className="visually-hidden">Waiting for wallet</span>
+        </p>
+      )}
     </section>
   );
 }

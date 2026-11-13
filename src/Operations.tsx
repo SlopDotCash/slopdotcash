@@ -1,4 +1,4 @@
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import { useCopyFeedback } from "./lib/use-copy-feedback";
 import "./operations-copy.css";
 
@@ -25,6 +25,8 @@ export function CopyButton({
       >
         {feedback === "copied" ? (
           <Check aria-hidden="true" />
+        ) : feedback === "failed" ? (
+          <X aria-hidden="true" className="operations-copy-error" />
         ) : (
           <Copy aria-hidden="true" />
         )}
@@ -36,9 +38,7 @@ export function CopyButton({
             feedback === "failed" ? "operations-copy-error" : "visually-hidden"
           }
         >
-          {feedback === "copied"
-            ? successMessage
-            : "Copy failed. Select and copy the text."}
+          {feedback === "copied" ? successMessage : "Copy failed"}
         </span>
       ) : null}
     </span>
@@ -66,13 +66,16 @@ export function CompactIdentifier({
   label,
   value,
   preview,
+  open,
 }: {
   label: string;
   value: string;
   preview: string;
+  /** Shows the full value without a click, as during a signing review. */
+  open?: boolean;
 }) {
   return (
-    <details className="compact-identifier">
+    <details className="compact-identifier" open={open}>
       <summary aria-label={`Show full ${label}`}>{preview}</summary>
       <CopyIdentifier label={label} value={value} />
     </details>

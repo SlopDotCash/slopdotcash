@@ -69,10 +69,10 @@ test("a native cycle labels its zero principal in ETH", async ({
   );
   await page.goto("/cycles/eliza/2026-07", { waitUntil: "networkidle" });
   await expect(page.locator(".cycle-number strong")).toHaveText("0 ETH");
-  await expect(page.getByText("Not funded yet.")).toBeVisible();
+  await expect(page.getByText("Not funded yet", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("row", { name: snapshot.leaders[0].actor.login }),
-  ).toContainText("of payment weight");
+  ).toContainText(/\d+\.\d{2}%/u);
   await expect(page.getByText("$0", { exact: true })).toHaveCount(0);
   await expect(page.getByText("$1,000,000,000,000")).toHaveCount(0);
   await expectAccessible(page);

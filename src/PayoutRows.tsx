@@ -3,6 +3,7 @@ import {
   Clock,
   Coins,
   ExternalLink,
+  Info,
   type LucideIcon,
   Send,
   TriangleAlert,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { ChainIcon } from "./ChainIcon";
-import { networkLabel } from "./lib/network-names";
+import { isTestNetwork, networkLabel } from "./lib/network-names";
 import {
   type AccountMonthlyAward,
   type AccountPayment,
@@ -20,6 +21,7 @@ import {
   type PaymentChain,
 } from "./lib/payments/contracts";
 import { formatAssetSymbol } from "./lib/reward-asset.mjs";
+import { shortAddress } from "./lib/wallets";
 import { StatusBadge } from "./Presentation";
 
 type PayoutTone = "success" | "warning" | "danger" | "neutral";
@@ -81,6 +83,7 @@ export function PayoutRow({
   note,
   status,
   statusTitle = status.title,
+  statusHref,
   transactionUrl,
   transactionLabel,
   children,
@@ -94,39 +97,55 @@ export function PayoutRow({
   note?: string;
   status: PayoutStatus;
   statusTitle?: string;
+  /** Where the viewer resolves this status; the badge becomes the link. */
+  statusHref?: string;
   transactionUrl: string | null;
   transactionLabel: string;
   /** Actions for this payout, shown below the line. */
   children?: ReactNode;
 }) {
+  const badge = (
+    <StatusBadge
+      className={statusHref ? "" : "payout-pill"}
+      tone={status.tone}
+      title={statusTitle}
+      icon={<status.icon aria-hidden="true" size={14} />}
+    >
+      {status.label}
+    </StatusBadge>
+  );
+  const testNetwork = isTestNetwork(network);
   return (
     <li className="payout-row">
-      <span className="payout-network">
+      <span
+        className="payout-network"
+        role="img"
+        aria-label={networkLabel(network)}
+        title={networkLabel(network)}
+      >
         <ChainIcon chain={chain} decorative />
       </span>
       <span className="payout-main">
         {amount}
         <small>
           {projectId ? (
-            <>
-              <a href={`/projects/${encodeURIComponent(projectId)}`}>
-                {projectId}
-              </a>{" "}
-              ·{" "}
-            </>
+            <a href={`/projects/${encodeURIComponent(projectId)}`}>
+              {projectId}
+            </a>
           ) : null}
-          {networkLabel(network)}
-          {note ? ` · ${note}` : ""}
+          {testNetwork
+            ? `${projectId ? " · " : ""}${networkLabel(network)}`
+            : ""}
+          {note ? `${projectId || testNetwork ? " · " : ""}${note}` : ""}
         </small>
       </span>
-      <StatusBadge
-        className="payout-pill"
-        tone={status.tone}
-        title={statusTitle}
-        icon={<status.icon aria-hidden="true" size={14} />}
-      >
-        {status.label}
-      </StatusBadge>
+      {statusHref ? (
+        <a className="payout-pill" href={statusHref} aria-label={statusTitle}>
+          {badge}
+        </a>
+      ) : (
+        badge
+      )}
       {transactionUrl ? (
         <a
           className="payout-tx"
@@ -177,16 +196,22 @@ export function PayoutAmount({
       ) : (
         <span className="payout-unit payout-token">
           <Coins aria-hidden="true" size={16} />
-          <span>
-            Token <code>{address}</code>
-          </span>
+          {address ? (
+            <>
+              {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to reach the full token address. */}
+              <code tabIndex={0} title={address}>
+                {shortAddress(address)}
+              </code>
+              <span className="visually-hidden">Token {address}</span>
+            </>
+          ) : null}
         </span>
       )}
     </span>
   );
 }
 
-/** The net amount of a payout, with its gross award and fee visible on every input device. */
+/** The net amount of a payout with its fee; the gross award is named on the info mark. */
 export function NetAmount({
   payout,
 }: {
@@ -217,21 +242,20 @@ export function NetAmount({
         <span
           className="payout-exact"
           role="region"
-          aria-label="Gross amount"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
-          tabIndex={0}
-        >
-          Gross {formatAssetAmount(payout.grossBase, payout)}
-        </span>
-        {/* biome-ignore lint/a11y/useSemanticElements: A labelled scroll region must remain inline within amount text. */}
-        <span
-          className="payout-exact"
-          role="region"
           aria-label="Fee amount"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
           tabIndex={0}
         >
-          fee {formatAssetAmount(payout.feeBase, payout)}
+          −{formatAssetAmount(payout.feeBase, payout)} fee
+        </span>{" "}
+        <span
+          role="img"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to reach the gross amount.
+          tabIndex={0}
+          aria-label={`Gross ${formatAssetAmount(payout.grossBase, payout)}`}
+          title={`Gross ${formatAssetAmount(payout.grossBase, payout)}`}
+        >
+          <Info aria-hidden="true" size={12} />
         </span>
       </small>
     </span>

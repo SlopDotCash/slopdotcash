@@ -1,9 +1,11 @@
+import { Check } from "lucide-react";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
+import { MetricGrid, MetricTile, StatusBadge } from "./Presentation";
 
 /** The same immutable program terms drive discovery, review and owner preview. */
 export function SecurityOffer({
@@ -18,9 +20,8 @@ export function SecurityOffer({
   const terms = project.securityBounty;
   if (!terms || terms.status !== "open")
     return (
-      <p className="field-hint">
-        No paid offer is open. You can still report privately; no award is
-        promised.
+      <p>
+        <StatusBadge>No bounty</StatusBadge>
       </p>
     );
   const fullAward = isFullAwardSplit(terms.split);
@@ -40,24 +41,22 @@ export function SecurityOffer({
       className={`security-offer${compact ? " security-offer-compact" : ""}`}
       aria-label="Published bounty offer"
     >
-      <p className="security-offer-net">
-        <strong>{researcher}</strong> to the researcher
-      </p>
+      <MetricGrid>
+        <MetricTile label="Researcher" value={researcher} />
+      </MetricGrid>
       <p>
         {fullAward
-          ? `${gross} total award, sponsored by ${terms.sponsor.name}. The researcher receives all of it; Slop takes no share and no payout fee.`
-          : `${gross} total award · ${slop} to Slop. No additional payout fee.`}
+          ? `100% researcher of ${gross} · ${terms.sponsor.name}`
+          : `75% researcher | 25% Slop (${slop}) of ${gross}`}
       </p>
       <p className="security-offer-funding">
-        {terms.funding.state === "pledged"
-          ? "Pledged. Awards require owner approval."
-          : "Funding verified at the recorded observation. Awards require owner approval."}
-      </p>
-      {!compact ? <p>{terms.scope.lossDefinition}</p> : null}
-      <p className="field-hint">
-        {terms.fundingPolicy === "after-approval"
-          ? "The owner decides whether to award the published amount for each first qualifying finding."
-          : "The owner decides awards under the published terms."}
+        {terms.funding.state === "pledged" ? (
+          <StatusBadge tone="warning">Pledged</StatusBadge>
+        ) : (
+          <StatusBadge tone="success" icon={<Check />}>
+            Funded
+          </StatusBadge>
+        )}
       </p>
     </section>
   );

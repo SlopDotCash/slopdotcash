@@ -130,7 +130,7 @@ test("a delayed publish must keep a newer draft written by a second editor", asy
   });
   release();
   await expect(
-    page.getByText("Published revision 2.", { exact: true }),
+    page.getByRole("status").getByText("Rev 2", { exact: true }),
   ).toBeVisible();
   await expect(
     other.getByLabel("Short description", { exact: true }),
@@ -218,9 +218,7 @@ test("cloned tab pointers fork ownership and discard only their own draft", asyn
   expect(pointers[0]).not.toBe(pointers[1]);
   fixture.advance();
   await other.reload({ waitUntil: "networkidle" });
-  await other
-    .getByRole("button", { name: "Discard draft", exact: true })
-    .click();
+  await other.getByRole("button", { name: "Discard", exact: true }).click();
   await expect.poll(() => readProjectDraft(other, DRAFT_KEY)).toBeNull();
   await page.reload({ waitUntil: "networkidle" });
   await expect(
@@ -296,10 +294,13 @@ for (const fault of ["locks", "storage", "metadata"] as const)
       .getByLabel("Short description", { exact: true })
       .fill("This unsaved draft remains in this page");
     await expect(
-      page.getByText("This browser cannot save the draft.", { exact: true }),
-    ).toBeVisible();
+      page.getByTitle("This browser cannot save the draft.", { exact: true }),
+    ).toHaveText("Draft not saved");
     await expect(
-      page.getByText("Draft saved on this device.", { exact: true }),
+      page.getByRole("img", {
+        name: "Draft saved on this device",
+        exact: true,
+      }),
     ).toHaveCount(0);
     await page.getByRole("link", { name: "How it works", exact: true }).click();
     await page.goBack();
@@ -477,13 +478,20 @@ test("a payload round trip stays pending through an older failed save", async ({
   await page
     .getByLabel("Short description", { exact: true })
     .fill("Queued description B");
-  await expect(page.getByText("Saving draft…", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Saving draft…", exact: true }),
+  ).toBeVisible();
   await page
     .getByLabel("Short description", { exact: true })
     .fill("Acknowledged description A");
-  await expect(page.getByText("Saving draft…", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Draft saved on this device.", { exact: true }),
+    page.getByRole("img", { name: "Saving draft…", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("img", {
+      name: "Draft saved on this device",
+      exact: true,
+    }),
   ).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("latest-payload-still-saving.png"),
@@ -493,10 +501,13 @@ test("a payload round trip stays pending through an older failed save", async ({
     (window as unknown as { releaseDraftLock: () => void }).releaseDraftLock(),
   );
   await expect(
-    page.getByText("Draft saved on this device.", { exact: true }),
+    page.getByRole("img", {
+      name: "Draft saved on this device",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
-    page.getByText("This browser cannot save the draft.", { exact: true }),
+    page.getByTitle("This browser cannot save the draft.", { exact: true }),
   ).toHaveCount(0);
   await expect
     .poll(async () => (await readProjectDraft(page, DRAFT_KEY))?.headline)

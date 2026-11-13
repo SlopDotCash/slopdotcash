@@ -8072,6 +8072,139 @@
     }
   },
   {
+    "projectId": "inscrib3-wallet",
+    "revision": 2,
+    "manifestSha256": "1ed6d7daf7f53f882032307731b2ead3864a5d71c332521847d2b89d264edfb7",
+    "reason": "Activated automatically after setup checks for @thewrlck: @thewrlck has admin access to inscrib3/arkade-wallet. Slopbot installation 179896394. Admission scan vet_cf19199b70b44bf7be5a59d263a65938.",
+    "createdAt": "2026-11-10T11:58:09.110Z",
+    "manifest": {
+      "schemaVersion": "1",
+      "id": "inscrib3-wallet",
+      "slug": "inscrib3-wallet",
+      "name": "Inscrib3 Wallet",
+      "eyebrow": "Open-source project",
+      "headline": "Your gateway to programmable Bitcoin.",
+      "description": "Non-custodial Arkade wallet Browser extension + PWA",
+      "listingTier": "community",
+      "status": "active",
+      "steward": {
+        "displayName": "@inscrib3",
+        "kind": "organization",
+        "github": {
+          "actorId": "138241317",
+          "nodeId": "O_kgDOCD1lJQ",
+          "login": "inscrib3",
+          "type": "Organization",
+          "profileUrl": "https://github.com/inscrib3"
+        },
+        "website": null
+      },
+      "authority": {
+        "state": "unverified",
+        "reason": "missing-repository-proof",
+        "role": "project-steward",
+        "repositoryId": "1445073061",
+        "repositoryNodeId": "R_kgDOViIQpQ",
+        "proof": null
+      },
+      "terms": {
+        "revision": "draft-1",
+        "effectiveAt": "2026-11-08T15:48:31.338Z",
+        "paymentTransfersIp": false,
+        "retroactive": false,
+        "receiptPolicy": {
+          "state": "pending-authority-activation",
+          "activatedAt": null,
+          "bindings": []
+        },
+        "copyright": {
+          "model": "unknown",
+          "claimedLegalHolder": null,
+          "notice": null,
+          "legalCapacity": null,
+          "governanceResolution": null
+        },
+        "repositoryLicense": {
+          "state": "verified",
+          "spdx": "MIT",
+          "url": "https://github.com/inscrib3/arkade-wallet/blob/935132e8be6f12d9f41540e12e8a5b5a0087d54a/LICENSE",
+          "commitSha": "935132e8be6f12d9f41540e12e8a5b5a0087d54a",
+          "fileSha256": "561fff6a02d4568d979d17724f7ac9b6b3b9a4f3a21b7242143ea0eb67ddddb3"
+        },
+        "inbound": {
+          "mode": "unknown",
+          "termsUrl": null,
+          "commitSha": null,
+          "fileSha256": null,
+          "version": null,
+          "acceptance": null
+        },
+        "assignment": null,
+        "externalPrize": null
+      },
+      "repositories": [
+        {
+          "id": "inscrib3/arkade-wallet",
+          "displayName": "inscrib3/arkade-wallet",
+          "githubUrl": "https://github.com/inscrib3/arkade-wallet",
+          "description": "Your gateway to programmable Bitcoin.",
+          "integrationBranch": "main"
+        }
+      ],
+      "skill": {
+        "id": "contribute-to-inscrib3-wallet",
+        "publishAtRoot": false,
+        "sourcePath": "skills/project-contributor-template",
+        "publicPath": "/projects/inscrib3-wallet/skill.md"
+      },
+      "reviewSkill": {
+        "id": "review-inscrib3-wallet-contributions",
+        "sourcePath": "skills/project-reviewer-template"
+      },
+      "contribution": {
+        "approvedScope": "Merged pull requests that fix a reproduced bug or deliver a change the maintainers asked for, with tests or other evidence that the result works.",
+        "contributionGuide": "",
+        "supportedTasks": "",
+        "requiredTests": "",
+        "reviewExpectations": "",
+        "securityContact": "",
+        "closurePolicy": "",
+        "maintainerNotes": ""
+      },
+      "slopbot": {
+        "automaticClosure": true
+      },
+      "reward": {
+        "kind": "monthly-pool",
+        "currency": "USDC",
+        "chain": "base",
+        "rewardStartAt": "2026-11-08T15:48:31.338Z",
+        "cycle": "calendar-month-utc",
+        "monthlyCapMinor": "0",
+        "monthlyCapDisplay": "$0",
+        "committedMinor": "0",
+        "paymentMode": "disabled",
+        "feeBasisPoints": 100,
+        "unusedFunds": "rollover-without-cap-increase",
+        "fundingState": "pledged"
+      },
+      "funding": {
+        "mode": "direct-noncustodial",
+        "disclosure": "Funds go directly to the project wallet. Slop does not hold or recover funds.",
+        "recordsPath": "funding/inscrib3-wallet",
+        "addresses": []
+      },
+      "modelPolicy": {
+        "mode": "open-declared",
+        "disclosureRequired": true
+      },
+      "links": {
+        "repository": "https://github.com/inscrib3/arkade-wallet",
+        "issues": "https://github.com/inscrib3/arkade-wallet/issues"
+      }
+    }
+  },
+  {
     "projectId": "monna-agent-permission-diff",
     "revision": 1,
     "manifestSha256": "2d1990b0cfdeee9fc4d3d159e006be6b25e51aae6ab2121ba2fbe8c9ddca792b",

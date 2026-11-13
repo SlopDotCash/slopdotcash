@@ -169,7 +169,7 @@ test("an image decoded after a headline publication uses the new draft revision"
       .getByRole("button", { name: "Publish changes", exact: true })
       .click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 2." }),
+      page.getByRole("status").filter({ hasText: /Rev 2\b/u }),
     ).toBeVisible();
     const first = await api.stored();
     expect(first.revision).toBe(2);
@@ -178,10 +178,7 @@ test("an image decoded after a headline publication uses the new draft revision"
     await page.evaluate(() =>
       (window as unknown as ImageWindow).lateProjectImage.release(),
     );
-    const preview = page.getByRole("img", {
-      name: "Project avatar preview",
-      exact: true,
-    });
+    const preview = page.locator('.project-image-upload img[src^="data:"]');
     await expect(preview).toBeVisible();
     await expect(
       page.getByText("Preparing image…", { exact: true }),
@@ -197,13 +194,13 @@ test("an image decoded after a headline publication uses the new draft revision"
       await readProjectDraft(page, "slop:project-update:v2:eliza"),
     ).toMatchObject({ baseRevision: 2, image });
     await expect(
-      page.getByRole("button", { name: "Use this draft", exact: true }),
+      page.getByRole("button", { name: "Keep", exact: true }),
     ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Publish changes", exact: true })
       .click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision 3." }),
+      page.getByRole("status").filter({ hasText: /Rev 3\b/u }),
     ).toBeVisible();
     const second = await api.stored();
     expect(second.revision).toBe(3);
@@ -296,10 +293,7 @@ test("a browser without WebP encoding can upload and persist its project image",
         mimeType: "image/png",
         buffer: Buffer.from(png.split(",")[1], "base64"),
       });
-    const preview = page.getByRole("img", {
-      name: "Project avatar preview",
-      exact: true,
-    });
+    const preview = page.locator('.project-image-upload img[src^="data:"]');
     await expect(preview).toBeVisible();
     const uploaded = await preview.getAttribute("src");
     expect(uploaded).toMatch(/^data:image\/jpeg;base64,/u);
@@ -444,7 +438,7 @@ test("retains edits typed while a project revision is being published", async ({
     fullPage: true,
   });
   release();
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(page.getByText("Rev 2", { exact: true })).toBeVisible();
   await expect(description).toHaveValue(
     "Second description typed while the save is pending",
   );
@@ -455,7 +449,7 @@ test("retains edits typed while a project revision is being published", async ({
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
     .click();
-  await expect(page.getByText("Published revision 3.")).toBeVisible();
+  await expect(page.getByText("Rev 3", { exact: true })).toBeVisible();
   expect(
     writes.map((write) => [write.expectedRevision, write.manifest.headline]),
   ).toEqual([
@@ -585,9 +579,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
         (await readProjectDraft(page, "slop:project-update:v2:eliza"))
           ?.headline,
       ).toBe("Newer local draft must survive the old response");
-      await expect(
-        page.getByText("Published revision 2.", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.getByText("Rev 2", { exact: true })).toHaveCount(0);
       const stored = await api.stored();
       expect(stored.revision).toBe(2);
       expect(stored.project.headline).toBe(
@@ -672,7 +664,7 @@ test("discarding an old project draft cancels its pending image decode", async (
   try {
     await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
     await expect(
-      page.getByRole("button", { name: "Discard draft", exact: true }),
+      page.getByRole("button", { name: "Discard", exact: true }),
     ).toBeVisible();
     const png = await page.evaluate(() => {
       const canvas = document.createElement("canvas");
@@ -690,9 +682,7 @@ test("discarding an old project draft cancels its pending image decode", async (
     await expect(
       page.getByText("Preparing image…", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Discard draft", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Discard", exact: true }).click();
     await expect(page.getByLabel("Short description")).toHaveValue(
       registered.headline,
     );
@@ -712,7 +702,7 @@ test("discarding an old project draft cancels its pending image decode", async (
       page.getByText("Preparing image…", { exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("img", { name: "Project avatar preview", exact: true }),
+      page.locator('.project-image-upload img[src^="data:"]'),
     ).toHaveCount(0);
     expect(
       await readProjectDraft(page, "slop:project-update:v2:eliza"),

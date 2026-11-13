@@ -220,7 +220,7 @@ export const SLOPBOT_INSTALL_URL =
  * the listed repository, so every install prompt says how to scope it.
  */
 export function slopbotInstallScopeNote(repository: string): string {
-  return `On GitHub's install screen choose "Only select repositories" and pick ${repository}. Slopbot gets no access to your other private repositories.`;
+  return `On GitHub, choose "Only select repositories" and pick ${repository}.`;
 }
 
 /**

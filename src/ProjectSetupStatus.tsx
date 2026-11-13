@@ -4,6 +4,8 @@ import {
   CircleAlert,
   Clock,
   KeyRound,
+  Lock,
+  RefreshCw,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
@@ -28,13 +30,38 @@ import { REWARD_ASSET_NETWORKS } from "./lib/reward-asset.mjs";
 import { NetworkName, StatusBadge } from "./Presentation";
 import { ScanClearanceBadges } from "./ScanClearanceBadges";
 
-const HEADINGS: Record<ProjectSetupStatus["state"], string> = {
-  ready: "Ready",
-  action_required: "Action needed",
-  waiting: "Waiting for the security scan",
-  retry: "Unavailable",
-  restricted: "Closed to contributors",
+const STATES: Record<
+  ProjectSetupStatus["state"],
+  {
+    label: string;
+    tone: "success" | "warning" | "info" | "danger";
+    Icon: typeof Check;
+  }
+> = {
+  ready: { label: "Ready", tone: "success", Icon: Check },
+  action_required: {
+    label: "Action needed",
+    tone: "warning",
+    Icon: CircleAlert,
+  },
+  waiting: { label: "Scanning", tone: "info", Icon: Clock },
+  retry: { label: "Unavailable", tone: "warning", Icon: CircleAlert },
+  restricted: { label: "Closed", tone: "danger", Icon: Lock },
 };
+
+/** The one coloured badge that names a project's setup state. */
+export function SetupStateBadge({
+  state,
+}: {
+  state: ProjectSetupStatus["state"];
+}) {
+  const { label, tone, Icon } = STATES[state];
+  return (
+    <StatusBadge tone={tone} icon={<Icon size={14} />}>
+      {label}
+    </StatusBadge>
+  );
+}
 
 const AUTHORITY: Record<
   ProjectSetupStatus["checks"]["authority"]["state"],
@@ -57,7 +84,7 @@ const SCAN: Record<ProjectSetupStatus["checks"]["scan"]["state"], string> = {
   cleared: "Passed",
   queued: "Queued",
   unscanned: "Not scanned",
-  stale: "Needs a new scan",
+  stale: "Stale",
   quarantined: "Not cleared",
   banned: "Blocked",
   unverified: "Not verified",
@@ -67,9 +94,12 @@ const SCAN: Record<ProjectSetupStatus["checks"]["scan"]["state"], string> = {
 function SetupBadge({
   label,
   tone,
+  title,
 }: {
   label: string;
   tone: "ready" | "pending" | "warning";
+  /** The server's message for this check. */
+  title?: string;
 }) {
   const Icon =
     tone === "ready" ? Check : tone === "pending" ? Clock : CircleAlert;
@@ -79,6 +109,7 @@ function SetupBadge({
         tone === "ready" ? "success" : tone === "pending" ? "info" : "warning"
       }
       icon={<Icon size={14} />}
+      title={title || undefined}
     >
       {label}
     </StatusBadge>
@@ -97,7 +128,6 @@ type ProjectSetupStatusProps = {
   /** Clear the parent's setup projection when its private access is lost. */
   onSetup?: (setup: ProjectSetupStatus | null) => void;
   showProjectLink?: boolean;
-  compact?: boolean;
 };
 
 export function ProjectSetupStatusPanel(props: ProjectSetupStatusProps) {
@@ -115,7 +145,6 @@ function ProjectSetupStatusForActor({
   initial,
   onSetup,
   showProjectLink = true,
-  compact = false,
 }: ProjectSetupStatusProps) {
   const [setup, setSetup] = useState<ProjectSetupStatus | null>(
     initial ?? null,
@@ -128,6 +157,7 @@ function ProjectSetupStatusForActor({
   const mounted = useRef(true);
   const generation = useRef(0);
   const inFlight = useRef<number | null>(null);
+  const abandoned = useRef(false);
   const check = useCallback(
     (requestScan = false) => {
       if (!mounted.current || inFlight.current !== null) return;
@@ -216,9 +246,18 @@ function ProjectSetupStatusForActor({
     return () => {
       mounted.current = false;
       generation.current += 1;
+      abandoned.current = inFlight.current !== null;
       inFlight.current = null;
     };
   }, [check, initial]);
+  // A suspended route hides this panel without unmounting it: the cleanup
+  // above disowns the running check, and only layout effects run again when
+  // the panel returns. Read the status again; never repeat a scan request.
+  useLayoutEffect(() => {
+    if (!abandoned.current) return;
+    abandoned.current = false;
+    check();
+  }, [check]);
   useEffect(() => {
     if (!setup || setup.state === "ready" || setup.state === "restricted")
       return;
@@ -232,24 +271,14 @@ function ProjectSetupStatusForActor({
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [busy, check, setup]);
-  const checkDetails = setup ? (
-    <dl>
-      <dt>GitHub access</dt>
-      <dd>{setup.checks.authority.message}</dd>
-      <dt>Slopbot</dt>
-      <dd>{setup.checks.installation.message}</dd>
-      <dt>Security scan</dt>
-      <dd>{setup.checks.scan.message}</dd>
-    </dl>
-  ) : null;
   return (
     <section
       aria-labelledby={`setup-${projectId}`}
       className={`owner-section project-setup-status${setup?.state === "ready" ? " is-ready" : ""}`}
     >
       <h2 id={`setup-${projectId}`}>
-        Setup status
-        {setup ? `: ${HEADINGS[setup.state]}` : ""}
+        Setup
+        {setup ? <SetupStateBadge state={setup.state} /> : null}
       </h2>
       {setup === null ? (
         error ? null : (
@@ -259,7 +288,12 @@ function ProjectSetupStatusForActor({
         <>
           {setup.state !== "ready" ? (
             <>
-              <p role="status">{setup.nextAction.message}</p>
+              {/* The badges and buttons already say "install" and "queued". */}
+              {setup.nextAction.kind === "install_slopbot" ||
+              setup.nextAction.kind === "wait_for_scan" ||
+              !setup.nextAction.message ? null : (
+                <p role="status">{setup.nextAction.message}</p>
+              )}
               {setup.checks.scan.clearance ? (
                 <ScanClearanceBadges view={setup.checks.scan.clearance} />
               ) : null}
@@ -286,19 +320,21 @@ function ProjectSetupStatusForActor({
                 onClick={() => check(true)}
                 type="button"
               >
-                {busy ? "Requesting…" : "Request a new scan"}
+                {busy ? "Requesting…" : "Rescan"}
               </button>
             ) : null}
             {setup.nextAction.kind !== "none" &&
             setup.nextAction.kind !== "restricted" &&
             setup.nextAction.kind !== "complete_skill_fields" ? (
               <button
-                className="button secondary-button"
+                aria-label={busy ? "Checking…" : "Check again"}
+                className="button secondary-button icon-button"
                 disabled={busy}
                 onClick={() => check()}
+                title={busy ? "Checking…" : "Check again"}
                 type="button"
               >
-                {busy ? "Checking…" : "Check again"}
+                <RefreshCw size={16} aria-hidden="true" />
               </button>
             ) : null}
           </div>
@@ -311,6 +347,7 @@ function ProjectSetupStatusForActor({
               <dd>
                 <SetupBadge
                   label={AUTHORITY[setup.checks.authority.state]}
+                  title={setup.checks.authority.message}
                   tone={
                     setup.checks.authority.state === "verified"
                       ? "ready"
@@ -327,6 +364,7 @@ function ProjectSetupStatusForActor({
               <dd>
                 <SetupBadge
                   label={INSTALLATION[setup.checks.installation.state]}
+                  title={setup.checks.installation.message}
                   tone={
                     setup.checks.installation.state === "installed"
                       ? "ready"
@@ -344,9 +382,13 @@ function ProjectSetupStatusForActor({
                 <SetupBadge
                   label={
                     setup.checks.scan.exempt
-                      ? "Exempt"
+                      ? setup.checks.scan.exemptionKind ===
+                        "owner-approved-admission"
+                        ? "Owner-approved exemption"
+                        : "Exempt"
                       : SCAN[setup.checks.scan.state]
                   }
+                  title={setup.checks.scan.message}
                   tone={
                     setup.checks.scan.exempt ||
                     setup.checks.scan.state === "cleared"
@@ -363,13 +405,7 @@ function ProjectSetupStatusForActor({
             <div className="setup-check setup-check--funding">
               <dt>
                 <Wallet size={20} aria-hidden="true" />
-                {setup.funding.mode === "bounty" ? (
-                  "Private bounty"
-                ) : (
-                  <>
-                    Contribution funding <small>Optional</small>
-                  </>
-                )}
+                {setup.funding.mode === "bounty" ? "Private bounty" : "Funding"}
               </dt>
               <dd>
                 {setup.funding.mode === "none" ? (
@@ -382,24 +418,25 @@ function ProjectSetupStatusForActor({
                         setup.funding.decimals,
                         setup.funding.symbol,
                       )}{" "}
-                      / accepted finding
+                      / finding
                     </strong>
                     <span className="setup-funding-note">
                       {setup.funding.network ? (
-                        <>
-                          <NetworkName chain={setup.funding.network}>
-                            {REWARD_ASSET_NETWORKS[
-                              setup.funding
-                                .network as keyof typeof REWARD_ASSET_NETWORKS
-                            ]?.name ?? setup.funding.network}
-                          </NetworkName>
-                          {" · "}
-                        </>
+                        <NetworkName chain={setup.funding.network}>
+                          {REWARD_ASSET_NETWORKS[
+                            setup.funding
+                              .network as keyof typeof REWARD_ASSET_NETWORKS
+                          ]?.name ?? setup.funding.network}
+                        </NetworkName>
                       ) : null}
-                      {setup.funding.state === "pledged"
-                        ? "Pledged"
-                        : "Funding verified"}
                     </span>
+                    {setup.funding.state === "pledged" ? (
+                      <StatusBadge tone="warning">Pledged</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="success" icon={<Check size={14} />}>
+                        Funded
+                      </StatusBadge>
+                    )}
                   </>
                 ) : (
                   <>
@@ -420,23 +457,13 @@ function ProjectSetupStatusForActor({
                       </NetworkName>
                     </span>
                     <a href={`/projects/${setup.slug}/manage#project-vault`}>
-                      Vault funding
+                      Fund vault
                     </a>
                   </>
                 )}
               </dd>
             </div>
           </dl>
-          {compact ? (
-            <div className="setup-details setup-details-compact">
-              {checkDetails}
-            </div>
-          ) : (
-            <details className="setup-details">
-              <summary>Check details</summary>
-              {checkDetails}
-            </details>
-          )}
         </>
       )}
       {error ? (

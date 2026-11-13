@@ -430,7 +430,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     });
   });
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
-  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await expect(page.getByLabel("Amount / month")).toHaveValue("0.001");
   await page
     .getByLabel("Short description")
     .fill("A focused token project description");
@@ -442,12 +442,14 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     path: test.info().outputPath("token-project-edit.png"),
     fullPage: true,
   });
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(
+    page.getByRole("status").getByText("Rev 2", { exact: true }),
+  ).toBeVisible();
   expect(published?.manifest.reward.monthlyCapMinor).toBe("1000000000000000");
   expect(published?.monthlyAmount).toBeUndefined();
-  await expect(page.getByLabel("Monthly amount (TEST)")).toHaveValue("0.001");
+  await expect(page.getByLabel("Amount / month")).toHaveValue("0.001");
   await openOwnerSettings(page, "Monthly rewards");
-  await page.getByLabel("Monthly amount (TEST)").fill("0.0000000000000000001");
+  await page.getByLabel("Amount / month").fill("0.0000000000000000001");
   await page
     .getByRole("button", { name: "Publish changes", exact: true })
     .click();
@@ -620,7 +622,7 @@ test("shows agent setup and keeps contribution records available", async ({
   expect(shareCells).toHaveLength(view.leaders.length);
   // No committed funds: every row is a share of payment weight, never dollars.
   for (const cell of shareCells) {
-    expect(cell).toMatch(/^\d+\.\d{2}% of payment weight$/u);
+    expect(cell).toMatch(/^\d+\.\d{2}%$/u);
   }
 });
 
@@ -733,7 +735,7 @@ test("renders contributor and cycle records from validated public data", {
         exact: true,
       }),
     ).toBeVisible();
-    const history = page.locator("details.cycle-history");
+    const history = page.locator("details.cycle-breakdown");
     if (await history.count()) {
       await expect(history).not.toHaveAttribute("open", "");
       await history.locator(":scope > summary").focus();
@@ -819,7 +821,7 @@ test("shows the suggested amount for a walletless cycle still under review", asy
     .filter({ has: page.getByRole("link", { name: contributor.actor.login }) });
   await expect(row).toContainText("Awaiting wallet");
   await expect(row.locator(".cycle-current-amount")).toHaveText("Suggested $1");
-  await row.getByText("Amount history", { exact: true }).click();
+  await row.getByLabel("Amount history", { exact: true }).click();
   await expect(row.locator(".cycle-amount-history")).toContainText(
     "Approved$0",
   );
@@ -829,9 +831,9 @@ test("project settings require a signed-in maintainer", async ({ page }) => {
   for (const id of ["eliza", "asi"]) {
     await page.goto(`/projects/${id}/manage`, { waitUntil: "networkidle" });
     await expect(
-      page.getByText(
-        "Sign in with a maintainer account to change project settings.",
-      ),
+      page.locator(".sign-in-panel").getByText("Maintainers only", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Sign in with GitHub" }),
@@ -884,7 +886,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     state: "waiting",
     nextAction: {
       kind: "wait_for_scan",
-      message: "The security scan is queued. Nothing is needed from you.",
+      message: "Scan queued.",
       href: null,
     },
     checks: {
@@ -894,11 +896,11 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
       },
       installation: {
         state: "installed",
-        message: "Slopbot is installed on elizaOS/eliza.",
+        message: "Installed.",
       },
       scan: {
         state: "queued",
-        message: "The security scan is queued. Nothing is needed from you.",
+        message: "Scan queued.",
       },
     },
     funding: { mode: "none" },
@@ -971,15 +973,19 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
   revision = 2;
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("alert")).toContainText(
-    "saved against revision 1",
+    "Draft is from rev 1; now rev 2.",
   );
   await expect(
     page.getByRole("button", { name: "Publish changes" }),
   ).toBeDisabled();
   await expect(page.getByLabel("Acceptance criteria")).toHaveValue(scope);
-  await page.getByRole("button", { name: "Use this draft" }).click();
+  await page
+    .getByRole("alert")
+    .getByRole("button", { name: "Keep", exact: true })
+    .click();
   const review = page.getByRole("region", { name: "Changes" });
-  const proposed = review.getByText(scope, { exact: true });
+  // The proposed value shares its cell with the chip naming its effect.
+  const proposed = review.locator("dd").filter({ hasText: scope });
   await review.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: test.info().outputPath("criteria-reviewed-diff.png"),
@@ -1015,11 +1021,11 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     path: test.info().outputPath("criteria-review-200-percent-text.png"),
   });
   await page.getByRole("button", { name: "Publish changes" }).click();
-  await expect(page.getByText("Published revision 3.")).toBeVisible();
   await expect(
-    page.getByRole("heading", {
-      name: "Setup status: Waiting for the security scan",
-    }),
+    page.getByRole("status").getByText("Rev 3", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /^Setup\s*Scanning$/u }),
   ).toBeVisible();
   expect(submission).toMatchObject({
     expectedRevision: 2,
@@ -1106,16 +1112,22 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toHaveCount(100);
   await page
-    .getByRole("button", { name: "Mark shown as read", exact: true })
+    .getByRole("button", { name: "Mark all read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText("1 unread");
+  await expect(
+    page.locator(".route-page-header").getByText("1 unread", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Older notifications" }).click();
   await expect(page.locator(".inbox-item")).toHaveCount(1);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page
-    .getByRole("button", { name: "Mark shown as read", exact: true })
+    .getByRole("button", { name: "Mark all read", exact: true })
     .click();
-  await expect(page.locator(".inbox-summary")).toContainText("All read.");
+  await expect(page.locator(".route-page-header")).not.toContainText("unread");
+  await expect(page.locator(".inbox-summary")).toHaveCount(0);
+  await expect(
+    page.getByRole("img", { name: "Unread", exact: true }),
+  ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page.screenshot({
     path: test.info().outputPath("older-notification-read.png"),
@@ -1232,46 +1244,40 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await page.goto("/inbox", { waitUntil: "networkidle" });
   const item = (subject: string) =>
     page.locator(".inbox-item", { hasText: subject });
+  // A read notice carries no mark; an unread one carries the unread dot.
   const sent = item("delivery-1");
-  await expect(sent.locator(".inbox-state")).toHaveText("Read");
-
-  await expect(sent.getByText("Email: sent", { exact: true })).toBeVisible();
-  await expect(sent.getByText("Email: delivered", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(sent.locator(".inbox-state")).toHaveCount(0);
+  // Only a failed or uncertain email is marked; a normal delivery is not.
+  await expect(sent.locator(".inbox-delivery")).toHaveCount(0);
   const delivered = item("delivery-2");
-  await expect(delivered.locator(".inbox-state")).toHaveText("Unread");
-
+  await expect(delivered.locator(".inbox-state")).toHaveAccessibleName(
+    "Unread",
+  );
+  await expect(delivered.locator(".inbox-delivery")).toHaveCount(0);
+  const failed = item("delivery-3");
   await expect(
-    delivered.getByText("Email: delivered", { exact: true }),
+    failed.getByRole("img", { name: "Email: failed", exact: true }),
   ).toBeVisible();
+  await expect(failed.locator(".inbox-delivery")).toHaveCount(1);
+  const uncertain = item("delivery-4");
   await expect(
-    item("delivery-3").getByText("Email: failed", { exact: true }),
+    uncertain.getByRole("img", { name: "Email: uncertain", exact: true }),
   ).toBeVisible();
-  await expect(
-    item("delivery-4").getByText("Email: uncertain", { exact: true }),
-  ).toBeVisible();
-  const queued = item("delivery-5");
-
-  await expect(
-    queued.getByText("Email: queued", { exact: true }),
-  ).toBeVisible();
+  await expect(uncertain.locator(".inbox-delivery")).toHaveCount(1);
+  await expect(item("delivery-5").locator(".inbox-delivery")).toHaveCount(0);
   await expect(item("delivery-6").locator(".inbox-delivery")).toHaveCount(0);
   // Reading a private notice or accepting its email does not acknowledge it.
   const security = item("case-0001");
-  await expect(security.locator(".inbox-state")).toHaveText("Read");
-
-  await expect(
-    security.getByText("Email: sent", { exact: true }),
-  ).toBeVisible();
+  await expect(security.locator(".inbox-state")).toHaveCount(0);
+  await expect(security.locator(".inbox-delivery")).toHaveCount(0);
   await expect(
     security.getByRole("button", { name: /^Acknowledge:/u }),
   ).toBeVisible();
-  await expect(security.getByText("Acknowledged", { exact: true })).toHaveCount(
-    0,
-  );
   await expect(
-    page.getByRole("region", { name: "Email preferences" }),
+    security.getByRole("img", { name: "Acknowledged", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Email", exact: true }),
   ).toHaveCount(0);
   await expectAccessible(page);
   await page.screenshot({
@@ -1282,12 +1288,13 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
     .getByRole("link", { name: "Email preferences", exact: true })
     .click();
   await expect(page).toHaveURL(/\/account#notifications$/u);
-  const preferences = page.getByRole("region", { name: "Email preferences" });
-  await expect(preferences).toContainText(
-    "No verified email address is on file.",
-  );
+  const preferences = page.getByRole("region", {
+    name: "Email",
+    exact: true,
+  });
+  await expect(preferences).toContainText("No verified email");
   await expect(
-    preferences.getByRole("button", { name: "Retry email preferences" }),
+    preferences.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
@@ -1303,9 +1310,11 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   );
   await page.reload();
   const retry = preferences.getByRole("button", {
-    name: "Retry email preferences",
+    name: "Retry",
+    exact: true,
   });
   await expect(retry).toBeVisible();
+  await expect(preferences).toContainText("Email check failed");
   await page.unroute("**/api/v1/notifications/email");
   await page.route("**/api/v1/notifications/email", (route) =>
     route.fulfill({
@@ -1323,7 +1332,8 @@ test("the inbox keeps delivery, read and acknowledgment distinct and links to ac
   await retry.click();
   await expect(preferences).toContainText("example@example.com");
   const activityEmail = preferences.getByRole("switch", {
-    name: "Activity email",
+    name: "Activity",
+    exact: true,
   });
   await expect(activityEmail).toBeEnabled();
   await expect(activityEmail).not.toBeChecked();
@@ -1399,7 +1409,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
     .fill("An updated description without a financial configuration change.");
   await expect(changes).toContainText("Short description");
   await expect(changes).not.toContainText("Reward asset");
-  await page.getByRole("button", { name: "Close and keep draft" }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\?project=asi$/u);
   await expect(
     page.getByRole("heading", { name: "ASI", exact: true }),
@@ -1413,13 +1423,13 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
     path: test.info().outputPath("admin-no-implicit-asset.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Use this reward asset" }).click();
+  await page.getByRole("button", { name: "Set asset", exact: true }).click();
   await expect(changes).toContainText("Reward asset");
   await page.getByRole("checkbox", { name: "Featured", exact: true }).uncheck();
   await expect(page.getByLabel("Project status")).toHaveValue(project.status);
   await expect(changes).toContainText("Discovery placement");
   await page
-    .getByLabel("Reason for revision (public)")
+    .getByLabel("Reason Public", { exact: true })
     .fill("Update the project description and selected reward asset.");
   let releaseSave: () => void = () => {};
   const pendingSave = new Promise<void>((resolve) => {
@@ -1651,7 +1661,7 @@ test("shows an explicit error for invalid data and retries", async ({
   // The frozen fixture is older than eight hours: a retained snapshot shows
   // its stale label instead of passing as current (owner decision D2).
   await expect(
-    page.getByRole("status").filter({ hasText: "Points may be outdated" }),
+    page.getByRole("status").filter({ hasText: "Points stale ·" }),
   ).toBeVisible();
   // Clearing the error starts loading; wait for the loaded snapshot before
   // checking that the retry made exactly one additional request.
@@ -1789,22 +1799,9 @@ for (const route of [
         );
       } else if (project.participation?.state !== "permission-required") {
         const start = page.locator("#start");
+        await expect(start.getByText("Paused", { exact: true })).toBeVisible();
         await expect(
-          start.getByRole("heading", { name: "Project paused", exact: true }),
-        ).toBeVisible();
-        await expect(
-          start.getByText(
-            "Do not install this project's skill or start work.",
-            {
-              exact: true,
-            },
-          ),
-        ).toBeVisible();
-        await expect(
-          start.getByRole("link", {
-            name: "Project owner: review setup",
-            exact: true,
-          }),
+          start.getByRole("link", { name: "Owner setup", exact: true }),
         ).toHaveAttribute("href", `/projects/${project.slug}/manage`);
       }
 
@@ -1868,9 +1865,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await audience.focus();
   await page.keyboard.press("Enter");
   await expect(audience.locator("..")).toHaveAttribute("open", "");
-  const rules = page.getByText("Funding rules and fees", {
-    exact: true,
-  });
+  const rules = page.getByText("Fees & rules", { exact: true });
   await rules.focus();
   await page.keyboard.press("Enter");
   await expect(rules.locator("..")).toHaveAttribute("open", "");
@@ -1978,7 +1973,7 @@ test("lands direct and lazy cross-route hash links on their section", async ({
       .getByRole("link", { name: "How penalties work", exact: true })
       .click();
     await expect(
-      page.getByText("Loading page…", { exact: true }),
+      page.getByTitle("Loading page", { exact: true }),
     ).toBeVisible();
     releaseChunk();
     await expect(page.locator("#penalties")).toBeInViewport();
@@ -2065,9 +2060,7 @@ test("cycle filters drop unavailable selections while retaining a published mont
   await expect(page.getByLabel("Month", { exact: true })).toHaveValue(
     index.cycles[0].cycleId,
   );
-  await expect(
-    page.getByText("No cycles match these filters.", { exact: false }),
-  ).toHaveCount(0);
+  await expect(page.getByText("No matches", { exact: false })).toHaveCount(0);
   await expect(page).toHaveURL(
     new RegExp(`/cycles\\?month=${index.cycles[0].cycleId}$`, "u"),
   );

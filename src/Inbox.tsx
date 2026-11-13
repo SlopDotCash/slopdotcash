@@ -2,9 +2,15 @@
 
 import {
   Bell,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   FolderGit2,
   Inbox,
+  Lock,
+  MailWarning,
+  Settings,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
@@ -36,7 +42,13 @@ import {
   subscribeProjectSessionChange,
 } from "./lib/project-api";
 import { useAction } from "./lib/use-action";
-import { formatDateTime, RoutePageHeader, SignInPanel } from "./Presentation";
+import {
+  formatDateTime,
+  RoutePageHeader,
+  SignInPanel,
+  Spinner,
+  StatusBadge,
+} from "./Presentation";
 
 const SecurityInbox = lazy(() =>
   import("./SecurityBounty").then((module) => ({
@@ -52,7 +64,7 @@ type InboxState =
   | { status: "error"; message: string }
   | { status: "ready"; value: NotificationsResponse };
 
-const UNAVAILABLE = "The inbox could not load. Retry.";
+const UNAVAILABLE = "Inbox unavailable";
 
 async function loadInbox(
   signal: AbortSignal,
@@ -90,7 +102,7 @@ async function loadInbox(
     value.recipientGithubId !== current.githubId ||
     (session !== undefined && session.githubId !== current.githubId)
   )
-    throw new Error("The inbox account changed. Retry.");
+    throw new Error("Account changed");
   return {
     status: "ready",
     value,
@@ -113,8 +125,7 @@ async function markRead(
     body: JSON.stringify({ eventKeys }),
   });
   if (response.status === 401) return "signed-out";
-  if (!response.ok)
-    throw new Error("Could not mark the notification as read. Please retry.");
+  if (!response.ok) throw new Error("Not saved");
   await readBoundedJson(response, 1_024, "notification read receipt");
   return "ok";
 }
@@ -138,8 +149,7 @@ async function acknowledgeSecurity(
     },
   );
   if (response.status === 401) return "signed-out";
-  if (!response.ok)
-    throw new Error("Could not acknowledge the security notice. Please retry.");
+  if (!response.ok) throw new Error("Not saved");
   await readBoundedJson(response, 1_024, "security acknowledgement receipt");
   return "ok";
 }
@@ -155,7 +165,6 @@ export default function InboxPage() {
     run,
   } = useAction();
   const actionActive = useRef(false);
-  const [message, setMessage] = useState("");
   const generation = useRef(0);
   const loadController = useRef<AbortController | null>(null);
   useEffect(
@@ -231,7 +240,7 @@ export default function InboxPage() {
             setRecipient(null);
             setState({
               status: "error",
-              message: "The inbox and private session could not load. Retry.",
+              message: "Inbox unavailable",
             });
           }
         }
@@ -251,7 +260,6 @@ export default function InboxPage() {
         loadController.current = null;
         acceptRecipient(null);
         setState({ status: "signed-out" });
-        setMessage("");
         setActionError(null);
       }),
     [acceptRecipient, setActionError],
@@ -275,7 +283,6 @@ export default function InboxPage() {
 
   function act(
     action: (expectedActorId: string) => Promise<"ok" | "signed-out">,
-    done: string,
   ) {
     if (
       actionActive.current ||
@@ -288,7 +295,6 @@ export default function InboxPage() {
     const expectedActorId = recipient;
     const previous = state;
     const current = ++generation.current;
-    setMessage("");
     setState({ status: "loading" });
     const ownsView = async () => {
       if (generation.current !== current) return false;
@@ -303,7 +309,7 @@ export default function InboxPage() {
           acceptRecipient(session.githubId);
           setState({
             status: "error",
-            message: "Your account changed. Retry your inbox.",
+            message: "Account changed",
           });
           return false;
         }
@@ -313,7 +319,7 @@ export default function InboxPage() {
           setRecipient(null);
           setState({
             status: "error",
-            message: "The inbox and private session could not load. Retry.",
+            message: "Inbox unavailable",
           });
         }
         return false;
@@ -333,14 +339,7 @@ export default function InboxPage() {
           loadController.current?.abort();
           loadController.current = controller;
           const next = await loadInbox(controller.signal, cursor);
-          if (generation.current === current) {
-            receive(next);
-            if (
-              next.status === "ready" &&
-              next.value.recipientGithubId === expectedActorId
-            )
-              setMessage(done);
-          }
+          if (generation.current === current) receive(next);
         } catch (caught) {
           if (await ownsView()) {
             setState(previous);
@@ -356,11 +355,32 @@ export default function InboxPage() {
 
   return (
     <main className="shell route-main inbox-page">
-      <RoutePageHeader icon={<Inbox />} title="Inbox" />
+      <RoutePageHeader
+        icon={<Inbox />}
+        title="Inbox"
+        titleAction={
+          state.status === "ready" && state.value.unread > 0 ? (
+            <StatusBadge tone="info">
+              {state.value.unread}
+              <span className="visually-hidden"> unread</span>
+            </StatusBadge>
+          ) : null
+        }
+        actions={
+          state.status === "ready" ? (
+            <a
+              className="button secondary-button icon-button"
+              href="/account#notifications"
+              aria-label="Email preferences"
+              title="Email preferences"
+            >
+              <Settings aria-hidden="true" size={18} />
+            </a>
+          ) : null
+        }
+      />
       <InboxEmailAction />
-      {state.status === "loading" ? (
-        <p role="status">Loading your inbox…</p>
-      ) : null}
+      {state.status === "loading" ? <Spinner label="Loading inbox" /> : null}
       {state.status === "signed-out" ? (
         <SignInPanel
           state={{ status: "signed-out" }}
@@ -395,7 +415,7 @@ export default function InboxPage() {
           ) : null}
           {new URLSearchParams(window.location.search).has("points") ||
           new URLSearchParams(window.location.search).has("pointsDispute") ? (
-            <Suspense fallback={<p role="status">Loading Points review…</p>}>
+            <Suspense fallback={<Spinner label="Loading Points review" />}>
               <PointsDisputes
                 key={`${recipient}:${window.location.search}`}
                 actorId={recipient}
@@ -404,7 +424,7 @@ export default function InboxPage() {
               />
             </Suspense>
           ) : null}
-          <Suspense fallback={<p role="status">Loading reports…</p>}>
+          <Suspense fallback={<Spinner label="Loading reports" />}>
             <SecurityInbox
               embedded
               key={recipient}
@@ -419,14 +439,9 @@ export default function InboxPage() {
         <InboxList
           busy={busy}
           response={state.value}
-          onMark={(keys, done) =>
-            void act((actorId) => markRead(keys, actorId), done)
-          }
+          onMark={(keys) => void act((actorId) => markRead(keys, actorId))}
           onAcknowledge={(notification) =>
-            void act(
-              (actorId) => acknowledgeSecurity(notification, actorId),
-              "Security notice acknowledged.",
-            )
+            void act((actorId) => acknowledgeSecurity(notification, actorId))
           }
         />
       ) : null}
@@ -437,37 +452,33 @@ export default function InboxPage() {
             type="button"
             className="button secondary-button"
             disabled={busy || previousPages.length === 0}
+            aria-label="Newer notifications"
+            title="Newer notifications"
             onClick={() => {
               setCursor(previousPages.at(-1) ?? null);
               setPreviousPages((pages) => pages.slice(0, -1));
-              setMessage("");
             }}
           >
-            Newer notifications
+            <ChevronLeft aria-hidden="true" size={18} /> Newer
           </button>
           <button
             type="button"
             className="button secondary-button"
             disabled={busy || !state.value.nextCursor}
+            aria-label="Older notifications"
+            title="Older notifications"
             onClick={() => {
               setPreviousPages((pages) => [...pages, cursor]);
               setCursor(state.value.nextCursor ?? null);
-              setMessage("");
             }}
           >
-            Older notifications
+            Older <ChevronRight aria-hidden="true" size={18} />
           </button>
         </nav>
       ) : null}
-      {message ? <p role="status">{message}</p> : null}
       {actionError ? (
         <p className="form-error" role="alert">
           {actionError}
-        </p>
-      ) : null}
-      {state.status === "ready" ? (
-        <p>
-          <a href="/account#notifications">Email preferences</a>
         </p>
       ) : null}
     </main>
@@ -482,7 +493,7 @@ function InboxList({
 }: {
   response: NotificationsResponse;
   busy: boolean;
-  onMark(eventKeys: string[], done: string): void;
+  onMark(eventKeys: string[]): void;
   onAcknowledge(notification: Notification): void;
 }) {
   const unreadKeys = response.notifications
@@ -490,24 +501,25 @@ function InboxList({
     .map((n) => n.eventKey)
     .slice(0, MAX_NOTIFICATION_MARK);
   if (response.notifications.length === 0)
-    return <p className="inbox-empty">You have no notifications.</p>;
+    return (
+      <p className="inbox-empty inbox-meta">
+        <Inbox aria-hidden="true" size={18} /> Nothing yet
+      </p>
+    );
   return (
     <>
-      <div className="inbox-summary">
-        <p>
-          {response.unread === 0 ? "All read." : `${response.unread} unread`}
-        </p>
-        {unreadKeys.length > 0 ? (
+      {unreadKeys.length > 0 ? (
+        <div className="inbox-summary">
           <button
             className="button secondary-button"
             type="button"
             disabled={busy}
-            onClick={() => onMark(unreadKeys, "Marked as read.")}
+            onClick={() => onMark(unreadKeys)}
           >
-            Mark shown as read
+            Mark all read
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       <ol className="inbox-list" aria-label="Notifications">
         {response.notifications.map((n) => (
           <InboxItem
@@ -531,13 +543,14 @@ function InboxItem({
 }: {
   notification: Notification;
   busy: boolean;
-  onMark(eventKeys: string[], done: string): void;
+  onMark(eventKeys: string[]): void;
   onAcknowledge(notification: Notification): void;
 }) {
   const unread = n.readAt === null;
   const title = notificationTitle(n);
-  const Icon =
-    n.kind.startsWith("security_") || n.kind.startsWith("slopbot_")
+  const Icon = n.kind.startsWith("security_")
+    ? Lock
+    : n.kind.startsWith("slopbot_")
       ? ShieldCheck
       : n.kind === "wallet_changed"
         ? Wallet
@@ -556,29 +569,50 @@ function InboxItem({
         <span className="inbox-kind-icon">
           <Icon size={20} aria-hidden="true" />
         </span>
-        <a
-          className="inbox-title"
-          href={n.actionPath}
-          aria-label={`${title}: ${notificationAction(n)}`}
-        >
-          {title}
-        </a>
+        <span>
+          {unread ? (
+            <span
+              className="inbox-state inbox-unread-dot"
+              role="img"
+              aria-label="Unread"
+              title="Unread"
+            />
+          ) : null}
+          <a
+            className="inbox-title"
+            href={n.actionPath}
+            aria-label={`${title}: ${notificationAction(n)}`}
+          >
+            {title}
+          </a>
+        </span>
       </div>
       {n.detail && n.detail !== title ? (
-        <p className="inbox-detail">{n.detail}</p>
+        <p className="inbox-detail" title={n.detail}>
+          {n.detail}
+        </p>
       ) : null}
       <p className="inbox-meta">
         <time dateTime={n.sourceAt}>{formatDateTime(n.sourceAt)}</time>
-        <span className="inbox-state">{unread ? "Unread" : "Read"}</span>
-        {n.emailDelivery ? (
+        {n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? (
           <span
-            className={`inbox-delivery${n.emailDelivery === "failed" || n.emailDelivery === "uncertain" ? " form-error" : ""}`}
+            className={`inbox-delivery${n.emailDelivery === "failed" ? " form-error" : ""}`}
+            style={
+              n.emailDelivery === "uncertain"
+                ? { color: "var(--warning)" }
+                : undefined
+            }
+            role="img"
+            aria-label={emailDeliveryLabel(n.emailDelivery)}
+            title={emailDeliveryLabel(n.emailDelivery)}
           >
-            {emailDeliveryLabel(n.emailDelivery)}
+            <MailWarning aria-hidden="true" size={14} />
           </span>
         ) : null}
         {n.kind === "security_case" && n.acknowledgedAt ? (
-          <span>Acknowledged</span>
+          <span role="img" aria-label="Acknowledged" title="Acknowledged">
+            <Check aria-hidden="true" size={14} />
+          </span>
         ) : null}
       </p>
       <div className="inbox-actions">
@@ -591,19 +625,20 @@ function InboxItem({
               aria-label={`Acknowledge: ${title}`}
               onClick={() => onAcknowledge(n)}
             >
-              Acknowledge
+              Ack
             </button>
           )
         ) : null}
         {unread ? (
           <button
-            className="button secondary-button button-small"
+            className="button secondary-button button-small icon-button"
             type="button"
             disabled={busy}
             aria-label={`Mark as read: ${title}`}
-            onClick={() => onMark([n.eventKey], "Marked as read.")}
+            title="Mark as read"
+            onClick={() => onMark([n.eventKey])}
           >
-            Mark as read
+            <Check aria-hidden="true" size={16} />
           </button>
         ) : null}
       </div>

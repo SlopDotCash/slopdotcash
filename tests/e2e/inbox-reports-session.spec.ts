@@ -97,16 +97,14 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       page.getByRole("button", { name: /^(Reports|Notifications)$/u }),
     ).toHaveCount(0);
     const notifications = page.getByRole("list", { name: "Notifications" });
-    await expect(
-      page.getByText("Link or import a GitHub report", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByText("Link report", { exact: true })).toHaveCount(0);
     await expectAccessible(page);
     await page.screenshot({
       path: test.info().outputPath("unified-inbox.png"),
       fullPage: false,
     });
     await page
-      .getByRole("button", { name: "Mark shown as read", exact: true })
+      .getByRole("button", { name: "Mark all read", exact: true })
       .dblclick();
     await expect.poll(() => markRequests).toBe(1);
     await expect(
@@ -191,9 +189,7 @@ test("Reports view retains sign-in and account-error recovery", async ({
   await expect(page.getByRole("alert")).toBeVisible();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(
-    page.getByText("You have no private reports yet.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("No reports", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
@@ -256,7 +252,7 @@ test("the financial filter keeps remediation distinct from payment", async ({
     name: "Show reports",
     exact: true,
   });
-  await filter.selectOption({ label: "Paid or ineligible" });
+  await filter.selectOption({ label: "Closed 2" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toHaveCount(
     0,
   );
@@ -264,6 +260,6 @@ test("the financial filter keeps remediation distinct from payment", async ({
   await expect(
     page.getByText(ineligible.nextStep, { exact: true }),
   ).toBeVisible();
-  await filter.selectOption({ label: "All reports" });
+  await filter.selectOption({ label: "All" });
   await expect(page.getByText(pending.nextStep, { exact: true })).toBeVisible();
 });

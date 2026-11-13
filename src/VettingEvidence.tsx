@@ -1,4 +1,14 @@
-import { FileSearch, LockKeyhole } from "lucide-react";
+import {
+  CircleCheck,
+  Clock,
+  Download,
+  Eye,
+  Infinity as InfinityIcon,
+  Info,
+  LoaderCircle,
+  LockKeyhole,
+  TriangleAlert,
+} from "lucide-react";
 import {
   type FormEvent,
   useCallback,
@@ -130,14 +140,15 @@ export default function VettingEvidencePage() {
   }
   return (
     <main className="shell route-main admin-page operations-page evidence-page">
-      <RoutePageHeader icon={<FileSearch />} title="Private vetting evidence" />
-      <p className="operations-caution">
-        <LockKeyhole aria-hidden="true" />
-        <span>
-          Private operator access. Evidence may contain hostile code or private
-          data.
-        </span>
-      </p>
+      <RoutePageHeader
+        icon={<LockKeyhole />}
+        title="Vetting evidence"
+        titleAction={
+          <StatusBadge icon={<TriangleAlert />} tone="warning">
+            Hostile content
+          </StatusBadge>
+        }
+      />
       {session.status !== "signed-in" ? (
         <SignInPanel
           state={session}
@@ -173,14 +184,22 @@ export default function VettingEvidencePage() {
               className="button primary-button"
               type="submit"
               disabled={busy}
+              aria-busy={busy}
             >
-              {busy ? "Loading evidence…" : "Inspect evidence inventory"}
+              {busy ? (
+                <LoaderCircle aria-hidden="true" className="wallet-spin" />
+              ) : null}
+              Load
             </button>
           </form>
         </details>
       ) : null}
       {session.status === "signed-in" && busy ? (
-        <p role="status">Loading evidence inventory…</p>
+        <p role="status">
+          <span aria-label="Loading" role="img" title="Loading">
+            <LoaderCircle aria-hidden="true" className="wallet-spin" />
+          </span>
+        </p>
       ) : null}
       {session.status === "signed-in" && error ? (
         <p role="alert">
@@ -193,23 +212,19 @@ export default function VettingEvidencePage() {
               requestAnimationFrame(() => assessmentInput.current?.focus());
             }}
           >
-            Edit IDs
+            Edit
           </button>{" "}
-          or{" "}
           <button
             className="text-button"
             type="button"
             onClick={() => lookup && setLookup({ ...lookup })}
           >
-            retry inventory
+            Retry
           </button>
-          .
         </p>
       ) : null}
-      {session.status === "signed-in" && data ? (
-        <>
-          <p className="operations-retention">{data.retentionBoundary}</p>
-          {data.runs.map((run) => (
+      {session.status === "signed-in" && data
+        ? data.runs.map((run) => (
             <section
               className="admin-card evidence-run"
               key={`${run.assessmentId}/${run.runId}`}
@@ -218,7 +233,7 @@ export default function VettingEvidencePage() {
                 <h2>Evidence inventory</h2>
               </header>
               <details className="security-reference operations-disclosure">
-                <summary>Run details and retention</summary>
+                <summary>Details</summary>
                 <dl className="operations-facts">
                   <div>
                     <dt>Run</dt>
@@ -236,7 +251,7 @@ export default function VettingEvidencePage() {
                     </dd>
                   </div>
                   <div>
-                    <dt>Storage inventory SHA-256</dt>
+                    <dt>Inventory hash</dt>
                     <dd>
                       <CopyIdentifier
                         label="storage inventory digest"
@@ -250,24 +265,44 @@ export default function VettingEvidencePage() {
                   </div>
                 </dl>
                 <p className="operations-retention">
-                  {run.permanentAdmissionEvidence
-                    ? "Admission evidence is retained permanently. Each read requires a short-lived operator grant."
-                    : run.expiresAt === null
-                      ? "Case open. Evidence is retained until 90 days after closure."
-                      : `Access expires: ${run.expiresAt}.`}
+                  {run.permanentAdmissionEvidence ? (
+                    <StatusBadge
+                      icon={<InfinityIcon />}
+                      title="Retained permanently; each read needs a grant"
+                    >
+                      Permanent
+                    </StatusBadge>
+                  ) : run.expiresAt === null ? (
+                    <StatusBadge
+                      icon={<Clock />}
+                      title="Retained until 90 days after closure"
+                    >
+                      Open · +90d after close
+                    </StatusBadge>
+                  ) : (
+                    <StatusBadge icon={<Clock />} title="Access expiry">
+                      Expires {run.expiresAt}
+                    </StatusBadge>
+                  )}{" "}
+                  <span
+                    aria-label="Backups, deletion and legal holds are separate"
+                    role="img"
+                    title={data.retentionBoundary}
+                  >
+                    <Info aria-hidden="true" size={14} />
+                  </span>
                 </p>
               </details>
               {run.assembly ? (
-                <p className="operations-caution">
-                  <span>
-                    <StatusBadge
-                      tone={run.assembly.retained ? "info" : "warning"}
-                    >
-                      Evidence assembly:{" "}
-                      {run.assembly.retained ? "Retained" : "Not verified"}
-                    </StatusBadge>{" "}
-                    {run.assembly.reason} Clean admission is unavailable.
-                  </span>
+                <p>
+                  <StatusBadge
+                    title={run.assembly.reason}
+                    tone={run.assembly.retained ? "info" : "warning"}
+                  >
+                    {run.assembly.retained
+                      ? "Assembly retained"
+                      : "Assembly unverified"}
+                  </StatusBadge>
                 </p>
               ) : null}
 
@@ -322,15 +357,14 @@ export default function VettingEvidencePage() {
                 ) : null;
               })}
             </section>
-          ))}
-        </>
-      ) : null}
+          ))
+        : null}
     </main>
   );
 }
 function evidenceState(state: string) {
   return state === "stored-unverified"
-    ? "Retained; not yet verified"
+    ? "Unverified"
     : state.replaceAll("-", " ");
 }
 
@@ -347,7 +381,9 @@ function EvidenceItem({
 }) {
   const [reason, setReason] = useState(""),
     [content, setContent] = useState<string | null>(null),
-    [status, setStatus] = useState("");
+    [status, setStatus] = useState<
+      "" | "downloading" | "verified-download" | "verified-text"
+    >("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -425,9 +461,7 @@ function EvidenceItem({
           link.href = `/api/v1/${base}/download`;
           link.download = `${object.sha256}.bin`;
           link.click();
-          setStatus(
-            "Download requested. Do not execute the file. A failed transfer needs a new grant.",
-          );
+          setStatus("downloading");
           return;
         }
         const granted = await projectApiRequest<{ grant: string }>(
@@ -480,8 +514,8 @@ function EvidenceItem({
         }
         setStatus(
           object.contentType === "application/octet-stream"
-            ? "Exact bytes verified. Download requested; do not execute the file."
-            : "Complete bytes verified. Text is displayed without execution.",
+            ? "verified-download"
+            : "verified-text",
         );
       } catch (cause) {
         if (!current()) return;
@@ -501,6 +535,8 @@ function EvidenceItem({
       }
     });
   }
+  const downloads =
+    object.streamed || object.contentType === "application/octet-stream";
   return (
     <article className="evidence-object operations-detail-panel">
       <header className="operations-card-heading">
@@ -530,7 +566,7 @@ function EvidenceItem({
       </dl>
       <form className="evidence-inspection" onSubmit={inspect}>
         <label className="form-field">
-          Reason to inspect {object.label}
+          Reason
           <input
             required
             minLength={8}
@@ -543,17 +579,34 @@ function EvidenceItem({
           className="button secondary-button"
           type="submit"
           disabled={busy || object.state !== "stored-unverified"}
+          aria-busy={busy}
+          aria-label={`${downloads ? "Download" : "Read"} ${object.label}`}
         >
-          {busy
-            ? "Verifying evidence…"
-            : object.streamed ||
-                object.contentType === "application/octet-stream"
-              ? `Download ${object.label}`
-              : `Read ${object.label}`}
+          {busy ? (
+            <LoaderCircle aria-hidden="true" className="wallet-spin" />
+          ) : downloads ? (
+            <Download aria-hidden="true" />
+          ) : (
+            <Eye aria-hidden="true" />
+          )}
+          {downloads ? "Download" : "Read"}
         </button>
       </form>
       {error ? <p role="alert">{error}</p> : null}
-      {status ? <p role="status">{status}</p> : null}
+      {status ? (
+        <p role="status">
+          {status === "downloading" ? (
+            "Downloading. Do not execute."
+          ) : (
+            <>
+              <StatusBadge icon={<CircleCheck />} tone="success">
+                Verified
+              </StatusBadge>
+              {status === "verified-download" ? " Do not execute" : null}
+            </>
+          )}
+        </p>
+      ) : null}
       {content !== null ? (
         <textarea
           className="admin-code evidence-content"

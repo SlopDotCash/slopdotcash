@@ -55,9 +55,7 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
-  await expect(page.locator(".project-reward-status")).toContainText(
-    "monthly, split between contributors",
-  );
+  await expect(page.locator(".project-reward-status")).toContainText("/mo");
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
     fullPage: true,
@@ -74,12 +72,8 @@ test("monthly targets remain distinct from verified payment records", async ({
     .getByRole("list", { name: "Project funding pools" })
     .getByRole("listitem")
     .filter({ has: page.getByRole("link", { name: "Eliza", exact: true }) });
-  await expect(
-    pool.getByText("Payments: Disabled", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    pool.getByText("Vault: Not set up", { exact: true }),
-  ).toBeVisible();
+  await expect(pool.getByText("No vault", { exact: true })).toBeVisible();
+  await expect(pool.getByText("Live", { exact: true })).toHaveCount(0);
   await expectAccessible(page);
   expect(
     await page.evaluate(
@@ -102,9 +96,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
     waitUntil: "networkidle",
   });
   const notice = page.locator(".cycle-reminder");
-  await expect(notice).toContainText(
-    "does not verify the month's funding status",
-  );
+  await expect(notice).toHaveText("Check funding →");
   await expect(notice).not.toContainText("Unfunded");
   await expect(notice).not.toContainText("Underfunded");
   await page.screenshot({
@@ -112,7 +104,7 @@ test("a cycle record offers a funding check without inventing a vault balance", 
     fullPage: true,
   });
   await expectAccessible(page);
-  const link = notice.getByRole("link", { name: "View project funding" });
+  const link = notice.getByRole("link", { name: "Check funding →" });
   await expect(link).toHaveAttribute("href", "/projects/eliza/funding");
   await link.click();
   await expect(page).toHaveURL(/\/projects\/eliza#funding$/u);

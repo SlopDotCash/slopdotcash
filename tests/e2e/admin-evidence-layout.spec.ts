@@ -148,7 +148,12 @@ test("selected admin project can queue after a superseded pending scan and prese
   const card = page.getByRole("article", {
     name: `Security vetting for ${project.id}`,
   });
-  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
+  // The card holds other reason fields; the scan request owns this one.
+  const scanReason = card
+    .locator("section.admin-subsection")
+    .filter({ has: page.getByRole("heading", { name: "Scan", exact: true }) })
+    .getByLabel("Scan reason", { exact: true });
+  await expect(scanReason).toBeVisible();
   await expect(
     card.getByText("An install script requests credentials.", { exact: false }),
   ).toBeVisible();
@@ -157,7 +162,7 @@ test("selected admin project can queue after a superseded pending scan and prese
   await expect(page).toHaveURL(`/admin?project=${project.id}`);
   await expect(card).toHaveCount(0);
   await page.goForward();
-  await expect(card.getByLabel("Reason for the scan")).toBeVisible();
+  await expect(scanReason).toBeVisible();
   await expect(
     card
       .getByRole("table", { name: "Scanned surfaces" })
@@ -178,9 +183,9 @@ test("selected admin project can queue after a superseded pending scan and prese
     "Dependency source could not be inspected",
     "Primary: clear",
   ]);
-  const reason = card.getByLabel("Reason for the scan");
+  const reason = scanReason;
   await expect(reason).toBeVisible();
-  await card.getByRole("button", { name: "Queue scan of revision 1" }).click();
+  await card.getByRole("button", { name: "Queue scan", exact: true }).click();
   expect(writes).toEqual([]);
   await reason.fill("  Recheck the unresolved dependency source  ");
   await expectAccessible(page);
@@ -241,7 +246,7 @@ test("selected admin project can queue after a superseded pending scan and prese
     contentType: "application/json",
   });
   await restore();
-  await card.getByRole("button", { name: "Queue scan of revision 1" }).focus();
+  await card.getByRole("button", { name: "Queue scan", exact: true }).focus();
   await page.keyboard.press("Enter");
   // The key press resolves before the queue request reaches the route.
   await expect
@@ -255,7 +260,7 @@ test("selected admin project can queue after a superseded pending scan and prese
     ]);
   await expect(card.locator(".admin-badge")).toHaveText("Queued");
   await expect(
-    card.getByRole("button", { name: "Queue scan of revision 1" }),
+    card.getByRole("button", { name: "Queue scan", exact: true }),
   ).toHaveCount(0);
 });
 
@@ -377,6 +382,12 @@ test("evidence deep links load only after sign-in and select one reasoned reader
         : body;
     return route.fulfill({ contentType: "text/plain", body: content });
   });
+  // Each opened object names itself in its heading; its reason field is "Reason".
+  const reasonFor = (label: string) =>
+    page
+      .locator("article.evidence-object")
+      .filter({ has: page.getByRole("heading", { name: label, exact: true }) })
+      .getByRole("textbox", { name: "Reason", exact: true });
   const path = "/vetting-evidence?assessmentId=scan-layout&runId=run-layout";
   await page.goto(path, { waitUntil: "networkidle" });
   await expect(
@@ -388,7 +399,8 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   const automaticReads = inventoryReads;
   // Also capture the old inventory for before/after comparison.
   const oldInspect = page.getByRole("button", {
-    name: "Inspect evidence inventory",
+    name: "Load",
+    exact: true,
   });
   if (await oldInspect.isVisible()) await oldInspect.click();
   await expect(
@@ -400,15 +412,15 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   });
   expect(automaticReads).toBe(1);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByText("Run details and retention", { exact: true }).click();
+  await page.getByText("Details", { exact: true }).click();
   await page
     .getByRole("button", { name: "Copy storage inventory digest" })
     .click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     "c".repeat(64),
   );
-  await page.getByText("Run details and retention", { exact: true }).click();
-  await expect(page.getByLabel("Reason to inspect First trace")).toHaveCount(0);
+  await page.getByText("Details", { exact: true }).click();
+  await expect(reasonFor("First trace")).toHaveCount(0);
   await page
     .getByRole("button", { name: `Select First trace, ${hash.slice(0, 12)}` })
     .focus();
@@ -416,9 +428,7 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   const read = page.getByRole("button", { name: "Read First trace" });
   await read.click();
   expect(grants).toEqual([]);
-  await page
-    .getByLabel("Reason to inspect First trace")
-    .fill("Verify the complete retained trace");
+  await reasonFor("First trace").fill("Verify the complete retained trace");
   await read.click();
   await expect(page.getByRole("alert")).toContainText(
     "Evidence digest differs",
@@ -439,10 +449,8 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("textbox", { name: "First trace verified content" }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("Reason to inspect First trace")).toHaveCount(0);
-  await page
-    .getByLabel("Reason to inspect Second object")
-    .fill("Compare the second retained object");
+  await expect(reasonFor("First trace")).toHaveCount(0);
+  await reasonFor("Second object").fill("Compare the second retained object");
   await page.getByRole("button", { name: "Read Second object" }).click();
   await expect(
     page.getByRole("textbox", { name: "Second object verified content" }),
@@ -474,27 +482,29 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("textbox", { name: "Second object verified content" }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Edit IDs", exact: true }).focus();
+  await page.getByRole("button", { name: "Edit", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByLabel("Assessment ID", { exact: true })).toBeFocused();
   await expect(page.getByLabel("Run ID", { exact: true })).toHaveValue(
     "run-layout",
   );
   inventoryDenied = false;
-  await page.getByRole("button", { name: "retry inventory" }).click();
+  await page
+    .getByRole("alert")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Evidence inventory" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
-    0,
-  );
+  await expect(reasonFor("Second object")).toHaveCount(0);
   holdNextInventory = true;
   const nextInventory = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/operator/vetting-evidence",
   );
   const lookup = page.getByRole("button", {
-    name: "Inspect evidence inventory",
+    name: "Load",
+    exact: true,
   });
   if (!(await lookup.isVisible()))
     await page.getByText("Find evidence", { exact: true }).click();
@@ -529,9 +539,9 @@ test("evidence deep links load only after sign-in and select one reasoned reader
       name: `Select Second object, ${otherHash.slice(0, 12)}`,
     })
     .click();
-  await page
-    .getByLabel("Reason to inspect Second object")
-    .fill("Inspect after renewed operator identity");
+  await reasonFor("Second object").fill(
+    "Inspect after renewed operator identity",
+  );
   diagnostics.allowResponse(403, "POST", `/api/v1/${base}/${otherHash}/grant`);
   holdNextGrant = true;
   const refusedGrant = page.waitForResponse(
@@ -550,9 +560,7 @@ test("evidence deep links load only after sign-in and select one reasoned reader
   await expect(
     page.getByRole("heading", { name: "Evidence inventory" }),
   ).toHaveCount(0);
-  await expect(page.getByLabel("Reason to inspect Second object")).toHaveCount(
-    0,
-  );
+  await expect(reasonFor("Second object")).toHaveCount(0);
   await expect(page.getByRole("alert")).toContainText(
     "Vetting operator access required.",
   );
@@ -632,10 +640,12 @@ test("each evidence read sends its reason and shows the verified text or exact b
       name: `Select Scanner note, ${textHash.slice(0, 12)}`,
     })
     .click();
-  const reason = page.getByRole("textbox", {
-    name: "Reason to inspect Scanner note",
-    exact: true,
-  });
+  const reasonFor = (label: string) =>
+    page
+      .locator("article.evidence-object")
+      .filter({ has: page.getByRole("heading", { name: label, exact: true }) })
+      .getByRole("textbox", { name: "Reason", exact: true });
+  const reason = reasonFor("Scanner note");
   const read = page.getByRole("button", {
     name: "Read Scanner note",
     exact: true,
@@ -651,11 +661,8 @@ test("each evidence read sends its reason and shows the verified text or exact b
   await reason.fill("Confirm the scanner flagged this note");
   await read.click();
   // While the single-use body is read, the action shows its verification.
-  const verifying = page.getByRole("button", {
-    name: "Verifying evidence…",
-    exact: true,
-  });
-  await expect(verifying).toBeDisabled();
+  await expect(read).toBeDisabled();
+  await expect(read).toHaveAttribute("aria-busy", "true");
   await expect.poll(() => bodyReads).toEqual(["grant-1"]);
   releaseBody?.();
   const content = page.getByRole("textbox", {
@@ -664,9 +671,7 @@ test("each evidence read sends its reason and shows the verified text or exact b
   });
   await expect(content).toHaveValue(text);
   await expect(content).toHaveAttribute("readonly", "");
-  await expect(page.getByRole("status")).toHaveText(
-    "Complete bytes verified. Text is displayed without execution.",
-  );
+  await expect(page.getByRole("status")).toHaveText("Verified");
   await expect(read).toBeEnabled();
   expect(grants).toEqual([
     {
@@ -687,21 +692,14 @@ test("each evidence read sends its reason and shows the verified text or exact b
     })
     .click();
   await expect(content).toHaveCount(0);
-  await page
-    .getByRole("textbox", {
-      name: "Reason to inspect Binary sample",
-      exact: true,
-    })
-    .fill("Compare the archive with the release");
+  await reasonFor("Binary sample").fill("Compare the archive with the release");
   const download = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Download Binary sample", exact: true })
     .click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe(`${binaryHash}.bin`);
-  await expect(page.getByRole("status")).toHaveText(
-    "Exact bytes verified. Download requested; do not execute the file.",
-  );
+  await expect(page.getByRole("status")).toHaveText("Verified Do not execute");
   await expect(
     page.getByRole("textbox", { name: "Binary sample verified content" }),
   ).toHaveCount(0);

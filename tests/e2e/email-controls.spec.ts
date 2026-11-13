@@ -63,9 +63,7 @@ test("a failed account check retries before verification, and Dismiss drops the 
     name: "Verify email",
     exact: true,
   });
-  await expect(action.getByRole("alert")).toHaveText(
-    "Your account could not be checked. Reload to retry.",
-  );
+  await expect(action.getByRole("alert")).toHaveText("Account check failed");
   const verify = action.getByRole("button", {
     name: "Verify email",
     exact: true,
@@ -78,9 +76,7 @@ test("a failed account check retries before verification, and Dismiss drops the 
   });
 
   sessionFailure = false;
-  await action
-    .getByRole("button", { name: "Retry account check", exact: true })
-    .click();
+  await action.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(verify).toBeEnabled();
   await expect(action.getByRole("alert")).toHaveCount(0);
   // The link is now bound to the checked account for this tab.
@@ -206,11 +202,11 @@ test("Change email replaces a pending verification address", async ({
     waitUntil: "networkidle",
   });
   const preferences = page.getByRole("region", {
-    name: "Email preferences",
+    name: "Email",
     exact: true,
   });
-  await expect(preferences.getByRole("status")).toContainText(
-    "Verification sent: first@example.test",
+  await expect(preferences.getByRole("status")).toHaveText(
+    "first@example.test Sent",
   );
   const input = preferences.getByRole("textbox", {
     name: "Email address",
@@ -239,13 +235,13 @@ test("Change email replaces a pending verification address", async ({
     .click();
   await input.fill("second@example.test");
   await preferences
-    .getByRole("checkbox", { name: "Activity email", exact: true })
+    .getByRole("checkbox", { name: "Activity", exact: true })
     .check();
   await preferences
-    .getByRole("button", { name: "Send verification", exact: true })
+    .getByRole("button", { name: "Verify", exact: true })
     .click();
-  await expect(preferences.getByRole("status")).toContainText(
-    "Verification requested: second@example.test",
+  await expect(preferences.getByRole("status")).toHaveText(
+    "second@example.test Pending",
   );
   await expect(input).toHaveCount(0);
   expect(state.requests).toHaveLength(1);

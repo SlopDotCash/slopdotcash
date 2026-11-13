@@ -6,7 +6,7 @@
  * separate `wrangler dev` notify Worker fails with "Network connection lost"
  * for some seconds after the server starts (3 to 19 s in local runs). The
  * first registry test is the Firefox email preference workflow, so it showed
- * "We could not check your email address". This read-only request waits, with
+ * "Email check failed". This read-only request waits, with
  * a bound, until the binding answers. It changes no data.
  */
 import type { FullConfig } from "@playwright/test";

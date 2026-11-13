@@ -152,7 +152,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     waitUntil: "networkidle",
   });
   const receipt = page.locator(`[aria-labelledby="submission-${id}"]`);
-  await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toContainText("Needs evidence");
   await expect(receipt).toHaveCount(1);
   await expect(page.locator(".security-case-choice")).toHaveCount(0);
   await expect(
@@ -178,15 +178,15 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toContainText("Needs evidence");
   const notifications = page.getByRole("list", { name: "Notifications" });
   await expect(notifications.locator(".inbox-item")).toHaveCount(1);
-  await expect(notifications).toContainText(
-    `Your private report ${caseId} was received.`,
+  await expect(notifications).toContainText(`Report ${caseId} received`);
+  await expect(notifications.locator(".inbox-state")).toHaveAccessibleName(
+    "Unread",
   );
-  await expect(notifications.locator(".inbox-state")).toHaveText("Unread");
   await expect(
-    page.getByRole("button", { name: "Mark shown as read", exact: true }),
+    page.getByRole("button", { name: "Mark all read", exact: true }),
   ).toBeVisible();
   await expect(receipt).toHaveCount(1);
   await expect(page.locator(".security-case-choice")).toHaveCount(0);
@@ -205,7 +205,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   blocked = undefined;
   diagnostics.allowResponse(503, "GET", olderPath);
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toContainText("Needs evidence");
   actor = "43";
   // The account change resets the cursor, which starts a second, first-page
   // read. It must fail in "error" mode before the fixture recovers, or that
@@ -224,12 +224,12 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
   await expect(page.getByRole("alert")).toBeVisible();
   mode = "ready";
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(page.getByText("You have no notifications.")).toBeVisible();
+  await expect(page.getByText("Nothing yet", { exact: true })).toBeVisible();
   actor = "42";
   await page.goto(`/inbox?view=notifications&submission=${id}`, {
     waitUntil: "networkidle",
   });
-  await expect(receipt).toContainText("More evidence needed");
+  await expect(receipt).toContainText("Needs evidence");
   mode = "signed-out";
   diagnostics.allowResponse(401, "GET", olderPath);
   diagnostics.allowResponse(401, "GET", "/api/v1/notifications");

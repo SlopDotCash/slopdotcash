@@ -40,7 +40,7 @@ for (const surface of ["detail", "archive"] as const) {
       { waitUntil: "networkidle" },
     );
     await expect(
-      page.getByText("Under review, awaiting approval", { exact: true }),
+      page.getByText("Awaiting approval", { exact: true }),
     ).toHaveCount(0);
     await page.clock.pauseAt(new Date(deadline - 1));
     await page.screenshot({
@@ -49,7 +49,7 @@ for (const surface of ["detail", "archive"] as const) {
     });
     await page.clock.fastForward(1);
     await expect(
-      page.getByText("Under review, awaiting approval", { exact: true }),
+      page.getByText("Awaiting approval", { exact: true }),
     ).toBeVisible();
     await page.screenshot({
       path: test.info().outputPath("review-ended.png"),
@@ -87,14 +87,17 @@ test("cycle archive advances past review and then the stale-index deadline", asy
   );
   await page.goto("/cycles", { waitUntil: "networkidle" });
   await expect(page.getByText("Under review", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Cycle history may be outdated/)).toHaveCount(0);
+  const staleNotice = page
+    .getByRole("status")
+    .filter({ hasText: /^Cycles stale · / });
+  await expect(staleNotice).toHaveCount(0);
   await page.clock.pauseAt(new Date(reviewAt - 1));
   await page.clock.fastForward(1);
   await expect(
-    page.getByText("Under review, awaiting approval", { exact: true }),
+    page.getByText("Awaiting approval", { exact: true }),
   ).toBeVisible();
   await page.clock.fastForward(staleAt - reviewAt);
-  await expect(page.getByText(/Cycle history may be outdated/)).toBeVisible();
+  await expect(staleNotice).toBeVisible();
   await expect(page.getByText("Paid", { exact: true })).toHaveCount(0);
 });
 
@@ -115,22 +118,20 @@ test("an open funding edit advances its effective month at UTC rollover", async 
   await page
     .getByRole("radio", { name: "Monthly rewards", exact: true })
     .check();
-  const amount = page.getByLabel(/^Monthly amount/);
+  const amount = page.getByLabel(/^Amount \/ month/);
   await amount.fill("2000");
+  const changes = page.getByRole("region", { name: "Changes", exact: true });
   await expect(
-    page.getByText(
-      "Financial changes apply from 2026-08 (UTC). Funded awards keep their terms.",
-      { exact: true },
-    ),
+    changes.getByText("From 2026-08", { exact: true }).first(),
   ).toBeVisible();
   await page.clock.pauseAt(new Date("2026-07-31T23:59:59.999Z"));
   await page.clock.fastForward(1);
   await expect(
-    page.getByText(
-      "Financial changes apply from 2026-09 (UTC). Funded awards keep their terms.",
-      { exact: true },
-    ),
+    changes.getByText("From 2026-09", { exact: true }).first(),
   ).toBeVisible();
+  await expect(changes.getByText("From 2026-08", { exact: true })).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: test.info().outputPath("funding-month-rollover.png"),
     fullPage: true,

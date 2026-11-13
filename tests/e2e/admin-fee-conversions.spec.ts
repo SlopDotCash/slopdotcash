@@ -94,8 +94,19 @@ test("an admin sees Robinhood Chain fees as not converted beside finalized USDC 
   await expect(network("Ethereum")).toContainText("USDC");
   await expect(network("Solana")).toContainText("USDC");
   await expect(network("Base")).toContainText("USDC");
-  await expect(network("Base")).toContainText(
-    `1 conversion: 2500000000000000000 base units of token ${token} to 12.5 USDC`,
+  // The row shortens the token and keeps the full address as its title.
+  const total = network("Base")
+    .getByRole("definition")
+    .filter({ has: page.locator(`code[title="${token}"]`) });
+  await expect(total.locator("code")).toHaveText(
+    `${token.slice(0, 6)}…${token.slice(-4)}`,
+  );
+  await expect(total).toContainText("2500000000000000000 → 12.5 USDC");
+  await expect(total.getByTitle("Base units", { exact: true })).toHaveText(
+    "2500000000000000000",
+  );
+  await expect(total.getByTitle("1 conversion", { exact: true })).toHaveText(
+    "×1",
   );
   await expect(page.locator("main details")).toHaveCount(0);
   await expectAccessible(page, {

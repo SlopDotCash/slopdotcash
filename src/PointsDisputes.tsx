@@ -214,6 +214,7 @@ export default function PointsDisputes({
           <button
             type="button"
             className="text-button"
+            aria-label="Retry loading"
             onClick={() => setRetry((value) => value + 1)}
           >
             Retry
@@ -292,6 +293,7 @@ export default function PointsDisputes({
               <button
                 type="button"
                 className="button secondary-button"
+                aria-label="Retry review"
                 disabled={busy}
                 onClick={() =>
                   void act(
@@ -300,7 +302,7 @@ export default function PointsDisputes({
                   )
                 }
               >
-                Retry Slopbot review
+                Retry
               </button>
             ) : null}
             <Link className="button secondary-button" href="/inbox?points">

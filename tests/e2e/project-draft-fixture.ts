@@ -111,7 +111,11 @@ export async function releaseHeldEditorSession(page: Page) {
 
 /** Inspect the tab's saved bytes, including during legacy-format migration. */
 export async function readProjectDraft(page: Page, key: string) {
-  await expect(page.getByText("Saving draft…", { exact: true })).toHaveCount(0);
+  await expect(
+    page
+      .getByText("Saving draft…", { exact: true })
+      .or(page.getByRole("img", { name: "Saving draft…", exact: true })),
+  ).toHaveCount(0);
   return page.evaluate((key) => {
     const pointer = sessionStorage.getItem(
       `slop:project-draft:v3:${encodeURIComponent(key)}:tab`,

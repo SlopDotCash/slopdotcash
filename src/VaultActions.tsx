@@ -1,5 +1,18 @@
-import { CircleAlert } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  ArrowRight,
+  Check,
+  CircleAlert,
+  ExternalLink,
+  LoaderCircle,
+  Lock,
+} from "lucide-react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -36,9 +49,23 @@ import {
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
 import { usePendingWalletAttempt } from "./lib/use-pending-wallet-attempt";
-import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
+import {
+  isWalletAddress,
+  sameWalletAddress,
+  shortAddress,
+} from "./lib/wallets";
+import { CompactIdentifier, CopyIdentifier } from "./Operations";
 import { PendingWalletCheck } from "./OwnerPresentation";
-import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
+import {
+  NetworkName,
+  NoWalletFound,
+  StatusBadge,
+  WalletConnection,
+} from "./Presentation";
+
+const spinner = (
+  <LoaderCircle className="wallet-spin" aria-hidden="true" size={14} />
+);
 
 type Step = "approve" | "reset" | "send";
 type Pending = PendingAttempt & {
@@ -88,9 +115,7 @@ function readPending(text: string | null, solana: boolean): Pending | null {
       (value.hash === null ||
         !["wallet", "recovery"].includes(value.hashSource)))
   )
-    throw new Error(
-      "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
-    );
+    throw new Error("Saved request unreadable. Check wallet activity.");
   return value;
 }
 
@@ -142,7 +167,7 @@ export function VaultActions({
   );
   const [amount, setAmount] = useState(saved.pending?.amount ?? "");
   const [review, setReview] = useState<Review | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const [recoveryHash, setRecoveryHash] = useState(saved.pending?.hash ?? "");
   const wallets = usePayoutWallets().filter((entry) =>
     solana
@@ -161,9 +186,7 @@ export function VaultActions({
       const connection = await provider.connect();
       if (!mounted.current) return;
       if (pending && !sameWallet(connection.address, pending.wallet))
-        throw new Error(
-          `Reconnect the wallet that submitted this action: ${pending.wallet}`,
-        );
+        throw new Error(`Wrong wallet. Use ${shortAddress(pending.wallet)}`);
       if (
         !canDeposit &&
         !pending &&
@@ -222,9 +245,7 @@ export function VaultActions({
         current.net !== review.net ||
         current.decimals !== review.decimals
       )
-        throw new Error(
-          "The vault review changed. Review the action again before signing.",
-        );
+        throw new Error("Review changed. Review again.");
       const intent: Pending = {
         attemptId: crypto.randomUUID(),
         version: 1,
@@ -280,13 +301,19 @@ export function VaultActions({
         try {
           if (!remember(submitted, intent) && mounted.current)
             setNotice(
-              `Submitted ${hash}. Keep this hash; the saved request changed.`,
+              <>
+                Not saved. Keep this hash:{" "}
+                <CopyIdentifier label="transaction hash" value={hash} />
+              </>,
             );
         } catch {
           if (mounted.current) {
             setPending(submitted);
             setNotice(
-              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
+              <>
+                Not saved. Keep this hash:{" "}
+                <CopyIdentifier label="transaction hash" value={hash} />
+              </>,
             );
           }
         }
@@ -300,9 +327,7 @@ export function VaultActions({
           throw new Error("You declined the wallet request. Nothing was sent.");
         }
         if (requested)
-          throw new Error(
-            "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
-          );
+          throw new Error("Result unclear. Enter the transaction hash.");
         throw caught;
       }
     });
@@ -369,24 +394,23 @@ export function VaultActions({
           storedPending.current = candidate;
           setPending(candidate);
         }
-        setNotice(
-          pending.hashSource === "wallet"
-            ? "Submitted. Waiting for finalized chain evidence."
-            : "Waiting for finalized chain evidence.",
-        );
+        setNotice(<>{spinner} Finalizing</>);
         return;
       }
       clear(captured);
       setRecoveryHash("");
       setReview(null);
       if (automatic) setError(null);
-      if (result === "failed")
-        setNotice(
-          "The transaction failed. Review the amount and wallet, then retry.",
-        );
+      if (result === "failed") setNotice("Transaction failed.");
       else if (result === "approval-confirmed") {
         setNotice(
-          "Token approval confirmed. Review the deposit to continue; no funds have been deposited yet.",
+          <>
+            <StatusBadge tone="success" icon={<Check size={12} />}>
+              Approve
+            </StatusBadge>{" "}
+            <ArrowRight aria-hidden="true" size={14} />{" "}
+            <StatusBadge>Deposit</StatusBadge>
+          </>,
         );
         // Open the next review so the owner does not enter the amount again.
         // It reads the live allowance; a failed read leaves the form as it was.
@@ -403,8 +427,26 @@ export function VaultActions({
         if (mounted.current && next && storedPending.current === null)
           setReview(next);
       } else {
+        const verified = transactionUrl(deployment.network, hash);
         setNotice(
-          `${pending.operation === "deposit" ? "Deposit" : "Withdrawal"} verified on the finalized chain. ${hash}`,
+          <>
+            <StatusBadge tone="success" icon={<Check size={12} />}>
+              {pending.operation === "deposit" ? "Deposited" : "Withdrawn"}
+            </StatusBadge>{" "}
+            {verified ? (
+              <a
+                href={verified}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="View transaction"
+                title="View transaction"
+              >
+                <ExternalLink aria-hidden="true" size={14} />
+              </a>
+            ) : (
+              <code>{hash}</code>
+            )}
+          </>,
         );
         onFinalized();
       }
@@ -470,31 +512,23 @@ export function VaultActions({
       aria-label={`Fund or withdraw · ${networkLabel(deployment.network)}`}
     >
       <h3>
-        Fund or withdraw ·{" "}
-        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain}>
+        Funds{" "}
+        <NetworkName chain={ESCROW_NETWORKS[deployment.network].chain} iconOnly>
           {networkLabel(deployment.network)}
         </NetworkName>
       </h3>
-      <details
-        className="vault-contract-details"
+      <CompactIdentifier
+        label="vault address"
+        value={deployment.vault}
+        preview={`Vault ${shortAddress(deployment.vault)}`}
         open={Boolean(review || pending)}
-      >
-        <summary>Contract details</summary>
-        <dl className="vault-addresses">
-          <div>
-            <dt>Vault</dt>
-            <dd>
-              <code>{deployment.vault}</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Token</dt>
-            <dd>
-              <code>{deployment.asset}</code>
-            </dd>
-          </div>
-        </dl>
-      </details>
+      />
+      <CompactIdentifier
+        label="token address"
+        value={deployment.asset}
+        preview={`Token ${shortAddress(deployment.asset)}`}
+        open={Boolean(review || pending)}
+      />
       <p className="setup-badge setup-badge--warning">
         <CircleAlert aria-hidden="true" size={14} />
         Direct transfers are not credited
@@ -511,7 +545,7 @@ export function VaultActions({
           disabled={busy}
           onClick={() => void run(async () => clearUnreadable())}
         >
-          I checked wallet activity; clear the unreadable local record
+          Clear saved record
         </button>
       ) : null}
       <WalletConnection
@@ -519,9 +553,7 @@ export function VaultActions({
         wallets={wallets}
         disabled={busy || storageError}
         className="admin-fieldset"
-        legend={
-          pending ? "Reconnect to check this transaction" : "Choose a wallet"
-        }
+        legend={pending ? "Reconnect wallet" : "Wallet"}
         empty={<NoWalletFound solana={solana} />}
         onConnect={(provider) => void connect(provider)}
       />
@@ -540,25 +572,26 @@ export function VaultActions({
             void run(async () => {
               clear(storedPending.current ?? pending);
               setReview(null);
-              setNotice("Local request cleared. Review again before sending.");
+              setNotice("Cleared.");
             })
           }
         >
           <p>
+            {spinner}{" "}
             {pending.step === "send"
               ? pending.operation === "deposit"
                 ? "Deposit"
                 : "Withdrawal"
-              : "Token approval"}{" "}
-            awaiting verification. Do not send it again.
+              : "Approval"}{" "}
+            pending · {formatted(pending.gross, pending.decimals)} · don't
+            resend
           </p>
-          <p>{formatted(pending.gross, pending.decimals)}</p>
         </PendingWalletCheck>
       ) : wallet && !storageError ? (
         <>
           <fieldset className="admin-fieldset" disabled={busy}>
             <fieldset className="vault-operation">
-              <legend>Action</legend>
+              <legend className="visually-hidden">Action</legend>
               {(isOwner
                 ? canDeposit
                   ? (["deposit", "withdraw"] as const)
@@ -578,19 +611,12 @@ export function VaultActions({
                       setReview(null);
                     }}
                   />
-                  <span>
-                    {choice === "deposit"
-                      ? "Deposit tokens"
-                      : "Withdraw free funds"}
-                  </span>
+                  <span>{choice === "deposit" ? "Deposit" : "Withdraw"}</span>
                 </label>
               ))}
-              {isOwner ? null : (
-                <p>Only the vault owner's wallet can withdraw free funds.</p>
-              )}
             </fieldset>
             <label>
-              Token amount
+              Amount
               <input
                 inputMode="decimal"
                 value={amount}
@@ -606,13 +632,13 @@ export function VaultActions({
               onClick={() => void inspect()}
               disabled={!canDeposit && operation === "deposit"}
             >
-              Review {operation === "deposit" ? "deposit" : "withdrawal"}
+              Review
             </button>
           </fieldset>
           {review ? (
             <section aria-label="Review vault action">
               <dl>
-                <dt>Current free balance</dt>
+                <dt>Free</dt>
                 <dd>
                   {review.freeBalance === null
                     ? "Unavailable"
@@ -620,10 +646,11 @@ export function VaultActions({
                 </dd>
                 {review.solanaPlan && (
                   <>
-                    <dt>Estimated network fee</dt>
+                    <dt>Network fee</dt>
                     <dd>
+                      ~
                       {formatBaseUnits(review.solanaPlan.networkFeeLamports, 9)}{" "}
-                      SOL, plus any token-account rent
+                      SOL
                     </dd>
                   </>
                 )}
@@ -631,27 +658,27 @@ export function VaultActions({
                 <dd>{formatted(review.gross, review.decimals)}</dd>
                 <dt>Fee</dt>
                 <dd>{formatted(review.fee, review.decimals)}</dd>
-                <dt>
-                  {operation === "deposit"
-                    ? "Added to free funds"
-                    : "Returned to owner"}
-                </dt>
+                <dt>Net</dt>
                 <dd>{formatted(review.net, review.decimals)}</dd>
               </dl>
               {operation === "deposit" ? (
                 <p>
-                  This deposit joins the project's free funds. Only its owner
-                  can award or withdraw them, less a 2% withdrawal fee.
-                  Depositors have no refund right.
+                  <Lock aria-hidden="true" size={14} /> Refundable only to the
+                  owner · 2% fee
                 </p>
               ) : (
                 <p>
-                  Reserved awards cannot be withdrawn. Funds go only to{" "}
-                  <code>{deployment.owner}</code>.
+                  To <code>{deployment.owner}</code>
                 </p>
               )}
               {review.resetAllowance ? (
-                <p>Reset the existing token allowance to zero first.</p>
+                <p>
+                  <StatusBadge tone="warning">Reset</StatusBadge>{" "}
+                  <ArrowRight aria-hidden="true" size={14} />{" "}
+                  <StatusBadge>Approve</StatusBadge>{" "}
+                  <ArrowRight aria-hidden="true" size={14} />{" "}
+                  <StatusBadge>Deposit</StatusBadge>
+                </p>
               ) : null}
               <button
                 type="button"
@@ -668,12 +695,12 @@ export function VaultActions({
                 }
               >
                 {review.resetAllowance
-                  ? "Reset token allowance in wallet"
+                  ? "Reset allowance"
                   : review.approvalNeeded
-                    ? "Approve exact token amount in wallet"
+                    ? "Approve"
                     : operation === "deposit"
-                      ? "Confirm deposit in wallet"
-                      : "Confirm withdrawal in wallet"}
+                      ? "Deposit"
+                      : "Withdraw"}
               </button>
             </section>
           ) : null}
@@ -690,7 +717,12 @@ export function VaultActions({
           </button>
         </>
       ) : null}
-      {busy && <p role="status">Waiting for wallet or chain response…</p>}
+      {busy && (
+        <p role="status">
+          {spinner}
+          <span className="visually-hidden">Waiting for wallet</span>
+        </p>
+      )}
     </section>
   );
 }

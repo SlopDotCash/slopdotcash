@@ -1,5 +1,6 @@
 /** The canonical authenticated payout response restores every network together. */
 import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { escapeRegExp, expect, expectAccessible, test } from "./fixtures";
 
@@ -25,6 +26,19 @@ const wallets = [
   ],
   ["ethereum", "Ethereum", "0x3333333333333333333333333333333333333333"],
 ];
+/** The page shows a payout account only to the session it was read for. */
+const signIn = (page: Page) =>
+  page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          githubId: account.githubUserId,
+          githubLogin: "qa",
+          admin: false,
+        },
+      },
+    }),
+  );
 const account = {
   githubUserId: "123",
   wallets: wallets.map(([chain, , address]) => ({
@@ -45,6 +59,7 @@ test("Account Wallets restores all saved networks and public records after reloa
 }, info) => {
   const writes: string[] = [];
   let authorized = false;
+  await signIn(page);
   await page.route("**/api/v1/payments/**", async (route) => {
     if (route.request().method() !== "GET") writes.push(route.request().url());
     await route.fulfill({
@@ -103,6 +118,7 @@ test("unavailable wallet readback retries without inventing an empty account", a
     /^(?:console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at |503 GET )http:\/\/[^ ]+\/api\/v1\/payments\/me$/u,
   );
   let available = false;
+  await signIn(page);
   await page.route("**/api/v1/payments/me", (route) =>
     available
       ? route.fulfill({ json: account })

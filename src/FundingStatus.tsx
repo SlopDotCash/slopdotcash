@@ -1,11 +1,8 @@
+import { Vault } from "lucide-react";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import {
-  paymentStateLabel,
-  StatusBadge,
-  vaultStateLabel,
-} from "./Presentation";
+import { StatusBadge } from "./Presentation";
 
-/** Vault availability and permission to pay are independent facts. */
+/** One badge: a recorded vault that can pay, one whose payments are off, or none. */
 export function FundingStatus({
   project,
   className = "",
@@ -13,17 +10,17 @@ export function FundingStatus({
   project: ProjectDefinition;
   className?: string;
 }) {
+  // An external prize is never paid through a vault.
+  if (project.reward.kind === "external-prize-share") return null;
+  const [tone, label] = !project.escrow?.deployments.length
+    ? (["neutral", "No vault"] as const)
+    : project.reward.paymentMode === "enabled"
+      ? (["success", "Live"] as const)
+      : (["warning", "Payments off"] as const);
   return (
     <div className={className}>
-      <StatusBadge
-        tone={project.escrow?.deployments.length ? "info" : "neutral"}
-      >
-        Vault: {vaultStateLabel(project)}
-      </StatusBadge>
-      <StatusBadge
-        tone={project.reward.paymentMode === "enabled" ? "success" : "neutral"}
-      >
-        Payments: {paymentStateLabel(project)}
+      <StatusBadge tone={tone} icon={<Vault aria-hidden="true" size={14} />}>
+        {label}
       </StatusBadge>
     </div>
   );
