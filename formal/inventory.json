@@ -8813,13 +8813,13 @@
     },
     {
       "path": "workers/vetting/acquire.ts",
-      "sha256": "fc9b675e131b0e1b3e8b0b170cccb745e1e8bb7aca1c4f2de4b890611bb340f9",
+      "sha256": "75e1e7fcdd701115800f02745bd015b4bc83804b57ffb9eb28ef0031caf4f505",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
-        15, 19, 36, 38, 81, 82, 512, 519, 520, 539, 561, 588, 597, 603
+        15, 19, 36, 38, 81, 82, 183, 521, 528, 529, 548, 573, 600, 609, 615
       ],
       "review": "mapped-abstraction"
     },
@@ -18024,7 +18024,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_acquisition.qnt",
-      "sha256": "37234cc6b64ac416e151fc2d9dedd54e86707e9f65f6285190cb6c69509e13fd",
+      "sha256": "09fd589674accc7a04d561c35bbd37e5f19948fcf4efe2605d9f93151cf7c07d",
       "sources": [
         "workers/vetting/acquire.ts",
         "workers/vetting/assembly-manifest.ts",
@@ -18036,7 +18036,8 @@
       "scenarios": [
         "acquisitionFailureDoesNotConsumeQueueTest",
         "completePinnedAcquisitionTest",
-        "partialBatchCannotClearTest"
+        "partialBatchCannotClearTest",
+        "trailingSourceCannotCompleteTest"
       ]
     },
     {
