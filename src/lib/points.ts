@@ -968,6 +968,13 @@ export function applyPointsSnapshot(
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {
     const a = previous.award;
+    // Held PR pools have either explicit allocation replacements above or no
+    // replacement at all. Absence from the new ledger never deletes the latter.
+    if (
+      a.category === "merged-pull-request" &&
+      heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`)
+    )
+      continue;
     const omission =
       a.category === "substantive-review"
         ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
