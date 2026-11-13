@@ -5404,11 +5404,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "a54a93cbb83345a1db2775f0332598525590dc5cfbb796eb7acb8a78b3f74b97",
+      "sha256": "b26b684f01e8affeb5f6b56c842722d7b41404575491b30a512dd57ef5a69f63",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        212, 297, 308, 338, 339, 341, 342, 375, 377, 388, 537, 538, 540, 541,
-        582, 672
+        212, 297, 308, 364, 365, 367, 368, 401, 403, 414, 563, 564, 566, 567,
+        608, 698
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
