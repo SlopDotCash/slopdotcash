@@ -2023,15 +2023,14 @@ test("how it works answers the referral and buyback questions", async ({
   const referral = faq.locator("article", {
     has: page.getByRole("heading", { name: "Is there a referral program?" }),
   });
-  await expect(referral).toContainText("slop.cash/r/");
-  await expect(referral).toContainText("paid its contributors");
+  await expect(referral).toContainText("none pay until the program");
   await expect(
     referral.getByRole("link", { name: "Referral terms" }),
   ).toHaveAttribute("href", "https://record.slop.cash/referrals");
   const buyback = faq.locator("article", {
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
-  await expect(buyback).toContainText("starts with the first fee");
+  await expect(buyback).toContainText("half of the SLOP bought is burned");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
   ).toHaveAttribute("href", "https://record.slop.cash/buyback");
