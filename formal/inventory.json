@@ -6130,7 +6130,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "499342e7e6f365c7c5896bc1ff57e0c1266b8be0b8dcf07ad4144fb47763c39d",
+      "sha256": "2a5337f125293f67b12a5fec37f47195586aa411299b33e969d783c3cfa25b4e",
       "models": [
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
