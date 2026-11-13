@@ -10,6 +10,9 @@ use anchor_spl::token_2022::spl_token_2022::{
 };
 use anchor_spl::token_2022_extensions::spl_token_metadata_interface::state::TokenMetadata;
 
+/// Bounds variable-length metadata parsing and the account data loaded by output instructions.
+pub const MAX_TOKEN_2022_MINT_SIZE: usize = 1024;
+
 pub fn admitted_mint(info: &AccountInfo) -> Result<bool> {
     if info.owner == &anchor_spl::token::ID {
         return Ok(true); // Existing classic SPL admission and authorities remain unchanged.
@@ -18,6 +21,10 @@ pub fn admitted_mint(info: &AccountInfo) -> Result<bool> {
         *info.owner,
         anchor_spl::token_2022::ID,
         EscrowError::WrongMint
+    );
+    require!(
+        info.data_len() <= MAX_TOKEN_2022_MINT_SIZE,
+        EscrowError::UnsupportedTokenExtension
     );
     let data = info.try_borrow_data()?;
     let state = StateWithExtensions::<MintState>::unpack(&data)?;
@@ -34,10 +41,24 @@ pub fn admitted_mint(info: &AccountInfo) -> Result<bool> {
         );
         match kind {
             ExtensionType::MetadataPointer => {
-                state.get_extension::<MetadataPointer>()?;
+                let pointer = state.get_extension::<MetadataPointer>()?;
+                require!(
+                    Option::<Pubkey>::from(pointer.authority).is_none(),
+                    EscrowError::UnsupportedTokenExtension
+                );
+                require_keys_eq!(
+                    Option::<Pubkey>::from(pointer.metadata_address)
+                        .ok_or(EscrowError::WrongMint)?,
+                    *info.key,
+                    EscrowError::WrongMint
+                );
             }
             ExtensionType::TokenMetadata => {
                 let metadata = state.get_variable_len_extension::<TokenMetadata>()?;
+                require!(
+                    Option::<Pubkey>::from(metadata.update_authority).is_none(),
+                    EscrowError::UnsupportedTokenExtension
+                );
                 require_keys_eq!(metadata.mint, *info.key, EscrowError::WrongMint);
             }
             _ => return err!(EscrowError::UnsupportedTokenExtension),
@@ -112,9 +133,29 @@ mod tests {
     }
 
     #[test]
+    fn mutable_or_oversized_metadata_is_refused() {
+        let bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin");
+        for offset in [170, 238] {
+            let mut mutable = bytes.to_vec();
+            mutable[offset..offset + 32].fill(9);
+            assert!(inspect_mint(mutable).is_err());
+        }
+        let mut external = bytes.to_vec();
+        external[202..234].fill(7);
+        assert!(inspect_mint(external).is_err());
+        let mut oversized = bytes.to_vec();
+        oversized.resize(MAX_TOKEN_2022_MINT_SIZE + 1, 0);
+        assert!(inspect_mint(oversized).is_err());
+        let mut bounded = bytes.to_vec();
+        bounded.resize(MAX_TOKEN_2022_MINT_SIZE, 0);
+        assert!(inspect_mint(bounded).unwrap());
+    }
+
+    #[test]
     fn revoked_authorities_keep_key_bytes_but_are_no_longer_authorities() {
         use anchor_lang::solana_program::{program_option::COption, program_pack::Pack};
-        let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+        let mut bytes =
+            include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
         let mut mint = MintState::unpack(&bytes[..82]).unwrap();
         mint.mint_authority = COption::Some(Pubkey::new_from_array([9; 32]));
         mint.freeze_authority = COption::Some(Pubkey::new_from_array([7; 32]));
@@ -135,7 +176,8 @@ mod tests {
             ExtensionType::TransferHook as u16,
             60_000,
         ] {
-            let mut bytes = include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
+            let mut bytes =
+                include_bytes!("../../../integration/fixtures/token-2022-mint.bin").to_vec();
             bytes[166..168].copy_from_slice(&kind.to_le_bytes());
             assert!(inspect_mint(bytes).is_err());
         }

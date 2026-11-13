@@ -1804,7 +1804,7 @@
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
-      "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
+      "sha256": "18e1e42304c5bcb631dfb4dafe2a36a064322736c8fedb54d3aaf5e8d74aff1a",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/solana_monthly_allocation.qnt",
@@ -1812,16 +1812,16 @@
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [33, 1047],
+      "candidateLines": [33, 1052],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/token_policy.rs",
-      "sha256": "710e5d5b26844e7bbd0b0cab33f75963e89e2bfe03d276fb7f1e05a8057264c4",
+      "sha256": "3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d",
       "models": ["formal/models/contracts/token_admission.qnt"],
       "candidateLines": [
-        9, 11, 23, 25, 28, 37, 40, 59, 61, 64, 71, 157, 160, 162, 164, 165, 169,
-        170
+        9, 11, 30, 32, 35, 44, 57, 80, 82, 85, 92, 199, 202, 204, 206, 207, 211,
+        212
       ],
       "review": "mapped-abstraction"
     },
@@ -1928,9 +1928,9 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "b456ced40e9d0a985a8fe029059a8ad325dea1abb2533d8d3695e29706c703e0",
+      "sha256": "0a8fddf8372b4b8b905995e8abc46914941ec0b57b230222a61a1447f1ef92dd",
       "models": ["formal/models/contracts/token_admission.qnt"],
-      "candidateLines": [],
+      "candidateLines": [171],
       "review": "mapped-abstraction"
     },
     {
@@ -3769,10 +3769,11 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "07da883c8e653b6e5fcb7418cb0adf16edc1a4fd873d18da709efcd2a082e97e",
+      "sha256": "7da141339979248eb96a203a05f86dfa136e624dbfca4746eb2b1cac79460b30",
       "models": [
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -3782,26 +3783,27 @@
         23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
         653, 685, 881, 1116, 1178, 1186, 1244, 1297, 1300, 1493, 1502, 1507,
         1514, 1597, 1598, 1745, 1746, 1803, 1829, 1847, 1849, 1853, 1887, 1890,
-        1891, 1894, 1896, 1907, 1930, 2137, 2140, 2448, 2467, 2565, 2578, 2589,
-        2590, 2767, 2768, 2959, 2975, 2987, 2994, 3020, 3030, 3034, 3038, 3042,
-        3097, 3116, 3143, 3160, 3194, 3195, 3197, 3213, 3230, 3231, 3232, 3241,
-        3246, 3426, 3784, 3806, 3815, 3865, 3900, 3906, 3913, 3982, 4067, 4219,
-        4434, 4444, 4446, 4459, 4488, 4490, 4491, 4495, 4499, 4554, 4608, 4659,
-        4662
+        1891, 1894, 1896, 1907, 1930, 2137, 2140, 2451, 2470, 2568, 2581, 2592,
+        2593, 2779, 2780, 2971, 2987, 2999, 3006, 3032, 3042, 3046, 3050, 3054,
+        3109, 3128, 3155, 3172, 3206, 3207, 3209, 3225, 3242, 3243, 3244, 3253,
+        3258, 3438, 3796, 3818, 3827, 3877, 3912, 3918, 3925, 3994, 4079, 4231,
+        4447, 4457, 4459, 4472, 4501, 4503, 4504, 4508, 4512, 4567, 4621, 4672,
+        4675
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "a4a3fe41dd4f77c1046bc29231e5b9121b13c5f6b1133f50f3244a1730dad238",
+      "sha256": "dafbef9cd51fca55f428dd16b6e6dc096fe4d0daeb050d5ea46fdad3aea1b390",
       "models": [
         "formal/models/points/journal_publication.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 247, 253, 256, 259,
-        260, 261, 262, 351, 626, 633, 634, 636, 641, 645, 649
+        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 245, 282, 288, 291,
+        295, 296, 297, 298, 387, 662, 669, 670, 672, 677, 681, 685
       ],
       "review": "mapped-abstraction"
     },
@@ -4324,6 +4326,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/retained-commit-credit.ts",
+      "sha256": "9430f2d50e9a91d34cac28d5dc9c41cecac56effce9805325c7827fb4603fefb",
+      "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/run-e2e-phase.mjs",
       "sha256": "08d0368c0b925438b62d8dc80b4bd4d6c2b65c038c22929d377e1e8d845dcab1",
       "models": [
@@ -4529,14 +4542,16 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "4936a88b94e142f2dd6930fecb4872e7f21caf64b18d493d211e112a4ab7a8dd",
+      "sha256": "1a7e69cab0f91fa2f0a12ec209c87c0cbbcc77fdb24af456ad4baacc19b27fa5",
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 651, 687,
-        720, 744
+        53, 64, 111, 112, 113, 114, 116, 117, 185, 186, 187, 189, 190, 674, 778,
+        814, 847, 871
       ],
       "review": "mapped-abstraction"
     },
@@ -5629,10 +5644,10 @@
     },
     {
       "path": "src/lib/commit-credit.ts",
-      "sha256": "81d4534547964189d03697fc3362115754ad98bb1e28288c864a1e2c4736461e",
-      "models": [],
+      "sha256": "25ab3825cd92d1f9ea932b61de65999da55d65b9d6e0c3d12e0b3444903315a4",
+      "models": ["formal/models/points/implementation_credit.qnt"],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure immutable actor-ID/kind eligibility predicate; no retained state or I/O. Accepted-source lifecycle is owned by the ledger."
     },
     {
@@ -5894,34 +5909,38 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "a58decf4643427498d90595c12070c7fc1c21cef88fc97cc1334896c8f1bec0e",
-      "models": [],
+      "sha256": "f27c61e0fbb478cecd4f0d938f2e27ad089e13ad180268a6e3543fdf175e8a7e",
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 269, 291, 339, 371, 429, 490, 498, 505, 545, 647, 678, 740, 767
+        71, 76, 274, 296, 344, 376, 434, 495, 503, 510, 550, 652, 683, 766, 793
       ],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "60f0ff3d27ce1b601ab6ff0358d9ec6c7b0e17e939b40932a37fbbf3c01dc02b",
+      "sha256": "815fc40573c10c79c4bdd14c12ff7e43fa19e35cbc8f91b28ba3dc36c1425abc",
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
         "formal/models/ui/ui_score_selection.qnt",
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        247, 248, 272, 278, 917, 980, 1006, 1217, 1278, 1288, 1294, 1296, 1298,
-        1300, 1307, 1392, 1426, 1431, 1449, 1546, 2088, 2106, 2178, 2187, 2205,
-        2214, 2222, 2244, 2259, 2268, 2276, 2322, 2372, 2422, 2477, 2494, 2495,
-        2498, 2499, 2603, 2605, 2606, 2610, 2613, 2621, 2623, 2641, 2896, 2951,
-        3127, 3318, 3343, 3415, 3424, 3520, 3586, 3923, 3934, 3963, 4024, 4038,
-        4361, 4574, 4775, 4888, 4913, 5038, 5044, 5750, 5752, 5775, 5779, 5783,
-        5788, 5926, 5935, 5945, 5946, 6004, 6039, 6045, 6065, 6070, 6077, 6085,
-        6087, 6113, 6116, 6130, 6132, 6153, 6155, 6159, 6162, 6167, 6357, 6359,
-        6618, 6662, 6725, 6726, 7526, 7542, 7552, 7563, 7616, 7617, 7644, 7851
+        250, 251, 275, 281, 920, 983, 1009, 1220, 1281, 1291, 1297, 1299, 1301,
+        1303, 1310, 1395, 1429, 1434, 1452, 1549, 2091, 2109, 2181, 2190, 2208,
+        2217, 2225, 2247, 2262, 2271, 2279, 2325, 2375, 2425, 2480, 2497, 2498,
+        2501, 2502, 2606, 2608, 2609, 2613, 2616, 2624, 2626, 2644, 2917, 2936,
+        2991, 3167, 3362, 3387, 3460, 3469, 3565, 3644, 3987, 3998, 4027, 4088,
+        4102, 4425, 4638, 4839, 4952, 4977, 5098, 5106, 5111, 5155, 5871, 5873,
+        5896, 5900, 5904, 5909, 6047, 6056, 6066, 6067, 6125, 6160, 6166, 6186,
+        6191, 6198, 6206, 6208, 6234, 6237, 6251, 6253, 6274, 6276, 6280, 6283,
+        6288, 6478, 6480, 6739, 6783, 6846, 6847, 7647, 7648, 7665, 7675, 7686,
+        7698, 7764, 7765, 7792, 7999
       ],
       "review": "mapped-abstraction"
     },
@@ -6107,15 +6126,16 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "82306c746b95c652bd9efff89fa032797482be028275cbb61d6211974fc1ae01",
+      "sha256": "691c6896abc073def7ac29325639d7ee8dc0ab6e9e0606c31b55692b99fde1a8",
       "models": [
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
         "formal/models/points/points_total_precision.qnt",
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [334, 877, 884, 893],
+      "candidateLines": [334, 765, 897, 915, 922, 931],
       "review": "mapped-abstraction"
     },
     {
@@ -8250,12 +8270,13 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "fb6e4c43050be8977206a962c3bac7489490508dc006b450df775ac59c8ca6b8",
+      "sha256": "c7d6928586d717c49f2cf0455ac61344075d4fabea8e8d81af945c372937a7d1",
       "models": [
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 521, 541, 584, 593, 612, 953, 972],
+      "candidateLines": [64, 75, 84, 98, 524, 544, 587, 596, 615, 958, 977],
       "review": "mapped-abstraction"
     },
     {
@@ -8375,9 +8396,12 @@
     },
     {
       "path": "workers/slopbot/value-patch-replay.ts",
-      "sha256": "0a50ec809d356b1a97fb8b6afe659dfa06a42edf587fb71826aae53666d82153",
-      "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [50, 53, 220, 221, 283, 292],
+      "sha256": "4a51914d827decf4efc11c96a4a28ee291df6c81f541cf3f0dae9d2c03bf445d",
+      "models": [
+        "formal/models/slopbot/batched_patch_replay.qnt",
+        "formal/models/slopbot/bot_patch_replay.qnt"
+      ],
+      "candidateLines": [50, 53, 228, 229, 284, 293],
       "review": "mapped-abstraction"
     },
     {
@@ -8443,12 +8467,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "ea75bb8b113c645e87199ede5605a3a8c4d5a4077a8492814954ed43f71bcd5d",
+      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
-        "formal/models/slopbot/retained_copy_bindings.qnt"
+        "formal/models/slopbot/retained_copy_bindings.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [30, 57, 177, 183, 207, 241],
+      "candidateLines": [33, 60, 260, 266, 290, 324],
       "review": "mapped-abstraction"
     },
     {
@@ -8546,8 +8571,9 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
+      "sha256": "de7ff4f54bc63f71d090af444d1d46f7278761fd5657c5362dc4775a2f4df494",
       "models": [
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
@@ -11263,7 +11289,7 @@
     },
     {
       "path": "formal/models/contracts/solana_monthly_allocation.qnt",
-      "sha256": "db746dfa9844abf7e55d67aff249a6f0d7331ddb742da51f7aa2c2fe6ff89307",
+      "sha256": "3cb1464eeaa993c1f68e3bd91fe062591f838f9a41bcd21bafc364d7965fd172",
       "sources": [
         "contracts/solana/monthly-commitment.ts",
         "contracts/solana/monthly-reserve.ts",
@@ -11273,16 +11299,18 @@
         "actorZeroReleasesTest",
         "commitThenPayTest",
         "eachSourceSettlesOnceTest",
+        "leafReleaseExcludesReserveTest",
         "legacyExpiredMonthKeepsOutstandingTest",
         "migratedGrossOneRefusedTest",
         "migratedPrincipalStaysReservedTest",
         "otherActorAfterFreezeStaysReservedTest",
         "otherActorBeforeFreezeReleasesTest",
         "outstandingBlocksHandCommitTest",
-        "partialReserveReleaseThenFittingLeafTest",
+        "partialReserveReleaseRefusedTest",
         "sameAwardReleasesTest",
         "smallerAwardAfterFreezeStaysReservedTest",
-        "staleExpectedReserveReleaseTest"
+        "staleExpectedReserveReleaseTest",
+        "wholeReserveReleaseExcludesLeafTest"
       ]
     },
     {
@@ -11382,7 +11410,7 @@
     },
     {
       "path": "formal/models/contracts/token_admission.qnt",
-      "sha256": "71482da2408e752348e2369b0b87a7923b430ea7ddd8140f78b639deb0b130c9",
+      "sha256": "9d6d43fcaba10241918929967b92483131c0e1349265ff636cd7ae07fa55b5d5",
       "sources": [
         "contracts/solana/programs/slop-escrow/src/token_policy.rs",
         "contracts/solana/token-extensions.ts",
@@ -11393,6 +11421,7 @@
         "allowedMetadataTest",
         "classicAuthorityCompatibilityTest",
         "liveAuthorityTest",
+        "oversizedMetadataTest",
         "unknownExtensionTest"
       ]
     },
@@ -13182,6 +13211,44 @@
       ]
     },
     {
+      "path": "formal/models/points/implementation_credit.qnt",
+      "sha256": "67e7c2bd82297be5abc0576a6ed468cd1ad3ee65c094371789623d085a8b7c2c",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "scripts/retained-commit-credit.ts",
+        "scripts/value-ingestion.ts",
+        "src/lib/commit-credit.ts",
+        "src/lib/leaderboard.ts",
+        "workers/slopbot/value-evidence.ts",
+        "workers/slopbot/value-work-unit.ts"
+      ],
+      "scenarios": [
+        "botsAndVendorAgentsCannotReceiveTest",
+        "carrierGetsNoAutomaticShareTest",
+        "maintainerImplementationStillCreditedTest",
+        "missingHumanIdentityDoesNotCreditTest",
+        "oldCarrierCreditNegativeControlTest",
+        "ordinaryUnlinkedFallbackTest",
+        "repeatedCommitsAndRetriesDoNotMultiplyTest",
+        "verifiedOriginalFallbackTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_credit_gate.qnt",
+      "sha256": "fa20592ae9e0de0da96fad37bfa98d953dea91a4f3c6cd08ac4bd65b35ccbc92",
+      "sources": [
+        "scripts/retained-commit-credit.ts",
+        "scripts/value-ingestion.ts",
+        "src/lib/leaderboard.ts"
+      ],
+      "scenarios": [
+        "completeDuplicateGetsNoNewCreditTest",
+        "heldSourceKeepsPriorPointsTest",
+        "missingOwnershipIsNotDuplicateProofTest",
+        "transportFailureDoesNotBecomeCreditTest"
+      ]
+    },
+    {
       "path": "formal/models/points/ingestion_retry.qnt",
       "sha256": "c849045fea46d6056d26f81e2e89d5113af6dba605287eacfda8c23ad507e00e",
       "sources": ["scripts/generate-leaderboard.ts", "scripts/github-token.ts"],
@@ -13239,6 +13306,35 @@
         "newestFiveMaterialTestsTest",
         "reviewCapTest",
         "uncappedPositiveMergesTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/points_financial_preservation.qnt",
+      "sha256": "3da9371b88261f29e12399bbb5cc03b85f37b6183b818c8e72e412a5cd770496",
+      "sources": ["scripts/generate-points.ts"],
+      "scenarios": [
+        "concurrentFreezeRefusesChangeTest",
+        "exactReplayAfterFreezeAllowedTest",
+        "frozenChangeRefusedTest",
+        "oldImportNegativeControlTest",
+        "unprotectedCorrectionAllowedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/points_implementation_correction.qnt",
+      "sha256": "7ec3f9e07fd922e438ba39ca26fb7932aba1bc3e3ea471531daab42818e0bc64",
+      "sources": [
+        "src/lib/leaderboard-types.ts",
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts"
+      ],
+      "scenarios": [
+        "finalAwardIsRetainedTest",
+        "missingOrIncompleteProofCannotRemoveTest",
+        "oldReplacementNegativeControlTest",
+        "phantomCarrierCorrectionIsAppendedOnceTest",
+        "retainedContributorValueIsNotReplacedTest",
+        "sourceBoundAwardIsRetainedTest"
       ]
     },
     {
@@ -14063,6 +14159,16 @@
       ]
     },
     {
+      "path": "formal/models/slopbot/batched_patch_replay.qnt",
+      "sha256": "035c0505a9cbadf4ce934540880d2e283a2a8488b3a32fd8c071f83da9a1b8cf",
+      "sources": ["workers/slopbot/value-patch-replay.ts"],
+      "scenarios": [
+        "completeBatchesReturnTest",
+        "firstBatchIsNotCompleteProofTest",
+        "laterFailureDiscardsProofTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_accepted_census.qnt",
       "sha256": "b2c1cd2139cee6be84e23313b0cdc3f3c3f72dda82ee0462b4e50df50a927ae0",
       "sources": [
@@ -14350,7 +14456,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_patch_replay.qnt",
-      "sha256": "6ec67c00b76c6ae7225f9ed499d2c6aaf42d66583b9f0b0b0eb8e145021076eb",
+      "sha256": "65ce027f217a9c427dd0cd2419ddccb0a08f018ce7e6cde8c4408148549daa61",
       "sources": [
         "workers/slopbot/git-object.ts",
         "workers/slopbot/value-accepted-range.ts",
@@ -14359,9 +14465,11 @@
         "workers/slopbot/value-patch.ts"
       ],
       "scenarios": [
+        "allRepeatedEditsVerifiedTest",
         "ambiguousContextRefusedTest",
         "exactReplayTest",
-        "partialPatchRefusedTest"
+        "partialPatchRefusedTest",
+        "uncoveredDuplicateRefusedTest"
       ]
     },
     {
@@ -14958,7 +15066,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6ac25853c3ea9fda64176dae0da31ede00cf0557a09e2c244c39ebf4f99c0c63",
+      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -14971,6 +15079,7 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
@@ -14988,6 +15097,19 @@
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/retained_recipient_scope.qnt",
+      "sha256": "0b13eec1e4789b1d8f7c9b517b287ca95a468c093e4db88c90ef3f1f8f2f0f35",
+      "sources": [
+        "scripts/retained-commit-credit.ts",
+        "workers/slopbot/value-retained-copy.ts"
+      ],
+      "scenarios": [
+        "fullAssessmentStillRequiresMergeProofTest",
+        "missingOrdinaryProofNeverCreditsTest",
+        "ordinaryRecipientCanIgnoreUnclaimedSyncTest"
       ]
     },
     {

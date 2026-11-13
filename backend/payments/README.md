@@ -283,6 +283,14 @@ real GitHub OAuth or public testnet deployment result.
 Automatic monthly payment is the PRD default for a funded project (PRD
 sections 6 and 7). Migration `0062` adds its private records.
 
+Points imports check these private records in the same atomic statement that
+accepts the new journal batch. A correction cannot change or add accepted-work
+Points in a frozen month, a month with an owner allocation decision, or a month
+with a retained direct payment. A legacy obligation without an exact monthly
+binding protects the whole project; its period is never inferred from indexing
+time. A refusal stops the release before Pages publication and retains the
+previous Points history. Replaying an identical batch remains valid.
+
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on
    `development` for `slop-staging`. It freezes the complete ledger of the
