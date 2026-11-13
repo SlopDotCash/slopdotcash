@@ -101,6 +101,13 @@ function publicRecord(row: Row): PublicVaultPayment {
     netBase,
     transactionId: row.transactionId,
     indexedAt: row.indexedAt,
+    proof: {
+      obligationId: row.obligationId,
+      sourceDigest: row.sourceDigest,
+      vault: row.vault,
+      grossBase: row.grossBase,
+      feeBase: row.feeBase,
+    },
   };
 }
 

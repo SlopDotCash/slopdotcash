@@ -435,12 +435,12 @@
     },
     {
       "path": "backend/payments/public-records.ts",
-      "sha256": "84cfe037dcf98628bbd5602a3f6a2af00d3a35a3c9cf2403266baada1d77fecd",
+      "sha256": "74566add7a3f7b6cf13838ddeaf3515e4086edfe8e426b731c2eea706fea461a",
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
-      "candidateLines": [28, 67, 85, 92, 177, 216, 217],
+      "candidateLines": [28, 67, 85, 92, 184, 223, 224],
       "review": "mapped-abstraction"
     },
     {
@@ -6088,13 +6088,13 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "sha256": "cf2242a114b4e351d422e916363a87cfd60ed9d9908b62972a67326a91c6bcf5",
+      "sha256": "978d89f2451eef1b8ba77a29c011133a3233cf672401d4f9676dd80504cd74f8",
       "models": [
         "formal/models/fees/ordinary_fee.qnt",
         "formal/models/rewards/escrow_balances.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt"
       ],
-      "candidateLines": [33, 53, 54, 55, 77, 94, 129, 137, 225],
+      "candidateLines": [33, 53, 54, 55, 77, 94, 129, 137, 232],
       "review": "mapped-abstraction"
     },
     {
