@@ -1795,10 +1795,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .click();
     await expect(setup.getByRole("status")).toContainText("not finalized");
     await rpc("anvil_mine", ["0x40"]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
-    await expect(setup).toHaveCount(0);
+    // The saved creation is checked without a click once its block is final.
+    await expect(setup).toHaveCount(0, { timeout: 30_000 });
     await expect(
       recoveryPage
         .getByRole("status")
