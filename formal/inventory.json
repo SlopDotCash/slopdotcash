@@ -4399,12 +4399,12 @@
     },
     {
       "path": "scripts/run-integration.mjs",
-      "sha256": "f1eae6e8d976c4be4c6b79abddca7c8615c8322c0b65d671e3fd717ba453b817",
+      "sha256": "977e77a6575c405c1f6d9bd832b77d3adfb3f2c84e78e652cb65d52082575abc",
       "models": [
         "formal/models/tooling/dev_server_lifecycle.qnt",
         "formal/models/tooling/integration_pipeline.qnt"
       ],
-      "candidateLines": [108, 117, 118, 120, 140],
+      "candidateLines": [113, 122, 123, 125, 145],
       "review": "mapped-abstraction"
     },
     {
@@ -8048,14 +8048,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "sha256": "07f8fe7790d039c4310e569b8919bf0f63abd0a6ce74d8c00694a6db5eece8eb",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        43, 77, 88, 105, 114, 115, 116, 118, 122, 123, 126, 164, 167, 220, 221,
-        252
+        43, 77, 88, 108, 117, 118, 119, 121, 125, 126, 129, 167, 170, 223, 224,
+        255
       ],
       "review": "mapped-abstraction"
     },
