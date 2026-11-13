@@ -8940,7 +8940,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "4fc98bc92c129a30fbc2b38352c0e80e20a82e3d05b7117cf653504acccf7c9f",
+      "sha256": "db304fe8748092d0ebd992674c93ce6144632c47824961d5505d5fd1b8683c67",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -8948,7 +8948,8 @@
         "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        246, 254, 255, 1761, 1762, 1943, 2004, 2025, 2092, 2108, 2151
+        249, 257, 258, 1772, 1773, 1809, 1810, 1979, 2040, 2061, 2128, 2144,
+        2187
       ],
       "review": "mapped-abstraction"
     },
@@ -18953,12 +18954,13 @@
     },
     {
       "path": "formal/models/vetting/vetting_path_coverage.qnt",
-      "sha256": "4e099ce87cf391f33c21cbabc155f088cc07bb1e705b900481bfcc03894b8745",
+      "sha256": "817f5a91825ea13fc87fe48e28c43f779d35c4a28a564cce2356330f9c4a1985",
       "sources": ["workers/vetting/bounded-scan.ts"],
       "scenarios": [
         "completeContentReviewTest",
         "omittedContentCannotPublishTest",
-        "previousCoverageCannotBeReusedTest"
+        "previousCoverageCannotBeReusedTest",
+        "unclassifiedTextCannotBeOmittedTest"
       ]
     },
     {
