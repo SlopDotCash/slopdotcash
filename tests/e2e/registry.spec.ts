@@ -367,7 +367,11 @@ async function draftApplication(
 }
 
 async function listedProject(page: Page, id: string) {
-  const body = await (await page.request.get("/api/v1/projects")).json();
+  const response = await page.request.get("/api/v1/projects", {
+    maxRetries: 1,
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
   return body.projects.find((entry: { id: string }) => entry.id === id);
 }
 
