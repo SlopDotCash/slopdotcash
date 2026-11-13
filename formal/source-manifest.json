@@ -1,0 +1,28 @@
+{
+  "template": {
+    "repository": "SlopDotCash/slopdotcash-vibestack",
+    "commit": "71fabba067e5b93852345736762f285486e421af"
+  },
+  "requirements": {
+    "repository": "SlopDotCash/slopdotcash",
+    "requestedBranch": "develop",
+    "resolvedBranch": "development",
+    "commit": "cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138",
+    "path": "docs/slop-product-requirements.md",
+    "sha256": "b3a8651f7f76e82844d01ede99676de7854f59de0774880dff80be89cc1a0c5b"
+  },
+  "legacyModels": {
+    "repository": "SlopDotCash/slopdotcash",
+    "branch": "main",
+    "commit": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+    "path": "formal/models",
+    "count": 473
+  },
+  "decisions": [
+    {
+      "date": "2026-11-13",
+      "source": "User reply in migration chat",
+      "decision": "New project automatic-closure control starts unchecked. Missing consent remains false."
+    }
+  ]
+}

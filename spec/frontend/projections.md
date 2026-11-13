@@ -1,0 +1,88 @@
+# Public and private projections
+
+PRD sections 2, 3, 6, 7, 8 and 9. Public pages derive from the registry and
+validated journals. They retain source-count integrity and explicit freshness.
+These pure projections form contracts for eventual view components.
+
+## Story: Show only the records a viewer may read
+
+### Project visibility, collection and installation have separate predicates
+
+Paused projects remain listed. Retired and legacy projects resolve history but
+leave discovery and collection. Installation additionally requires skill fields
+and security clearance.
+
+```quint
+type ProjectView = { registered: bool, retired: bool, legacy: bool, paused: bool, flagged: bool, quarantined: bool, cleared: bool, skillFields: bool }
+pure def listed(p: ProjectView): bool = p.registered and not(p.retired) and not(p.legacy)
+pure def collected(p: ProjectView): bool = listed(p) and not(p.paused) and not(p.flagged) and not(p.quarantined)
+pure def installable(p: ProjectView): bool = collected(p) and p.cleared and p.skillFields
+pure def lawPausedRemainsListed(p: ProjectView): bool =
+  p.registered and p.paused and not(p.retired) and not(p.legacy) implies listed(p) and not(collected(p))
+pure def lawInstallationRequiresClearance(p: ProjectView): bool = installable(p) implies p.cleared and p.skillFields
+pure val pValues = Set(
+  { registered: true, retired: false, legacy: false, paused: false, flagged: false, quarantined: false, cleared: true, skillFields: true },
+  { registered: true, retired: false, legacy: false, paused: true, flagged: false, quarantined: false, cleared: true, skillFields: true },
+  { registered: true, retired: true, legacy: false, paused: true, flagged: false, quarantined: false, cleared: true, skillFields: true }
+)
+```
+
+### Ordinary public payment rows require finalized evidence and a public account
+
+Private-case amounts, counts and revealing totals never enter ordinary pages.
+Missing contribution month stays unavailable rather than using indexing time.
+
+```quint
+type PaymentView = { privateCase: bool, closedAccount: bool, finalized: bool, exact: bool, contributionMonth: int, net: int }
+pure def publicPayment(payment: PaymentView): bool = not(payment.privateCase) and not(payment.closedAccount) and payment.finalized and payment.exact and payment.net >= 0
+pure def knownContributionMonth(payment: PaymentView): bool = payment.contributionMonth > 0
+pure def lawPrivatePaymentNeverPublic(payment: PaymentView): bool = payment.privateCase implies not(publicPayment(payment))
+pure def lawPublicPaymentHasFinality(payment: PaymentView): bool = publicPayment(payment) implies payment.finalized and payment.exact and not(payment.closedAccount)
+pure val paymentValues = Set(
+  { privateCase: true, closedAccount: false, finalized: true, exact: true, contributionMonth: 202611, net: 98 },
+  { privateCase: false, closedAccount: false, finalized: true, exact: true, contributionMonth: 0, net: 98 },
+  { privateCase: false, closedAccount: true, finalized: false, exact: false, contributionMonth: 0, net: 0 }
+)
+```
+
+### Removed public evidence pages and downloads stay unavailable
+
+The boundary maps these routes to HTTP 404. Ordinary APIs and retained records
+keep their separate contracts. Private trace bodies have no readable route.
+
+```quint
+pure def removedRoute(path: str): bool = Set("/models", "/receipts", "/data/cycles/eliza/2026-09/proposal.json", "/downloads/contribute-to-eliza.skill").contains(path)
+pure def publicRouteAllowed(path: str): bool = not(removedRoute(path))
+pure def traceBodyReadable(viewer: int): bool = false
+pure def lawRemovedRoutesStayClosed(path: str): bool = removedRoute(path) implies not(publicRouteAllowed(path))
+pure def lawTraceBodiesStayPrivate(viewer: int): bool = not(traceBodyReadable(viewer))
+pure val pathValues = Set("/models", "/receipts", "/projects")
+```
+
+### Interface capability requirements survive responsive and accessibility modes
+
+The shell must preserve visible consent, amounts, restrictions and evidence,
+field-linked errors, announcements and recovery actions at mobile widths and
+200% zoom. Keyboard and screen-reader access, WCAG AA, stable headings and
+reduced-motion behavior require real browser acceptance. A formal predicate
+records those obligations without claiming a rendered page meets them.
+
+```quint
+type InterfaceEvidence = { keyboard: bool, screenReader: bool, mobile: bool, zoom200: bool, contrastAA: bool, reducedMotion: bool, visibleConsent: bool, exactAmounts: bool, recovery: bool, links: bool, console: bool, network: bool }
+pure def acceptedInterface(e: InterfaceEvidence): bool = e.keyboard and e.screenReader and e.mobile and e.zoom200 and
+  e.contrastAA and e.reducedMotion and e.visibleConsent and e.exactAmounts and e.recovery and e.links and e.console and e.network
+pure def lawAcceptanceRequiresKeyboard(e: InterfaceEvidence): bool = acceptedInterface(e) implies e.keyboard and e.mobile and e.zoom200
+pure val eValues = Set(
+  { keyboard: true, screenReader: true, mobile: true, zoom200: true, contrastAA: true, reducedMotion: true, visibleConsent: true, exactAmounts: true, recovery: true, links: true, console: true, network: true },
+  { keyboard: false, screenReader: true, mobile: true, zoom200: true, contrastAA: true, reducedMotion: true, visibleConsent: true, exactAmounts: true, recovery: true, links: true, console: true, network: true }
+)
+```
+
+### Simulation samples exercise missing, matching and conflicting evidence
+
+These input sets bound simulation only. The generated guards accept every
+value allowed by their declared types and product rules.
+
+```quint
+pure val viewerValues = Set(0, 1, 2)
+```
