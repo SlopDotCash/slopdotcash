@@ -706,27 +706,30 @@ const OUTCOME_COMMIT_LINES_QUERY = `
 
 interface CachedCommitLines {
   repositoryNodeId: string;
-  oid: string;
-  parentCount: number;
-  authorId: string | null;
-  authorKind: GitHubActorKind | null;
-  additions: number;
-  deletions: number;
+  outcome: OutcomeCommit;
 }
 
 function sameCommitIdentity(
-  left: Pick<
-    CachedCommitLines,
-    "oid" | "parentCount" | "authorId" | "authorKind"
-  >,
+  left: Pick<OutcomeCommit, "oid" | "parentCount">,
   right: OutcomeCommitIdentity,
 ): boolean {
-  return (
-    left.oid === right.oid &&
-    left.parentCount === right.parentCount &&
-    left.authorId === (right.author?.id ?? null) &&
-    left.authorKind === (right.author?.kind ?? null)
-  );
+  return left.oid === right.oid && left.parentCount === right.parentCount;
+}
+
+// A null GitHub account link is missing evidence, not a different author.
+// REST comparison and GraphQL can disagree about whether the link exists.
+// Keep a verified link, but never choose between two distinct linked actors.
+function mergeCommitAuthor(
+  earlier: GitHubActor | null,
+  current: GitHubActor | null,
+): GitHubActor | null {
+  if (
+    earlier &&
+    current &&
+    (earlier.id !== current.id || earlier.kind !== current.kind)
+  )
+    throw new Error("Commit statistics changed linked commit author");
+  return current ?? earlier;
 }
 
 /** One collection run owns this cache; only a wholly validated load warms it. */
@@ -743,6 +746,7 @@ export class OutcomeCommitLineLoader {
     asString(repositoryNodeId, "commit statistics repository ID");
     const pending = new Map<string, OutcomeCommitIdentity>();
     const pendingBySha = new Map<string, string>();
+    const authorUpdates = new Map<string, GitHubActor | null>();
     for (const commit of commits) {
       asString(commit.id, "commit statistics node ID");
       asFullCommitSha(commit.oid, "commit statistics SHA");
@@ -758,24 +762,34 @@ export class OutcomeCommitLineLoader {
       if (cached) {
         if (
           cached.repositoryNodeId !== repositoryNodeId ||
-          !sameCommitIdentity(cached, commit)
+          !sameCommitIdentity(cached.outcome, commit)
         )
           throw new Error(
             "Commit statistics changed immutable commit metadata",
           );
+        authorUpdates.set(
+          commit.id,
+          mergeCommitAuthor(
+            authorUpdates.has(commit.id)
+              ? authorUpdates.get(commit.id)!
+              : cached.outcome.author,
+            commit.author,
+          ),
+        );
       } else {
         const earlier = pending.get(commit.id);
         if (
           earlier &&
           (earlier.oid !== commit.oid ||
-            earlier.parentCount !== commit.parentCount ||
-            earlier.author?.id !== commit.author?.id ||
-            earlier.author?.kind !== commit.author?.kind)
+            earlier.parentCount !== commit.parentCount)
         )
           throw new Error(
             "Commit statistics changed immutable commit metadata",
           );
-        pending.set(commit.id, commit);
+        pending.set(commit.id, {
+          ...commit,
+          author: mergeCommitAuthor(earlier?.author ?? null, commit.author),
+        });
         pendingBySha.set(shaKey, commit.id);
       }
     }
@@ -817,31 +831,26 @@ export class OutcomeCommitLineLoader {
           throw new Error("Commit line counts must be non-negative integers");
         staged.set(expected.id, {
           repositoryNodeId,
-          oid: expected.oid,
-          parentCount: expected.parentCount,
-          authorId: expected.author?.id ?? null,
-          authorKind: expected.author?.kind ?? null,
-          additions,
-          deletions,
+          outcome: {
+            oid: expected.oid,
+            parentCount: expected.parentCount,
+            author: expected.author,
+            additions,
+            deletions,
+          },
         });
       }
     }
+    // Publish author evidence only after the entire load validates. Returned
+    // occurrences share this record, so a later verified link also repairs an
+    // earlier null occurrence before the complete census reaches scoring.
+    for (const [id, author] of authorUpdates)
+      this.byId.get(id)!.outcome.author = author;
     for (const [id, value] of staged) {
       this.byId.set(id, value);
-      this.idBySha.set(`${repositoryNodeId}\0${value.oid}`, id);
+      this.idBySha.set(`${repositoryNodeId}\0${value.outcome.oid}`, id);
     }
-    return commits.map((commit) => {
-      const lines = this.byId.get(commit.id);
-      if (!lines)
-        throw new Error("Commit statistics were not completely hydrated");
-      return {
-        oid: commit.oid,
-        parentCount: commit.parentCount,
-        author: commit.author,
-        additions: lines.additions,
-        deletions: lines.deletions,
-      };
-    });
+    return commits.map((commit) => this.byId.get(commit.id)!.outcome);
   }
 }
 
@@ -2634,13 +2643,12 @@ async function completeOutcomeCommits(
       if (
         !hydrated ||
         hydrated.id !== commit.id ||
-        hydrated.parentCount !== commit.parentCount ||
-        hydrated.author?.id !== commit.author?.id ||
-        hydrated.author?.kind !== commit.author?.kind
+        hydrated.parentCount !== commit.parentCount
       )
         throw new Error(
           `PR #${outcome.number} comparison changed immutable commit metadata`,
         );
+      hydrated.author = mergeCommitAuthor(commit.author, hydrated.author);
     }
     commits = compared;
   }
