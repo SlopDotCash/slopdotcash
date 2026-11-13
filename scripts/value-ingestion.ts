@@ -441,6 +441,12 @@ type AttributionOutcome = Pick<
   baseRefName?: string;
 };
 
+export interface ValueInputProgress {
+  phase: "commit-attributions" | "value-histories";
+  completed: number;
+  total: number;
+}
+
 export async function loadValueInputs(
   github: Pick<GitHubClient, "get" | "graphql" | "fileText">,
   outcomes: readonly AttributionOutcome[],
@@ -449,6 +455,7 @@ export async function loadValueInputs(
     ids: readonly string[],
   ) => Promise<readonly string[]>,
   attributionOutcomes: readonly AttributionOutcome[] = outcomes,
+  onProgress: (progress: ValueInputProgress) => void = () => {},
 ) {
   const heldWorkUnits: HeldWorkUnit[] = [];
   const valueDecisions = new Map<
@@ -793,14 +800,29 @@ export async function loadValueInputs(
 
   // Attribution applies to the complete merge census, including historical
   // work. Only the policy-selected outcomes below read assessment history.
-  for (const outcome of attributionOutcomes) {
+  onProgress({
+    phase: "commit-attributions",
+    completed: 0,
+    total: attributionOutcomes.length,
+  });
+  for (const [index, outcome] of attributionOutcomes.entries()) {
     const [owner, repo] = new URL(outcome.url).pathname
       .split("/")
       .filter(Boolean);
     await resolveRetainedAuthors(outcome, `${owner}/${repo}`);
+    onProgress({
+      phase: "commit-attributions",
+      completed: index + 1,
+      total: attributionOutcomes.length,
+    });
   }
 
-  for (const outcome of outcomes) {
+  for (const [index, outcome] of outcomes.entries()) {
+    onProgress({
+      phase: "value-histories",
+      completed: index,
+      total: outcomes.length,
+    });
     const [owner, repo] = new URL(outcome.url).pathname
       .split("/")
       .filter(Boolean);
@@ -955,6 +977,11 @@ export async function loadValueInputs(
     if (decision.status === "assessed")
       await hydrateActors(new Set(decision.implementationActorNodeIds));
   }
+  onProgress({
+    phase: "value-histories",
+    completed: outcomes.length,
+    total: outcomes.length,
+  });
   return {
     valueDecisions,
     jointValueDecisions,

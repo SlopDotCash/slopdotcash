@@ -6,6 +6,7 @@ import {
   penaltyFeedProjects,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
+  type ValueInputProgress,
 } from "./value-ingestion";
 
 /**
@@ -370,7 +371,11 @@ export interface GenerationProgress {
     | "merged-pull-requests"
     | "resolved-issues"
     | "open-issues"
-    | "open-pull-requests";
+    | "open-pull-requests"
+    | "evidence-verification"
+    | "review-census"
+    | "participation-history"
+    | ValueInputProgress["phase"];
   completed: number;
   total: number;
 }
@@ -4581,6 +4586,7 @@ export async function generateLeaderboardFromGitHub(
     (pullRequest) => hydrationPlan.detailEligibleIds.has(pullRequest.id),
   );
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
+  onProgress({ phase: "evidence-verification", completed: 0, total: 1 });
   const { evidenceVerification, openIssues, openPullRequests } =
     await retrySlopSnapshot(async (attempt) => {
       if (attempt > 1) {
@@ -4626,6 +4632,8 @@ export async function generateLeaderboardFromGitHub(
       };
     });
 
+  onProgress({ phase: "evidence-verification", completed: 1, total: 1 });
+  onProgress({ phase: "review-census", completed: 0, total: 1 });
   const finalReviewCounts = await collectPullRequestReviewCounts(
     client,
     hydrationCandidates.map(({ outcome }) => ({ id: outcome.id })),
@@ -4648,6 +4656,7 @@ export async function generateLeaderboardFromGitHub(
     assertReviewCensusStable(closedCounts, finalClosedCounts);
   }
 
+  onProgress({ phase: "review-census", completed: 1, total: 1 });
   const allRecords = [
     ...dedupedOutcomes,
     ...dedupedMergedPullRequests,
@@ -4691,6 +4700,7 @@ export async function generateLeaderboardFromGitHub(
     undefined,
     probeUnavailableSources,
     dedupedOutcomes,
+    onProgress,
   );
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
@@ -4728,6 +4738,7 @@ export async function generateLeaderboardFromGitHub(
       )),
     );
   }
+  onProgress({ phase: "participation-history", completed: 0, total: 1 });
   const participationBans = await loadParticipationBans({
     get: <T>(path: string) => {
       valueRestRequests += 1;
@@ -4774,6 +4785,7 @@ export async function generateLeaderboardFromGitHub(
     penaltyHistory.push(...history);
     penalties.push(...history.filter((row) => row.reversedAt === null));
   }
+  onProgress({ phase: "participation-history", completed: 1, total: 1 });
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const observedUnavailable = new Map<string, UnavailableSource>();
@@ -4941,6 +4953,15 @@ if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
+  let latestProgress: GenerationProgress | null = null;
+  const heartbeat = setInterval(() => {
+    if (latestProgress) {
+      process.stderr.write(
+        `[slop.cash] waiting on ${latestProgress.phase.replaceAll("-", " ")}: ${latestProgress.completed}/${latestProgress.total}\n`,
+      );
+    }
+  }, 60_000);
+  heartbeat.unref();
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -4948,6 +4969,7 @@ if (import.meta.main) {
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
+      latestProgress = progress;
       const phaseChanged = progress.phase !== lastProgressPhase;
       lastProgressPhase = progress.phase;
       if (
@@ -4958,14 +4980,16 @@ if (import.meta.main) {
         process.stderr.write(progressLine(progress));
       }
     },
-  }).catch((error: unknown) => {
-    // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
-    if (!(error instanceof ValueFeedUnavailableError)) throw error;
-    process.stderr.write(
-      `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
-    );
-    process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
-  });
+  })
+    .finally(() => clearInterval(heartbeat))
+    .catch((error: unknown) => {
+      // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
+      if (!(error instanceof ValueFeedUnavailableError)) throw error;
+      process.stderr.write(
+        `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
+      );
+      process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
+    });
   process.stdout.write(
     `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GitHub requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} GraphQL points remaining)\n`,
   );

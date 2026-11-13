@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8f680edac5ee6ccb4ed83be35532a8ba0b987360ca7db8d1549534bc3954f8ba",
+  "inventorySha256": "6d36532cacc200701253fb967ddaf37efb4704bc3e54f995607e2246319cadcd",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2017,7 +2017,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 235,
+      "line": 236,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
@@ -2036,14 +2036,17 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 370,
+      "line": 371,
       "name": "phase",
       "kind": "string-union",
       "values": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
@@ -2056,16 +2059,19 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "review": "candidate-only"
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3468,
+      "line": 3473,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2084,7 +2090,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4072,
+      "line": 4077,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2143,6 +2149,21 @@
         "updatedAt",
         "url"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/value-ingestion.ts",
+      "line": 445,
+      "name": "phase",
+      "kind": "string-union",
+      "values": ["commit-attributions", "value-histories"],
+      "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/slopbot/value_ingestion.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["commit-attributions", "value-histories"],
       "review": "candidate-only"
     },
     {
@@ -2816,6 +2837,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/VaultActions.tsx",
+      "line": 368,
+      "name": "result",
+      "kind": "string-union",
+      "values": [
+        "approval-confirmed",
+        "failed",
+        "finalized",
+        "not-sent",
+        "pending"
+      ],
+      "models": [
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["finalized"],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/allocation-funding.ts",
       "line": 31,
       "name": "fundingState",
@@ -2858,6 +2903,22 @@
         "external-provisional",
         "wound-up"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/evm-vault-actions.ts",
+      "line": 355,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["failed", "finalized", "not-sent", "pending"],
+      "models": [
+        "formal/models/contracts/evm_owner_action.qnt",
+        "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
