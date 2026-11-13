@@ -67,6 +67,7 @@ import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
 import {
   assertAppendedIdentitiesUnlisted,
+  assertNewRepositoryIdentityUnlisted,
   verifyAppendedRepositories,
 } from "./appended-repositories";
 import {
@@ -1275,9 +1276,9 @@ async function createProject(
   assertMaintainerNotBanned(manifest, actor, enforcements);
   assertRepositoryUnrestricted(manifest, enforcements);
   const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
-  assertRegistryWith(await deps.persistence.listProjects(), manifest, {
-    replaces: false,
-  });
+  const listed = await deps.persistence.listProjects();
+  assertRegistryWith(listed, manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, manifest);
   const checked = await currentAuthority(deps, manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();
@@ -2014,11 +2015,9 @@ async function publishPendingApplication(
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(application.manifest, actor, enforcements);
   assertRepositoryUnrestricted(application.manifest, enforcements);
-  assertRegistryWith(
-    await deps.persistence.listProjects(),
-    application.manifest,
-    { replaces: false },
-  );
+  const listed = await deps.persistence.listProjects();
+  assertRegistryWith(listed, application.manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, application.manifest);
   const checked = await currentAuthority(deps, application.manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();

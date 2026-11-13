@@ -257,21 +257,42 @@ export function activeRestrictions(
     .filter((restriction) => restriction.state !== "clear");
 }
 
-/** Repository identities a manifest claims: the GitHub id and every path. */
+/** Restriction key for an appended repository's permanent GitHub id. A
+ * repository path always has a slash and never a colon, so the two kinds of
+ * key cannot collide. */
+function githubIdKey(githubId: string): string {
+  return `github:${githubId}`;
+}
+
+/**
+ * Repository identities a manifest claims: the first repository's GitHub id
+ * (`authority.repositoryId`), every repository's GitHub id (an appended entry
+ * carries its own `githubId`), and every path plus a `github:<id>` key per
+ * appended id. A restriction records the keys, so an appended repository
+ * renamed on GitHub after the restriction still matches by id; the first
+ * repository's id is the restriction's own `repositoryGithubId`.
+ */
 export function repositoryIdentity(manifest: ProjectDefinition): {
   githubId: string;
+  githubIds: string[];
   keys: string[];
 } {
+  const githubId = String(manifest.authority.repositoryId);
+  const appendedIds = manifest.repositories
+    .slice(1)
+    .flatMap((entry) => (entry.githubId === undefined ? [] : [entry.githubId]));
   return {
-    githubId: String(manifest.authority.repositoryId),
+    githubId,
+    githubIds: [...new Set([githubId, ...appendedIds])],
     keys: [
-      ...new Set(
-        manifest.repositories.flatMap((repository) =>
+      ...new Set([
+        ...manifest.repositories.flatMap((repository) =>
           [repository.id, ...(repository.aliases ?? [])].map((path) =>
             path.toLowerCase(),
           ),
         ),
-      ),
+        ...appendedIds.map(githubIdKey),
+      ]),
     ],
   };
 }
@@ -296,11 +317,19 @@ export function restrictionForRepository(
   records: ProjectEnforcement[],
 ): ProjectRestriction | null {
   const identity = repositoryIdentity(manifest);
+  // Any repository of this manifest, first or appended, matches a recorded
+  // appended id, so a renamed appended repository stays restricted wherever
+  // it is listed again.
+  const keys = new Set([
+    ...identity.keys,
+    ...identity.githubIds.map(githubIdKey),
+  ]);
   return (
     activeRestrictions(records).find(
       (restriction) =>
-        restriction.repositoryGithubId === identity.githubId ||
-        restriction.repositoryKeys.some((key) => identity.keys.includes(key)),
+        (restriction.repositoryGithubId !== null &&
+          identity.githubIds.includes(restriction.repositoryGithubId)) ||
+        restriction.repositoryKeys.some((key) => keys.has(key)),
     ) ?? null
   );
 }

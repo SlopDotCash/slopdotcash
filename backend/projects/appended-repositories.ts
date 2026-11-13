@@ -56,6 +56,36 @@ async function readAccess(
 
 type ListedProject = { id: string; manifest: ProjectDefinition };
 
+/** Permanent GitHub ids a manifest lists: the first repository's
+ * `authority.repositoryId`, then each appended entry's `githubId`. */
+function listedIds(manifest: ProjectDefinition): unknown[] {
+  return [
+    manifest.authority?.repositoryId,
+    ...manifest.repositories.slice(1).map((entry) => entry.githubId),
+  ];
+}
+
+/** Maps every permanent GitHub repository id to the first project that
+ * lists it, in the order given. */
+function repositoryIdIndex(
+  projects: readonly ListedProject[],
+): Map<string, string> {
+  const listed = new Map<string, string>();
+  for (const candidate of projects)
+    for (const githubId of listedIds(candidate.manifest))
+      if (typeof githubId === "string" && !listed.has(githubId))
+        listed.set(githubId, candidate.id);
+  return listed;
+}
+
+function refuseListed(githubId: string, name: unknown, owner: string): never {
+  fail(
+    409,
+    "registry_conflict",
+    `GitHub repository ${githubId}${typeof name === "string" ? ` (${name})` : ""} is already listed by project ${owner}`,
+  );
+}
+
 /**
  * Refuses an appended repository whose permanent GitHub id any project
  * already lists, under any name: another project's first repository
@@ -75,20 +105,10 @@ export function assertAppendedIdentitiesUnlisted(
     submittedRepositories.length <= project.manifest.repositories.length
   )
     return;
-  const listed = new Map<string, string>();
-  for (const candidate of [
+  const listed = repositoryIdIndex([
     project,
     ...projects.filter((entry) => entry.id !== project.id),
-  ]) {
-    const { manifest } = candidate;
-    const ids = [
-      manifest.authority?.repositoryId,
-      ...manifest.repositories.slice(1).map((entry) => entry.githubId),
-    ];
-    for (const githubId of ids)
-      if (typeof githubId === "string" && !listed.has(githubId))
-        listed.set(githubId, candidate.id);
-  }
+  ]);
   for (const entry of submittedRepositories.slice(
     project.manifest.repositories.length,
   )) {
@@ -96,14 +116,30 @@ export function assertAppendedIdentitiesUnlisted(
     const { id, githubId } = entry as { id?: unknown; githubId?: unknown };
     if (typeof githubId !== "string") continue;
     const owner = listed.get(githubId);
-    if (owner !== undefined)
-      fail(
-        409,
-        "registry_conflict",
-        `GitHub repository ${githubId}${typeof id === "string" ? ` (${id})` : ""} is already listed by project ${owner}`,
-      );
+    if (owner !== undefined) refuseListed(githubId, id, owner);
     listed.set(githubId, project.id);
   }
+}
+
+/**
+ * Refuses a new project, created or published from a stored application,
+ * whose first repository a listed project already appended under another
+ * name: an appended repository renamed on GitHub after it was listed. Only
+ * appended ids are indexed, so a registry of single-repository projects
+ * behaves as before.
+ */
+export function assertNewRepositoryIdentityUnlisted(
+  projects: readonly ListedProject[],
+  manifest: ProjectDefinition,
+): void {
+  const githubId = manifest.authority.repositoryId;
+  for (const candidate of projects)
+    if (
+      candidate.manifest.repositories
+        .slice(1)
+        .some((entry) => entry.githubId === githubId)
+    )
+      refuseListed(githubId, manifest.repositories[0]?.id, candidate.id);
 }
 
 async function verifyOne(

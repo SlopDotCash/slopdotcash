@@ -237,3 +237,46 @@ test("an exact repository id wins over another entry's alias", () => {
   expect(findListedRepository(repositories, "acme/one")?.index).toBe(0);
   expect(findListedRepository(repositories, "acme/three")).toBeNull();
 });
+
+test("a restriction binds every repository's numeric id, so a renamed appended repository stays restricted", async () => {
+  const { repositoryIdentity: restrictionIdentity, restrictionForRepository } =
+    await import("../backend/projects/enforcement");
+  const added = entry("tools");
+  const restricted = withRepositories(base(), [added]);
+  const identity = restrictionIdentity(restricted);
+  const record = {
+    id: "enf_fixture",
+    projectId: restricted.id,
+    sequence: 1,
+    action: "ban",
+    stateAfter: "banned",
+    appealAfter: "none",
+    reason: "Synthetic confirmed malicious scan",
+    evidenceReference: "private-case-fixture",
+    repositoryGithubId: identity.githubId,
+    repositoryKeys: identity.keys,
+    actor: null,
+    actorRole: "vetting-service",
+    decisionSource: "standing-rule",
+    beforeRevision: 1,
+    beforeManifestSha256: "a".repeat(64),
+    afterRevision: null,
+    afterManifestSha256: null,
+    result: "revision_pending",
+    createdAt: "2026-11-12T00:00:00.000Z",
+  } as never;
+  // The appended repository, renamed on GitHub, listed as another project's
+  // first repository.
+  const relisted = structuredClone(fixtureProject("asi"));
+  relisted.repositories[0] = {
+    ...relisted.repositories[0],
+    id: "acme/tools-renamed",
+    displayName: "acme/tools-renamed",
+    githubUrl: "https://github.com/acme/tools-renamed",
+    aliases: [],
+  } as never;
+  relisted.authority.repositoryId = added.githubId;
+  expect(restrictionForRepository(relisted, [record])?.state).toBe("banned");
+  // A repository with neither a restricted name nor a restricted id is clear.
+  expect(restrictionForRepository(fixtureProject("asi"), [record])).toBeNull();
+});
