@@ -339,10 +339,12 @@ export function HowItWorksPage() {
             <h3>Does Slop buy back SLOP?</h3>
             <div>
               <p>
-                Yes, since 12 November 2026. Half of every fee Slop collects
-                buys SLOP on Robinhood Chain, and half of the SLOP bought is
-                burned. The money comes from fees, not the treasury. It starts
-                with the first fee, and nothing about it is guaranteed.{" "}
+                The buyback is configured live since 12 November 2026. Half of
+                eligible fee income funds SLOP purchases on Robinhood Chain once
+                minimum order sizes are met. Half of the SLOP acquired is
+                allocated to burning. The first verified bridge fill, purchase
+                and burn are still pending. Funding comes from fees, not the
+                treasury, and nothing is guaranteed.{" "}
                 <ExternalLinkAnchor href="https://record.slop.cash/buyback">
                   How the buyback works
                 </ExternalLinkAnchor>

@@ -434,6 +434,8 @@ test("large private evidence downloads with a single-use browser grant @registry
   expect(abandonedDownloads).toEqual([]);
   page.off("download", observeAbandoned);
   await page.unroute(`**${grantPath}`);
+  // Let the home route finish loading fonts before the next hard navigation.
+  await page.evaluate(() => document.fonts.ready);
   await page.goto(
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },
