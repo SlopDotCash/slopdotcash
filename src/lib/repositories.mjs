@@ -4,6 +4,7 @@
  * row now carries the project that owns its scoring and reward policy.
  */
 
+import { repositoryIdentity } from "./project-repositories.mjs";
 import {
   INGESTED_HISTORICAL_PROJECTS,
   INGESTED_PROJECTS,
@@ -26,6 +27,15 @@ import {
  * highest-capped project promotes the next active one to `primary` rather
  * than leaving the registry without a primary.
  */
+/** The node id a renamed repository must still resolve to. */
+function renamedNodeId(project, repositoryIndex, repositoryId) {
+  if (repositoryIndex === 0) return project.authority.repositoryNodeId;
+  const identity = repositoryIdentity(project, repositoryId);
+  if (identity === null)
+    throw new TypeError(`${repositoryId} has no recorded GraphQL node ID`);
+  return identity.nodeId;
+}
+
 function flattenRepositories(projects) {
   return projects.flatMap((project, projectIndex) =>
     project.repositories.map((metadata, repositoryIndex) => {
@@ -40,7 +50,7 @@ function flattenRepositories(projects) {
         expectedNodeId:
           currentIdentity.toLowerCase() === metadata.id.toLowerCase()
             ? null
-            : project.authority.repositoryNodeId,
+            : renamedNodeId(project, repositoryIndex, metadata.id),
         projectId: project.id,
         role:
           projectIndex === 0 && repositoryIndex === 0 ? "primary" : "member",

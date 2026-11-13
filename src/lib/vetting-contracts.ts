@@ -121,19 +121,38 @@ export type AdmissionExemption = {
  * "stale" applies to current-pin reinstatement; "unverified" means required
  * retained evidence or the remedial live pin cannot be verified. A project
  * registered before the gate is grandfathered: "cleared" with no assessment.
+ *
+ * A project with more than one repository clears only when every repository
+ * clears on its own (PRD section 8). Otherwise its clearance is the first
+ * repository, in manifest order, that does not clear, and `repository` names
+ * it. A project with one repository never carries `repository`.
  */
 export type VettingClearance =
-  | { state: "unscanned" }
-  | { state: "unverified"; reason: string }
-  | { state: "queued"; assessment: AssessmentSummary }
-  | { state: "quarantined"; assessment: AssessmentSummary }
-  | { state: "stale"; assessment: AssessmentSummary; live: VettingPin }
+  | { state: "unscanned"; repository?: string }
+  | { state: "unverified"; reason: string; repository?: string }
+  | { state: "queued"; assessment: AssessmentSummary; repository?: string }
+  | {
+      state: "quarantined";
+      assessment: AssessmentSummary;
+      repository?: string;
+    }
+  | {
+      state: "stale";
+      assessment: AssessmentSummary;
+      live: VettingPin;
+      repository?: string;
+    }
   | {
       state: "cleared";
       assessment: AssessmentSummary;
       /** Admission eligibility; the assessment still describes its original revision. */
       basis?: "admission";
       reviewedMaliciousAssessmentIds?: string[];
+      /**
+       * A fresh reinstatement of a project with more than one repository:
+       * the clean scan of each repository, in manifest order.
+       */
+      repositoryAssessments?: AssessmentSummary[];
     }
   | { state: "cleared"; assessment: null; grandfathered: true }
   | {
