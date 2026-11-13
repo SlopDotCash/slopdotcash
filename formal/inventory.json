@@ -787,15 +787,15 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "sha256": "3b68a7c7469606826fb334d0215fdd5cd3ad5354b29653c5ae9bd1a01b8ebd0a",
+      "sha256": "51dca7422c7766b65e4a014ef622ab6aecbcf0f40f7d8cc227eb2ad57a90405e",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_transaction.qnt"
       ],
       "candidateLines": [
-        35, 362, 382, 399, 400, 401, 425, 509, 525, 553, 558, 560, 591, 592,
-        637, 687, 712, 730, 770, 778, 791, 824, 834, 853, 856, 858, 871, 929
+        35, 377, 397, 414, 415, 416, 440, 492, 565, 581, 609, 614, 616, 647,
+        648, 719, 744, 762, 802, 810, 823, 856, 866, 885, 888, 890, 903, 961
       ],
       "review": "mapped-abstraction"
     },
@@ -811,7 +811,7 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "sha256": "877f04248ef146e3ffd64aac72db59f15fc74a93f7eb8adc7a2435d23d746eab",
+      "sha256": "904c0d1a8c3c17f3f528d47d661120fcf1c1872329c5403f42abeb3c9b384e5b",
       "models": [
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
@@ -819,8 +819,8 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "candidateLines": [
-        131, 167, 171, 195, 207, 208, 256, 374, 395, 465, 508, 527, 532, 561,
-        642, 660, 706, 709
+        134, 170, 174, 198, 210, 211, 259, 377, 404, 474, 517, 536, 541, 570,
+        651, 669, 715, 718
       ],
       "review": "mapped-abstraction"
     },
@@ -845,7 +845,7 @@
     },
     {
       "path": "backend/security/direct-payments.ts",
-      "sha256": "72b209a7216b33aa79f63abc5ebb92a158d86c84b5520b1efed3fb4eab6640b4",
+      "sha256": "8790864dc7d0a6e8af7ff61047d40e929e50e189cfd217b1011174262da624b1",
       "models": [
         "formal/models/api/api_award_recovery.qnt",
         "formal/models/payments/bounty_payment.qnt",
@@ -858,10 +858,10 @@
         "formal/models/ui/ui_private_case_revisions.qnt"
       ],
       "candidateLines": [
-        278, 378, 437, 486, 534, 537, 539, 647, 786, 791, 840, 855, 869, 984,
-        1000, 1005, 1009, 1020, 1022, 1072, 1073, 1080, 1100, 1111, 1118, 1119,
-        1120, 1124, 1136, 1153, 1196, 1200, 1224, 1276, 1354, 1361, 1362, 1368,
-        1399, 1410, 1470, 1475
+        278, 378, 437, 486, 539, 542, 544, 652, 791, 796, 845, 860, 874, 989,
+        1005, 1010, 1014, 1025, 1027, 1077, 1078, 1085, 1105, 1116, 1123, 1124,
+        1125, 1129, 1141, 1158, 1201, 1205, 1229, 1281, 1361, 1368, 1369, 1375,
+        1404, 1415, 1475, 1480
       ],
       "review": "mapped-abstraction"
     },
@@ -1000,7 +1000,7 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "7871318f69664e5eaf76c7a0a607f853bf66fd4118dffe1f82c18260e9ce1c7c",
+      "sha256": "9c78487e42d9c0d07cd14790bf6b7222a9a404254229c1f5526c29c10a4b91f7",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
@@ -1012,10 +1012,10 @@
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
-        65, 102, 129, 148, 153, 174, 181, 198, 205, 246, 355, 362, 443, 456,
-        498, 508, 523, 530, 548, 559, 572, 574, 600, 635, 645, 647, 827, 845,
-        856, 861, 866, 935, 1078, 1156, 1171, 1211, 1247, 1253, 1267, 1272,
-        1284, 1289, 1294
+        66, 103, 130, 149, 154, 175, 182, 199, 206, 247, 356, 363, 444, 457,
+        499, 509, 524, 531, 555, 566, 582, 584, 610, 650, 656, 668, 670, 673,
+        674, 855, 873, 884, 889, 894, 963, 1106, 1184, 1199, 1239, 1275, 1281,
+        1295, 1300, 1312, 1317, 1322
       ],
       "review": "mapped-abstraction"
     },
@@ -1804,7 +1804,7 @@
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
-      "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
+      "sha256": "18e1e42304c5bcb631dfb4dafe2a36a064322736c8fedb54d3aaf5e8d74aff1a",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/solana_monthly_allocation.qnt",
@@ -1812,16 +1812,16 @@
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [33, 1047],
+      "candidateLines": [33, 1052],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/token_policy.rs",
-      "sha256": "710e5d5b26844e7bbd0b0cab33f75963e89e2bfe03d276fb7f1e05a8057264c4",
+      "sha256": "3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d",
       "models": ["formal/models/contracts/token_admission.qnt"],
       "candidateLines": [
-        9, 11, 23, 25, 28, 37, 40, 59, 61, 64, 71, 157, 160, 162, 164, 165, 169,
-        170
+        9, 11, 30, 32, 35, 44, 57, 80, 82, 85, 92, 199, 202, 204, 206, 207, 211,
+        212
       ],
       "review": "mapped-abstraction"
     },
@@ -1857,9 +1857,9 @@
     },
     {
       "path": "contracts/solana/scripts/bootstrap-linux.sh",
-      "sha256": "3fe0a84986deca04dc3edee46120e07688d122a5fc33ed487420ceb9477e116e",
+      "sha256": "85d5c889a4332ca6481e3d52d84c236c1aa7544a7240f2488f52b02cebc27569",
       "models": ["formal/models/contracts/deployment_artifact.qnt"],
-      "candidateLines": [10, 14],
+      "candidateLines": [10, 17],
       "review": "mapped-abstraction"
     },
     {
@@ -1928,9 +1928,9 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "b456ced40e9d0a985a8fe029059a8ad325dea1abb2533d8d3695e29706c703e0",
+      "sha256": "0a8fddf8372b4b8b905995e8abc46914941ec0b57b230222a61a1447f1ef92dd",
       "models": ["formal/models/contracts/token_admission.qnt"],
-      "candidateLines": [],
+      "candidateLines": [171],
       "review": "mapped-abstraction"
     },
     {
@@ -3270,7 +3270,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "79689619804e1b83acf8cc808fae2fd162008ab9a9813c31a0c92966af0d609c",
+      "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [78, 82, 84, 85],
       "review": "mapped-abstraction"
@@ -3769,39 +3769,42 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "07da883c8e653b6e5fcb7418cb0adf16edc1a4fd873d18da709efcd2a082e97e",
+      "sha256": "a872807a2f37605e51c09c6f60861925cfd6416e4249d785acee3bb46d8e842a",
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        23, 178, 189, 198, 265, 277, 279, 282, 381, 469, 490, 526, 557, 621,
-        653, 685, 881, 1116, 1178, 1186, 1244, 1297, 1300, 1493, 1502, 1507,
-        1514, 1597, 1598, 1745, 1746, 1803, 1829, 1847, 1849, 1853, 1887, 1890,
-        1891, 1894, 1896, 1907, 1930, 2137, 2140, 2448, 2467, 2565, 2578, 2589,
-        2590, 2767, 2768, 2959, 2975, 2987, 2994, 3020, 3030, 3034, 3038, 3042,
-        3097, 3116, 3143, 3160, 3194, 3195, 3197, 3213, 3230, 3231, 3232, 3241,
-        3246, 3426, 3784, 3806, 3815, 3865, 3900, 3906, 3913, 3982, 4067, 4219,
-        4434, 4444, 4446, 4459, 4488, 4490, 4491, 4495, 4499, 4554, 4608, 4659,
-        4662
+        23, 178, 189, 198, 278, 290, 292, 295, 394, 482, 503, 539, 570, 635,
+        667, 747, 780, 789, 797, 862, 1058, 1293, 1355, 1363, 1421, 1474, 1477,
+        1670, 1679, 1684, 1691, 1774, 1775, 1922, 1923, 1980, 2006, 2024, 2026,
+        2030, 2064, 2067, 2068, 2071, 2073, 2084, 2107, 2315, 2318, 2556, 2676,
+        2797, 2810, 2821, 2822, 3009, 3010, 3201, 3217, 3229, 3236, 3262, 3272,
+        3276, 3280, 3284, 3339, 3358, 3385, 3402, 3436, 3437, 3439, 3455, 3472,
+        3473, 3474, 3483, 3488, 3668, 4026, 4048, 4057, 4107, 4142, 4148, 4155,
+        4224, 4310, 4468, 4684, 4694, 4696, 4709, 4738, 4740, 4741, 4745, 4749,
+        4804, 4858, 4909, 4912
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "a4a3fe41dd4f77c1046bc29231e5b9121b13c5f6b1133f50f3244a1730dad238",
+      "sha256": "dafbef9cd51fca55f428dd16b6e6dc096fe4d0daeb050d5ea46fdad3aea1b390",
       "models": [
         "formal/models/points/journal_publication.qnt",
+        "formal/models/points/points_financial_preservation.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 247, 253, 256, 259,
-        260, 261, 262, 351, 626, 633, 634, 636, 641, 645, 649
+        2, 35, 62, 99, 121, 124, 137, 144, 153, 161, 169, 245, 282, 288, 291,
+        295, 296, 297, 298, 387, 662, 669, 670, 672, 677, 681, 685
       ],
       "review": "mapped-abstraction"
     },
@@ -3988,9 +3991,9 @@
     },
     {
       "path": "scripts/prepare-contribution-quality.ts",
-      "sha256": "9dd0dd0c9908ad2b3189a02010075a56e268aeaee47297d056e146e1b373fa14",
+      "sha256": "1fac9f8a79a52301170231ac78286615a08b1f5ef792da6e65419d7198e2d5fc",
       "models": ["formal/models/slopbot/quality_capture.qnt"],
-      "candidateLines": [3, 26, 155, 180, 185],
+      "candidateLines": [3, 27, 158, 183, 188],
       "review": "mapped-abstraction"
     },
     {
@@ -4053,9 +4056,9 @@
     },
     {
       "path": "scripts/prepare-pr-ledger.ts",
-      "sha256": "928b3746261538268c90fba7e515a2f99f1654f661e033932079a7919e2b5626",
+      "sha256": "622049cd4e90675a588b82215d5ba33a51ae4a791a1bb9ed9d2dd2a8d7d1c8f6",
       "models": ["formal/models/points/journal_publication.qnt"],
-      "candidateLines": [7, 118, 226, 423, 511, 514],
+      "candidateLines": [7, 119, 227, 439, 527, 530],
       "review": "mapped-abstraction"
     },
     {
@@ -4324,6 +4327,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/retained-commit-credit.ts",
+      "sha256": "9430f2d50e9a91d34cac28d5dc9c41cecac56effce9805325c7827fb4603fefb",
+      "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/run-e2e-phase.mjs",
       "sha256": "08d0368c0b925438b62d8dc80b4bd4d6c2b65c038c22929d377e1e8d845dcab1",
       "models": [
@@ -4459,9 +4473,9 @@
     },
     {
       "path": "scripts/source-correction.ts",
-      "sha256": "8f2b004814c7f304ba72daa34ced1fed6670e12b8da0628966352e918bef3117",
+      "sha256": "e37a04fa39f01e8c0393f84631987bf3dafb7f7e89074dd892f9273929ebad6b",
       "models": ["formal/models/points/source_correction_preview.qnt"],
-      "candidateLines": [24, 354],
+      "candidateLines": [28, 362],
       "review": "mapped-abstraction"
     },
     {
@@ -4529,14 +4543,16 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "4936a88b94e142f2dd6930fecb4872e7f21caf64b18d493d211e112a4ab7a8dd",
+      "sha256": "6b73daa714bd94b8776681bc3c422efb8ddc16ac8e95675282c79fae52b2e0a2",
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        48, 59, 106, 107, 108, 109, 111, 112, 180, 181, 182, 184, 185, 651, 687,
-        720, 744
+        57, 68, 115, 116, 117, 118, 120, 121, 189, 190, 191, 193, 194, 698, 805,
+        841, 880, 904
       ],
       "review": "mapped-abstraction"
     },
@@ -4811,7 +4827,7 @@
     },
     {
       "path": "src/CyclePages.tsx",
-      "sha256": "4a5695823285f1fb12dc79e1aa10a0ff8c1030f8c51a45dca750f10817b6dfa2",
+      "sha256": "2b004640e9a7339882680a764fe37f8299ae102c9746d8863674064d7aa0c352",
       "models": [
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_cycle_publication.qnt",
@@ -4819,12 +4835,12 @@
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        2, 45, 46, 52, 53, 62, 72, 73, 79, 81, 82, 88, 105, 110, 113, 114, 117,
-        119, 127, 129, 132, 134, 157, 169, 175, 177, 207, 215, 217, 224, 240,
-        246, 282, 294, 305, 330, 354, 355, 428, 445, 446, 483, 487, 501, 506,
-        507, 509, 510, 513, 514, 520, 521, 534, 539, 548, 550, 554, 563, 565,
-        569, 570, 575, 589, 597, 598, 599, 605, 607, 613, 614, 616, 645, 655,
-        666, 691
+        2, 46, 47, 53, 54, 63, 73, 74, 80, 82, 83, 89, 106, 111, 114, 115, 118,
+        120, 128, 130, 133, 135, 158, 170, 176, 178, 208, 216, 218, 225, 241,
+        247, 283, 295, 306, 331, 355, 356, 429, 446, 447, 484, 488, 502, 507,
+        508, 510, 511, 514, 515, 521, 522, 535, 540, 549, 551, 555, 564, 566,
+        570, 571, 576, 590, 598, 599, 600, 606, 608, 614, 615, 617, 646, 656,
+        667, 692
       ],
       "review": "mapped-abstraction"
     },
@@ -5181,7 +5197,7 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "8ceb4392aeb2d594eef93483b0c0da1ba9fb3e5d9ff77c117f3c796f59e2bb2e",
+      "sha256": "85625ee969a4c427e274998d070b812276386608a0ea5cccf0cf6dcdaa5f4483",
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
@@ -5631,10 +5647,13 @@
     },
     {
       "path": "src/lib/commit-credit.ts",
-      "sha256": "81d4534547964189d03697fc3362115754ad98bb1e28288c864a1e2c4736461e",
-      "models": [],
+      "sha256": "bb2223a458535443f9b3b216ae57d5b0bfd3d3b8c6a1f6bbf367d3f767fa9e25",
+      "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt"
+      ],
       "candidateLines": [],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure immutable actor-ID/kind eligibility predicate; no retained state or I/O. Accepted-source lifecycle is owned by the ledger."
     },
     {
@@ -5655,7 +5674,7 @@
     },
     {
       "path": "src/lib/contribution-quality.ts",
-      "sha256": "a903e19846d05fb02c8229a62c8908cea3b0b75cbe46e17efb2b552c3c293c7b",
+      "sha256": "dc7b9750bd1426ebd7e8ccf239149b5ea0d56fac35a4953d57323d78c28cd12b",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -5682,10 +5701,10 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "sha256": "0d2e344a5d1f7953d7daf09e7343f2d942c5f1db19b728f530bc054fff291f85",
+      "sha256": "240b4a48f1e79642b28d1b395b2c1ba8e28bfbcd5580cd6230bf8c07463884d1",
       "models": ["formal/models/ui/ui_cycle_publication.qnt"],
       "candidateLines": [
-        63, 97, 391, 422, 423, 573, 603, 604, 606, 607, 616, 617, 619, 670, 746,
+        64, 98, 392, 423, 424, 574, 603, 604, 606, 607, 616, 617, 619, 670, 746,
         752, 759, 761, 762, 767, 769, 771, 777, 827, 828, 840, 850, 851, 852,
         853, 856, 858, 861, 866, 872, 878, 882, 885, 889, 891, 893, 900, 909,
         915, 918, 921, 923, 934, 940, 952, 998
@@ -5788,9 +5807,9 @@
     },
     {
       "path": "src/lib/funding-review-data.ts",
-      "sha256": "a446ecefa45104dcb6bf1d6e6ce3ca7ad3d4af7efcd41100de15235f0b939355",
+      "sha256": "4a976f47d1212d720520a31175032c2428ffd1a3baa8817c370b6cef41f4fe41",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [58, 238, 292],
+      "candidateLines": [59, 240, 294],
       "review": "mapped-abstraction"
     },
     {
@@ -5830,9 +5849,9 @@
     },
     {
       "path": "src/lib/global-leaderboard.ts",
-      "sha256": "23deb359a46ddc9af987bf4a4b60c1b17b65d8c534aa850b63f6a9748f8e8601",
+      "sha256": "020d86d6494e246d8998f22d04a9e79db7e9e4cf4d0c3dfbe2912041e887a20c",
       "models": ["formal/models/ui/ui_history_projection.qnt"],
-      "candidateLines": [178],
+      "candidateLines": [179],
       "review": "mapped-abstraction"
     },
     {
@@ -5851,6 +5870,23 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [38, 59, 107, 135, 146, 147],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/implementation-allocation.ts",
+      "sha256": "aad8fbbd7f2e4c01f6a5376ab10be4e37a80db132a0d8e538f4270de4acd87c5",
+      "models": ["formal/models/points/implementation_allocation.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/implementation-lines.ts",
+      "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
+      "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt"
+      ],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -5898,34 +5934,39 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "sha256": "a58decf4643427498d90595c12070c7fc1c21cef88fc97cc1334896c8f1bec0e",
-      "models": [],
+      "sha256": "95e2e5dfda875c64e3412acf9326986cbe015f0fe32b516006bd8b407a0bebd6",
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "candidateLines": [
-        71, 76, 269, 291, 339, 371, 429, 490, 498, 505, 545, 647, 678, 740, 767
+        71, 76, 277, 299, 347, 379, 437, 498, 506, 513, 553, 655, 686, 779, 806
       ],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Types and literal enum arrays only; no retained state, I/O, lifecycle or mutation. Admission and aggregation contracts are modeled at consuming functions."
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "sha256": "60f0ff3d27ce1b601ab6ff0358d9ec6c7b0e17e939b40932a37fbbf3c01dc02b",
+      "sha256": "c73da57c52297023cb996d5d36a82097a3055717cd42f61ba7ca0ee404e26350",
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
         "formal/models/ui/ui_score_selection.qnt",
         "formal/models/ui/ui_snapshot_contract.qnt"
       ],
       "candidateLines": [
-        247, 248, 272, 278, 917, 980, 1006, 1217, 1278, 1288, 1294, 1296, 1298,
-        1300, 1307, 1392, 1426, 1431, 1449, 1546, 2088, 2106, 2178, 2187, 2205,
-        2214, 2222, 2244, 2259, 2268, 2276, 2322, 2372, 2422, 2477, 2494, 2495,
-        2498, 2499, 2603, 2605, 2606, 2610, 2613, 2621, 2623, 2641, 2896, 2951,
-        3127, 3318, 3343, 3415, 3424, 3520, 3586, 3923, 3934, 3963, 4024, 4038,
-        4361, 4574, 4775, 4888, 4913, 5038, 5044, 5750, 5752, 5775, 5779, 5783,
-        5788, 5926, 5935, 5945, 5946, 6004, 6039, 6045, 6065, 6070, 6077, 6085,
-        6087, 6113, 6116, 6130, 6132, 6153, 6155, 6159, 6162, 6167, 6357, 6359,
-        6618, 6662, 6725, 6726, 7526, 7542, 7552, 7563, 7616, 7617, 7644, 7851
+        261, 262, 286, 292, 931, 994, 1020, 1231, 1292, 1302, 1308, 1310, 1312,
+        1314, 1321, 1406, 1440, 1445, 1463, 1560, 2115, 2133, 2205, 2214, 2232,
+        2241, 2249, 2271, 2286, 2295, 2303, 2349, 2399, 2449, 2504, 2521, 2522,
+        2525, 2526, 2630, 2632, 2633, 2637, 2640, 2648, 2650, 2668, 2972, 2991,
+        3046, 3222, 3417, 3442, 3530, 3549, 3672, 3751, 4146, 4157, 4191, 4254,
+        4268, 4591, 4804, 5005, 5118, 5143, 5267, 5275, 5280, 5347, 5361, 6109,
+        6111, 6134, 6138, 6142, 6147, 6293, 6302, 6312, 6313, 6371, 6406, 6412,
+        6432, 6437, 6444, 6452, 6454, 6480, 6483, 6497, 6499, 6520, 6522, 6526,
+        6529, 6534, 6726, 6728, 6987, 7031, 7094, 7095, 7916, 7917, 7918, 7919,
+        7936, 7946, 7957, 7973, 8062, 8128, 8129, 8156, 8363
       ],
       "review": "mapped-abstraction"
     },
@@ -5956,7 +5997,7 @@
     },
     {
       "path": "src/lib/model-outcomes.ts",
-      "sha256": "1d021354f1d7be103f7612c45a5665b7b8257d70cdff472f4d74f34c36048f89",
+      "sha256": "8994d0f0fef4f1fabab2592ee0bc22bcd3004ad0def5550bb265ed0c03b76433",
       "models": ["formal/models/ui/ui_model_outcomes.qnt"],
       "candidateLines": [105],
       "review": "mapped-abstraction"
@@ -6111,15 +6152,17 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "82306c746b95c652bd9efff89fa032797482be028275cbb61d6211974fc1ae01",
+      "sha256": "07ca52074d1749d65143294d5d8587dc1b577b0601c54478eae8b89ca22cd2f7",
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/points/points_journal.qnt",
         "formal/models/points/points_retained_provenance.qnt",
         "formal/models/points/points_total_precision.qnt",
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [334, 877, 884, 893],
+      "candidateLines": [336, 786, 1021, 1028, 1037],
       "review": "mapped-abstraction"
     },
     {
@@ -6315,9 +6358,9 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "sha256": "9559a6291a9254a5cd956e54a9866ecaaa81726027d748a5652540d1da09c101",
+      "sha256": "5130811d73953a61bcbbdf0bc05f692cc520863332db0c7e9b0e6f65e3270d49",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [112, 120, 131, 287, 304, 330, 758, 786, 798],
+      "candidateLines": [113, 121, 132, 288, 305, 331, 768, 796, 808],
       "review": "mapped-abstraction"
     },
     {
@@ -6397,9 +6440,9 @@
     },
     {
       "path": "src/lib/reward-cycle.ts",
-      "sha256": "697597ccf2e5f19ce9857d0ebedc04c1025a9e96d15f9e7ef5f0cf6a681f345c",
+      "sha256": "ae7a8780570912333f6f5196a7488d8432c9e6602c0a75626019334e03925133",
       "models": ["formal/models/rewards/historical_reward.qnt"],
-      "candidateLines": [138, 179, 190, 248, 343, 380, 436],
+      "candidateLines": [139, 180, 191, 249, 344, 381, 437],
       "review": "mapped-abstraction"
     },
     {
@@ -6437,7 +6480,7 @@
     },
     {
       "path": "src/lib/score-penalties.ts",
-      "sha256": "10ffbb4349ff5e045b323e7bf5c8064325fa048b9850000c2349e2633351568a",
+      "sha256": "41ab4582a1cebaae11a6e71a238ada85c1238a5dc62af42b76530663ee993530",
       "models": [
         "formal/models/points/points_journal.qnt",
         "formal/models/rewards/bucket_aggregation.qnt"
@@ -6449,6 +6492,13 @@
       "path": "src/lib/score-records.ts",
       "sha256": "bce4f40c19001cba9cad6ac58d71c25e8e7486fbe772ab507834ec60c8c868f4",
       "models": ["formal/models/points/points_journal.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/score-units.ts",
+      "sha256": "dd5f52350c81762ee37e433b2c1dd1ce17123452bd7660da0072c55bd8fd8725",
+      "models": ["formal/models/points/implementation_allocation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7749,7 +7799,7 @@
     },
     {
       "path": "workers/payments/scanner.ts",
-      "sha256": "881dc96f75bc40a278e70c1590a329d525b721f7d0a195b89863922cdd5a4790",
+      "sha256": "859e9352f0a7a9dd5ad62dbfb45a511d9fee3d039ca57d6fe9eae327c700b5c5",
       "models": [
         "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/evm_scan_checkpoint.qnt",
@@ -7757,8 +7807,8 @@
         "formal/models/payments/solana_scan_checkpoint.qnt"
       ],
       "candidateLines": [
-        23, 47, 48, 52, 53, 56, 57, 73, 95, 125, 150, 159, 173, 185, 207, 223,
-        230, 244, 266, 278, 283, 288
+        23, 55, 56, 60, 61, 64, 65, 81, 103, 133, 158, 167, 181, 193, 215, 231,
+        238, 252, 274, 286, 291, 296
       ],
       "review": "mapped-abstraction"
     },
@@ -8379,9 +8429,12 @@
     },
     {
       "path": "workers/slopbot/value-patch-replay.ts",
-      "sha256": "0a50ec809d356b1a97fb8b6afe659dfa06a42edf587fb71826aae53666d82153",
-      "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [50, 53, 220, 221, 283, 292],
+      "sha256": "4a51914d827decf4efc11c96a4a28ee291df6c81f541cf3f0dae9d2c03bf445d",
+      "models": [
+        "formal/models/slopbot/batched_patch_replay.qnt",
+        "formal/models/slopbot/bot_patch_replay.qnt"
+      ],
+      "candidateLines": [50, 53, 228, 229, 284, 293],
       "review": "mapped-abstraction"
     },
     {
@@ -8447,12 +8500,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "ea75bb8b113c645e87199ede5605a3a8c4d5a4077a8492814954ed43f71bcd5d",
+      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
-        "formal/models/slopbot/retained_copy_bindings.qnt"
+        "formal/models/slopbot/retained_copy_bindings.qnt",
+        "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [30, 57, 177, 183, 207, 241],
+      "candidateLines": [33, 60, 260, 266, 290, 324],
       "review": "mapped-abstraction"
     },
     {
@@ -8817,13 +8871,13 @@
     },
     {
       "path": "workers/vetting/acquire.ts",
-      "sha256": "fc9b675e131b0e1b3e8b0b170cccb745e1e8bb7aca1c4f2de4b890611bb340f9",
+      "sha256": "75e1e7fcdd701115800f02745bd015b4bc83804b57ffb9eb28ef0031caf4f505",
       "models": [
         "formal/models/vetting/vetting_acquisition.qnt",
         "formal/models/vetting/vetting_terminal_outcomes.qnt"
       ],
       "candidateLines": [
-        15, 19, 36, 38, 81, 82, 512, 519, 520, 539, 561, 588, 597, 603
+        15, 19, 36, 38, 81, 82, 183, 521, 528, 529, 548, 573, 600, 609, 615
       ],
       "review": "mapped-abstraction"
     },
@@ -8836,13 +8890,14 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "9ef9ed33c25f4e9eb9f5c259c765a6fc4ff10e662603e2a6a1821ca1c621c002",
+      "sha256": "6c769892ccc379fd7f8986f445093bdee2040947edf1db32912838996ca97382",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_gzip_expansion.qnt"
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        245, 253, 254, 1720, 1721, 1902, 1963, 1984, 2051, 2067, 2110
+        245, 253, 254, 1725, 1726, 1907, 1968, 1989, 2056, 2072, 2115
       ],
       "review": "mapped-abstraction"
     },
@@ -9439,7 +9494,7 @@
     },
     {
       "path": "formal/models/api/api_private_intake.qnt",
-      "sha256": "06160162977d1532636370c2bb5171ce9f528b6ef56bada099d9c33e809b4917",
+      "sha256": "30e37494bfade0846eb065295bf9a72b2f4e880176e8315cd479675cadec90c9",
       "sources": [
         "backend/security/case-store.ts",
         "backend/security/github-advisories.ts",
@@ -9453,6 +9508,7 @@
         "migrations/0101_durable_security_intake.sql"
       ],
       "scenarios": [
+        "duplicateRemainsRecoverableTest",
         "emptyReconcileReopensDraftTest",
         "expiredGrantRefusesReconcileTest",
         "forwardOverridesSpamTest",
@@ -9466,6 +9522,7 @@
         "renewedGrantReconcilesTest",
         "requestInformationBlocksSendTest",
         "sendWithoutGrantRefusedTest",
+        "staleCompletionCannotAssessTest",
         "staleScreenCannotOverwriteRetryTest",
         "unavailableScreenRetriesTest"
       ]
@@ -11004,7 +11061,7 @@
     },
     {
       "path": "formal/models/contracts/deployment_artifact.qnt",
-      "sha256": "3eaac3b497810549a96f67fa509dd1234da770675fa258885648a289b3eb283e",
+      "sha256": "0491b12c9e2644a92f031b1be1d30d9951e5181fe54f409da09ff77a2d9bfe59",
       "sources": [
         "contracts/solana/scripts/bootstrap-linux.sh",
         "contracts/solana/scripts/build-local.sh",
@@ -11264,7 +11321,7 @@
     },
     {
       "path": "formal/models/contracts/solana_monthly_allocation.qnt",
-      "sha256": "db746dfa9844abf7e55d67aff249a6f0d7331ddb742da51f7aa2c2fe6ff89307",
+      "sha256": "3cb1464eeaa993c1f68e3bd91fe062591f838f9a41bcd21bafc364d7965fd172",
       "sources": [
         "contracts/solana/monthly-commitment.ts",
         "contracts/solana/monthly-reserve.ts",
@@ -11274,16 +11331,18 @@
         "actorZeroReleasesTest",
         "commitThenPayTest",
         "eachSourceSettlesOnceTest",
+        "leafReleaseExcludesReserveTest",
         "legacyExpiredMonthKeepsOutstandingTest",
         "migratedGrossOneRefusedTest",
         "migratedPrincipalStaysReservedTest",
         "otherActorAfterFreezeStaysReservedTest",
         "otherActorBeforeFreezeReleasesTest",
         "outstandingBlocksHandCommitTest",
-        "partialReserveReleaseThenFittingLeafTest",
+        "partialReserveReleaseRefusedTest",
         "sameAwardReleasesTest",
         "smallerAwardAfterFreezeStaysReservedTest",
-        "staleExpectedReserveReleaseTest"
+        "staleExpectedReserveReleaseTest",
+        "wholeReserveReleaseExcludesLeafTest"
       ]
     },
     {
@@ -11383,7 +11442,7 @@
     },
     {
       "path": "formal/models/contracts/token_admission.qnt",
-      "sha256": "71482da2408e752348e2369b0b87a7923b430ea7ddd8140f78b639deb0b130c9",
+      "sha256": "9d6d43fcaba10241918929967b92483131c0e1349265ff636cd7ae07fa55b5d5",
       "sources": [
         "contracts/solana/programs/slop-escrow/src/token_policy.rs",
         "contracts/solana/token-extensions.ts",
@@ -11394,6 +11453,7 @@
         "allowedMetadataTest",
         "classicAuthorityCompatibilityTest",
         "liveAuthorityTest",
+        "oversizedMetadataTest",
         "unknownExtensionTest"
       ]
     },
@@ -12407,11 +12467,12 @@
     },
     {
       "path": "formal/models/payments/evm_scan_checkpoint.qnt",
-      "sha256": "f17322b471f58ce94beb019972f5bda5171c7523e116a791f4db1f9ea6e63b1c",
+      "sha256": "bbe5fd7bad516c288ef10fb77564bb677ef246348697bfd5c840e65f54d210fa",
       "sources": ["workers/payments/scanner.ts"],
       "scenarios": [
         "failedPageCannotAdvanceTest",
-        "oldCompletionCannotRewindTest"
+        "oldCompletionCannotRewindTest",
+        "wrongChainCannotAdvanceTest"
       ]
     },
     {
@@ -13157,6 +13218,20 @@
       ]
     },
     {
+      "path": "formal/models/points/commit_line_cache.qnt",
+      "sha256": "13e23a7ead5ffefc760e8eab87030eddc54de143ebdf5ab548bc6b5ae5645a64",
+      "sources": ["scripts/generate-leaderboard.ts"],
+      "scenarios": [
+        "completeLoadAndReuseTest",
+        "failedLoadCannotPublishAuthorTest",
+        "invalidIdentityCannotFetchTest",
+        "lateAuthorLinkRepairsPriorOccurrenceTest",
+        "laterFailureDiscardsStagedTest",
+        "oldCacheSurvivesFailureTest",
+        "partialLoadNotPublishedTest"
+      ]
+    },
+    {
       "path": "formal/models/points/github_budget_window.qnt",
       "sha256": "dd873914f8256275f15bcabf22c961d4dbfbea2073d7f221741d0ab4cc07e61f",
       "sources": ["scripts/generate-leaderboard.ts"],
@@ -13179,6 +13254,63 @@
         "completeCountStillRequiresTerminalPageTest",
         "overlappingPagesCannotInventCountTest",
         "repeatedCursorRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_allocation.qnt",
+      "sha256": "c8949c5ccfcc8736619960d90e1d057f8de3215058a6e2bb0c967b962c005e57",
+      "sources": [
+        "src/lib/commit-credit.ts",
+        "src/lib/implementation-allocation.ts",
+        "src/lib/implementation-lines.ts",
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts",
+        "src/lib/score-units.ts"
+      ],
+      "scenarios": [
+        "actorIdTieTest",
+        "frozenAwardHeldTest",
+        "missingEvidenceHeldTest",
+        "proportionalTest",
+        "retryIdempotentTest",
+        "zeroLineFallbackTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_credit.qnt",
+      "sha256": "cf90b799d9b4c6949971a1913f51c5e5463341d53e9ca9b49f00e795fce1af8a",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "scripts/retained-commit-credit.ts",
+        "scripts/value-ingestion.ts",
+        "src/lib/commit-credit.ts",
+        "src/lib/implementation-lines.ts",
+        "src/lib/leaderboard.ts"
+      ],
+      "scenarios": [
+        "botsAndVendorAgentsCannotReceiveTest",
+        "carrierGetsNoAutomaticShareTest",
+        "maintainerImplementationStillCreditedTest",
+        "missingHumanIdentityDoesNotCreditTest",
+        "oldCarrierCreditNegativeControlTest",
+        "ordinaryUnlinkedFallbackTest",
+        "repeatedCommitsAndRetriesDoNotMultiplyTest",
+        "verifiedOriginalFallbackTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/implementation_credit_gate.qnt",
+      "sha256": "fa20592ae9e0de0da96fad37bfa98d953dea91a4f3c6cd08ac4bd65b35ccbc92",
+      "sources": [
+        "scripts/retained-commit-credit.ts",
+        "scripts/value-ingestion.ts",
+        "src/lib/leaderboard.ts"
+      ],
+      "scenarios": [
+        "completeDuplicateGetsNoNewCreditTest",
+        "heldSourceKeepsPriorPointsTest",
+        "missingOwnershipIsNotDuplicateProofTest",
+        "transportFailureDoesNotBecomeCreditTest"
       ]
     },
     {
@@ -13239,6 +13371,35 @@
         "newestFiveMaterialTestsTest",
         "reviewCapTest",
         "uncappedPositiveMergesTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/points_financial_preservation.qnt",
+      "sha256": "3da9371b88261f29e12399bbb5cc03b85f37b6183b818c8e72e412a5cd770496",
+      "sources": ["scripts/generate-points.ts"],
+      "scenarios": [
+        "concurrentFreezeRefusesChangeTest",
+        "exactReplayAfterFreezeAllowedTest",
+        "frozenChangeRefusedTest",
+        "oldImportNegativeControlTest",
+        "unprotectedCorrectionAllowedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/points_implementation_correction.qnt",
+      "sha256": "7ec3f9e07fd922e438ba39ca26fb7932aba1bc3e3ea471531daab42818e0bc64",
+      "sources": [
+        "src/lib/leaderboard-types.ts",
+        "src/lib/leaderboard.ts",
+        "src/lib/points.ts"
+      ],
+      "scenarios": [
+        "finalAwardIsRetainedTest",
+        "missingOrIncompleteProofCannotRemoveTest",
+        "oldReplacementNegativeControlTest",
+        "phantomCarrierCorrectionIsAppendedOnceTest",
+        "retainedContributorValueIsNotReplacedTest",
+        "sourceBoundAwardIsRetainedTest"
       ]
     },
     {
@@ -14063,6 +14224,16 @@
       ]
     },
     {
+      "path": "formal/models/slopbot/batched_patch_replay.qnt",
+      "sha256": "035c0505a9cbadf4ce934540880d2e283a2a8488b3a32fd8c071f83da9a1b8cf",
+      "sources": ["workers/slopbot/value-patch-replay.ts"],
+      "scenarios": [
+        "completeBatchesReturnTest",
+        "firstBatchIsNotCompleteProofTest",
+        "laterFailureDiscardsProofTest"
+      ]
+    },
+    {
       "path": "formal/models/slopbot/bot_accepted_census.qnt",
       "sha256": "b2c1cd2139cee6be84e23313b0cdc3f3c3f72dda82ee0462b4e50df50a927ae0",
       "sources": [
@@ -14350,7 +14521,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_patch_replay.qnt",
-      "sha256": "6ec67c00b76c6ae7225f9ed499d2c6aaf42d66583b9f0b0b0eb8e145021076eb",
+      "sha256": "65ce027f217a9c427dd0cd2419ddccb0a08f018ce7e6cde8c4408148549daa61",
       "sources": [
         "workers/slopbot/git-object.ts",
         "workers/slopbot/value-accepted-range.ts",
@@ -14359,9 +14530,11 @@
         "workers/slopbot/value-patch.ts"
       ],
       "scenarios": [
+        "allRepeatedEditsVerifiedTest",
         "ambiguousContextRefusedTest",
         "exactReplayTest",
-        "partialPatchRefusedTest"
+        "partialPatchRefusedTest",
+        "uncoveredDuplicateRefusedTest"
       ]
     },
     {
@@ -14958,7 +15131,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6ac25853c3ea9fda64176dae0da31ede00cf0557a09e2c244c39ebf4f99c0c63",
+      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -14971,6 +15144,7 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
@@ -14988,6 +15162,19 @@
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/retained_recipient_scope.qnt",
+      "sha256": "0b13eec1e4789b1d8f7c9b517b287ca95a468c093e4db88c90ef3f1f8f2f0f35",
+      "sources": [
+        "scripts/retained-commit-credit.ts",
+        "workers/slopbot/value-retained-copy.ts"
+      ],
+      "scenarios": [
+        "fullAssessmentStillRequiresMergeProofTest",
+        "missingOrdinaryProofNeverCreditsTest",
+        "ordinaryRecipientCanIgnoreUnclaimedSyncTest"
       ]
     },
     {
@@ -18037,7 +18224,7 @@
     },
     {
       "path": "formal/models/vetting/vetting_acquisition.qnt",
-      "sha256": "37234cc6b64ac416e151fc2d9dedd54e86707e9f65f6285190cb6c69509e13fd",
+      "sha256": "09fd589674accc7a04d561c35bbd37e5f19948fcf4efe2605d9f93151cf7c07d",
       "sources": [
         "workers/vetting/acquire.ts",
         "workers/vetting/assembly-manifest.ts",
@@ -18049,7 +18236,8 @@
       "scenarios": [
         "acquisitionFailureDoesNotConsumeQueueTest",
         "completePinnedAcquisitionTest",
-        "partialBatchCannotClearTest"
+        "partialBatchCannotClearTest",
+        "trailingSourceCannotCompleteTest"
       ]
     },
     {
@@ -18638,6 +18826,16 @@
         "staleMetadataDoesNotBlockRawPreservationTest",
         "truncatedBodyCannotProduceObservedDigestTest",
         "unavailableBodyIsNotMissingTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_path_coverage.qnt",
+      "sha256": "4e099ce87cf391f33c21cbabc155f088cc07bb1e705b900481bfcc03894b8745",
+      "sources": ["workers/vetting/bounded-scan.ts"],
+      "scenarios": [
+        "completeContentReviewTest",
+        "omittedContentCannotPublishTest",
+        "previousCoverageCannotBeReusedTest"
       ]
     },
     {

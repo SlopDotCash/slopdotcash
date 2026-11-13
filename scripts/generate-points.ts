@@ -242,6 +242,41 @@ export function pointsSql(journal: PointsJournal): string {
   assertPointsJournal(journal);
   const quote = (s: string) => `'${s.replaceAll("'", "''")}'`;
   const digest = hash(JSON.stringify(journal));
+  // Scoring's provisional flag is not financial state. Read the private
+  // settlement tables in the same atomic statement that accepts this batch.
+  // Unmapped legacy obligations protect their project because their period
+  // cannot safely be inferred from creation or indexing time.
+  const protectedAward = (payload: string) => {
+    const project = `json_extract(${payload},'$.award.projectId')`;
+    const period = `substr(json_extract(${payload},'$.award.occurredAt'),1,7)`;
+    return `(EXISTS (SELECT 1 FROM monthly_payment_runs m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM monthly_allocation_changes m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM payment_direct_transfers p WHERE p.project_id=${project} AND p.contribution_month=${period}) OR EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest)))`;
+  };
+  // Freeze economic and source identity, not GitHub presentation or the score's
+  // provisional label. Renames and a fresh assessment of unchanged value must
+  // still be able to append their provenance without changing a frozen award.
+  const economicFields = [
+    "key",
+    "actor.id",
+    "projectId",
+    "category",
+    "amount",
+    "occurredAt",
+    "sourceId",
+    "workUnitId",
+  ];
+  const economicAward = (payload: string) => {
+    const fields = economicFields.map(
+      (field) => `json_extract(${payload},'$.award.${field}')`,
+    );
+    // Review finality and source URLs affect review deduplication in
+    // pointMembers. Unlike PR presentation, changing them may change totals.
+    fields.push(
+      `CASE WHEN json_extract(${payload},'$.award.category')='substantive-review' THEN json_extract(${payload},'$.award.provisional') END`,
+      `CASE WHEN json_extract(${payload},'$.award.category') IN ('substantive-review','evaluated-contribution') THEN json_extract(${payload},'$.award.sourceUrl') END`,
+    );
+    return `json_array(${fields.join(",")})`;
+  };
+  const changesProtectedAwards = `EXISTS (SELECT 1 FROM points_staging s LEFT JOIN points_revisions prior ON prior.id=json_extract(s.payload,'$.previous') WHERE s.batch_id=${quote(digest)} AND NOT EXISTS (SELECT 1 FROM points_revisions known WHERE known.id=json_extract(s.payload,'$.id')) AND json_extract(s.payload,'$.award.category')!='payout-received' AND (prior.id IS NULL OR ${economicAward("prior.payload")} IS NOT ${economicAward("s.payload")}) AND (${protectedAward("s.payload")} OR ${protectedAward("prior.payload")}))`;
   const statements = journal.revisions.map(
     (r, sequence) =>
       `INSERT INTO points_staging(batch_id,sequence,payload) VALUES(${quote(digest)},${sequence},${quote(JSON.stringify(r))}) ON CONFLICT(batch_id,sequence) DO NOTHING;`,
@@ -255,8 +290,9 @@ export function pointsSql(journal: PointsJournal): string {
   statements.push(
     // Skip the insert before its BEFORE trigger runs. A known older batch is
     // an idempotent replay, not a new candidate with a shorter history.
-    // Incomplete staged coverage yields NULL, which the NOT NULL column rejects.
-    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
+    // Missing coverage or a protected award change yields NULL. The NOT NULL
+    // constraint refuses the entire import before any Points become public.
+    `INSERT INTO points_batches(digest,generated_at,coverage,revision_count) SELECT ${quote(digest)},${quote(journal.generatedAt)},(SELECT CASE WHEN COUNT(*)=${journal.coverage.length} AND NOT ${changesProtectedAwards} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${quote(digest)} ORDER BY sequence)),${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     // Replayed batches skip the AFTER INSERT triggers that normally clear staging.
     `DELETE FROM points_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,
     `DELETE FROM points_coverage_staging WHERE batch_id=${quote(digest)} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${quote(digest)});`,

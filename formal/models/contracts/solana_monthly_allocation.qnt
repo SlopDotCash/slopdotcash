@@ -17,8 +17,9 @@
 // other-actor obligation committed at or after the freeze leaves the gross
 // reserved, so selective consumption is never a refund. The owner's hand
 // `commit` is refused while `monthly_outstanding` is nonzero.
-// `release_monthly_reserve` frees part or all of `total - committed` for the
-// exact expected value and counts it as committed and released.
+// `release_monthly_reserve` frees only the whole untouched reserve for an
+// authenticated wrong-total fault. Any prior leaf settlement refuses it, and
+// its full settlement prevents a second per-leaf release of the same gross.
 //
 // The attester is not trusted here: a recorded allocation may list any leaves,
 // including sources already consumed, and any frozen_at <= now.
@@ -108,7 +109,8 @@ module solana_monthly_allocation {
         .with("month", settledState.month.with("released", s.month.released + l.gross))
         .with("freed", s.freed.union(Set(l))) } }
   action releaseReserve(expected: int, amt: int): bool = all { s.month.recorded,
-    expected == unsettled, amt > 0, amt <= expected,
+    expected == unsettled, s.month.committed == 0, s.month.released == 0,
+    amt > 0, amt == expected, expected == s.month.total,
     s' = s.with("free", s.free + amt).with("reserved", s.reserved - amt)
       .with("outstanding", if (s.month.expired) s.outstanding else s.outstanding - amt)
       .with("month", s.month.with("committed", s.month.committed + amt)
@@ -180,10 +182,13 @@ module solana_monthly_allocation {
     .then(commitMonthly(Set(L12), 0)).then(releaseAward(L12).fail())
   run sameAwardReleasesTest = fundedRun.then(handConsume(1, 1, 2, false))
     .then(commitMonthly(Set(L12), 0)).then(releaseAward(L12)).expect(s.free == 2 and invariant)
-  run partialReserveReleaseThenFittingLeafTest = fundedRun.then(commitMonthly(Set(L11, L21), 0))
-    .then(releaseReserve(2, 1)).then(commitAward(L11))
-    .expect(s.month.committed == 2 and s.outstanding == 0 and invariant)
-    .then(commitAward(L21).fail())
+  run partialReserveReleaseRefusedTest = fundedRun.then(commitMonthly(Set(L11, L21), 0))
+    .then(releaseReserve(2, 1).fail())
+  run wholeReserveReleaseExcludesLeafTest = fundedRun.then(commitMonthly(Set(L11, L20), 0))
+    .then(releaseReserve(2, 2)).expect(invariant).then(releaseAward(L20).fail())
+  run leafReleaseExcludesReserveTest = fundedRun.then(commitMonthly(Set(L11, L20), 0))
+    .then(releaseAward(L20)).expect(s.outstanding == 1 and invariant)
+    .then(releaseReserve(1, 1).fail())
   run staleExpectedReserveReleaseTest = fundedRun.then(commitMonthly(Set(L11, L21), 0))
     .then(commitAward(L11)).then(releaseReserve(2, 1).fail())
   run legacyExpiredMonthKeepsOutstandingTest = initWith(true).then(deposit(2)).then(commitMonthly(Set(L11), 0))

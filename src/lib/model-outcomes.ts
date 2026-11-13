@@ -15,7 +15,7 @@ import type {
   ScoreEvent,
 } from "./leaderboard-types";
 import { isUnavailableModelIdentifier } from "./model-identity";
-import { POINTS_PER_THIRD } from "./points";
+import { scoreThirdsToPoints } from "./score-units";
 
 /** Provider spellings that name the same organization. */
 const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
@@ -215,7 +215,7 @@ function attributionClient(attribution: ModelAttribution): string | null {
 function pointsForScoreEvent(
   event: Pick<ScoreEvent, "points" | "scoreThirds">,
 ): number {
-  return (event.scoreThirds ?? event.points * 3) * POINTS_PER_THIRD;
+  return scoreThirdsToPoints(event.scoreThirds ?? event.points * 3);
 }
 
 /**

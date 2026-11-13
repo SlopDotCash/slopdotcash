@@ -1,5 +1,6 @@
 import type { ActorRef } from "./leaderboard-types";
 import { ALLOCATION_STATES } from "./rewards";
+import { isScoreThirds } from "./score-units";
 import type { WalletProof as CycleWalletProof } from "./wallet-proof";
 
 export type { CycleWalletProof };
@@ -594,8 +595,7 @@ function cycleEntry(value: unknown, index: number): CycleIndexEntry {
     const scoreThirds = contributor.scoreThirds;
     if (
       Object.hasOwn(contributor, "scoreThirds") &&
-      (!Number.isSafeInteger(scoreThirds) ||
-        Number(scoreThirds) < 0 ||
+      (!isScoreThirds(scoreThirds) ||
         Math.floor(Number(scoreThirds) / 3) !== contributor.score)
     ) {
       throw new TypeError(`${contributorField}.scoreThirds is invalid`);
