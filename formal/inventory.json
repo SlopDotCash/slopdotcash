@@ -5080,17 +5080,19 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "3debbce1878338cf1e9d7fad4cf537059770b5ecc822f4c40438d1db57694260",
+      "sha256": "e30106ec392f0fbf2d0a5bbd272c43ca803ef88319a572fc7ba41dc30f7f88c0",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
-        "formal/models/ui/ui_transaction.qnt"
+        "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_register.qnt"
       ],
       "candidateLines": [
-        1, 15, 36, 59, 61, 67, 70, 102, 106, 108, 113, 120, 121, 123, 127, 128,
-        129, 130, 131, 132, 135, 136, 137, 138, 148, 149, 151, 153, 219, 221,
-        231, 241, 337, 390, 421, 429, 433, 435, 447, 458, 459, 463, 482, 503,
-        506, 716, 727, 749, 754, 769, 784
+        1, 15, 36, 59, 61, 67, 70, 114, 118, 120, 125, 132, 133, 135, 139, 140,
+        141, 142, 143, 144, 147, 148, 149, 150, 160, 161, 163, 165, 234, 236,
+        246, 256, 352, 405, 437, 438, 447, 455, 459, 461, 473, 484, 487, 495,
+        525, 529, 535, 539, 546, 549, 550, 556, 558, 605, 626, 629, 839, 850,
+        872, 877, 892, 907
       ],
       "review": "mapped-abstraction"
     },
@@ -18001,6 +18003,19 @@
         "recoveryHashNeedsClickTest",
         "replacedApprovalTest",
         "transferWaitsForFinalityTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_auto_register.qnt",
+      "sha256": "0e544eb98b07b0aa5a1ce3a2cab377cb9fe2f9b05b697bf003ab3e0ee83cc350",
+      "sources": ["src/OwnerVaultSetup.tsx"],
+      "scenarios": [
+        "attemptLimitTest",
+        "editingRetiresAutomaticAnswerTest",
+        "failedCreationStopsTest",
+        "ownerRefusalStopsTimerTest",
+        "registersWithoutClickTest",
+        "repeatedRefusalStopsTest"
       ]
     },
     {
