@@ -101,11 +101,9 @@ function rebindTransferredRepositoryPresentation(
     changed ||= PUBLISHED_REPOSITORY_KEYS.some(
       (key) => deployed[key] !== current[key],
     );
-    const {
-      aliases: _aliases,
-      expectedNodeId: _expectedNodeId,
-      ...published
-    } = current;
+    const published = Object.fromEntries(
+      PUBLISHED_REPOSITORY_KEYS.map((key) => [key, current[key]]),
+    );
     // This role belongs to the retained ledger's collection order. A newer
     // registry can reorder projects without changing these source records.
     return { ...published, role: deployed.role };
@@ -159,11 +157,9 @@ export function addActivatedRepositories(
         `activated repository ${target.id} has no recorded GraphQL node ID`,
       );
     }
-    const {
-      aliases: _aliases,
-      expectedNodeId: _expectedNodeId,
-      ...published
-    } = target;
+    const published = Object.fromEntries(
+      PUBLISHED_REPOSITORY_KEYS.map((key) => [key, target[key]]),
+    );
     nextRepositories.push(published);
     nextSourceRepositories.push({
       id: target.id,

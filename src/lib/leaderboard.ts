@@ -5202,10 +5202,17 @@ function createSnapshotWithReviewCutoff(
   const snapshot: LeaderboardSnapshot = {
     schemaVersion: LEADERBOARD_SCHEMA_VERSION,
     repository: LEADERBOARD_REPOSITORY,
-    repositories: TARGET_REPOSITORIES.map(
-      ({ aliases: _aliases, expectedNodeId: _expectedNodeId, ...repository }) =>
-        repository,
-    ),
+    repositories: TARGET_REPOSITORIES.map((repository) => ({
+      id: repository.id,
+      owner: repository.owner,
+      name: repository.name,
+      displayName: repository.displayName,
+      githubUrl: repository.githubUrl,
+      description: repository.description,
+      integrationBranch: repository.integrationBranch,
+      projectId: repository.projectId,
+      role: repository.role,
+    })),
     ruleVersion: SCORE_RULE_VERSION,
     generatedAt: input.generatedAt,
     sourceUpdatedAt: latestSourceUpdate(input),
