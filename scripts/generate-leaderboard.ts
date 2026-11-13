@@ -7,6 +7,7 @@ import {
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
 } from "./value-ingestion";
+
 /**
  * Collects the rolling contribution ledger and current work queues from the
  * authenticated GitHub GraphQL API. Time slicing, cursor pagination, runtime
@@ -14,6 +15,7 @@ import {
  * becoming a plausible-looking empty snapshot.
  */
 
+import { githubIngestionReadTransport } from "./github-ingestion-read";
 import type { ConnectionPage, PageInfo } from "./github-pagination";
 import { resolveGitHubToken } from "./github-token";
 
@@ -4651,7 +4653,10 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  const github = GitHubClient.forToken(options.evidenceToken ?? "");
+  const github = GitHubClient.forToken(
+    options.evidenceToken ?? "",
+    githubIngestionReadTransport(),
+  );
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {
@@ -4866,7 +4871,8 @@ export async function runGenerator(
   outputPath = DEFAULT_OUTPUT_PATH,
   dependencies: GeneratorDependencies = {
     getToken: resolveGitHubToken,
-    createClient: (token) => new GitHubGraphqlClient(token),
+    createClient: (token) =>
+      new GitHubGraphqlClient(token, githubIngestionReadTransport()),
     generate: generateLeaderboardFromGitHub,
     write: writeLeaderboardAtomically,
     onCensusRetry: () => {

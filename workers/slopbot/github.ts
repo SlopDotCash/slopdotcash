@@ -48,12 +48,15 @@ export class GitHubError extends Error {
 }
 
 export class GitHubClient {
-  private constructor(private readonly token: string) {}
+  private constructor(
+    private readonly token: string,
+    private readonly transport: typeof fetch = fetch,
+  ) {}
 
   /** Existing GitHub token for read-only source ingestion outside the Worker. */
-  static forToken(token: string) {
+  static forToken(token: string, transport: typeof fetch = fetch) {
     if (!token.trim()) throw new Error("GitHub source token is required");
-    return new GitHubClient(token);
+    return new GitHubClient(token, transport);
   }
 
   static async forInstallation(
@@ -84,7 +87,7 @@ export class GitHubClient {
     body?: unknown,
   ): Promise<{ status: number; data: T | null }> {
     const send = (url: string) =>
-      fetch(url, {
+      this.transport(url, {
         method,
         headers: {
           ...headers(this.token),

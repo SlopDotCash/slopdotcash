@@ -3769,7 +3769,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "a872807a2f37605e51c09c6f60861925cfd6416e4249d785acee3bb46d8e842a",
+      "sha256": "3f7f8a10397771f3e0bd36f0d98451fe2216966a587aefe529c69889a20865c0",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3781,15 +3781,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        23, 178, 189, 198, 278, 290, 292, 295, 394, 482, 503, 539, 570, 635,
-        667, 747, 780, 789, 797, 862, 1058, 1293, 1355, 1363, 1421, 1474, 1477,
-        1670, 1679, 1684, 1691, 1774, 1775, 1922, 1923, 1980, 2006, 2024, 2026,
-        2030, 2064, 2067, 2068, 2071, 2073, 2084, 2107, 2315, 2318, 2556, 2676,
-        2797, 2810, 2821, 2822, 3009, 3010, 3201, 3217, 3229, 3236, 3262, 3272,
-        3276, 3280, 3284, 3339, 3358, 3385, 3402, 3436, 3437, 3439, 3455, 3472,
-        3473, 3474, 3483, 3488, 3668, 4026, 4048, 4057, 4107, 4142, 4148, 4155,
-        4224, 4310, 4468, 4684, 4694, 4696, 4709, 4738, 4740, 4741, 4745, 4749,
-        4804, 4858, 4909, 4912
+        25, 180, 191, 200, 280, 292, 294, 297, 396, 484, 505, 541, 572, 637,
+        669, 749, 782, 791, 799, 864, 1060, 1295, 1357, 1365, 1423, 1476, 1479,
+        1672, 1681, 1686, 1693, 1776, 1777, 1924, 1925, 1982, 2008, 2026, 2028,
+        2032, 2066, 2069, 2070, 2073, 2075, 2086, 2109, 2317, 2320, 2558, 2678,
+        2799, 2812, 2823, 2824, 3011, 3012, 3203, 3219, 3231, 3238, 3264, 3274,
+        3278, 3282, 3286, 3341, 3360, 3387, 3404, 3438, 3439, 3441, 3457, 3474,
+        3475, 3476, 3485, 3490, 3670, 4028, 4050, 4059, 4109, 4144, 4150, 4157,
+        4226, 4312, 4470, 4689, 4699, 4701, 4714, 4743, 4745, 4746, 4750, 4754,
+        4809, 4863, 4915, 4918
       ],
       "review": "mapped-abstraction"
     },
@@ -3820,6 +3820,13 @@
       "sha256": "07f32541fcc2307abcbdeb3984eb764f3d8c2978c44fa3c4796cfe0719ea9463",
       "models": ["formal/models/release/static_asset_generation.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/github-ingestion-read.ts",
+      "sha256": "dbf7a250c8679e984f8ae9fbf7e0d12c172df78b4a5f0ed57fd908c895f18383",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [9, 26, 40, 46],
       "review": "mapped-abstraction"
     },
     {
@@ -4543,7 +4550,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "6b73daa714bd94b8776681bc3c422efb8ddc16ac8e95675282c79fae52b2e0a2",
+      "sha256": "7e83481bc4d95f33221243f102d31b8b1ba93c8de389c00019937dc9c9241b75",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4551,8 +4558,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        57, 68, 115, 116, 117, 118, 120, 121, 189, 190, 191, 193, 194, 698, 805,
-        841, 880, 904
+        64, 75, 122, 123, 124, 125, 127, 128, 196, 197, 198, 200, 201, 729, 749,
+        856, 892, 931, 955
       ],
       "review": "mapped-abstraction"
     },
@@ -8002,11 +8009,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "ed1fede597a3dee0fa61c67510de560e034ca3a75593f88ae55762e6ae105a41",
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "candidateLines": [
-        43, 74, 85, 102, 111, 112, 113, 115, 119, 120, 123, 161, 164, 217, 218,
-        249
+        43, 77, 88, 105, 114, 115, 116, 118, 122, 123, 126, 164, 167, 220, 221,
+        252
       ],
       "review": "mapped-abstraction"
     },
@@ -8300,12 +8310,12 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "fb6e4c43050be8977206a962c3bac7489490508dc006b450df775ac59c8ca6b8",
+      "sha256": "ae46fb549ed08a8d8731900d6e4f6e5d10039149eb6da447689cb934419eb4fa",
       "models": [
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 521, 541, 584, 593, 612, 953, 972],
+      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
       "review": "mapped-abstraction"
     },
     {
@@ -13250,6 +13260,20 @@
         "completeCountStillRequiresTerminalPageTest",
         "overlappingPagesCannotInventCountTest",
         "repeatedCursorRefusedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/github_ingestion_read.qnt",
+      "sha256": "29feafe43b55620b874394569d681926c42de6040413e0fdbc078fffad7d0396",
+      "sources": [
+        "scripts/github-ingestion-read.ts",
+        "workers/slopbot/github.ts"
+      ],
+      "scenarios": [
+        "authorizationDoesNotRetryTest",
+        "readResumesAfterLimitTest",
+        "repeatedLimitFailsTest",
+        "writeDoesNotRetryTest"
       ]
     },
     {
