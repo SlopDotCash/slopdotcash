@@ -1,5 +1,10 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { implementationCreditActors } from "../src/lib/commit-credit";
+import { shareImplementationPoints } from "../src/lib/implementation-allocation";
+import {
+  workUnitCreditActorIds,
+  workUnitLineWeights,
+} from "../src/lib/implementation-lines";
 import {
   assertLeaderboardSnapshot,
   createLeaderboardSnapshot,
@@ -27,6 +32,7 @@ import {
   repository as retainedRepository,
 } from "../tests/value-promotion-fixture";
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import { valueSourceDigest } from "../workers/slopbot/value-review";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
   RetainedAttributionIncompleteError,
@@ -133,7 +139,7 @@ test("unlinked and agent-authored commits retain the source creator fallback", (
   expect(implementationCreditActors(agent, [])).toEqual([]);
 });
 
-test("collected evidence and joint claims both exclude a carrier with no authored change", async () => {
+test("legacy valuation fields stay unchanged while current allocation excludes the carrier", async () => {
   const f = fixture({ textOnly: true, direct: true });
   const evidence = await collectValueEvidence(
     f.client,
@@ -142,15 +148,29 @@ test("collected evidence and joint claims both exclude a carrier with no authore
     repository,
   );
   expect(evidence.limitations).toEqual([]);
-  expect(evidence.implementationActorNodeIds).toEqual(["U_author"]);
+  expect(evidence.implementationActorNodeIds).toEqual([
+    "U_author",
+    "U_submitter",
+  ]);
   const joint = await prepareWorkUnitEvidence(
     [{ evidence, policy }],
     [repository],
   );
   expect(joint.limitations).toEqual([]);
   expect(joint.claims.map((claim) => claim.implementationActorNodeIds)).toEqual(
-    [["U_author"]],
+    [["U_author", "U_submitter"]],
   );
+  const originalEvidence = JSON.stringify({ evidence, joint });
+  const originalDigest = await valueSourceDigest(evidence, policy);
+  expect(workUnitCreditActorIds(joint, joint.claims[0])).toEqual(["U_author"]);
+  const weights = workUnitLineWeights(joint, joint.claims);
+  expect(weights).toEqual(new Map([["U_author", 1n]]));
+  if (!weights) throw new Error("fixture allocation lacks line evidence");
+  expect(shareImplementationPoints(30, [...weights.keys()], weights)).toEqual([
+    30,
+  ]);
+  expect(JSON.stringify({ evidence, joint })).toBe(originalEvidence);
+  expect(await valueSourceDigest(evidence, policy)).toBe(originalDigest);
 });
 
 function retainedCase() {

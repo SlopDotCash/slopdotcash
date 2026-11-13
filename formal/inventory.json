@@ -5877,7 +5877,10 @@
     {
       "path": "src/lib/implementation-lines.ts",
       "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
-      "models": ["formal/models/points/implementation_allocation.qnt"],
+      "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -8296,13 +8299,12 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "c7d6928586d717c49f2cf0455ac61344075d4fabea8e8d81af945c372937a7d1",
+      "sha256": "fb6e4c43050be8977206a962c3bac7489490508dc006b450df775ac59c8ca6b8",
       "models": [
-        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [64, 75, 84, 98, 524, 544, 587, 596, 615, 958, 977],
+      "candidateLines": [61, 72, 81, 95, 521, 541, 584, 593, 612, 953, 972],
       "review": "mapped-abstraction"
     },
     {
@@ -8597,9 +8599,8 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "de7ff4f54bc63f71d090af444d1d46f7278761fd5657c5362dc4775a2f4df494",
+      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
       "models": [
-        "formal/models/points/implementation_credit.qnt",
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
@@ -13258,15 +13259,14 @@
     },
     {
       "path": "formal/models/points/implementation_credit.qnt",
-      "sha256": "67e7c2bd82297be5abc0576a6ed468cd1ad3ee65c094371789623d085a8b7c2c",
+      "sha256": "cf90b799d9b4c6949971a1913f51c5e5463341d53e9ca9b49f00e795fce1af8a",
       "sources": [
         "scripts/generate-leaderboard.ts",
         "scripts/retained-commit-credit.ts",
         "scripts/value-ingestion.ts",
         "src/lib/commit-credit.ts",
-        "src/lib/leaderboard.ts",
-        "workers/slopbot/value-evidence.ts",
-        "workers/slopbot/value-work-unit.ts"
+        "src/lib/implementation-lines.ts",
+        "src/lib/leaderboard.ts"
       ],
       "scenarios": [
         "botsAndVendorAgentsCannotReceiveTest",
