@@ -150,8 +150,11 @@ export function VaultActions({
       : entry.family === "evm",
   );
   const { busy, error, setError, run: act } = useAction(saved.error);
+  /** True while the shown error came from an automatic check, not an owner action. */
+  const autoErrored = useRef(false);
   const run = (action: () => Promise<void>) => {
     setNotice("");
+    autoErrored.current = false;
     return act(action, (caught) =>
       errorMessage(caught, "The wallet request failed."),
     );
@@ -345,7 +348,12 @@ export function VaultActions({
           );
       if (!mounted.current) return;
       if (result === "pending") {
-        if (automatic) return;
+        if (automatic) {
+          // The check works again: withdraw the error an earlier one showed.
+          if (autoErrored.current) setError(null);
+          autoErrored.current = false;
+          return;
+        }
         if (pending.hashSource !== "wallet") {
           const candidate: Pending = {
             ...pending,
@@ -380,6 +388,7 @@ export function VaultActions({
       setRecoveryHash("");
       setReview(null);
       if (automatic) setError(null);
+      autoErrored.current = false;
       if (result === "failed")
         setNotice(
           "The transaction failed. Review the amount and wallet, then retry.",
@@ -446,7 +455,13 @@ export function VaultActions({
         else
           void latestVerify
             .current(true)
-            .catch(() => undefined)
+            .catch((caught) => {
+              // Show why the check fails; the next attempt still runs and a
+              // later success withdraws the message.
+              if (!mounted.current) return;
+              autoErrored.current = true;
+              setError(errorMessage(caught, "The wallet request failed."));
+            })
             .then(() => done(true));
       },
       autoAttempts < AUTO_CHECK_FAST_ATTEMPTS
@@ -454,7 +469,7 @@ export function VaultActions({
         : AUTO_CHECK_SLOW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [autoHash, autoAttempts, autoTicks, mounted]);
+  }, [autoHash, autoAttempts, autoTicks, mounted, setError]);
   const formatted = (value: string, decimals: number) =>
     formatAssetAmount(value, {
       network: deployment.network,
