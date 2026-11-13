@@ -1804,7 +1804,7 @@
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
-      "sha256": "a88ff0c1520c70bc90a60fa198eff8d415d1f8eebc6d388cca8b567c18956ffa",
+      "sha256": "18e1e42304c5bcb631dfb4dafe2a36a064322736c8fedb54d3aaf5e8d74aff1a",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/solana_monthly_allocation.qnt",
@@ -1812,16 +1812,16 @@
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [33, 1047],
+      "candidateLines": [33, 1052],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/token_policy.rs",
-      "sha256": "710e5d5b26844e7bbd0b0cab33f75963e89e2bfe03d276fb7f1e05a8057264c4",
+      "sha256": "3ef54af0a483a0e463f8763bc554781c4daa1dfee90b42fe9387741f9bd1d79d",
       "models": ["formal/models/contracts/token_admission.qnt"],
       "candidateLines": [
-        9, 11, 23, 25, 28, 37, 40, 59, 61, 64, 71, 157, 160, 162, 164, 165, 169,
-        170
+        9, 11, 30, 32, 35, 44, 57, 80, 82, 85, 92, 199, 202, 204, 206, 207, 211,
+        212
       ],
       "review": "mapped-abstraction"
     },
@@ -1928,9 +1928,9 @@
     },
     {
       "path": "contracts/solana/token-extensions.ts",
-      "sha256": "b456ced40e9d0a985a8fe029059a8ad325dea1abb2533d8d3695e29706c703e0",
+      "sha256": "0a8fddf8372b4b8b905995e8abc46914941ec0b57b230222a61a1447f1ef92dd",
       "models": ["formal/models/contracts/token_admission.qnt"],
-      "candidateLines": [],
+      "candidateLines": [171],
       "review": "mapped-abstraction"
     },
     {
@@ -11317,7 +11317,7 @@
     },
     {
       "path": "formal/models/contracts/solana_monthly_allocation.qnt",
-      "sha256": "db746dfa9844abf7e55d67aff249a6f0d7331ddb742da51f7aa2c2fe6ff89307",
+      "sha256": "3cb1464eeaa993c1f68e3bd91fe062591f838f9a41bcd21bafc364d7965fd172",
       "sources": [
         "contracts/solana/monthly-commitment.ts",
         "contracts/solana/monthly-reserve.ts",
@@ -11327,16 +11327,18 @@
         "actorZeroReleasesTest",
         "commitThenPayTest",
         "eachSourceSettlesOnceTest",
+        "leafReleaseExcludesReserveTest",
         "legacyExpiredMonthKeepsOutstandingTest",
         "migratedGrossOneRefusedTest",
         "migratedPrincipalStaysReservedTest",
         "otherActorAfterFreezeStaysReservedTest",
         "otherActorBeforeFreezeReleasesTest",
         "outstandingBlocksHandCommitTest",
-        "partialReserveReleaseThenFittingLeafTest",
+        "partialReserveReleaseRefusedTest",
         "sameAwardReleasesTest",
         "smallerAwardAfterFreezeStaysReservedTest",
-        "staleExpectedReserveReleaseTest"
+        "staleExpectedReserveReleaseTest",
+        "wholeReserveReleaseExcludesLeafTest"
       ]
     },
     {
@@ -11436,7 +11438,7 @@
     },
     {
       "path": "formal/models/contracts/token_admission.qnt",
-      "sha256": "71482da2408e752348e2369b0b87a7923b430ea7ddd8140f78b639deb0b130c9",
+      "sha256": "9d6d43fcaba10241918929967b92483131c0e1349265ff636cd7ae07fa55b5d5",
       "sources": [
         "contracts/solana/programs/slop-escrow/src/token_policy.rs",
         "contracts/solana/token-extensions.ts",
@@ -11447,6 +11449,7 @@
         "allowedMetadataTest",
         "classicAuthorityCompatibilityTest",
         "liveAuthorityTest",
+        "oversizedMetadataTest",
         "unknownExtensionTest"
       ]
     },
