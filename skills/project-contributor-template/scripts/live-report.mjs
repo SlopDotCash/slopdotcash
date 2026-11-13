@@ -2680,7 +2680,7 @@ export function readGhOpenActivity(
 const PROVIDER_MODEL_LINE_RE = /^AI provider\/model\s*:\s*(.*)$/i;
 const TERMINAL_LANE_RE = /^(?:\u2014|-)\s*\[[A-Za-z0-9][A-Za-z0-9-]{1,48}\]$/u;
 const TERMINAL_ATTRIBUTION_LABEL_RE =
-  /^(?:AI provider\/model|Client \/ agent tooling|Contribution skill revision|Skill revision|Attribution status)\s*:/i;
+  /^(?:AI provider\/model|Client \/ agent tooling|Contribution skill revision|Skill revision|Attribution status|Compute receipt)\s*:/i;
 
 /**
  * An exact provider/model pair, null when the line is a provider/model row
@@ -2711,9 +2711,10 @@ function exactProviderModel(line) {
 
 /**
  * The provider/model row in the contiguous attribution block that ends at the
- * last lane signature. Checklist rows above that block are a different
- * disclosure, so a placeholder there cannot erase or replace the footer.
- * Returns undefined when no footer row is present.
+ * last lane signature. The legacy footer places Compute receipt between that
+ * row and the lane, so the walk continues through it. Checklist rows above
+ * that block are a different disclosure, so a placeholder there cannot erase
+ * or replace the footer. Returns undefined when no footer row is present.
  */
 function terminalProviderModel(body, records) {
   const lines = records.map((record) => record.normalized);

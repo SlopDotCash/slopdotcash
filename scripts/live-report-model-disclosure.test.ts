@@ -61,6 +61,18 @@ function footer(provider = "Cursor", model = "gpt-5.4"): string {
   ].join("\n");
 }
 
+function legacyFooter(providerModel = "Cursor / gpt-5.4"): string {
+  return [
+    `AI provider/model: ${providerModel}`,
+    "Client / agent tooling: Cursor-cloud-agent",
+    "Contribution skill revision: N/A - ordinary GitHub contribution without optional run evidence",
+    "Compute receipt: 10 project-attributed tokens (unavailable; device-signed, locally reported)",
+    "Attribution status: self-reported",
+    lane,
+    marker,
+  ].join("\n");
+}
+
 function checklist(providerModel: string): string {
   return [
     "## Contribution provenance",
@@ -123,19 +135,32 @@ test("an empty checklist row still resolves the footer", () => {
 });
 
 test("a legacy footer split by the compute receipt still resolves", () => {
-  const body = [
-    "AI provider/model: Cursor / gpt-5.4",
-    "Client / agent tooling: Cursor-cloud-agent",
-    "Contribution skill revision: N/A - ordinary GitHub contribution without optional run evidence",
-    "Compute receipt: 10 project-attributed tokens (unavailable; device-signed, locally reported)",
-    "Attribution status: self-reported",
-    lane,
-    marker,
-  ].join("\n");
+  expect(report.parseModelDisclosure(legacyFooter())).toEqual({
+    provider: "Cursor",
+    model: "gpt-5.4",
+  });
+});
+
+test("a trailing note does not replace a legacy footer split by the compute receipt", () => {
+  const body = `${legacyFooter()}\n\nAI provider/model: OpenAI / gpt-4.1`;
   expect(report.parseModelDisclosure(body)).toEqual({
     provider: "Cursor",
     model: "gpt-5.4",
   });
+  expect(report.auditCommentDisclosures([comment(body)])).toEqual([]);
+});
+
+test("an inexact legacy footer is not rescued by an earlier checklist pair", () => {
+  const body = `${checklist("OpenAI / gpt-4.1")}\n\n${legacyFooter("TBD")}`;
+  expect(report.parseModelDisclosure(body)).toBeNull();
+  expect(report.auditCommentDisclosures([comment(body)])).toEqual([
+    {
+      id: 41,
+      kind: "pr-comment",
+      url: "https://github.com/Example/repo/pull/1#issuecomment-41",
+      author: "ada",
+    },
+  ]);
 });
 
 test("one exact provider row is that disclosure", () => {
