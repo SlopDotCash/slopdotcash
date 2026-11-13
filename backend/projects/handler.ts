@@ -25,6 +25,7 @@ import {
   validRepositoryPath,
 } from "../../src/lib/project-contracts";
 import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
+import { appendedRepositories } from "../../src/lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "../../src/lib/project-revision-changes";
 import {
   assertProjectDefinition,
@@ -64,6 +65,11 @@ import { handleSolanaFunding } from "../payments/solana-funding";
 import type { readSecurityProgramFunds } from "../security/program-funds";
 import { readStrictJsonObject } from "../trace/validation";
 import type { VettingClearance } from "../vetting/persistence";
+import {
+  assertAppendedIdentitiesUnlisted,
+  assertNewRepositoryIdentityUnlisted,
+  verifyAppendedRepositories,
+} from "./appended-repositories";
 import {
   PROJECT_API_CONTRACT_VERSION,
   type ProjectPersistence,
@@ -106,6 +112,7 @@ import {
   currentRepositoryPath,
   projectSetupStatus,
   type RepositoryAccessReader,
+  readListedRepositoryAccess,
   readRepositoryAccess,
   type ScanRequest,
   type ScanRequester,
@@ -1146,6 +1153,26 @@ async function runSetupCheck(
     }
   }
   const { authority, access } = checked;
+  // Every repository of the project needs the Slopbot installation.
+  const repositoryAccess: { repositoryId: string; access: AccessCheck }[] = [];
+  for (const entry of project.manifest.repositories.slice(1))
+    repositoryAccess.push({
+      repositoryId: entry.id,
+      access: (await readListedRepositoryAccess(
+        deps.repositoryAccess,
+        project.manifest,
+        entry.id,
+        actor,
+      )) ?? {
+        state: "retry",
+        message: `Slop has no permanent GitHub identity for ${entry.id}.`,
+      },
+    });
+  const installedEverywhere = repositoryAccess.every(
+    (read) =>
+      read.access.state === "read" &&
+      read.access.access.installation === "installed",
+  );
   const clearance = await deps.vettingClearance(
     project.id,
     project.manifest,
@@ -1178,6 +1205,7 @@ async function runSetupCheck(
     authority.state === "verified" &&
     access.state === "read" &&
     access.access.installation === "installed" &&
+    installedEverywhere &&
     clearance.state === "cleared" &&
     publishesGeneratedSkills(project.manifest)
   ) {
@@ -1195,6 +1223,7 @@ async function runSetupCheck(
     restriction,
     authority,
     access,
+    ...(repositoryAccess.length > 0 ? { repositoryAccess } : {}),
     clearance,
     scanRequest,
     activatedRevision,
@@ -1248,9 +1277,9 @@ async function createProject(
   assertMaintainerNotBanned(manifest, actor, enforcements);
   assertRepositoryUnrestricted(manifest, enforcements);
   const referrer = await resolveReferrer(body.referrer, manifest, actor, deps);
-  assertRegistryWith(await deps.persistence.listProjects(), manifest, {
-    replaces: false,
-  });
+  const listed = await deps.persistence.listProjects();
+  assertRegistryWith(listed, manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, manifest);
   const checked = await currentAuthority(deps, manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();
@@ -1634,6 +1663,18 @@ async function publishOwnerRevision(
   // never authorize private funding reads or a revision of another project.
   const checked = await currentAuthority(deps, current.manifest, actor);
   requireAuthority(checked);
+  // An appended repository's permanent GitHub id must be new to the registry.
+  const submittedRepositories = (body.manifest as Record<string, unknown>)
+    .repositories;
+  if (
+    Array.isArray(submittedRepositories) &&
+    submittedRepositories.length > current.manifest.repositories.length
+  )
+    assertAppendedIdentitiesUnlisted(
+      await deps.persistence.listProjects(),
+      current,
+      submittedRepositories,
+    );
   // The server decides status and listing; the owner sends content.
   let prepared = (await verifiedBountyAmount(
     withMonthlyAmount(
@@ -1722,6 +1763,11 @@ async function publishOwnerRevision(
     0
   )
     fail(422, "no_change", "The revision changes nothing");
+  // Appended repositories are verified on GitHub and through their own
+  // Slopbot installation before anything is recorded.
+  const added = appendedRepositories(current.manifest, submitted) ?? [];
+  if (added.length > 0)
+    await verifyAppendedRepositories(deps, actor, added, deps.now());
   let manifest =
     changes.financial.length > 0
       ? prospectiveFinancialChange(current.manifest, submitted, deps.now())
@@ -1737,6 +1783,9 @@ async function publishOwnerRevision(
   if (scanRequired && manifest.status === "active")
     manifest = { ...manifest, status: "paused" };
   const summary = [
+    added.length > 0
+      ? `added ${added.length === 1 ? "repository" : "repositories"} ${added.map((entry) => entry.id).join(", ")}`
+      : null,
     changes.presentation.length > 0
       ? `presentation (${changes.presentation.join(", ")}) published`
       : null,
@@ -1967,11 +2016,9 @@ async function publishPendingApplication(
   const enforcements = await deps.persistence.listEnforcements();
   assertMaintainerNotBanned(application.manifest, actor, enforcements);
   assertRepositoryUnrestricted(application.manifest, enforcements);
-  assertRegistryWith(
-    await deps.persistence.listProjects(),
-    application.manifest,
-    { replaces: false },
-  );
+  const listed = await deps.persistence.listProjects();
+  assertRegistryWith(listed, application.manifest, { replaces: false });
+  assertNewRepositoryIdentityUnlisted(listed, application.manifest);
   const checked = await currentAuthority(deps, application.manifest, actor);
   requireAuthority(checked);
   const at = deps.now().toISOString();
@@ -2206,11 +2253,19 @@ async function appendRevision(
       manifest,
       current.revision,
     );
+    // A multi-repository clearance names the repository that did not
+    // clear; a single-repository one never does.
+    const uncleared =
+      vetting.state !== "cleared" && "repository" in vetting
+        ? vetting.repository
+        : undefined;
     if (vetting.state !== "cleared")
       fail(
         422,
         "vetting_required",
-        `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`,
+        uncleared === undefined
+          ? `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.`
+          : `Security vetting of ${uncleared} is ${vetting.state}. A successful retained admission scan of ${uncleared} is required before activation; reinstatement requires fresh evidence.`,
       );
   }
   const manifestSha256 = await sha256Hex(new TextEncoder().encode(text));
@@ -2232,7 +2287,18 @@ async function appendRevision(
     },
     enforcementGeneration,
   );
-  if (result === "conflict") {
+  // Another project taking an appended repository's name during the write
+  // is a registry conflict; every other race keeps its earlier answer.
+  if (
+    result === "repository_conflict" &&
+    manifest.repositories.length > current.manifest.repositories.length
+  )
+    fail(
+      409,
+      "registry_conflict",
+      "Another project lists a repository of this revision. Reload before retrying.",
+    );
+  if (result !== "updated") {
     fail(409, "stale_revision", "The project changed since you loaded it");
   }
   await purgeProjectCache(
@@ -2653,12 +2719,20 @@ async function recordEnforcement(
     const latestRestriction = restriction.records.findLast(
       (record) => record.action === "quarantine" || record.action === "ban",
     );
+    // A project with more than one repository needs this fresh clean scan
+    // of every repository, each at its own live pin.
+    const fresh =
+      vetting.state === "cleared" && vetting.assessment !== null
+        ? (vetting.repositoryAssessments ?? [vetting.assessment])
+        : [];
     if (
-      vetting.state !== "cleared" ||
-      vetting.assessment === null ||
-      vetting.assessment.revision !== project.revision ||
-      (latestRestriction !== undefined &&
-        vetting.assessment.requestedAt < latestRestriction.createdAt)
+      fresh.length === 0 ||
+      fresh.some(
+        (assessment) =>
+          assessment.revision !== project.revision ||
+          (latestRestriction !== undefined &&
+            assessment.requestedAt < latestRestriction.createdAt),
+      )
     )
       fail(
         409,
@@ -2666,8 +2740,11 @@ async function recordEnforcement(
         "Reinstatement requires a fresh clean scan of the current restricted revision, requested after the latest restriction, at the current integration-branch head and skill template.",
       );
     vettingReview = {
-      assessmentId: vetting.assessment.id,
-      maliciousAssessmentIds: vetting.reviewedMaliciousAssessmentIds ?? [],
+      assessmentId: fresh[0].id,
+      maliciousAssessmentIds:
+        vetting.state === "cleared" && vetting.assessment !== null
+          ? (vetting.reviewedMaliciousAssessmentIds ?? [])
+          : [],
     };
   }
   const selectedAccounts = input.responsibleAccounts ?? [];
@@ -2963,7 +3040,7 @@ async function githubLookup(
   const cacheRequest = new Request(
     parts[1] === "owned-repositories"
       ? `${url.origin}/api/v1/project-github/owned-repositories/${session.githubId}`
-      : `${url.origin}/api/v1/project-github/repository-node-v1/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
+      : `${url.origin}/api/v1/project-github/repository-node-v2/${parts[2].toLowerCase()}/${parts[3].toLowerCase()}`,
   );
   const build = async () => {
     if (parts[1] === "owned-repositories") {

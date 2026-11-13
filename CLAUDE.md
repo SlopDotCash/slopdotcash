@@ -78,10 +78,11 @@ alias only.
     `0x000000000000000000000000000000000000dEaD`. Every order names that fee
     wallet as receiver, order authority and refund beneficiary, checked before
     signing. The other half of each fee keeps its earlier handling; on
-    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is off in the
-    checked-in configuration. Source approval does not activate the buyback:
-    activation needs its own reviewed change, the owner's confirmation of each
-    limit, and the readiness checks in `workers/fee-converter/README.md`. The
+    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is live in the
+    production configuration from 12 November 2026 (operator decision; PRD
+    section 6) and off on staging. Changing the mode, the start instant or any
+    limit needs its own reviewed change and the readiness checks in
+    `workers/fee-converter/README.md`. The
     Worker never cancels an order; cancelling an unfilled order is an owner
     action. `workers/fee-converter/wrangler.toml` sets the mode of
     each network. The Worker deploys only when the
@@ -233,7 +234,11 @@ future executable changes. Later projects require one successful admission scan 
 repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
-cannot inherit a nonexempt admission. Explicit security investigations control
+cannot inherit a nonexempt admission. An owner may append public repositories on the
+manage page; each needs the owner's current authority through Slopbot, counts from
+the next UTC month, is never removed or reordered, and needs its own admission scan
+or exemption, because the migration-0075 exemption covers only original repositories.
+Explicit security investigations control
 nonexempt admission (owner decision, 27 October 2026, PRD section 8).
 Admission scans have no repository size limit (owner decision, 28 October
 2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,

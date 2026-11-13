@@ -19,6 +19,10 @@ import {
   type ScoreEvent,
 } from "../src/lib/leaderboard";
 import { findProject } from "../src/lib/projects.mjs";
+import {
+  pointsToScoreThirdsString,
+  scoreThirdsToPoints,
+} from "../src/lib/score-units";
 
 export const sha256 = (bytes: string | Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -130,8 +134,9 @@ export async function prepareSourceCorrection(input: {
           row.scoreThirds === thirds &&
           row.weight ===
             (
-              BigInt(thirds) *
-              BigInt(10000 + (event.evidenceBonusBasisPoints ?? 0))
+              (BigInt(scoreThirdsToPoints(thirds)) *
+                BigInt(10000 + (event.evidenceBonusBasisPoints ?? 0))) /
+              10n
             ).toString()
         );
       }),
@@ -269,9 +274,12 @@ export async function prepareSourceCorrection(input: {
       wallet: row.wallet,
       lookupUnavailable: row.lookupUnavailable,
       beforeScoreThirds: row.scoreThirds,
-      proposedScoreThirds: events
-        .reduce((sum, event) => sum + BigInt(event.scoreThirds), 0n)
-        .toString(),
+      proposedScoreThirds: pointsToScoreThirdsString(
+        events.reduce(
+          (sum, event) => sum + BigInt(scoreThirdsToPoints(event.scoreThirds)),
+          0n,
+        ),
+      ),
       beforeWeight: row.weight,
       proposedWeight: events
         .reduce((sum, event) => sum + BigInt(event.weight), 0n)

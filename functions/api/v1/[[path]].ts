@@ -302,7 +302,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         projectId,
         manifest,
         throughRevision,
-        () => livePin(manifest),
+        (repositoryId) => livePin(manifest, repositoryId),
         forReinstatement,
       ),
     adminGithubIds,

@@ -22,12 +22,14 @@ import {
   SCORE_RULE_VERSION,
 } from "../src/lib/leaderboard-constants";
 import { isUnavailableModelIdentifier } from "../src/lib/model-identity";
+import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { findProject } from "../src/lib/projects.mjs";
 import {
   REGISTERED_REPOSITORIES,
   TARGET_REPOSITORIES,
 } from "../src/lib/repositories.mjs";
 import { eventThirds } from "../src/lib/score-penalties";
+import { addScoreThirds } from "../src/lib/score-units";
 import { readLeaderboardFile } from "./leaderboard-files.mjs";
 
 type JsonRecord = Record<string, unknown>;
@@ -119,7 +121,11 @@ function rebindTransferredRepositoryPresentation(
  * pull-request checks see the current target registry. Trusted builds collect
  * the repository from GitHub instead.
  */
-function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
+export function addActivatedRepositories(
+  candidate: JsonRecord,
+  targetRepositories: typeof TARGET_REPOSITORIES = TARGET_REPOSITORIES,
+  lookupProject: typeof findProject = findProject,
+): JsonRecord {
   const repositories = array(candidate.repositories, "snapshot.repositories");
   const source = record(candidate.source, "snapshot.source");
   const sourceRepositories = array(
@@ -129,7 +135,7 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
   const deployedIds = repositories.map(
     (value, index) => record(value, `snapshot.repositories[${index}]`).id,
   );
-  const targetIds = TARGET_REPOSITORIES.map((repository) => repository.id);
+  const targetIds = targetRepositories.map((repository) => repository.id);
   let cursor = 0;
   for (const id of deployedIds) {
     cursor = targetIds.indexOf(String(id), cursor);
@@ -139,15 +145,16 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
   if (deployedIds.length === targetIds.length) return candidate;
   const nextRepositories: unknown[] = [];
   const nextSourceRepositories: unknown[] = [];
-  for (const target of TARGET_REPOSITORIES) {
+  for (const target of targetRepositories) {
     const index = deployedIds.indexOf(target.id);
     if (index >= 0) {
       nextRepositories.push(repositories[index]);
       nextSourceRepositories.push(sourceRepositories[index]);
       continue;
     }
-    const project = findProject(target.projectId);
-    if (project?.repositories[0]?.id !== target.id) {
+    const project = lookupProject(target.projectId);
+    const identity = project ? repositoryIdentity(project, target.id) : null;
+    if (!project || identity === null) {
       throw new TypeError(
         `activated repository ${target.id} has no recorded GraphQL node ID`,
       );
@@ -160,7 +167,7 @@ function addActivatedRepositories(candidate: JsonRecord): JsonRecord {
     nextRepositories.push(published);
     nextSourceRepositories.push({
       id: target.id,
-      repositoryId: project.authority.repositoryNodeId,
+      repositoryId: identity.nodeId,
     });
   }
   return {
@@ -281,27 +288,42 @@ function rebuildLeaders(
     for (const event of events) {
       const thirds = eventThirds(event);
       if (event.category === "merged-pull-request") {
-        pointThirds.mergedPullRequests += thirds;
+        pointThirds.mergedPullRequests = addScoreThirds(
+          pointThirds.mergedPullRequests,
+          thirds,
+        );
         acceptedOutcomes.mergedPullRequests += 1;
       } else if (event.category === "resolved-issue") {
-        pointThirds.resolvedIssues += thirds;
+        pointThirds.resolvedIssues = addScoreThirds(
+          pointThirds.resolvedIssues,
+          thirds,
+        );
         acceptedOutcomes.resolvedIssues += 1;
       } else if (event.category === "material-test-change") {
-        pointThirds.materialTestChanges += thirds;
+        pointThirds.materialTestChanges = addScoreThirds(
+          pointThirds.materialTestChanges,
+          thirds,
+        );
         acceptedOutcomes.materialTestChanges += 1;
       } else if (event.category === "evidence") {
-        pointThirds.evidence += thirds;
+        pointThirds.evidence = addScoreThirds(pointThirds.evidence, thirds);
         acceptedOutcomes.evidenceCategories += 1;
       } else if (event.category === "substantive-review") {
-        pointThirds.substantiveReviews += thirds;
+        pointThirds.substantiveReviews = addScoreThirds(
+          pointThirds.substantiveReviews,
+          thirds,
+        );
         acceptedOutcomes.substantiveReviews += 1;
       } else {
-        pointThirds.evaluatedContributions += thirds;
+        pointThirds.evaluatedContributions = addScoreThirds(
+          pointThirds.evaluatedContributions,
+          thirds,
+        );
         acceptedOutcomes.evaluatedContributions += 1;
       }
     }
     const scoreThirds = Object.values(pointThirds).reduce(
-      (total, thirds) => total + thirds,
+      (total, thirds) => addScoreThirds(total, thirds),
       0,
     );
     return {

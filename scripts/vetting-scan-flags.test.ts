@@ -129,6 +129,8 @@ let flags: ProjectFlagStore;
 let beforeFlagBatch: (() => void | Promise<void>) | null = null;
 let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let livePin: VettingPin;
+/** Live pins that differ for one repository, by manifest repository id. */
+let repositoryPins = new Map<string, VettingPin>();
 let pinUp = true;
 let clock: Date;
 let ids = 0;
@@ -162,6 +164,7 @@ beforeEach(async () => {
   );
   keys = await vettingKeyPair();
   livePin = { commitSha: HEAD, templateSha256: TEMPLATE };
+  repositoryPins = new Map();
   pinUp = true;
 });
 afterEach(async () => {
@@ -170,9 +173,14 @@ afterEach(async () => {
 
 const actorOf = (request: Request) =>
   ACTORS[request.headers.get("x-test-actor") ?? ""] ?? null;
-const readLivePin = async () => {
+/**
+ * Reads the live pin of a repository, both as `livePin(manifest, repository)`
+ * and as a clearance `readPin(repository)`.
+ */
+const readLivePin = async (...args: unknown[]) => {
   if (!pinUp) throw new Error("GitHub unavailable");
-  return livePin;
+  const repository = args.find((arg) => typeof arg === "string");
+  return repositoryPins.get(String(repository)) ?? livePin;
 };
 const randomId = () =>
   `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
@@ -1866,4 +1874,700 @@ test("a cached scan from before a ban escalation is refused and cannot reinstate
   );
   expect(prematureReinstate.status).toBe(409);
   expect((await prematureReinstate.json()).error).toBe("vetting_required");
+});
+
+/** Appends the next revision of the project with `change` applied. */
+async function appendRevision(change: (manifest: ProjectManifest) => void) {
+  const current = sqlite
+    .query("SELECT revision, manifest FROM projects WHERE id = 'open-registry'")
+    .get() as { revision: number; manifest: string };
+  const manifest = JSON.parse(current.manifest);
+  change(manifest);
+  const text = JSON.stringify(manifest);
+  const sha256 = await sha256Hex(new TextEncoder().encode(text));
+  const revision = current.revision + 1;
+  sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('open-registry',?,?,?,'Fixture revision',?)",
+    )
+    .run(revision, text, sha256, NOW.toISOString());
+  sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'open-registry'",
+    )
+    .run(revision, text, sha256);
+}
+type ProjectManifest = {
+  headline: string;
+  repositories: object[];
+  contribution: { requiredTests: string };
+};
+
+const SECOND_REPOSITORY = "example/second-registry";
+
+/** Appends a second repository to the project as its next revision. */
+function appendSecondRepository() {
+  return appendRevision((manifest) => {
+    manifest.repositories.push({
+      id: SECOND_REPOSITORY,
+      displayName: SECOND_REPOSITORY,
+      githubUrl: `https://github.com/${SECOND_REPOSITORY}`,
+      description: "The second repository of the project.",
+      integrationBranch: "main",
+      githubId: "223456789",
+      nodeId: "R_second",
+      countsFrom: "2026-11-01T00:00:00.000Z",
+    });
+  });
+}
+
+/** A scan fixture of the second repository's queued row. */
+async function secondRepositoryFixture(
+  assessmentId: string,
+  disposition: "clean" | "incomplete",
+  options: Parameters<typeof vettingScanResult>[2] = {},
+) {
+  const result = await scanFixture(assessmentId, disposition, options);
+  return {
+    ...result,
+    assessed: { ...result.assessed, repository: SECOND_REPOSITORY },
+  };
+}
+
+const firstRepositoryRow = async () => {
+  const row = (await vetting.pendingAssessments()).find(
+    (assessment) => assessment.repositoryId === "example/open-registry",
+  );
+  if (!row) throw new Error("no pending scan of the first repository");
+  return row;
+};
+
+/** The owner's setup scan request, as the project setup check sends it. */
+const ownerScanRequest = (
+  project: NonNullable<Awaited<ReturnType<typeof projects.getProject>>>,
+) =>
+  vettingScanRequester({
+    vetting,
+    serviceAvailable: async () => true,
+    livePin: readLivePin,
+    now: () => clock,
+    randomId,
+  })(project, APPLICANT, "Setup check");
+
+const secondRepositoryRow = async () => {
+  const row = (await vetting.pendingAssessments()).find(
+    (assessment) => assessment.repositoryId === SECOND_REPOSITORY,
+  );
+  if (!row) throw new Error("no pending scan of the second repository");
+  return row;
+};
+
+test("a fresh reinstatement of a two-repository project needs a clean scan of each repository at its own live pin", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  const fresh = () =>
+    vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+      true,
+    );
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Explicit investigation"),
+  ).toBe("queued");
+  // A clean fresh scan of the first repository at the live pin.
+  const first = await firstRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(await fresh()).toMatchObject({
+    state: "queued",
+    repository: SECOND_REPOSITORY,
+  });
+  const second = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(second.id, "clean", {
+          runId: "scan-run-3",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  const cleared = await fresh();
+  expect(cleared).toMatchObject({
+    state: "cleared",
+    assessment: { id: first.id },
+    reviewedMaliciousAssessmentIds: [],
+    repositoryAssessments: [{ id: first.id }, { id: second.id }],
+  });
+  expect("repository" in cleared).toBe(false);
+  // The second repository's head moved: its scan no longer matches its pin,
+  // and the first repository's scan cannot stand in for it.
+  repositoryPins.set(SECOND_REPOSITORY, {
+    commitSha: "c".repeat(40),
+    templateSha256: TEMPLATE,
+  });
+  expect(await fresh()).toMatchObject({
+    state: "stale",
+    repository: SECOND_REPOSITORY,
+    live: { commitSha: "c".repeat(40) },
+  });
+});
+
+test("a two-repository flag pause lifts only after a clean fresh scan of every repository", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect(await (await flag("bob")).json()).toMatchObject({
+    paused: true,
+    freshScan: "queued",
+  });
+  clock = new Date(NOW.getTime() + 120_000);
+  const first = await firstRepositoryRow();
+  const second = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await vetting.getAssessment(first.id))?.state).toBe("clean");
+  expect(await flags.activeFlags(clock)).toHaveLength(2);
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  const reinstatements = async () =>
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    );
+  expect(await reinstatements()).toEqual([]);
+  expect((await publicProject()).status).toBe(410);
+  // The second repository's clean fresh scan completes the set.
+  clock = new Date(NOW.getTime() + 180_000);
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(second.id, "clean", {
+          runId: "scan-run-3",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(await flags.activeFlags(clock)).toHaveLength(0);
+  expect(await reinstatements()).toMatchObject([
+    { evidenceReference: second.id, actorRole: "vetting-service" },
+  ]);
+  expect((await publicProject()).status).toBe(200);
+});
+
+test("a two-repository flag pause stays while one repository's fresh scan misses its own live pin", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 120_000);
+  const first = await firstRepositoryRow();
+  const second = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  // The first repository's head moves before the second scan lands.
+  repositoryPins.set("example/open-registry", {
+    commitSha: "c".repeat(40),
+    templateSha256: TEMPLATE,
+  });
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(second.id, "clean", {
+          runId: "scan-run-3",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  expect((await publicProject()).status).toBe(410);
+  // Once the first repository's live pin matches its scan again, the
+  // recorded fresh scans reinstate the project.
+  repositoryPins.delete("example/open-registry");
+  expect(
+    ((await refresh()) as unknown as { reinstated: string[] }).reinstated,
+  ).toHaveLength(1);
+  expect((await publicProject()).status).toBe(200);
+});
+
+test("a presentation-only revision does not rescan a two-repository project", async () => {
+  await listPausedProject();
+  await appendSecondRepository();
+  const { queued } = await refresh();
+  expect(queued).toHaveLength(2);
+  const [firstId, secondId] = queued;
+  expect(
+    (await postResult(await scanFixture(firstId, "incomplete"))).status,
+  ).toBe(200);
+  expect(
+    (await postResult(await secondRepositoryFixture(secondId, "incomplete")))
+      .status,
+  ).toBe(200);
+  // Listing and presentation edits keep the executable content digest.
+  await appendRevision((manifest) => {
+    manifest.headline =
+      "Reproducible research tooling, now in two repositories.";
+  });
+  expect((await refresh()).queued).toEqual([]);
+  // An executable change keeps each repository's recorded admission result,
+  // as it does for a project with one repository.
+  await appendRevision((manifest) => {
+    manifest.contribution.requiredTests =
+      "Run `bun test` in both repositories.";
+  });
+  expect((await refresh()).queued).toEqual([]);
+});
+
+test("an automatic refresh queues each repository once per revision", async () => {
+  await listPausedProject();
+  await appendSecondRepository();
+  const { queued } = await refresh();
+  expect(
+    await Promise.all(
+      queued.map(async (id) => (await vetting.getAssessment(id))?.repositoryId),
+    ),
+  ).toEqual(["example/open-registry", "example/second-registry"]);
+  expect((await refresh()).queued).toEqual([]);
+  // A finished scan of one repository is not queued again for this revision.
+  expect((await postResult(await scanFixture(queued[0], "clean"))).status).toBe(
+    200,
+  );
+  expect((await refresh()).queued).toEqual([]);
+  expect((await vetting.pendingAssessments()).map((row) => row.id)).toEqual([
+    queued[1],
+  ]);
+});
+
+test("a cached clean scan stands in only for a scan of the same repository", async () => {
+  const original = await vetting.getAssessment(await activeProject());
+  const policyVersion = original?.result?.policyVersion;
+  await appendSecondRepository();
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  expect(
+    await queueAutomaticScan(
+      vettingDeps(),
+      project,
+      "Explicit security investigation",
+    ),
+  ).toBe("queued");
+  const pending = await vetting.pendingAssessments();
+  expect(pending.map((row) => row.repositoryId)).toEqual([
+    "example/open-registry",
+    "example/second-registry",
+  ]);
+  // The same exact inventory as the original clean scan of the first repository.
+  const { inputManifestSha256 } = (
+    await scanFixture(pending[0].id, "clean", {}, false)
+  ).assessed;
+  const lookup = async (assessmentId: string) => {
+    const response = await vettingApi(
+      await signed(
+        "POST",
+        "vetting/reuse",
+        JSON.stringify({
+          assessmentId,
+          inputManifestSha256,
+          policyVersion,
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()).result;
+  };
+  expect(await lookup(pending[0].id)).toMatchObject({
+    assessed: { repository: "example/open-registry" },
+  });
+  expect(await lookup(pending[1].id)).toBeNull();
+});
+
+test("an appended repository needs its own admission scan; the first repository's scan never clears it", async () => {
+  const firstScan = await activeProject();
+  await appendSecondRepository();
+  const clearance = async () => {
+    const project = await projects.getProject("open-registry");
+    if (!project) throw new Error("missing project");
+    return vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+    );
+  };
+  expect(await clearance()).toEqual({
+    state: "unscanned",
+    repository: SECOND_REPOSITORY,
+  });
+  const { queued } = await refresh();
+  expect(queued).toHaveLength(1);
+  expect((await vetting.getAssessment(queued[0]))?.repositoryId).toBe(
+    SECOND_REPOSITORY,
+  );
+  expect(await clearance()).toMatchObject({
+    state: "queued",
+    repository: SECOND_REPOSITORY,
+    assessment: { id: queued[0] },
+  });
+  expect(
+    (await postResult(await secondRepositoryFixture(queued[0], "incomplete")))
+      .status,
+  ).toBe(200);
+  expect(await clearance()).toMatchObject({
+    state: "quarantined",
+    repository: SECOND_REPOSITORY,
+  });
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  // The owner's request queues only the repository that is not cleared.
+  expect(await ownerScanRequest(project)).toEqual({ state: "queued" });
+  expect(
+    (await vetting.pendingAssessments()).map((row) => row.repositoryId),
+  ).toEqual([SECOND_REPOSITORY]);
+  const second = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(second.id, "clean", {
+          runId: "scan-run-4",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  // The combined clearance is the first repository's admission.
+  const cleared = await clearance();
+  expect(cleared).toMatchObject({
+    state: "cleared",
+    basis: "admission",
+    assessment: { id: firstScan },
+  });
+  expect("repository" in cleared).toBe(false);
+  // An executable change elsewhere keeps both admissions.
+  await appendRevision((manifest) => {
+    manifest.contribution.requiredTests = "Run `bun test` in both.";
+  });
+  expect((await clearance()).state).toBe("cleared");
+  expect((await refresh()).queued).toEqual([]);
+  // The second repository's admission stops at a revision without it, and a
+  // re-added entry with the same identity needs a new scan.
+  await appendRevision((manifest) => {
+    manifest.repositories.pop();
+  });
+  expect((await clearance()).state).toBe("cleared");
+  await appendSecondRepository();
+  expect(await clearance()).toEqual({
+    state: "unscanned",
+    repository: SECOND_REPOSITORY,
+  });
+  // A different identity under the same name never inherits admission.
+  await appendRevision((manifest) => {
+    (manifest.repositories[1] as { githubId: string }).githubId = "323456789";
+  });
+  expect(await clearance()).toEqual({
+    state: "unscanned",
+    repository: SECOND_REPOSITORY,
+  });
+});
+
+test("a grandfathered project's appended repository needs its own admission scan", async () => {
+  await listPausedProject();
+  sqlite.exec("DROP TRIGGER vetting_grandfathered_projects_no_insert");
+  sqlite
+    .query(
+      "INSERT INTO vetting_grandfathered_projects(project_id, granted_at) VALUES('open-registry', ?)",
+    )
+    .run(NOW.toISOString());
+  const clearance = async () => {
+    const project = await projects.getProject("open-registry");
+    if (!project) throw new Error("missing project");
+    return vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+    );
+  };
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+  expect((await refresh()).queued).toEqual([]);
+  await appendSecondRepository();
+  expect(await clearance()).toEqual({
+    state: "unscanned",
+    repository: SECOND_REPOSITORY,
+  });
+  // The owner's setup request queues only the repository that needs a scan.
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  expect(await ownerScanRequest(project)).toEqual({ state: "queued" });
+  const pending = await vetting.pendingAssessments();
+  expect(pending.map((row) => row.repositoryId)).toEqual([SECOND_REPOSITORY]);
+  expect((await refresh()).queued).toEqual([]);
+  expect(
+    (await postResult(await secondRepositoryFixture(pending[0].id, "clean")))
+      .status,
+  ).toBe(200);
+  expect(await clearance()).toEqual({
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  });
+});
+
+test("setup activates a two-repository project only once Slopbot is on every repository and every repository clears", async () => {
+  await listPausedProject();
+  await appendSecondRepository();
+  const { queued } = await refresh();
+  expect(queued).toHaveLength(2);
+  expect((await postResult(await scanFixture(queued[0], "clean"))).status).toBe(
+    200,
+  );
+  const check = (secondInstalled: boolean) =>
+    projectApi(
+      sessionRequest(
+        "POST",
+        "project-setup/open-registry/check",
+        "applicant",
+        {},
+      ),
+      {
+        repositoryAccess: async (repository) =>
+          repository.path === SECOND_REPOSITORY && !secondInstalled
+            ? { installation: "missing" }
+            : {
+                installation: "installed",
+                installationId: 1,
+                permission: "admin",
+                roleName: null,
+              },
+      },
+    );
+  const waiting = (await (await check(true)).json()).setup;
+  expect(waiting).toMatchObject({
+    state: "waiting",
+    checks: {
+      scan: {
+        state: "queued",
+        message: `${SECOND_REPOSITORY}: The security scan is queued. Nothing is needed from you.`,
+      },
+    },
+  });
+  expect(
+    (await postResult(await secondRepositoryFixture(queued[1], "clean")))
+      .status,
+  ).toBe(200);
+  const missing = (await (await check(false)).json()).setup;
+  expect(missing).toMatchObject({
+    state: "action_required",
+    nextAction: { kind: "install_slopbot" },
+    checks: {
+      installation: {
+        state: "missing",
+        message: `Slopbot is not installed on ${SECOND_REPOSITORY}.`,
+      },
+      scan: { state: "cleared" },
+    },
+  });
+  expect((await projects.getProject("open-registry"))?.status).toBe("paused");
+  expect((await check(true)).status).toBe(200);
+  expect((await projects.getProject("open-registry"))?.status).toBe("active");
+});
+
+test("a flag on a two-repository project resolves only once every repository has a clean scan bound to it", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  expect((await flag("alice")).status).toBe(201);
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("missing project");
+  const requested = await vettingApi(
+    sessionRequest("POST", "admin/vetting/assessments", "admin", {
+      projectId: project.id,
+      revision: project.revision,
+      reason: "Investigate the reported install script.",
+    }),
+  );
+  expect(requested.status).toBe(201);
+  const first = await firstRepositoryRow();
+  const second = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await scanFixture(first.id, "clean", { runId: "scan-run-2" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(await flags.activeFlags(clock)).toHaveLength(1);
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(second.id, "clean", {
+          runId: "scan-run-3",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(await flags.activeFlags(clock)).toEqual([]);
+  expect(
+    sqlite
+      .query(
+        "SELECT state, closed_by, closed_reference FROM project_flags WHERE project_id = 'open-registry'",
+      )
+      .all(),
+  ).toEqual([
+    { state: "resolved", closed_by: "clean-scan", closed_reference: second.id },
+  ]);
+});
+
+// Review Focus 1 through the owner route: an owner appends a repository to an
+// admitted active project; the existing executable-change path pauses it and
+// queues a scan of the appended repository only, and setup reactivates it
+// once that repository clears.
+test("an owner's append pauses an admitted project, scans only the appended repository and setup reactivates it", async () => {
+  const firstScan = await activeProject();
+  const ownerApi = (request: Request) =>
+    projectApi(request, {
+      github: {
+        token: "public-read-token-fixture",
+        fetch: async (url, init) => {
+          if (url === `https://api.github.com/repos/${SECOND_REPOSITORY}`)
+            return Response.json({
+              id: 223456789,
+              node_id: "R_second",
+              full_name: SECOND_REPOSITORY,
+              description: "The second repository of the project.",
+              private: false,
+              fork: false,
+              archived: false,
+              default_branch: "main",
+              owner: {
+                login: "example",
+                id: 987654321,
+                node_id: "O_example",
+                type: "Organization",
+              },
+            });
+          if (url === "https://api.github.com/graphql") {
+            const { query } = JSON.parse(String(init?.body));
+            return Response.json({
+              data: {
+                node: {
+                  __typename: "Repository",
+                  id: "R_second",
+                  fullDatabaseId: "223456789",
+                  isPrivate: false,
+                  ...(query.includes("ProjectRepositoryBranches")
+                    ? {
+                        refs: {
+                          nodes: [
+                            {
+                              name: "main",
+                              prefix: "refs/heads/",
+                              target: { __typename: "Commit", oid: HEAD },
+                            },
+                          ],
+                          pageInfo: { hasNextPage: false, endCursor: null },
+                        },
+                      }
+                    : { ref: null }),
+                },
+              },
+            });
+          }
+          return new Response(null, { status: 404 });
+        },
+      },
+      requestScan: vettingScanRequester({
+        vetting,
+        serviceAvailable: async () => true,
+        livePin: readLivePin,
+        now: () => clock,
+        randomId,
+      }),
+    });
+  const current = await projects.getProject("open-registry");
+  if (!current) throw new Error("missing project");
+  expect(current.status).toBe("active");
+  const response = await ownerApi(
+    sessionRequest("PUT", "projects/open-registry", "applicant", {
+      manifest: {
+        ...current.manifest,
+        repositories: [
+          ...current.manifest.repositories,
+          {
+            id: SECOND_REPOSITORY,
+            displayName: SECOND_REPOSITORY,
+            githubUrl: `https://github.com/${SECOND_REPOSITORY}`,
+            description: "The second repository of the project.",
+            integrationBranch: "main",
+            githubId: "223456789",
+            nodeId: "R_second",
+            countsFrom: "2026-11-01T00:00:00.000Z",
+          },
+        ],
+      },
+      expectedRevision: current.revision,
+    }),
+  );
+  expect(response.status).toBe(200);
+  const appended = await projects.getProject("open-registry");
+  expect(appended).toMatchObject({
+    revision: current.revision + 1,
+    status: "paused",
+  });
+  // Only the appended repository is queued; the first keeps its admission.
+  const pending = await vetting.pendingAssessments();
+  expect(pending.map((row) => row.repositoryId)).toEqual([SECOND_REPOSITORY]);
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(pending[0].id, "clean", {
+          runId: "scan-run-appended",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  const check = await ownerApi(
+    sessionRequest(
+      "POST",
+      "project-setup/open-registry/check",
+      "applicant",
+      {},
+    ),
+  );
+  expect(check.status).toBe(200);
+  expect((await check.json()).setup).toMatchObject({
+    status: "active",
+    activatedRevision: current.revision + 2,
+  });
+  const reactivated = await projects.getProject("open-registry");
+  expect(reactivated?.status).toBe("active");
+  expect(
+    await vetting.manifestClearance(
+      "open-registry",
+      reactivated?.manifest as never,
+      reactivated?.revision as number,
+      readLivePin,
+    ),
+  ).toMatchObject({ state: "cleared", assessment: { id: firstScan } });
 });

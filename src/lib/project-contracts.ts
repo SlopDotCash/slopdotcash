@@ -396,6 +396,12 @@ export interface RepositoryLookup {
   branches: string[];
   /** Immutable heads returned by GitHub; older lookup responses may omit them. */
   branchCommits?: Record<string, string>;
+  /**
+   * GitHub's fork and archive flags. Absent from older lookup responses; an
+   * absent or unreported flag counts as true, so it never admits a repository.
+   */
+  fork?: boolean;
+  archived?: boolean;
   owner: {
     login: string;
     actorId: string;

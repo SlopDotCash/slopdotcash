@@ -1,6 +1,7 @@
 import { compareActors } from "./github-actor";
 import { ordinaryFee } from "./payments/contracts";
 import { periodBounds } from "./payments/monthly-allocation";
+import { repositoriesCountedFor } from "./project-repositories.mjs";
 /**
  * Derives one project's cycle leaderboard, diagnostic compute evidence, and
  * reward simulation from the canonical GitHub snapshot. November 2026 and
@@ -42,6 +43,7 @@ import {
 import { resolveRewardCapMinor } from "./reward-cap.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 import { eventThirds, penaltyDeductions } from "./score-penalties";
+import { addScoreThirds, scoreThirdsToPoints } from "./score-units";
 import { sumAmounts } from "./verified-allocation";
 import { allocateWeightedRows } from "./weighted-allocation";
 
@@ -474,6 +476,33 @@ export function projectCycleHasOpened(
   return window.to >= window.from;
 }
 
+/**
+ * The project repositories whose work counts in the cycle: an appended
+ * repository counts from its own start month, never earlier.
+ */
+export function projectCountedRepositories(
+  snapshot: LeaderboardSnapshot,
+  project: ProjectDefinition,
+  requestedCycleId?: string,
+): ProjectDefinition["repositories"] {
+  return repositoriesCountedFor(
+    project,
+    projectCycleWindow(snapshot, project, requestedCycleId).calendar.from,
+  );
+}
+
+/** Reports whether the snapshot collected every repository counted that cycle. */
+export function projectActivityCollected(
+  snapshot: LeaderboardSnapshot,
+  project: ProjectDefinition,
+  requestedCycleId?: string,
+): boolean {
+  return projectCountedRepositories(snapshot, project, requestedCycleId).every(
+    (repository) =>
+      snapshot.repositories.some((collected) => collected.id === repository.id),
+  );
+}
+
 export function createProjectView(
   snapshot: LeaderboardSnapshot,
   projectId: ProjectId,
@@ -488,14 +517,7 @@ export function createProjectView(
   if (project && project.id !== projectId)
     throw new Error("Archived project identity mismatch");
   if (!project) throw new TypeError(`Unknown project: ${projectId}`);
-  if (
-    project.repositories.some(
-      (repository) =>
-        !snapshot.repositories.some(
-          (collected) => collected.id === repository.id,
-        ),
-    )
-  ) {
+  if (!projectActivityCollected(snapshot, project, requestedCycleId)) {
     throw new TypeError(`Snapshot has not collected activity for ${projectId}`);
   }
   const snapshotTo = Date.parse(snapshot.window.to);
@@ -511,7 +533,9 @@ export function createProjectView(
   }
 
   const repositoryIds = new Set(
-    project.repositories.map((repository) => repository.id),
+    projectCountedRepositories(snapshot, project, requestedCycleId).map(
+      (repository) => repository.id,
+    ),
   );
   // Cache only this cycle's matching events for the sort below.
   const occurredAtMs = new Map<ScoreEvent, number>();
@@ -578,32 +602,41 @@ export function createProjectView(
     const actorRuns = runsByActor.get(actor.id) ?? [];
     const usage = usageForActor(actor.id, events, actorRuns);
     const earnedThirds = events.reduce(
-      (total, event) => total + eventThirds(event),
+      (total, event) => addScoreThirds(total, eventThirds(event)),
       0,
     );
     const penaltyThirds = deductions.get(actor.id) ?? 0;
-    const rawThirds = earnedThirds - penaltyThirds;
+    const earnedPoints = scoreThirdsToPoints(earnedThirds);
+    const rawPoints = earnedPoints - scoreThirdsToPoints(penaltyThirds);
+    const rawThirds = rawPoints / 10;
     // The automatic monthly policy starts in November. Preserve archived
     // calculations; unpaid historical corrections require their own reviewed
     // assessment and funded-history reconciliation (PRD sections 7 and 11).
-    const earnedWeight =
+    const exactEarnedWeight =
       cycleId >= "2026-11"
-        ? earnedThirds * 10_000
+        ? BigInt(earnedPoints) * 1_000n
         : events.reduce(
             (total, event) =>
               total +
-              (event.scoreThirds ?? event.points * 3) *
-                (10_000 + (event.evidenceBonusBasisPoints ?? 0)),
-            0,
-          );
+              BigInt(scoreThirdsToPoints(eventThirds(event))) *
+                BigInt(10_000 + (event.evidenceBonusBasisPoints ?? 0)),
+            0n,
+          ) / 10n;
+    const earnedWeight = Number(exactEarnedWeight);
+    if (!Number.isSafeInteger(earnedWeight))
+      throw new RangeError("Project contribution weight overflow");
     // A debit lowers the payment weight in the same proportion as the score.
     const weightedThirdBasisPoints =
       penaltyThirds === 0
         ? earnedWeight
-        : Math.floor((earnedWeight * rawThirds) / earnedThirds);
+        : Number(
+            (exactEarnedWeight * BigInt(rawPoints)) / BigInt(earnedPoints),
+          );
     const payoutExclusion = payoutExclusionFor(project, cycleId, actor.id);
     const computeBonus =
-      earnedThirds === 0 ? 0 : Math.floor(earnedWeight / earnedThirds) - 10_000;
+      earnedPoints === 0
+        ? 0
+        : Number((exactEarnedWeight * 10n) / BigInt(earnedPoints)) - 10_000;
     const score = Math.floor(rawThirds / 3);
     const points = {
       "merged-pull-request": 0,

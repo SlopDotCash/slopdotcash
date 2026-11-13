@@ -12,11 +12,18 @@ helper signs the exact method, canonical path, UTC time and body digest used
 by the existing backend contract.
 
 The acquisition function verifies the stored manifest text against the queued
-digest and validates the project schema. It checks the current GitHub repository
-id and node id against the manifest, so a reused repository name is refused. A recorded rename is read and acquired
-under its current `githubUrl` name, because GitHub redirects the former name. The scan result still names the
-registered repository id, which the signed intake requires. It supports the same single-repository
-scope as the queue. Source acquisition uses the assigned commit. The function
+digest and validates the project schema. Each queued item names one manifest
+repository (`repository`); a scan covers that repository only. The function
+selects the manifest entry by its id or a recorded alias and refuses an item
+the revision does not list. It checks the current GitHub repository id and
+node id against that entry's identity (the project `authority` for the first
+repository, the entry's own `githubId` and `nodeId` for an appended one), so a
+reused repository name, or another repository of the same project, is refused.
+A recorded rename is read and acquired under its current `githubUrl` name,
+because GitHub redirects the former name. `queued-inputs.json` records the
+entry id as `repository` beside the unchanged assessment binding, and the scan
+result names that registered repository id, which the signed intake requires.
+Source acquisition uses the assigned commit. The function
 then checks the template index against the assigned input digest, reconstructs
 that digest, and downloads the exact contributor, reviewer and renderer bytes.
 Changed or uncommitted template inputs fail closed. It follows no redirects.

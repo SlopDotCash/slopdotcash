@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "./lib/errors";
 import {
   ESCROW_NETWORKS,
@@ -54,6 +54,15 @@ type Pending = PendingAttempt & {
   solanaBlockhash?: string;
 };
 type Review = VaultActionReview & { solanaPlan?: SolanaFundingPlan };
+/**
+ * A submitted wallet transaction is checked without a click: every 3 seconds
+ * at first, then every 15, for about an hour. "Check transaction" stays for
+ * a hash the owner entered and for later visits.
+ */
+const AUTO_CHECK_FAST_MS = 3_000;
+const AUTO_CHECK_SLOW_MS = 15_000;
+const AUTO_CHECK_FAST_ATTEMPTS = 20;
+const AUTO_CHECK_ATTEMPTS = 240;
 function readPending(text: string | null, solana: boolean): Pending | null {
   if (text === null) return null;
   const value = JSON.parse(text) as Pending;
@@ -140,9 +149,12 @@ export function VaultActions({
       ? entry.family === "solana" && entry.solanaFunding
       : entry.family === "evm",
   );
-  const { busy, error, run: act } = useAction(saved.error);
+  const { busy, error, setError, run: act } = useAction(saved.error);
+  /** True while the shown error came from an automatic check, not an owner action. */
+  const autoErrored = useRef(false);
   const run = (action: () => Promise<void>) => {
     setNotice("");
+    autoErrored.current = false;
     return act(action, (caught) =>
       errorMessage(caught, "The wallet request failed."),
     );
@@ -297,9 +309,15 @@ export function VaultActions({
         throw caught;
       }
     });
-  const check = () =>
-    run(async () => {
-      if (!pending || !wallet) return;
+  const checking = useRef(false);
+  /**
+   * Reads the chain for the pending request. An automatic check signs nothing,
+   * shows no busy state and leaves the notice alone while the result is pending.
+   */
+  const verify = async (automatic: boolean) => {
+    if (!pending || !wallet || checking.current) return;
+    checking.current = true;
+    try {
       const captured = storedPending.current;
       if (!captured)
         throw new Error("The saved request changed. Reload before continuing.");
@@ -330,6 +348,12 @@ export function VaultActions({
           );
       if (!mounted.current) return;
       if (result === "pending") {
+        if (automatic) {
+          // The check works again: withdraw the error an earlier one showed.
+          if (autoErrored.current) setError(null);
+          autoErrored.current = false;
+          return;
+        }
         if (pending.hashSource !== "wallet") {
           const candidate: Pending = {
             ...pending,
@@ -363,21 +387,89 @@ export function VaultActions({
       clear(captured);
       setRecoveryHash("");
       setReview(null);
+      if (automatic) setError(null);
+      autoErrored.current = false;
       if (result === "failed")
         setNotice(
           "The transaction failed. Review the amount and wallet, then retry.",
         );
-      else if (result === "approval-confirmed")
+      else if (result === "approval-confirmed") {
         setNotice(
           "Token approval confirmed. Review the deposit to continue; no funds have been deposited yet.",
         );
-      else {
+        // Open the next review so the owner does not enter the amount again.
+        // It reads the live allowance; a failed read leaves the form as it was.
+        if (solana || !canDeposit) return;
+        setOperation("deposit");
+        setAmount(pending.amount);
+        const next = await reviewVaultAction(
+          deployment,
+          wallet,
+          "deposit",
+          pending.amount,
+          payoutPolicy,
+        ).catch(() => null);
+        if (mounted.current && next && storedPending.current === null)
+          setReview(next);
+      } else {
         setNotice(
           `${pending.operation === "deposit" ? "Deposit" : "Withdrawal"} verified on the finalized chain. ${hash}`,
         );
         onFinalized();
       }
-    });
+    } finally {
+      checking.current = false;
+    }
+  };
+  const check = () => run(() => verify(false));
+  const latestVerify = useRef(verify);
+  useLayoutEffect(() => {
+    latestVerify.current = verify;
+  });
+  // Only a hash this wallet interaction returned is checked automatically.
+  const [autoCheck, setAutoCheck] = useState({
+    hash: "",
+    attempts: 0,
+    ticks: 0,
+  });
+  const autoHash =
+    wallet && !busy && !storageError && pending?.hashSource === "wallet"
+      ? pending.hash
+      : null;
+  const autoAttempts = autoCheck.hash === autoHash ? autoCheck.attempts : 0;
+  const autoTicks = autoCheck.ticks;
+  useEffect(() => {
+    if (autoHash === null || autoAttempts >= AUTO_CHECK_ATTEMPTS) return;
+    const timer = window.setTimeout(
+      () => {
+        const done = (checked: boolean) => {
+          if (mounted.current)
+            setAutoCheck({
+              hash: autoHash,
+              attempts: autoAttempts + (checked ? 1 : 0),
+              ticks: autoTicks + 1,
+            });
+        };
+        // A hidden tab reads nothing and uses no attempt; the next tick retries.
+        if (document.visibilityState === "hidden") done(false);
+        else
+          void latestVerify
+            .current(true)
+            .catch((caught) => {
+              // Show why the check fails; the next attempt still runs and a
+              // later success withdraws the message.
+              if (!mounted.current) return;
+              autoErrored.current = true;
+              setError(errorMessage(caught, "The wallet request failed."));
+            })
+            .then(() => done(true));
+      },
+      autoAttempts < AUTO_CHECK_FAST_ATTEMPTS
+        ? AUTO_CHECK_FAST_MS
+        : AUTO_CHECK_SLOW_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [autoHash, autoAttempts, autoTicks, mounted, setError]);
   const formatted = (value: string, decimals: number) =>
     formatAssetAmount(value, {
       network: deployment.network,
