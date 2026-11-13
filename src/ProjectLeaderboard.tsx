@@ -3,6 +3,7 @@ import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
 import {
   type ProjectContributor,
   type ProjectView,
+  paymentWeightDisplayParts,
   requiredProjection,
 } from "./lib/project-view";
 import {
@@ -47,6 +48,11 @@ export function CycleAllocation({
     (left, right) =>
       left.rank - right.rank || left.actor.id.localeCompare(right.actor.id),
   );
+  const unfundedWeight =
+    view.reward.kind === "monthly-pool" &&
+    monthlyPoolUnfunded(view.project.reward)
+      ? paymentWeightDisplayParts(view.leaders)
+      : null;
   return (
     <section className="section project-leader-section">
       <div className="section-heading">
@@ -124,7 +130,11 @@ export function CycleAllocation({
                   </td>
                   <td>
                     <strong>
-                      <RewardValue leader={leader} view={view} />
+                      <RewardValue
+                        leader={leader}
+                        unfundedWeight={unfundedWeight}
+                        view={view}
+                      />
                     </strong>
                   </td>
                 </tr>
@@ -139,9 +149,11 @@ export function CycleAllocation({
 
 function RewardValue({
   leader,
+  unfundedWeight,
   view,
 }: {
   leader: ProjectContributor;
+  unfundedWeight: ReadonlyMap<string, number> | null;
   view: ProjectView;
 }) {
   if (leader.payoutExclusion)
@@ -174,18 +186,10 @@ function RewardValue({
       asset,
     );
   }
-  const totalWeight = view.leaders.reduce(
-    (total, entry) => total + entry.adjustedWeight,
-    0,
-  );
   return (
     <>
-      {formatPercent(
-        totalWeight > 0
-          ? Math.round((leader.adjustedWeight * 1_000_000) / totalWeight)
-          : 0,
-      )}{" "}
-      of payment weight
+      {formatPercent(unfundedWeight?.get(leader.actor.id) ?? 0)} of payment
+      weight
     </>
   );
 }

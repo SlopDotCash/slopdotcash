@@ -260,6 +260,35 @@ export function allocateIntegerTotal(
   return result;
 }
 
+/**
+ * Parts per million for an unfunded pool's payment-weight column.
+ * formatPercent prints two decimal places, so these shares use the same
+ * largest-remainder allocation as a funded amount, applied to 10_000
+ * hundredths of a percent and then scaled by 100. The printed percentages
+ * on one leaderboard sum to 100.00%.
+ */
+export function paymentWeightDisplayParts(
+  contributors: readonly {
+    actor: Pick<GitHubActor, "id" | "login">;
+    adjustedWeight: number;
+  }[],
+): Map<string, number> {
+  const result = new Map(contributors.map((entry) => [entry.actor.id, 0]));
+  const totalWeight = sumAmounts(
+    contributors.map((entry) => BigInt(entry.adjustedWeight)),
+  );
+  if (totalWeight <= 0n) return result;
+  for (const { row, amount } of allocateWeightedRows(
+    10_000n,
+    contributors,
+    (entry) => BigInt(entry.adjustedWeight),
+    (left, right) => compareActors(left.actor, right.actor),
+  )) {
+    result.set(row.actor.id, Number(amount) * 100);
+  }
+  return result;
+}
+
 function canonicalReceipt(receipt: ProjectRunReceipt): string {
   return JSON.stringify(receipt);
 }

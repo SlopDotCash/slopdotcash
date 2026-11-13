@@ -5311,7 +5311,7 @@
     },
     {
       "path": "src/ProjectLeaderboard.tsx",
-      "sha256": "31f4713c4e1fd2f19816f8a42ac32f5f3c74e4da2a0db35ceeab16f2923e72a4",
+      "sha256": "0b3206d991e35653a7766567223d5fd58c5abe627e93f1ae1f0bb2a51c0b3891",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -6400,9 +6400,9 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "sha256": "9656fb8858f69f970f53b356fa5552d150dcac3ca5a21fe1eaaf512b184d0164",
+      "sha256": "22e37d0a1f2e007f37736746f8ba5b0f984233a689ec423c187ad4a7539c979f",
       "models": ["formal/models/rewards/monthly_allocation.qnt"],
-      "candidateLines": [114, 122, 133, 289, 306, 332, 791, 819, 831],
+      "candidateLines": [114, 122, 133, 318, 335, 361, 820, 848, 860],
       "review": "mapped-abstraction"
     },
     {
