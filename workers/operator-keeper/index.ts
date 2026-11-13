@@ -53,6 +53,60 @@ interface TickResult {
   results: KeeperResult[];
 }
 
+/** Fixed labels and counts only; never emit result objects or error text. */
+function unavailableWorkSummary(results: KeeperResult[]) {
+  const groups = new Map<
+    string,
+    { operation: string; state: string; cause: string; count: number }
+  >();
+  let failedResults = 0;
+  for (const item of results) {
+    if (
+      !item.error &&
+      item.state !== "unavailable" &&
+      item.state !== "publication-unavailable"
+    )
+      continue;
+    failedResults++;
+    const operation =
+      item.operation === "registry" || item.operation === "deployment"
+        ? item.operation
+        : typeof item.operation === "string" &&
+            item.operation.startsWith("monthly:")
+          ? "monthly"
+          : typeof item.operation === "string" &&
+              item.operation.startsWith("award:")
+            ? "award"
+            : "other";
+    const state =
+      item.state === "unavailable" ||
+      item.state === "publication-unavailable" ||
+      item.state === "waiting"
+        ? item.state
+        : "other";
+    const cause =
+      item.operation === "registry" &&
+      item.error === "Project unavailable in current registry"
+        ? "project-unavailable"
+        : item.operation === "registry" &&
+            item.error === "No reviewed deployment for this network"
+          ? "deployment-unavailable"
+          : "other";
+    const key = `${operation}:${state}:${cause}`;
+    const group = groups.get(key) ?? { operation, state, cause, count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  return {
+    event: "operator_keeper_unavailable",
+    schemaVersion: 1,
+    failedResults,
+    groups: [...groups]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, group]) => group),
+  };
+}
+
 /** One operator-controlled object owns one network's gas wallet and its durable liabilities. */
 export class OperatorKeeper {
   protected readonly store;
@@ -136,9 +190,11 @@ export default {
           item.state === "unavailable" ||
           item.state === "publication-unavailable",
       )
-    )
+    ) {
+      console.error(unavailableWorkSummary(result.results));
       throw new Error(
         "Operator keeper has unavailable work; durable attempts are retained",
       );
+    }
   },
 };

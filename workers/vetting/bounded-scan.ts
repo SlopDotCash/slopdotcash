@@ -169,6 +169,9 @@ const INSTALL_FILES = new Set([
   "jenkinsfile",
   "vagrantfile",
   "rakefile",
+  "rakefile.rb",
+  "gemfile",
+  "gems.rb",
   "brewfile",
   "procfile",
   "cmakelists.txt",
@@ -211,7 +214,7 @@ const INSTALL_FILES = new Set([
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|rake|mk|make|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
@@ -270,6 +273,9 @@ export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
   const surfaces = new Set<ScanSurface>();
+  const rubyManifest =
+    !name.endsWith(".lock") &&
+    /^(?:gemfile(?:\..+)?|.+\.gemfile|gems\.rb)$/u.test(name);
   if (
     LOCKFILES.has(name) ||
     /^requirements[^/]*\.txt$/u.test(name) ||
@@ -278,7 +284,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     /(?:^|\/)requirements\/[^/]*\.txt$/u.test(lower)
   )
     surfaces.add("dependencies");
-  if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
+  if (MANIFESTS.has(name) || name.endsWith(".gemspec") || rubyManifest)
     surfaces.add("manifests");
   if (
     name.endsWith(".md") ||
@@ -294,6 +300,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    rubyManifest ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     inDirectory(lower, ".husky") ||
@@ -553,6 +560,7 @@ const RULE_POLICY_SHA256 = sha256(
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
     localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -1678,6 +1686,8 @@ export function inspectRepository(input: {
     text: string;
     surfaces: ScanSurface[];
     flagged: boolean;
+    /** Unknown text is never assumed to be generated or vendored source. */
+    fullTextRequired: boolean;
     /** Rule patterns the deterministic pass proved cannot match `text`. */
     nonMatches?: ReadonlySet<RegExp>;
   };
@@ -1736,6 +1746,7 @@ export function inspectRepository(input: {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
+    const unclassified = surfaces.length === 0;
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
@@ -1772,13 +1783,35 @@ export function inspectRepository(input: {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length === 0) continue;
+    // An extension is a hint, not proof that acquired bytes cannot execute.
+    // Keep native/archive handling above. Every other acquired file enters
+    // source review; unreadable bytes below remain an explicit coverage gap.
+    if (unclassified) {
+      if (!surfaces.includes("source")) surfaces.push("source");
+      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
+    }
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);
+      if (unclassified) {
+        // Unknown binary bytes are evidence too. Keep their digest and
+        // quarantine rather than reusing the same path-only visibility gap
+        // when an opaque input changes.
+        artifacts.push({
+          sha256: digest,
+          parentSha256: file.parentArtifactSha256 ?? null,
+          origin: file.parentArtifactSha256 ? "archive" : "repository",
+          path: file.path.slice(0, 500),
+          type: "binary",
+          state: "quarantined",
+          analysis: "pending",
+          requestedExecution: false,
+        });
+        counts.downloads += 1;
+      }
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
@@ -1820,6 +1853,7 @@ export function inspectRepository(input: {
       text,
       surfaces,
       flagged: found.length > 0 || hooks.length > 0,
+      fullTextRequired: unclassified,
       // The recorded non-matches were proven against `ruleText`; they are
       // only valid for the excerpt pass when that is the text it reads.
       ...(ruleText === text ? { nonMatches: provenNonMatches } : {}),
@@ -1862,7 +1896,9 @@ export function inspectRepository(input: {
   if (envelope(items)) {
     items = [...links];
     for (const candidate of candidates) {
-      const kind = bulkClass(candidate.path, candidate.surfaces);
+      const kind = candidate.fullTextRequired
+        ? null
+        : bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
         kind === null
           ? null

