@@ -105,7 +105,7 @@ function exact(value: object, keys: string[]) {
     if (!expected.has(key)) throw new Error("Unexpected points fields");
 }
 /**
- * An appended repository's work before its own start month earns no Points.
+ * An appended repository's work before its own start month counts for no Points.
  * Repositories without a start month count exactly as before.
  */
 export function repositoryWorkCounts(
@@ -556,7 +556,7 @@ export function reconcilePointPenalties(
     const project = findHistoricalRepository(penalty.repository);
     if (!project || penalty.actor.kind !== "User")
       throw new Error("Invalid penalty identity");
-    // Work on an appended repository before its start month earns no Points,
+    // Work on an appended repository before its start month counts for no Points,
     // so a penalty on it debits none either.
     if (!repositoryWorkCounts(penalty)) continue;
     const award: PointAward = {
