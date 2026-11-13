@@ -522,6 +522,11 @@ test("retained attribution does not hydrate unlinked commits already accepted on
     headRefOid: "a".repeat(40),
     updatedAt: "2026-10-02T00:00:00Z",
   };
+  const progress: Array<{
+    phase: string;
+    completed: number;
+    total: number;
+  }> = [];
   const result = await loadValueInputs(
     { get: read, graphql: read, fileText: read },
     [],
@@ -547,7 +552,14 @@ test("retained attribution does not hydrate unlinked commits already accepted on
         commits: [{ oid: common.headRefOid, author: null, parentCount: 1 }],
       },
     ],
+    (entry) => progress.push(entry),
   );
   expect(result.retainedCommitAuthors.size).toBe(0);
   expect(result.implementationAttributionHolds.size).toBe(0);
+  expect(progress).toEqual([
+    { phase: "commit-attributions", completed: 0, total: 2 },
+    { phase: "commit-attributions", completed: 1, total: 2 },
+    { phase: "commit-attributions", completed: 2, total: 2 },
+    { phase: "value-histories", completed: 0, total: 0 },
+  ]);
 });
