@@ -42,13 +42,13 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
+      "sha256": "1e5f8c563bd4d297b4644682a65aac534d18150f7748f5851a07a559158e1e02",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
+      "candidateLines": [1, 90, 113, 178, 238, 263, 284, 371, 382],
       "review": "mapped-abstraction"
     },
     {
@@ -1981,10 +1981,11 @@
     },
     {
       "path": "formal/tlc-safety-views.json",
-      "sha256": "c0c787bc15dc65b384d27c50071fe74f8182b0d1e61a04a4ad31bdd650f16a1c",
+      "sha256": "f48879661db754c704f25eed75782b64f89c74f49bc488593dc90e70835a89bf",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247
+        57, 58, 75, 76, 93, 116, 117, 134, 152, 172, 175, 193, 211, 229, 247,
+        265, 283
       ],
       "review": "mapped-abstraction"
     },
@@ -3744,9 +3745,9 @@
     },
     {
       "path": "scripts/formal-report.mjs",
-      "sha256": "207b331410ca1daae844d110ab76e449f1a3f16405b5c8b28c5be0f81b35ebd9",
+      "sha256": "b86d6696a874100da163933e0b2666c27ef9d5a619b8431dc3fa0e3a3f5e57be",
       "models": [],
-      "candidateLines": [59, 62, 70],
+      "candidateLines": [64, 67, 75],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure canonical argument/resource lookup and validation of caller-supplied immutable report data against caller-supplied current expectations. It performs no IO, stores no run state and does not execute or attest a model; the producer and workflow own execution and artifact IO."
     },
@@ -4218,10 +4219,11 @@
     },
     {
       "path": "scripts/quint-safety-view.mjs",
-      "sha256": "ae69edab95b695a7e49b4377082175532489647de8e03d5135dacf2f89311635",
+      "sha256": "66548759041dbbfbb6cc59d08b3f307cf1a130297d622276b72caab596339ccb",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [
-        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 241
+        7, 62, 64, 80, 82, 96, 117, 119, 135, 152, 171, 174, 191, 207, 224, 241,
+        258, 275
       ],
       "review": "mapped-abstraction"
     },

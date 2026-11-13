@@ -245,6 +245,40 @@ const definitions = [
     ],
     clauses: [],
   },
+  {
+    id: "email-actions-phase-carrier-safety-v1",
+    model: "formal/models/ui/ui_email_actions.qnt",
+    module: "ui_email_actions",
+    operator: "SlopEmailActionsViewV1",
+    hashMode: "separate-raw-invariants-and-live-email-captures",
+    memoryCandidateMode:
+      "phase-dead-inputs-storage-bounds-and-explicit-closed-carriers",
+    fields: [
+      {
+        name: "state",
+        expression:
+          'IF (s.loaded /\\ s.generation >= 4 /\\ s.request.attempt >= 2 /\\ s.request.phase \\in {"idle", "done"} /\\ (\\A id \\in {1, 2}: s.checks[id].phase = "done")) THEN <<"closed", s.present, s.request.phase, (s.generation >= 1), (s.generation <= 4), (s.captures <= 2), (s.request.attempt <= 2), (s.stored >= 0), (s.stored <= 2), (s.storedActor >= 0), (s.storedActor <= 2), (s.effects \\subseteq {1, 2}), (((s.done /\\ s.link > 0) => s.doneLink = s.link)), (((s.done /\\ s.link > 0) => s.doneLink \\in s.effects)), (((s.present /\\ s.link > 0 /\\ s.error # "none") => s.errorGeneration = s.generation)), ((s.request.phase = "done" => ~s.busy)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.cookie = s.request.actor)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.actor > 0))>> ELSE <<"open", [s EXCEPT !.scrubbed = FALSE, !.error = IF s.error = "none" THEN "none" ELSE "error", !.errorGeneration = IF s.error = "none" THEN 0 ELSE s.errorGeneration, !.stored = <<s.stored >= 0, s.stored <= 2>>, !.storedActor = <<s.storedActor >= 0, s.storedActor <= 2>>, !.checks = [id \\in DOMAIN s.checks |-> LET c == s.checks[id] IN IF c.phase = "unused" THEN <<c.phase>> ELSE IF c.phase = "done" THEN <<c.phase, c.generation>> ELSE IF c.phase = "waiting" THEN [c EXCEPT !.observed = 0, !.available = FALSE] ELSE c], !.request = LET r == s.request IN IF r.phase \\in {"idle", "done", "finally"} THEN <<r.phase, r.attempt>> ELSE IF r.phase = "catch" THEN <<r.phase, r.attempt, r.generation, IF r.cause = "none" THEN "none" ELSE "error">> ELSE IF r.phase \\in {"preflight", "preflight-observed", "http", "http-reply", "body", "postflight", "postflight-observed"} THEN [r EXCEPT !.cause = "none", !.observed = IF r.phase \\in {"preflight-observed", "postflight-observed"} THEN r.observed ELSE 0, !.available = IF r.phase \\in {"preflight-observed", "postflight-observed"} THEN r.available ELSE FALSE, !.cookie = IF r.phase = "http" THEN r.cookie ELSE 0] ELSE r], (((s.request.accepted /\\ s.request.kind = "verify") => s.request.cookie = s.request.actor)), (((s.request.accepted /\\ s.request.kind = "verify") => s.request.actor > 0))>>',
+      },
+    ],
+    clauses: [],
+  },
+  {
+    id: "owner-private-terminal-safety-v1",
+    model: "formal/models/ui/ui_owner_private_requests.qnt",
+    module: "ui_owner_private_requests",
+    operator: "SlopOwnerPrivateRequestsViewV1",
+    hashMode: "exact-globals-live-requests-and-terminal-raw-invariant-bits",
+    memoryCandidateMode:
+      "erase-write-only-error-and-terminal-payload-after-full-reset-or-no-reuse",
+    fields: [
+      {
+        name: "state",
+        expression:
+          '[s EXCEPT !.error = "none", !.requests = [id \\in DOMAIN s.requests |-> LET r == s.requests[id] IN IF r.phase \\in {"unused", "done"} THEN <<r.phase, (r.actor >= 0), (r.actor <= 2), (r.admitted => r.cookie = r.actor)>> ELSE r]]',
+      },
+    ],
+    clauses: [],
+  },
 ];
 
 function reviewedDefinition(view) {
