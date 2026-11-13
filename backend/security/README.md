@@ -179,6 +179,14 @@ stay readable to their reporter and current case authorities. They are not
 automatically rejected or awarded. Failed delivery preserves the receipt;
 retrying `/screen` on a legitimate report retries only idempotent routing.
 
+Screening also compares current assessment summaries from the latest 25 verified
+cases in the same project. It omits stale or held assessments. Possible semantic
+overlap stays `needs-information` for reporter revision or maintainer review;
+the model cannot reject a report or decide an award. When prior summaries enter
+the model input, reporter receipts use a generic reason so the model cannot
+return another report's private content. Each screening worker must retain its
+claimed revision, and only its committed result may start an assessment.
+
 - `POST /:id/screen` retries an unavailable or lost screen, or pending routing.
 - `POST /:id/review` lets a current technical maintainer record `forward` or
   `request-information` with a private reason and the expected intake revision.
