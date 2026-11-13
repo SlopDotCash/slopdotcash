@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   type PagesMetadata,
   pagesMetadata,
+  requireReviewedPagesProject,
   SCANNER_PUBLIC_KEYS,
   scannerPagesConfiguration,
 } from "./prepare-vetting-public-key";
@@ -11,6 +12,7 @@ const env = {
   CLOUDFLARE_API_TOKEN: "private-test-token",
 };
 const metadata: PagesMetadata = {
+  name: "eliza-computer",
   production_branch: "main",
   deployment_configs: {
     production: {
@@ -77,6 +79,30 @@ test("a transient Pages metadata response recovers without losing existing confi
   });
   expect(r.calls()).toBe(2);
   expect(r.waits).toEqual([1_000]);
+});
+
+test("the release preflight uses recovered metadata and still refuses another project or branch", async () => {
+  const r = reader([
+    () => new Response("temporary", { status: 503 }),
+    accepted,
+  ]);
+  const remote = await r.read();
+  expect(() => requireReviewedPagesProject(remote, "production")).not.toThrow();
+  expect(() =>
+    requireReviewedPagesProject(
+      { ...remote, name: "slop-staging" },
+      "production",
+    ),
+  ).toThrow("The reviewed Pages project contract drifted");
+  expect(() =>
+    requireReviewedPagesProject(
+      { ...remote, production_branch: "development" },
+      "production",
+    ),
+  ).toThrow("The reviewed Pages project contract drifted");
+  expect(() =>
+    requireReviewedPagesProject({ ...remote, name: undefined }, "production"),
+  ).toThrow("The reviewed Pages project contract drifted");
 });
 
 test("network and rate-limit failures retry with a fresh timeout signal", async () => {

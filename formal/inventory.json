@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "c51066b7d5c390f544a5db47135b95e709ab65bf39333def6d83e0589c5b295f",
+      "sha256": "d7ae7a96a0f091e5d83581493bf1021a968cbd7b028b9dcb5c831d12fbc91419",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,9 +24,8 @@
       ],
       "candidateLines": [
         27, 59, 157, 189, 194, 195, 249, 303, 377, 490, 496, 564, 587, 588, 609,
-        621, 687, 917, 945, 984, 1000, 1010, 1011, 1102, 1205, 1207, 1208, 1412,
-        1495, 1648, 1650, 1680, 1788, 1810, 1881, 1892, 1917, 1988, 2001, 2014,
-        2023, 2024, 2025
+        621, 687, 917, 945, 984, 1075, 1178, 1180, 1181, 1385, 1468, 1621, 1623,
+        1653, 1761, 1783, 1854, 1865, 1890, 1961, 1974, 1987, 1996, 1997, 1998
       ],
       "review": "mapped-abstraction"
     },
@@ -4116,12 +4115,12 @@
     },
     {
       "path": "scripts/prepare-vetting-public-key.ts",
-      "sha256": "5f9d4703209f73a9d2c49c93197c00203ed742935fdaeee5ed4f428cb372f99e",
+      "sha256": "4478e14016640f2439d82780db7fa418db831e91d16bcf5feac87fb516deefd0",
       "models": [
         "formal/models/release/pages_metadata_retry.qnt",
         "formal/models/release/service_release_identity.qnt"
       ],
-      "candidateLines": [3, 127, 155, 158, 212, 261],
+      "candidateLines": [3, 141, 169, 172, 231, 280],
       "review": "mapped-abstraction"
     },
     {
@@ -13785,12 +13784,12 @@
     },
     {
       "path": "formal/models/release/pages_metadata_retry.qnt",
-      "sha256": "3c087093722bd845a45c0e90d7f8b9774f5a001608741abad9be7ca5854803e1",
+      "sha256": "1ea2e34bddc640fee9e7fe3d0fd79936f6b2e4f72202e8c87204d43dfeb598d5",
       "sources": ["scripts/prepare-vetting-public-key.ts"],
       "scenarios": [
         "invalidMetadataCannotRetryTest",
         "permanentResponseCannotRetryTest",
-        "recoveredReadCannotRotateKeyTest",
+        "recoveredReadCannotChangeIdentityTest",
         "thirdTransientStopsTest",
         "transientReadRecoversTest"
       ]

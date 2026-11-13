@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 745,
-    "functions": 10642,
+    "functions": 10643,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10454,
+    "unprovedFunctions": 10455,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -4146,20 +4146,21 @@
 {"name":"<ArrowFunction@50>","kind":"ArrowFunction","line":50,"sha256":"2205ac9c7edac4fcec1fa30732c6db5097f504062ed158826a9a71483b6f6842","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@60>","kind":"ArrowFunction","line":60,"sha256":"b2cfad0622dba763f349882a61c1ffdd00a2d58d0f33ae8166921c2975649abf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/prepare-vetting-public-key.ts","sha256":"5f9d4703209f73a9d2c49c93197c00203ed742935fdaeee5ed4f428cb372f99e","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"publicScannerKey","kind":"FunctionDeclaration","line":36,"sha256":"d450c73460a9749187f063a55fdeb4a4313de6444244577c1f762cbf5db1b8a0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
-{"name":"scannerPagesConfiguration","kind":"FunctionDeclaration","line":59,"sha256":"2189e20d1147051f3b6a4c4d6faada2430d1ffadc2ae24bc1db892ff18a60024","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"<ArrowFunction@93>","kind":"ArrowFunction","line":93,"sha256":"d181b1edb0aea5ac5d00c45d7c711650b44ca17362fe174537e63d4395f15c57","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@94>","kind":"ArrowFunction","line":94,"sha256":"f309ccddc561ef340d0744553d54885849f5a598f9c84addb6e626f01b68f504","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"verifyScannerPublicKey","kind":"FunctionDeclaration","line":107,"sha256":"6e68534f1b0388affc476f6907c4c72b4f8f6af3da7fadf3e762b5c97dc66b8a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"pagesMetadata","kind":"FunctionDeclaration","line":122,"sha256":"128d4ff0d8538c86dd1e3362f7e6edd14805dc9ff399f693ed962ddc2feb61fd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@126>","kind":"ArrowFunction","line":126,"sha256":"8465d3240e7a1c4ecd0d620784780d3f7893cdc0f79b32157076ddf3ec57ac13","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["promise-construction","runtime-effect"]},
-{"name":"<ArrowFunction@127>","kind":"ArrowFunction","line":127,"sha256":"be09eafec29134a9b8e54ed291a6b43e8f9b5db2725c6f337c0b48fbe6dd9f23","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
-{"name":"<ArrowFunction@160>","kind":"ArrowFunction","line":160,"sha256":"5fa8c711247d70f5c653bac436acb6b2959231e50344d054ff9cf6093cc71a2c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"release","kind":"FunctionDeclaration","line":173,"sha256":"cb967a8ae931d2ea232692586572171e6b746356b198f2fea4d6aad9a0a8c811","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"temporary","kind":"FunctionDeclaration","line":194,"sha256":"827803276219df85418e672e37861f0d761716cd9dc8373ea69ae6870d2c2fd9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"main","kind":"FunctionDeclaration","line":202,"sha256":"137e2d601229dd7261ef4f545d640e6d7bcc0f84cbacde36df4c5c57942f8a6d","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
-{"name":"<ArrowFunction@269>","kind":"ArrowFunction","line":269,"sha256":"901a942c2d57c823ae46f41feb9c8b6dddcd7f29cb60268808dcd8c73c80d3b4","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]}
+{"path":"scripts/prepare-vetting-public-key.ts","sha256":"4478e14016640f2439d82780db7fa418db831e91d16bcf5feac87fb516deefd0","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"requireReviewedPagesProject","kind":"FunctionDeclaration","line":37,"sha256":"5ce3410534192f95fb03518c980bc26827c121c255e90f2b30f240f4986d6b14","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"publicScannerKey","kind":"FunctionDeclaration","line":50,"sha256":"d450c73460a9749187f063a55fdeb4a4313de6444244577c1f762cbf5db1b8a0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"scannerPagesConfiguration","kind":"FunctionDeclaration","line":73,"sha256":"2189e20d1147051f3b6a4c4d6faada2430d1ffadc2ae24bc1db892ff18a60024","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"<ArrowFunction@107>","kind":"ArrowFunction","line":107,"sha256":"d181b1edb0aea5ac5d00c45d7c711650b44ca17362fe174537e63d4395f15c57","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@108>","kind":"ArrowFunction","line":108,"sha256":"f309ccddc561ef340d0744553d54885849f5a598f9c84addb6e626f01b68f504","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"verifyScannerPublicKey","kind":"FunctionDeclaration","line":121,"sha256":"6e68534f1b0388affc476f6907c4c72b4f8f6af3da7fadf3e762b5c97dc66b8a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"pagesMetadata","kind":"FunctionDeclaration","line":136,"sha256":"128d4ff0d8538c86dd1e3362f7e6edd14805dc9ff399f693ed962ddc2feb61fd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@140>","kind":"ArrowFunction","line":140,"sha256":"8465d3240e7a1c4ecd0d620784780d3f7893cdc0f79b32157076ddf3ec57ac13","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["promise-construction","runtime-effect"]},
+{"name":"<ArrowFunction@141>","kind":"ArrowFunction","line":141,"sha256":"be09eafec29134a9b8e54ed291a6b43e8f9b5db2725c6f337c0b48fbe6dd9f23","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"<ArrowFunction@174>","kind":"ArrowFunction","line":174,"sha256":"5fa8c711247d70f5c653bac436acb6b2959231e50344d054ff9cf6093cc71a2c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"release","kind":"FunctionDeclaration","line":187,"sha256":"cb967a8ae931d2ea232692586572171e6b746356b198f2fea4d6aad9a0a8c811","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"temporary","kind":"FunctionDeclaration","line":208,"sha256":"827803276219df85418e672e37861f0d761716cd9dc8373ea69ae6870d2c2fd9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"main","kind":"FunctionDeclaration","line":216,"sha256":"9deb6641eb06b6be24d7838f5e37127fe30568fe23ddcab148ff7a7f4d139b2b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@288>","kind":"ArrowFunction","line":288,"sha256":"901a942c2d57c823ae46f41feb9c8b6dddcd7f29cb60268808dcd8c73c80d3b4","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]}
 ]},
 {"path":"scripts/prepare-vetting-sandbox.mjs","sha256":"b6446ed845eaf9d595351c4d6829c9f764775008c2cf3ce4ece573fb4b58414d","language":"javascript","disposition":"no-function-body","functions":[
 

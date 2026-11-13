@@ -9,6 +9,7 @@ class PublicKeyPreparationError extends Error {}
 
 export const SCANNER_PUBLIC_KEYS = "VETTING_RESULT_PUBLIC_KEYS";
 export type PagesMetadata = {
+  name?: string;
   production_branch: string;
   deployment_configs: {
     production: { env_vars?: Record<string, { type: string; value?: string }> };
@@ -33,6 +34,19 @@ const targets = {
     origin: "https://slop.cash",
   },
 };
+export function requireReviewedPagesProject(
+  remote: PagesMetadata,
+  target: PublicScannerKey["target"],
+) {
+  const expected = targets[target];
+  if (
+    remote.name !== expected.project ||
+    remote.production_branch !== expected.branch
+  )
+    throw new PublicKeyPreparationError(
+      "The reviewed Pages project contract drifted",
+    );
+}
 export async function publicScannerKey(
   raw: string | undefined,
   target: PublicScannerKey["target"],
@@ -202,6 +216,11 @@ function temporary(path: string) {
 async function main() {
   const [mode, target, keyFile, configFile] = process.argv.slice(2);
   release(target);
+  if (mode === "preflight") {
+    const chosen = target as PublicScannerKey["target"];
+    requireReviewedPagesProject(await pagesMetadata(chosen), chosen);
+    return;
+  }
   const path = temporary(keyFile);
   if (mode === "derive") {
     const key = await publicScannerKey(
