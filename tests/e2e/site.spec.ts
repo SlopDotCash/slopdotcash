@@ -2030,8 +2030,13 @@ test("how it works answers the referral and buyback questions", async ({
   const buyback = faq.locator("article", {
     has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
   });
-  await expect(buyback).toContainText("half of the SLOP bought is burned");
-  await expect(buyback).toContainText("starts with the first fee");
+  await expect(buyback).toContainText("configured live since 12 November 2026");
+  await expect(buyback).toContainText("eligible fee income");
+  await expect(buyback).toContainText("once minimum order sizes are met");
+  await expect(buyback).toContainText(
+    "The first verified bridge fill, purchase and burn are still pending",
+  );
+  await expect(buyback).not.toContainText("starts with the first fee");
   await expect(
     buyback.getByRole("link", { name: "How the buyback works" }),
   ).toHaveAttribute("href", "https://record.slop.cash/buyback");
