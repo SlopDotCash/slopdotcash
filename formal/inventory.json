@@ -32,7 +32,7 @@
     },
     {
       "path": ".github/workflows/escrow-tests.yml",
-      "sha256": "bde81a26b9dd4646dca435aa090581b00bd78c1e0cb1f5cd30c419bcda1af952",
+      "sha256": "8ae78cd9ba2d0d23a3622be50738b9ae4dda00211b68977deb3370e643fef5cf",
       "models": [
         "formal/models/contracts/solana_container_lifecycle.qnt",
         "formal/models/release/ci_coverage.qnt"
@@ -4527,10 +4527,10 @@
     },
     {
       "path": "scripts/test-payout-browser.mjs",
-      "sha256": "1479242528620d4fc41955cef8b3da7c02ad542e423af0ba8b8fd051d84411ef",
+      "sha256": "645a396654474bfc8e659555b8b41af50a8c4a2bdf3eeac7965e3f53ffd6dfc4",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        3, 29, 70, 80, 87, 93, 132, 141, 153, 158, 172, 175, 212, 214, 253
+        3, 37, 78, 88, 95, 101, 140, 149, 161, 166, 180, 183, 220, 222, 261
       ],
       "review": "mapped-abstraction"
     },
@@ -8896,14 +8896,15 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "6c769892ccc379fd7f8986f445093bdee2040947edf1db32912838996ca97382",
+      "sha256": "4fc98bc92c129a30fbc2b38352c0e80e20a82e3d05b7117cf653504acccf7c9f",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_local_helpers.qnt",
         "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "candidateLines": [
-        245, 253, 254, 1725, 1726, 1907, 1968, 1989, 2056, 2072, 2115
+        246, 254, 255, 1761, 1762, 1943, 2004, 2025, 2092, 2108, 2151
       ],
       "review": "mapped-abstraction"
     },
@@ -8933,6 +8934,13 @@
       "sha256": "e9cc1694f026f04194bff925220b2a68f03263eaff7a3236f7d7a8fc1b14cbcb",
       "models": ["formal/models/vetting/vetting_execution_provenance.qnt"],
       "candidateLines": [31, 36],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/vetting/local-install-helpers.ts",
+      "sha256": "ac017199c02fbc954e797b57f3fc9b4640c1220da21e7c163ab3c842c521146b",
+      "models": ["formal/models/vetting/vetting_local_helpers.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -18756,6 +18764,19 @@
         "originalCompressedSymlinkLineageSurvivesTest",
         "payloadOnlyMissesOptionalHeaderInstructionsTest",
         "unknownAndNestedArchiveDoNotClearTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_local_helpers.qnt",
+      "sha256": "bf99a34a3dadfdd862710d8e74ee1d9b5db9f81fed60cda343883f961ce6661a",
+      "sources": [
+        "workers/vetting/bounded-scan.ts",
+        "workers/vetting/local-install-helpers.ts"
+      ],
+      "scenarios": [
+        "cyclesFinishWithoutDuplicatesTest",
+        "missingHelperKeepsGapTest",
+        "unrelatedFileNeverBecomesDownloadTest"
       ]
     },
     {
