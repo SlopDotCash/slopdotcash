@@ -422,6 +422,8 @@ Every accepted merge receives at least 10 Points, including a zero-size assessme
 
 Share merge credit with verified implementation authors. Credit useful reviews separately. Exclude bots, self-review, post-merge reviews, repeated comments, and duplicate or empty reviews. A useful review may validate a change without requesting corrections.
 
+Determine implementation recipients from GitHub-linked primary commit authors. Opening, recreating, updating, or merging a PR alone earns no implementation share. For a commit without an eligible linked author, retain the source PR creator as the fallback; use the original PR creator when verified retained-copy evidence binds that commit to an original PR. A reference in a PR description alone is insufficient. Commit counts do not increase the work unit's Points. Preserve frozen awards and append corrections for eligible unpaid work.
+
 Credit at most the first five distinct qualifying reviewers. Use each reviewer's highest band. The review pool is their summed bands, capped at the PR's assessed credit, with a 10-point minimum. Allocate proportionally by largest remainder in 10-point increments. Break ties by first qualifying review time, then review node ID.
 
 Use reviewed evaluation manifests only for useful work that ordinary scoring does not cover. Never reward a source twice. A merged PR later removed by GitHub retains its recorded Points and reward eligibility.
