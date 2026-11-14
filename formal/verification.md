@@ -189,8 +189,12 @@ link. After restoring the installed dependency link, the full rerun passed.
 
 The proof stage took its input after the verified wallet and money helpers
 were installed. The two phase manifests bind the model and proof inputs to
-those separate observation times. The baseline stage predates the later model refinements.
-[Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json)
+those separate observation times. The baseline stage predates the later
+model refinements. The retained checkpoint captured 60 of 65 proof units with
+2,252 discharged obligations and 58 open obligations. Five units had no
+completed cached result at that checkpoint. The baseline reserve result is
+superseded by the signed-attempt correction below.
+[Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json) · [Proof checkpoint](validation/full-tree/proof-checkpoint.json)
 
 ## Additional source refinements
 
