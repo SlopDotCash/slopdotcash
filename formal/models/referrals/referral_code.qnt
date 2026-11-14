@@ -10,6 +10,8 @@
 // A name is recorded, retired and put in use in one database transaction, so
 // each accepted request is one step. Syntax, case folding, the reserved list
 // and the closed-account join of the link are predicates of the handler.
+// The link with no name reads no state and names nobody: it always opens the
+// Settings section where a name is chosen, so it adds no transition here.
 // GitHub logins: login is the login each account has on GitHub now, 0 once
 // the account is gone; cached is the login the member record stored at the
 // last sign-in. An account may rename to a free login, and another account

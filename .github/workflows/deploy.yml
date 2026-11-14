@@ -21,6 +21,17 @@ on:
         description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      discussion_resume_run:
+        description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
+        type: string
+      skip_proofs:
+        description: "Manual main or development release only: do not repeat the Quint state-model and LemmaScript proof runs; every other check and all deployment verification still run"
+        type: boolean
+        default: false
+      skip_browser_tests:
+        description: "Manual main or development release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel. Development pushes share one lane: a running
@@ -42,8 +53,49 @@ env:
   NODE_VERSION: "24.15.0"
 
 jobs:
+  restore_discussions:
+    name: Restore trusted production discussion reads
+    if: github.event_name == 'workflow_dispatch' && inputs.discussion_resume_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.retained.outputs.artifact-id }}
+    steps:
+      - name: Require a fresh main release
+        env:
+          USE_PUBLISHED_DATA: ${{ inputs.use_published_data }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$USE_PUBLISHED_DATA" = false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Load the exact trusted main attempt's checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN: ${{ inputs.discussion_resume_run }}
+        run: python3 scripts/restore-leaderboard-discussions.py
+      - name: Pass verified checkpoint to preparation
+        id: retained
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: restored-leaderboard-discussions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/leaderboard-discussions
+          if-no-files-found: error
+          retention-days: 2
+
   prepare:
     name: Prepare checked browser bundle
+    needs: restore_discussions
+    if: >-
+      !cancelled() &&
+      (needs.restore_discussions.result == 'success' || needs.restore_discussions.result == 'skipped')
     outputs:
       browser_matrix: ${{ steps.scope.outputs.browser_matrix }}
       sandbox: ${{ steps.scope.outputs.sandbox }}
@@ -74,6 +126,9 @@ jobs:
 
       - name: Select affected CI coverage
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
       - name: Verify quality checkout
@@ -160,7 +215,15 @@ jobs:
           bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
           printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
 
+      - name: Copy restored public discussion reads
+        if: github.event_name == 'workflow_dispatch' && inputs.discussion_resume_run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.restore_discussions.outputs.artifact_id }}
+          path: ${{ runner.temp }}/leaderboard-discussions
+
       - name: Generate live contribution data
+        id: live_ledger
         # Pull-request code is untrusted, so this step never explicitly injects
         # a repository-scoped token into it. Trusted main runs refresh the
         # ledger before producing a deployable build.
@@ -168,27 +231,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
-          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
         run: |
           set -euo pipefail
-          profile_origin="https://slop.cash"
+          leaderboard_origin="https://slop.cash"
           if [ "$VITE_SLOP_ENVIRONMENT" = "staging" ]; then
-            profile_origin="https://staging.slop.cash"
+            leaderboard_origin="https://staging.slop.cash"
           fi
-          # Match the PR snapshot transport: compressed responses, bounded retries,
-          # and enough time for the multi-megabyte published history.
-          previous_profiles="$RUNNER_TEMP/slop-previous-profiles.json"
-          if [ "$BOOTSTRAP_STAGING_PROFILES" = "true" ]; then
-            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-            test "$GITHUB_REF" = "refs/heads/development"
-            test "$VITE_SLOP_ENVIRONMENT" = "staging"
-            cp data/profiles/seed.json "$previous_profiles"
-            echo "First staging publication: start from the reviewed profile census."
-          else
-            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
-              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
-              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
-              "$profile_origin/data/profiles.json" --output "$previous_profiles"
+          collect=(bun run leaderboard:generate)
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            export SLOP_DISCUSSION_CHECKPOINT="$RUNNER_TEMP/leaderboard-discussions"
+            mkdir -p "$SLOP_DISCUSSION_CHECKPOINT"
+            export SLOP_DISCUSSION_DEADLINE_MS="$(( $(date +%s) * 1000 + 18000000 ))"
+            # Reserve time to retain the latest journal of public reads before
+            # the job limit, even when an unrelated live endpoint stalls.
+            collect=(timeout --signal=TERM --kill-after=10s 18100 "${collect[@]}")
           fi
           # Selects the versioned value scoring policy for new work. Exit 75
           # means the hosted value feed is unavailable (owner decision D2):
@@ -198,7 +254,7 @@ jobs:
           feed_status=0
           for attempt in 1 2; do
             feed_status=0
-            bun run leaderboard:generate || feed_status=$?
+            "${collect[@]}" || feed_status=$?
             if [ "$feed_status" -ne 75 ]; then
               break
             fi
@@ -211,10 +267,47 @@ jobs:
             echo "::warning::Hosted value feed still unavailable; keeping the last published leaderboard snapshot."
             mkdir -p public/data
             bun scripts/download-leaderboard.ts \
-              "$profile_origin/data/leaderboard.json" public/data/leaderboard.json
+              "$leaderboard_origin/data/leaderboard.json" public/data/leaderboard.json
             test -s public/data/leaderboard.json
           elif [ "$feed_status" -ne 0 ]; then
             exit "$feed_status"
+          fi
+
+      - name: Save public discussion reads for a subsequent trusted run
+        if: >-
+          !cancelled() && github.ref == 'refs/heads/main' &&
+          (steps.live_ledger.outcome == 'success' || steps.live_ledger.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: leaderboard-discussions-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/leaderboard-discussions/*.bin
+          if-no-files-found: ignore
+          retention-days: 2
+
+      - name: Generate live contributor profiles
+        if: github.event_name != 'pull_request' && inputs.use_published_data != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
+        run: |
+          set -euo pipefail
+          profile_origin="https://slop.cash"
+          if [ "$VITE_SLOP_ENVIRONMENT" = "staging" ]; then
+            profile_origin="https://staging.slop.cash"
+          fi
+          previous_profiles="$RUNNER_TEMP/slop-previous-profiles.json"
+          if [ "$BOOTSTRAP_STAGING_PROFILES" = "true" ]; then
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "$GITHUB_REF" = "refs/heads/development"
+            test "$VITE_SLOP_ENVIRONMENT" = "staging"
+            cp data/profiles/seed.json "$previous_profiles"
+            echo "First staging publication: start from the reviewed profile census."
+          else
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+              "$profile_origin/data/profiles.json" --output "$previous_profiles"
           fi
           # Preserve previously observed issue history, including records
           # no longer accessible. Both source inventories must reconcile.
@@ -249,6 +342,7 @@ jobs:
             --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
             --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
             "$data_origin/data/profiles.json" --output "$profiles_file"
+          # shellcheck disable=SC2016
           bun --no-env-file -e '
             import { assertLeaderboardSnapshot } from "./src/lib/leaderboard";
             const snapshot = await Bun.file(process.argv[1]).json();
@@ -260,6 +354,7 @@ jobs:
           bun scripts/extend-published-profiles.ts "$profiles_file"
           bun scripts/generate-profiles.ts --input "$profiles_file" --current
           cp "$ledger_file" public/data/leaderboard.json
+          # shellcheck disable=SC2016
           bun --no-env-file -e '
             const snapshot = await Bun.file("public/data/profiles.json").json();
             console.log(`Using published profiles generated at ${snapshot.generatedAt}`);
@@ -344,6 +439,9 @@ jobs:
 
       - name: Select affected CI coverage
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
       - name: Verify check checkout
@@ -421,6 +519,8 @@ jobs:
   browsers:
     name: Browser ${{ matrix.lane }}
     needs: prepare
+    # The optional restore ancestor may be skipped on an otherwise valid run.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -555,7 +655,7 @@ jobs:
 
   isolated-artifact:
     needs: prepare
-    if: needs.prepare.outputs.sandbox == 'true'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.sandbox == 'true' }}
     uses: ./.github/workflows/vetting-sandbox.yml
     permissions:
       contents: read
@@ -564,6 +664,9 @@ jobs:
     name: Select affected proofs
     # Pull requests check only the state models and LemmaScript proofs their
     # changes can affect; pushes, manual runs and promotions check all of them.
+    # A manual run that sets skip_proofs repeats neither (PRD section 12,
+    # STATE-05); both inventory checks and every other gate still run. One that
+    # sets skip_browser_tests runs the browser smoke lane only (PRD section 9).
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -583,6 +686,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Select affected proofs
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
   state-models:

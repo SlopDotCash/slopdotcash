@@ -190,6 +190,8 @@ export async function handleReferralCode(
 }
 
 const PROJECT_FORM = "/projects/new";
+/** Where a member chooses the name: the Referral link section of Settings. */
+const REFERRAL_SETTINGS = "/account#referral";
 
 /**
  * `/referral/<code>` forwards to the project form. A code in use names its
@@ -200,7 +202,9 @@ const PROJECT_FORM = "/projects/new";
  * An account GitHub no longer has, or one that is no longer a person's
  * account (an organization or bot), forwards without a referrer: capture
  * could not record it either. A failed read answers 503: forwarding without
- * the referrer would drop a referral that exists.
+ * the referrer would drop a referral that exists. The path with no name at all
+ * (`/referral` or `/referral/`) names nobody, so it opens the Settings section
+ * where a member chooses a name.
  */
 export async function referralRedirect(
   request: Request,
@@ -208,7 +212,10 @@ export async function referralRedirect(
   github: ReferralCodeDependencies["github"],
 ): Promise<Response | null> {
   const url = new URL(request.url);
-  if (!url.pathname.startsWith(REFERRAL_LINK_PREFIX)) return null;
+  const bare =
+    url.pathname === REFERRAL_LINK_PREFIX ||
+    url.pathname === REFERRAL_LINK_PREFIX.slice(0, -1);
+  if (!bare && !url.pathname.startsWith(REFERRAL_LINK_PREFIX)) return null;
   const headers = {
     "cache-control": "no-store",
     "content-type": "text/plain; charset=utf-8",
@@ -216,6 +223,14 @@ export async function referralRedirect(
   };
   if (request.method !== "GET" && request.method !== "HEAD")
     return new Response("Method not allowed", { status: 405, headers });
+  if (bare)
+    return new Response(null, {
+      status: 302,
+      headers: {
+        ...headers,
+        location: new URL(REFERRAL_SETTINGS, url.origin).toString(),
+      },
+    });
   const code = url.pathname
     .slice(REFERRAL_LINK_PREFIX.length)
     .replace(/\/$/u, "");

@@ -275,6 +275,50 @@ test("a closed account's code stops forwarding, and stored rows cannot change ow
   );
 });
 
+test("the link with no name opens the Settings section where a name is chosen", async () => {
+  const h = harness();
+  await h.choose(ALICE, "alice-link");
+  const github = h.deps(null).github;
+  for (const path of ["/referral", "/referral/"]) {
+    const response = await referralRedirect(
+      new Request(origin + path),
+      h.db,
+      github,
+    );
+    expect(response?.status).toBe(302);
+    expect(response?.headers.get("location")).toBe(
+      `${origin}/account#referral`,
+    );
+    expect(
+      (
+        await referralRedirect(
+          new Request(origin + path, { method: "POST" }),
+          h.db,
+          github,
+        )
+      )?.status,
+    ).toBe(405);
+  }
+  // It needs no read, so it still answers when the database does not.
+  const broken = {
+    ...h.db,
+    prepare: () => {
+      throw new Error("D1 unavailable");
+    },
+  } as unknown as typeof h.db;
+  expect(
+    (await referralRedirect(new Request(`${origin}/referral`), broken, github))
+      ?.status,
+  ).toBe(302);
+  // Other paths are not this route's.
+  expect(
+    await referralRedirect(new Request(`${origin}/referrals`), h.db, github),
+  ).toBeNull();
+  expect(
+    await referralRedirect(new Request(`${origin}/referralx`), h.db, github),
+  ).toBeNull();
+});
+
 test("a failed read answers 503 instead of forwarding without the referrer", async () => {
   const h = harness();
   const broken = {
