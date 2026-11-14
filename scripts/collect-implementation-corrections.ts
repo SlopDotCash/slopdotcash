@@ -351,6 +351,25 @@ export class CorrectionEvidenceCache {
           }),
         ),
       );
+      if (
+        github &&
+        (response.status === 429 ||
+          (response.status === 403 &&
+            response.headers.get("x-ratelimit-remaining") === "0") ||
+          (response.status === 200 &&
+            url.pathname === "/graphql" &&
+            Array.isArray(parsed?.errors) &&
+            parsed.errors.some(
+              (error) =>
+                typeof error === "object" &&
+                error !== null &&
+                "type" in error &&
+                error.type === "RATE_LIMITED",
+            )))
+      )
+        throw new CollectionBudgetExhausted(
+          "GitHub API quota exhausted; wait for quota recovery and rerun the same baseline-bound campaign",
+        );
       const validJson = typeof parsed === "object" && parsed !== null;
       const completeGraphql =
         url.pathname !== "/graphql" ||
