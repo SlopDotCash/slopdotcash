@@ -61,6 +61,18 @@ pure def sometimesSent(a: Allocation): bool = a.phase == Sent
 pure def sometimesUnclaimed(a: Allocation): bool = a.phase == Unclaimed
 ```
 
+### First confirmation is either absent or inside the registration window
+
+Discovered by the proof: an arbitrary AwaitingWallet state could retain a
+negative first confirmation. Confirming a valid wallet would preserve that
+invalid timestamp. Every retained first confirmation is now explicitly absent
+or positive and before the fixed deadline, in every phase.
+
+```quint
+pure def alwaysFirstConfirmationValid(a: Allocation): bool = a.firstConfirmation == 0
+  or (a.firstConfirmation > 0 and a.firstConfirmation < a.deadline)
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

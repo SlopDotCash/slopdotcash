@@ -10,6 +10,7 @@ service. They introduce no new screens or visual design.
 - [Asynchronous reads and recovery](./requests.md)
 - [Private report drafts](./drafts.md)
 - [Public and private projections](./projections.md)
+- [Required product presentation](./presentation.md)
 
 Source requirements are PRD sections 2–4 and 7–10. The retained UI models under
 `reference/slop-main/formal/models/ui/` provide the individual legacy races and

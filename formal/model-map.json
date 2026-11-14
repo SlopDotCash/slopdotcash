@@ -1545,7 +1545,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
-        "spec/projectComposition.md"
+        "spec/projectComposition.md",
+        "spec/backend/listing.md"
       ]
     },
     {
@@ -1845,7 +1846,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/backend/listing.md"
       ]
     },
     {
@@ -5718,7 +5720,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11588,7 +11592,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11624,7 +11630,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11662,7 +11670,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11709,7 +11719,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11749,7 +11761,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11801,7 +11815,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11840,7 +11856,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -11875,7 +11893,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -12222,7 +12242,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
-        "spec/governance.md"
+        "spec/governance.md",
+        "spec/backend/listing.md"
       ]
     },
     {
@@ -16295,7 +16316,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
-        "spec/governance.md"
+        "spec/governance.md",
+        "spec/backend/listing.md"
       ]
     },
     {
@@ -19222,7 +19244,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/composition.md",
+        "spec/frontend/presentation.md"
       ]
     },
     {
@@ -19965,7 +19988,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/composition.md",
+        "spec/frontend/presentation.md"
       ]
     },
     {
@@ -21300,7 +21324,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/frontend/presentation.md"
       ]
     },
     {
@@ -21533,7 +21558,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/frontend/presentation.md"
       ]
     },
     {
@@ -21834,7 +21860,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -21894,7 +21922,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/settlement/referrals.md"
+        "spec/settlement/referrals.md",
+        "spec/settlement/referralAccrual.md",
+        "spec/settlement/referralPublication.md"
       ]
     },
     {
@@ -22445,7 +22475,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/composition.md",
+        "spec/frontend/presentation.md"
       ]
     },
     {

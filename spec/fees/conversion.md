@@ -204,6 +204,23 @@ pure def expire(f: FeeConversion, observation: ExpiryObservation): FeeConversion
   { ...f, phase: Failed, nativeHold: 0, expiryObservations: f.expiryObservations.append(observation) }
 ```
 
+### Unsigned receipts and signed attempts retain their budget facts
+
+Discovered by the proof: an empty first-receipt state could already contain
+native spending from a different network, and a Signed state could lack its
+native hold. Before the first received receipt there are no funds, costs or
+holds. From reservation through reconciliation, the attempt retains a positive
+native hold and its complete value fits the remaining daily budget. Changing
+the UTC day resets spent amounts and keeps the unresolved hold.
+
+```quint
+pure def alwaysBeforeFirstReceiptEmpty(f: FeeConversion): bool = f.receivedReceipts.length() == 0 implies
+  f.phase == Empty and f.value == 0 and f.spentValue == 0 and f.nativeHold == 0 and f.nativeSpent == 0
+pure def alwaysAttemptBudgetRetained(f: FeeConversion): bool =
+  (f.phase == Reserved or f.phase == Signed or f.phase == Pending or f.phase == Uncertain) implies
+    f.nativeHold > 0 and f.value >= 5000000 and f.spentValue + f.value <= 5000000000
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

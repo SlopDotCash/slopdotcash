@@ -14,3 +14,6 @@ PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Ru
 - [Separate contributor allocation](./contributorAllocation.md)
 - [Deferred referrals](./referrals.md)
 - [Received fees and buyback](../fees/)
+
+- [Referral accrual ledger](./referralAccrual.md)
+- [Referral root publication](./referralPublication.md)

@@ -8,3 +8,4 @@ verification remain external evidence boundaries for the future shell.
 - [Wallets](./wallets.md)
 - [Email enrollment](./email.md)
 - [Project registration](./projects.md)
+- [Project discovery placement](./listing.md)

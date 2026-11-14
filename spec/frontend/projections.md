@@ -31,17 +31,20 @@ pure val pValues = Set(
 
 Private-case amounts, counts and revealing totals never enter ordinary pages.
 Missing contribution month stays unavailable rather than using indexing time.
+Net amounts preserve the exact full-width asset base units from settlement;
+public rendering must never coerce them to a JavaScript number.
 
 ```quint
-type PaymentView = { privateCase: bool, closedAccount: bool, finalized: bool, exact: bool, contributionMonth: int, net: int }
-pure def publicPayment(payment: PaymentView): bool = not(payment.privateCase) and not(payment.closedAccount) and payment.finalized and payment.exact and payment.net >= 0
+import money as M from "../settlement/money"
+type PaymentView = { privateCase: bool, closedAccount: bool, finalized: bool, exact: bool, contributionMonth: int, net: M::Amount }
+pure def publicPayment(payment: PaymentView): bool = not(payment.privateCase) and not(payment.closedAccount) and payment.finalized and payment.exact and M::validAmount(payment.net)
 pure def knownContributionMonth(payment: PaymentView): bool = payment.contributionMonth > 0
 pure def lawPrivatePaymentNeverPublic(payment: PaymentView): bool = payment.privateCase implies not(publicPayment(payment))
 pure def lawPublicPaymentHasFinality(payment: PaymentView): bool = publicPayment(payment) implies payment.finalized and payment.exact and not(payment.closedAccount)
 pure val paymentValues = Set(
-  { privateCase: true, closedAccount: false, finalized: true, exact: true, contributionMonth: 202611, net: 98 },
-  { privateCase: false, closedAccount: false, finalized: true, exact: true, contributionMonth: 0, net: 98 },
-  { privateCase: false, closedAccount: true, finalized: false, exact: false, contributionMonth: 0, net: 0 }
+  { privateCase: true, closedAccount: false, finalized: true, exact: true, contributionMonth: 202611, net: List(98) },
+  { privateCase: false, closedAccount: false, finalized: true, exact: true, contributionMonth: 0, net: List(98) },
+  { privateCase: false, closedAccount: true, finalized: false, exact: false, contributionMonth: 0, net: List(0) }
 )
 ```
 

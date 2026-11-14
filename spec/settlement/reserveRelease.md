@@ -9,10 +9,11 @@ PRD section 6 permits one bounded attester approval for a current owner's reques
 ```quint
 import money as M from "./money"
 type ReleasePhase = Reserved | Checked | Approved | OwnerSigned | Released
-type ReserveRelease = { phase: ReleasePhase, root: str, allocationRoot: str, reserved: M::Amount,
+type ReserveRelease = { phase: ReleasePhase, root: str, allocationRoot: str, originalReserve: M::Amount, originalFree: M::Amount, hasSettled: bool, reserved: M::Amount,
   allocationTotal: M::Amount, settledAmount: M::Amount, free: M::Amount, evidenceHeight: int, observedHeight: int,
   ownerRevision: int, requestRevision: int, upgradeQualified: bool }
 pure val initial: ReserveRelease = { phase: Reserved, root: "root", allocationRoot: "root",
+  originalReserve: List(6), originalFree: M::zero, hasSettled: false,
   reserved: List(6), allocationTotal: List(5), settledAmount: M::zero, free: M::zero, evidenceHeight: 0, observedHeight: 0,
   ownerRevision: 1, requestRevision: 0, upgradeQualified: false }
 pure val byValues = Set("owner", "attester", "wrong")
@@ -33,7 +34,7 @@ pure def observe(r: ReserveRelease, height: int): ReserveRelease = { ...r, phase
 pure def canQualifyUpgrade(r: ReserveRelease, by: str): bool = r.phase == Reserved and by == "owner"
 pure def qualifyUpgrade(r: ReserveRelease, by: str): ReserveRelease = { ...r, upgradeQualified: true }
 pure def canCheck(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): bool =
-  r.phase == Reserved and r.upgradeQualified and by == "owner" and requestRevision == r.ownerRevision
+  r.phase == Reserved and not(r.hasSettled) and r.upgradeQualified and by == "owner" and requestRevision == r.ownerRevision
     and root == r.root and root == r.allocationRoot and M::equalAmounts(total, r.allocationTotal)
     and not(M::equalAmounts(total, r.reserved)) and M::equalAmounts(r.settledAmount, M::zero) and height > 0 and height == r.observedHeight
 pure def check(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): ReserveRelease =
@@ -59,14 +60,45 @@ pure def changeOwner(r: ReserveRelease, revision: int): ReserveRelease =
   { ...r, phase: Reserved, ownerRevision: revision, requestRevision: 0, evidenceHeight: 0 }
 pure def canSettlePart(r: ReserveRelease, amount: M::Amount): bool = r.phase != Released and M::validAmount(amount) and M::positiveAmount(amount) and M::compareAmounts(amount, r.reserved) <= 0
 pure def settlePart(r: ReserveRelease, amount: M::Amount): ReserveRelease =
-  { ...r, phase: Reserved, reserved: M::subtractAmounts(r.reserved, amount), settledAmount: M::addAmounts(r.settledAmount, amount),
+  { ...r, phase: Reserved, hasSettled: true, reserved: M::subtractAmounts(r.reserved, amount), settledAmount: M::addAmounts(r.settledAmount, amount),
     requestRevision: 0, evidenceHeight: 0 }
 pure def alwaysNoSettlementOnRelease(r: ReserveRelease): bool = r.phase == Released implies M::equalAmounts(r.settledAmount, M::zero)
-pure def alwaysWholeRelease(r: ReserveRelease): bool = r.phase == Released implies M::equalAmounts(r.reserved, M::zero) and M::equalAmounts(r.free, List(6))
+pure def alwaysWholeRelease(r: ReserveRelease): bool = r.phase == Released implies M::equalAmounts(r.reserved, M::zero) and M::equalAmounts(r.free, M::addAmounts(r.originalFree, r.originalReserve))
 pure def alwaysBoundApproval(r: ReserveRelease): bool = r.phase != Reserved implies
-  r.requestRevision == r.ownerRevision and r.evidenceHeight > 0 and not(M::equalAmounts(r.allocationTotal, List(6))) and M::equalAmounts(r.settledAmount, M::zero)
+  r.requestRevision == r.ownerRevision and r.evidenceHeight > 0 and not(M::equalAmounts(r.allocationTotal, r.originalReserve)) and not(r.hasSettled) and M::equalAmounts(r.settledAmount, M::zero)
 pure def sometimesReleased(r: ReserveRelease): bool = r.phase == Released
 pure def sometimesPartialHeld(r: ReserveRelease): bool = M::positiveAmount(r.settledAmount) and r.phase == Reserved
+```
+
+### The original balances and allocation survive every recovery step
+
+Discovered by the proof: a syntactically valid OwnerSigned state could contain
+an unrelated free balance or reserve and still satisfy the previous rules.
+Release would then violate the stated whole-reserve result. Retain the original
+free balance and original reserve explicitly. Until settlement or release,
+those balances are unchanged. Any settlement permanently records that history
+and leaves the allocation in the held Reserved phase. The root and complete
+allocation remain immutable, and conservation includes amounts already settled.
+
+```quint
+pure def alwaysUntouchedBalances(r: ReserveRelease): bool =
+  (not(r.hasSettled) and r.phase != Released) implies
+    r.reserved == r.originalReserve and r.free == r.originalFree
+pure def alwaysSettlementHistory(r: ReserveRelease): bool =
+  (r.hasSettled implies r.phase == Reserved) and
+  (not(r.hasSettled) implies r.settledAmount == M::zero)
+pure def alwaysValidAmounts(r: ReserveRelease): bool = M::validAmount(r.originalReserve)
+  and M::validAmount(r.originalFree) and M::validAmount(r.reserved)
+  and M::validAmount(r.allocationTotal) and M::validAmount(r.settledAmount) and M::validAmount(r.free)
+pure def alwaysConserved(r: ReserveRelease): bool =
+  M::equalAmounts(M::addAmounts(M::addAmounts(r.free, r.reserved), r.settledAmount),
+    M::addAmounts(r.originalFree, r.originalReserve))
+pure def stepOriginalTermsRetained(before: ReserveRelease, after: ReserveRelease): bool =
+  before.originalReserve == after.originalReserve and before.originalFree == after.originalFree
+    and before.root == after.root and before.allocationRoot == after.allocationRoot
+    and before.allocationTotal == after.allocationTotal
+pure def stepSettlementHistoryRetained(before: ReserveRelease, after: ReserveRelease): bool =
+  before.hasSettled implies after.hasSettled
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence

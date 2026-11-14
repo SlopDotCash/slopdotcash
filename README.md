@@ -20,6 +20,10 @@ all 473 original models to the new spec tree. The pinned PRD is preserved in
 New project automatic-closure consent starts unchecked, as the owner confirmed
 for this migration.
 
+The [verification record](formal/verification.md) reports passing checks,
+remaining financial proof obligations and the implementation evidence still
+required. Specification review and acceptance remain open.
+
 ## Set up
 
 Use Node 26, pnpm 10.24.0 and Dafny 4.11 on PATH.

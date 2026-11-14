@@ -105,6 +105,7 @@ pure def finalizeBurn(b: Buyback, quantity: M::Amount, height: int, finalized: b
   { ...b, phase: Burned, burned: M::addAmounts(b.burned, quantity), finalizedHeight: height }
 pure def alwaysShareBounded(b: Buyback): bool = M::validAmount(b.income) and M::validAmount(b.committed) and M::compareAmounts(b.committed, M::divideAmounts(b.income, List(2)).quotient) <= 0
 pure def alwaysBurnBounded(b: Buyback): bool = M::validAmount(b.burned) and M::compareAmounts(b.burned, b.burnCommitted) <= 0
+  and M::validAmount(b.burnCommitted) and M::validAmount(b.acquired)
   and M::compareAmounts(b.burnCommitted, M::divideAmounts(b.acquired, List(2)).quotient) <= 0
 pure def sometimesInTransit(b: Buyback): bool = b.phase == InTransit
 pure def sometimesRefunded(b: Buyback): bool = b.phase == Refunded
@@ -123,9 +124,18 @@ pure def continueCycle(b: Buyback): Buyback =
   { ...b, phase: Ready, orderAmount: 0, order: 0, arrival: 0 }
 pure def alwaysWindowLimits(b: Buyback): bool = spentInWindow(b.bridgeSpends, b.clock) <= 5000000000
   and spentInWindow(b.purchaseSpends, b.clock) <= 5000000000
+pure def alwaysJournalPastAndPositive(b: Buyback): bool = b.clock >= 0
+  and b.bridgeSpends.every(spend => spend.at >= 0 and spend.at <= b.clock and spend.amount > 0)
+  and b.purchaseSpends.every(spend => spend.at >= 0 and spend.at <= b.clock and spend.amount > 0)
 pure def stepIncomeMonotonic(before: Buyback, after: Buyback): bool = M::compareAmounts(after.income, before.income) >= 0
   and M::compareAmounts(after.acquired, before.acquired) >= 0 and M::compareAmounts(after.burnCommitted, before.burnCommitted) >= 0
 ```
+
+Discovered by the proof: cumulative acquired and burn-committed amounts must
+retain valid limbs. The rolling-window bound also needs every journal entry
+to have a positive amount and a timestamp no later than the observed clock.
+Otherwise an arbitrary invariant-satisfying state can hide future spending
+outside the current window and reveal it when the clock advances.
 
 ## Story: Check bridge-native and direct-receipt boundaries
 
