@@ -38,6 +38,8 @@ pure def retry(r: Review): Review = { ...r, status: Queued, provider: OrbioSonne
 pure def canFinish(r: Review, fullCoverage: bool, finding: bool, cost: int): bool = r.status == InFlight and cost >= 0
 pure def finish(r: Review, fullCoverage: bool, finding: bool, cost: int): Review = { ...r, status: if (fullCoverage) Complete else Limited, fullCoverage: fullCoverage, finding: finding, completed: r.completed + 1, knownCost: r.knownCost + cost }
 pure def alwaysAttemptAccounting(r: Review): bool = r.attempts >= r.completed + r.unknownCosts and r.knownCost >= 0
+pure def alwaysExactAttemptAccounting(r: Review): bool = r.attempts >= 0 and r.completed >= 0 and r.unknownCosts >= 0 and r.attempts == r.completed + r.unknownCosts + (if (r.status == InFlight) 1 else 0)
+pure def alwaysAdmittedReview(r: Review): bool = (r.status == InFlight or r.status == Limited or r.status == Complete) implies r.registered and not(r.retired) and r.isolated and r.sourceBound
 pure def alwaysCompletedCoverage(r: Review): bool = r.status == Complete implies r.fullCoverage and r.registered and not(r.retired) and r.isolated and r.sourceBound
 pure def mayEnforce(r: Review): bool = r.status == Complete and r.fullCoverage
 pure def alwaysLimitedIsAdvisory(r: Review): bool = r.status == Limited implies not(mayEnforce(r))
@@ -48,6 +50,9 @@ pure def sometimesProviderFailure(r: Review): bool = r.status == RetryableFailur
 ```
 
 A no-findings result remains distinct from limited coverage and provider failure.
+Discovered by the proof. An in-flight attempt is the one outstanding journal
+entry, and it retains the admitted source and isolation facts. Completing or
+failing that attempt accounts for it exactly once.
 The shell applies effective repository scope, ignore, security and rejection
 rules from the exact approved base. Untrusted code runs only in approved
 isolation without posting credentials or secrets. Large and binary evidence

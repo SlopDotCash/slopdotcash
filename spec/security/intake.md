@@ -51,6 +51,8 @@ pure def commitReceipt(i: Intake): Intake = { ...i, phase: Received, caseExists:
 pure def canReconcileReceipt(i: Intake, key: int, digest: int): bool = i.phase == Received and key == i.key and digest == i.digest
 pure def reconcileReceipt(i: Intake, key: int, digest: int): Intake = i
 pure def alwaysAtomicReceipt(i: Intake): bool = i.caseExists == i.inboxExists and (i.caseExists implies i.objectVerified and i.phase == Received)
+pure def alwaysReceivedHasReceipt(i: Intake): bool = i.phase == Received implies i.caseExists and i.inboxExists and i.objectVerified
+pure def alwaysForwardingHasReceipt(i: Intake): bool = (i.forwardingAuthorized or i.forwardUncertain) implies i.phase == Received and i.caseExists and i.forwardingAuthorized
 pure def stepPreservesReceipt(before: Intake, after: Intake): bool = before.caseExists implies after.caseExists and after.key == before.key and after.digest == before.digest and after.termsRevision == before.termsRevision
 ```
 
@@ -59,6 +61,10 @@ pure def stepPreservesReceipt(before: Intake, after: Intake): bool = before.case
 The adapter uses the authorized user's GitHub token. Installation tokens retain
 read-only advisory access. Unknown delivery requires reconciliation before a
 new send. A forwarding failure leaves the original Slop receipt available.
+
+Discovered by the proof. Received and forwarding states retain the durable
+case and Inbox receipt, and an uncertain forwarding attempt retains its
+researcher authorization.
 
 ```quint
 pure def canAuthorizeForwarding(i: Intake, by: int): bool = i.phase == Received and by == i.reporter

@@ -48,11 +48,15 @@ pure def publish(a: Appeal): Appeal = { ...a, published: true }
 pure def canReplay(a: Appeal): bool = a.phase == Resolved
 pure def replay(a: Appeal): Appeal = a
 pure def alwaysReversalBound(a: Appeal): bool = a.reversal >= 0 and a.reversal <= a.debit and (a.resolution == Reversed implies a.reversal == a.debit)
+pure def alwaysUnresolvedHasNoReversal(a: Appeal): bool = a.phase != Resolved implies a.resolution == NoResolution and a.reversal == 0
 pure def alwaysResolvedBeforePublication(a: Appeal): bool = a.published implies a.phase == Resolved
 pure def stepAppendOnly(before: Appeal, after: Appeal): bool = after.appendCount >= before.appendCount
 pure def sometimesEscalated(a: Appeal): bool = a.phase == Escalated
 pure def sometimesReversed(a: Appeal): bool = a.phase == Resolved and a.resolution == Reversed
 ```
+
+Discovered by the proof. An unresolved appeal has no reversal record. Opening
+an appeal cannot retain a reversal from an impossible pre-appeal state.
 
 The penalty table and effective dates stay in the Points domain. No outcome
 here transfers money, reduces a funded obligation or erases the source record.

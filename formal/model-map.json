@@ -47,7 +47,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/accounts.md"
+        "spec/backend/accounts.md",
+        "spec/access.md"
       ]
     },
     {
@@ -187,7 +188,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -244,7 +246,8 @@
         "spec/settlement/monthly.md",
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -403,7 +406,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -1068,7 +1072,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -1139,7 +1144,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -1212,7 +1218,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -1329,7 +1336,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/projectComposition.md"
       ]
     },
     {
@@ -1396,7 +1404,9 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/access.md",
+        "spec/projectComposition.md"
       ]
     },
     {
@@ -1534,7 +1544,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/projectComposition.md"
       ]
     },
     {
@@ -5321,7 +5332,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -5631,7 +5643,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -5938,7 +5951,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -7095,7 +7109,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/contributor/installation.md",
-        "spec/contributor/workflow.md"
+        "spec/contributor/workflow.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -8174,7 +8189,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -8211,7 +8227,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -8254,7 +8271,9 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/security/evidence.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -8400,7 +8419,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -9253,7 +9273,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -9334,7 +9355,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -10351,7 +10373,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -10856,7 +10879,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -11892,7 +11916,9 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -11932,7 +11958,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -11973,7 +12000,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12015,7 +12043,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12054,7 +12083,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12106,7 +12136,8 @@
         "spec/points/allocation.md",
         "spec/points/reviews.md",
         "spec/points/journal.md",
-        "spec/points/census.md"
+        "spec/points/census.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12140,7 +12171,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12189,7 +12221,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12222,7 +12255,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12264,7 +12298,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12342,7 +12377,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12393,7 +12429,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12428,7 +12465,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12466,7 +12504,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12500,7 +12539,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12543,7 +12583,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -12579,7 +12620,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -12659,7 +12701,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -12783,7 +12826,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -12984,7 +13028,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -13275,7 +13320,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -13321,7 +13367,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/composition.md"
       ]
     },
     {
@@ -13963,7 +14010,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -14129,7 +14177,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/review.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/appeals.md"
+        "spec/slopbot/appeals.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -15684,7 +15733,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -16201,7 +16251,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16243,7 +16294,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/backend/projects.md"
+        "spec/backend/projects.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16292,7 +16344,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16339,7 +16392,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16435,7 +16489,9 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -16506,7 +16562,9 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -16585,7 +16643,9 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -16639,7 +16699,8 @@
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16726,7 +16787,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16778,7 +16840,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16844,7 +16907,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16888,7 +16952,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16928,7 +16993,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -16976,7 +17042,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -17036,7 +17103,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -17073,7 +17141,9 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -17115,7 +17185,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -17173,7 +17244,8 @@
         "spec/contributor/workflow.md",
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/governance.md"
       ]
     },
     {
@@ -18057,7 +18129,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -18244,7 +18317,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/monthly.md",
-        "spec/points/allocation.md"
+        "spec/points/allocation.md",
+        "spec/settlement/allocation.md"
       ]
     },
     {
@@ -20008,7 +20082,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -20714,7 +20789,8 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/terms.md"
       ]
     },
     {
@@ -24223,7 +24299,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24313,7 +24390,8 @@
         "spec/operations/backup.md",
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24452,7 +24530,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24549,7 +24628,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24623,7 +24703,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24713,7 +24794,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -24758,7 +24840,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {
@@ -25317,7 +25400,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/operations/local.md"
       ]
     },
     {
@@ -25795,7 +25879,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/evidence.md"
       ]
     },
     {

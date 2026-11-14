@@ -17,14 +17,15 @@ and can append repositories or retire the project while retaining its records.
 type ApplicationPhase = Draft | Checking | Published | Cancelled
 type UpdatePhase = NoUpdate | EditingUpdate | CancelledUpdate | PublishedUpdate
 type UpdateRecord = { base: int, outcome: str }
+type RepositoryStart = { repositoryId: int, month: int }
 type Project = { applicant: int, authorityActor: int, application: ApplicationPhase, revision: int,
-  history: List[int], repositories: List[int], cleared: List[int],
+  history: List[int], repositories: List[int], repositoryStarts: List[RepositoryStart], cleared: List[int],
   installed: bool, fieldsComplete: bool, licenseVerified: bool,
   authority: bool, authorityEpoch: int, checkedEpoch: int,
   paused: bool, retired: bool, funded: bool, effectiveMonth: int,
   updatePhase: UpdatePhase, updateAuthor: int, updateBase: int, updateHistory: List[UpdateRecord] }
 pure val initial: Project = { applicant: 1, authorityActor: 1, application: Draft, revision: 0,
-  history: List(), repositories: List(1), cleared: List(), installed: false,
+  history: List(), repositories: List(1), repositoryStarts: List({ repositoryId: 1, month: 0 }), cleared: List(), installed: false,
   fieldsComplete: false, licenseVerified: false, authority: false,
   authorityEpoch: 0, checkedEpoch: -1, paused: true, retired: false,
   funded: false, effectiveMonth: 0, updatePhase: NoUpdate, updateAuthor: 0, updateBase: 0, updateHistory: List() }
@@ -34,6 +35,9 @@ pure def alwaysPublishedRevision(p: Project): bool = p.application == Published 
 pure def alwaysRetiredPaused(p: Project): bool = p.retired implies p.paused
 pure def alwaysRegisteredRepository(p: Project): bool = p.repositories.length() > 0
 pure def alwaysClearanceBelongs(p: Project): bool = p.cleared.every(id => p.repositories.includes(id))
+pure def alwaysRepositoryStarts(p: Project): bool =
+  p.repositoryStarts.every(start => start.month >= 0 and p.repositories.includes(start.repositoryId)) and
+  p.repositories.every(id => p.repositoryStarts.select(start => start.repositoryId == id).length() == 1)
 ```
 
 ### Setup requires current GitHub authority, installation, license facts, and required fields
@@ -82,7 +86,9 @@ An appended repository is public, unarchived, and not a fork. Its permanent
 numeric and node IDs must be globally unregistered. Work begins next UTC month.
 A separate admission model supplies retained successful scan or explicit
 owner-approved exemption evidence. This event does not describe an exemption
-as a successful scan.
+as a successful scan. Each repository retains its own first eligible month.
+The initial repository is eligible immediately; adding another repository never
+defers the original repository or changes the economic revision effective month.
 
 ```quint
 pure def canClearRepository(p: Project, repositoryId: int, admissionEvidence: bool): bool =
@@ -96,7 +102,8 @@ pure def canAppendRepository(p: Project, by: int, appendEvidence: AppendEvidence
   appendEvidence.publicRepository and not(appendEvidence.archived) and not(appendEvidence.fork) and appendEvidence.globallyUnique and appendEvidence.installedAuthority
 pure def appendRepository(p: Project, by: int, appendEvidence: AppendEvidence): Project =
   { ...p, repositories: p.repositories.append(appendEvidence.repositoryId), paused: true,
-    effectiveMonth: appendEvidence.currentMonth + 1, revision: p.revision + 1,
+    repositoryStarts: p.repositoryStarts.append({ repositoryId: appendEvidence.repositoryId, month: appendEvidence.currentMonth + 1 }),
+    revision: p.revision + 1,
     history: p.history.append(p.revision + 1) }
 pure val appendEvidenceValues = Set(
   { repositoryId: 2, currentMonth: 202611, publicRepository: true, archived: false, fork: false, globallyUnique: true, installedAuthority: true },
@@ -136,12 +143,20 @@ pure def canRecordFunding(p: Project, finalizedFunding: bool): bool = finalizedF
 pure def recordFunding(p: Project, finalizedFunding: bool): Project = { ...p, funded: true }
 pure def listed(p: Project): bool = p.revision > 0 and not(p.retired)
 pure def collectable(p: Project): bool = listed(p) and not(p.paused)
+pure def repositoryCollectable(p: Project, repositoryId: int, period: int): bool =
+  collectable(p) and p.repositoryStarts.some(start => start.repositoryId == repositoryId and period >= start.month)
 pure def skillPublished(p: Project): bool = collectable(p) and p.fieldsComplete
 pure def stepApplicantRetained(before: Project, after: Project): bool = before.applicant == after.applicant
 pure def stepHistoryOnlyAppends(before: Project, after: Project): bool =
   after.history.length() >= before.history.length() and before.history.every(id => after.history.includes(id))
 pure def stepRepositoriesRetained(before: Project, after: Project): bool =
   before.repositories.every(id => after.repositories.includes(id))
+pure def stepRepositoryStartsRetained(before: Project, after: Project): bool =
+  before.repositoryStarts.every(start => after.repositoryStarts.includes(start))
+pure def sometimesAppendedRepositoryDeferred(p: Project): bool =
+  p.repositoryStarts.some(start => start.month > 0 and
+    not(repositoryCollectable(p, start.repositoryId, start.month - 1)) and
+    repositoryCollectable(p, start.repositoryId, start.month) and repositoryCollectable(p, 1, start.month - 1))
 pure def sometimesPublishedUnfunded(p: Project): bool = p.application == Published and not(p.funded) and not(p.paused)
 pure def sometimesRetired(p: Project): bool = p.retired and p.revision > 0
 pure def sometimesCancelled(p: Project): bool = p.application == Cancelled and p.revision == 0

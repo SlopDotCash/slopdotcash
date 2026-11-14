@@ -59,7 +59,7 @@ pure def allocateAmounts(total: M::Amount, weights: List[Weight]): List[Share] =
 pure def allocatedTotal(shares: List[Share]): M::Amount = shares.foldl(M::zero, (sum, share) => M::addAmounts(sum, share.amount))
 pure def canCommitAllocation(total: M::Amount, weights: List[Weight]): bool = canAllocate(total, weights)
   and M::equalAmounts(allocatedTotal(allocateAmounts(total, weights)), total)
-pure val totalValues = Set(List(0), List(1), List(10), List(0, 0, 0, 0, 0, 0, 1))
+pure val totalValues = Set(List(0), List(1), List(10), List(0, 1))
 pure val weightsValues = Set(List(), List({ actor: 1, weight: List(1) }),
   List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }),
   List({ actor: 2, weight: List(5, 1) }, { actor: 1, weight: List(5, 1) }, { actor: 3, weight: List(0) }))

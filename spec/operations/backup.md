@@ -27,11 +27,16 @@ pure def canResume(b: Backup, digest: int): bool = b.phase == BackupInterrupted 
 pure def resume(b: Backup, digest: int): Backup = { ...b, phase: Copying }
 pure def canFinish(b: Backup, digest: int): bool = b.phase == Copying and b.verifiedPages == b.expectedPages and b.copiedPages == b.expectedPages and digest == b.manifestDigest
 pure def finish(b: Backup, digest: int): Backup = { ...b, phase: BackupComplete, completeDigest: digest }
+pure def alwaysNotStartedEmpty(b: Backup): bool = b.phase == NotStarted implies b.expectedPages == 0 and b.copiedPages == 0 and b.verifiedPages == 0
+pure def alwaysRestorePrepared(b: Backup): bool = (b.restore == WritingDestination or b.restore == RestoreUncertain or b.restore == Restored) implies b.chainChecked
 pure def alwaysBackupPrefix(b: Backup): bool = b.verifiedPages >= 0 and b.verifiedPages <= b.copiedPages and b.copiedPages <= b.expectedPages
 pure def alwaysCompleteManifest(b: Backup): bool = b.phase == BackupComplete implies b.completeDigest == b.manifestDigest and b.verifiedPages == b.expectedPages
 ```
 
 ### Restoration verifies the complete chain and observes the exact destination bytes
+
+Discovered by the proof. A backup starts with no copied or verified pages, and
+a destination write already has a verified source chain before readback.
 
 A create-only destination write may commit before its response is lost. A
 later readback must compare the expected digest. A conflicting preexisting

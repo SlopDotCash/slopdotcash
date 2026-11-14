@@ -6,7 +6,7 @@ PRD sections 3, 6, 8 and 10 require exact reconciliation before paid. One instan
 
 ### An approved obligation retains its immutable amount and purpose
 
-The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. This machine starts with that approved obligation. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. An approved full-award case requires its separately released payment rail.
+The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. An approved full-award case requires its separately released payment rail.
 
 ```quint
 import money as M from "./money"
@@ -20,10 +20,10 @@ type Payment = { configured: bool, phase: PaymentPhase, purpose: Purpose, rail: 
   attempt: int, attempts: List[int], failedAttempts: List[int], canonical: int, finalizedHeight: int, observedPrincipal: M::Amount,
   observedFee: M::Amount, fullRailReleased: bool }
 pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose: Ordinary, rail: OrdinaryVault, feeRecipient: "fees", obligation: 1, vault: "vault", asset: "asset",
-  recipient: "", gross: List(100), principal: List(98), fee: List(2), consent: 0, request: 1,
+  recipient: "", gross: M::zero, principal: M::zero, fee: M::zero, consent: 0, request: 1,
   attempt: 0, attempts: List(), failedAttempts: List(), canonical: 0, finalizedHeight: 0,
   observedPrincipal: M::zero, observedFee: M::zero, fullRailReleased: false }
-pure val grossValues = Set(List(1), List(4), List(100), List(0, 0, 0, 0, 0, 0, 1))
+pure val grossValues = Set(List(1), List(4), List(100), List(0, 1))
 pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): bool =
   p.phase == AwaitingWallet and not(p.configured) and M::validAmount(gross) and M::positiveAmount(gross)
     and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
@@ -65,7 +65,7 @@ pure def canLoseReceipt(p: Payment): bool = p.phase == Submitted
 pure def loseReceipt(p: Payment): Payment = { ...p, phase: Uncertain }
 pure def canRetransmit(p: Payment): bool = p.phase == Uncertain
 pure def retransmit(p: Payment): Payment = { ...p, phase: Submitted }
-pure def canHold(p: Payment): bool = p.phase != Paid and p.phase != Held
+pure def canHold(p: Payment): bool = p.configured and p.phase != Paid and p.phase != Held
 pure def hold(p: Payment): Payment = { ...p, phase: Held }
 pure def canResume(p: Payment, by: str): bool = p.phase == Held and by == "owner"
 pure def resume(p: Payment, by: str): Payment =
@@ -81,11 +81,11 @@ pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, s
 
 ### Exact finalized evidence is the only transition to paid
 
-The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
+The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. Discovered by the proof: retained attempts cannot substitute for releasing the full-award payment rail; reconciliation checks that release independently. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
 
 ```quint
 pure def canReconcile(p: Payment, evidence: PaymentEvidence): bool =
-  p.phase != Paid and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
+  p.phase != Paid and (p.purpose != PrivateFull or p.fullRailReleased) and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
     and evidence.source == p.vault and evidence.asset == p.asset and evidence.recipient == p.recipient and evidence.feeRecipient == p.feeRecipient
     and M::validAmount(evidence.principal) and M::validAmount(evidence.fee)
     and M::equalAmounts(evidence.principal, p.principal) and M::equalAmounts(evidence.fee, p.fee)
@@ -103,7 +103,11 @@ pure def stepPaidPermanent(before: Payment, after: Payment): bool = before.phase
 pure def stepObligationPermanent(before: Payment, after: Payment): bool = before.configured implies before.obligation == after.obligation
   and before.gross == after.gross and before.principal == after.principal and before.fee == after.fee
   and before.vault == after.vault and before.asset == after.asset and before.rail == after.rail and before.feeRecipient == after.feeRecipient
-pure def alwaysCorrectFee(p: Payment): bool = validSplit(p.purpose, p.gross, p.principal, p.fee)
+pure def alwaysCorrectFee(p: Payment): bool = p.configured implies validSplit(p.purpose, p.gross, p.principal, p.fee)
+pure def alwaysUnconfiguredEmpty(p: Payment): bool = not(p.configured) implies
+  p.phase == AwaitingWallet and p.recipient == "" and p.attempts.length() == 0 and p.failedAttempts.length() == 0
+    and p.attempt == 0 and M::equalAmounts(p.gross, M::zero) and M::equalAmounts(p.principal, M::zero) and M::equalAmounts(p.fee, M::zero)
+pure def alwaysAdmittedAttempts(p: Payment): bool = p.attempts.length() > 0 implies p.configured
 pure def alwaysCorrectRail(p: Payment): bool = railMatchesPurpose(p.purpose, p.rail)
 pure def sometimesUncertain(p: Payment): bool = p.phase == Uncertain
 pure def sometimesPaid(p: Payment): bool = p.phase == Paid

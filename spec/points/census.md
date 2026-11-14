@@ -15,7 +15,9 @@ Missing data is never presented as an empty successful census. Only a complete
 Discovered by the proof review, a synthetic saved census could previously
 contain repeated or out-of-range page IDs while satisfying the expected page
 count. Every retained page now has a unique valid page index, and every source
-has a positive immutable ID before completion can be accepted.
+has a positive immutable ID before completion can be accepted. Ready states retain
+the completed census evidence, and collection through readiness retains the prior
+published snapshot; phase changes cannot invent completeness or publication.
 
 ```quint
 type CensusPhase = Empty | Collecting | Incomplete | Ready | Published
@@ -81,9 +83,9 @@ pure def publish(c: Census, snapshot: int): Census = { ...c, phase: Published, p
 pure def promotionExcluded(baseTree: str, headTree: str, mergeTree: str,
   completeCoverage: bool, allPriorAccepted: bool): bool =
   baseTree != "" and baseTree == headTree and headTree == mergeTree and completeCoverage and allPriorAccepted
-pure def alwaysPublishedComplete(c: Census): bool = c.phase == Published implies
-  c.pagesSeen.length() == c.pagesExpected and c.sourceIds.length() == c.sourcesExpected and not(c.historicalHold) and c.duplicateChecked and c.frozenChecked and c.assessmentsComplete
-pure def alwaysFailedKeepsSnapshot(c: Census): bool = c.phase == Incomplete implies c.publishedSnapshot == c.previousSnapshot
+pure def alwaysPublishedComplete(c: Census): bool = (c.phase == Ready or c.phase == Published) implies
+  c.pagesSeen.length() == c.pagesExpected and c.sourceIds.length() == c.sourcesExpected and c.duplicateChecked and c.frozenChecked and c.assessmentsComplete and (c.phase == Published implies not(c.historicalHold))
+pure def alwaysFailedKeepsSnapshot(c: Census): bool = (c.phase == Collecting or c.phase == Ready or c.phase == Incomplete) implies c.publishedSnapshot == c.previousSnapshot
 pure def sometimesPublished(c: Census): bool = c.phase == Published
 pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete
 ```

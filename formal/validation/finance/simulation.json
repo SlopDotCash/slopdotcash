@@ -1,17 +1,17 @@
 {
-  "status": "running",
+  "status": "complete",
   "snapshot": {
-    "spec/settlement/money.md": "62e08dce0afbb12dae69a65abf8b4067c4f7bdeefca9bf8ca8e2557e55dcce81",
-    "spec/fees/buyback.md": "15658499f55ef7af77a7e2ee3e5e8b42d5b89d5080bddc1a38ada159b4943107",
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/fees/buyback.md": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
     "spec/fees/conversion.md": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
     "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
-    "spec/settlement/allocation.md": "ad486e0ba4d4ffb8e358c6a74aecd78e27eca60d095447ed50b7d185a16f84a5",
-    "spec/settlement/vault.md": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd",
-    "spec/settlement/payment.md": "3d0f766589fd7ed13347f5e77fb9b9866c21786bdb607a1f4095542113045843",
+    "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+    "spec/settlement/payment.md": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
     "spec/settlement/composition.md": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
     "spec/settlement/contributorAllocation.md": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
     "spec/settlement/index.md": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
-    "spec/settlement/monthly.md": "e44f01c693b0865d0fbedefdc97760ec4913c987c49764f7e14a35f1b8f370a3",
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
     "spec/settlement/referrals.md": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
     "spec/settlement/reserveRelease.md": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
@@ -20,7 +20,7 @@
   "results": [
     {
       "file": "spec/settlement/money.md",
-      "sha256": "62e08dce0afbb12dae69a65abf8b4067c4f7bdeefca9bf8ca8e2557e55dcce81",
+      "sha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
       "typecheck": true,
       "generated": true,
       "transitions": [],
@@ -28,7 +28,7 @@
     },
     {
       "file": "spec/fees/buyback.md",
-      "sha256": "15658499f55ef7af77a7e2ee3e5e8b42d5b89d5080bddc1a38ada159b4943107",
+      "sha256": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
       "typecheck": true,
       "generated": true,
       "transitions": [
@@ -38,9 +38,9 @@
         "broadcast",
         "observeArrival",
         "observeRefund",
-        "finalizeBurn",
         "purchase",
         "commitBurn",
+        "finalizeBurn",
         "continueCycle",
         "selectSource",
         "reserveLocalShare",
@@ -52,21 +52,21 @@
         "sometimesBurned"
       ],
       "simulation": true,
-      "command": "seed 240592739374774; to simulate again: pnpm exec quint run gen/fees__buyback.run.qnt --main fees__buyback_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 240592739374774",
+      "command": "seed 233224331600015; to simulate again: pnpm exec quint run gen/fees__buyback.run.qnt --main fees__buyback_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 233224331600015",
       "replay": true,
       "events": [
         "selectSource",
         "activate",
-        "recordIncome",
-        "order",
-        "broadcast",
-        "observeArrival",
         "receiveSlopFee",
         "continueCycle",
+        "recordIncome",
         "reserveLocalShare",
         "purchase",
         "commitBurn",
         "finalizeBurn",
+        "order",
+        "broadcast",
+        "observeArrival",
         "observeRefund"
       ],
       "missingEvents": [],
@@ -157,7 +157,7 @@
     },
     {
       "file": "spec/settlement/allocation.md",
-      "sha256": "ad486e0ba4d4ffb8e358c6a74aecd78e27eca60d095447ed50b7d185a16f84a5",
+      "sha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
       "typecheck": true,
       "generated": true,
       "transitions": [],
@@ -165,7 +165,7 @@
     },
     {
       "file": "spec/settlement/vault.md",
-      "sha256": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd",
+      "sha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
       "typecheck": true,
       "generated": true,
       "transitions": [
@@ -211,7 +211,7 @@
     },
     {
       "file": "spec/settlement/payment.md",
-      "sha256": "3d0f766589fd7ed13347f5e77fb9b9866c21786bdb607a1f4095542113045843",
+      "sha256": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
       "typecheck": true,
       "generated": true,
       "transitions": [
@@ -235,18 +235,18 @@
         "sometimesHeld"
       ],
       "simulation": true,
-      "command": "seed 92537835787534; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 92537835787534",
+      "command": "seed 33250238087997; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 33250238087997",
       "replay": true,
       "events": [
-        "hold",
-        "resume",
         "configure",
         "bind",
+        "hold",
+        "resume",
         "journal",
-        "recordFailure",
-        "releaseFullRail",
         "submit",
         "loseReceipt",
+        "recordFailure",
+        "releaseFullRail",
         "retransmit"
       ],
       "missingEvents": [
@@ -295,6 +295,36 @@
         "sometimesReserved",
         "sometimesUncertainReserved",
         "sometimesPaidTogether"
+      ],
+      "simulation": true,
+      "command": "seed 263085937189779; to simulate again: pnpm exec quint run gen/settlement__composition.run.qnt --main settlement__composition_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 263085937189779",
+      "replay": true,
+      "events": [
+        "deposit",
+        "configure",
+        "bind",
+        "reserve",
+        "journal",
+        "submit",
+        "loseReceipt",
+        "retransmit"
+      ],
+      "missingEvents": [
+        "reconcile"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesReserved",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertainReserved",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaidTogether",
+          "reached": false
+        }
       ]
     },
     {
@@ -313,6 +343,29 @@
       "goals": [
         "sometimesSent",
         "sometimesUnclaimed"
+      ],
+      "simulation": true,
+      "command": "seed 270961566293842; to simulate again: pnpm exec quint run gen/settlement__contributorAllocation.run.qnt --main settlement__contributorAllocation_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 270961566293842",
+      "replay": true,
+      "events": [
+        "publish",
+        "confirmWallet",
+        "replaceWallet",
+        "recordSend",
+        "closeBatch"
+      ],
+      "missingEvents": [
+        "expire"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesSent",
+          "reached": true
+        },
+        {
+          "name": "sometimesUnclaimed",
+          "reached": true
+        }
       ]
     },
     {
@@ -325,7 +378,7 @@
     },
     {
       "file": "spec/settlement/monthly.md",
-      "sha256": "e44f01c693b0865d0fbedefdc97760ec4913c987c49764f7e14a35f1b8f370a3",
+      "sha256": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
       "typecheck": true,
       "generated": true,
       "transitions": [
@@ -345,6 +398,40 @@
         "sometimesIndependentPayment",
         "sometimesCompleted",
         "sometimesEmptyMonth"
+      ],
+      "simulation": true,
+      "command": "seed 131455078646219; to simulate again: pnpm exec quint run gen/settlement__monthly.run.qnt --main settlement__monthly_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 131455078646219",
+      "replay": true,
+      "events": [
+        "reachCutoff",
+        "setCap",
+        "propose",
+        "freeze",
+        "registerWallet",
+        "fund",
+        "pay",
+        "setAutomatic",
+        "autoFreeze",
+        "adjust"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesWalletlessReserve",
+          "reached": true
+        },
+        {
+          "name": "sometimesIndependentPayment",
+          "reached": true
+        },
+        {
+          "name": "sometimesCompleted",
+          "reached": true
+        },
+        {
+          "name": "sometimesEmptyMonth",
+          "reached": true
+        }
       ]
     },
     {
@@ -364,6 +451,32 @@
         "sometimesSuccessor",
         "sometimesOldWinner",
         "sometimesSuccessorWinner"
+      ],
+      "simulation": true,
+      "command": "seed 147352335278975; to simulate again: pnpm exec quint run gen/settlement__recovery.run.qnt --main settlement__recovery_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 147352335278975",
+      "replay": true,
+      "events": [
+        "requestChange",
+        "consent",
+        "retire",
+        "presentSuccessor",
+        "successorPaid",
+        "oldWins"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesSuccessor",
+          "reached": true
+        },
+        {
+          "name": "sometimesOldWinner",
+          "reached": true
+        },
+        {
+          "name": "sometimesSuccessorWinner",
+          "reached": true
+        }
       ]
     },
     {
@@ -384,6 +497,33 @@
         "sometimesDryRun",
         "sometimesClaimed",
         "sometimesVoided"
+      ],
+      "simulation": true,
+      "command": "seed 247556779051616; to simulate again: pnpm exec quint run gen/settlement__referrals.run.qnt --main settlement__referrals_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 247556779051616",
+      "replay": true,
+      "events": [
+        "dryRun",
+        "recordFunding",
+        "startWatcher",
+        "activate",
+        "postRoot",
+        "claim",
+        "voidRoot"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesDryRun",
+          "reached": true
+        },
+        {
+          "name": "sometimesClaimed",
+          "reached": true
+        },
+        {
+          "name": "sometimesVoided",
+          "reached": true
+        }
       ]
     },
     {
@@ -404,6 +544,31 @@
       "goals": [
         "sometimesReleased",
         "sometimesPartialHeld"
+      ],
+      "simulation": true,
+      "command": "seed 167677590748464; to simulate again: pnpm exec quint run gen/settlement__reserveRelease.run.qnt --main settlement__reserveRelease_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 167677590748464",
+      "replay": true,
+      "events": [
+        "changeOwner",
+        "settlePart",
+        "qualifyUpgrade",
+        "observe",
+        "check",
+        "approve"
+      ],
+      "missingEvents": [
+        "ownerSign",
+        "finalize"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesReleased",
+          "reached": false
+        },
+        {
+          "name": "sometimesPartialHeld",
+          "reached": true
+        }
       ]
     },
     {
@@ -421,6 +586,27 @@
       "goals": [
         "sometimesOldBindingWins",
         "sometimesCancellationWins"
+      ],
+      "simulation": true,
+      "command": "seed 265213740009636; to simulate again: pnpm exec quint run gen/settlement__signer.run.qnt --main settlement__signer_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 265213740009636",
+      "replay": true,
+      "events": [
+        "authorize",
+        "signBinding",
+        "finalizeBinding",
+        "cancelBinding",
+        "finalizeCancellation"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesOldBindingWins",
+          "reached": true
+        },
+        {
+          "name": "sometimesCancellationWins",
+          "reached": true
+        }
       ]
     }
   ]

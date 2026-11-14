@@ -1,0 +1,1130 @@
+{
+  "kind": "guarded-generated-typescript-witnesses",
+  "rows": [
+    {
+      "unit": "backend__projects",
+      "source": "spec/backend/projects.md",
+      "sourceSha256": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+      "claims": {
+        "laterMaintainer": true,
+        "cancelledUpdate": true,
+        "appendedRepositoryDeferred": true,
+        "originalEligibleImmediately": true,
+        "newRepositoryExcludedUntilNextMonth": true,
+        "newRepositoryEligibleNextMonth": true,
+        "economicEffectiveMonthUnchanged": true,
+        "originalApplicantRetained": true
+      },
+      "trace": [
+        {
+          "state": {
+            "applicant": 1,
+            "authorityActor": 1,
+            "application": "Draft",
+            "revision": 0,
+            "history": [],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [],
+            "installed": false,
+            "fieldsComplete": false,
+            "licenseVerified": false,
+            "authority": false,
+            "authorityEpoch": 0,
+            "checkedEpoch": -1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "observeSetup",
+            "setupEvidence": {
+              "installed": true,
+              "fieldsComplete": true,
+              "licenseVerified": true,
+              "authority": true
+            }
+          },
+          "by": 1,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 1,
+            "application": "Draft",
+            "revision": 0,
+            "history": [],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 1,
+            "checkedEpoch": -1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "clearRepository",
+            "repositoryId": 1,
+            "admissionEvidence": true
+          },
+          "state": {
+            "applicant": 1,
+            "authorityActor": 1,
+            "application": "Draft",
+            "revision": 0,
+            "history": [],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 1,
+            "checkedEpoch": -1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "beginPublish"
+          },
+          "by": 1,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 1,
+            "application": "Checking",
+            "revision": 0,
+            "history": [],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 1,
+            "checkedEpoch": 1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "completePublish"
+          },
+          "by": 1,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 1,
+            "application": "Published",
+            "revision": 1,
+            "history": [
+              1
+            ],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 1,
+            "checkedEpoch": 1,
+            "paused": false,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "observeCurrentAuthority",
+            "authorityEvidence": {
+              "actorId": 2,
+              "verified": true
+            }
+          },
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 1,
+            "history": [
+              1
+            ],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": false,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "NoUpdate",
+            "updateAuthor": 0,
+            "updateBase": 0,
+            "updateHistory": []
+          }
+        },
+        {
+          "event": {
+            "type": "beginUpdate",
+            "freshAuthority": true
+          },
+          "by": 2,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 1,
+            "history": [
+              1
+            ],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": false,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "EditingUpdate",
+            "updateAuthor": 2,
+            "updateBase": 1,
+            "updateHistory": [
+              {
+                "base": 1,
+                "outcome": "started"
+              }
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "cancelUpdate"
+          },
+          "by": 2,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 1,
+            "history": [
+              1
+            ],
+            "repositories": [
+              1
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": false,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "CancelledUpdate",
+            "updateAuthor": 2,
+            "updateBase": 1,
+            "updateHistory": [
+              {
+                "base": 1,
+                "outcome": "started"
+              },
+              {
+                "base": 1,
+                "outcome": "cancelled"
+              }
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "appendRepository",
+            "appendEvidence": {
+              "repositoryId": 2,
+              "currentMonth": 202611,
+              "publicRepository": true,
+              "archived": false,
+              "fork": false,
+              "globallyUnique": true,
+              "installedAuthority": true
+            }
+          },
+          "by": 2,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 2,
+            "history": [
+              1,
+              2
+            ],
+            "repositories": [
+              1,
+              2
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              },
+              {
+                "repositoryId": 2,
+                "month": 202612
+              }
+            ],
+            "cleared": [
+              1
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "CancelledUpdate",
+            "updateAuthor": 2,
+            "updateBase": 1,
+            "updateHistory": [
+              {
+                "base": 1,
+                "outcome": "started"
+              },
+              {
+                "base": 1,
+                "outcome": "cancelled"
+              }
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "clearRepository",
+            "repositoryId": 2,
+            "admissionEvidence": true
+          },
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 2,
+            "history": [
+              1,
+              2
+            ],
+            "repositories": [
+              1,
+              2
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              },
+              {
+                "repositoryId": 2,
+                "month": 202612
+              }
+            ],
+            "cleared": [
+              1,
+              2
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": true,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "CancelledUpdate",
+            "updateAuthor": 2,
+            "updateBase": 1,
+            "updateHistory": [
+              {
+                "base": 1,
+                "outcome": "started"
+              },
+              {
+                "base": 1,
+                "outcome": "cancelled"
+              }
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "resume"
+          },
+          "by": 2,
+          "state": {
+            "applicant": 1,
+            "authorityActor": 2,
+            "application": "Published",
+            "revision": 2,
+            "history": [
+              1,
+              2
+            ],
+            "repositories": [
+              1,
+              2
+            ],
+            "repositoryStarts": [
+              {
+                "repositoryId": 1,
+                "month": 0
+              },
+              {
+                "repositoryId": 2,
+                "month": 202612
+              }
+            ],
+            "cleared": [
+              1,
+              2
+            ],
+            "installed": true,
+            "fieldsComplete": true,
+            "licenseVerified": true,
+            "authority": true,
+            "authorityEpoch": 2,
+            "checkedEpoch": 1,
+            "paused": false,
+            "retired": false,
+            "funded": false,
+            "effectiveMonth": 0,
+            "updatePhase": "CancelledUpdate",
+            "updateAuthor": 2,
+            "updateBase": 1,
+            "updateHistory": [
+              {
+                "base": 1,
+                "outcome": "started"
+              },
+              {
+                "base": 1,
+                "outcome": "cancelled"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "unit": "points__penalties",
+      "source": "spec/points/penalties.md",
+      "sourceSha256": "4c4c0a99ee4f5e7c67d24d6071843e54631eed5c5a0908b5a505cc68d474cba0",
+      "claims": {
+        "severalSources": true,
+        "cappedPenalty": true,
+        "reversedPenalty": true,
+        "penaltyAfterFreeze": true,
+        "frozenWeightRetained": true,
+        "standingRestored": true
+      },
+      "trace": [
+        {
+          "state": {
+            "period": 1,
+            "sources": [],
+            "penalties": [],
+            "financialFrozen": false,
+            "frozenWeight": 0,
+            "frozenPenaltyCount": 0
+          }
+        },
+        {
+          "event": {
+            "type": "addAccepted",
+            "sourceId": 1,
+            "points": 30,
+            "period": 1
+          },
+          "state": {
+            "period": 1,
+            "sources": [
+              {
+                "source": 1,
+                "points": 30
+              }
+            ],
+            "penalties": [],
+            "financialFrozen": false,
+            "frozenWeight": 0,
+            "frozenPenaltyCount": 0
+          }
+        },
+        {
+          "event": {
+            "type": "addAccepted",
+            "sourceId": 2,
+            "points": 90,
+            "period": 1
+          },
+          "state": {
+            "period": 1,
+            "sources": [
+              {
+                "source": 1,
+                "points": 30
+              },
+              {
+                "source": 2,
+                "points": 90
+              }
+            ],
+            "penalties": [],
+            "financialFrozen": false,
+            "frozenWeight": 0,
+            "frozenPenaltyCount": 0
+          }
+        },
+        {
+          "event": {
+            "type": "freezeRewards"
+          },
+          "state": {
+            "period": 1,
+            "sources": [
+              {
+                "source": 1,
+                "points": 30
+              },
+              {
+                "source": 2,
+                "points": 90
+              }
+            ],
+            "penalties": [],
+            "financialFrozen": true,
+            "frozenWeight": 120,
+            "frozenPenaltyCount": 0
+          }
+        },
+        {
+          "event": {
+            "type": "applyPenalty",
+            "receipt": 1,
+            "period": 1,
+            "finding": "Scam",
+            "authenticatedMember": true,
+            "exactOwnRun": true,
+            "nonMaintainer": true,
+            "qualifiedDecision": true
+          },
+          "state": {
+            "period": 1,
+            "sources": [
+              {
+                "source": 1,
+                "points": 30
+              },
+              {
+                "source": 2,
+                "points": 90
+              }
+            ],
+            "penalties": [
+              {
+                "receipt": 1,
+                "requested": 240,
+                "applied": 120,
+                "reversed": false
+              }
+            ],
+            "financialFrozen": true,
+            "frozenWeight": 120,
+            "frozenPenaltyCount": 0
+          }
+        },
+        {
+          "event": {
+            "type": "reversePenalty",
+            "receipt": 1,
+            "moderatorUpheld": true
+          },
+          "state": {
+            "period": 1,
+            "sources": [
+              {
+                "source": 1,
+                "points": 30
+              },
+              {
+                "source": 2,
+                "points": 90
+              }
+            ],
+            "penalties": [
+              {
+                "receipt": 1,
+                "requested": 240,
+                "applied": 120,
+                "reversed": true
+              }
+            ],
+            "financialFrozen": true,
+            "frozenWeight": 120,
+            "frozenPenaltyCount": 0
+          }
+        }
+      ]
+    },
+    {
+      "unit": "points__reviews",
+      "source": "spec/points/reviews.md",
+      "sourceSha256": "4f8d415aac9fef09c53123b069374aa5687ee96bc35d3ef3bf72428e80dfd6b7",
+      "claims": {
+        "fiveUsefulReviewers": true,
+        "poolAtAssessment": true,
+        "distinctReviewers": true
+      },
+      "trace": [
+        {
+          "state": {
+            "assessed": 10,
+            "reviewers": [],
+            "mergedAt": 10,
+            "lastAt": 0,
+            "lastId": 0
+          }
+        },
+        {
+          "event": {
+            "type": "recordReview",
+            "actor": 1,
+            "band": 10,
+            "at": 1,
+            "reviewId": 1,
+            "bot": false,
+            "selfReview": false,
+            "useful": true,
+            "repeated": false
+          },
+          "state": {
+            "assessed": 10,
+            "reviewers": [
+              {
+                "actor": 1,
+                "band": 10,
+                "firstAt": 1,
+                "reviewId": 1
+              }
+            ],
+            "mergedAt": 10,
+            "lastAt": 1,
+            "lastId": 1
+          }
+        },
+        {
+          "event": {
+            "type": "recordReview",
+            "actor": 2,
+            "band": 10,
+            "at": 2,
+            "reviewId": 2,
+            "bot": false,
+            "selfReview": false,
+            "useful": true,
+            "repeated": false
+          },
+          "state": {
+            "assessed": 10,
+            "reviewers": [
+              {
+                "actor": 1,
+                "band": 10,
+                "firstAt": 1,
+                "reviewId": 1
+              },
+              {
+                "actor": 2,
+                "band": 10,
+                "firstAt": 2,
+                "reviewId": 2
+              }
+            ],
+            "mergedAt": 10,
+            "lastAt": 2,
+            "lastId": 2
+          }
+        },
+        {
+          "event": {
+            "type": "recordReview",
+            "actor": 3,
+            "band": 10,
+            "at": 3,
+            "reviewId": 3,
+            "bot": false,
+            "selfReview": false,
+            "useful": true,
+            "repeated": false
+          },
+          "state": {
+            "assessed": 10,
+            "reviewers": [
+              {
+                "actor": 1,
+                "band": 10,
+                "firstAt": 1,
+                "reviewId": 1
+              },
+              {
+                "actor": 2,
+                "band": 10,
+                "firstAt": 2,
+                "reviewId": 2
+              },
+              {
+                "actor": 3,
+                "band": 10,
+                "firstAt": 3,
+                "reviewId": 3
+              }
+            ],
+            "mergedAt": 10,
+            "lastAt": 3,
+            "lastId": 3
+          }
+        },
+        {
+          "event": {
+            "type": "recordReview",
+            "actor": 4,
+            "band": 10,
+            "at": 4,
+            "reviewId": 4,
+            "bot": false,
+            "selfReview": false,
+            "useful": true,
+            "repeated": false
+          },
+          "state": {
+            "assessed": 10,
+            "reviewers": [
+              {
+                "actor": 1,
+                "band": 10,
+                "firstAt": 1,
+                "reviewId": 1
+              },
+              {
+                "actor": 2,
+                "band": 10,
+                "firstAt": 2,
+                "reviewId": 2
+              },
+              {
+                "actor": 3,
+                "band": 10,
+                "firstAt": 3,
+                "reviewId": 3
+              },
+              {
+                "actor": 4,
+                "band": 10,
+                "firstAt": 4,
+                "reviewId": 4
+              }
+            ],
+            "mergedAt": 10,
+            "lastAt": 4,
+            "lastId": 4
+          }
+        },
+        {
+          "event": {
+            "type": "recordReview",
+            "actor": 5,
+            "band": 10,
+            "at": 5,
+            "reviewId": 5,
+            "bot": false,
+            "selfReview": false,
+            "useful": true,
+            "repeated": false
+          },
+          "state": {
+            "assessed": 10,
+            "reviewers": [
+              {
+                "actor": 1,
+                "band": 10,
+                "firstAt": 1,
+                "reviewId": 1
+              },
+              {
+                "actor": 2,
+                "band": 10,
+                "firstAt": 2,
+                "reviewId": 2
+              },
+              {
+                "actor": 3,
+                "band": 10,
+                "firstAt": 3,
+                "reviewId": 3
+              },
+              {
+                "actor": 4,
+                "band": 10,
+                "firstAt": 4,
+                "reviewId": 4
+              },
+              {
+                "actor": 5,
+                "band": 10,
+                "firstAt": 5,
+                "reviewId": 5
+              }
+            ],
+            "mergedAt": 10,
+            "lastAt": 5,
+            "lastId": 5
+          }
+        }
+      ]
+    },
+    {
+      "unit": "points__census",
+      "source": "spec/points/census.md",
+      "sourceSha256": "f6d7c2e66b6ffa9a9feb1eaf76aed09dfb75f0788fd505567a18868a6ad6f9f4",
+      "claims": {
+        "published": true,
+        "exactWindow": true,
+        "allPagesRetained": true,
+        "allSourcesRetained": true
+      },
+      "trace": [
+        {
+          "state": {
+            "phase": "Empty",
+            "lowerDay": 0,
+            "upperDay": 35,
+            "pagesExpected": 0,
+            "sourcesExpected": 0,
+            "pagesSeen": [],
+            "sourceIds": [],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": false,
+            "frozenChecked": false,
+            "assessmentsComplete": false
+          }
+        },
+        {
+          "event": {
+            "type": "begin",
+            "lowerDay": 100,
+            "pages": 2,
+            "sources": 2
+          },
+          "state": {
+            "phase": "Collecting",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [],
+            "sourceIds": [],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": false,
+            "frozenChecked": false,
+            "assessmentsComplete": false
+          }
+        },
+        {
+          "event": {
+            "type": "recordPage",
+            "page": 1,
+            "sourceId": 10
+          },
+          "state": {
+            "phase": "Collecting",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1
+            ],
+            "sourceIds": [
+              10
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": false,
+            "frozenChecked": false,
+            "assessmentsComplete": false
+          }
+        },
+        {
+          "event": {
+            "type": "recordPage",
+            "page": 1,
+            "sourceId": 20
+          },
+          "state": {
+            "phase": "Collecting",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1
+            ],
+            "sourceIds": [
+              10,
+              20
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": false,
+            "frozenChecked": false,
+            "assessmentsComplete": false
+          }
+        },
+        {
+          "event": {
+            "type": "recordEmptyPage",
+            "page": 2
+          },
+          "state": {
+            "phase": "Collecting",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1,
+              2
+            ],
+            "sourceIds": [
+              10,
+              20
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": false,
+            "frozenChecked": false,
+            "assessmentsComplete": false
+          }
+        },
+        {
+          "event": {
+            "type": "finish",
+            "duplicateChecked": true,
+            "frozenChecked": true,
+            "assessmentsComplete": true
+          },
+          "state": {
+            "phase": "Ready",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1,
+              2
+            ],
+            "sourceIds": [
+              10,
+              20
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": true,
+            "duplicateChecked": true,
+            "frozenChecked": true,
+            "assessmentsComplete": true
+          }
+        },
+        {
+          "event": {
+            "type": "releaseHold"
+          },
+          "state": {
+            "phase": "Ready",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1,
+              2
+            ],
+            "sourceIds": [
+              10,
+              20
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 1,
+            "historicalHold": false,
+            "duplicateChecked": true,
+            "frozenChecked": true,
+            "assessmentsComplete": true
+          }
+        },
+        {
+          "event": {
+            "type": "publish",
+            "snapshot": 2
+          },
+          "state": {
+            "phase": "Published",
+            "lowerDay": 100,
+            "upperDay": 135,
+            "pagesExpected": 2,
+            "sourcesExpected": 2,
+            "pagesSeen": [
+              1,
+              2
+            ],
+            "sourceIds": [
+              10,
+              20
+            ],
+            "previousSnapshot": 1,
+            "publishedSnapshot": 2,
+            "historicalHold": false,
+            "duplicateChecked": true,
+            "frozenChecked": true,
+            "assessmentsComplete": true
+          }
+        }
+      ]
+    }
+  ]
+}

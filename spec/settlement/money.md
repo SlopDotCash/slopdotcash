@@ -137,8 +137,8 @@ pure def divideAmounts(dividend: Amount, divisor: Amount): Division =
     (acc, digit) => divisionStep(acc, digit, divisor))
   if (not(positiveAmount(divisor))) { quotient: zero, remainder: dividend }
   else { quotient: reverseAmount(divided.quotient), remainder: divided.remainder }
-pure val aValues = Set(List(0), List(1), List(999), List(0, 1), List(999, 999), List(123, 456, 789, 123, 456, 789, 1))
-pure val bValues = Set(List(1), List(2), List(50), List(999), List(0, 1), List(5, 12))
+pure val aValues = Set(List(0), List(1), List(999), List(0, 1), List(999, 1))
+pure val bValues = Set(List(1), List(2), List(50), List(999), List(0, 1))
 pure def lawDivisionReconstructs(a: Amount, b: Amount): bool =
   val divided = divideAmounts(a, b)
   (validAmount(a) and validAmount(b) and positiveAmount(b)) implies
@@ -166,8 +166,11 @@ pure def lawFullPrivateConservation(a: Amount): bool = privateSplitPossible(a) i
 
 ### Simulation samples exercise missing, matching and conflicting evidence
 
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+These input sets bound simulation only. Routine random exploration uses at
+most two limbs so arithmetic does not dominate state coverage. Independent
+BigInt differential cases and guided journeys cover values through 2^256 - 1.
+General proofs quantify over arbitrary-length amounts. The generated guards
+accept every value allowed by their declared types and product rules.
 
 ```quint
 pure val assetValues = Set("", "a", "b")
@@ -178,7 +181,7 @@ pure val expectedNetworkValues = Set("", "a", "b")
 pure val expectedProgramValues = Set("", "a", "b")
 pure val factorValues = Set(0, 1, 2)
 pure val scalarGrossValues = Set(0, 1, 2, 49, 50, 51)
-pure val grossValues = Set(List(0), List(1), List(4), List(50), List(0, 0, 0, 0, 0, 0, 1))
+pure val grossValues = Set(List(0), List(1), List(4), List(50), List(0, 1))
 pure val mintBytesValues = Set(0, 1, 2)
 pure val nValues = Set(0, 1, 2)
 pure val networkValues = Set("", "a", "b")

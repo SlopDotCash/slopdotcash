@@ -1,9 +1,4 @@
 // A singleton set union keeps the old members and admits only its argument.
-lemma SingletonFilterBridge(values: seq<int>, value: int)
-  ensures Std.Collections.Seq.Filter((set_x: int) => !((set_x in values)), [value]) == ProofLib.Filter((set_x: int) => !((set_x in values)), [value])
-{
-}
-
 lemma SingletonUnionMembers(values: seq<int>, value: int)
   ensures forall x :: x in values + ProofLib.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value
 {
@@ -22,8 +17,8 @@ lemma markPermanent_ensures(e: Evidence, ref: int)
 {
   if inv(e) && canMarkPermanent(e, ref) {
     SingletonUnionMembers(e.permanent, ref);
-    SingletonFilterBridge(e.permanent, ref);
     var after := markPermanent(e, ref);
+    assert after.permanent == e.permanent + ProofLib.Filter((set_x: int) => !((set_x in e.permanent)), [ref]);
     assert forall x :: x in after.permanent ==> x in e.permanent || x == ref;
     assert forall x :: x in after.permanent ==> !(x in e.expired) && x in e.refs;
   }
@@ -37,8 +32,8 @@ lemma expireReference_ensures(e: Evidence, ref: int)
 {
   if inv(e) && canExpireReference(e, ref) {
     SingletonUnionMembers(e.expired, ref);
-    SingletonFilterBridge(e.expired, ref);
     var after := expireReference(e, ref);
+    assert after.expired == e.expired + ProofLib.Filter((set_x: int) => !((set_x in e.expired)), [ref]);
     assert forall x :: x in after.expired ==> x in e.expired || x == ref;
     assert forall x :: x in e.permanent ==> !(x in after.expired) && x in e.refs;
     assert forall x :: x in after.expired ==> x in e.refs;
@@ -62,4 +57,3 @@ lemma deleteBytes_ensures(e: Evidence)
     assert |e.permanent| == 0;
   }
 }
-

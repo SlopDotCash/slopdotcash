@@ -1,0 +1,4 @@
+/tmp/slop-finance-candidate.dfy(225,4): Error: assertion might not hold
+/tmp/slop-finance-candidate.dfy(391,62): Error: assertion might not hold
+
+Dafny program verifier finished with 2 verified, 2 errors

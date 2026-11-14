@@ -22,9 +22,9 @@ pure def spentInWindow(spends: List[Spend], now: int): int = spends.foldl(0, (to
 pure val initial: Buyback = { sourceIsRobinhood: false, localSlopIncome: M::zero, localSlopCommitted: M::zero, clock: 0, bridgeSpends: List(), purchaseSpends: List(), phase: Off, income: M::zero, committed: M::zero, orderAmount: 0, order: 0,
   arrival: 0, acquired: M::zero, burnCommitted: M::zero, burned: M::zero, receipts: List(), orders: List(),
   finalizedHeight: 0, outputWallet: "fees" }
-pure val quantityValues = Set(List(1), List(2), List(3), List(0, 0, 0, 0, 0, 0, 1))
+pure val quantityValues = Set(List(1), List(2), List(3), List(0, 1))
 pure val amountValues = Set(1, 500000000, 1000000000)
-pure val incomeAmountValues = Set(List(1), List(0, 0, 500), List(0, 0, 0, 1), List(0, 0, 0, 0, 0, 0, 1))
+pure val incomeAmountValues = Set(List(1), List(0, 0, 500), List(0, 0, 0, 1), List(1, 0, 0, 1))
 pure val receivedAtValues = Set(20261111, 20261112, 20261113)
 pure def canActivate(b: Buyback, converterLive: bool, robinhoodEnabled: bool,
   explicitLimits: bool, by: str): bool = b.phase == Off and converterLive and robinhoodEnabled and explicitLimits and by == "owner"

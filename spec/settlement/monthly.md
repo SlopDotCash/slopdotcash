@@ -6,7 +6,7 @@ The full recipient list uses the full-width largest-remainder algorithm. Every w
 
 ## Story: Freeze one complete allocation
 
-### A new period has no proposal or financial obligation
+### A new period has no proposal, pool amount or financial obligation
 
 ```quint
 import allocation as A from "./allocation"
@@ -15,13 +15,13 @@ type ProjectEligibility = { revision: int, registered: bool, paused: bool, retir
 type MonthlyPhase = Collecting | Proposed | Frozen | Reserved | Completed
 type Monthly = { phase: MonthlyPhase, period: int, revision: int, cap: M::Amount, total: M::Amount,
   shares: List[A::Share], automatic: bool, paid: List[int], receipts: List[int], wallets: List[int], cutoffReached: bool }
-pure val initial: Monthly = { phase: Collecting, period: 202611, revision: 1, cap: List(6), total: M::zero,
+pure val initial: Monthly = { phase: Collecting, period: 202611, revision: 1, cap: M::zero, total: M::zero,
   shares: List(), automatic: true, paid: List(), receipts: List(), wallets: List(), cutoffReached: false }
 pure val byValues = Set("owner", "wrong")
 pure val elapsedHoursValues = Set(0, 71, 72, 73)
 pure val availableValues = Set(List(0), List(3), List(6))
-pure val amountValues = Set(List(0), List(1), List(4), List(6), List(0, 0, 0, 0, 0, 0, 1))
-pure val capValues = Set(List(0), List(6), List(0, 0, 0, 0, 0, 0, 1))
+pure val amountValues = Set(List(0), List(1), List(4), List(6), List(0, 1))
+pure val capValues = Set(List(0), List(6), List(0, 1))
 pure val sourceValues = Set("vault", "wrong")
 pure val assetValues = Set("asset", "wrong")
 pure val weightsValues = Set(List(), List({ actor: 1, weight: List(1) }), List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }))

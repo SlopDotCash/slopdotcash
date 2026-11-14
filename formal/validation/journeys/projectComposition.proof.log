@@ -1,11 +1,11 @@
 solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
-Generated: /private/tmp/slop-projects-proof-ready/gen/proof/projectComposition/projectComposition.dfy.gen
-Created: /private/tmp/slop-projects-proof-ready/gen/proof/projectComposition/projectComposition.dfy
+Generated: /private/tmp/slop-projects-proof-finish/gen/proof/projectComposition/projectComposition.dfy.gen
+Created: /private/tmp/slop-projects-proof-finish/gen/proof/projectComposition/projectComposition.dfy
 WARNING: '===' compares non-primitive operands (array === array): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
-Generated: /private/tmp/slop-projects-proof-ready/gen/proof/projectComposition/projectComposition.dfy.gen
+Generated: /private/tmp/slop-projects-proof-finish/gen/proof/projectComposition/projectComposition.dfy.gen
 WARNING: '===' compares non-primitive operands (array === array): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
 
-Dafny program verifier finished with 12 verified, 0 errors
+Dafny program verifier finished with 13 verified, 0 errors
 
 ---- dafny audit ----
 DafnyStandardLibraries.dfy(15327,26): Warning: Omega: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.

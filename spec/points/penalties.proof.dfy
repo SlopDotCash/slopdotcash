@@ -10,7 +10,7 @@ lemma addAccepted_ensures(m: MonthlyPoints, sourceId: int, points: int, period: 
 {
   if inv(m) && canAddAccepted(m, sourceId, points, period) {
     UniqueSourcesMeaning(m);
-    AppendUniqueKey(m.sources, MonthSource(sourceId, points), (s: MonthSource) => s.source);
+    AppendUniqueSources(m.sources, MonthSource(sourceId, points));
     UniqueSourcesMeaning(addAccepted(m, sourceId, points, period));
   }
 }
@@ -28,7 +28,7 @@ lemma applyPenalty_ensures(m: MonthlyPoints, receipt: int, period: int, finding:
     UniqueDecisionsMeaning(m);
     var requested := requestedDebit(finding);
     var applied := if requested > standingPoints(m) then standingPoints(m) else requested;
-    AppendUniqueKey(m.penalties, AppliedPenalty(receipt, requested, applied, false), (p: AppliedPenalty) => p.receipt);
+    AppendUniqueDecisions(m.penalties, AppliedPenalty(receipt, requested, applied, false));
     UniqueDecisionsMeaning(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision));
   }
 }
@@ -62,17 +62,32 @@ lemma UniqueDecisionsMeaning(m: MonthlyPoints)
 {
 }
 
-lemma AppendUniqueKey<T, K>(xs: seq<T>, added: T, key: T -> K)
-  requires forall value :: value in xs ==> |ProofLib.Filter((other: T) => (key(other) == key(value)), xs)| == 1
-  requires forall value :: value in xs ==> key(value) != key(added)
-  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((other: T) => (key(other) == key(value)), xs + [added])| == 1
+lemma AppendUniqueSources(xs: seq<MonthSource>, added: MonthSource)
+  requires forall value :: value in xs ==> |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs)| == 1
+  requires forall value :: value in xs ==> value.source != added.source
+  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs + [added])| == 1
 {
   forall value | value in xs + [added]
-    ensures |ProofLib.Filter((other: T) => (key(other) == key(value)), xs + [added])| == 1
+    ensures |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs + [added])| == 1
   {
-    ProofLib.FilterAppend((other: T) => (key(other) == key(value)), xs, added);
-    if key(value) == key(added) {
-      ProofLib.FilterNone((other: T) => (key(other) == key(value)), xs);
+    ProofLib.FilterAppend((other: MonthSource) => (other.source == value.source), xs, added);
+    if value.source == added.source {
+      ProofLib.FilterNone((other: MonthSource) => (other.source == value.source), xs);
+    }
+  }
+}
+
+lemma AppendUniqueDecisions(xs: seq<AppliedPenalty>, added: AppliedPenalty)
+  requires forall value :: value in xs ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs)| == 1
+  requires forall value :: value in xs ==> value.receipt != added.receipt
+  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs + [added])| == 1
+{
+  forall value | value in xs + [added]
+    ensures |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs + [added])| == 1
+  {
+    ProofLib.FilterAppend((other: AppliedPenalty) => (other.receipt == value.receipt), xs, added);
+    if value.receipt == added.receipt {
+      ProofLib.FilterNone((other: AppliedPenalty) => (other.receipt == value.receipt), xs);
     }
   }
 }

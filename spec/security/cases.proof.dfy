@@ -1,9 +1,4 @@
 // A singleton set union keeps the old members and admits only its argument.
-lemma SingletonFilterBridge(values: seq<int>, value: int)
-  ensures Std.Collections.Seq.Filter((set_x: int) => !((set_x in values)), [value]) == ProofLib.Filter((set_x: int) => !((set_x in values)), [value])
-{
-}
-
 lemma SingletonUnionMembers(values: seq<int>, value: int)
   ensures forall x :: x in values + ProofLib.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value
 {
@@ -26,8 +21,8 @@ lemma decide_ensures(c: PrivateCase, by_: int, checkedEpoch: int, finding: Findi
 {
   if inv(c) && canDecide(c, by_, checkedEpoch, finding, related) {
     SingletonUnionMembers(c.deciders, by_);
-    SingletonFilterBridge(c.deciders, by_);
     var after := decide(c, by_, checkedEpoch, finding, related);
+    assert after.deciders == c.deciders + ProofLib.Filter((set_x: int) => !((set_x in c.deciders)), [by_]);
     assert by_ in after.deciders;
     assert |after.deciders| > 0;
   }

@@ -1,65 +1,220 @@
 {
-  "status": "in-progress",
+  "status": "complete-with-unproved",
   "sourceHashes": {
-    "spec/fees/buyback.md": "15658499f55ef7af77a7e2ee3e5e8b42d5b89d5080bddc1a38ada159b4943107",
+    "spec/fees/buyback.md": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
     "spec/fees/conversion.md": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
     "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
-    "spec/settlement/allocation.md": "ad486e0ba4d4ffb8e358c6a74aecd78e27eca60d095447ed50b7d185a16f84a5",
-    "spec/settlement/composition.md": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
+    "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+    "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
     "spec/settlement/contributorAllocation.md": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
     "spec/settlement/index.md": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
-    "spec/settlement/money.md": "62e08dce0afbb12dae69a65abf8b4067c4f7bdeefca9bf8ca8e2557e55dcce81",
-    "spec/settlement/monthly.md": "e44f01c693b0865d0fbedefdc97760ec4913c987c49764f7e14a35f1b8f370a3",
-    "spec/settlement/payment.md": "3d0f766589fd7ed13347f5e77fb9b9866c21786bdb607a1f4095542113045843",
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+    "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
     "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
     "spec/settlement/referrals.md": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
     "spec/settlement/reserveRelease.md": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
     "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
-    "spec/settlement/vault.md": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd"
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5"
+  },
+  "proofFileHashes": {
+    "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11"
   },
   "arithmeticDifferential": {
     "status": "passed",
-    "report": "formal/validation/finance/arithmetic.json"
+    "checks": 11027,
+    "report": "formal/validation/finance/arithmetic.json",
+    "meaning": "Finite independent BigInt comparisons, not a general proof."
   },
   "generatedJourneys": {
     "status": "passed",
-    "report": "formal/validation/finance/journeys.json"
+    "journeys": 12,
+    "steps": 86,
+    "report": "formal/validation/finance/journeys.json",
+    "meaning": "Current source hashes; checks admission/refusal and intermediate state invariants, not application conformance."
   },
   "randomSimulation": {
-    "status": "running",
+    "status": "completed-on-recorded-snapshot",
     "report": "formal/validation/finance/simulation.json",
     "samplesPerModel": 100,
-    "steps": 30
+    "steps": 30,
+    "allRecordedSafetySamplesPassed": true,
+    "sourceCurrent": false,
+    "meaning": "Some events/goals were not reached in this finite random sample; retained guided journeys and reachability probes provide separate evidence. Final full-tree checks are reported at repository level."
   },
   "proofs": {
-    "status": "running",
-    "units": [
-      "settlement__money",
-      "settlement__allocation",
-      "settlement__payment",
-      "settlement__vault",
-      "settlement__monthly",
-      "settlement__signer"
-    ],
-    "completed": [
+    "status": "unproved",
+    "method": "Unmodified Vibestack proof generation/prove with Dafny 4.11 and pinned Z3, without acceptance exceptions. Each result is bound to the exact recorded source snapshot.",
+    "results": [
+      {
+        "unit": "settlement__money.ts",
+        "total": 9,
+        "unproved": [
+          "lawMultiplyOne: (lawMultiplyOne(a) == true)",
+          "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+          "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+          "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+          "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+        ],
+        "errors": [],
+        "exhausted": [
+          "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+        ],
+        "proofFile": "spec/settlement/money.proof.dfy",
+        "proofSha256": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+        "log": "formal/validation/finance/settlement__money.ts.proof.log",
+        "source": "spec/settlement/money.md",
+        "sourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+        "sourceCurrent": true,
+        "status": "unproved"
+      },
+      {
+        "unit": "settlement__allocation.ts",
+        "total": 2,
+        "unproved": [
+          "lawAllocationConserves: (lawAllocationConserves(total, weights) == true)",
+          "lawSingleRecipient: (lawSingleRecipient(total, actor) == true)"
+        ],
+        "errors": [],
+        "exhausted": [
+          "lawAllocationConserves: (lawAllocationConserves(total, weights) == true)",
+          "lawSingleRecipient: (lawSingleRecipient(total, actor) == true)"
+        ],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/settlement__allocation.ts.proof.log",
+        "source": "spec/settlement/allocation.md",
+        "sourceSha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+        "sourceCurrent": true,
+        "status": "unproved"
+      },
+      {
+        "unit": "settlement__vault.ts",
+        "total": 30,
+        "unproved": [
+          "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))",
+          "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysValidAmounts(deposit(v, amount, asset, receipt, finalized)))",
+          "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysConserved(reserve(v, amount, recipient, obligation)))",
+          "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysValidAmounts(reserve(v, amount, recipient, obligation)))",
+          "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationMatches(reserve(v, amount, recipient, obligation)))",
+          "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationTotal(reserve(v, amount, recipient, obligation)))",
+          "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationIdentity(reserve(v, amount, recipient, obligation)))",
+          "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysConserved(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+          "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+          "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+          "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+          "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationIdentity(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+          "refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysConserved(refund(v, amount, destination, receipt, finalizedHeight, by_)))",
+          "refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysValidAmounts(refund(v, amount, destination, receipt, finalizedHeight, by_)))",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/settlement__vault.ts.proof.log",
+        "source": "spec/settlement/vault.md",
+        "sourceSha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+        "sourceCurrent": true,
+        "status": "unproved"
+      },
+      {
+        "unit": "settlement__monthly.ts",
+        "total": 73,
+        "unproved": [
+          "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete, eligibility) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete, eligibility)))",
+          "adjust: (inv(m) ==> canAdjust(m, shares, revision, by_) ==> alwaysAllocationConserved(adjust(m, shares, revision, by_)))",
+          "setCap: (inv(m) ==> canSetCap(m, cap, by_) ==> alwaysAllocationConserved(setCap(m, cap, by_)))",
+          "fund: (inv(m) ==> canFund(m, available) ==> alwaysCompletedPaid(fund(m, available)))",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [
+          "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete, eligibility) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete, eligibility)))"
+        ],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/settlement__monthly.ts.proof.log",
+        "source": "spec/settlement/monthly.md",
+        "sourceSha256": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+        "sourceCurrent": true,
+        "status": "unproved"
+      },
+      {
+        "unit": "settlement__payment.ts",
+        "total": 68,
+        "unproved": [
+          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))",
+          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))",
+          "reconcile: (inv(p) ==> canReconcile(p, evidence) ==> alwaysPaidEvidence(reconcile(p, evidence)))",
+          "initialHolds: inv(initialHolds())",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [
+          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))"
+        ],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/settlement__payment.ts.proof.log",
+        "source": "spec/settlement/payment.md",
+        "sourceSha256": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
+        "sourceCurrent": false,
+        "status": "unproved"
+      },
+      {
+        "unit": "settlement__composition.ts",
+        "total": 38,
+        "unproved": [
+          "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+          "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+          "reserve: (inv(s) ==> canReserve(s) ==> alwaysChildRules(reserve(s)))",
+          "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+          "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))",
+          "initialHolds: inv(initialHolds())",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [
+          "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+          "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+          "initialHolds: inv(initialHolds())"
+        ],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/settlement__composition.ts.proof.log",
+        "source": "spec/settlement/composition.md",
+        "sourceSha256": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
+        "sourceCurrent": false,
+        "status": "unproved"
+      },
       {
         "unit": "settlement__signer.ts",
         "total": 19,
         "unproved": [],
         "errors": [],
         "exhausted": [],
+        "status": "passed",
         "source": "spec/settlement/signer.md",
-        "sha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
-        "command": "Vibestack prove() with the generated settlement__signer proof unit, Dafny 4.11 and pinned solver, no proof exceptions",
+        "sourceSha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
+        "sourceCurrent": true,
+        "report": "formal/validation/finance/signer-proof.json",
         "log": "formal/validation/finance/signer-proof.log"
       }
     ],
-    "targetedComparison": "formal/validation/finance/comparison-proof.json",
-    "report": "formal/validation/finance/proofs.json"
+    "baselineReport": "formal/validation/finance/proofs.json",
+    "attemptsReport": "formal/validation/finance/proof-attempts.json",
+    "unprovedCount": 39,
+    "sourceSnapshotsNeedingFinalTreeRecheck": [
+      "settlement__payment.ts",
+      "settlement__composition.ts"
+    ],
+    "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established."
   },
-  "meaning": "Finite diagnostics validate these exact specification bytes. Application conformance and live financial behavior require later implementation evidence.",
   "reachabilityProbes": {
-    "status": "passed",
+    "status": "passed-on-recorded-snapshot",
     "report": "formal/validation/finance/reachability-probes.json"
-  }
+  },
+  "discoveredRules": "formal/validation/finance/discovered-rules.json",
+  "meaning": "Specification-only evidence. No application code was migrated and no live financial behavior, release, signing or payment was activated."
 }

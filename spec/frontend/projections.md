@@ -119,6 +119,44 @@ pure val factsValues = Set(
 )
 ```
 
+## Story: Read Points standings with equal ranks for equal totals
+
+### Monthly and lifetime standings sum the same accepted-work history
+
+The journal supplies already validated public accepted-work rows. Participation,
+private-case money, token use and Slopbot activity are excluded before this
+projection. A zero period selects lifetime history. A positive period selects
+that exact UTC contribution period, without changing its occurrence date.
+
+```quint
+type StandingEntry = { actor: int, period: int, points: int }
+pure def lifetimePoints(entries: List[StandingEntry], actor: int): int =
+  entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor) entry.points else 0))
+pure def pointsFor(entries: List[StandingEntry], actor: int, period: int): int =
+  if (period == 0) lifetimePoints(entries, actor)
+  else entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor and entry.period == period) entry.points else 0))
+pure def higherCount(totals: List[int], points: int): int =
+  totals.foldl(0, (count, total) => count + (if (total > points) 1 else 0))
+pure def rankAt(totals: List[int], points: int): int = 1 + higherCount(totals, points)
+pure def lawEqualPointsHaveEqualRank(totals: List[int], left: int, right: int): bool =
+  left == right implies rankAt(totals, left) == rankAt(totals, right)
+pure def lawLifetimeIncludesEveryPeriod(entries: List[StandingEntry], actor: int): bool =
+  pointsFor(entries, actor, 0) == entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor) entry.points else 0))
+pure val entriesValues = Set(
+  List(),
+  List({ actor: 1, period: 1, points: 10 }, { actor: 1, period: 2, points: 30 }, { actor: 2, period: 1, points: 30 })
+)
+pure val totalsValues = Set(List(), List(10, 30, 30))
+pure val leftValues = Set(10, 30)
+pure val rightValues = Set(10, 30)
+pure val actorValues = Set(1, 2)
+pure val periodValues = Set(0, 1, 2)
+pure val pointsValues = Set(10, 30)
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

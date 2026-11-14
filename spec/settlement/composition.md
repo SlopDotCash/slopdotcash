@@ -87,7 +87,8 @@ pure def alwaysPaidConsumesReserve(s: Settlement): bool =
 pure def alwaysChildRules(s: Settlement): bool =
   V::alwaysConserved(s.vault) and V::alwaysValidAmounts(s.vault) and
   V::alwaysReservationMatches(s.vault) and V::alwaysReservationTotal(s.vault) and V::alwaysReservationIdentity(s.vault) and
-  P::alwaysConserved(s.payment) and P::alwaysPaidEvidence(s.payment) and P::alwaysCorrectFee(s.payment) and P::alwaysCorrectRail(s.payment)
+  P::alwaysConserved(s.payment) and P::alwaysPaidEvidence(s.payment) and P::alwaysCorrectFee(s.payment) and P::alwaysCorrectRail(s.payment) and
+  P::alwaysUnconfiguredEmpty(s.payment) and P::alwaysAdmittedAttempts(s.payment)
 pure def sometimesReserved(s: Settlement): bool = hasReserve(s)
 pure def sometimesUncertainReserved(s: Settlement): bool = s.payment.phase == P::Uncertain and hasReserve(s)
 pure def sometimesPaidTogether(s: Settlement): bool = s.payment.phase == P::Paid and not(hasReserve(s))

@@ -356,7 +356,9 @@
       "sourceEndLine": 299,
       "sourceText": "### Monthly allocation\n\nAutomatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.\n\nThe period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations privately in D1, not new cycle files.\n\nThe owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. Do not publish adjustment history or require public reasons. Retain records needed for disputes and reconciliation.\n\nOnly accepted-work Points for that project and period set shares. Rollover never increases a later monthly cap. An underfunded month creates no obligations until the entire allocation is covered. Prevent manual and automatic duplicate payments.\n\nKeep walletless funded awards reserved without expiry. One recipient's failure must not block others. Preserve historical cycles' original review windows and frozen terms.\n",
       "owners": [
-        "spec/settlement/monthly.md"
+        "spec/settlement/monthly.md",
+        "spec/settlement/allocation.md",
+        "spec/settlement/composition.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -368,7 +370,8 @@
       "sourceEndLine": 309,
       "sourceText": "### Fees and payment evidence\n\nFor ordinary awards and free-fund withdrawals, the fee is `ceil(gross / 50)`: 2%, rounded up. A 100 USDC award pays 98 to the contributor and 2 in fees. A one-base-unit award pays that unit in fees and zero net. Splitting must not reduce the fee.\n\nPay token fees in the same token. Do not charge again at claim or retry. Preserve funded awards' original fees through upgrades. Private bounties use section 8's split instead.\n\nA project-operated or permissionless executor submits payments. Slop operates no payment key or payment relayer. Permissionless vault creation requires the owner's authority; remove the separate service charge.\n\nMark an obligation paid only after finalized evidence reconciles its exact vault or direct-payment source, recipient, principal, fee, and asset. Reject replay, wrong owner, wrong asset, partial completion, failed transfers, duplicates, and overpayment. Keep uncertain attempts until reconciliation; a missing receipt is not failure proof.\n",
       "owners": [
-        "spec/settlement/payment.md"
+        "spec/settlement/payment.md",
+        "spec/settlement/composition.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -561,7 +564,8 @@
       "sourceEndLine": 554,
       "sourceText": "### Offers and report intake\n\nEligible projects may offer bounties through Add project. All names, source revisions, scope, contacts, amounts, and splits derive from D1. Do not hardcode a program or prefill its terms, deployments, or commit in product code.\n\nOwners publish scope and acceptance criteria; do not impose another program's critical-severity or loss-of-funds restriction. Preserve the protected program terms below and each report's receipt terms. A bounty award requires paid terms to have been published when the case was received. Only administrator-controlled manifest terms may grant an award-split exception.\n\nShow researcher net prominently, with gross, Slop share, scope, and pledged or verified funding. A prefunded program opens only after verified funds. An explicit `after-approval` program may open as a discretionary pledge. An open offer does not prove available funds.\n\nKeep owner setup separate from reporting. Group offer, scope/testing, contacts/response targets, and preview/publish. Verify owner authority before showing setup. Project stewards or repository administrators manage case contacts without routine platform approval. Keep bounty funds separate from contribution funds, with observation time and stale status.\n\nReporting uses Write report and Review and submit on one route. Classification is optional. Keep drafts in account-and-project-bound session storage. Clear them on sign-out or account change. Preserve the idempotency key through uncertain retries and show storage failure. Do not add persistent local-storage drafts, server autosave, or an attachment service.\n\nRetain the exact report in private object storage before optional forwarding. Bind its digest, reporter, repository, receipt time, and effective terms. Atomically create the case and reporter Inbox receipt. Never put report bodies in D1, public pages, logs, analytics, notifications, or generated artifacts.\n",
       "owners": [
-        "spec/security/intake.md"
+        "spec/security/intake.md",
+        "spec/security/terms.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -587,7 +591,8 @@
       "sourceText": "### Award, payment, and disclosure\n\nThe owner or maintainer decides technical acceptance and discretionary awards. The financial approver authorizes payout. Screening, forwarding, a critical defect, or potential loss never authorizes payment. Refuse unauthorized self-approval. Slopbot triages disputes; a moderator decides escalated cases.\n\nRecord the first verified qualifying report for each underlying finding. Use safe evidence; actual loss is neither required nor permitted. A fixed after-approval offer uses the gross amount frozen at receipt: award that amount or none. Preserve historical amount rules.\n\nAn unfunded award decision creates no funded reservation or payment claim. Require approval and verified funds before reservation. A vault-backed award reserves only its bounty vault's finalized free balance. Prevent duplicate reservations. Private awards never use the automatic monthly-payment fallback.\n\nThe standard split is 75% to the researcher and 25% to Slop. Its gross amount must divide by four in asset base units. An authorized full-award exception pays 100% to the researcher and needs no such divisibility rule. Add no ordinary 2% fee or claim fee. Show exact gross and net amounts before authorization.\n\nUse a released, qualified payment path for the award's frozen asset and split. Existing 75/25 vaults must never pay a full-award case. A selected award or verified funds alone do not prove that a suitable path is available.\n\nFor direct payments, record each finalized leg separately and show only unpaid legs for action. Mark paid only when the researcher amount and any Slop share are proved. Direct fees enter the same received-fee accounting as vault fees. Notify the reporter, current security maintainers, and financial approvers with private content omitted.\n\nKeep the report and its fix as one financial work unit unless approved terms say otherwise. Separate eligible ordinary work may still earn rewards.\n\nUse independent private patch review and exact-revision tests. Remediation, payment, or an expired deadline never authorizes disclosure. Require approval of the exact redacted content, retain embargo history, and obtain separate recognition consent. Maintainers should provide an email or Signal contact for private coordination.\n",
       "owners": [
         "spec/security/cases.md",
-        "spec/settlement/payment.md"
+        "spec/settlement/payment.md",
+        "spec/security/terms.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -600,7 +605,8 @@
       "sourceText": "### Protected program terms\n\nThese terms protect existing offers and received reports. They do not restrict new programs to named projects or replace the D1 registry.\n\n**Umia Protocol.** Each accepted critical loss-of-funds finding carries a 10,000 USDC gross offer on Base. The first qualifying reporter receives 7,500 USDC; Slop receives 2,500 USDC. The maintainer may grant the receipt-time amount or none. There is no single-award program limit.\n\nThe program is an after-approval pledge. Slop fronts an approved award through its separate bounty vault after verified funding. Umia reimbursement occurs off chain. Verify the registered repository and current authority from D1 and GitHub. `lalalune` (GitHub actor 18633264) is the intended owner and technical contact. Private vulnerability reporting must be enabled on the registered fork for optional researcher-token forwarding.\n\n**Slop mainnet contracts.** Each accepted critical loss-of-funds finding carries a $10,000 offer, paid entirely to the first qualifying reporter. Slop takes no share or payout fee. The maintainer may grant the published amount or none; there is no predetermined award count. `lalalune` reviews findings and decides awards.\n\nScope covers reviewed Slop mainnet deployments from `contracts/evm/src` and `contracts/solana/programs`. It includes vaults, factories, monthly reserves, and other contracts in those paths only after qualifying mainnet deployment. Loss means theft or permanent freezing of user, contributor, owner, or vault funds.\n\nExclude third-party contracts, off-chain and frontend defects, testnet/local deployments, known or previously reported findings, and losses requiring compromised privileged keys or intended owner actions. This after-approval offer belongs to the `slopdotcash` platform project and binds no 75/25 bounty vault. The full-award payment-path requirement above applies.\n",
       "owners": [
         "spec/security/cases.md",
-        "spec/settlement/payment.md"
+        "spec/settlement/payment.md",
+        "spec/security/terms.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

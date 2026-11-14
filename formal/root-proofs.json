@@ -46,12 +46,12 @@
       "errors": [],
       "exhausted": [],
       "spec": "spec/backend/accounts.md",
-      "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "sourceSha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
       "inputs": {
-        "spec/backend/accounts.md": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
-        "spec/backend/accounts.proof.dfy": "29e3c39ac39361a4fb6c623bfc2c1115b8273cf3e8b6dda61674d4f10b749c6e"
+        "spec/backend/accounts.md": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+        "spec/backend/accounts.proof.dfy": "e8b074b5be700273b52fc33ab042919ca019385be0b3df28cca0618880a30c35"
       },
-      "sourceCurrent": false,
+      "sourceCurrent": true,
       "status": "passed",
       "log": "formal/validation/journeys/backend__accounts.proof.log"
     },
@@ -72,14 +72,15 @@
     },
     {
       "unit": "backend__projects.ts",
-      "total": 170,
+      "total": 198,
       "unproved": [],
       "errors": [],
       "exhausted": [],
       "spec": "spec/backend/projects.md",
-      "sourceSha256": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596",
+      "sourceSha256": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
       "inputs": {
-        "spec/backend/projects.md": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596"
+        "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+        "spec/backend/projects.proof.dfy": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19"
       },
       "sourceCurrent": true,
       "status": "passed",
@@ -209,17 +210,19 @@
     },
     {
       "unit": "frontend__projections.ts",
-      "total": 10,
-      "unproved": [],
+      "total": 12,
+      "unproved": [
+        "lawLifetimeIncludesEveryPeriod: (lawLifetimeIncludesEveryPeriod(entries, actor) == true)"
+      ],
       "errors": [],
       "exhausted": [],
       "spec": "spec/frontend/projections.md",
-      "sourceSha256": "64951eebef3084913871402bff4b0ae4562fe4ffe6effe92b86a64c53bd8ab84",
+      "sourceSha256": "fb1b0325e3bf498bbed770ef6bd9e30efd947f3ee4162a12a1f989898262f4c6",
       "inputs": {
-        "spec/frontend/projections.md": "64951eebef3084913871402bff4b0ae4562fe4ffe6effe92b86a64c53bd8ab84"
+        "spec/frontend/projections.md": "fb1b0325e3bf498bbed770ef6bd9e30efd947f3ee4162a12a1f989898262f4c6"
       },
-      "sourceCurrent": true,
-      "status": "passed",
+      "sourceCurrent": false,
+      "status": "not-proved",
       "log": "formal/validation/journeys/frontend__projections.proof.log"
     },
     {
@@ -253,6 +256,22 @@
       "log": "formal/validation/journeys/governance.proof.log"
     },
     {
+      "unit": "points__allocation.ts",
+      "total": 4,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/points/allocation.md",
+      "sourceSha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "inputs": {
+        "spec/points/allocation.md": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+        "spec/points/allocation.proof.dfy": "348bb1203aa9f8b2023774aedb79212a5a2d6f37b45a2cf41cd41f91536ea0a6"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__allocation.proof.log"
+    },
+    {
       "unit": "points__authorship.ts",
       "spec": "spec/points/authorship.md",
       "sourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
@@ -266,6 +285,22 @@
       "sourceCurrent": true,
       "status": "passed",
       "log": "formal/validation/journeys/points__authorship.proof.log"
+    },
+    {
+      "unit": "points__census.ts",
+      "total": 58,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/points/census.md",
+      "sourceSha256": "f6d7c2e66b6ffa9a9feb1eaf76aed09dfb75f0788fd505567a18868a6ad6f9f4",
+      "inputs": {
+        "spec/points/census.md": "f6d7c2e66b6ffa9a9feb1eaf76aed09dfb75f0788fd505567a18868a6ad6f9f4",
+        "spec/points/census.proof.dfy": "940d1cb80009e4b3e7031a1dfb2b85c63736461826475a0e9ff480bab965714a"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__census.proof.log"
     },
     {
       "unit": "points__journal.ts",
@@ -283,6 +318,38 @@
       "log": "formal/validation/journeys/points__journal.proof.log"
     },
     {
+      "unit": "points__penalties.ts",
+      "total": 30,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/points/penalties.md",
+      "sourceSha256": "4c4c0a99ee4f5e7c67d24d6071843e54631eed5c5a0908b5a505cc68d474cba0",
+      "inputs": {
+        "spec/points/penalties.md": "4c4c0a99ee4f5e7c67d24d6071843e54631eed5c5a0908b5a505cc68d474cba0",
+        "spec/points/penalties.proof.dfy": "045b02ca2fbf0567bd296ec5848e12049505ddcde66e4cc7f8aa11967825aa7d"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__penalties.proof.log"
+    },
+    {
+      "unit": "points__reviews.ts",
+      "total": 12,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/points/reviews.md",
+      "sourceSha256": "4f8d415aac9fef09c53123b069374aa5687ee96bc35d3ef3bf72428e80dfd6b7",
+      "inputs": {
+        "spec/points/reviews.md": "4f8d415aac9fef09c53123b069374aa5687ee96bc35d3ef3bf72428e80dfd6b7",
+        "spec/points/reviews.proof.dfy": "04fd8c91e7617f3964c9e79f0063e6e1c9a7aca7f110f706ef018dbe0afaa00e"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__reviews.proof.log"
+    },
+    {
       "unit": "projectComposition.ts",
       "total": 3,
       "unproved": [],
@@ -291,11 +358,11 @@
       "spec": "spec/projectComposition.md",
       "sourceSha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
       "inputs": {
-        "spec/backend/projects.md": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596",
         "spec/projectComposition.md": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
-        "spec/security/enforcement.md": "25452cb8355aa12ca608b7c15a22d0cbaa120f3432f09fe585270a1922a220f7"
+        "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+        "spec/security/enforcement.md": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b"
       },
-      "sourceCurrent": false,
+      "sourceCurrent": true,
       "status": "passed",
       "log": "formal/validation/journeys/projectComposition.proof.log"
     }

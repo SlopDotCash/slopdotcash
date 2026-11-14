@@ -56,7 +56,8 @@ counterexamples, crashes, unstable inputs and failed scenarios remain failures.
 ```quint
 pure def canRecordGate(r: Release, gate: QualityGate, source: int): bool = r.phase == Candidate and source == r.source and r.branchHead == r.source
 pure def recordGate(r: Release, gate: QualityGate, source: int): Release = { ...r, passed: r.passed.union(Set(gate)) }
-pure def canCheck(r: Release, artifactDigest: int): bool = r.phase == Candidate and validData(r) and r.isolatedSecrets and r.trustedWorkflow and r.branchHead == r.source and artifactDigest > 0 and r.passed.exists(checked => checked == Types) and r.passed.exists(checked => checked == Models) and r.passed.exists(checked => checked == Unit) and r.passed.exists(checked => checked == Browser) and r.passed.exists(checked => checked == Isolation) and r.passed.exists(checked => checked == Identity)
+pure def allGatesPassed(r: Release): bool = r.passed.exists(checked => checked == Types) and r.passed.exists(checked => checked == Models) and r.passed.exists(checked => checked == Unit) and r.passed.exists(checked => checked == Browser) and r.passed.exists(checked => checked == Isolation) and r.passed.exists(checked => checked == Identity)
+pure def canCheck(r: Release, artifactDigest: int): bool = r.phase == Candidate and validData(r) and r.isolatedSecrets and r.trustedWorkflow and r.branchHead == r.source and artifactDigest > 0 and allGatesPassed(r)
 pure def check(r: Release, artifactDigest: int): Release = { ...r, phase: Checked, checkedSource: r.source, artifactDigest: artifactDigest }
 ```
 
@@ -77,14 +78,20 @@ pure def proveUnpublished(r: Release, confirmedUnpublished: bool): Release = { .
 
 ### Served bytes require exact deployment identity and current branch equivalence
 
+Discovered by the proof. A checked candidate already has its source, artifact
+and complete quality receipts. A published deployment retains a positive
+deployment identity before its served bytes can be accepted.
+
 ```quint
 pure def canVerifyServed(r: Release, deployment: int, digest: int, environment: Environment, dnsTlsHeaders: bool): bool = r.phase == Published and deployment == r.deployment and digest == r.artifactDigest and environment == r.environment and dnsTlsHeaders and r.branchHead == r.checkedSource
 pure def verifyServed(r: Release, deployment: int, digest: int, environment: Environment, dnsTlsHeaders: bool): Release = { ...r, phase: Verified, servedDigest: digest }
-pure def alwaysPublicationChecked(r: Release): bool = (r.phase == Publishing or r.phase == PublicationUncertain or r.phase == Published or r.phase == Verified) implies r.checkedSource == r.source and r.trustedWorkflow and r.isolatedSecrets and validData(r)
+pure def alwaysPublicationChecked(r: Release): bool = r.phase != Candidate implies r.checkedSource == r.source and r.trustedWorkflow and r.isolatedSecrets and validData(r) and r.artifactDigest > 0 and allGatesPassed(r)
+pure def alwaysPublishedDeployment(r: Release): bool = (r.phase == Published or r.phase == Verified) implies r.deployment > 0
 pure def alwaysVerifiedBytes(r: Release): bool = r.phase == Verified implies r.deployment > 0 and r.servedDigest == r.artifactDigest
 pure def sometimesVerified(r: Release): bool = r.phase == Verified
 pure def sometimesUncertain(r: Release): bool = r.phase == PublicationUncertain
 pure def sometimesStaging(r: Release): bool = r.environment == Staging and r.phase == Verified
+pure def sometimesRecoveredUnpublished(r: Release): bool = r.phase == Checked and r.attempt > 0 and not(r.publicationLock)
 ```
 
 Pinned publication tooling installs without lifecycle scripts or dependency
@@ -127,4 +134,12 @@ pure val registryDigestValues = Set(0, 1)
 pure val sourceValues = Set(1, 2)
 pure val sourceHeadValues = Set(1, 2)
 pure val viaValues = Set("", "a", "b")
+pure val weight_recordGate = 10
+pure val weight_check = 10
+pure val weight_acquireLock = 10
+pure val weight_publish = 10
+pure val weight_loseResponse = 10
+pure val weight_proveUnpublished = 10
+pure val weight_reconcilePublication = 10
+pure val weight_verifyServed = 10
 ```

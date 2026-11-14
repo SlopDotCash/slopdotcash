@@ -1,0 +1,24 @@
+{
+  "status": "complete",
+  "changes": [
+    {
+      "file": "spec/settlement/payment.md",
+      "discoveredBy": "proof",
+      "problem": "An unconfigured payment carried a synthetic 100-unit obligation and could be held or resumed before admission.",
+      "resolution": "The initial gross, principal and fee are zero; unconfigured instances remain AwaitingWallet without destination or retained attempts; holds require configuration. Configuration still requires a positive approved amount and the purpose-specific split."
+    },
+    {
+      "file": "spec/settlement/payment.md",
+      "discoveredBy": "proof",
+      "problem": "A type-correct synthetic state could retain an attempt for a full-award payment before its payment rail was released. Reconciliation accepted it although a reachable journal path would have refused it.",
+      "resolution": "Reconciliation independently requires fullRailReleased for PrivateFull. Retained evidence never substitutes for the separate released-rail approval."
+    },
+    {
+      "file": "spec/settlement/composition.md",
+      "discoveredBy": "proof",
+      "problem": "The composed vault/payment machine needed to preserve the empty unconfigured state and admitted-attempt facts used by the payment machine.",
+      "resolution": "The composition invariant now includes both payment admission invariants."
+    }
+  ],
+  "meaning": "These are specification corrections within the authorized product rules, not application implementation or production activation."
+}

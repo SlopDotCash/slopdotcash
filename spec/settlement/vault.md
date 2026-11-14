@@ -13,7 +13,7 @@ type Vault = { id: str, obligations: List[int], reservations: List[Reservation],
   paid: M::Amount, refunded: M::Amount, deposited: M::Amount, reservation: bool }
 pure val initial: Vault = { id: "vault", obligations: List(), reservations: List(), receipts: List(), asset: "asset", refund: "owner", free: M::zero, reserved: M::zero,
   paid: M::zero, refunded: M::zero, deposited: M::zero, reservation: false }
-pure val amountValues = Set(List(0), List(1), List(5), List(999, 999, 999, 999, 999, 999))
+pure val amountValues = Set(List(0), List(1), List(5), List(999, 1))
 pure val recipientValues = Set("contributor", "wrong", "")
 pure val vaultValues = Set("vault", "wrong")
 pure val assetValues = Set("asset", "wrong")

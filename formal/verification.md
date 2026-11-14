@@ -79,7 +79,7 @@ source hashes, finite budgets, outcomes and retained logs are recorded in the
 following files.
 
 - [Legacy verification](legacy-validation.json) records successful typechecking
-  and seeded named-test runs for all 473 original models.
+  and seeded named-test runs for all 473 original models. Those runs reported 4,160 passing named tests.
 - [Root and journey proofs](root-proofs.json) and
   [journey verification](journey-verification.json) record the active browser,
   account, contributor and Points results.
