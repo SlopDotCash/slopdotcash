@@ -168,7 +168,7 @@ type Observation = { sourceDigest: int, rubric: int, membersDigest: int, claimsD
 pure def exactIds(left: Set[int], right: Set[int]): bool = left.subseteq(right) and right.subseteq(left)
 pure def decision(h: History, observation: Observation): Verdict =
   val record = stored(h, h.selected)
-  if (h.selected == 0) Missing
+  if (h.selected <= 0) Missing
   else if (not(observation.completeEvidence)) Incomplete
   else if (record.sourceDigest != observation.sourceDigest or record.rubric != observation.rubric) Stale
   else if (not(exactIds(observation.verifiedLegacySources, observation.observedSources))) Invalid
