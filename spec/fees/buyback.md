@@ -80,7 +80,7 @@ pure def observeRefund(b: Buyback, order: int, amount: int, beneficiary: str, he
 
 ### Each proven arrival is spent in full and half the acquired SLOP can burn once
 
-SLOP token identity and the pinned swap route are checked by the receipt adapter. A paused token has no enabled purchase or burn. Burn transfers go only to the canonical dead address, and total supply is not modeled as decreasing.
+SLOP token identity and the pinned swap route are checked by the receipt adapter. A paused token has no enabled purchase or burn. Finalized burn evidence supplies valid base-unit limbs for the exact remaining burn commitment. Burn transfers go only to the canonical dead address, and total supply is not modeled as decreasing.
 
 ```quint
 pure def canPurchase(b: Buyback, purchaseRequest: PurchaseQuote): bool =
@@ -101,7 +101,7 @@ pure def canCommitBurn(b: Buyback, quantity: M::Amount, value: int, destination:
 pure def commitBurn(b: Buyback, quantity: M::Amount, value: int, destination: str, tokenPaused: bool): Buyback =
   { ...b, phase: BurnPending, burnCommitted: M::addAmounts(b.burnCommitted, quantity) }
 pure def canFinalizeBurn(b: Buyback, quantity: M::Amount, height: int, finalized: bool): bool =
-  b.phase == BurnPending and M::equalAmounts(quantity, M::subtractAmounts(b.burnCommitted, b.burned)) and height > b.finalizedHeight and finalized
+  b.phase == BurnPending and M::validAmount(quantity) and M::equalAmounts(quantity, M::subtractAmounts(b.burnCommitted, b.burned)) and height > b.finalizedHeight and finalized
 pure def finalizeBurn(b: Buyback, quantity: M::Amount, height: int, finalized: bool): Buyback =
   { ...b, phase: Burned, burned: M::addAmounts(b.burned, quantity), finalizedHeight: height }
 pure def alwaysShareBounded(b: Buyback): bool = M::validAmount(b.income) and M::validAmount(b.committed) and M::compareAmounts(b.committed, H::half(b.income).quotient) <= 0
