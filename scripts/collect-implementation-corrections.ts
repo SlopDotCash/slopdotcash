@@ -348,7 +348,7 @@ export class CorrectionEvidenceCache {
         resolve(
           this.directory,
           "attempts",
-          `${Date.now()}-${this.requests}-${key}.json`,
+          `${Date.now()}-${this.requests}-${key}-${randomUUID()}.json`,
         ),
         new TextEncoder().encode(
           encode({
