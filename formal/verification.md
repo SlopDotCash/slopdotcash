@@ -302,6 +302,15 @@ page view traffic to the site's own origin.
   money obligations. This checks ordered filing, pinned inputs, and cumulative
   project and program caps.
   [Accrual proof](validation/finance/referral-accrual-proof-complete.json)
+- Referral publication discharged all 287 obligations. Voiding the latest
+  unclaimed root preserves recorded wallet pins, cumulative amounts and
+  previously settled gas.
+  [Publication proof](validation/finance/referral-publication-proof-complete.json)
+- Slopbot work-unit value inference discharged all 90 obligations, including
+  reservation of at most three attempt slots per key and live authority
+  before each provider call. It replayed 18 generated traces and passed 18
+  directed groups for retained responses and publication fences.
+  [Inference results](validation/source-coverage/slopbot-value-inference.json) · [Source crosswalk](validation/source-coverage/slopbot-value-inference-crosswalk.json)
 - The direct standard private-award journal discharged all 101 obligations.
   Five native Quint witnesses distinguish retained EVM legs from the atomic
   Solana transfer and exercise receipt replay and recovery.

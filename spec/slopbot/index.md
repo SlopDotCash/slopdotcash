@@ -5,6 +5,7 @@ scoring, qualified closure and appeals. Slopbot review remains free.
 
 - [Review and provider recovery](./review.md)
 - [Review claims and late-worker fencing](./reviewLease.md)
+- [Work-unit value inference](./valueInference.md)
 - [Closure eligibility](./closure.md)
 - [Appeals and immutable penalties](./appeals.md)
 
