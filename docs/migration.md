@@ -9,8 +9,9 @@ pushed. The old application remains on its existing branches.
 
 The source manifest pins every repository and commit. The requested `develop`
 branch resolves to this repository's `development` integration branch. Its PRD
-is byte-identical to the PRD at the pinned `main` commit. The PRD snapshot and
-Slop contribution and agent policies remain available under `docs/`.
+is byte-identical to the PRD at the matching `main` commit. The source manifest
+records both current revisions and preserves the original requirements pin.
+The PRD snapshot and Slop contribution and agent policies remain under `docs/`.
 
 The user's 13 November 2026 decision overrides one sentence of the source PRD.
 New project drafts start with automatic closure unchecked. Missing saved
@@ -18,9 +19,9 @@ consent is false. Existing project consent stays as recorded.
 
 Current policy includes November's repository-append flow, line-weighted
 implementation Points, the separate contributor allocation, buyback rules,
-referral reactivation conditions and environment-specific published-data
-release option. Earlier snapshots in the original project history remain
-historical evidence.
+referral reactivation conditions, custom referral links, public referred
+projects, provisional EVM vault funding and manual release coverage options.
+Earlier snapshots remain in the original project history.
 
 ## Ownership
 

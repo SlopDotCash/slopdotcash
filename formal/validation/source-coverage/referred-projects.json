@@ -1,0 +1,38 @@
+{
+  "sourceMain": "e170d85aa5efcb45e2971c1733b7bb44f4226f32",
+  "sourceDevelopment": "5268ca066dfc67251715eceaa5c1e943b80a0b6c",
+  "source": "spec/backend/referralProjects.md",
+  "sourceHash": "13ad1b6359022ae935b82af23159be98c6b53be35583b7f6a1b927182b92aba8",
+  "proofFileHash": "fc8792316c6b1c5759e091ae5b1a4b34b8cf81b385f5c1246a7d0aeb5292b4de",
+  "proof": {
+    "generatedDafnySha256": "0741694995df543bb8e9464e1c21273427d7bd908d74328976945482fcf09aa8",
+    "total": 6,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 187598332717978; to simulate again: pnpm exec quint run gen/backend__referralProjects.run.qnt --main backend__referralProjects_run --step probe --invariant inv --max-samples 60 --max-steps 10 --mbt --seed 187598332717978",
+    "replayed": 20
+  },
+  "witnesses": {},
+  "directed": [
+    "empty public list",
+    "active and paused preserve canonical order",
+    "retired and incomplete attribution omitted",
+    "only public fields returned",
+    "base, trailing slash, child, method and unavailable outcomes"
+  ],
+  "pinnedSources": {
+    "docs/slop-product-requirements.md": "84dec2d53b1a2cf670265bd3954c68ca6d7a5b548721ea3d60e4e903ceec95a7",
+    "backend/referrals/handler.ts": "1b5de82ce245f509c8d1d7bd6e1c7588dc4a0fb03a9f598a584a707efdb0955b",
+    "workers/referral-accrual/referral-accrual.test.ts": "7ac1cf77762a796b54d9e63a20c76a15b6bade3ed391bf571cf10b2eeb4a7e0a",
+    "migrations/0055_project_referrer.sql": "df17af82c695b8d3bfd74a76bf2bcf0d9a903ffc32218587994176130c7bf961"
+  },
+  "sourceDifference": "The source query does not filter retired project rows. The approved route says listed rows are already public, and the supplied AGENTS.md hides retired projects from every page and list. The target projection uses canonical public visibility and flags the difference for implementation conformance.",
+  "boundaries": [
+    "GitHub identity fields come from immutable registration attribution.",
+    "The adapter owns exact HTTP response, query ordering and selection from a current D1 snapshot."
+  ]
+}

@@ -128,8 +128,8 @@ pure def lawHealthNeverBlocksContribution(reportingHealthFresh: bool): bool = co
 ```
 
 The hourly health job neither publishes code nor holds the publication lock.
-Mainnet activation proceeds through Base, Solana and Robinhood qualification,
-with the recorded Ethereum waiver. Native assets and Token-2022 implementation
+The [mainnet escrow qualification ledger](./escrowQualification.md) governs
+Base, Solana and Robinhood qualification and the recorded Ethereum waiver. Native assets and Token-2022 implementation
 approval do not authorize an upgrade or funding. Existing completed setup and
 gas top-up steps are never repeated merely to fill an evidence row. Full-award
 payments and closure retain their separate release and qualification gates.

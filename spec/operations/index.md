@@ -9,6 +9,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Local Solana validator stages](./localValidator.md)
 - [Notifications](./notifications.md)
 - [Release and operational qualification](./release.md)
+- [Mainnet escrow qualification](./escrowQualification.md)
 - [Release and verification coverage](./releaseCoverage.md)
 - [Independent payment job runs](./paymentJobs.md)
 

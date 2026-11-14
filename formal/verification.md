@@ -16,6 +16,10 @@ model files. The model inventory and its legacy test results apply to the
 pinned migration snapshot. All six later files also passed direct Quint
 typechecking and seeded named tests. [Later main changes](validation/main-model-delta.json)
 
+The current requirements snapshot matches both recorded 14 November tips. It
+includes provisional EVM vault funding, the manual release options, custom
+referral links and the public referred-project list. [Source updates](validation/active-proof/source-policy-delta.json)
+
 ## Rules added
 
 The specification tree defines account and browser ownership, project setup
@@ -319,6 +323,27 @@ page view traffic to the site's own origin.
   five named outcomes. Directed checks covered claim takeover, exact duplicate
   evidence, stale completion, version replacement and private routing.
   [Screening proof and replays](validation/source-coverage/private-report-screening.json)
+- Points recovery discharged all nine obligations. Reconciliation keeps the
+  exact award revision prefix and the union of complete source coverage, even
+  when a newer copy has coverage changes alone.
+  [Points recovery proof and replays](validation/source-coverage/points-recovery.json)
+- Mainnet escrow qualification discharged all 147 obligations and reached six
+  named outcomes. Exact network, vault and review evidence gates activation,
+  and an uncertain attempt stays durable until exact finality is checked.
+  [Qualification proof and replays](validation/source-coverage/escrow-qualification.json)
+- Ranked snapshot validation discharged all ten obligations and passed 29
+  directed groups. It checks hydration identity, coverage and payment-basis
+  eligibility, including the exact pre-cutoff review boundary.
+  [Ranked snapshot evidence](validation/source-coverage/ranked-snapshot.json)
+- Browser direct-bounty prompt ownership discharged all 92 obligations.
+  Seven native Quint witnesses and 250 replays exercised stale wallet replies,
+  durable prompt identity and the backend-verification request boundary.
+  [Browser prompt proof](validation/active-proof/frontend/direct-bounty-prompt-proof.json)
+- The referred-project list discharged all six obligations and replayed 20
+  generated traces. The current legacy query lacks a retirement filter. The
+  specification uses public registry eligibility to follow the supplied
+  visibility rule.
+  [Referred-project list evidence](validation/source-coverage/referred-projects.json)
 - The direct standard private-award journal discharged all 101 obligations.
   Five native Quint witnesses distinguish retained EVM legs from the atomic
   Solana transfer and exercise receipt replay and recovery.

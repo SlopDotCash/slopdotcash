@@ -355,7 +355,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "962d985ac3e531ad65d3b0026c633f9d013505b0319fd4ce72f8f370230da2e8",
+      "sha256": "b733173a92a944b79de91c759382ab9740918020b13a2f892116c06f5fea86df",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -374,16 +374,20 @@
           "line": 9
         },
         {
-          "target": "./referralCodes.md",
+          "target": "./referralProjects.md",
           "line": 10
         },
         {
-          "target": "./projects.md",
+          "target": "./referralCodes.md",
           "line": 11
         },
         {
-          "target": "./listing.md",
+          "target": "./projects.md",
           "line": 12
+        },
+        {
+          "target": "./listing.md",
+          "line": 13
         }
       ]
     },
@@ -659,6 +663,57 @@
             "sValues",
             "keyValues",
             "membershipValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/backend/referralProjects.md",
+      "sha256": "13ad1b6359022ae935b82af23159be98c6b53be35583b7f6a1b927182b92aba8",
+      "module": "backend__referralProjects",
+      "stories": [
+        {
+          "heading": "Story: Read immutable referral attribution for public registrations",
+          "line": 18
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Read immutable referral attribution for public registrations / The route exposes only successful public reads and fails explicitly when the registry is unavailable",
+          "line": 20,
+          "definitions": [
+            "Method",
+            "Path",
+            "Result",
+            "publicRead",
+            "lawMethodsAreReadOnly",
+            "lawFailedRegistryCannotList"
+          ]
+        },
+        {
+          "heading": "Story: Read immutable referral attribution for public registrations / Only current public projects with complete immutable attribution appear, in registry order",
+          "line": 40,
+          "definitions": [
+            "RegistryStatus",
+            "Registration",
+            "PublicProject",
+            "visibleReferral",
+            "projectProjection",
+            "referredProjects",
+            "lawProjectionPreservesExactPublicFields",
+            "lawHiddenOrIncompleteRowOmitted",
+            "lawPublicRegistrationAppears",
+            "lawEmptyRegistryReturnsEmpty"
+          ]
+        },
+        {
+          "heading": "Story: Read immutable referral attribution for public registrations / Simulation covers active and paused registrations, partial attribution and retirement",
+          "line": 69,
+          "definitions": [
+            "rowValues",
+            "orderedRowsValues"
           ]
         }
       ],
@@ -2518,8 +2573,146 @@
       "references": []
     },
     {
+      "path": "spec/frontend/directBountyPrompt.md",
+      "sha256": "3153d6670dcddaa7cc99d72c02a97d600ea3153b00930bc5970cbc53b2801b04",
+      "module": "frontend__directBountyPrompt",
+      "stories": [
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send / A wallet prompt starts only after an atomic storage write owns its nonce",
+          "line": 19,
+          "definitions": [
+            "Slot",
+            "Surface",
+            "Mode",
+            "Scope",
+            "Plan",
+            "Plans",
+            "Entry",
+            "Entries",
+            "Pending",
+            "Hashes",
+            "View",
+            "Candidate",
+            "Candidates",
+            "WalletResult",
+            "Verification",
+            "CheckOutcome",
+            "Prompt",
+            "noScope",
+            "noPlan",
+            "noEntry",
+            "noEntries",
+            "noPending",
+            "noHashes",
+            "noView",
+            "noCandidate",
+            "initial",
+            "plan",
+            "entry",
+            "view",
+            "writeEntry",
+            "writeView",
+            "validPlan",
+            "validScope",
+            "canOpen",
+            "open",
+            "canMount",
+            "mount",
+            "canDepart",
+            "depart",
+            "blocksSend",
+            "canReserve",
+            "reserve"
+          ]
+        },
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send / A late wallet result updates only the prompt that still owns the stored entry",
+          "line": 96,
+          "definitions": [
+            "samePrompt",
+            "canResolve",
+            "resolve"
+          ]
+        },
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send / Verification candidates merge atomically with current storage",
+          "line": 126,
+          "definitions": [
+            "sameEntryOwner",
+            "conflicts",
+            "recoveredEntry",
+            "verifiedCandidate",
+            "canCheck",
+            "check",
+            "canRestoreLegacy",
+            "restoreLegacy",
+            "canObserveHash",
+            "observeHash",
+            "canObserveEmpty",
+            "observeEmpty"
+          ]
+        },
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send / Storage keeps the other leg and never grants settlement authority",
+          "line": 181,
+          "definitions": [
+            "wellScopedEntry",
+            "wellScopedView",
+            "alwaysScope",
+            "alwaysStorageOwned",
+            "alwaysViewOwned",
+            "stepScopeFixed",
+            "stepIdsRemainSpent",
+            "stepNoOtherSlotChanges",
+            "stepCheckKeepsOwnership",
+            "keepsStoredResult",
+            "stepCheckKeepsStoredHashes",
+            "stepCompletionKeepsReplacement",
+            "stepEffectsOnlyVerify",
+            "sometimesPending",
+            "sometimesKnownInMemory",
+            "sometimesBothHashes",
+            "sometimesLegacyCandidate",
+            "sometimesChecked"
+          ]
+        },
+        {
+          "heading": "Story: Make wallet outcomes recoverable without repeating an uncertain send / Simulation covers both slots, two views, and conflicting outcomes",
+          "line": 232,
+          "definitions": [
+            "exampleScope",
+            "examplePlans",
+            "scopeValues",
+            "plansValues",
+            "byValues",
+            "identityValues",
+            "hashValues",
+            "candidatesValues",
+            "weight_open",
+            "weight_mount",
+            "weight_reserve",
+            "weight_resolve",
+            "weight_check"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../settlement/directBounty.md",
+          "line": 7
+        }
+      ]
+    },
+    {
       "path": "spec/frontend/index.md",
-      "sha256": "594926c667e0c7721462a7ba915be170482239072d2e54a17d86dcef9c84cf1b",
+      "sha256": "585c56428a69220eca9cab7d244cb3271194311195c6d6ba5b25af6dc01f894e",
       "module": "frontend",
       "stories": [],
       "rules": [],
@@ -2534,36 +2727,44 @@
           "line": 10
         },
         {
-          "target": "./snapshotCache.md",
+          "target": "./rankedSnapshot.md",
           "line": 11
         },
         {
-          "target": "./drafts.md",
+          "target": "./snapshotCache.md",
           "line": 12
         },
         {
-          "target": "./reportDetails.md",
+          "target": "./drafts.md",
           "line": 13
         },
         {
-          "target": "./projections.md",
+          "target": "./directBountyPrompt.md",
           "line": 14
         },
         {
-          "target": "./presentation.md",
+          "target": "./reportDetails.md",
           "line": 15
         },
         {
-          "target": "./referralSettings.md",
+          "target": "./projections.md",
           "line": 16
         },
         {
-          "target": "./provisionalVault.md",
+          "target": "./presentation.md",
           "line": 17
         },
         {
-          "target": "./batchedDeposit.md",
+          "target": "./referralSettings.md",
           "line": 18
+        },
+        {
+          "target": "./provisionalVault.md",
+          "line": 19
+        },
+        {
+          "target": "./batchedDeposit.md",
+          "line": 20
         }
       ]
     },
@@ -3016,6 +3217,131 @@
       ]
     },
     {
+      "path": "spec/frontend/rankedSnapshot.md",
+      "sha256": "c426806425e92583183f45bcad23db247819d759a08d386a6f2f0db64633d988",
+      "module": "frontend__rankedSnapshot",
+      "stories": [
+        {
+          "heading": "Story: Hydrate details only for real outcomes within the collected verification window",
+          "line": 23
+        },
+        {
+          "heading": "Story: Refuse a public artifact that contradicts its published coverage",
+          "line": 54
+        },
+        {
+          "heading": "Story: Preserve the last structurally accepted view after a refusal",
+          "line": 173
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Hydrate details only for real outcomes within the collected verification window / First occurrences are retained per class and hydration classes are disjoint",
+          "line": 25,
+          "definitions": [
+            "Hydrated",
+            "BuildInput",
+            "firstHydration",
+            "validHydration"
+          ]
+        },
+        {
+          "heading": "Story: Refuse a public artifact that contradicts its published coverage / Open counts are exact and processed counts are maximum distinct source counts",
+          "line": 56,
+          "definitions": [
+            "EventKind",
+            "LedgerRow",
+            "Counts",
+            "Window",
+            "Marker",
+            "Change",
+            "PaymentBasis",
+            "Snapshot",
+            "verificationMillis",
+            "paymentCutoff",
+            "paymentPolicy",
+            "omissionReason",
+            "uniqueIds",
+            "distinctIds",
+            "sourceIds",
+            "detailedIds",
+            "reviewedIds",
+            "validWindow",
+            "nonnegativeCounts",
+            "validCoverage"
+          ]
+        },
+        {
+          "heading": "Story: Refuse a public artifact that contradicts its published coverage / Explicit payment differences and an omission marker are exclusive",
+          "line": 114,
+          "definitions": [
+            "hasPreCutoffReview",
+            "validOmission",
+            "validDelta",
+            "reconstructLedger",
+            "reconstructAttributionIds",
+            "validExplicit",
+            "scoreAcceptable",
+            "paymentAcceptable",
+            "paymentView",
+            "attributionById",
+            "reconstructedAttributions"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the last structurally accepted view after a refusal / A candidate check records score and payment results separately",
+          "line": 175,
+          "definitions": [
+            "Result",
+            "RankedSnapshot",
+            "noMarker",
+            "noBasis",
+            "emptyWindow",
+            "emptyCounts",
+            "emptySnapshot",
+            "initial",
+            "canInspect",
+            "inspect",
+            "canValidateBuild",
+            "validateBuild",
+            "alwaysRetainedScoreValidated",
+            "alwaysRetainedPaymentValidated",
+            "stepRefusalPreservesViews",
+            "stepScoreOnlyPreservesPayment",
+            "sometimesRefused",
+            "sometimesScoreOnly",
+            "sometimesPayment",
+            "exactMarker",
+            "exactBasis",
+            "omittedSample",
+            "explicitSample",
+            "directSample",
+            "reviewSample",
+            "sampleValues",
+            "detailSample",
+            "buildSample",
+            "inputValues",
+            "digestValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../points/census.md",
+          "line": 6
+        },
+        {
+          "target": "./projections.md",
+          "line": 7
+        },
+        {
+          "target": "./snapshotCache.md",
+          "line": 8
+        }
+      ]
+    },
+    {
       "path": "spec/frontend/referralSettings.md",
       "sha256": "be162ae92ebb9ef3852757276b85c24ca6c4b34caab4d66bd803cf9ba32ea919",
       "module": "frontend__referralSettings",
@@ -3363,8 +3689,170 @@
       "references": []
     },
     {
+      "path": "spec/operations/escrowQualification.md",
+      "sha256": "f6fe181b0a481a267fc0020fb5ab9a12b85b6deceac901d4714d81784f8f702a",
+      "module": "operations__escrowQualification",
+      "stories": [
+        {
+          "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope",
+          "line": 17
+        },
+        {
+          "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls",
+          "line": 184
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization",
+          "line": 19,
+          "definitions": [
+            "Network",
+            "QualificationPhase",
+            "StepKind",
+            "Plan",
+            "PlanEvidence",
+            "FreshChecks",
+            "Operation",
+            "Result",
+            "RecordedOutcome",
+            "Qualification",
+            "emptyPlan",
+            "emptyOperation",
+            "initial",
+            "networkFor",
+            "stablecoin",
+            "gasCeiling",
+            "validPlan",
+            "completeEvidence",
+            "canAdmitPlan",
+            "admitPlan",
+            "alwaysOrderedQualification",
+            "stepProgressIsSingleNetwork",
+            "alwaysAwaitingLaneIsClear"
+          ]
+        },
+        {
+          "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation",
+          "line": 64,
+          "definitions": [
+            "fresh",
+            "allowedOperation",
+            "canRetainAttempt",
+            "retainAttempt",
+            "liveAttempt",
+            "mayRetransmit",
+            "alwaysPendingBound",
+            "alwaysNativeCeiling",
+            "alwaysPaymentAfterDeposit"
+          ]
+        },
+        {
+          "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Missing or mismatched evidence holds the attempt, and finalized failure stops further actions",
+          "line": 97,
+          "definitions": [
+            "canMissReceipt",
+            "missReceipt",
+            "canStopBeforeAttempt",
+            "stopBeforeAttempt",
+            "canResume",
+            "resume",
+            "matchesResult",
+            "receiptState",
+            "canReconcileAttempt",
+            "reconcileAttempt",
+            "canRetainHistorical",
+            "retainHistorical",
+            "stepPendingClearedByExactReceipt",
+            "stepPaidNeedsAReceipt",
+            "stepAttemptIdentityPersists",
+            "stepReceiptHistoryPersists",
+            "sometimesHeld",
+            "sometimesStopped"
+          ]
+        },
+        {
+          "heading": "Story: Qualify escrow one network at a time with an explicitly approved scope / Completed lanes do not repeat, and Ethereum requires both shared EVM qualifications and its own evidence",
+          "line": 144,
+          "definitions": [
+            "ActivationEvidence",
+            "canCompleteLane",
+            "completeLane",
+            "validActivation",
+            "canActivateLane",
+            "activateLane",
+            "alwaysActivationWithinQualification",
+            "stepActivationIsSingleNetwork",
+            "canActivateEthereum",
+            "activateEthereum",
+            "alwaysEthereumAfterSequence",
+            "stepEthereumActivePersists",
+            "qualificationCountsForRewards",
+            "lawQualificationTransfersAreExcluded",
+            "sometimesPaid",
+            "sometimesThreeLanesQualified",
+            "sometimesThreeLanesActivated",
+            "sometimesEthereumActive"
+          ]
+        },
+        {
+          "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Native and Token-2022 qualification requires the whole asset flow and a reviewed authorization for the particular action",
+          "line": 186,
+          "definitions": [
+            "AssetScope",
+            "AssetChecks",
+            "assetFlowQualified",
+            "assetActionAuthorized",
+            "lawToken2022RequiresConversion",
+            "lawScopeNeedsActionAuthority"
+          ]
+        },
+        {
+          "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization",
+          "line": 207,
+          "definitions": [
+            "SolanaUpgradeEvidence",
+            "ExistingSolanaStep",
+            "solanaUpgradeQualified",
+            "lawSolanaBytesAndTestnetRequired",
+            "historicalSolanaStepComplete",
+            "mayRepeatHistoricalSolanaStep",
+            "lawHistoricalSolanaStepsDoNotRepeat"
+          ]
+        },
+        {
+          "heading": "Story: Keep previously approved scope and evidence exceptions attached to their specific controls / Sample plans, receipts and checks cover the allowed progression and conflicting evidence",
+          "line": 227,
+          "definitions": [
+            "planValues",
+            "evidenceValues",
+            "checksValues",
+            "sampleTransaction",
+            "sampleNetworks",
+            "operationValues",
+            "resultValues",
+            "activationValues",
+            "flowValues",
+            "upgradeValues",
+            "weight_admitPlan",
+            "weight_completeLane",
+            "weight_stopBeforeAttempt",
+            "weight_resume",
+            "weight_retainHistorical",
+            "weight_retainAttempt",
+            "weight_reconcileAttempt",
+            "weight_missReceipt",
+            "weight_activateLane",
+            "weight_activateEthereum"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/operations/index.md",
-      "sha256": "7e51e510edb2f8712156be2cde399e0ab5b8ef1ff65133478a637baf25a2f432",
+      "sha256": "1d5f3d60f2fd80b7f1e7beac29f870783ab51b108226541b55f1fd19f252d9d8",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -3395,12 +3883,16 @@
           "line": 11
         },
         {
-          "target": "./releaseCoverage.md",
+          "target": "./escrowQualification.md",
           "line": 12
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./releaseCoverage.md",
           "line": 13
+        },
+        {
+          "target": "./paymentJobs.md",
+          "line": 14
         }
       ]
     },
@@ -3834,7 +4326,7 @@
     },
     {
       "path": "spec/operations/release.md",
-      "sha256": "4ed36d5d184079d482210a62934d4867bc7b009235d5d6a3d6cc5e397fe92981",
+      "sha256": "ee00b6382a6759e82dc92d815f9f3fdb0a207f5aff531c70d7eff4cbcd547935",
       "module": "operations__release",
       "stories": [
         {
@@ -3971,6 +4463,10 @@
         {
           "target": "./releaseCoverage.md",
           "line": 65
+        },
+        {
+          "target": "./escrowQualification.md",
+          "line": 131
         }
       ]
     },
@@ -4328,7 +4824,7 @@
     },
     {
       "path": "spec/points/index.md",
-      "sha256": "1023dffd6f73467c118c34ffea5a169092aad804f68def188a057c55275ac00b",
+      "sha256": "024bd09ca3fa72b072c89592a925acadd1f05860cf0bbdf9b7d1b49d390fa496",
       "module": "points",
       "stories": [],
       "rules": [],
@@ -4363,8 +4859,12 @@
           "line": 13
         },
         {
-          "target": "./publication.md",
+          "target": "./recovery.md",
           "line": 14
+        },
+        {
+          "target": "./publication.md",
+          "line": 15
         }
       ]
     },
@@ -4523,6 +5023,94 @@
         {
           "target": "./journal.md",
           "line": 7
+        }
+      ]
+    },
+    {
+      "path": "spec/points/recovery.md",
+      "sha256": "2426821b88449c8d2fbe50e18c3c64986524522721b6e285addc17632aa8c540",
+      "module": "points__recovery",
+      "stories": [
+        {
+          "heading": "Story: Resume generation from the complete published journal",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Resume generation from the complete published journal / Recovery requires both verified public copies from the requested environment",
+          "line": 19,
+          "definitions": [
+            "Environment",
+            "SourceCoverage",
+            "PublicHistory",
+            "CopyEvidence",
+            "RecoveryEvidence",
+            "RecoveryOutcome",
+            "Recovery",
+            "initial",
+            "originMatches",
+            "verifiedCopies",
+            "checkpointIsLater",
+            "laterCopy",
+            "earlierCopy",
+            "historiesAgree",
+            "admissibleRecovery",
+            "pendingResult",
+            "canRecover",
+            "canRefuse",
+            "refuse",
+            "stepTerminalResult"
+          ]
+        },
+        {
+          "heading": "Story: Resume generation from the complete published journal / Recovery retains exact coverage even when no award revision changes",
+          "line": 57,
+          "definitions": [
+            "unionCoverage",
+            "recoveredHistory",
+            "recover",
+            "lawCoverageRetained",
+            "lawOnlyObservedCoverage",
+            "lawRecoveryStaysInEnvironment",
+            "lawRecoveryKeepsNewerTime",
+            "lawRecoveryKeepsCompleteRevisions"
+          ]
+        },
+        {
+          "heading": "Story: Resume generation from the complete published journal / Coverage-only recovery and all refusal reasons can occur",
+          "line": 91,
+          "definitions": [
+            "firstCoverage",
+            "refreshedCoverage",
+            "otherCoverageRow",
+            "firstHistory",
+            "refreshedHistory",
+            "evidenceFor",
+            "checkedBoth",
+            "verifiedCheckpointRefresh",
+            "extendedCheckpoint",
+            "forkedCopies",
+            "differentEnvironment",
+            "unverifiedPages",
+            "evidenceValues",
+            "baseValues",
+            "otherCoverageValues",
+            "rowValues",
+            "sometimesCoverageOnlyRecovered",
+            "sometimesWrongEnvironment",
+            "sometimesUnverified",
+            "sometimesDiverged"
+          ]
+        }
+      ],
+      "imports": [
+        "points__publication"
+      ],
+      "references": [
+        {
+          "target": "./publication.md",
+          "line": 5
         }
       ]
     },
@@ -5025,7 +5613,7 @@
     },
     {
       "path": "spec/security/index.md",
-      "sha256": "3853f59468ffc5b2a4fdce363e9eb19fe65e62eaef1a91566b4fb1a3cf3879eb",
+      "sha256": "ae9c98325bbea402374485ce44090c8f5be6078cfccea627c043f9234b0afcc0",
       "module": "security",
       "stories": [],
       "rules": [],
@@ -5044,20 +5632,24 @@
           "line": 9
         },
         {
-          "target": "./cases.md",
+          "target": "./screening.md",
           "line": 10
         },
         {
-          "target": "./terms.md",
+          "target": "./cases.md",
           "line": 11
         },
         {
-          "target": "./evidence.md",
+          "target": "./terms.md",
           "line": 12
         },
         {
-          "target": "./privacy.md",
+          "target": "./evidence.md",
           "line": 13
+        },
+        {
+          "target": "./privacy.md",
+          "line": 14
         }
       ]
     },
@@ -5203,6 +5795,108 @@
           "line": 67,
           "definitions": [
             "actorValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/security/screening.md",
+      "sha256": "27fafe9f9765065177d967ce33197c4bcfb4ccb75efe965ce8b6fe48f37b76a9",
+      "module": "security__screening",
+      "stories": [
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing",
+          "line": 9
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing / Claim queued, unavailable or expired work for the current revision",
+          "line": 11,
+          "definitions": [
+            "Phase",
+            "Review",
+            "Screening",
+            "Clock",
+            "Claim",
+            "initial",
+            "qualified",
+            "recoverable",
+            "canClaim",
+            "claim",
+            "owns",
+            "alwaysClockBindings",
+            "stepRevisionAdvancesOnce"
+          ]
+        },
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing / The fixed private route treats missing and partial provider evidence as unavailable",
+          "line": 47,
+          "definitions": [
+            "ProviderRoute",
+            "Observation",
+            "Input",
+            "mayCall",
+            "providerPhase",
+            "observedPhase",
+            "privateReasonMayUseProposal",
+            "acceptsObservation",
+            "canFinish",
+            "finish",
+            "lawDuplicateNeverCalls",
+            "lawOnlySurplusReceivesLoadedVersion",
+            "sometimesLegitimate",
+            "sometimesNeedsInformation",
+            "sometimesUnavailable"
+          ]
+        },
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing / A late result cannot replace human review or a newly saved version",
+          "line": 97,
+          "definitions": [
+            "RevisionEvidence",
+            "canReviewReport",
+            "reviewReport",
+            "revisionPermitted",
+            "canReplace",
+            "replace",
+            "alwaysHistoryMatchesVersion",
+            "stepReportHistoryRetained",
+            "sometimesRevised"
+          ]
+        },
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing / Routing writes only private references for the current qualified version",
+          "line": 132,
+          "definitions": [
+            "Routing",
+            "canRoute",
+            "route",
+            "alwaysRecordedNoticeBelongsToRetainedVersion",
+            "stepNoticeHistoryRetained",
+            "stepNewRoutingNeedsQualification",
+            "sometimesRouted"
+          ]
+        },
+        {
+          "heading": "Story: Screen the exact saved version privately before owner routing / Samples exercise missing, stale, duplicate and current screening evidence",
+          "line": 158,
+          "definitions": [
+            "seenRevisionValues",
+            "nowMsValues",
+            "digestValues",
+            "tokenValues",
+            "inputValues",
+            "observationValues",
+            "evidenceValues",
+            "routingValues",
+            "weight_claim",
+            "weight_finish",
+            "weight_reviewReport",
+            "weight_replace",
+            "weight_route"
           ]
         }
       ],
@@ -5593,7 +6287,7 @@
     },
     {
       "path": "spec/settlement/payment.md",
-      "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b",
+      "sha256": "4895f39f23c1c88a98d40b06411cd6e06d35805096c5c82344b014408408f141",
       "module": "settlement__payment",
       "stories": [
         {
@@ -5637,7 +6331,7 @@
           ]
         },
         {
-          "heading": "Story: Pay one obligation exactly once / Direct rails journal before submission and retain every uncertain attempt",
+          "heading": "Story: Pay one obligation exactly once / The released direct full-award rail journals before submission and retain every uncertain attempt",
           "line": 59,
           "definitions": [
             "canJournal",
@@ -5718,11 +6412,16 @@
         "settlement__money",
         "settlement__paymentDispatch"
       ],
-      "references": []
+      "references": [
+        {
+          "target": "./directBounty.md",
+          "line": 9
+        }
+      ]
     },
     {
       "path": "spec/settlement/composition.md",
-      "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5",
+      "sha256": "58a5ffaf95c1a2428428f8b8df03924125cc5352f6f7d36a53f456849fa28127",
       "module": "settlement__composition",
       "stories": [
         {
@@ -5731,7 +6430,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners",
-          "line": 93
+          "line": 94
         }
       ],
       "rules": [
@@ -5755,7 +6454,7 @@
         },
         {
           "heading": "Story: Reserve funds for the immutable contributor / Current and historical consent belong to the shared outbox",
-          "line": 63,
+          "line": 64,
           "definitions": [
             "DeliveryUpdate",
             "canUpdateDelivery",
@@ -5765,7 +6464,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners / An exact finalized event records one receipt and consumes the matching reserve",
-          "line": 95,
+          "line": 96,
           "definitions": [
             "canReconcile",
             "reconcile",
@@ -5781,7 +6480,7 @@
         },
         {
           "heading": "Story: Commit a canonical scanner payout across all three owners / Simulation samples exercise independent actor and wallet identities",
-          "line": 147,
+          "line": 148,
           "definitions": [
             "amountValues",
             "grossValues",
@@ -5804,8 +6503,16 @@
       ],
       "references": [
         {
+          "target": "./directBounty.md",
+          "line": 30
+        },
+        {
+          "target": "./payment.md",
+          "line": 32
+        },
+        {
           "target": "./paymentDispatch.md",
-          "line": 67
+          "line": 68
         }
       ]
     },
@@ -5886,8 +6593,162 @@
       "references": []
     },
     {
+      "path": "spec/settlement/directBounty.md",
+      "sha256": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
+      "module": "settlement__directBounty",
+      "stories": [
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A standard award freezes its network, asset and two split amounts",
+          "line": 19,
+          "definitions": [
+            "Network",
+            "Lane",
+            "Wallet",
+            "Terms",
+            "Intent",
+            "Transfer",
+            "ReceiptPair",
+            "EndKind",
+            "Retirement",
+            "ArchivedIntent",
+            "TxUse",
+            "DirectBounty",
+            "noWallet",
+            "noIntent",
+            "noTerms",
+            "noRetirement",
+            "noTransfer",
+            "initial",
+            "validWallet",
+            "validTerms",
+            "canAdmit",
+            "admit",
+            "canObserveCaseRevision",
+            "observeCaseRevision",
+            "canObserveWallets",
+            "observeWallets",
+            "canConsent",
+            "consent",
+            "scopedWallets",
+            "authorizedWallets",
+            "wellFormedIntent",
+            "canPrepare",
+            "prepare"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Each finalized transaction belongs to one ledger and one exact request",
+          "line": 106,
+          "definitions": [
+            "matchesIntent",
+            "used",
+            "canRecordOtherUse",
+            "recordOtherUse",
+            "canRecordTransfer",
+            "recordTransfer",
+            "canRecordPair",
+            "recordPair",
+            "paid",
+            "heldResearcher",
+            "pendingResearcherRequest",
+            "pendingFeeRequest",
+            "pendingBundleRequest",
+            "receivedFee"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A recovered request changes only an unpaid leg after exact retirement",
+          "line": 169,
+          "definitions": [
+            "sameResearcherLeg",
+            "sameFeeLeg",
+            "freshNonce",
+            "freshMessage",
+            "canRecover",
+            "recover"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Paid legs and prior intent generations remain permanent",
+          "line": 221,
+          "definitions": [
+            "alwaysUnadmittedEmpty",
+            "alwaysAdmittedTerms",
+            "alwaysIntentBound",
+            "alwaysResearcherReceipt",
+            "alwaysFeeReceipt",
+            "alwaysSolanaReceiptAtomic",
+            "alwaysIndependentReceiptIds",
+            "alwaysNoOtherTransactionReuse",
+            "stepTermsUnchanged",
+            "stepPaidLegsUnchanged",
+            "stepIntentHistory",
+            "sometimesPartialFee",
+            "sometimesPartialResearcher",
+            "sometimesPaidEvm",
+            "sometimesPaidSolana",
+            "sometimesHeld",
+            "sometimesRecovered"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Simulation covers both payment shapes and conflicting evidence",
+          "line": 267,
+          "definitions": [
+            "payerOne",
+            "reporterOne",
+            "reporterTwo",
+            "termsEvm",
+            "termsSolana",
+            "evmIntent",
+            "solanaIntent",
+            "researcherTransfer",
+            "feeTransfer",
+            "bundledTransfer",
+            "nextResearcherIntent",
+            "nextFeeIntent",
+            "nextSolanaIntent",
+            "researcherRetirement",
+            "feeRetirement",
+            "solanaRetirement",
+            "termsValues",
+            "walletValues",
+            "payerWalletValues",
+            "reporterWalletValues",
+            "intentValues",
+            "successorValues",
+            "retirementValues",
+            "transferValues",
+            "useValues",
+            "pairValues",
+            "caseVersionValues",
+            "observedRevisionValues",
+            "generationValues",
+            "byValues",
+            "weight_admit",
+            "weight_observeWallets",
+            "weight_consent",
+            "weight_prepare",
+            "weight_recordTransfer",
+            "weight_recordPair",
+            "weight_recover"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": []
+    },
+    {
       "path": "spec/settlement/index.md",
-      "sha256": "07590773dda51995801dc335090f810149d4505331c36ca4615e3c7d31ff84a0",
+      "sha256": "f5731d74d23eab4a9218bcb1299ac692ebc03e31cfdef93523412d82df4364ef",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -5930,56 +6791,60 @@
           "line": 13
         },
         {
-          "target": "./recovery.md",
+          "target": "./directBounty.md",
           "line": 14
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./recovery.md",
           "line": 15
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 16
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./signer.md",
           "line": 17
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 18
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 19
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 20
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 21
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 22
         },
         {
-          "target": "../fees/",
+          "target": "./referrals.md",
           "line": 23
         },
         {
-          "target": "./referralAccrual.md",
-          "line": 25
+          "target": "../fees/",
+          "line": 24
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 26
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 27
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 28
         }
       ]
     },
@@ -7694,27 +8559,35 @@
     },
     {
       "path": "spec/slopbot/index.md",
-      "sha256": "7aba31e478883622dfb6138e9078fe53ef567623add83af779fcfc753c636574",
+      "sha256": "bc1d215f16b55ac01cef6c54e7f66cd9ab08a61d1ed3d338d53bbbe7e5341b2f",
       "module": "slopbot",
       "stories": [],
       "rules": [],
       "imports": [],
       "references": [
         {
-          "target": "./review.md",
+          "target": "./webhookDelivery.md",
           "line": 6
         },
         {
-          "target": "./reviewLease.md",
+          "target": "./review.md",
           "line": 7
         },
         {
-          "target": "./closure.md",
+          "target": "./reviewLease.md",
           "line": 8
         },
         {
-          "target": "./appeals.md",
+          "target": "./valueInference.md",
           "line": 9
+        },
+        {
+          "target": "./closure.md",
+          "line": 10
+        },
+        {
+          "target": "./appeals.md",
+          "line": 11
         }
       ]
     },
@@ -7842,6 +8715,344 @@
             "expiresValues",
             "weight_claim",
             "weight_finish"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/slopbot/valueInference.md",
+      "sha256": "efe1773d023e9b5c250d1dc7fba4488f5b1f8b9922f5efcda3d04cbcc5c5bd89",
+      "module": "slopbot__valueInference",
+      "stories": [
+        {
+          "heading": "Story: Claim a complete immutable source group",
+          "line": 20
+        },
+        {
+          "heading": "Story: Hold paid attempts until exact usage reconciles",
+          "line": 128
+        },
+        {
+          "heading": "Story: Publish under the current exact authority",
+          "line": 281
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Claim a complete immutable source group / Take all source leases or none",
+          "line": 22,
+          "definitions": [
+            "RequestPhase",
+            "Mode",
+            "Provider",
+            "AttemptPhase",
+            "CallResult",
+            "ReadPhase",
+            "Decision",
+            "Source",
+            "Authority",
+            "Request",
+            "Charge",
+            "Attempt",
+            "Retained",
+            "ValueInference",
+            "Milestone",
+            "NoticeKind",
+            "ProviderNotice",
+            "emptyAuthority",
+            "reviewedAuthority",
+            "noRequest",
+            "noAttempt",
+            "noRetained",
+            "initial",
+            "validSource",
+            "sameScope",
+            "validGroup",
+            "request",
+            "attempt",
+            "putRequest",
+            "putAttempt",
+            "live",
+            "owns",
+            "canSetSource",
+            "setSource",
+            "canObserve",
+            "observe",
+            "canClaim",
+            "claim",
+            "canOwnGroup",
+            "ownGroup"
+          ]
+        },
+        {
+          "heading": "Story: Claim a complete immutable source group / A remote membership lookup is followed by current local authority and lease checks",
+          "line": 98,
+          "definitions": [
+            "locallyAuthorized",
+            "canBeginCheck",
+            "beginCheck",
+            "canRemoteReply",
+            "remoteReply",
+            "candidateCurrent",
+            "canFinishCheck",
+            "finishCheck",
+            "checkedCurrent"
+          ]
+        },
+        {
+          "heading": "Story: Hold paid attempts until exact usage reconciles / Admit at most three unresolved or non-free attempts for the same key",
+          "line": 130,
+          "definitions": [
+            "hasReservation",
+            "chargeFree",
+            "counted",
+            "terminal",
+            "chargeTotal",
+            "localUsedAt",
+            "heldCap",
+            "unboundedHold",
+            "validBudget",
+            "canConfigure",
+            "configure",
+            "budgetAllows",
+            "admission",
+            "canAdmit",
+            "admit",
+            "canReserve",
+            "reserve",
+            "providerFor",
+            "canCall",
+            "call",
+            "expectedModel",
+            "canRecordCall",
+            "recordCall",
+            "canSkipUnavailable",
+            "skipUnavailable",
+            "canEndWithoutCall",
+            "endWithoutCall"
+          ]
+        },
+        {
+          "heading": "Story: Hold paid attempts until exact usage reconciles / Usage precedes retained output and explicit completion",
+          "line": 219,
+          "definitions": [
+            "canSaveUsage",
+            "saveUsage",
+            "lastCharge",
+            "canRetain",
+            "retain",
+            "canComplete",
+            "complete",
+            "canReconcile",
+            "reconcile",
+            "canNoticeProvider",
+            "noticeProvider",
+            "nextMilestone",
+            "canNoticeMilestone",
+            "noticeMilestone"
+          ]
+        },
+        {
+          "heading": "Story: Publish under the current exact authority / A retained inference survives stale publication without another charge",
+          "line": 283,
+          "definitions": [
+            "canCaptureFence",
+            "captureFence",
+            "canPublish",
+            "publish",
+            "stepRetainResult",
+            "stepRetainPublication",
+            "alwaysPublicationUsesRetained",
+            "alwaysAttemptLimit",
+            "sometimesHeld",
+            "sometimesRetained",
+            "sometimesPublished",
+            "sourceOne",
+            "sourceTwo",
+            "completeGroup",
+            "groupValues",
+            "sourcesValues",
+            "membersValues",
+            "keyValues",
+            "inputDigestValues",
+            "observedSourceValues",
+            "authorityValues",
+            "deadlineValues",
+            "tokenValues",
+            "attemptIdValues",
+            "nowValues",
+            "monthValues",
+            "capValues",
+            "maximumValues",
+            "otherUsedValues",
+            "otherHeldValues",
+            "noticeValues",
+            "externalUsageValues",
+            "resultDigestValues",
+            "sampleCharge",
+            "chargeValues",
+            "weight_setSource",
+            "weight_claim",
+            "weight_ownGroup",
+            "weight_beginCheck",
+            "weight_remoteReply",
+            "weight_finishCheck",
+            "weight_admit",
+            "weight_reserve",
+            "weight_call",
+            "weight_recordCall",
+            "weight_saveUsage",
+            "weight_retain",
+            "weight_publish"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./review.md",
+          "line": 7
+        },
+        {
+          "target": "../points/census.md",
+          "line": 8
+        },
+        {
+          "target": "../points/journal.md",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "path": "spec/slopbot/webhookDelivery.md",
+      "sha256": "57bca5f57a780e02a1e0eb8a20ca483f2bce987fa72a573e5c86d2b558e60645",
+      "module": "slopbot__webhookDelivery",
+      "stories": [
+        {
+          "heading": "Story: Authenticate exact bytes before claiming a receipt",
+          "line": 19
+        },
+        {
+          "heading": "Story: Record the delivery and make independent routing decisions",
+          "line": 92
+        },
+        {
+          "heading": "Story: Recover an uncertain queue submission without changing source authority",
+          "line": 175
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Authenticate exact bytes before claiming a receipt / Bounded bytes and strict object decoding are required",
+          "line": 21,
+          "definitions": [
+            "GithubEvent",
+            "Ingress",
+            "Outcome",
+            "OrdinaryReceipt",
+            "Capability",
+            "JobKind",
+            "JobScope",
+            "ItemKind",
+            "ItemState",
+            "ReopenDecision",
+            "Ack",
+            "ValueSource",
+            "ReopenSource",
+            "ReopenObservation",
+            "Body",
+            "Request",
+            "Webhook",
+            "noValue",
+            "noReopen",
+            "noBody",
+            "noRequest",
+            "initial",
+            "request",
+            "updateRequest",
+            "answer",
+            "canReceive",
+            "receive",
+            "canAuthenticate",
+            "authenticate",
+            "canDecode",
+            "decode"
+          ]
+        },
+        {
+          "heading": "Story: Record the delivery and make independent routing decisions / An ordinary pending receipt does not claim exclusive execution",
+          "line": 94,
+          "definitions": [
+            "canClaim",
+            "claim",
+            "canFinishInstallation",
+            "finishInstallation",
+            "releaseOrdinary"
+          ]
+        },
+        {
+          "heading": "Story: Record the delivery and make independent routing decisions / Current registration determines valuation and queue scope",
+          "line": 127,
+          "definitions": [
+            "validValue",
+            "canInspectValue",
+            "inspectValue",
+            "qualifiedJob",
+            "queueScope",
+            "canInspectQueue",
+            "inspectQueue"
+          ]
+        },
+        {
+          "heading": "Story: Recover an uncertain queue submission without changing source authority / An accepted reopen pins exact source before sending",
+          "line": 177,
+          "definitions": [
+            "validReopen",
+            "canBindReopen",
+            "bindReopen",
+            "canSend",
+            "send",
+            "canComplete",
+            "complete"
+          ]
+        },
+        {
+          "heading": "Story: Recover an uncertain queue submission without changing source authority / A downstream reopen decision rechecks the exact retained source",
+          "line": 218,
+          "definitions": [
+            "reopenDecision",
+            "canConfirmReopen",
+            "confirmReopen",
+            "alwaysConfirmedSource",
+            "alwaysReopenHasReceipt",
+            "stepValueSourceImmutable",
+            "stepReopenSourceImmutable",
+            "sometimesValued",
+            "sometimesReleased",
+            "sometimesReopenRetained",
+            "sometimesConfirmed",
+            "sourceValue",
+            "sourceReopen",
+            "reviewBody",
+            "valueBody",
+            "reopenBody",
+            "bodyValues",
+            "evidenceValues",
+            "requestIdValues",
+            "bytesValues",
+            "signedBytesValues",
+            "decodedBytesValues",
+            "receivedBytesValues",
+            "weight_receive",
+            "weight_authenticate",
+            "weight_decode",
+            "weight_claim",
+            "weight_inspectValue",
+            "weight_inspectQueue",
+            "weight_bindReopen",
+            "weight_send"
           ]
         }
       ],

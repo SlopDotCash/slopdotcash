@@ -153,7 +153,24 @@
           ]
         }
       }
+    },
+    "publicReferredProjectsUpdate": {
+      "main": "e170d85aa5efcb45e2971c1733b7bb44f4226f32",
+      "development": "5268ca066dfc67251715eceaa5c1e943b80a0b6c",
+      "prdPath": "docs/slop-product-requirements.md",
+      "prdSha256": "84dec2d53b1a2cf670265bd3954c68ca6d7a5b548721ea3d60e4e903ceec95a7",
+      "paragraphs": {
+        "publicReferredProjects": {
+          "section": 11,
+          "line": 779,
+          "text": "The submitting maintainer may name a signed-in referrer. Keep the record immutable under migration `0055_project_referrer.sql`. Refuse self, steward, administrator, and moderator referrals at capture. Publish the registered projects that carry a referrer at `GET /api/v1/referrals/projects`: project ID, registry status, registration time, and the referrer's GitHub account, oldest first. Every listed project is already public and the accrual files publish the same referrer, so the list has no session and no write route (operator decision, 14 November 2026).",
+          "owners": [
+            "spec/backend/referralProjects.md",
+            "spec/backend/listing.md"
+          ]
+        }
+      }
     }
   },
-  "notes": "The pinned PRD remains the migration baseline. The two current legacy refs supply later approved requirements. Each changed paragraph retains exact source text."
+  "notes": "The original pinned PRD and intermediate approvals remain identified by exact hash and commit. The current requirements source is the complete byte-identical PRD from the recorded development and main tips."
 }

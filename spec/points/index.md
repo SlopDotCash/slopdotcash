@@ -11,4 +11,5 @@ received remain separate records.
 - [Journal and corrections](./journal.md)
 - [Source census and publication](./census.md)
 - [Historical correction import](./corrections.md)
+- [Recovery across verified publication copies](./recovery.md)
 - [Exact-prefix publication](./publication.md)
