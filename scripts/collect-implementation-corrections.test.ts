@@ -668,21 +668,19 @@ test("GitHub quota failures retain raw attempts without caching them or swallowi
   for (const failure of failures) {
     const dir = await directory();
     let requests = 0;
-    const cache = new CorrectionEvidenceCache(
-      dir,
-      Object.assign(
-        async () => {
-          requests++;
-          return requests === 1
-            ? Response.json(failure.body, {
-                status: failure.status,
-                headers: failure.headers,
-              })
-            : Response.json({ data: { node: null } });
-        },
-        { preconnect: fetch.preconnect },
-      ),
+    const transport = Object.assign(
+      async () => {
+        requests++;
+        return requests === 1
+          ? Response.json(failure.body, {
+              status: failure.status,
+              headers: failure.headers,
+            })
+          : Response.json({ data: { node: null } });
+      },
+      { preconnect: fetch.preconnect },
     );
+    const cache = new CorrectionEvidenceCache(dir, transport);
     await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
       CollectionBudgetExhausted,
     );
@@ -697,12 +695,20 @@ test("GitHub quota failures retain raw attempts without caching them or swallowi
         await readFile(join(dir, "objects", retained.bodyDigest), "utf8"),
       ),
     ).toEqual(failure.body);
-    expect(await (await cache.fetch(failure.url, failure.init)).json()).toEqual(
-      { data: { node: null } },
+    await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
+      CollectionBudgetExhausted,
     );
-    await cache.fetch(failure.url, failure.init);
+    expect(requests).toBe(1);
+    expect(() => cache.assertUninterrupted()).toThrow(
+      CollectionBudgetExhausted,
+    );
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(
+      await (await resumed.fetch(failure.url, failure.init)).json(),
+    ).toEqual({ data: { node: null } });
+    await resumed.fetch(failure.url, failure.init);
     expect(requests).toBe(2);
-    expect(cache.cacheHits).toBe(1);
+    expect(resumed.cacheHits).toBe(1);
   }
   for (const [url, status, headers] of [
     ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 403, {}],
@@ -727,11 +733,13 @@ test("GitHub quota failures retain raw attempts without caching them or swallowi
   }
 });
 
-test("retained-source quota exhaustion stops the collection and resumes from verified evidence", async () => {
+test("retained-source quota and budget interruptions survive caught discovery errors", async () => {
   const dir = await directory();
   const base = transport();
   let quotaAvailable = false;
   let timelineQuotaAvailable = false;
+  let outgoingQuotaAvailable = false;
+  let outgoingRequests = 0;
   let pullRequests = 0;
   let requests = 0;
   const network = Object.assign(
@@ -748,7 +756,7 @@ test("retained-source quota exhaustion stops the collection and resumes from ver
         return Response.json({
           node_id: "PR_source",
           number: 1,
-          body: "Fix",
+          body: "Fix #2 and #3",
           head: { sha },
           merged_at: when,
           comments: 0,
@@ -757,6 +765,23 @@ test("retained-source quota exhaustion stops the collection and resumes from ver
       }
       if (url.pathname !== "/graphql") return Response.json([]);
       const body = JSON.parse(String(init?.body));
+      if (body.query.includes("issueOrPullRequest")) {
+        outgoingRequests++;
+        if (!outgoingQuotaAvailable)
+          return Response.json(
+            { message: "Too many requests" },
+            { status: 429 },
+          );
+        return Response.json({
+          data: {
+            repository: {
+              isPrivate: false,
+              nameWithOwner: "elizaOS/asi",
+              issueOrPullRequest: { __typename: "Issue" },
+            },
+          },
+        });
+      }
       if (body.query.includes("CROSS_REFERENCED_EVENT")) {
         if (!timelineQuotaAvailable)
           return Response.json({
@@ -825,6 +850,20 @@ test("retained-source quota exhaustion stops the collection and resumes from ver
   ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
   await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
   timelineQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(1);
+  outgoingQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(
+      { ...options, requestBudget: 1 },
+      dependencies,
+    ),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(2);
   const resumed = await collectImplementationCorrections(options, dependencies);
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(resumed.receipt.completeProofs).toBe(1);
