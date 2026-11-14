@@ -1437,12 +1437,15 @@ async function collectWithEvidenceCache(
           to: interval.to,
           outcomes,
         };
-        if (part)
+        if (part) {
           requireThat(
             part.digest === digest(encode(payload)),
             "Cached census differs from reconstructed raw evidence",
           );
-        else {
+          // Keep the loader's shared commit records, as a fresh pass does, so
+          // a later month's verified author link still repairs this month.
+          part = { ...part, outcomes };
+        } else {
           part = { ...payload, digest: digest(encode(payload)) };
           await atomicJson(partPath, part);
         }

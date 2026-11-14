@@ -2077,3 +2077,205 @@ test("a counter error without rate accounting is never admitted for cached recov
     expect(envelope.errors).toBeUndefined();
   }
 });
+
+function promotedCommitTransport(
+  quotaOnFebruarySearch: boolean,
+  clock: () => number,
+) {
+  const user = (id: string, login: string) => ({
+    __typename: "User",
+    id,
+    login,
+    avatarUrl: `https://avatars.githubusercontent.com/u/${login}`,
+    url: `https://github.com/${login}`,
+  });
+  const author = user(actor.id, actor.login);
+  const bob = user("MDQ6VXNlcjQz", "bob");
+  const lines: Record<string, { oid: string; additions: number }> = {
+    C_a: { oid: sha, additions: 10 },
+    C_b: { oid: "e".repeat(40), additions: 2 },
+    C_c: { oid: "c".repeat(40), additions: 5 },
+  };
+  const commit = (id: string, user: unknown) => ({
+    commit: {
+      id,
+      oid: lines[id].oid,
+      parents: { totalCount: 1 },
+      author: { user },
+    },
+  });
+  const pull = (
+    id: string,
+    number: number,
+    mergedAt: string,
+    nodes: unknown[],
+  ) => ({
+    ...fixture(),
+    id,
+    number,
+    url: `https://github.com/SlopDotCash/asi/pull/${number}`,
+    updatedAt: mergedAt,
+    mergedAt,
+    additions: 12,
+    deletions: 0,
+    baseRefName: number === 1 ? "development" : "main",
+    headRefOid: lines.C_b.oid,
+    mergeCommit: { oid: "d".repeat(40) },
+    commits: {
+      totalCount: nodes.length,
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes,
+    },
+  });
+  // GitHub lists bob's commit without an account link in the January feature
+  // PR and with it in the February promotion PR that carries the same commit.
+  const january = pull("PR_source", 1, "2026-01-15T00:00:00Z", [
+    commit("C_a", null),
+    commit("C_b", author),
+  ]);
+  const february = pull("PR_promotion", 2, "2026-02-10T00:00:00Z", [
+    commit("C_a", bob),
+    commit("C_b", author),
+    commit("C_c", author),
+  ]);
+  let februarySearches = 0;
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/asi/pulls/1"))
+        return Response.json({
+          node_id: "PR_source",
+          number: 1,
+          body: "Fix",
+          head: { sha: lines.C_b.oid },
+          merged_at: when,
+          comments: 0,
+          review_comments: 0,
+        });
+      if (url.pathname !== "/graphql") return Response.json([]);
+      const body = JSON.parse(String(init?.body));
+      const query: string = body.query;
+      let data: Record<string, unknown>;
+      if (query.includes("CROSS_REFERENCED_EVENT"))
+        data = {
+          repository: {
+            pullRequest: {
+              id: "PR_source",
+              timelineItems: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        };
+      else if (query.includes("CorrectionRepository"))
+        data = {
+          repository: {
+            id: "R_kgDOT23CXA",
+            nameWithOwner: "SlopDotCash/asi",
+            isPrivate: false,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        };
+      else if (query.includes("LeaderboardSearchReferences")) {
+        const isJanuary = String(body.variables.searchQuery).includes(
+          "merged:2026-01-01",
+        );
+        if (!isJanuary && quotaOnFebruarySearch && februarySearches++ === 0)
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": String(Math.floor(clock() / 1000) + 5),
+              },
+            },
+          );
+        data = {
+          search: {
+            issueCount: 1,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [isJanuary ? january : february],
+          },
+        };
+      } else if (query.includes("LeaderboardOutcomeCommitLines"))
+        data = {
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: lines[id].oid,
+            additions: lines[id].additions,
+            deletions: 0,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
+        };
+      else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
+      return Response.json({
+        data: {
+          ...data,
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-03-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+}
+
+test("resumed months keep a later month's verified author link like an uninterrupted census", async () => {
+  const now = new Date("2026-02-20T00:00:00Z");
+  let clock = now.getTime();
+  const deps = (quota = false) => ({
+    journal: baseline([award(12)]),
+    registry: registry(),
+    token: "private-test-token",
+    transport: promotedCommitTransport(quota, () => clock),
+    now,
+  });
+  const options = async () => ({
+    projects: ["asi"],
+    directory: await directory(),
+    before: "2026-01-31T00:00:00.000Z",
+  });
+  const linkedAuthor = (
+    result: Awaited<ReturnType<typeof collectImplementationCorrections>>,
+  ) => {
+    const proof = result.manifest.candidates[0].proof;
+    if (proof.status !== "complete") return `held:${proof.status}`;
+    return proof.sources[0].commits.find((commit) => commit.sha === sha)?.author
+      ?.login;
+  };
+
+  const freshOptions = await options();
+  const fresh = await collectImplementationCorrections(freshOptions, deps());
+  expect(fresh.receipt.ownershipComplete).toBe(true);
+  expect(linkedAuthor(fresh)).toBe("bob");
+
+  // Both months now come from their census parts, as in a resume_run apply.
+  const replay = await collectImplementationCorrections(freshOptions, deps());
+  expect(linkedAuthor(replay)).toBe("bob");
+  expect(replay.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+
+  // A quota stop in February makes the next pass read January from disk.
+  const waits: number[] = [];
+  const resumed = await collectWithQuotaResume(
+    { ...(await options()), resumeForSeconds: 300 },
+    deps(true),
+    {
+      now: () => clock,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+        clock += milliseconds;
+      },
+    },
+  );
+  expect(waits).toHaveLength(1);
+  expect(resumed.receipt.ownershipComplete).toBe(true);
+  expect(linkedAuthor(resumed)).toBe("bob");
+  expect(resumed.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+});
