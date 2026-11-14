@@ -1,0 +1,9 @@
+
+  reserve_release_signed_witness
+    ok signedReleaseJourney1Test passed 1 test(s)
+    ok signedReleaseJourney2Test passed 1 test(s)
+    ok signedReleaseJourney3Test passed 1 test(s)
+    ok signedReleaseJourney4Test passed 1 test(s)
+    ok signedReleaseJourney5Test passed 1 test(s)
+
+  5 passing (2137ms)

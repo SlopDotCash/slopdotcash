@@ -1,0 +1,825 @@
+{
+  "base": "b6dfe096b",
+  "snapshot": {
+    "spec/settlement/reserveRelease.md": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a"
+  },
+  "journeys": [
+    {
+      "name": "New observation invalidates unsigned review and preserves signed winner",
+      "events": [
+        {
+          "event": {
+            "type": "qualifyUpgrade"
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 1
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 2,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 3
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        }
+      ]
+    },
+    {
+      "name": "Rotation cannot erase a signed attempt, and wrong receipts cannot release",
+      "events": [
+        {
+          "event": {
+            "type": "qualifyUpgrade"
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 1
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "changeOwner",
+            "revision": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 2,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "wrong",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 0,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                5
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                1
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": false,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": false
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 2,
+            "requestRevision": 2
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6,
+                0
+              ],
+              "settledAmount": [
+                0,
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "Finalized partial settlement blocks release and preserves the signed plan",
+      "events": [
+        {
+          "event": {
+            "type": "qualifyUpgrade"
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 1
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "settlePart",
+            "amount": [
+              1
+            ]
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "changeOwner",
+            "revision": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 2,
+            "requestRevision": 2
+          },
+          "by": "owner",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "name": "Exact finalized failure retains history and requires fresh owner review",
+      "events": [
+        {
+          "event": {
+            "type": "qualifyUpgrade"
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 1
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 3
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "changeOwner",
+            "revision": 2
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 2,
+              "root": "root",
+              "height": 2,
+              "canonicalFailure": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "wrong",
+              "height": 2,
+              "canonicalFailure": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "root",
+              "height": 0,
+              "canonicalFailure": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "canonicalFailure": false
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 3,
+            "requestRevision": 2
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "canonicalFailure": true
+            }
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "canonicalFailure": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 2,
+            "requestRevision": 2
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 3,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 3,
+            "requestRevision": 2
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 2
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 1,
+              "root": "root",
+              "height": 3,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": false
+        },
+        {
+          "event": {
+            "type": "finalize",
+            "receipt": {
+              "attempt": 2,
+              "root": "root",
+              "height": 3,
+              "releasedAmount": [
+                6
+              ],
+              "settledAmount": [
+                0
+              ],
+              "finalized": true,
+              "succeeded": true
+            }
+          },
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "Failed attempt after competing settlement cannot reopen release",
+      "events": [
+        {
+          "event": {
+            "type": "qualifyUpgrade"
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "observe",
+            "height": 1
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 1,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "approve"
+          },
+          "by": "attester",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "ownerSign",
+            "attempt": 1
+          },
+          "by": "owner",
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "settlePart",
+            "amount": [
+              1
+            ]
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "retireFailedAttempt",
+            "failure": {
+              "attempt": 1,
+              "root": "root",
+              "height": 2,
+              "canonicalFailure": true
+            }
+          },
+          "expected": true
+        },
+        {
+          "event": {
+            "type": "check",
+            "root": "root",
+            "total": [
+              5
+            ],
+            "height": 2,
+            "requestRevision": 1
+          },
+          "by": "owner",
+          "expected": false
+        }
+      ]
+    }
+  ],
+  "eventCount": 70
+}
