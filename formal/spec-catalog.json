@@ -5386,7 +5386,7 @@
     },
     {
       "path": "spec/settlement/reserveRelease.md",
-      "sha256": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
+      "sha256": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a",
       "module": "settlement__reserveRelease",
       "stories": [
         {
@@ -5400,19 +5400,20 @@
           "line": 7,
           "definitions": [
             "ReleasePhase",
+            "ReleaseReceipt",
+            "FailedReleaseReceipt",
+            "RetiredReleaseAttempt",
             "ReserveRelease",
             "initial",
             "byValues",
             "rootValues",
-            "releasedAmountValues",
             "totalValues",
-            "amountValues",
-            "settledAmountValues"
+            "amountValues"
           ]
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Current authority and fresh complete wrong-total evidence permit approval",
-          "line": 27,
+          "line": 30,
           "definitions": [
             "canObserve",
             "observe",
@@ -5428,10 +5429,12 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Finalized release returns the whole untouched reserve",
-          "line": 49,
+          "line": 60,
           "definitions": [
             "canFinalize",
             "finalize",
+            "canRetireFailedAttempt",
+            "retireFailedAttempt",
             "canChangeOwner",
             "changeOwner",
             "canSettlePart",
@@ -5439,16 +5442,24 @@
             "alwaysNoSettlementOnRelease",
             "alwaysWholeRelease",
             "alwaysBoundApproval",
+            "alwaysSignedIdentity",
+            "alwaysLiveAttemptFresh",
+            "alwaysFinalizedHeight",
+            "alwaysObservedAfterSignature",
+            "stepAttemptHistoryRetained",
+            "stepSignedAttemptRetained",
             "sometimesReleased",
+            "sometimesObservedThenReleased",
             "sometimesPartialHeld"
           ]
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / The original balances and allocation survive every recovery step",
-          "line": 73,
+          "line": 141,
           "definitions": [
             "alwaysUntouchedBalances",
             "alwaysSettlementHistory",
+            "alwaysOwnerRevision",
             "alwaysValidAmounts",
             "alwaysConserved",
             "stepOriginalTermsRetained",
@@ -5457,9 +5468,19 @@
         },
         {
           "heading": "Story: Recover an allocation with the wrong total / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 104,
+          "line": 173,
           "definitions": [
             "heightValues",
+            "attemptValues",
+            "receiptValues",
+            "failureValues",
+            "weight_observe",
+            "weight_qualifyUpgrade",
+            "weight_check",
+            "weight_approve",
+            "weight_ownerSign",
+            "weight_finalize",
+            "weight_retireFailedAttempt",
             "requestRevisionValues",
             "revisionValues"
           ]

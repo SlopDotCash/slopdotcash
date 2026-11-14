@@ -13,7 +13,7 @@
     "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
     "spec/settlement/referralPublication.md": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
     "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
-    "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
+    "spec/settlement/reserveRelease.md": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a",
     "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
     "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
     "spec/fees/buyback.md": "d45d97d3353687f3a134c57b10daddd00d73285687035533e9e330d2a548c8e4",
@@ -280,7 +280,7 @@
         "log": "formal/validation/finance/lifecycle-settlement__reserveRelease.ts.log",
         "source": "spec/settlement/reserveRelease.md",
         "sourceSha256": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
-        "sourceCurrent": true,
+        "sourceCurrent": false,
         "status": "unproved",
         "report": "formal/validation/finance/lifecycle-repair.json",
         "inputs": {
@@ -289,7 +289,8 @@
           "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
           "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
         },
-        "currentSourceSha256": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+        "currentSourceSha256": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a",
+        "qualification": "Precedes the signed-attempt retention and definitive-failure recovery model."
       },
       {
         "unit": "settlement__referrals.ts",
@@ -321,7 +322,7 @@
       "settlement__referrals.ts"
     ],
     "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established.",
-    "scope": "Focused source-bound proof attempts; the full-tree report is authoritative for the complete current tree.",
+    "scope": "Focused source-bound proof results. The baseline full-tree report and later model evidence apply to the source snapshots named in each report.",
     "fullTreeReport": "formal/validation/full-tree/current-check.json",
     "historicalResults": [
       {
@@ -386,5 +387,12 @@
       ],
       "successfulRolloverSettlementTraces": 16
     }
+  },
+  "reserveRelease": {
+    "sourceSha256": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a",
+    "scope": "Generated-core journeys and Quint replay for signed-attempt retention and definitive failure recovery.",
+    "verification": "formal/validation/finance/reserve-release-signed-verification.json",
+    "witnesses": "formal/validation/finance/reserve-release-signed-quint-witness.qnt",
+    "report": "formal/validation/finance/reserve-release-signed-handoff.md"
   }
 }
