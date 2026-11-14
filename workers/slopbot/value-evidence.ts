@@ -411,6 +411,17 @@ export interface CompleteValueReferenceDiscussion {
   timeline: RelatedPullRequestTimelineNode[];
 }
 
+/** Let sibling reads finish pagination and retries before reporting a failure. */
+async function readDiscussionPair<Left, Right>(
+  left: Promise<Left>,
+  right: Promise<Right>,
+): Promise<[Left, Right]> {
+  const [first, second] = await Promise.allSettled([left, right]);
+  if (first.status === "rejected") throw first.reason;
+  if (second.status === "rejected") throw second.reason;
+  return [first.value, second.value];
+}
+
 /** Discover retained-copy candidates before reading any commit patches.
  * Uses the same complete discussions and reference resolver as valuation.
  * This is discovery only; a candidate still needs full retained-copy proof.
@@ -426,25 +437,25 @@ export async function collectValueReferenceEvidence(
   const path = `/repos/${repository}/pulls/${number}`;
   const pull = await client.get<Pull>(path);
   if (!pull) throw new Error("Pull request unavailable");
-  const [reviews, discussion] = await Promise.all([
+  const [reviews, discussion] = await readDiscussionPair(
     pages<Review>(client, `${path}/reviews`),
     (async () => {
       const verified = await readDiscussion?.(pull);
       if (verified) return verified;
-      const [comments, inline] = await Promise.all([
+      const [comments, inline] = await readDiscussionPair(
         pages<Comment>(
           client,
           `/repos/${repository}/issues/${number}/comments`,
         ),
         pages<Comment>(client, `${path}/comments`),
-      ]);
+      );
       return {
         commentBodies: comments.map((entry) => entry.body),
         inlineBodies: inline.map((entry) => entry.body),
         timeline: undefined,
       };
     })(),
-  ]);
+  );
   const related = await relatedPullRequests(
     client,
     repository,

@@ -8497,13 +8497,15 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "df922b896087cf899f3a0a5207ba0ab9e03e17a11158c6de9b2d250c74f5d288",
+      "sha256": "377760084401d38301f40347da22389ad9b09679b4b7db1a534796a805380fad",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 601, 621, 664, 673, 692, 1033, 1052],
+      "candidateLines": [
+        61, 72, 81, 95, 420, 421, 612, 632, 675, 684, 703, 1044, 1063
+      ],
       "review": "mapped-abstraction"
     },
     {

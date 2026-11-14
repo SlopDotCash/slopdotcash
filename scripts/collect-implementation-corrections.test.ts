@@ -2358,6 +2358,52 @@ test("historical discussion secondary quota remains sticky across the optional f
   expect(calls.inline + calls.comments + calls.timeline).toBe(0);
 });
 
+test.each([true, false])(
+  "historical discussion waits for a late sibling quota stop (GraphQL enabled: %s)",
+  async (graphqlDiscussions) => {
+    const { options, dependencies } = await discussionCampaign("complete");
+    let quotaReads = 0;
+    const transport = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { pathname } = new URL(String(input));
+        if (
+          pathname.endsWith("/reviews") ||
+          (!graphqlDiscussions && pathname.endsWith("/issues/1/comments"))
+        )
+          return new Response(null, { status: 404 });
+        const lateRead = graphqlDiscussions
+          ? pathname === "/graphql" &&
+            String(init?.body).includes("HistoricalValueDiscussion")
+          : pathname.endsWith("/pulls/1/comments");
+        if (!lateRead) return dependencies.transport(input, init);
+        quotaReads += 1;
+        if (graphqlDiscussions && quotaReads === 1)
+          return Response.json(
+            { message: "Transient gateway failure" },
+            { status: 503 },
+          );
+        await Bun.sleep(30);
+        return Response.json(
+          { message: "Secondary rate limit" },
+          { status: 403, headers: { "retry-after": "17" } },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await expect(
+      collectImplementationCorrections(
+        { ...options, graphqlDiscussions },
+        { ...dependencies, transport },
+      ),
+    ).rejects.toMatchObject({ kind: "quota", retryAtMs: 1_019_000 });
+    expect(quotaReads).toBe(graphqlDiscussions ? 2 : 1);
+    for (const filename of ["manifest.json", "collection-receipt.json"])
+      await expect(
+        readFile(join(options.directory, filename), "utf8"),
+      ).rejects.toThrow();
+  },
+);
+
 function promotedCommitTransport(
   quotaOnFebruarySearch: boolean,
   clock: () => number,
