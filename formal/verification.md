@@ -183,8 +183,7 @@ lists the definitions without standalone comparison.
 
 The proof stage took its input after the verified wallet and money helpers
 were installed. The two phase manifests bind the model and proof inputs to
-those separate observation times. The baseline stage does not incorporate the
-later model refinements.
+those separate observation times. The baseline stage predates the later model refinements.
 [Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json)
 
 ## Additional source refinements
@@ -194,8 +193,10 @@ explicit. Publication requires a canonical exact prefix and checks the current
 public revision at commit. Corrections recheck the current predecessor and
 protected financial history in the canonical append and treat an applied
 manifest as replay after revocation. Targeted Quint simulation and TypeScript
-replay reached all nine goals, and nine directed assertions passed.
-[Points evidence](validation/points/targeted.json)
+replay reached all nine goals, and nine directed assertions passed. The
+publication proof establishes all 37 obligations, including exact-prefix
+transitivity across canonical and public state changes.
+[Points evidence](validation/points/targeted.json) · [Publication proof](validation/points/publication-proof.json)
 
 The local Solana stages require a fresh owned validator receipt for each
 shell stage and a confirmed local funding result before tests. The command
