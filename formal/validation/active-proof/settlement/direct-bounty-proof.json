@@ -1,0 +1,22 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "settlement__directBounty.ts",
+  "total": 101,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/settlement/directBounty.md": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+  },
+  "generated": {
+    "typescript": "d7c9db69747507027acb7eaa3679552b0941eb320ac1427d5546c6c6c2c1b2d5",
+    "dafny": "cb28313fbfcbc9e5d330ff04966c8f32268e1897906ada4af2570d78b9dc3851"
+  },
+  "offered": []
+}
