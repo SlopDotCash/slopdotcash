@@ -328,7 +328,7 @@ reporting requirement.
   retains the pending submission until a bounded listing reconciles its
   canonical advisory. The receipt owner discharged all 23 obligations after
   forwarding moved to its dedicated model.
-  [Private intake proof](validation/source-coverage/private-intake-receipt-owner.json)
+  [Private intake proof](validation/source-coverage/private-intake-receipt-owner.json) · [Forwarding proof and directed cases](validation/source-coverage/private-forwarding.json)
 - Points recovery discharged all nine obligations. Reconciliation keeps the
   exact award revision prefix and the union of complete source coverage, even
   when a newer copy has coverage changes alone.
