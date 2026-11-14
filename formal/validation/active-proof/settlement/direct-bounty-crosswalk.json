@@ -86,29 +86,85 @@
       "sourceEntries": [
         "src/DirectBountyPayment.tsx"
       ],
-      "successor": null,
+      "successor": {
+        "path": "spec/frontend/directBountyPrompt.md",
+        "definitions": [
+          "canReserve",
+          "reserve",
+          "resolve",
+          "check",
+          "restoreLegacy",
+          "observeHash",
+          "observeEmpty",
+          "depart",
+          "stepNoOtherSlotChanges",
+          "stepCheckKeepsOwnership",
+          "stepCompletionKeepsReplacement"
+        ]
+      },
       "originalScenarios": {
-        "lateNonceResultPreservesOtherLegTest": [],
-        "lateResultCannotReplaceNewSameNonceTest": [],
-        "oldRejectionCannotDeleteNewSameNonceTest": [],
-        "duplicateNonceCannotStartSecondPromptTest": [],
-        "failedHashWriteKeepsKnownResultInMemoryTest": [],
-        "failedMarkerWriteCannotOwnPromptTest": [],
-        "checkAfterFailedHashWriteKeepsKnownHashTest": [],
-        "failedCheckWriteKeepsLocalRecoveryTest": [],
-        "localHashCannotReplaceNewerStoredHashTest": [],
-        "localHashCannotAttachToNewReservationTest": [],
-        "noPromptAfterDepartureTest": [],
-        "departedCompletionStillMergesOwnedEvidenceTest": [],
-        "legacyCandidateRemainsProtectedTest": [],
-        "legacyCandidateRefusesNewPromptTest": [],
-        "canonicalFreshIdsReachSameNonceAbaTest": [],
-        "canonicalFreshIdsExhaustAfterThreeTest": [],
-        "clearedInputCannotSubmitStoredCandidateTest": []
+        "lateNonceResultPreservesOtherLegTest": [
+          "walletResultsMergeAcrossSlotsAndDepartureTest"
+        ],
+        "lateResultCannotReplaceNewSameNonceTest": [
+          "lateReturnAndRejectionCannotOverwriteANewerSameNonceTest"
+        ],
+        "oldRejectionCannotDeleteNewSameNonceTest": [
+          "lateReturnAndRejectionCannotOverwriteANewerSameNonceTest"
+        ],
+        "duplicateNonceCannotStartSecondPromptTest": [
+          "walletResultsMergeAcrossSlotsAndDepartureTest"
+        ],
+        "failedHashWriteKeepsKnownResultInMemoryTest": [
+          "failedHashWriteRecoversOnlyOwnedMemoryTest"
+        ],
+        "failedMarkerWriteCannotOwnPromptTest": [
+          "failedMarkerOrUnknownNeverLaunchesAnotherPromptTest"
+        ],
+        "checkAfterFailedHashWriteKeepsKnownHashTest": [
+          "failedHashWriteRecoversOnlyOwnedMemoryTest"
+        ],
+        "failedCheckWriteKeepsLocalRecoveryTest": [
+          "failedHashWriteRecoversOnlyOwnedMemoryTest"
+        ],
+        "localHashCannotReplaceNewerStoredHashTest": [
+          "failedHashWriteRecoversOnlyOwnedMemoryTest"
+        ],
+        "localHashCannotAttachToNewReservationTest": [
+          "failedHashWriteRecoversOnlyOwnedMemoryTest"
+        ],
+        "noPromptAfterDepartureTest": [
+          "walletResultsMergeAcrossSlotsAndDepartureTest"
+        ],
+        "departedCompletionStillMergesOwnedEvidenceTest": [
+          "walletResultsMergeAcrossSlotsAndDepartureTest"
+        ],
+        "legacyCandidateRemainsProtectedTest": [
+          "legacyAndExplicitClearNeverRepeatOrCheckTheStoredCandidateTest"
+        ],
+        "legacyCandidateRefusesNewPromptTest": [
+          "legacyAndExplicitClearNeverRepeatOrCheckTheStoredCandidateTest"
+        ],
+        "canonicalFreshIdsReachSameNonceAbaTest": [
+          "lateReturnAndRejectionCannotOverwriteANewerSameNonceTest"
+        ],
+        "canonicalFreshIdsExhaustAfterThreeTest": [
+          "markerFreshnessHasNoModelCountLimitTest"
+        ],
+        "clearedInputCannotSubmitStoredCandidateTest": [
+          "legacyAndExplicitClearNeverRepeatOrCheckTheStoredCandidateTest"
+        ]
       },
       "boundary": [
-        "The original unit models synchronous sessionStorage prompt ownership, late wallet results, mounted memory, candidate hashes and ABA replacement. Durable receipts are a different state owner. A browser successor is pending in this evidence snapshot."
-      ]
+        "The browser owns scoped sessionStorage prompt identity, compare-and-swap, mounted recovery data, and verification candidates. The durable case journal alone accepts payment receipts.",
+        "Two simultaneous views are used in the bounded local model. Authenticated shell and storage observations represent their external access, rather than cross-tab/process atomicity.",
+        "The legacy three-ID exhaustion is a simulator bound. The successor witnesses preserve same-nonce ABA with fresh IDs and allow a fourth request."
+      ],
+      "evidence": {
+        "proof": "formal/validation/active-proof/frontend/direct-bounty-prompt-proof.json",
+        "replay": "formal/validation/active-proof/frontend/direct-bounty-prompt-replay.json",
+        "directed": "formal/validation/active-proof/frontend/direct-bounty-prompt-witness.qnt"
+      }
     },
     {
       "path": "formal/models/payments/security_rail_exclusivity.qnt",
