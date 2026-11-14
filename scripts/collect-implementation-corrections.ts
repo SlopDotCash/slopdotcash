@@ -1335,9 +1335,18 @@ export async function collectImplementationCorrections(
               plan.repository.id.toLowerCase() &&
             typeof outcome.headRefOid === "string" &&
             /^[a-f0-9]{40}$/u.test(outcome.headRefOid) &&
-            outcome.commits !== null &&
-            outcome.commits.length > 0 &&
-            outcome.commits.at(-1)?.oid === outcome.headRefOid &&
+            outcome.commits !== null,
+          "Complete census source identity or commit evidence is invalid",
+        );
+        if (outcome.commits.length === 0) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-commit-list-empty",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.commits.at(-1)?.oid === outcome.headRefOid &&
             new Set(outcome.commits.map((commit) => commit.oid)).size ===
               outcome.commits.length &&
             outcome.commits.every(
