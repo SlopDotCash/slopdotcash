@@ -1,0 +1,271 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "settlement__monthly.ts",
+  "total": 73,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+    "spec/settlement/allocation.md": "86989f799605147fdd0aaaaadf4fef0df980b2e5f6eecf0c9a982fd08bb4afc2",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/monthly.proof.dfy": "4b1edcdfe299e473623396d076ecd23f3701081a0c3e48bbc2a4697cd7f6baca"
+  },
+  "generated": {
+    "typescript": "71152d5a3275ce969ac1e5181d290032de94e4b1013039f8e35cf129a45e851a",
+    "dafny": "d2b60aa49feb1e02f43759260e9e2bcc91cb8bfa618fe13066c2890c8f61d501"
+  },
+  "offered": [
+    {
+      "fn": "settlement__money_lawEqualReflexive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSymmetric",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSubstitution",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroIdentity",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAdditionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPositiveAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTotal",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTransitive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawUnitGap",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddMonotone",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionAtMost",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddAssociative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionReconstructs",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCancellation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyZero",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionByOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionRemainder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionReconstructs",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplySmallValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawAllocatedSharesValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawAllocationConserves",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawSingleRecipient",
+      "proved": [
+        true
+      ]
+    }
+  ]
+}
