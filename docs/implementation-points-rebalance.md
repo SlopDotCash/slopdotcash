@@ -31,6 +31,9 @@ IDs for largest-remainder ties. A sole verified recipient needs no line ratio.
 Use the workflow's default `apply=false` to collect and preview. `month` limits
 one census piece; `candidate_month` limits which pools get new proofs without
 removing the rest from the inventory. Blank month collects the complete census.
+Collect month pieces in calendar order: a repository's later month reuses the
+commit statistics its earlier months loaded, so the collector refuses a later
+month while an earlier month of that repository has no piece.
 Bounded month runs collect and preview only. Apply once from the complete resumed
 historical scope, without either month filter. The workflow leaves time to upload checkpoints before its job limit. Resume
 with `resume_run` from this repository's same manual workflow on main. The

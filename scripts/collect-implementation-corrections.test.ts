@@ -713,6 +713,137 @@ test("a request-budget stop retains raw progress and the next invocation complet
   expect(resumed.receipt.cacheHits).toBeGreaterThan(0);
 });
 
+// January's feature PR and February's promotion PR list the same accepted
+// commit, so the repository's one commit-line loader carries January's
+// statistics into February's request.
+function promotionTransport() {
+  const january = { ...fixture(), baseRefName: "development" };
+  const shared = january.commits.nodes[0];
+  const next = {
+    commit: { ...shared.commit, id: "C_next", oid: "c".repeat(40) },
+  };
+  const february = {
+    ...fixture("d".repeat(40)),
+    id: "PR_promotion",
+    number: 2,
+    url: "https://github.com/SlopDotCash/asi/pull/2",
+    updatedAt: "2026-02-10T00:00:00Z",
+    mergedAt: "2026-02-10T00:00:00Z",
+    headRefOid: next.commit.oid,
+    commits: {
+      totalCount: 2,
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: [shared, next],
+    },
+  };
+  const lines: Record<string, { oid: string; additions: number }> = {
+    C_source: { oid: sha, additions: 2 },
+    C_next: { oid: next.commit.oid, additions: 5 },
+  };
+  const searchedMonths: string[] = [];
+  const call = Object.assign(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const query: string = body.query;
+      let data: Record<string, unknown>;
+      if (query.includes("CorrectionRepository"))
+        data = {
+          repository: {
+            id: "R_kgDOT23CXA",
+            nameWithOwner: "SlopDotCash/asi",
+            isPrivate: false,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        };
+      else if (query.includes("LeaderboardSearchReferences")) {
+        const isJanuary = String(body.variables.searchQuery).includes(
+          "merged:2026-01-01",
+        );
+        searchedMonths.push(isJanuary ? "2026-01" : "2026-02");
+        data = {
+          search: {
+            issueCount: 1,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [isJanuary ? january : february],
+          },
+        };
+      } else if (query.includes("CorrectionMetadata"))
+        data = {
+          nodes: (body.variables.ids as string[]).map((id) =>
+            id === january.id ? january : february,
+          ),
+        };
+      else if (query.includes("LeaderboardOutcomeCommitLines"))
+        data = {
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: lines[id].oid,
+            additions: lines[id].additions,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
+        };
+      else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
+      return Response.json({
+        data: {
+          ...data,
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-03-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, searchedMonths };
+}
+
+test("a bounded run refuses a later census month until the earlier months are collected", async () => {
+  const run = (dir: string, network: { call: typeof fetch }, month?: string) =>
+    collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        before: "2026-01-31T00:00:00.000Z",
+        directory: dir,
+        ...(month ? { month } : {}),
+      },
+      {
+        journal: baseline(),
+        registry: registry(),
+        token: "private-test-token",
+        transport: network.call,
+        now: new Date("2026-02-20T00:00:00Z"),
+      },
+    );
+  const fresh = await run(await directory(), promotionTransport());
+  expect(fresh.receipt.ownershipComplete).toBe(true);
+  expect(fresh.receipt.completeProofs).toBe(1);
+
+  // February first would cache a statistics request that a resumed campaign,
+  // which loads January's shared commit first, never asks again.
+  const dir = await directory(),
+    early = promotionTransport();
+  await expect(run(dir, early, "2026-02")).rejects.toThrow(
+    "Collect earlier census months first",
+  );
+  expect(early.searchedMonths).toEqual([]);
+  const resumed = await run(dir, promotionTransport());
+  expect(resumed.receipt.ownershipComplete).toBe(true);
+  expect(resumed.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+
+  const ordered = await directory(),
+    network = promotionTransport();
+  await run(ordered, network, "2026-01");
+  await run(ordered, network, "2026-02");
+  expect(network.searchedMonths).toEqual(["2026-01", "2026-02"]);
+  const complete = await run(ordered, promotionTransport());
+  expect(complete.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+});
+
 test("resumed attempts in one millisecond retain distinct immutable evidence", async () => {
   const dir = await directory();
   const clock = spyOn(Date, "now").mockReturnValue(1794620000000);

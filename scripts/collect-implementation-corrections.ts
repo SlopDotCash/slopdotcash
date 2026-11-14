@@ -1242,6 +1242,9 @@ export async function collectImplementationCorrections(
       plan.repository,
       github,
     );
+    // The loader spans every month of this repository, so a month's raw
+    // statistics requests depend on the months reconstructed before it.
+    let earlierMonthMissing = false;
     for (const interval of plan.months) {
       const partPath = resolve(
         directory,
@@ -1255,6 +1258,10 @@ export async function collectImplementationCorrections(
         options.month === interval.month ||
         (!options.month && !options.sampleSourceIds)
       ) {
+        requireThat(
+          part || !earlierMonthMissing,
+          "Collect earlier census months first; later months reuse their commit statistics",
+        );
         cache.allowRequests = part === null;
         let references: Awaited<ReturnType<typeof collectSearchReferences>>;
         try {
@@ -1298,6 +1305,7 @@ export async function collectImplementationCorrections(
         }
       }
       if (!part) {
+        earlierMonthMissing = true;
         missingMonths.push(`${plan.repository.id}:${interval.month}`);
         continue;
       }
