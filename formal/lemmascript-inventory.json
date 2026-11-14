@@ -9716,9 +9716,9 @@
 {"name":"sameWalletAddress","kind":"FunctionDeclaration","line":48,"sha256":"9a59542201e0e7b6be46d3afbaa072e169f9d5d4817b5b8750cc3f6e4bac8500","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"isWalletAddress","kind":"FunctionDeclaration","line":59,"sha256":"a976a940532144b05e43620d4fe4e5024ae72c56f8916d75bd4f375989ae33ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/web-analytics.mjs","sha256":"71cd8044a1ef9f0cff93b6078b4f28e19949825e8cd77c71344553d2e600d297","language":"javascript","disposition":"callables-inventoried","functions":[
-{"name":"isWebAnalyticsHost","kind":"FunctionDeclaration","line":7,"sha256":"1578c67f30d76861f99ad57df575f266cb08353ac16e6734d76c4c222dea0769","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"renderWebAnalytics","kind":"FunctionDeclaration","line":11,"sha256":"3e93d804547a77045706a00a7af72d1a5e25507bc7da10f976cb5c6441011b49","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]}
+{"path":"src/lib/web-analytics.mjs","sha256":"96aa2f153796b7565c5ef878c02267c3ca9b22c3ce6290092bf692c7138decac","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"isWebAnalyticsHost","kind":"FunctionDeclaration","line":17,"sha256":"1578c67f30d76861f99ad57df575f266cb08353ac16e6734d76c4c222dea0769","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"renderWebAnalytics","kind":"FunctionDeclaration","line":21,"sha256":"3e93d804547a77045706a00a7af72d1a5e25507bc7da10f976cb5c6441011b49","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]}
 ]},
 {"path":"src/lib/weighted-allocation.ts","sha256":"8d039ddfe9937e98ce317569d4a9c35834dc518b8ba197a216b0c8ce71516e6e","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"allocateWeightedRows","kind":"FunctionDeclaration","line":8,"sha256":"5e7733341a5d5c65e598833c64190d7d084f661ffee1057b42f2f4e5a7d736eb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
