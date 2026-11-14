@@ -494,10 +494,6 @@ async function main() {
       mode: 0o600,
       flag: "wx",
     });
-    writeFileSync(secrets, JSON.stringify({ [binding]: url }), {
-      mode: 0o600,
-      flag: "wx",
-    });
     requireRotationBase(
       await workerState(get),
       expectedVersion,
@@ -505,6 +501,10 @@ async function main() {
       state.active.id,
     );
     requireLiveMain(sha);
+    writeFileSync(secrets, JSON.stringify({ [binding]: url }), {
+      mode: 0o600,
+      flag: "wx",
+    });
     const upload = runWrangler([
       "versions",
       "upload",

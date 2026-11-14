@@ -4403,12 +4403,12 @@
     },
     {
       "path": "scripts/release-robinhood-rpc.ts",
-      "sha256": "5847325ecafefc98a3cd0cce902c2cc43e097366ad7d60080101ef8e0c15d687",
+      "sha256": "746b05625c8fe769b0a664194f4ebeb1b0288c676a9287cefca35475408e2f70",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [
         57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
         243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
-        470, 505, 541
+        470, 501, 541
       ],
       "review": "mapped-abstraction"
     },
