@@ -348,7 +348,7 @@ export class CorrectionEvidenceCache {
         resolve(
           this.directory,
           "attempts",
-          `${Date.now()}-${this.requests}-${key}.json`,
+          `${Date.now()}-${this.requests}-${key}-${randomUUID()}.json`,
         ),
         new TextEncoder().encode(
           encode({
@@ -1142,6 +1142,17 @@ export async function collectImplementationCorrections(
   const executor = cachedExecutor(client, cache);
   const github = GitHubClient.forToken(token, cache.fetch);
   const registryDigest = digest(encode(registry));
+  const through =
+    campaign?.through ??
+    new Date(
+      Math.floor((dependencies.now ?? new Date()).getTime() / 1000) * 1000,
+    ).toISOString();
+  requireThat(
+    canonicalTime(through) === through &&
+      (!campaign ||
+        (campaign.schemaVersion === "1" && campaign.through === through)),
+    "Campaign schema or collection time is invalid",
+  );
   if (campaign) {
     requireThat(
       typeof campaign.before === "string" &&
@@ -1158,11 +1169,13 @@ export async function collectImplementationCorrections(
         campaign.registryDigest === registryDigest,
       "Campaign baseline or canonical registry changed; use a new campaign directory",
     );
-  } else {
-    const through = new Date(
-      Math.floor((dependencies.now ?? new Date()).getTime() / 1000) * 1000,
-    ).toISOString();
-    const plans: RepositoryPlan[] = [];
+  }
+  const plans: RepositoryPlan[] = [];
+  // Rebuild the frozen scope under the current collector, including when a
+  // reviewed main ancestor produced the checkpoint. Never replace its original
+  // repository observation with a live read during resume.
+  cache.allowRequests = campaign === null;
+  try {
     for (const repository of repositories) {
       const data = await executor.execute(PREFLIGHT, {
         owner: repository.owner,
@@ -1174,6 +1187,9 @@ export async function collectImplementationCorrections(
           live.nameWithOwner.toLowerCase() ===
             `${repository.owner}/${repository.name}`.toLowerCase() &&
           typeof live.id === "string" &&
+          typeof live.createdAt === "string" &&
+          Number.isFinite(Date.parse(live.createdAt)) &&
+          Date.parse(live.createdAt) <= Date.parse(through) &&
           (repository.expectedNodeId === null ||
             live.id === repository.expectedNodeId),
         "Canonical public repository identity unavailable",
@@ -1185,6 +1201,15 @@ export async function collectImplementationCorrections(
         months: censusMonths(live.createdAt, through),
       });
     }
+  } finally {
+    cache.allowRequests = true;
+  }
+  if (campaign) {
+    requireThat(
+      encode(campaign.repositories) === encode(plans),
+      "Campaign repository scope or monthly partition differs from its raw evidence",
+    );
+  } else {
     campaign = {
       schemaVersion: "1",
       baseline,
