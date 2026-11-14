@@ -185,8 +185,8 @@ The assembled 71-document tree generated successfully and passed both VibeLang
 typechecks. Baseline and focused results together replayed 24,112 traces across
 all 61 current executable models. The integrated report lists the inputs
 carried forward and the focused substitutions. The template tool suite passed
-34 tests and the greeting app passed three. The greeting's conformance driver also passed a directed journey,
-five malformed-input cases and 1,000 walks. The scratch checkout initially
+34 tests and the greeting app passed three. The greeting's conformance driver
+also passed a directed journey, five malformed-input cases and 1,000 walks. The scratch checkout initially
 lacked its design-package dependency link. After restoring the installed
 link, the full rerun passed.
 [Integrated generation and test results](validation/full-tree/integrated-generation.json)
@@ -194,8 +194,8 @@ link, the full rerun passed.
 The proof stage took its input after the verified wallet and money helpers
 were installed. The two phase manifests bind the model and proof inputs to
 those separate observation times. The baseline stage predates the later
-model refinements. The retained checkpoint captured 60 of 65 proof units with
-2,252 discharged obligations and 58 open obligations. Five units had no
+model refinements. The retained checkpoint captured 61 of 65 proof units with
+2,284 discharged obligations and 64 open obligations. Four units had no
 completed cached result at that checkpoint. A separate exact-source buyback
 proof reached Vibestack's 60-minute tool timeout during isolated assertion
 checking and produced no unit verdict. The baseline reserve result is

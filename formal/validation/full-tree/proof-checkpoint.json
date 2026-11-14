@@ -1,5 +1,5 @@
 {
-  "observedAt": "2026-11-14T06:56:57.837Z",
+  "observedAt": "2026-11-14T07:07:04.732Z",
   "qualification": "Read-only snapshot of cache entries selected by the current model and proof inputs and the canonical imported-clause rule. Missing results can be pending work or uncached verifier errors. The tool reports final status after all proof units finish.",
   "modelSnapshot": "model-simulation-replay.json",
   "proofSnapshot": "proof-stage-inputs.json",
@@ -776,7 +776,28 @@
       "proofSource": null,
       "proofSha256": null,
       "checkedImportedLemmas": 0,
-      "status": "no-completed-cache-result"
+      "status": "unproved",
+      "generatedDafnySha256": "e2a618959e6e1068921a2d19e86eff238da7573302d00c293010b476e0d2071c",
+      "materializedDafnyMatches": true,
+      "total": 38,
+      "unproved": [
+        "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+        "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+        "reserve: (inv(s) ==> canReserve(s) ==> alwaysChildRules(reserve(s)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "exhausted": [
+        "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+        "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))"
+      ],
+      "resting": {
+        "step: inv(step(current, event, by_))": "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))"
+      },
+      "errors": []
     },
     {
       "unit": "settlement__contributorAllocation.ts",
@@ -1030,10 +1051,10 @@
   ],
   "unitCounts": {
     "proved": 53,
-    "unproved": 7,
-    "no-completed-cache-result": 5
+    "unproved": 8,
+    "no-completed-cache-result": 4
   },
-  "provedObligations": 2252,
-  "unprovedObligations": 58,
+  "provedObligations": 2284,
+  "unprovedObligations": 64,
   "baselineCommit": "e51a6b55a75f91644176e6a3ad60fc0970e20797"
 }
