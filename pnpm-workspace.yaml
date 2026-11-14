@@ -48,6 +48,8 @@ catalog:
   eslint-plugin-better-tailwindcss: ^4.11.0
   storybook: 10.6.7
   tailwind-merge: ^3.7.0
+  "@fontsource-variable/bricolage-grotesque": 5.2.10
+  "@fontsource/jetbrains-mono": 5.2.8
 
 overrides:
   "@effect/platform-node-shared": 4.1.1
