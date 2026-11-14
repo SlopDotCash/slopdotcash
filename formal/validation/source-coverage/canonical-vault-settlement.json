@@ -1,6 +1,6 @@
 {
   "legacyMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
-  "scope": "Canonical atomic settled-on-chain vault payout. Chain adapter and D1 database runtime conformance remain independent.",
+  "scope": "Canonical atomic settled-on-chain vault payout. Model projects an immutable contribution and obligation. The native D1 batch and conflicting concurrent event admission, chain read finality and shell adapters need application conformance.",
   "anchors": [
     {
       "path": "contracts/evm/src/ProjectEscrow.sol",
@@ -95,20 +95,198 @@
       ]
     }
   ],
-  "directed": [
-    "verified deposit required before actor reservation",
-    "walletless reserve and no wallet payout refusal",
-    "exact vault receipt settles with no attempt",
-    "historical destination remains admissible after active wallet replacement",
-    "unresolved and submitted attempts retain reserve",
-    "scanner can win ahead of recorded callback and late metadata cannot change balances",
-    "independent scanner transaction can finalize beside recorded attempt",
-    "matching scanner transaction finalizes its retained dispatch attempt",
-    "wrong obligation, principal, fee, gross, fee recipient, actor, destination and finality refuse",
-    "paid receipt and reserve cannot be rewritten",
-    "private vault purpose restricts receipt scope",
-    "direct standard rail requires its own retained attempt",
-    "direct full rail requires explicit release and a retained attempt",
-    "actor mismatch cannot consume another reserve and concurrent reserve survives"
-  ]
+  "sourceInputs": [
+    {
+      "path": "spec/settlement/money.md",
+      "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+    },
+    {
+      "path": "spec/settlement/vault.md",
+      "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+    },
+    {
+      "path": "spec/settlement/paymentDispatch.md",
+      "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+    },
+    {
+      "path": "spec/settlement/payment.md",
+      "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+    },
+    {
+      "path": "spec/settlement/composition.md",
+      "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5"
+    }
+  ],
+  "proofs": {
+    "settlement__money.ts": {
+      "exactExistingProof": "formal/validation/active-proof/money-unit-gap/verification.json",
+      "total": 38,
+      "unproved": [],
+      "errors": [],
+      "expectedInputs": {
+        "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+        "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7"
+      }
+    },
+    "settlement__paymentDispatch.ts": {
+      "total": 107,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "proofFile": null,
+      "importedAlreadyProved": [],
+      "sourceInputs": [
+        {
+          "path": "spec/settlement/paymentDispatch.md",
+          "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+        }
+      ],
+      "generatedDafnySha256": "7fe58d52d8570937487cb6af931825bcf2772966b0883bf704dce1df9c4d9f9e"
+    },
+    "settlement__payment.ts": {
+      "total": 110,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "proofFile": {
+        "path": "spec/settlement/payment.proof.dfy",
+        "sha256": "dd3a6a5570cad57a01d5db407c3214b38ef02fe4cfc2fa15d501eb5e8711e66e"
+      },
+      "sourceInputs": [
+        {
+          "path": "spec/settlement/money.md",
+          "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+        },
+        {
+          "path": "spec/settlement/paymentDispatch.md",
+          "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+        },
+        {
+          "path": "spec/settlement/payment.md",
+          "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+        }
+      ],
+      "importedAlreadyProved": [
+        "settlement__money.ts"
+      ],
+      "generatedDafnySha256": "026d8f41355bbcc7b8ec68f40b86f5efe1afa8d0bdeac6fc8aa415f673e9d09b"
+    },
+    "settlement__vault.ts": {
+      "total": 42,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "proofFile": {
+        "path": "spec/settlement/vault.proof.dfy",
+        "sha256": "7e83e05d0339feb1d55b0fd614b23749a2d651526efbf39db95586d19fe75082"
+      },
+      "sourceInputs": [
+        {
+          "path": "spec/settlement/money.md",
+          "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+        },
+        {
+          "path": "spec/settlement/vault.md",
+          "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+        }
+      ],
+      "importedAlreadyProved": [
+        "settlement__money.ts"
+      ],
+      "generatedDafnySha256": "16616626015aa2b56e66c72fc1a3f2a1033b14b2a6c06b8ad8824343df17f13c"
+    },
+    "settlement__composition.ts": {
+      "total": 27,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "generatedDafnySha256": "388a9f014f7077530fbdd51bad47362cacd8674ff017b7a462818bd2caa949aa",
+      "proofFile": {
+        "path": "spec/settlement/composition.proof.dfy",
+        "sha256": "c5bf43910e2b876910a59fa4d57e92353625cd2890565d28a975b45a54c2718d"
+      },
+      "sourceInputs": [
+        {
+          "path": "spec/settlement/money.md",
+          "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+        },
+        {
+          "path": "spec/settlement/vault.md",
+          "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+        },
+        {
+          "path": "spec/settlement/paymentDispatch.md",
+          "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+        },
+        {
+          "path": "spec/settlement/payment.md",
+          "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+        },
+        {
+          "path": "spec/settlement/composition.md",
+          "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5"
+        }
+      ],
+      "importedAlreadyProved": [
+        "settlement__money.ts",
+        "settlement__vault.ts",
+        "settlement__paymentDispatch.ts",
+        "settlement__payment.ts"
+      ]
+    }
+  },
+  "simulation": {
+    "settlement__composition": {
+      "command": "seed 116038687529223; to simulate again: pnpm exec quint run gen/settlement__composition.run.qnt --main settlement__composition_run --step step --invariant inv --max-samples 100 --max-steps 18 --mbt --seed 116038687529223",
+      "replayed": 18
+    },
+    "settlement__payment": {
+      "command": "seed 136011340989562; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 100 --max-steps 18 --mbt --seed 136011340989562",
+      "replayed": 18
+    },
+    "settlement__vault": {
+      "command": "seed 222058107388526; to simulate again: pnpm exec quint run gen/settlement__vault.run.qnt --main settlement__vault_run --step step --invariant inv --max-samples 100 --max-steps 18 --mbt --seed 222058107388526",
+      "replayed": 18
+    }
+  },
+  "simulationMoneyDependency": "Previous exact 37-law file; active money adds only a law, with identical transition and amount calculation definitions. All directed cases replayed on active exact 38-law inputs.",
+  "directedSourceInputs": [
+    {
+      "path": "spec/settlement/money.md",
+      "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+    },
+    {
+      "path": "spec/settlement/vault.md",
+      "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+    },
+    {
+      "path": "spec/settlement/paymentDispatch.md",
+      "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+    },
+    {
+      "path": "spec/settlement/payment.md",
+      "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+    },
+    {
+      "path": "spec/settlement/composition.md",
+      "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5"
+    }
+  ],
+  "directedModelCount": 5,
+  "reachability": {
+    "historicalExternalAwardTest": [
+      "sometimesWalletlessReserved",
+      "sometimesPaidTogether",
+      "sometimesPaidWithoutAttempt",
+      "sometimesHistoricalDestination"
+    ],
+    "uncertainBeforeScanTest": [
+      "sometimesUncertainReserved",
+      "sometimesPaidTogether"
+    ]
+  }
 }
