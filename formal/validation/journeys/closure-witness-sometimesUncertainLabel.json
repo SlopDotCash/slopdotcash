@@ -1,0 +1,1886 @@
+{
+  "goal": "sometimesUncertainLabel",
+  "reached": true,
+  "replay": true,
+  "command": "seed 81584926013065; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant never_sometimesUncertainLabel --max-samples 10000 --max-steps 30 --mbt --seed 81584926013065",
+  "sourceHashes": {
+    "spec/slopbot/closure.md": "e68e86ceb091be37354f1486c8dad650090bc7085614e2cd5ffb5e99faa4d68f"
+  },
+  "trace": [
+    {
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceUnknown",
+          "activeInstallation": false,
+          "openItem": false,
+          "completeCoverage": false,
+          "reviewAllowed": false,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": false
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": false
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceUnknown",
+          "activeInstallation": false,
+          "openItem": false,
+          "completeCoverage": false,
+          "reviewAllowed": false,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": false
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordVerdict",
+        "reviewScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality"
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "notifyMaintainer",
+        "durableNotice": true
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 604799
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": false
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 604799
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": false,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": false,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": true
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": true
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "WaitingForMaintainer",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "labelUncertain",
+        "observation": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "heldAt": 0,
+          "checkedAt": 1209600,
+          "timeline": "NoMaintainerAction",
+          "upheldAppeal": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "FullReview",
+        "uncertain": true,
+        "category": "LowQuality",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "HoldLabeled",
+        "closed": false,
+        "labelApplied": true,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    }
+  ]
+}

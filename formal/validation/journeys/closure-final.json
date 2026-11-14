@@ -1,0 +1,202 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-closure-proof/slop-spec-final-integration",
+  "scratch": "/tmp/slop-closure-final",
+  "sourceHashes": {
+    "spec/slopbot/closure.md": "e68e86ceb091be37354f1486c8dad650090bc7085614e2cd5ffb5e99faa4d68f"
+  },
+  "simulations": [
+    {
+      "unit": "slopbot__closure",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 50,
+      "command": "seed 104172896957539; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant inv --max-samples 350 --max-steps 30 --mbt --seed 104172896957539",
+      "events": [
+        "observeContext",
+        "observeTime",
+        "saveConsent",
+        "recordVerdict",
+        "recordEvidence",
+        "reopen",
+        "labelOutOfScope",
+        "close",
+        "commentSecurity",
+        "notifyMaintainer",
+        "labelUncertain"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": true
+        },
+        {
+          "name": "sometimesRestrictedScamLabel",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertainLabel",
+          "reached": true
+        },
+        {
+          "name": "sometimesMaintainerActed",
+          "reached": false
+        },
+        {
+          "name": "sometimesSuperseded",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": true
+        },
+        {
+          "name": "sometimesRemovedUncertainLabel",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "unit": "slopbot__closure",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 50,
+      "command": "seed 75552185364690; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step probe --invariant inv --max-samples 350 --max-steps 30 --mbt --seed 75552185364690",
+      "events": [
+        "observeContext",
+        "recordEvidence",
+        "observeTime",
+        "saveConsent",
+        "recordVerdict",
+        "reopen",
+        "notifyMaintainer",
+        "labelOutOfScope",
+        "commentSecurity",
+        "labelSecurityScam"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": false
+        },
+        {
+          "name": "sometimesRestrictedScamLabel",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertainLabel",
+          "reached": false
+        },
+        {
+          "name": "sometimesMaintainerActed",
+          "reached": false
+        },
+        {
+          "name": "sometimesSuperseded",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": true
+        },
+        {
+          "name": "sometimesRemovedUncertainLabel",
+          "reached": false
+        }
+      ]
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "slopbot__closure.ts",
+      "total": 137,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/closure-final-slopbot__closure.ts.log",
+      "logSha256": "f8b419e83aa3d48c2da98de42eef7e552d40871cc3b94b4efb56d6b0dd37ca85",
+      "translatorDiagnostic": "The proof projection uses structural equality for records, whereas direct execution of that projection would use JS reference equality. The generated runtime TypeScript uses an explicit structural comparer. Quint was replayed against the runtime export, including exact and unequal decoded identities."
+    }
+  ],
+  "tools": {
+    "node": "v26.13.1",
+    "quint": "0.33.1",
+    "dafny": "4.11.0"
+  },
+  "validationInputs": {
+    "quintSha256": "c4ef754baca6c0756e281a08fccea80cf47a6731c849e51e121aecf9b1a43ad7",
+    "harnessSha256": "ccb6b9034c02d429921278d6f2cf570db1351bc7a63824eca9cf62597df0f5a3",
+    "typescriptSha256": "b43d0d312228e366c939539047b3e71b01ce6bee5b4901c7da02f27cd5ac9a03",
+    "proofTypeScriptSha256": "d50ebe29bc30c5d266febbee24e073365fafca61e9333e70262ca130e0c47845",
+    "dafnySha256": "ac1759ebe26585774cbe2b60662314db47badb4bb75a58548c39a21b063c7680",
+    "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+  },
+  "reachability": [
+    {
+      "goal": "sometimesClosed",
+      "observedIn": [
+        "step"
+      ]
+    },
+    {
+      "goal": "sometimesRestrictedScamLabel",
+      "observedIn": [
+        "probe"
+      ],
+      "witness": {
+        "artifact": "formal/validation/journeys/closure-witness-sometimesRestrictedScamLabel.json",
+        "sha256": "ca56bcd14efee41efe38e10e30127b5573dd19814549ac9804a552f1266acda6",
+        "states": 29
+      }
+    },
+    {
+      "goal": "sometimesUncertainLabel",
+      "observedIn": [
+        "step"
+      ],
+      "witness": {
+        "artifact": "formal/validation/journeys/closure-witness-sometimesUncertainLabel.json",
+        "sha256": "642739c3cb82913d969e3e9af361561f0e907b840e53408c3332fde1cb36f634",
+        "states": 28
+      }
+    },
+    {
+      "goal": "sometimesMaintainerActed",
+      "observedIn": [],
+      "witness": {
+        "artifact": "formal/validation/journeys/closure-witness-sometimesMaintainerActed.json",
+        "sha256": "d3bdf2edd9f33f920f973b087fb4d4b1e9ae76e43450aac1c5299efdfaeb4cf8",
+        "states": 15
+      }
+    },
+    {
+      "goal": "sometimesSuperseded",
+      "observedIn": [
+        "step",
+        "probe"
+      ]
+    },
+    {
+      "goal": "sometimesReopened",
+      "observedIn": [
+        "step",
+        "probe"
+      ]
+    },
+    {
+      "goal": "sometimesRemovedUncertainLabel",
+      "observedIn": [],
+      "witness": {
+        "artifact": "formal/validation/journeys/closure-witness-sometimesRemovedUncertainLabel.json",
+        "sha256": "299e3fcf6b7238267938fc146d178c19c4ce22b6ec3c594ddeda57be490eeb0c",
+        "states": 13
+      }
+    }
+  ],
+  "directed": {
+    "artifact": "formal/validation/journeys/closure-directed.json",
+    "sha256": "ba6f5f808f3eab193b6ac31f8f9f3ae073c2acc898a5b964eea754388b2ba24a",
+    "cases": 46
+  }
+}
