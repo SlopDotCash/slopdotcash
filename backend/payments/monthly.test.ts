@@ -673,6 +673,68 @@ test("write collaborators on an organization project may read monthly awards but
   }
 });
 
+test("collaborators on a user-owned project may read monthly awards according to repository authority", async () => {
+  const collaborator = { githubId: "900000099", githubLogin: "collaborator" };
+  const steward = {
+    ...project.manifest.steward.github,
+    type: "User" as const,
+  };
+  const userManifest = {
+    ...project.manifest,
+    steward: { ...project.manifest.steward, github: steward },
+  };
+  const facts = {
+    id: Number(userManifest.authority.repositoryId),
+    node_id: userManifest.authority.repositoryNodeId,
+    owner: {
+      id: Number(steward.actorId),
+      node_id: steward.nodeId,
+      type: steward.type,
+      login: steward.login,
+    },
+  };
+  let permission = "write";
+  const nativeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    String(input).endsWith("/permission")
+      ? Response.json({
+          permission,
+          user: { id: Number(collaborator.githubId) },
+        })
+      : Response.json(facts)) as typeof fetch;
+  try {
+    const service = owner((_current, who, level) =>
+      verifyProjectAuthority(userManifest, who, undefined, level),
+    );
+    const refused = async (action: Promise<unknown>) => {
+      const error = await action.then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(MonthlyPaymentError);
+      expect((error as MonthlyPaymentError).code).toBe("owner_required");
+    };
+
+    for (permission of ["write", "maintain"]) {
+      const read = await service.view(project.id, "2026-11", collaborator);
+      expect(read.canManage).toBe(false);
+      await refused(service.setAutomatic(project.id, collaborator, false));
+    }
+
+    permission = "admin";
+    expect(
+      (await service.view(project.id, "2026-11", collaborator)).canManage,
+    ).toBe(true);
+    expect(await service.setAutomatic(project.id, collaborator, false)).toEqual(
+      {
+        automatic: false,
+      },
+    );
+  } finally {
+    globalThis.fetch = nativeFetch;
+  }
+});
+
 test("an unchanged paused project still permits owner opt-out and allocation edits", async () => {
   clock = beforeCutoff;
   const manifest = { ...project.manifest, status: "paused" as const };
