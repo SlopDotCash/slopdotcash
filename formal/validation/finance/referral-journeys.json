@@ -1,0 +1,5797 @@
+{
+  "snapshot": {
+    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d"
+  },
+  "meaning": "Finite guided core journeys, not application or chain conformance.",
+  "checks": [
+    "immutable capture",
+    "unknown attribution refused",
+    "two projects one referrer",
+    "prospective rate preserves history",
+    "duplicate month refused",
+    "12-month eligibility expiry",
+    "2,000,000 whole-program and 250,000 per-project caps",
+    "walletless carry",
+    "poster gas limit",
+    "uncertain hold survives UTC day",
+    "failed root receipt refused",
+    "exact wallet and transfer",
+    "immediate once-only claim",
+    "sealed root cannot void",
+    "poster pause does not block finalized claim observation",
+    "distributor pause is a separate known state",
+    "stale cache is explicitly unknown",
+    "calendar anniversary including leap-day clamp",
+    "lifetime wallet pin",
+    "shared address actor-order and pin priority",
+    "sequential epochs and spacing",
+    "high-water rollback and rescue deadline",
+    "exact transfer and total funding",
+    "two-step ownership and poster separation",
+    "contract pause and raw estimate",
+    "whole-balance delayed rescue",
+    "expired lease commits no rows or pins",
+    "earliest filed tree",
+    "void acknowledgement before next post",
+    "gas retains actual settlement day"
+  ],
+  "coverage": [
+    {
+      "unit": "referralAccrual",
+      "transitions": [
+        "capture",
+        "configure",
+        "enableDryRun",
+        "disable",
+        "setRate",
+        "startMonth",
+        "accrueNext",
+        "fileMonth",
+        "abandonMonth"
+      ],
+      "covered": [
+        "capture",
+        "configure",
+        "enableDryRun",
+        "disable",
+        "setRate",
+        "startMonth",
+        "accrueNext",
+        "fileMonth",
+        "abandonMonth"
+      ],
+      "missing": [],
+      "goals": [
+        {
+          "goal": "sometimesFiled",
+          "reached": true
+        },
+        {
+          "goal": "sometimesExcludedRecorded",
+          "reached": true
+        },
+        {
+          "goal": "sometimesMultiProject",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "referralPublication",
+      "transitions": [
+        "prepare",
+        "journal",
+        "discardPrepared",
+        "submit",
+        "loseObservation",
+        "retransmit",
+        "observeDay",
+        "setPostingPaused",
+        "finalize",
+        "finalizeFailure",
+        "claim",
+        "voidRoot",
+        "acknowledgeVoid",
+        "invalidateCache",
+        "refreshCache"
+      ],
+      "covered": [
+        "prepare",
+        "journal",
+        "discardPrepared",
+        "submit",
+        "loseObservation",
+        "retransmit",
+        "observeDay",
+        "setPostingPaused",
+        "finalize",
+        "finalizeFailure",
+        "claim",
+        "voidRoot",
+        "acknowledgeVoid",
+        "invalidateCache",
+        "refreshCache"
+      ],
+      "missing": [],
+      "goals": [
+        {
+          "goal": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "goal": "sometimesClaimed",
+          "reached": true
+        },
+        {
+          "goal": "sometimesVoided",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "referralDistributor",
+      "transitions": [
+        "deploy",
+        "tick",
+        "transferOwnership",
+        "acceptOwnership",
+        "setPoster",
+        "pause",
+        "unpause",
+        "deposit",
+        "postRoot",
+        "voidLast",
+        "claim",
+        "rescue"
+      ],
+      "covered": [
+        "deploy",
+        "tick",
+        "transferOwnership",
+        "acceptOwnership",
+        "setPoster",
+        "pause",
+        "unpause",
+        "deposit",
+        "postRoot",
+        "voidLast",
+        "claim",
+        "rescue"
+      ],
+      "missing": [],
+      "goals": [
+        {
+          "goal": "sometimesClaimed",
+          "reached": true
+        },
+        {
+          "goal": "sometimesVoided",
+          "reached": true
+        },
+        {
+          "goal": "sometimesRescued",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "referrals",
+      "transitions": [
+        "dryRun",
+        "recordFunding",
+        "startWatcher",
+        "activate"
+      ],
+      "covered": [
+        "dryRun",
+        "recordFunding",
+        "startWatcher",
+        "activate"
+      ],
+      "missing": [],
+      "goals": [
+        {
+          "goal": "sometimesDryRun",
+          "reached": true
+        },
+        {
+          "goal": "sometimesPosting",
+          "reached": true
+        }
+      ]
+    }
+  ],
+  "eventCount": 172,
+  "events": [
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 2,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 4,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 1,
+            "project": 3,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "unknown-project",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 1,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 2,
+            "project": 2,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "setRate",
+        "rate": {
+          "fromPeriod": 24323,
+          "numerator": [
+            6
+          ],
+          "denominator": [
+            1
+          ]
+        }
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24323,
+        "payouts": [
+          {
+            "id": 3,
+            "project": 1,
+            "period": 24323,
+            "paidAt": {
+              "year": 2026,
+              "month": 12,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24323",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [],
+        "sourceDigest": "duplicate",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24323,
+        "payouts": [],
+        "sourceDigest": "snapshot-24323",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24324,
+        "payouts": [],
+        "sourceDigest": "snapshot-24324",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24325,
+        "payouts": [],
+        "sourceDigest": "snapshot-24325",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24326,
+        "payouts": [],
+        "sourceDigest": "snapshot-24326",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24327,
+        "payouts": [],
+        "sourceDigest": "snapshot-24327",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24328,
+        "payouts": [],
+        "sourceDigest": "snapshot-24328",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24329,
+        "payouts": [],
+        "sourceDigest": "snapshot-24329",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24330,
+        "payouts": [],
+        "sourceDigest": "snapshot-24330",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24331,
+        "payouts": [],
+        "sourceDigest": "snapshot-24331",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24332,
+        "payouts": [],
+        "sourceDigest": "snapshot-24332",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24333,
+        "payouts": [],
+        "sourceDigest": "snapshot-24333",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24334,
+        "payouts": [
+          {
+            "id": 4,
+            "project": 1,
+            "period": 24334,
+            "paidAt": {
+              "year": 2027,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24334",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 2,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 3,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 4,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 5,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 6,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 7,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 8,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 9,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 10,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 11,
+            "project": 2,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 12,
+            "project": 3,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 13,
+            "project": 4,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 14,
+            "project": 5,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 15,
+            "project": 6,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 16,
+            "project": 7,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 17,
+            "project": 8,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 18,
+            "project": 9,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 50,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "lost",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "wrong",
+        "leaseCurrent": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": false
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "abandonMonth",
+        "leaseId": "run",
+        "leaseCurrent": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 60,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 60,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [],
+              "total": [
+                0
+              ]
+            }
+          ],
+          "pins": [],
+          "nextPeriod": 24323,
+          "activePeriod": 24322,
+          "sourceDigest": "snapshot-24322",
+          "sourceCount": 1,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 1,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "empty",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24324,
+          "activePeriod": 24323,
+          "sourceDigest": "snapshot-24323",
+          "sourceCount": 1,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 1,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "merkle",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "journal",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "attempt": 1,
+        "gas": 200000000000001,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "signer": "poster"
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "journal",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "attempt": 1,
+        "gas": 100,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "signer": "wrong"
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "journal",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "attempt": 1,
+        "gas": 100,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "submit",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        }
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "loseObservation"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "observeDay",
+        "day": 2
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "finalize",
+        "attempt": 1,
+        "rootId": 1,
+        "epoch": 0,
+        "merkleRoot": "merkle",
+        "entries": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "amount": [
+              0,
+              0,
+              6,
+              0,
+              0
+            ]
+          }
+        ],
+        "total": [
+          0,
+          0,
+          6,
+          0,
+          0
+        ],
+        "receipt": 1,
+        "height": 1,
+        "actualGas": 10,
+        "settledDay": 1,
+        "finalized": true,
+        "succeeded": false
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 0,
+        "root": "merkle",
+        "total": [
+          0,
+          0,
+          6,
+          0,
+          0
+        ]
+      },
+      "by": "poster",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "finalize",
+        "attempt": 1,
+        "rootId": 1,
+        "epoch": 0,
+        "merkleRoot": "merkle",
+        "entries": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "amount": [
+              0,
+              0,
+              6,
+              0,
+              0
+            ]
+          }
+        ],
+        "total": [
+          0,
+          0,
+          6,
+          0,
+          0
+        ],
+        "receipt": 1,
+        "height": 1,
+        "actualGas": 10,
+        "settledDay": 1,
+        "finalized": true,
+        "succeeded": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "setPostingPaused",
+        "paused": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "refreshCache",
+        "paused": true,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "refreshCache",
+        "paused": false,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "claim",
+        "actor": 3,
+        "wallet": "wrong",
+        "cumulative": [
+          0,
+          0,
+          6
+        ],
+        "rootId": 1,
+        "transferred": [
+          0,
+          0,
+          6
+        ],
+        "receipt": 2,
+        "height": 2,
+        "finalized": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "claim",
+        "actor": 3,
+        "wallet": "wallet",
+        "cumulative": [
+          0,
+          0,
+          6
+        ],
+        "rootId": 1,
+        "transferred": [
+          999,
+          999,
+          5
+        ],
+        "receipt": 2,
+        "height": 2,
+        "finalized": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "claim",
+        "actor": 3,
+        "wallet": "wallet",
+        "cumulative": [
+          0,
+          0,
+          6
+        ],
+        "rootId": 1,
+        "transferred": [
+          0,
+          0,
+          6
+        ],
+        "receipt": 2,
+        "height": 2,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "claim",
+        "actor": 3,
+        "wallet": "wallet",
+        "cumulative": [
+          0,
+          0,
+          6
+        ],
+        "rootId": 1,
+        "transferred": [
+          0,
+          0,
+          6
+        ],
+        "receipt": 3,
+        "height": 2,
+        "finalized": true
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "voidRoot",
+        "rootId": 1,
+        "receipt": 3,
+        "height": 2,
+        "finalized": true
+      },
+      "by": "owner",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "claim",
+        "wallet": "wallet",
+        "cumulative": [
+          0,
+          0,
+          6
+        ],
+        "proofRoot": "merkle",
+        "verified": true,
+        "transferExact": true
+      },
+      "by": "wallet",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "refreshCache",
+        "paused": false,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "invalidateCache"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "setPostingPaused",
+        "paused": false
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24324,
+          "activePeriod": 24323,
+          "sourceDigest": "snapshot-24323",
+          "sourceCount": 1,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 2,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [
+            {
+              "index": 0,
+              "root": "merkle",
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": false
+            }
+          ],
+          "latestRootClaimed": true,
+          "claims": [
+            {
+              "wallet": "wallet",
+              "cumulative": [
+                0,
+                0,
+                6
+              ]
+            }
+          ],
+          "balance": [
+            0,
+            0,
+            994,
+            999,
+            1
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0,
+            0,
+            6
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "next",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "journal",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "attempt": 2,
+        "gas": 100,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [
+            {
+              "index": 0,
+              "root": "merkle",
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": false
+            }
+          ],
+          "latestRootClaimed": true,
+          "claims": [
+            {
+              "wallet": "wallet",
+              "cumulative": [
+                0,
+                0,
+                6
+              ]
+            }
+          ],
+          "balance": [
+            0,
+            0,
+            994,
+            999,
+            1
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0,
+            0,
+            6
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "submit",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        }
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 1,
+        "root": "next",
+        "total": [
+          0,
+          0,
+          12,
+          0,
+          0
+        ]
+      },
+      "by": "poster",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "finalize",
+        "attempt": 2,
+        "rootId": 2,
+        "epoch": 1,
+        "merkleRoot": "next",
+        "entries": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "amount": [
+              0,
+              0,
+              12,
+              0,
+              0
+            ]
+          }
+        ],
+        "total": [
+          0,
+          0,
+          12,
+          0,
+          0
+        ],
+        "receipt": 3,
+        "height": 3,
+        "actualGas": 10,
+        "settledDay": 1,
+        "finalized": true,
+        "succeeded": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "voidRoot",
+        "rootId": 2,
+        "receipt": 4,
+        "height": 4,
+        "finalized": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "voidLast",
+        "index": 1
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24324,
+        "payouts": [],
+        "sourceDigest": "snapshot-24324",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "replacement",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24324,
+              "sourceDigest": "snapshot-24324",
+              "sourceCount": 0,
+              "recordCount": 0,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24325,
+          "activePeriod": 24324,
+          "sourceDigest": "snapshot-24324",
+          "sourceCount": 0,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 3,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [
+            {
+              "index": 0,
+              "root": "merkle",
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": false
+            },
+            {
+              "index": 1,
+              "root": "next",
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": true
+            }
+          ],
+          "latestRootClaimed": false,
+          "claims": [
+            {
+              "wallet": "wallet",
+              "cumulative": [
+                0,
+                0,
+                6
+              ]
+            }
+          ],
+          "balance": [
+            0,
+            0,
+            994,
+            999,
+            1
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0,
+            0,
+            6
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "third",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "acknowledgeVoid",
+        "rootId": 2
+      },
+      "by": "wrong",
+      "expected": false
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "acknowledgeVoid",
+        "rootId": 2
+      },
+      "by": "operator",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24324,
+              "sourceDigest": "snapshot-24324",
+              "sourceCount": 0,
+              "recordCount": 0,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24325,
+          "activePeriod": 24324,
+          "sourceDigest": "snapshot-24324",
+          "sourceCount": 0,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 3,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [
+            {
+              "index": 0,
+              "root": "merkle",
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": false
+            },
+            {
+              "index": 1,
+              "root": "next",
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ],
+              "postedAt": 1,
+              "voided": true
+            }
+          ],
+          "latestRootClaimed": false,
+          "claims": [
+            {
+              "wallet": "wallet",
+              "cumulative": [
+                0,
+                0,
+                6
+              ]
+            }
+          ],
+          "balance": [
+            0,
+            0,
+            994,
+            999,
+            1
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0,
+            0,
+            6
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "third",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "configure",
+        "tokenUnit": [
+          0,
+          0,
+          1
+        ],
+        "verified": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 1,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 3,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "capture",
+        "project": 2,
+        "applicant": 1,
+        "steward": 2,
+        "referrer": 4,
+        "signedIn": true,
+        "administrator": false,
+        "moderator": false
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 90,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 91,
+            "project": 2,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "shared",
+            "authorized": true
+          },
+          {
+            "actor": 4,
+            "wallet": "shared",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24322,
+        "payouts": [
+          {
+            "id": 90,
+            "project": 1,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          },
+          {
+            "id": 91,
+            "project": 2,
+            "period": 24322,
+            "paidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "firstPaidAt": {
+              "year": 2026,
+              "month": 11,
+              "day": 1,
+              "millis": 0
+            },
+            "gross": [
+              0,
+              0,
+              1
+            ],
+            "paid": true,
+            "stablecoin": true,
+            "team": false,
+            "banned": false,
+            "held": false
+          }
+        ],
+        "sourceDigest": "snapshot-24322",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "accrueNext"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 4,
+            "wallet": "shared",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "startMonth",
+        "period": 24323,
+        "payouts": [],
+        "sourceDigest": "snapshot-24323",
+        "closed": true,
+        "complete": true,
+        "canonicalOrder": true,
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "fileMonth",
+        "wallets": [
+          {
+            "actor": 3,
+            "wallet": "shared",
+            "authorized": true
+          },
+          {
+            "actor": 4,
+            "wallet": "shared",
+            "authorized": true
+          }
+        ],
+        "leaseId": "run",
+        "leaseCurrent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "deploy",
+        "token": "token",
+        "tokenUnit": [
+          1
+        ],
+        "cap": [
+          10
+        ],
+        "spacing": 1,
+        "owner": "owner",
+        "poster": "poster",
+        "timestamp": 1
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "deposit",
+        "amount": [
+          10
+        ],
+        "token": "token",
+        "receipt": 1,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 1,
+        "root": "first",
+        "total": [
+          3
+        ]
+      },
+      "by": "poster",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 0,
+        "root": "first",
+        "total": [
+          3
+        ]
+      },
+      "by": "owner",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 0,
+        "root": "first",
+        "total": [
+          3
+        ]
+      },
+      "by": "poster",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 1,
+        "root": "second",
+        "total": [
+          5
+        ]
+      },
+      "by": "poster",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "tick",
+        "timestamp": 2
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 1,
+        "root": "second",
+        "total": [
+          5
+        ]
+      },
+      "by": "poster",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "voidLast",
+        "index": 1
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 2,
+        "root": "third",
+        "total": [
+          14
+        ]
+      },
+      "by": "poster",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 2,
+        "root": "third",
+        "total": [
+          13
+        ]
+      },
+      "by": "poster",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "postRoot",
+        "index": 2,
+        "root": "third",
+        "total": [
+          10
+        ]
+      },
+      "by": "poster",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "claim",
+        "wallet": "wallet",
+        "cumulative": [
+          3
+        ],
+        "proofRoot": "third",
+        "verified": true,
+        "transferExact": false
+      },
+      "by": "wallet",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "claim",
+        "wallet": "wallet",
+        "cumulative": [
+          3
+        ],
+        "proofRoot": "third",
+        "verified": true,
+        "transferExact": true
+      },
+      "by": "wallet",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "voidLast",
+        "index": 2
+      },
+      "by": "owner",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "pause"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "claim",
+        "wallet": "wallet",
+        "cumulative": [
+          6
+        ],
+        "proofRoot": "third",
+        "verified": true,
+        "transferExact": true
+      },
+      "by": "wallet",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "unpause"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "transferOwnership",
+        "newOwner": "successor"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "setPoster",
+        "newPoster": "successor"
+      },
+      "by": "owner",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "acceptOwnership"
+      },
+      "by": "wrong",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "acceptOwnership"
+      },
+      "by": "successor",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "setPoster",
+        "newPoster": "nextPoster"
+      },
+      "by": "successor",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "rescue",
+        "destination": "owner",
+        "transferExact": true
+      },
+      "by": "successor",
+      "expected": false
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "tick",
+        "timestamp": 31536002
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "rescue",
+        "destination": "owner",
+        "transferExact": true
+      },
+      "by": "successor",
+      "expected": true
+    },
+    {
+      "unit": "referralDistributor",
+      "event": {
+        "type": "claim",
+        "wallet": "wallet",
+        "cumulative": [
+          6
+        ],
+        "proofRoot": "third",
+        "verified": true,
+        "transferExact": true
+      },
+      "by": "wallet",
+      "expected": false
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "disable"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralAccrual",
+      "event": {
+        "type": "enableDryRun",
+        "reactivationApproved": true
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referrals",
+      "event": {
+        "type": "dryRun"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referrals",
+      "event": {
+        "type": "recordFunding",
+        "amount": 2000000,
+        "proposalPassed": true,
+        "finalized": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referrals",
+      "event": {
+        "type": "startWatcher",
+        "independent": true
+      },
+      "expected": true
+    },
+    {
+      "unit": "referrals",
+      "event": {
+        "type": "activate"
+      },
+      "by": "owner",
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24324,
+          "activePeriod": 24323,
+          "sourceDigest": "snapshot-24323",
+          "sourceCount": 1,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 1,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "merkle",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "discardPrepared"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "prepare",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "a": {
+          "phase": "Ready",
+          "configured": true,
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "attributions": [
+            {
+              "project": 1,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            },
+            {
+              "project": 2,
+              "applicant": 1,
+              "steward": 2,
+              "referrer": 3
+            }
+          ],
+          "rates": [
+            {
+              "fromPeriod": 24322,
+              "numerator": [
+                3,
+                0,
+                0
+              ],
+              "denominator": [
+                1
+              ]
+            },
+            {
+              "fromPeriod": 24323,
+              "numerator": [
+                6
+              ],
+              "denominator": [
+                1
+              ]
+            }
+          ],
+          "records": [
+            {
+              "payout": {
+                "id": 1,
+                "project": 1,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 2,
+                "project": 2,
+                "period": 24322,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24322,
+                "numerator": [
+                  3,
+                  0,
+                  0
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "amount": [
+                0,
+                0,
+                3,
+                0,
+                0
+              ],
+              "outcome": "Accrued"
+            },
+            {
+              "payout": {
+                "id": 3,
+                "project": 1,
+                "period": 24323,
+                "paidAt": {
+                  "year": 2026,
+                  "month": 12,
+                  "day": 1,
+                  "millis": 0
+                },
+                "firstPaidAt": {
+                  "year": 2026,
+                  "month": 11,
+                  "day": 1,
+                  "millis": 0
+                },
+                "gross": [
+                  0,
+                  0,
+                  1
+                ],
+                "paid": true,
+                "stablecoin": true,
+                "team": false,
+                "banned": false,
+                "held": false
+              },
+              "referrer": 3,
+              "eligible": true,
+              "rate": {
+                "fromPeriod": 24323,
+                "numerator": [
+                  6
+                ],
+                "denominator": [
+                  1
+                ]
+              },
+              "computed": [
+                0,
+                0,
+                6
+              ],
+              "amount": [
+                0,
+                0,
+                6
+              ],
+              "outcome": "Accrued"
+            }
+          ],
+          "staged": [],
+          "filings": [
+            {
+              "period": 24322,
+              "sourceDigest": "snapshot-24322",
+              "sourceCount": 2,
+              "recordCount": 2,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    6,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            },
+            {
+              "period": 24323,
+              "sourceDigest": "snapshot-24323",
+              "sourceCount": 1,
+              "recordCount": 1,
+              "entries": [
+                {
+                  "actor": 3,
+                  "wallet": "wallet",
+                  "amount": [
+                    0,
+                    0,
+                    12,
+                    0,
+                    0
+                  ]
+                }
+              ],
+              "total": [
+                0,
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ],
+          "pins": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "authorized": true
+            }
+          ],
+          "nextPeriod": 24324,
+          "activePeriod": 24323,
+          "sourceDigest": "snapshot-24323",
+          "sourceCount": 1,
+          "leaseRun": "",
+          "pending": []
+        },
+        "rootId": 1,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "merkleRoot": "merkle",
+        "rootVerified": true,
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "journal",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        },
+        "attempt": 1,
+        "gas": 100,
+        "chain": {
+          "configured": true,
+          "token": "token",
+          "tokenUnit": [
+            0,
+            0,
+            1
+          ],
+          "epochCap": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "postSpacing": 0,
+          "owner": "owner",
+          "pendingOwner": "",
+          "poster": "poster",
+          "paused": false,
+          "now": 1,
+          "deployedAt": 1,
+          "lastUnpausedAt": 1,
+          "epochs": [],
+          "latestRootClaimed": false,
+          "claims": [],
+          "balance": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "deposited": [
+            0,
+            0,
+            0,
+            0,
+            2
+          ],
+          "paid": [
+            0
+          ],
+          "rescued": [
+            0
+          ],
+          "depositReceipts": [
+            1
+          ]
+        },
+        "signer": "poster"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "submit",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        }
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "loseObservation"
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "retransmit",
+        "control": {
+          "mode": "Posting",
+          "reactivationApproved": true,
+          "tokenExists": true,
+          "fundingFinalized": true,
+          "watcherOperating": true
+        }
+      },
+      "expected": true
+    },
+    {
+      "unit": "referralPublication",
+      "event": {
+        "type": "finalizeFailure",
+        "attempt": 1,
+        "receipt": 1,
+        "actualGas": 10,
+        "settledDay": 1,
+        "finalized": true,
+        "succeeded": false
+      },
+      "expected": true
+    }
+  ],
+  "finalPublication": {
+    "phase": "Prepared",
+    "prepared": {
+      "id": 3,
+      "epoch": 2,
+      "merkleRoot": "third",
+      "period": 24324,
+      "sourceDigest": "snapshot-24324",
+      "entries": [
+        {
+          "actor": 3,
+          "wallet": "wallet",
+          "amount": [
+            0,
+            0,
+            12,
+            0,
+            0
+          ]
+        }
+      ],
+      "total": [
+        0,
+        0,
+        12,
+        0,
+        0
+      ],
+      "height": 0,
+      "voided": false,
+      "sealed": false,
+      "voidAcknowledged": false
+    },
+    "roots": [
+      {
+        "id": 1,
+        "epoch": 0,
+        "merkleRoot": "merkle",
+        "period": 24322,
+        "sourceDigest": "snapshot-24322",
+        "entries": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "amount": [
+              0,
+              0,
+              6,
+              0,
+              0
+            ]
+          }
+        ],
+        "total": [
+          0,
+          0,
+          6,
+          0,
+          0
+        ],
+        "height": 1,
+        "voided": false,
+        "sealed": true,
+        "voidAcknowledged": false
+      },
+      {
+        "id": 2,
+        "epoch": 1,
+        "merkleRoot": "next",
+        "period": 24323,
+        "sourceDigest": "snapshot-24323",
+        "entries": [
+          {
+            "actor": 3,
+            "wallet": "wallet",
+            "amount": [
+              0,
+              0,
+              12,
+              0,
+              0
+            ]
+          }
+        ],
+        "total": [
+          0,
+          0,
+          12,
+          0,
+          0
+        ],
+        "height": 3,
+        "voided": true,
+        "sealed": false,
+        "voidAcknowledged": true
+      }
+    ],
+    "attempts": [
+      {
+        "id": 1,
+        "root": 1,
+        "epoch": 0,
+        "day": 1,
+        "reservedGas": 100
+      },
+      {
+        "id": 2,
+        "root": 2,
+        "epoch": 1,
+        "day": 2,
+        "reservedGas": 100
+      }
+    ],
+    "claims": [
+      {
+        "actor": 3,
+        "cumulative": [
+          0,
+          0,
+          6
+        ]
+      }
+    ],
+    "pins": [
+      {
+        "actor": 3,
+        "wallet": "wallet",
+        "authorized": true
+      }
+    ],
+    "receipts": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "token": "token",
+    "tokenUnit": [
+      0,
+      0,
+      1
+    ],
+    "currentAttempt": 2,
+    "day": 2,
+    "settledGas": [
+      {
+        "attempt": 1,
+        "actual": 10,
+        "day": 1
+      },
+      {
+        "attempt": 2,
+        "actual": 10,
+        "day": 1
+      }
+    ],
+    "nativeHold": 0,
+    "postingPaused": false,
+    "distributorPaused": false,
+    "cacheFresh": false
+  }
+}

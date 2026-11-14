@@ -1,0 +1,112 @@
+{
+  "status": "source-compared-and-current-guided-journeys-passed",
+  "sourceCommit": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "snapshot": {
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d"
+  },
+  "comparisons": [
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:103-119",
+      "rule": "Constructor token, distinct owner/poster, positive cap and bounded spacing",
+      "spec": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:202-222",
+      "rule": "Sequential zero-based epochs, spacing, prior-live high water, available balance plus paid covers root",
+      "spec": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:225-239",
+      "rule": "Latest root void before successful claim; retained history restores prior active root and high water",
+      "spec": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:251-284",
+      "rule": "Separate on-chain pause; owner/pending owner/poster role transitions",
+      "spec": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:151-166,287-319",
+      "rule": "365-day rescue delay cannot be shortened by void; exact cumulative claims and transfers; raw claimable differs from execution readiness",
+      "spec": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "source": "workers/referral-accrual/core.ts:178-189",
+      "rule": "Twelve calendar months, end-of-month clamp and preserved time of day",
+      "spec": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "source": "workers/referral-accrual/core.ts:365-379",
+      "rule": "Integer base units per stablecoin micro-unit; running project and pool caps",
+      "spec": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "source": "workers/referral-accrual/store.ts:118-136",
+      "rule": "Canonical candidate order by paid observation then exact obligation ID; adapter must bind snapshot ordering",
+      "spec": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "source": "workers/referral-accrual/core.ts:403-410,425-460",
+      "rule": "Lifetime wallet pin; prior pin wins; lowest immutable actor ID wins new shared address; walletless totals retained",
+      "spec": "spec/settlement/referralPublication.md"
+    },
+    {
+      "source": "contracts/evm/src/ReferralDistributor.sol:202-222",
+      "rule": "Worker positive record ID is distinct from contract epoch; prepare/sign use authenticated distributor snapshot and exact Merkle digest",
+      "spec": "spec/settlement/referralPublication.md"
+    },
+    {
+      "source": "workers/referral-accrual/store.ts:258-306",
+      "rule": "Staged rows, exact file and first-use wallet pins commit together only under the matching live lease; lease loss publishes nothing.",
+      "spec": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "source": "workers/referral-accrual/core.ts:816-926",
+      "rule": "Earliest nonempty unposted file; period uniqueness/order; void acknowledgement; matching signer and zero-based epoch count; prior finalized total floor.",
+      "spec": "spec/settlement/referralPublication.md"
+    },
+    {
+      "source": "workers/referral-accrual/store.ts:23-40,351-385",
+      "rule": "Uncertain maximum gas remains reserved; finalized cost belongs to its actual settlement day, and missing historical fee evidence blocks new signing.",
+      "spec": "spec/settlement/referralPublication.md"
+    }
+  ],
+  "limits": [
+    "This source comparison is not a transition-by-transition refinement proof.",
+    "Canonical source order, exact identity and stablecoin admission, Merkle encoding/verification, finalized receipt parsing and real database/chain conformance remain adapter obligations.",
+    "No referral activation, funding, signing, root posting or payment occurred."
+  ],
+  "completeOwningFilesRead": [
+    "workers/referral-accrual/core.ts",
+    "workers/referral-accrual/store.ts",
+    "contracts/evm/src/ReferralDistributor.sol"
+  ],
+  "guidance": {
+    "preflightLog": "formal/validation/finance/referral-preflight.log",
+    "guidedReport": "formal/validation/finance/referral-journeys.json",
+    "guidedEvents": 172,
+    "guidedChecks": 30,
+    "transitionsCovered": 40,
+    "sometimesGoalsCovered": 11
+  },
+  "sourceFiles": [
+    {
+      "path": "workers/referral-accrual/core.ts",
+      "sha256": "08ba97e99e1b6a19f847b39a2469b89b524c7348e904780e793370ca1848c9ea",
+      "lines": 974
+    },
+    {
+      "path": "workers/referral-accrual/store.ts",
+      "sha256": "11da9478feccdbdb77e5a4eec3e8bba7153441b2ee2d0999693f257710b9dec0",
+      "lines": 473
+    },
+    {
+      "path": "contracts/evm/src/ReferralDistributor.sol",
+      "sha256": "20d05115aee7a42cecbbf3acf5d86144feed2a5313494ca20e2d0e1177afe66f",
+      "lines": 343
+    }
+  ]
+}

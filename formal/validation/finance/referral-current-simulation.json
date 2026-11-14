@@ -1,0 +1,26 @@
+{
+  "status": "complete",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6"
+  },
+  "samplesPerUnit": 100,
+  "steps": 30,
+  "simulations": [
+    {
+      "unit": "settlement__referralAccrual",
+      "passed": true,
+      "replayedTraces": 20,
+      "again": "seed 12543720067283; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 12543720067283"
+    },
+    {
+      "unit": "settlement__referralPublication",
+      "passed": true,
+      "replayedTraces": 20,
+      "again": "seed 49109082303145; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 49109082303145"
+    }
+  ]
+}

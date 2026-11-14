@@ -15,6 +15,8 @@ The specification tree defines account and browser ownership, project setup
 and revisions, contributor installation and work, Points, security admission,
 private cases, notifications, releases, settlement and fee handling. Each
 formal rule is catalogued in [spec-catalog.json](spec-catalog.json).
+The current tree contains 64 documents, 81 story groups and 270 rule groups.
+The retained source maps cover all 63 PRD sections and all 473 original models.
 
 The frontend owns request identity, stale and unavailable reads, private draft
 recovery, route access and public projections. Backend models own account and
@@ -53,6 +55,14 @@ Their owning specs include the corresponding explanations and rules.
   authorization before persistence can succeed.
 - A frozen monthly proposal retains its allocations, and phases before reserve
   creation cannot contain paid recipients.
+- A contributor allocation's first wallet-confirmation time remains valid
+  before and after replacement.
+- An unreceived fee state cannot carry spent funds, and signed conversion
+  attempts retain their native hold and committed value budget.
+- A wrong-total release retains its initial balances and prior-settlement
+  history, so it cannot release a substituted amount.
+- Buyback journal entries are positive and no later than the observed clock;
+  future entries cannot silently enter a later rolling window.
 
 ## Rules reconciled with the source
 
@@ -72,6 +82,22 @@ while later valid Points decisions enter the journal.
 New-project closure defaults to unchecked under the user's explicit migration
 decision. The pinned source PRD remains unchanged for provenance.
 
+The final coverage review added Featured and Community placement tied to the
+exact authoritative project revision, full-width public payment amounts, the
+approved homepage and setup presentation, and the production-only first-party
+beacon policy. Referral accrual now retains immutable attribution, complete
+ordered monthly filings, historical rates and multi-project cumulative caps.
+Root publication preserves walletless accruals, pinned wallets, uncertain gas
+holds, immediate claims and void/seal history. Poster operational pause and
+the distributor's separate on-chain pause have distinct meanings. A stale
+claim cache exposes an explicit unknown state.
+The pinned referral source additionally requires lifetime wallet pins, exact
+integer token base units per stablecoin micro-unit, canonical payout ordering
+and calendar-anniversary eligibility with month-end clamping. Its distributor
+owns zero-based epochs, funding and spacing checks, role rotation, exact claim
+transfers and the rescue delay. The publication model binds its own record IDs
+to the separate contract epoch and Merkle digest.
+
 ## Proofs and checks
 
 The toolchain uses Node 26.13.1, Quint 0.33.1 and Dafny 4.11.0. Exact commands,
@@ -83,21 +109,46 @@ following files.
 - [Root and journey proofs](root-proofs.json) and
   [journey verification](journey-verification.json) record the active browser,
   account, contributor and Points results.
+- [Coverage verification](coverage-verification.json) records the final
+  listing, full-width payment projection and presentation checks.
 - [Security verification](security-verification.json) records admission,
   private-case, Slopbot and operations results.
 - [Financial verification](financial-verification.json) records exact arithmetic,
   composed journeys and financial proof results. The independent BigInt
-  differential check covered 11,025 comparisons, including 256-bit values.
+  differential check covered 11,027 comparisons, including 256-bit values.
 
 Handwritten proof files sit beside their owning specifications. They supply
 induction or set-membership reasoning through the checked Vibestack proof
 pipeline. Source code, generated core, cache and acceptance files remain
 separate. No proof exception has been accepted for this migration.
 
-The full-tree `pnpm check` is still in progress while these records are being
-assembled. Its final outcome must be recorded here before declaring the
-specification phase verified. A prior passing snapshot does not certify a
-later changed model.
+The current focused reports establish 763 obligations for the browser,
+account, project, contributor and Points units, and 741 unique obligations
+for security, Slopbot and operations. Historical repeated runs are excluded
+from those totals. The financial signer has 19 proved obligations. General
+full-width arithmetic, allocation and dependent financial invariants retain
+the exact unresolved obligations listed in their report.
+
+The full-tree `pnpm check` passed model parsing, typechecking, invariant
+simulation, reachability and generated TypeScript replay for the reviewed
+snapshot. Its proof stage is still running while these records are being
+assembled. General full-width arithmetic and dependent financial invariants
+remain unproved in the completed isolated attempts. The exact obligations and
+attempts remain in the financial verification record. A prior passing snapshot
+does not certify a later changed model.
+
+## Guard diagnostics
+
+The simulation report may list guards it did not observe refusing an event.
+`canChangeDestination` and `canObserveAvailability` deliberately accept an
+observation in every state; their trusted adapters own sender and evidence
+validation. `canAuthenticate` and draft `canOpen` require positive authenticated
+identities. Release `canConfigure` requires Candidate and
+`canObserveBranchHead` requires a positive source identity. Closure's
+`canRecordParticipant`, `canRecordQualification`, `canRecordActivation` and
+`canRecordVerdict` refuse changes after closure. Their missing negative samples
+are finite-coverage diagnostics, not evidence that these restrictions were
+removed. The final full-tree log retains the actual diagnostic list.
 
 ## Acceptance boundaries
 

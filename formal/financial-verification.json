@@ -1,21 +1,24 @@
 {
-  "status": "complete-with-unproved",
+  "status": "focused-checks-recorded-full-tree-pending",
   "sourceHashes": {
-    "spec/fees/buyback.md": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
-    "spec/fees/conversion.md": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
-    "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
     "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
     "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
-    "spec/settlement/contributorAllocation.md": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
-    "spec/settlement/index.md": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
+    "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+    "spec/settlement/index.md": "8a3532cc1f1017fbcaa9c50f51be8f613cfd107cc4224022dcca54e9196aab78",
     "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
     "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
     "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
-    "spec/settlement/referrals.md": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
-    "spec/settlement/reserveRelease.md": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
+    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
     "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
-    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5"
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+    "spec/fees/buyback.md": "d45d97d3353687f3a134c57b10daddd00d73285687035533e9e330d2a548c8e4",
+    "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+    "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd"
   },
   "proofFileHashes": {
     "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11"
@@ -66,7 +69,8 @@
         "source": "spec/settlement/money.md",
         "sourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
         "sourceCurrent": true,
-        "status": "unproved"
+        "status": "unproved",
+        "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
       },
       {
         "unit": "settlement__allocation.ts",
@@ -86,7 +90,8 @@
         "source": "spec/settlement/allocation.md",
         "sourceSha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
         "sourceCurrent": true,
-        "status": "unproved"
+        "status": "unproved",
+        "currentSourceSha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f"
       },
       {
         "unit": "settlement__vault.ts",
@@ -116,7 +121,8 @@
         "source": "spec/settlement/vault.md",
         "sourceSha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
         "sourceCurrent": true,
-        "status": "unproved"
+        "status": "unproved",
+        "currentSourceSha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5"
       },
       {
         "unit": "settlement__monthly.ts",
@@ -138,29 +144,8 @@
         "source": "spec/settlement/monthly.md",
         "sourceSha256": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
         "sourceCurrent": true,
-        "status": "unproved"
-      },
-      {
-        "unit": "settlement__payment.ts",
-        "total": 68,
-        "unproved": [
-          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))",
-          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))",
-          "reconcile: (inv(p) ==> canReconcile(p, evidence) ==> alwaysPaidEvidence(reconcile(p, evidence)))",
-          "initialHolds: inv(initialHolds())",
-          "step: inv(step(current, event, by_))"
-        ],
-        "errors": [],
-        "exhausted": [
-          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))"
-        ],
-        "proofFile": null,
-        "proofSha256": null,
-        "log": "formal/validation/finance/settlement__payment.ts.proof.log",
-        "source": "spec/settlement/payment.md",
-        "sourceSha256": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
-        "sourceCurrent": false,
-        "status": "unproved"
+        "status": "unproved",
+        "currentSourceSha256": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69"
       },
       {
         "unit": "settlement__composition.ts",
@@ -186,7 +171,32 @@
         "source": "spec/settlement/composition.md",
         "sourceSha256": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
         "sourceCurrent": false,
-        "status": "unproved"
+        "status": "unproved",
+        "currentSourceSha256": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c"
+      },
+      {
+        "unit": "settlement__payment.ts",
+        "total": 90,
+        "unproved": [
+          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))",
+          "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [],
+        "proofFile": null,
+        "proofSha256": null,
+        "log": "formal/validation/finance/finish-settlement__payment.ts.log",
+        "source": "spec/settlement/payment.md",
+        "sourceSha256": "c9f0be82542055dd005b1f99a6526f0fed827acc603ad71441c8c000cc6fd8ae",
+        "sourceCurrent": false,
+        "status": "unproved",
+        "report": "formal/validation/finance/finish-proofs.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/settlement/payment.md": "c9f0be82542055dd005b1f99a6526f0fed827acc603ad71441c8c000cc6fd8ae"
+        },
+        "currentSourceSha256": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55"
       },
       {
         "unit": "settlement__signer.ts",
@@ -199,22 +209,124 @@
         "sourceSha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
         "sourceCurrent": true,
         "report": "formal/validation/finance/signer-proof.json",
-        "log": "formal/validation/finance/signer-proof.log"
+        "log": "formal/validation/finance/signer-proof.log",
+        "currentSourceSha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9"
+      },
+      {
+        "unit": "fees__conversion.ts",
+        "total": 114,
+        "unproved": [],
+        "errors": [],
+        "exhausted": [],
+        "log": "formal/validation/finance/lifecycle-fees__conversion.ts.log",
+        "source": "spec/fees/conversion.md",
+        "sourceSha256": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+        "sourceCurrent": true,
+        "status": "passed",
+        "report": "formal/validation/finance/lifecycle-repair.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+          "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+          "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+        },
+        "currentSourceSha256": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed"
+      },
+      {
+        "unit": "settlement__contributorAllocation.ts",
+        "total": 32,
+        "unproved": [],
+        "errors": [],
+        "exhausted": [],
+        "log": "formal/validation/finance/lifecycle-settlement__contributorAllocation.ts.log",
+        "source": "spec/settlement/contributorAllocation.md",
+        "sourceSha256": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+        "sourceCurrent": true,
+        "status": "passed",
+        "report": "formal/validation/finance/lifecycle-repair.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+          "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+          "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+        },
+        "currentSourceSha256": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89"
+      },
+      {
+        "unit": "settlement__reserveRelease.ts",
+        "total": 74,
+        "unproved": [
+          "check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))",
+          "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysWholeRelease(finalize(r, height, releasedAmount, settledAmount)))",
+          "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysValidAmounts(finalize(r, height, releasedAmount, settledAmount)))",
+          "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysConserved(finalize(r, height, releasedAmount, settledAmount)))",
+          "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))",
+          "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))",
+          "step: inv(step(current, event, by_))"
+        ],
+        "errors": [],
+        "exhausted": [],
+        "log": "formal/validation/finance/lifecycle-settlement__reserveRelease.ts.log",
+        "source": "spec/settlement/reserveRelease.md",
+        "sourceSha256": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
+        "sourceCurrent": true,
+        "status": "unproved",
+        "report": "formal/validation/finance/lifecycle-repair.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+          "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+          "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+        },
+        "currentSourceSha256": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+      },
+      {
+        "unit": "settlement__referrals.ts",
+        "total": 6,
+        "unproved": [],
+        "errors": [],
+        "exhausted": [],
+        "log": "formal/validation/finance/referral-settlement__referrals.ts.log",
+        "source": "spec/settlement/referrals.md",
+        "sourceSha256": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+        "sourceCurrent": false,
+        "status": "passed",
+        "report": "formal/validation/finance/referral-completion.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+          "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+          "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+          "spec/settlement/referralPublication.md": "e0e00eacc314b956dca57720b26695a0bde1f60fc3dacf460caaf209326ae981"
+        },
+        "currentSourceSha256": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373"
       }
     ],
     "baselineReport": "formal/validation/finance/proofs.json",
     "attemptsReport": "formal/validation/finance/proof-attempts.json",
-    "unprovedCount": 39,
+    "unprovedCount": 44,
     "sourceSnapshotsNeedingFinalTreeRecheck": [
+      "settlement__composition.ts",
       "settlement__payment.ts",
-      "settlement__composition.ts"
+      "settlement__referrals.ts"
     ],
-    "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established."
+    "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established.",
+    "scope": "Focused source-bound proof attempts; the full-tree report is authoritative for the complete current tree.",
+    "fullTreeReport": "formal/validation/full-tree/current-check.json"
   },
   "reachabilityProbes": {
     "status": "passed-on-recorded-snapshot",
     "report": "formal/validation/finance/reachability-probes.json"
   },
   "discoveredRules": "formal/validation/finance/discovered-rules.json",
-  "meaning": "Specification-only evidence. No application code was migrated and no live financial behavior, release, signing or payment was activated."
+  "meaning": "Specification-only evidence. No application code was migrated and no live financial behavior, release, signing or payment was activated.",
+  "lifecycleRepair": {
+    "report": "formal/validation/finance/lifecycle-repair.json",
+    "counterexamples": "formal/validation/finance/lifecycle-counterexamples.json"
+  },
+  "referrals": {
+    "sourceAudit": "formal/validation/finance/referral-source-audit.json",
+    "journeys": "formal/validation/finance/referral-journeys.json",
+    "checks": "formal/validation/finance/referral-completion.json"
+  }
 }

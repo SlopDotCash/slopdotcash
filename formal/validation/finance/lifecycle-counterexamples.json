@@ -1,0 +1,187 @@
+{
+  "meaning": "Arbitrary states admitted by earlier invariant sets, now rejected by the new lifecycle facts. These are inductiveness checks, not reachable runtime failures.",
+  "cases": [
+    {
+      "unit": "settlement__reserveRelease",
+      "reason": "An untouched signed release cannot contain balances from another reserve.",
+      "state": {
+        "phase": "OwnerSigned",
+        "root": "root",
+        "allocationRoot": "root",
+        "originalReserve": [
+          6
+        ],
+        "originalFree": [
+          0
+        ],
+        "hasSettled": false,
+        "reserved": [
+          7
+        ],
+        "allocationTotal": [
+          5
+        ],
+        "settledAmount": [
+          0
+        ],
+        "free": [
+          1
+        ],
+        "evidenceHeight": 1,
+        "observedHeight": 1,
+        "ownerRevision": 1,
+        "requestRevision": 1,
+        "upgradeQualified": true
+      },
+      "rejectedByRepairedInvariant": true
+    },
+    {
+      "unit": "settlement__reserveRelease",
+      "reason": "Wrong-total admission retains the original reserve baseline.",
+      "state": {
+        "phase": "Reserved",
+        "root": "root",
+        "allocationRoot": "root",
+        "originalReserve": [
+          6
+        ],
+        "originalFree": [
+          0
+        ],
+        "hasSettled": false,
+        "reserved": [
+          7
+        ],
+        "allocationTotal": [
+          6
+        ],
+        "settledAmount": [
+          0
+        ],
+        "free": [
+          0
+        ],
+        "evidenceHeight": 0,
+        "observedHeight": 1,
+        "ownerRevision": 1,
+        "requestRevision": 0,
+        "upgradeQualified": true
+      },
+      "rejectedByRepairedInvariant": true
+    },
+    {
+      "unit": "settlement__contributorAllocation",
+      "reason": "An awaiting allocation cannot preserve a negative first-confirmation timestamp.",
+      "state": {
+        "phase": "AwaitingWallet",
+        "actor": 1,
+        "amount": [
+          5
+        ],
+        "deadline": 4,
+        "firstConfirmation": -1,
+        "wallet": "",
+        "transaction": "",
+        "batchClosed": false
+      },
+      "rejectedByRepairedInvariant": true
+    },
+    {
+      "unit": "fees__conversion",
+      "reason": "Before a first receipt, no spending from another network can exist.",
+      "state": {
+        "expiryObservations": [],
+        "receivedReceipts": [],
+        "finalizedReceipts": [],
+        "attempts": [],
+        "minimumOutput": 0,
+        "outputAmount": 0,
+        "phase": "Empty",
+        "network": "Ethereum",
+        "wallet": "fees",
+        "asset": "token",
+        "value": 0,
+        "spentValue": 0,
+        "nativeHold": 0,
+        "nativeSpent": 5000000,
+        "quoteNative": 0,
+        "gasValue": 0,
+        "slippageBps": 0,
+        "impactBps": 0,
+        "outputWallet": "",
+        "receipt": 0,
+        "attempt": 0,
+        "day": 1,
+        "releaseEnabled": false,
+        "route": ""
+      },
+      "rejectedByRepairedInvariant": true
+    },
+    {
+      "unit": "fees__conversion",
+      "reason": "A signed send retains its native reservation.",
+      "state": {
+        "expiryObservations": [],
+        "receivedReceipts": [
+          1
+        ],
+        "finalizedReceipts": [],
+        "attempts": [],
+        "minimumOutput": 0,
+        "outputAmount": 0,
+        "phase": "Signed",
+        "network": "Base",
+        "wallet": "fees",
+        "asset": "token",
+        "value": 5000000,
+        "spentValue": 0,
+        "nativeHold": 0,
+        "nativeSpent": 0,
+        "quoteNative": 0,
+        "gasValue": 0,
+        "slippageBps": 0,
+        "impactBps": 0,
+        "outputWallet": "fees",
+        "receipt": 0,
+        "attempt": 0,
+        "day": 1,
+        "releaseEnabled": false,
+        "route": "inspectedAllowlist"
+      },
+      "rejectedByRepairedInvariant": true
+    },
+    {
+      "unit": "fees__conversion",
+      "reason": "A pending send already reserved value inside the cumulative daily cap.",
+      "state": {
+        "expiryObservations": [],
+        "receivedReceipts": [
+          1
+        ],
+        "finalizedReceipts": [],
+        "attempts": [],
+        "minimumOutput": 0,
+        "outputAmount": 0,
+        "phase": "Pending",
+        "network": "Base",
+        "wallet": "fees",
+        "asset": "token",
+        "value": 5000000001,
+        "spentValue": 0,
+        "nativeHold": 1,
+        "nativeSpent": 0,
+        "quoteNative": 0,
+        "gasValue": 0,
+        "slippageBps": 0,
+        "impactBps": 0,
+        "outputWallet": "fees",
+        "receipt": 0,
+        "attempt": 0,
+        "day": 1,
+        "releaseEnabled": false,
+        "route": "inspectedAllowlist"
+      },
+      "rejectedByRepairedInvariant": true
+    }
+  ]
+}

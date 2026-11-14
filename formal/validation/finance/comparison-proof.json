@@ -13,5 +13,5 @@
     "dafny verify --standard-libraries --unicode-char:true --cores 1 --resource-limit 30000000 --verification-time-limit 60 --filter-symbol FoldComparisonStable <generated money unit>",
     "dafny verify --standard-libraries --unicode-char:true --cores 1 --resource-limit 30000000 --verification-time-limit 60 --filter-symbol lawEqualReflexive_ensures <generated money unit>"
   ],
-  "outcome": "Each command completed with 1 verified and 0 errors. Complete money-unit verification remains in progress."
+  "outcome": "Each targeted command completed with 1 verified and 0 errors. The complete money-unit result is retained in formal/validation/finance/proofs.json and still has five unproved laws."
 }
