@@ -5,7 +5,8 @@ accounting and a recoverable assessment before Points publication. This unit
 owns one inference key with potentially competing deliveries, scoped source
 leases, append-only attempt and provider observations, the retained validated
 result and its assessment journal boundary. [Review](./review.md) owns ordinary
-PR findings, [Points census](../points/census.md) owns source collection, and the
+PR findings, [value requests](./valueRequests.md) own each delivery's
+claim, outcome and retry schedule, [Points census](../points/census.md) owns source collection, and the
 [Points journal](../points/journal.md) owns awarded Points. An assessment does
 not merge work, alter a vote, close a PR, authorize a payout or assign Points
 on its own.
@@ -31,7 +32,7 @@ strictly before its deadline. Claimed source leases track the owner request's
 deadline, and any overlapping live source owner refuses the entire group.
 
 ```quint
-type RequestPhase = Reading | Owned | Waiting | Published
+type RequestPhase = Absent | Reading | Owned | Published
 type Mode = MissingConfig | AlertsOnly | Capped
 type Provider = OrbioSonnet | SurplusSonnet | SurplusTerra
 type AttemptPhase = Admitted | HeldBudget | Calling | RouteDone | Completed
@@ -42,26 +43,26 @@ type Source = { repository: int, pull: int, digest: str }
 type Authority = { revision: int, generation: int, manifest: str, installation: int, active: bool }
 type Request = { token: int, deadline: int, inputDigest: str, group: List[Source], phase: RequestPhase,
   check: ReadPhase, checked: Authority, observedSource: str, remoteExact: bool, fence: Authority }
-type Charge = { provider: Provider, seenModel: str, result: CallResult, known: bool, actual: int, estimate: int, output: str }
+type Charge = { provider: Provider, seenModel: str, result: CallResult, known: bool, actual: int, estimate: int,
+  output: str, sizeBand: int, customerCharge: int }
 type Attempt = { id: int, token: int, month: int, stage: AttemptPhase, limited: bool, maximum: int, routeStep: int,
   allCalls: List[Charge], usageSaved: bool, resultStored: bool, reconciled: bool }
-type Retained = { attempt: int, key: str, result: str }
+type Retained = { attempt: int, key: str, result: str, sizeBand: int }
 type ValueInference = { now: int, month: int, key: str, group: List[Source], authority: Authority,
   config: Mode, monthlyCap: int, maximum: int, requests: List[Request], attempts: List[Attempt],
-  retained: Retained, published: Retained, occupied: Set[int], notices: List[ProviderNotice], milestones: List[Milestone] }
-type Milestone = { period: int, threshold: int }
-type NoticeKind = GatewayFailure | LowSurplusBalance
-type ProviderNotice = { kind: NoticeKind, provider: Provider, period: int, attempt: int, route: int }
+  retained: Retained, published: Retained, occupied: Set[int] }
+type ReleaseSettings = { reviewedRelease: bool, mode: Mode, cap: int, maximum: int }
+type ProviderReceipt = { verified: bool, provider: Provider, known: bool, actual: int, estimate: int }
 pure val emptyAuthority: Authority = { revision: 0, generation: 0, manifest: "", installation: 0, active: false }
 pure val reviewedAuthority: Authority = { revision: 1, generation: 1, manifest: "manifest-one", installation: 1, active: true }
 pure val noRequest: Request = { token: 0, deadline: 0, inputDigest: "", group: List(),
-  phase: Waiting, check: NoCheck, checked: emptyAuthority, observedSource: "", remoteExact: false, fence: emptyAuthority }
+  phase: Absent, check: NoCheck, checked: emptyAuthority, observedSource: "", remoteExact: false, fence: emptyAuthority }
 pure val noAttempt: Attempt = { id: 0, token: 0, month: 0, stage: Admitted, limited: false, maximum: 0, routeStep: 0,
   allCalls: List(), usageSaved: false, resultStored: false, reconciled: false }
-pure val noRetained: Retained = { attempt: 0, key: "", result: "" }
+pure val noRetained: Retained = { attempt: 0, key: "", result: "", sizeBand: 0 }
 pure val initial: ValueInference = { now: 0, month: 1, key: "", group: List(), authority: emptyAuthority,
   config: MissingConfig, monthlyCap: 0, maximum: 0, requests: List(), attempts: List(),
-  retained: noRetained, published: noRetained, occupied: Set(), notices: List(), milestones: List() }
+  retained: noRetained, published: noRetained, occupied: Set() }
 pure def validSource(s: Source): bool = s.repository > 0 and s.pull > 0 and s.digest != ""
 pure def sameScope(a: Source, b: Source): bool = a.repository == b.repository and a.pull == b.pull
 pure def validGroup(group: List[Source]): bool = group.length() > 0 and group.every(s => validSource(s)
@@ -141,6 +142,8 @@ Alerts-only holds no numeric amount. Capped mode requires the explicit
 operator cap and route maximum, includes current-month usage and outstanding
 reservations, and refuses while any uncapped attempt remains outstanding.
 External usage of the same global budget enters admission as trusted amounts.
+The budget settings come only from the reviewed release's configuration,
+never from a request.
 
 ```quint
 pure def hasReservation(a: Attempt): bool = a.stage != Admitted
@@ -159,9 +162,12 @@ pure def unboundedHold(v: ValueInference): bool =
   v.attempts.some(a => not(a.limited) and hasReservation(a) and not(a.reconciled))
 pure def validBudget(mode: Mode, cap: int, maximum: int): bool =
   mode == AlertsOnly or (mode == Capped and cap > 0 and maximum > 0 and maximum <= cap)
-pure def canConfigure(v: ValueInference, mode: Mode, cap: int, maximum: int, operator: bool): bool = operator
-pure def configure(v: ValueInference, mode: Mode, cap: int, maximum: int, operator: bool): ValueInference =
-  { ...v, config: if (validBudget(mode, cap, maximum)) mode else MissingConfig, monthlyCap: cap, maximum: maximum }
+pure def canConfigure(v: ValueInference, settings: ReleaseSettings): bool = settings.reviewedRelease
+pure def configure(v: ValueInference, settings: ReleaseSettings): ValueInference =
+  { ...v, config: if (validBudget(settings.mode, settings.cap, settings.maximum)) settings.mode else MissingConfig,
+    monthlyCap: settings.cap, maximum: settings.maximum }
+pure def lawMalformedSettingsStopInference(v: ValueInference, settings: ReleaseSettings): bool =
+  not(validBudget(settings.mode, settings.cap, settings.maximum)) implies configure(v, settings).config == MissingConfig
 pure def budgetAllows(v: ValueInference, otherUsed: int, otherHeld: int, otherUnbounded: bool): bool =
   v.config == AlertsOnly or (v.config == Capped and not(otherUnbounded) and not(unboundedHold(v))
     and otherUsed >= 0 and otherHeld >= 0 and localUsedAt(v.month, v) + otherUsed + heldCap(v) + otherHeld + v.maximum <= v.monthlyCap)
@@ -196,8 +202,8 @@ pure def expectedModel(provider: Provider): str =
 pure def canRecordCall(v: ValueInference, attemptId: int, charge: Charge): bool =
   val a = attempt(v, attemptId)
   a.stage == Calling and charge.provider == providerFor(a.routeStep)
-    and charge.actual >= 0 and charge.estimate >= 0 and (charge.result != ValidResult or
-      (charge.output != "" and charge.seenModel == expectedModel(charge.provider)))
+    and charge.actual >= 0 and charge.estimate >= 0 and charge.customerCharge == 0 and (charge.result != ValidResult or
+      (charge.output != "" and charge.seenModel == expectedModel(charge.provider) and charge.sizeBand >= 0 and charge.sizeBand <= 5))
     and (charge.result != BudgetDenial or charge.provider != OrbioSonnet)
 pure def recordCall(v: ValueInference, attemptId: int, charge: Charge): ValueInference =
   val a = attempt(v, attemptId)
@@ -224,10 +230,13 @@ A completed failed result and an unfinished charged attempt remain distinct.
 Only all-known actual usage can settle a numeric hold. A provider charge
 above the reserved maximum stays unresolved. Unknown costs retain the
 estimate for spending and an unresolved reservation. No age-based action
-releases a hold. The monthly email projection emits each crossed $500
-threshold once, including in a prior UTC month. The notification service owns
-transport and ambiguous-delivery reconciliation. A private provider incident notice can reference the provider
-and attempt metadata without prompt, code or raw response.
+releases a hold. Every call row also enters the global
+[cost ledger](./spendAlerts.md), which owns the $500 milestones and provider
+failure notices. A provider call interrupted after it started stays in
+`Calling` and keeps its slot until a verified provider receipt for that
+exact call reconciles it as a recorded failed call. Without such a receipt
+the attempt stays occupied and the request stays visible in the
+[incomplete-assessment Inbox](./assessmentInbox.md) for administrators.
 
 ```quint
 pure def canSaveUsage(v: ValueInference, attemptId: int): bool =
@@ -239,13 +248,14 @@ pure def saveUsage(v: ValueInference, attemptId: int): ValueInference =
   putAttempt(saved, { ...v, occupied: occupied })
 pure def lastCharge(a: Attempt): Charge =
   a.allCalls.nthOr(a.allCalls.length() - 1, { provider: OrbioSonnet, seenModel: "", result: FailedCall,
-    known: false, actual: 0, estimate: 0, output: "" })
+    known: false, actual: 0, estimate: 0, output: "", sizeBand: 0, customerCharge: 0 })
 pure def canRetain(v: ValueInference, attemptId: int): bool =
   val a = attempt(v, attemptId)
   a.stage == RouteDone and a.usageSaved and lastCharge(a).result == ValidResult and v.retained == noRetained
 pure def retain(v: ValueInference, attemptId: int): ValueInference =
   val a = attempt(v, attemptId)
-  putAttempt({ ...a, resultStored: true }, { ...v, retained: { attempt: attemptId, key: v.key, result: lastCharge(a).output } })
+  putAttempt({ ...a, resultStored: true }, { ...v, retained: { attempt: attemptId, key: v.key, result: lastCharge(a).output,
+    sizeBand: lastCharge(a).sizeBand } })
 pure def canComplete(v: ValueInference, attemptId: int): bool =
   val a = attempt(v, attemptId)
   a.stage == RouteDone and a.usageSaved and (lastCharge(a).result != ValidResult or v.retained != noRetained)
@@ -259,23 +269,19 @@ pure def reconcile(v: ValueInference, attemptId: int): ValueInference =
   val a = attempt(v, attemptId)
   val occupied = if (a.allCalls.length() == 0) v.occupied.exclude(Set(attemptId)) else v.occupied
   putAttempt({ ...a, reconciled: true }, { ...v, occupied: occupied })
-pure def canNoticeProvider(v: ValueInference, notice: ProviderNotice, lowBalanceProof: bool): bool =
-  val a = attempt(v, notice.attempt)
-  val charged = a.allCalls.nthOr(notice.route, lastCharge(noAttempt))
-  not(v.notices.includes(notice)) and
-    (if (notice.kind == LowSurplusBalance) lowBalanceProof and notice.period == v.month
-      and notice.attempt == 0 and notice.route == 0 and notice.provider == SurplusSonnet
-    else a.id > 0 and notice.period == a.month and a.usageSaved and notice.route >= 0
-      and notice.route < a.allCalls.length() and charged.provider == notice.provider and charged.result != ValidResult)
-pure def noticeProvider(v: ValueInference, notice: ProviderNotice, lowBalanceProof: bool): ValueInference =
-  { ...v, notices: v.notices.append(notice) }
-pure def nextMilestone(month: int, v: ValueInference): int =
-  (v.milestones.select(m => m.period == month).length() + 1) * 500000000
-pure def canNoticeMilestone(v: ValueInference, month: int, externalUsage: int): bool =
-  month > 0 and month <= v.month and externalUsage >= 0
-    and nextMilestone(month, v) <= localUsedAt(month, v) + externalUsage
-pure def noticeMilestone(v: ValueInference, month: int, externalUsage: int): ValueInference =
-  { ...v, milestones: v.milestones.append({period: month, threshold: nextMilestone(month, v)}) }
+pure def canReconcileInterrupted(v: ValueInference, attemptId: int, receipt: ProviderReceipt): bool =
+  val a = attempt(v, attemptId)
+  a.stage == Calling and receipt.verified and receipt.provider == providerFor(a.routeStep)
+    and receipt.actual >= 0 and receipt.estimate >= 0
+pure def reconcileInterrupted(v: ValueInference, attemptId: int, receipt: ProviderReceipt): ValueInference =
+  val a = attempt(v, attemptId)
+  putAttempt({ ...a, stage: RouteDone, routeStep: a.routeStep + 1, allCalls: a.allCalls.append({ provider: receipt.provider,
+    seenModel: "", result: FailedCall, known: receipt.known, actual: receipt.actual, estimate: receipt.estimate,
+    output: "", sizeBand: 0, customerCharge: 0 }) }, v)
+pure def alwaysCallsAreFree(v: ValueInference): bool =
+  v.attempts.every(a => a.allCalls.every(c => c.customerCharge == 0))
+pure def alwaysRetainedBandIsValid(v: ValueInference): bool =
+  v.retained != noRetained implies v.retained.sizeBand >= 0 and v.retained.sizeBand <= 5
 ```
 
 ## Story: Publish under the current exact authority
@@ -289,7 +295,9 @@ and the exact immutable result. A changed authority or expired lease makes
 the publication refuse. The original attempt may still retain metering and
 result evidence. A later owner reuses that validated result under a fresh
 fence. Publication appends one assessment identity and the underlying Points
-journal separately verifies it.
+journal separately verifies it. The published size band, from 0 to 5,
+is the input of the Points journal's size points; the Points domain credits
+one publication once.
 
 ```quint
 pure def canCaptureFence(v: ValueInference, token: int): bool =
@@ -331,12 +339,14 @@ pure val capValues = Set(0, 5)
 pure val maximumValues = Set(0, 2)
 pure val otherUsedValues = Set(0, 2)
 pure val otherHeldValues = Set(0, 2)
-pure val noticeValues = Set(
-  {kind: LowSurplusBalance, provider: SurplusSonnet, period: 1, attempt: 0, route: 0},
-  {kind: GatewayFailure, provider: OrbioSonnet, period: 1, attempt: 1, route: 0})
-pure val externalUsageValues = Set(0, 500000000)
+pure val settingsValues = Set({ reviewedRelease: true, mode: AlertsOnly, cap: 0, maximum: 0 },
+  { reviewedRelease: true, mode: Capped, cap: 5, maximum: 2 }, { reviewedRelease: true, mode: Capped, cap: 0, maximum: 2 },
+  { reviewedRelease: false, mode: AlertsOnly, cap: 0, maximum: 0 })
+pure val receiptValues = Set({ verified: true, provider: OrbioSonnet, known: true, actual: 1, estimate: 1 },
+  { verified: false, provider: OrbioSonnet, known: true, actual: 1, estimate: 1 })
 pure val resultDigestValues = Set("result")
-pure val sampleCharge: Charge = { provider: OrbioSonnet, seenModel: "anthropic/claude-sonnet-5.5", result: ValidResult, known: true, actual: 1, estimate: 1, output: "result" }
+pure val sampleCharge: Charge = { provider: OrbioSonnet, seenModel: "anthropic/claude-sonnet-5.5", result: ValidResult,
+  known: true, actual: 1, estimate: 1, output: "result", sizeBand: 2, customerCharge: 0 }
 pure val chargeValues = Set(sampleCharge, { ...sampleCharge, result: FailedCall, known: false },
   { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5", result: BudgetDenial, actual: 0, estimate: 0 },
   { ...sampleCharge, provider: SurplusSonnet, seenModel: "claude-sonnet-5.5" })
