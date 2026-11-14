@@ -13,5 +13,13 @@
     "spec/security/evidence.proof.dfy": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7",
     "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a"
   },
-  "qualification": "Active proof files observed at the start of the proof phase after the verified wallet and money proof inputs were installed. See proof-input-update.json."
+  "qualification": "Active proof files observed at the start of the proof phase after the verified wallet and money proof inputs were installed. See proof-input-update.json.",
+  "generatedProofs": {
+    "gen/proof/backend__wallets/backend__wallets.dfy": "c654228229be512b8deef374b74399171c53a0024ea7269e07cfca2be45f45d7",
+    "gen/proof/settlement__money/settlement__money.dfy": "c0212b4348d4f344b914e6148a4aa2e9e4d8e2280d8893dae81abf706fa904a7"
+  },
+  "includedVerifiedLemmas": {
+    "backend__wallets": "AppendUniqueConsumption",
+    "settlement__money": "ScaleByOne"
+  }
 }
