@@ -347,6 +347,8 @@ export function VaultActions({
       }
     });
   const checking = useRef(false);
+  /** Whether the notice now says the transfer was received but is not final. */
+  const receivedShown = useRef(false);
   /**
    * Reads the chain for the pending request. An automatic check signs nothing,
    * shows no busy state and leaves the notice alone while the result is pending.
@@ -367,6 +369,7 @@ export function VaultActions({
       let result:
         | "pending"
         | "not-sent"
+        | "received"
         | "failed"
         | "approval-confirmed"
         | "finalized";
@@ -397,12 +400,14 @@ export function VaultActions({
             stored = updatePendingRecord(key, captured, named);
           } catch {
             // Storage refused the write; this view still names the transaction.
-            if (result === "pending") setPending(named);
+            if (result === "pending" || result === "received")
+              setPending(named);
           }
           if (stored) {
             captured = named;
             storedPending.current = named;
-            if (result === "pending") setPending(named);
+            if (result === "pending" || result === "received")
+              setPending(named);
           }
         }
       } else {
@@ -429,11 +434,27 @@ export function VaultActions({
             );
         if (!mounted.current) return;
       }
-      if (result === "pending") {
+      if (result === "pending" || result === "received") {
+        // Included in a canonical block but not final: say it arrived, keep
+        // the saved request and keep checking. It counts only once final.
+        const network = networkLabel(deployment.network);
+        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const waitingNotice =
+          fromWallet || pending.batchId
+            ? "Submitted. Waiting for finalized chain evidence."
+            : "Waiting for finalized chain evidence.";
         if (automatic) {
           // The check works again: withdraw the error an earlier one showed.
           if (autoErrored.current) setError(null);
           autoErrored.current = false;
+          if (result === "received") {
+            receivedShown.current = true;
+            setNotice(receivedNotice);
+          } else if (receivedShown.current) {
+            // The block that carried it was replaced; it is pending again.
+            receivedShown.current = false;
+            setNotice(waitingNotice);
+          }
           return;
         }
         if (!fromWallet && hash) {
@@ -459,13 +480,11 @@ export function VaultActions({
           storedPending.current = candidate;
           setPending(candidate);
         }
-        setNotice(
-          fromWallet || pending.batchId
-            ? "Submitted. Waiting for finalized chain evidence."
-            : "Waiting for finalized chain evidence.",
-        );
+        receivedShown.current = result === "received";
+        setNotice(result === "received" ? receivedNotice : waitingNotice);
         return;
       }
+      receivedShown.current = false;
       clear(captured);
       setRecoveryHash("");
       setReview(null);
