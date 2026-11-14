@@ -70,11 +70,11 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "d8356694cb58364c6c005ae57d8b214b8e41f8af58d12aa02331dc023595ae18",
+      "sha256": "172fc23a562b8f03892d5423c8289c167888b8ec424a243abd3025ba6e77a792",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [70, 158],
+      "candidateLines": [70, 98, 169],
       "review": "mapped-abstraction"
     },
     {
@@ -3465,13 +3465,13 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "2358ca3f3f7431fa4cd7ea7da37fcd2b2a8eae62110571952712bc0143065890",
+      "sha256": "756e03cef7a5a60e811c269f408ca0441a61a12a28ac5f3a094a976074b7136c",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 77, 157, 194, 210, 211, 221, 224, 304, 328, 358, 366, 367,
-        369, 405, 410, 519, 530, 695, 976, 1441, 1499, 1535, 1560, 1588, 1590
+        369, 405, 410, 519, 530, 695, 976, 1466, 1524, 1560, 1585, 1613, 1615
       ],
       "review": "mapped-abstraction"
     },
@@ -3877,9 +3877,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "3e3e742d98707e1a785a2b607e2c467b1c03d4a4eaffd637405db64e14e0ead7",
+      "sha256": "a815f4564f6fbbea121f39c2832f49c4e44f242af4eccf767780979143099f1b",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
-      "candidateLines": [8, 25, 42, 46, 52],
+      "candidateLines": [
+        32, 65, 86, 88, 106, 126, 166, 181, 190, 212, 222, 228
+      ],
       "review": "mapped-abstraction"
     },
     {

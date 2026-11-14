@@ -36,8 +36,13 @@ commit statistics its earlier months loaded, so the collector refuses a later
 month while an earlier month of that repository has no piece.
 Bounded month runs collect and preview only. Apply once from the complete resumed
 historical scope, without either month filter. The workflow leaves time to upload checkpoints before its job limit. Resume
-with `resume_run` from this same workflow and exact main SHA. Cached bytes are
-verified again; an uploaded checkpoint is not its own evidence of completeness.
+with `resume_run` from this repository's same manual workflow on main. The
+source commit must be the current main commit or one of its ancestors. The
+current collector reconstructs cached bytes and proofs again, so a reviewed
+collector repair can retain compatible source evidence from an earlier run.
+The frozen baseline, registry and campaign scope must still match. An uploaded
+checkpoint is not its own evidence of completeness. Applying corrections still
+requires the current main checkout and fresh authority and financial checks.
 
 ## Private eligibility and recording
 

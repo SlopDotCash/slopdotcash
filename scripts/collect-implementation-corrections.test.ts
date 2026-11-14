@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -305,6 +305,87 @@ test("complete canonical census derives first acceptance and resumes from raw ev
   await expect(collectImplementationCorrections(options, deps)).rejects.toThrow(
     "reconstructed raw evidence",
   );
+});
+
+test("resume reconstructs the complete repository plan from cached canonical preflight evidence", async () => {
+  const dir = await directory();
+  const network = transport();
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network.call,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const first = await collectImplementationCorrections(options, dependencies);
+  const path = join(dir, "campaign.json");
+  const original = await readFile(path, "utf8");
+  const calls = network.requests();
+  const resumed = await collectImplementationCorrections(options, dependencies);
+  expect(resumed.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(network.requests()).toBe(calls);
+  type FrozenCampaign = {
+    through: string;
+    repositories: {
+      nodeId: string;
+      createdAt: string;
+      months: ReturnType<typeof censusMonths>;
+    }[];
+  };
+  for (const mutate of [
+    (campaign: FrozenCampaign) => {
+      campaign.repositories = [];
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories.push(structuredClone(campaign.repositories[0]));
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].months = [];
+    },
+    (campaign: FrozenCampaign) => {
+      const plan = campaign.repositories[0];
+      plan.createdAt = "2026-01-02T00:00:00Z";
+      plan.months = censusMonths(plan.createdAt, campaign.through);
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].nodeId = "R_changed";
+    },
+  ]) {
+    const changed = JSON.parse(original);
+    mutate(changed);
+    await writeFile(path, JSON.stringify(changed));
+    await expect(
+      collectImplementationCorrections(options, dependencies),
+    ).rejects.toThrow("Campaign repository scope or monthly partition");
+    expect(network.requests()).toBe(calls);
+  }
+  await writeFile(path, original);
+  for (const name of await readdir(join(dir, "attempts"))) {
+    const attempt = JSON.parse(
+      await readFile(join(dir, "attempts", name), "utf8"),
+    );
+    if (!attempt.body?.includes("CorrectionRepository")) continue;
+    const key = createHash("sha256")
+      .update(
+        JSON.stringify({
+          url: attempt.url,
+          method: attempt.method,
+          body: attempt.body,
+        }),
+      )
+      .digest("hex");
+    await rm(join(dir, "requests", `${key}.json`));
+  }
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toThrow("Cached census is missing raw request evidence");
+  expect(network.requests()).toBe(calls);
 });
 
 test("a complete census supplies source proofs without another metadata or statistics pass", async () => {
@@ -761,6 +842,47 @@ test("a bounded run refuses a later census month until the earlier months are co
   expect(network.searchedMonths).toEqual(["2026-01", "2026-02"]);
   const complete = await run(ordered, promotionTransport());
   expect(complete.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+});
+
+test("resumed attempts in one millisecond retain distinct immutable evidence", async () => {
+  const dir = await directory();
+  const clock = spyOn(Date, "now").mockReturnValue(1794620000000);
+  let calls = 0;
+  const transport = Object.assign(
+    async () => {
+      calls++;
+      return calls === 1
+        ? Response.json({ error: "unavailable" }, { status: 503 })
+        : Response.json({ restored: true });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const url = "https://api.github.com/repos/SlopDotCash/asi/pulls/1";
+  try {
+    const first = new CorrectionEvidenceCache(dir, transport);
+    expect((await first.fetch(url)).status).toBe(503);
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(calls).toBe(2);
+    const attempts = await readdir(join(dir, "attempts"));
+    expect(attempts).toHaveLength(2);
+    const retained = await Promise.all(
+      attempts.map(async (name) => {
+        const attempt = JSON.parse(
+          await readFile(join(dir, "attempts", name), "utf8"),
+        );
+        const bytes = await readFile(join(dir, "objects", attempt.bodyDigest));
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+          attempt.bodyDigest,
+        );
+        return attempt.status;
+      }),
+    );
+    expect(retained.sort()).toEqual([200, 503]);
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 test("GitHub quota failures retain raw attempts without caching them or swallowing other failures", async () => {
