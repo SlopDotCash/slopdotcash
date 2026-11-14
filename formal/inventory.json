@@ -70,11 +70,11 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "172fc23a562b8f03892d5423c8289c167888b8ec424a243abd3025ba6e77a792",
+      "sha256": "d0e0fec28b3a4c52a7838377ddbce56fb090198cf25c4c21be096d5bc239b2d1",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [70, 98, 169],
+      "candidateLines": [70, 98, 172],
       "review": "mapped-abstraction"
     },
     {
@@ -3465,13 +3465,14 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "8d143e91efc1db61fa7dd9d4eee9cc85c9de8d82864925fbd2fa8d891b02d7d2",
+      "sha256": "5d7a69f260cd926506ab3314535270680529a07b22246327b8e69d2ca5a06b4e",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 77, 157, 194, 210, 211, 221, 224, 304, 328, 358, 366, 367,
-        369, 405, 410, 519, 530, 695, 976, 1458, 1516, 1552, 1577, 1605, 1607
+        4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
+        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1608, 1667,
+        1703, 1728, 1756, 1758
       ],
       "review": "mapped-abstraction"
     },
