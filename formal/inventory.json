@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "acd00c2aa5b10a5a7c5d35d133d985a9c0b62d0dd7950faaeada90764b243434",
+      "sha256": "13bd3b806c5d526776da2ec1ca603622ca589ead62b39316b8c4799bc25ab5c2",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,9 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 158, 190, 195, 196, 250, 304, 378, 491, 497, 565, 588, 589, 610,
-        622, 688, 918, 946, 985, 1076, 1182, 1184, 1185, 1389, 1472, 1625, 1627,
-        1657, 1765, 1787, 1858, 1869, 1894, 1965, 1978, 1991, 2000, 2001, 2002
+        25, 35, 67, 169, 201, 206, 207, 261, 315, 392, 505, 511, 579, 582, 608,
+        609, 630, 642, 708, 938, 966, 1005, 1096, 1202, 1204, 1205, 1409, 1492,
+        1645, 1647, 1677, 1785, 1807, 1878, 1889, 1914, 1985, 1998, 2011, 2020,
+        2021, 2022
       ],
       "review": "mapped-abstraction"
     },
@@ -41,24 +42,24 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
+      "sha256": "cd4f3e4e5a7ac15e7efdc933917fe766f7405ab85bd6a1a9aae4d22e7f910901",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
+      "candidateLines": [1, 5, 95, 116, 181, 241, 266, 287, 374, 385],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "dfb9f6c24dcb5729a6ebc8ec93c9836772e6d26f599d9e92813ce91873dc2b7e",
+      "sha256": "20d898b70db2b68edab6d6d13e8dada5512915a6eab73b23938629feb836b666",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [5],
       "review": "mapped-abstraction"
     },
     {
@@ -3466,12 +3467,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
+      "sha256": "a0958646461865675c03c99d9bcb38d68704f6c78d095483ef4abf4e41183bc1",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [104, 153, 159, 160, 175],
+      "candidateLines": [110, 119, 120, 172, 178, 179, 194],
       "review": "mapped-abstraction"
     },
     {
@@ -13961,7 +13962,7 @@
     },
     {
       "path": "formal/models/release/ci_coverage.qnt",
-      "sha256": "69179871c0e91ee413be2ac33f3196ddbe267fcded19568ca2636a16ead1d412",
+      "sha256": "c8ed89ba784400cd1e9dfd9fec87223ec164d754e7478dc4a7b42af393c7a9f1",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -13973,7 +13974,11 @@
       "scenarios": [
         "developmentCoverageTest",
         "fixtureSelectsChainCoverageTest",
+        "manualRunIsCompleteByDefaultTest",
+        "manualRunSkipsOnlyProofsTest",
+        "manualRunSkipsProofsAndBrowserLanesTest",
         "modelSourceSelectsAffectedModelsTest",
+        "pushCannotSkipTest",
         "releaseCoverageTest"
       ]
     },
