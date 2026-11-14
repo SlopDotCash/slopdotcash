@@ -1,0 +1,76 @@
+{
+  "scope": "Focused models and generated replay. Exact registered complete groups, durable attempt handling and charge receipts. Live provider result and API conformance remain external.",
+  "sourceInputs": [
+    {
+      "path": "spec/slopbot/valueInference.md",
+      "sha256": "efe1773d023e9b5c250d1dc7fba4488f5b1f8b9922f5efcda3d04cbcc5c5bd89"
+    }
+  ],
+  "results": {
+    "slopbot__valueInference": {
+      "simulation": {
+        "command": "seed 281141579091521; to simulate again: pnpm exec quint run gen/slopbot__valueInference.run.qnt --main slopbot__valueInference_run --step step --invariant inv --max-samples 120 --max-steps 22 --mbt --seed 281141579091521",
+        "replayed": 18
+      },
+      "proof": {
+        "total": 90,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "exact complete source and no overlapping leases",
+    "expired owner replaced",
+    "paused/source drift/incomplete membership refusal",
+    "malformed configuration refuses admission",
+    "last lease and local authority checks fence provider call",
+    "exact served provider model required",
+    "lost lease preserves usage and retained result",
+    "retained result reuses no further paid call",
+    "old publication fence refuses, fresh fence publishes",
+    "three completed non-free attempts terminal",
+    "three unresolved holds wait and forbid fourth attempt",
+    "reconciled no-call releases slot",
+    "missing Orbio credential skips to Surplus and its spending denial remains recoverable",
+    "unknown uncapped cost blocks capped admission",
+    "capped cross-scope holds and usage included",
+    "provider overcharge retains reservation",
+    "each crossed monthly milestone once",
+    "sanitized provider failure and verified low-balance notices dedupe"
+  ],
+  "retainedModelMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "applicationMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "reachability": {
+    "test": "retainedPublicationTest",
+    "result": "passed",
+    "states": [
+      "sometimesHeld",
+      "sometimesRetained",
+      "sometimesPublished"
+    ],
+    "events": [
+      "setSource",
+      "configure",
+      "claim",
+      "ownGroup",
+      "captureFence",
+      "beginCheck",
+      "remoteReply",
+      "finishCheck",
+      "admit",
+      "reserve",
+      "call",
+      "recordCall",
+      "saveUsage",
+      "retain",
+      "beginCheck",
+      "remoteReply",
+      "finishCheck",
+      "publish"
+    ]
+  },
+  "generatedDafnySha256": "28214474552fed96c23b4d2e6d329d808d27d1ffcea102e518a88a6b34d93d3f"
+}
