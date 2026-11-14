@@ -35,6 +35,22 @@ pure def positiveAmount(a: Amount): bool = compareAmounts(a, zero) > 0
 pure def lawEqualReflexive(a: Amount): bool = equalAmounts(a, a)
 ```
 
+### Equivalent padded amounts have the same order against every other amount
+
+Trailing zero digits carry no value. Equality is symmetric, and replacing one
+operand with an equivalent padded representation preserves both orders of a
+comparison and every equality result. Every valid value is at least zero.
+
+```quint
+pure def lawEqualSymmetric(a: Amount, b: Amount): bool = equalAmounts(a, b) == equalAmounts(b, a)
+pure def lawEqualOrder(a: Amount, b: Amount, c: Amount): bool = equalAmounts(a, b) implies
+  compareAmounts(a, c) == compareAmounts(b, c) and compareAmounts(c, a) == compareAmounts(c, b)
+pure def lawEqualSubstitution(a: Amount, b: Amount, c: Amount): bool = equalAmounts(a, b) implies
+  (equalAmounts(a, c) == equalAmounts(b, c)) and (equalAmounts(c, a) == equalAmounts(c, b))
+pure def lawZeroOrder(a: Amount): bool = validAmount(a) implies
+  compareAmounts(a, zero) >= 0 and compareAmounts(zero, a) <= 0
+```
+
 ### Addition carries each limb and subtraction borrows each limb
 
 Subtraction is used only after the caller establishes that the minuend covers the subtrahend. These operations impose no asset-decimal convention. An invalid incoming limb vector is refused before a financial transition.
@@ -72,6 +88,14 @@ pure def lawAdditionValid(a: Amount, b: Amount): bool =
   (validAmount(a) and validAmount(b)) implies validAmount(addAmounts(a, b))
 pure def lawSubtractionValid(a: Amount, b: Amount): bool =
   (validAmount(a) and validAmount(b)) implies validAmount(subtractAmounts(a, b))
+```
+
+### Addition is independent of operand order
+
+Reordering the operands preserves the exact sum, including its limb sequence.
+
+```quint
+pure def lawAddCommutative(a: Amount, b: Amount): bool = addAmounts(a, b) == addAmounts(b, a)
 ```
 
 ### Ordinary fees round upward and private splits require exact division

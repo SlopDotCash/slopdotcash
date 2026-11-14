@@ -242,3 +242,202 @@ lemma lawSubtractionValid_ensures(a: seq<int>, b: seq<int>)
     assert subtractAmounts(a, b) == result.digits;
   }
 }
+
+lemma AmountEqualLimb(a: seq<int>, b: seq<int>)
+  ensures equalAmounts(a, b) == (forall i :: (0 <= i < (if |a| >= |b| then |a| else |b|) ==> ((if i < |a| then a[i] else 0) == (if i < |b| then b[i] else 0))))
+{
+  var longest := (if (|a| >= |b|) then a else b);
+  var f := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then 1 else -1)));
+  var same := (i: int) => (if (0 <= i && i < |a|) then a[i] else 0) == (if (0 <= i && i < |b|) then b[i] else 0);
+  forall acc: CompareFold, ignored: int
+    ensures f(acc, ignored).index == acc.index + 1
+    ensures (f(acc, ignored).comparison == 0) == (acc.comparison == 0 && same(acc.index))
+  { }
+  CompareFoldZero(f, same, CompareFold(0, 0), longest);
+  assert |longest| == (if |a| >= |b| then |a| else |b|);
+  assert compareAmounts(a, b) == Std.Collections.Seq.FoldLeft(f, CompareFold(0, 0), longest).comparison;
+  assert forall i :: (0 <= i < |longest|) ==> (same(i) == ((if i < |a| then a[i] else 0) == (if i < |b| then b[i] else 0)));
+}
+
+lemma CompareFoldZero(f: (CompareFold, int) -> CompareFold, same: int -> bool,
+  acc: CompareFold, xs: seq<int>)
+  requires forall acc, x :: f(acc, x).index == acc.index + 1
+  requires forall acc, x :: (f(acc, x).comparison == 0) == (acc.comparison == 0 && same(acc.index))
+  ensures (Std.Collections.Seq.FoldLeft(f, acc, xs).comparison == 0) ==
+    (acc.comparison == 0 && (forall i :: acc.index <= i < acc.index + |xs| ==> same(i)))
+  decreases |xs|
+{
+  if |xs| > 0 {
+    assert |xs[1..]| == |xs| - 1;
+    CompareFoldZero(f, same, f(acc, xs[0]), xs[1..]);
+  }
+}
+
+
+
+lemma CompareTailStable(f: (CompareFold, int) -> CompareFold, current: CompareFold, xs: seq<int>, fromIndex: int)
+  requires current.index >= fromIndex
+  requires forall acc: CompareFold, x: int :: acc.index >= fromIndex ==>
+    f(acc, x).comparison == acc.comparison && f(acc, x).index == acc.index + 1
+  ensures Std.Collections.Seq.FoldLeft(f, current, xs).comparison == current.comparison
+  decreases |xs|
+{
+  if |xs| > 0 {
+    CompareTailStable(f, f(current, xs[0]), xs[1..], fromIndex);
+  }
+}
+
+lemma CompareDifferentLengths(f: (CompareFold, int) -> CompareFold, g: (CompareFold, int) -> CompareFold,
+  current: CompareFold, xs: seq<int>, ys: seq<int>, xLimit: int, yLimit: int)
+  requires current.index + |xs| == xLimit && current.index + |ys| == yLimit
+  requires forall acc: CompareFold, x: int, y: int :: f(acc, x) == g(acc, y)
+  requires forall acc: CompareFold, x: int :: f(acc, x).index == acc.index + 1
+  requires forall acc: CompareFold, x: int :: acc.index >= xLimit ==>
+    f(acc, x).comparison == acc.comparison && f(acc, x).index == acc.index + 1
+  requires forall acc: CompareFold, y: int :: acc.index >= yLimit ==>
+    g(acc, y).comparison == acc.comparison && g(acc, y).index == acc.index + 1
+  ensures Std.Collections.Seq.FoldLeft(f, current, xs).comparison == Std.Collections.Seq.FoldLeft(g, current, ys).comparison
+  decreases |xs| + |ys|
+{
+  if |xs| == 0 {
+    assert current.index == xLimit;
+    forall acc: CompareFold, y: int | acc.index >= xLimit
+      ensures g(acc, y).comparison == acc.comparison && g(acc, y).index == acc.index + 1
+    { assert g(acc, y) == f(acc, 0); }
+    CompareTailStable(g, current, ys, xLimit);
+  } else if |ys| == 0 {
+    assert current.index == yLimit;
+    forall acc: CompareFold, x: int | acc.index >= yLimit
+      ensures f(acc, x).comparison == acc.comparison && f(acc, x).index == acc.index + 1
+    { assert f(acc, x) == g(acc, 0); }
+    CompareTailStable(f, current, xs, yLimit);
+  } else {
+    assert f(current, xs[0]) == g(current, ys[0]);
+    CompareDifferentLengths(f, g, f(current, xs[0]), xs[1..], ys[1..], xLimit, yLimit);
+  }
+}
+
+lemma PaddedAmountLookup(a: seq<int>, b: seq<int>)
+  requires equalAmounts(a, b)
+  ensures forall i :: (if 0 <= i < |a| then a[i] else 0) == (if 0 <= i < |b| then b[i] else 0)
+{
+  AmountEqualLimb(a, b);
+  forall i: int
+    ensures (if 0 <= i < |a| then a[i] else 0) == (if 0 <= i < |b| then b[i] else 0)
+  {
+    if 0 <= i < |a| || 0 <= i < |b| {
+      assert 0 <= i < (if |a| >= |b| then |a| else |b|);
+    }
+  }
+}
+
+lemma lawEqualSymmetric_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawEqualSymmetric(a, b) == true)
+{
+  AmountEqualLimb(a, b);
+  AmountEqualLimb(b, a);
+  assert (if |a| >= |b| then |a| else |b|) == (if |b| >= |a| then |b| else |a|);
+}
+
+lemma CompareOperandReplacement(a: seq<int>, b: seq<int>, c: seq<int>, d: seq<int>)
+  requires equalAmounts(a, c) && equalAmounts(b, d)
+  ensures compareAmounts(a, b) == compareAmounts(c, d)
+{
+  PaddedAmountLookup(a, c);
+  PaddedAmountLookup(b, d);
+  var f := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then 1 else -1)));
+  var g := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |c|)) then c[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |d|)) then d[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |c|)) then c[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |d|)) then d[acc.index] else 0)) then 1 else -1)));
+  forall acc: CompareFold, x: int, y: int
+    ensures f(acc, x) == g(acc, y)
+  {
+    assert (if 0 <= acc.index < |a| then a[acc.index] else 0) == (if 0 <= acc.index < |c| then c[acc.index] else 0);
+    assert (if 0 <= acc.index < |b| then b[acc.index] else 0) == (if 0 <= acc.index < |d| then d[acc.index] else 0);
+  }
+  var xs := if |a| >= |b| then a else b;
+  var ys := if |c| >= |d| then c else d;
+  forall acc: CompareFold, x: int | acc.index >= |xs|
+    ensures f(acc, x).comparison == acc.comparison && f(acc, x).index == acc.index + 1
+  { assert acc.index >= |a| && acc.index >= |b|; }
+  forall acc: CompareFold, y: int | acc.index >= |ys|
+    ensures g(acc, y).comparison == acc.comparison && g(acc, y).index == acc.index + 1
+  { assert acc.index >= |c| && acc.index >= |d|; }
+  CompareDifferentLengths(f, g, CompareFold(0, 0), xs, ys, |xs|, |ys|);
+  assert compareAmounts(a, b) == Std.Collections.Seq.FoldLeft(f, CompareFold(0, 0), xs).comparison;
+  assert compareAmounts(c, d) == Std.Collections.Seq.FoldLeft(g, CompareFold(0, 0), ys).comparison;
+}
+
+lemma lawEqualOrder_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawEqualOrder(a, b, c) == true)
+{
+  if equalAmounts(a, b) {
+    lawEqualReflexive_ensures(c);
+    CompareOperandReplacement(a, c, b, c);
+    CompareOperandReplacement(c, a, c, b);
+  }
+}
+
+lemma lawEqualSubstitution_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawEqualSubstitution(a, b, c) == true)
+{
+  lawEqualOrder_ensures(a, b, c);
+}
+
+lemma CompareNonnegativeFold(f: (CompareFold, int) -> CompareFold, current: CompareFold, xs: seq<int>)
+  requires current.comparison >= 0
+  requires forall acc: CompareFold, x: int :: acc.comparison >= 0 ==> f(acc, x).comparison >= 0
+  ensures Std.Collections.Seq.FoldLeft(f, current, xs).comparison >= 0
+  decreases |xs|
+{
+  if |xs| > 0 { CompareNonnegativeFold(f, f(current, xs[0]), xs[1..]); }
+}
+
+lemma CompareNonpositiveFold(f: (CompareFold, int) -> CompareFold, current: CompareFold, xs: seq<int>)
+  requires current.comparison <= 0
+  requires forall acc: CompareFold, x: int :: acc.comparison <= 0 ==> f(acc, x).comparison <= 0
+  ensures Std.Collections.Seq.FoldLeft(f, current, xs).comparison <= 0
+  decreases |xs|
+{
+  if |xs| > 0 { CompareNonpositiveFold(f, f(current, xs[0]), xs[1..]); }
+}
+
+lemma lawZeroOrder_ensures(a: seq<int>)
+  ensures (lawZeroOrder(a) == true)
+{
+  if validAmount(a) {
+    var f := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0)) then 1 else -1)));
+    var g := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) then 1 else -1)));
+    forall acc: CompareFold, x: int | acc.comparison >= 0
+      ensures f(acc, x).comparison >= 0
+    {
+      if 0 <= acc.index < |a| { assert a[acc.index] in a; }
+    }
+    forall acc: CompareFold, x: int | acc.comparison <= 0
+      ensures g(acc, x).comparison <= 0
+    {
+      if 0 <= acc.index < |a| { assert a[acc.index] in a; }
+    }
+    CompareNonnegativeFold(f, CompareFold(0, 0), a);
+    var longest := if |zero| >= |a| then zero else a;
+    CompareNonpositiveFold(g, CompareFold(0, 0), longest);
+    assert compareAmounts(a, zero) == Std.Collections.Seq.FoldLeft(f, CompareFold(0, 0), a).comparison;
+    assert compareAmounts(zero, a) == Std.Collections.Seq.FoldLeft(g, CompareFold(0, 0), longest).comparison;
+  }
+}
+
+lemma lawAddCommutative_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawAddCommutative(a, b) == true)
+{
+  var f := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)]));
+  var g := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) + acc.carry), 1000)]));
+  var xs := if |a| >= |b| then a else b;
+  var ys := if |b| >= |a| then b else a;
+  var start := AddFold(0, 0, []);
+  assert |xs| == |ys|;
+  forall acc: AddFold, x: int, y: int
+    ensures f(acc, x) == g(acc, y)
+  { }
+  ProofLib.FoldLeftPointwise(f, g, start, xs, ys);
+  var sum := Std.Collections.Seq.FoldLeft(f, start, xs);
+  assert addAmounts(a, b) == (if sum.carry > 0 then sum.digits + [sum.carry] else sum.digits);
+  assert addAmounts(b, a) == (if sum.carry > 0 then sum.digits + [sum.carry] else sum.digits);
+}
