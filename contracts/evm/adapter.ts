@@ -1248,13 +1248,26 @@ export async function prepareEvmVaultCreation(
   return { existingVault: null, transaction };
 }
 export class EvmVaultCreationFailed extends Error {}
+/**
+ * The creation is in a block that is not final and does not verify against
+ * this configuration there. Nothing is refused before finality: the block can
+ * still change, and another reviewed configuration may match.
+ */
+export class EvmVaultCreationUnsettled extends Error {}
 
-/** Exact finalized creation, not a user-supplied deployment assertion. */
+/**
+ * Exact creation, not a user-supplied deployment assertion. A finalized
+ * creation answers `finalized`. With `acceptIncluded`, a successful creation in
+ * a canonical block that is not final yet answers `included` after the same
+ * checks at its own block; that answer is provisional and never a registration.
+ * An unmined creation answers null.
+ */
 export async function verifyEvmVaultCreation(
   config: EvmFactoryConfig,
   input: EvmVaultCreation,
   transactionId: string,
-) {
+  { acceptIncluded = false }: { acceptIncluded?: boolean } = {},
+): Promise<{ vault: string; evidence: "finalized" | "included" } | null> {
   const transactionHash = hash(transactionId);
   // Read independent facts together and check them in the original order, so
   // the first failed check keeps its refusal.
@@ -1267,7 +1280,49 @@ export async function verifyEvmVaultCreation(
   if (!receiptValue) return null;
   const receipt = object(receiptValue);
   const finalized = object(settled(finalizedRead));
-  if (quantity(receipt.blockNumber) > quantity(finalized.number)) return null;
+  const final = quantity(receipt.blockNumber) <= quantity(finalized.number);
+  if (!final) {
+    if (!acceptIncluded) return null;
+    try {
+      return {
+        vault: await creationVaultAt(
+          config,
+          input,
+          transactionHash,
+          receipt,
+          transaction,
+          false,
+        ),
+        evidence: "included",
+      };
+    } catch (error) {
+      // An unread chain is still a retry. Any other mismatch may be a block
+      // that is being replaced; only a finalized creation can be refused.
+      if (error instanceof EvmRpcUnavailable) throw error;
+      throw new EvmVaultCreationUnsettled("The creation is not finalized.");
+    }
+  }
+  return {
+    vault: await creationVaultAt(
+      config,
+      input,
+      transactionHash,
+      receipt,
+      transaction,
+      true,
+    ),
+    evidence: "finalized",
+  };
+}
+/** The creation checks at the receipt's block, and at the finalized block when final. */
+async function creationVaultAt(
+  config: EvmFactoryConfig,
+  input: EvmVaultCreation,
+  transactionHash: string,
+  receipt: RpcObject,
+  transaction: PromiseSettledResult<unknown>,
+  final: boolean,
+) {
   const [canonicalBlock, vaultRead] = await Promise.allSettled([
     rpc(config, "eth_getBlockByNumber", [receipt.blockNumber, false]),
     creationVault(config, input, String(receipt.blockNumber)),
@@ -1317,9 +1372,12 @@ export async function verifyEvmVaultCreation(
     verifyEvmDeployment(created, receipt.blockNumber, {
       expectedProjectId: input.projectId,
     }),
-    verifyEvmDeployment(created, "finalized", {
-      expectedProjectId: input.projectId,
-    }),
+    // A creation that is not final has no finalized state to read yet.
+    final
+      ? verifyEvmDeployment(created, "finalized", {
+          expectedProjectId: input.projectId,
+        })
+      : null,
   ]);
   settled(atCreation);
   settled(atFinalized);
@@ -1425,13 +1483,15 @@ type EvmVaultTotalsConfig = EvmRpc & {
  */
 export async function readVaultTotals(
   config: EvmVaultTotalsConfig,
+  /** "latest" only shows a form for a vault that is not final yet; it never counts funds. */
+  evidence: "finalized" | "latest" = "finalized",
 ): Promise<VaultTotals> {
   const { vault } = config;
   if (!ADDRESS.test(vault)) throw new Error("Invalid vault");
   if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
     throw new Error("Wrong chain");
   const block = object(
-    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
+    await rpc(config, "eth_getBlockByNumber", [evidence, false]),
   );
   const blockNumber = quantity(block.number);
   const blockTag = `0x${blockNumber.toString(16)}`;

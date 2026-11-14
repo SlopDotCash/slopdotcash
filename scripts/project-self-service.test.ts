@@ -3180,7 +3180,7 @@ test.each(["vault verification", "owner update"])(
       register: async () => {
         start();
         await verified;
-        return TEST_VAULT;
+        return { deployment: TEST_VAULT, evidence: "finalized" };
       },
     };
     const prepared = await t.persistence.getProject(target.id);
@@ -3303,7 +3303,7 @@ test("only the steward or a repository admin can register the project vault", as
     },
     register: async (_project, actor) => {
       registered.push(actor.githubId);
-      return TEST_VAULT;
+      return { deployment: TEST_VAULT, evidence: "finalized" };
     },
   };
   const register = (actor: string) =>
@@ -3384,7 +3384,10 @@ test("an EVM vault creation hash registers in any letter case", async () => {
     // Like the chain verifier, the deployment records the hash it was given.
     register: async (_project, _actor, _input, transactionId) => {
       verified.push(transactionId);
-      return { ...TEST_VAULT, deploymentTransaction: transactionId };
+      return {
+        deployment: { ...TEST_VAULT, deploymentTransaction: transactionId },
+        evidence: "finalized",
+      };
     },
   };
   const register = (transactionId: string) =>

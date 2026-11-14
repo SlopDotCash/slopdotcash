@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f6f7f9c970882d79dc1da346ac3dd88376107633912b4be6217b1b08fa40450f",
+  "inventorySha256": "bfceda601bef68c1c758c5d9dbfb007c677d9f876f8cb2676559499da07a4a09",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2458,
+      "line": 2463,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -133,6 +133,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
@@ -141,7 +142,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2662,
+      "line": 2667,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -167,6 +168,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
@@ -2864,13 +2866,14 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 370,
+      "line": 406,
       "name": "result",
       "kind": "string-union",
       "values": [
         "approval-confirmed",
         "failed",
         "finalized",
+        "no-vault",
         "not-sent",
         "pending",
         "received"
@@ -2882,6 +2885,7 @@
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["finalized"],
@@ -2934,16 +2938,24 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 355,
+      "line": 379,
       "name": "status",
       "kind": "string-union",
-      "values": ["failed", "finalized", "not-sent", "pending", "received"],
+      "values": [
+        "failed",
+        "finalized",
+        "no-vault",
+        "not-sent",
+        "pending",
+        "received"
+      ],
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
-        "formal/models/ui/ui_vault_prompt_ownership.qnt"
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
