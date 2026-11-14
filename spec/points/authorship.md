@@ -1,100 +1,169 @@
 # Accepted-commit authorship and retained copies
 
-PRD section 7 determines implementation recipients from accepted, unique,
-non-merge commits on every integration branch. This machine represents one
-immutable accepted commit candidate. GitHub author links, actor eligibility,
-source trees, and retained-copy bindings are externally verified evidence.
-A PR description reference alone supplies no retained-copy proof.
+PRD section 7 determines implementation recipients from GitHub-linked
+primary authors of accepted, unique, non-merge commits on every integration
+branch. Opening, recreating, updating or merging a PR alone earns no share.
+A commit without an eligible linked author falls back to the source PR
+creator, or to the original PR creator when verified retained-copy evidence
+binds the commit to that PR. A PR description reference alone is never such
+evidence. Maintainers are not excluded from implementation credit; bots and
+vendor agents are. The owner decision of 13 November 2026 weights recipients
+by additions plus deletions in their accepted commits.
+
+This machine represents one immutable accepted commit, following
+`scripts/generate-leaderboard.ts` (commit line cache, late author links) and
+the legacy `commit_line_cache`, `implementation_credit` and
+`implementation_credit_gate` models. Each observation is a record from the
+GitHub ingestion adapter, bound to the commit ID it names. An observation is
+recorded once per kind: an absent observation changes nothing, an identical
+repeat is a no-op, and a conflicting one holds the commit for review.
 
 ## Story: Credit the implementation author without rewarding a carrier PR
 
-An eligible primary commit author receives the implementation share. An
-unlinked or ineligible commit falls back to the source PR creator, except when
-verified retained-copy evidence identifies the original PR creator.
-
-### Commit identity and accepted-copy line evidence remain bound together
+### Commit identity, observations and line evidence remain bound together
 
 ```quint
-type AttributionPhase = Gathering | Attributed | Credited
-type CommitAttribution = { phase: AttributionPhase, commitId: str,
-  sourcePrActor: int, sourceActorEligible: bool, primaryActor: int,
-  primaryLinked: bool, primaryEligible: bool, originalPrActor: int,
-  originalActorEligible: bool, retainedCopyVerified: bool, descriptionReference: bool,
-  accepted: bool, mergeCommit: bool, alreadyCredited: bool, recipient: int,
-  additions: int, deletions: int, lineEvidenceComplete: bool }
-pure val initial: CommitAttribution = { phase: Gathering, commitId: "accepted-commit",
-  sourcePrActor: 1, sourceActorEligible: true, primaryActor: 0,
-  primaryLinked: false, primaryEligible: false, originalPrActor: 0,
-  originalActorEligible: false, retainedCopyVerified: false, descriptionReference: false,
-  accepted: false, mergeCommit: false, alreadyCredited: false, recipient: 0,
-  additions: 0, deletions: 0, lineEvidenceComplete: false }
+import allocation as A from "./allocation"
+type ActorKind = User | Bot | VendorAgent
+type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | Repaired
+type Observed = Unknown | Seen({ actor: int, kind: ActorKind, linked: bool })
+type Lines = NoLines | CompleteLines({ additions: int, deletions: int })
+type Acceptance = NotObserved | AcceptedCommit({ merge: bool, earlierSource: bool }) | Unaccepted
+type CopyBinding = NoCopy | VerifiedCopy({ actor: int, kind: ActorKind }) | DescriptionOnly
+type CommitAttribution = { phase: AttributionPhase, commitId: str, primary: Observed, source: Observed,
+  copy: CopyBinding, acceptance: Acceptance, lines: Lines, recipient: int, repairedFrom: int }
+pure val initial: CommitAttribution = { phase: Gathering, commitId: "accepted-commit", primary: Unknown,
+  source: Unknown, copy: NoCopy, acceptance: NotObserved, lines: NoLines, recipient: 0, repairedFrom: 0 }
+pure def eligibleKind(kind: ActorKind): bool = kind == User
 pure def alwaysCommitIdentity(a: CommitAttribution): bool = a.commitId == "accepted-commit"
-pure def alwaysLineEvidence(a: CommitAttribution): bool = a.additions >= 0 and a.deletions >= 0
+pure def linesValid(lines: Lines): bool = match lines { | CompleteLines(x) => x.additions >= 0 and x.deletions >= 0 | NoLines => true }
+pure def alwaysLineEvidence(a: CommitAttribution): bool = linesValid(a.lines)
 ```
 
-### Primary authorship takes precedence over the PR opener and retained-copy fallback
+### Primary authorship takes precedence over retained-copy and PR-opener fallbacks
 
-The absence of an eligible recipient holds attribution. Opening, updating,
-recreating, or merging the PR cannot add an implementation recipient.
+The absence of an eligible recipient holds attribution.
 
 ```quint
+pure def primaryRecipient(o: Observed): int = match o { | Seen(x) => if (x.linked and eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
+pure def copyRecipient(c: CopyBinding): int = match c { | VerifiedCopy(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | _ => 0 }
+pure def sourceRecipient(o: Observed): int = match o { | Seen(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
 pure def recipientFor(a: CommitAttribution): int =
-  if (a.primaryLinked and a.primaryEligible and a.primaryActor > 0) a.primaryActor
-  else if (a.retainedCopyVerified and a.originalActorEligible and a.originalPrActor > 0) a.originalPrActor
-  else if (a.sourceActorEligible) a.sourcePrActor else 0
-pure def canObservePrimary(a: CommitAttribution, actor: int, linked: bool, eligible: bool): bool =
-  a.phase == Gathering and actor >= 0
-pure def observePrimary(a: CommitAttribution, actor: int, linked: bool, eligible: bool): CommitAttribution =
-  { ...a, primaryActor: actor, primaryLinked: linked, primaryEligible: eligible }
-pure def canObserveOriginal(a: CommitAttribution, actor: int, eligible: bool,
-  immutableCopyBinding: bool, descriptionReference: bool): bool = a.phase == Gathering and actor >= 0
-pure def observeOriginal(a: CommitAttribution, actor: int, eligible: bool,
-  immutableCopyBinding: bool, descriptionReference: bool): CommitAttribution =
-  { ...a, originalPrActor: actor, originalActorEligible: eligible,
-    retainedCopyVerified: immutableCopyBinding, descriptionReference: descriptionReference }
-pure def canObserveSource(a: CommitAttribution, actor: int, eligible: bool, exactSourcePr: bool): bool = a.phase == Gathering and actor > 0 and exactSourcePr
-pure def observeSource(a: CommitAttribution, actor: int, eligible: bool, exactSourcePr: bool): CommitAttribution =
-  { ...a, sourcePrActor: actor, sourceActorEligible: eligible }
+  if (primaryRecipient(a.primary) > 0) primaryRecipient(a.primary)
+  else if (copyRecipient(a.copy) > 0) copyRecipient(a.copy)
+  else sourceRecipient(a.source)
+pure def isUnknown(o: Observed): bool = match o { | Unknown => true | _ => false }
+pure def openForEvidence(a: CommitAttribution): bool = a.phase == Gathering or a.phase == Attributed
+pure def canObservePrimary(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): bool =
+  openForEvidence(a) and actor > 0 and linked
+pure def observePrimary(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): CommitAttribution =
+  if (isUnknown(a.primary)) { ...a, primary: Seen({ actor: actor, kind: kind, linked: linked }), phase: Gathering, recipient: 0 }
+  else if (a.primary == Seen({ actor: actor, kind: kind, linked: linked })) a
+  else { ...a, phase: ConflictHeld, recipient: 0 }
+pure def canObserveSource(a: CommitAttribution, actor: int, kind: ActorKind): bool = a.phase == Gathering and actor > 0
+pure def observeSource(a: CommitAttribution, actor: int, kind: ActorKind): CommitAttribution =
+  if (isUnknown(a.source)) { ...a, source: Seen({ actor: actor, kind: kind, linked: false }) }
+  else if (a.source == Seen({ actor: actor, kind: kind, linked: false })) a
+  else { ...a, phase: ConflictHeld }
+pure def canObserveCopy(a: CommitAttribution, copy: CopyBinding): bool = a.phase == Gathering and copy != NoCopy
+pure def observeCopy(a: CommitAttribution, copy: CopyBinding): CommitAttribution =
+  if (a.copy == NoCopy or a.copy == DescriptionOnly) { ...a, copy: copy }
+  else if (a.copy == copy or copy == DescriptionOnly) a
+  else { ...a, phase: ConflictHeld }
+pure def lawDescriptionIsNoEvidence(actor: int, kind: ActorKind): bool =
+  copyRecipient(DescriptionOnly) == 0
+pure def lawMaintainerStillCredited(actor: int): bool =
+  actor > 0 implies primaryRecipient(Seen({ actor: actor, kind: User, linked: true })) == actor
+pure def lawBotsAndAgentsExcluded(actor: int, kind: ActorKind): bool =
+  kind != User implies (primaryRecipient(Seen({ actor: actor, kind: kind, linked: true })) == 0 and
+    sourceRecipient(Seen({ actor: actor, kind: kind, linked: false })) == 0)
 ```
 
-### Only accepted unique non-merge commits can contribute line weight
+### Only accepted unique non-merge commits contribute line weight
 
-For retained copies the line counts are those of this accepted copy. Complete
-zero-line evidence is kept explicitly so it can use equal allocation. Missing
-line evidence stays distinct and the allocation module holds multiple recipients.
+A synchronization merge and a commit already credited in an earlier accepted
+source contribute nothing. For a retained copy the line counts are the
+accepted copy's. Complete zero-line evidence stays explicit; missing line
+evidence holds a multiple-recipient allocation.
 
 ```quint
-pure def canObserveAcceptance(a: CommitAttribution, accepted: bool, mergeCommit: bool, alreadyCredited: bool): bool = a.phase == Gathering
-pure def observeAcceptance(a: CommitAttribution, accepted: bool, mergeCommit: bool, alreadyCredited: bool): CommitAttribution =
-  { ...a, accepted: accepted, mergeCommit: mergeCommit, alreadyCredited: alreadyCredited }
-pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int, exactAcceptedCopy: bool): bool =
-  a.phase == Gathering and additions >= 0 and deletions >= 0 and exactAcceptedCopy
-pure def recordLines(a: CommitAttribution, additions: int, deletions: int, exactAcceptedCopy: bool): CommitAttribution =
-  { ...a, additions: additions, deletions: deletions, lineEvidenceComplete: true }
-pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and
-  a.accepted and not(a.mergeCommit) and not(a.alreadyCredited) and recipientFor(a) > 0
-pure def attribute(a: CommitAttribution): CommitAttribution =
-  { ...a, phase: Attributed, recipient: recipientFor(a) }
-pure def canCreditCommit(a: CommitAttribution, completeSource: bool): bool =
-  a.phase == Attributed and completeSource and not(a.alreadyCredited)
-pure def creditCommit(a: CommitAttribution, completeSource: bool): CommitAttribution =
-  { ...a, phase: Credited, alreadyCredited: true }
-pure def alwaysAttributedEligibility(a: CommitAttribution): bool = a.phase != Gathering implies
-  a.accepted and not(a.mergeCommit) and a.recipient == recipientFor(a) and a.recipient > 0
-pure def alwaysCreditOnce(a: CommitAttribution): bool = a.phase == Credited implies a.alreadyCredited
-pure def sometimesPrimary(a: CommitAttribution): bool = a.phase == Attributed and a.primaryLinked and a.primaryEligible and a.recipient == a.primaryActor
-pure def sometimesOriginalFallback(a: CommitAttribution): bool = a.phase == Attributed and not(a.primaryLinked) and a.retainedCopyVerified and a.recipient == a.originalPrActor
-pure def sometimesSourceFallback(a: CommitAttribution): bool = a.phase == Attributed and not(a.primaryLinked) and not(a.retainedCopyVerified) and a.recipient == a.sourcePrActor
-pure def sometimesCredited(a: CommitAttribution): bool = a.phase == Credited
+pure def canObserveAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): bool =
+  a.phase == Gathering and a.acceptance == NotObserved
+pure def observeAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): CommitAttribution =
+  { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: earlierSource }) }
+pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): bool =
+  a.phase == Gathering and additions >= 0 and deletions >= 0 and a.lines == NoLines
+pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
+  { ...a, lines: CompleteLines({ additions: additions, deletions: deletions }) }
+pure def contributes(a: CommitAttribution): bool = a.acceptance == AcceptedCommit({ merge: false, earlierSource: false })
+pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and contributes(a) and recipientFor(a) > 0
+pure def attribute(a: CommitAttribution): CommitAttribution = { ...a, phase: Attributed, recipient: recipientFor(a) }
+pure def canCreditCommit(a: CommitAttribution): bool = a.phase == Attributed and a.lines != NoLines
+pure def creditCommit(a: CommitAttribution): CommitAttribution = { ...a, phase: Credited }
 ```
 
-### Simulation samples exercise missing, matching and conflicting evidence
+### A late author link repairs a credited fallback by an appended correction
 
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+A GitHub author link observed after credit changes the recipient only
+through a journal correction with basis `Reallocation` that preserves the
+unit's complete total. The earlier recipient is retained as the repaired
+predecessor.
+
+```quint
+pure def canRepair(a: CommitAttribution, actor: int, kind: ActorKind): bool =
+  a.phase == Credited and isUnknown(a.primary) and actor > 0 and eligibleKind(kind) and actor != a.recipient
+pure def repair(a: CommitAttribution, actor: int, kind: ActorKind): CommitAttribution =
+  { ...a, phase: Repaired, primary: Seen({ actor: actor, kind: kind, linked: true }), repairedFrom: a.recipient, recipient: actor }
+pure def alwaysAttributedEligibility(a: CommitAttribution): bool =
+  (a.phase == Attributed or a.phase == Credited or a.phase == Repaired) implies
+    (contributes(a) and a.recipient == recipientFor(a) and a.recipient > 0)
+pure def alwaysCreditedHasLines(a: CommitAttribution): bool = (a.phase == Credited or a.phase == Repaired) implies a.lines != NoLines
+pure def alwaysRepairKeepsPredecessor(a: CommitAttribution): bool = a.phase == Repaired implies (a.repairedFrom > 0 and a.repairedFrom != a.recipient)
+pure def stepCreditedNeverRewritten(before: CommitAttribution, after: CommitAttribution): bool =
+  (before.phase == Credited or before.phase == Repaired) implies (after.lines == before.lines and after.acceptance == before.acceptance)
+pure def stepConflictHolds(before: CommitAttribution, after: CommitAttribution): bool =
+  before.phase == ConflictHeld implies after == before
+pure def sometimesPrimary(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == a.recipient
+pure def sometimesCopyFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == a.recipient
+pure def sometimesSourceFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == 0 and a.recipient > 0
+pure def sometimesConflictHeld(a: CommitAttribution): bool = a.phase == ConflictHeld
+pure def sometimesRepaired(a: CommitAttribution): bool = a.phase == Repaired
+pure def sometimesMergeHeld(a: CommitAttribution): bool = a.acceptance == AcceptedCommit({ merge: true, earlierSource: false })
+```
+
+### Recipient line weights sum additions plus deletions over contributing commits
+
+The allocation receives one recipient per actor. Merge commits, commits
+credited in an earlier source, unattributed commits and commits without
+complete line evidence contribute no lines; any such missing evidence keeps
+the allocation's complete-lines input false.
+
+```quint
+type CommitLines = { recipient: int, additions: int, deletions: int, merge: bool, earlierSource: bool, complete: bool }
+pure def commitWeight(c: CommitLines): int = if (c.merge or c.earlierSource or not(c.complete)) 0 else c.additions + c.deletions
+pure def linesFor(commits: List[CommitLines], actor: int): int =
+  commits.foldl(0, (acc, c) => if (c.recipient == actor) acc + commitWeight(c) else acc)
+pure def recipientLines(commits: List[CommitLines], actors: List[int]): List[A::Recipient] =
+  actors.listMap(actor => { actor: actor, lines: linesFor(commits, actor) })
+pure def completeLines(commits: List[CommitLines]): bool =
+  commits.every(c => c.merge or c.earlierSource or (c.complete and c.recipient > 0))
+pure def lawLinesAreAdditionsPlusDeletions(additions: int, deletions: int): bool =
+  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: false, earlierSource: false, complete: true }) == additions + deletions
+pure def lawMergeCommitsContributeZero(additions: int, deletions: int): bool =
+  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: true, earlierSource: false, complete: true }) == 0
+pure def lawEarlierSourceContributesZero(additions: int, deletions: int): bool =
+  commitWeight({ recipient: 1, additions: additions, deletions: deletions, merge: false, earlierSource: true, complete: true }) == 0
+```
+
+### Simulation samples exercise linked, unlinked, conflicting and ineligible evidence
+
+These input sets bound simulation only.
 
 ```quint
 pure val actorValues = Set(0, 1, 2)
+pure val kindValues = Set(User, Bot, VendorAgent)
+pure val linkedValues = Set(true, false)
 pure val additionsValues = Set(0, 1, 2)
 pure val deletionsValues = Set(0, 1, 2)
+pure val copyValues = Set(VerifiedCopy({ actor: 2, kind: User }), VerifiedCopy({ actor: 1, kind: User }), DescriptionOnly)
 ```
