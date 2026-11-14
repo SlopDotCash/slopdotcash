@@ -18,6 +18,7 @@ export interface OperatorEnvironment {
   KEEPER: KeeperNamespace;
   KEEPER_MODE?: string;
   KEEPER_CONFIG?: string;
+  KEEPER_RPC_URL?: string;
   KEEPER_EVM_PRIVATE_KEY?: string;
   KEEPER_SOLANA_SIGNER_SEED?: string;
 }
@@ -46,6 +47,18 @@ function configuration(env: OperatorEnvironment): KeeperConfiguration {
     throw new Error("Invalid operator Solana address");
   }
   validateBudget(config.gas);
+  if (env.KEEPER_RPC_URL !== undefined) {
+    try {
+      if (
+        !env.KEEPER_RPC_URL.trim() ||
+        new URL(env.KEEPER_RPC_URL).protocol !== "https:"
+      )
+        throw new Error();
+    } catch {
+      throw new Error("Operator RPC override must be a valid HTTPS URL");
+    }
+    config.rpcUrl = env.KEEPER_RPC_URL;
+  }
   return config;
 }
 interface TickResult {
