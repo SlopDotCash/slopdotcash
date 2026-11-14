@@ -1895,7 +1895,12 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
             ccipRead: false,
             transport: http(config.rpcUrl, {
               fetchFn: doFetch,
-              fetchOptions: { signal, redirect: "error" },
+              // Workers supports manual redirects. Reject them before reading RPC data.
+              fetchOptions: { signal, redirect: "manual" },
+              onFetchResponse(response) {
+                if (response.status >= 300 && response.status < 400)
+                  throw new Error("The finalized RPC request was redirected");
+              },
               retryCount: 0,
             }),
           });
