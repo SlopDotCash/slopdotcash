@@ -1301,7 +1301,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+      "sha256": "b00cb238e46146e9bf37b4665d3f288d6f752c95ca4557d5450ce9ee5f911224",
       "module": "settlement__money",
       "stories": [
         {
@@ -1310,11 +1310,11 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior",
-          "line": 114
+          "line": 125
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values",
-          "line": 136
+          "line": 147
         }
       ],
       "rules": [
@@ -1374,8 +1374,15 @@
           ]
         },
         {
-          "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
+          "heading": "Story: Preserve every base unit / Addition is positive exactly when at least one summand is positive",
           "line": 101,
+          "definitions": [
+            "lawPositiveAddition"
+          ]
+        },
+        {
+          "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
+          "line": 112,
           "definitions": [
             "ordinaryFee",
             "ordinaryNet",
@@ -1387,7 +1394,7 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior / Token-2022 admission permits only immutable metadata and immutable token ownership",
-          "line": 116,
+          "line": 127,
           "definitions": [
             "AssetKind",
             "token2022Admissible",
@@ -1396,7 +1403,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication accumulates shifted limb products without converting the amount to a number",
-          "line": 138,
+          "line": 149,
           "definitions": [
             "multiplySmall",
             "multiplyAmounts",
@@ -1406,8 +1413,10 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
-          "line": 159,
+          "line": 170,
           "definitions": [
+            "quotientBits",
+            "quotientCandidate",
             "quotientDigit",
             "divisionStep",
             "divideAmounts",
@@ -1419,7 +1428,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 189,
+          "line": 201,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1431,8 +1440,19 @@
           ]
         },
         {
+          "heading": "Story: Multiply and divide full-width monetary values / Multiplication, division and derived fees preserve valid limb representations",
+          "line": 217,
+          "definitions": [
+            "lawMultiplySmallValid",
+            "lawMultiplyValid",
+            "lawDivisionValid",
+            "lawOrdinaryAmountsValid",
+            "lawPrivateAmountsValid"
+          ]
+        },
+        {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 205,
+          "line": 236,
           "definitions": [
             "assetValues",
             "decimalsValues",
@@ -1455,7 +1475,7 @@
     },
     {
       "path": "spec/settlement/half.md",
-      "sha256": "c9c22ee47471408922c6b3dca092ab668a8f500a8559ae43697da4b022a288c8",
+      "sha256": "295d7fe379d149205880a3f738a5c8628ba17fadb0f90fb791bdd943256ed521",
       "module": "settlement__half",
       "stories": [
         {
@@ -1472,6 +1492,8 @@
             "halfStep",
             "half",
             "lawHalfValid",
+            "lawHalfOrder",
+            "largerValues",
             "amountValues"
           ]
         }
@@ -4568,7 +4590,7 @@
     },
     {
       "path": "spec/settlement/allocation.md",
-      "sha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+      "sha256": "b90cfceec014cc33b742e379db5450a029ca585034f63ebaefac443df450fb92",
       "module": "settlement__allocation",
       "stories": [
         {
@@ -4591,7 +4613,7 @@
         },
         {
           "heading": "Story: Allocate the complete monthly pool without losing or creating units / Each floor and remainder comes from full-width multiplication and division",
-          "line": 25,
+          "line": 27,
           "definitions": [
             "portion",
             "floorTotal",
@@ -4602,20 +4624,21 @@
         },
         {
           "heading": "Story: Allocate the complete monthly pool without losing or creating units / The largest remainders receive the remaining units exactly once",
-          "line": 44,
+          "line": 46,
           "definitions": [
             "allocateAmounts",
             "allocatedTotal",
             "canCommitAllocation",
             "totalValues",
             "weightsValues",
+            "lawAllocatedSharesValid",
             "lawAllocationConserves",
             "lawSingleRecipient"
           ]
         },
         {
           "heading": "Story: Allocate the complete monthly pool without losing or creating units / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 72,
+          "line": 77,
           "definitions": [
             "actorValues"
           ]
@@ -4988,7 +5011,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "ad034e97a85a693ab10fe07bb3ea31a874d1f8d0224e4cc533482c751f940e13",
+      "sha256": "6f74be305e83459ced9aba82d1aff6aa41c07d816f36bc3f5e7ad3e50c1d2ab7",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -5019,60 +5042,64 @@
           "line": 10
         },
         {
-          "target": "./composition.md",
+          "target": "./solanaScan.md",
           "line": 11
         },
         {
-          "target": "./recovery.md",
+          "target": "./composition.md",
           "line": 12
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./recovery.md",
           "line": 13
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 14
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./signer.md",
           "line": 15
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 16
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 17
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 18
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 19
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 20
         },
         {
-          "target": "../fees/",
+          "target": "./referrals.md",
           "line": 21
         },
         {
-          "target": "./referralAccrual.md",
-          "line": 23
+          "target": "../fees/",
+          "line": 22
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 24
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 25
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 26
         }
       ]
     },
@@ -6344,6 +6371,80 @@
             "heightValues",
             "nonceValues",
             "valueValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/settlement/solanaScan.md",
+      "sha256": "a54b27136066e7f6f2ee7937f10a272a0bce6f219d21c17816558835d6c0d9bf",
+      "module": "settlement__solanaScan",
+      "stories": [
+        {
+          "heading": "Story: Discover a complete frozen interval before processing",
+          "line": 14
+        },
+        {
+          "heading": "Story: Checkpoint only after a fully observed transaction",
+          "line": 77
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Discover a complete frozen interval before processing / A fresh scan invocation verifies the selected endpoint's network",
+          "line": 16,
+          "definitions": [
+            "ChainIdentity",
+            "IntervalPhase",
+            "Scan",
+            "initial",
+            "identityValues",
+            "weight_openInterval",
+            "weight_discoverPage",
+            "weight_checkpoint",
+            "weight_closeInterval",
+            "mayRequestGenesis",
+            "canOpenInterval",
+            "openInterval",
+            "sameCheckpoint"
+          ]
+        },
+        {
+          "heading": "Story: Discover a complete frozen interval before processing / Store one page per invocation and keep the old cursor as the interval boundary",
+          "line": 48,
+          "definitions": [
+            "PageCoverage",
+            "coverageValues",
+            "oldestFirstValues",
+            "generationValues",
+            "revisionValues",
+            "validPage",
+            "canDiscoverPage",
+            "discoverPage"
+          ]
+        },
+        {
+          "heading": "Story: Checkpoint only after a fully observed transaction / Stale or partial work leaves the authoritative prefix intact",
+          "line": 79,
+          "definitions": [
+            "Observation",
+            "signatureValues",
+            "observationValues",
+            "mayCapture",
+            "canCheckpoint",
+            "checkpoint",
+            "canCloseInterval",
+            "closeInterval",
+            "alwaysIdleEmpty",
+            "alwaysIdentity",
+            "stepOnlyCheckpointChangesCursor",
+            "stepNeverRewinds",
+            "stepFrozenBoundary",
+            "sometimesStaged",
+            "sometimesCheckpointed",
+            "sometimesClosedAfterProgress"
           ]
         }
       ],

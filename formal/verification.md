@@ -231,6 +231,11 @@ page view traffic to the site's own origin.
   checking exact chain evidence. Payment jobs scope failures and retries to
   their own network and run identity. All 78 obligations proved.
   [Deposit and job results](validation/source-coverage/deposit-jobs.json)
+- Solana payment discovery verifies the RPC genesis before touching its
+  backlog. The frozen interval advances oldest first under a generation and
+  revision fence. All 22 obligations proved, and the directed check drained
+  an interval over a real 1,000-signature page boundary.
+  [Solana scan results](validation/source-coverage/solana-scan.json)
 - Durable keeper requests share one active run. A staged transaction retains
   exact bytes and its bounded native liability through restart and retry.
   All 66 obligations proved.

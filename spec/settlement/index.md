@@ -8,6 +8,7 @@ PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Ru
 - [Full-width largest remainder](./allocation.md)
 - [Monthly allocation](./monthly.md)
 - [Payment evidence](./payment.md)
+- [Solana signature discovery and checkpoints](./solanaScan.md)
 - [Atomic obligation settlement](./composition.md)
 - [Private-award destination recovery](./recovery.md)
 - [Wrong-total reserve release](./reserveRelease.md)
