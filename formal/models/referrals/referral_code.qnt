@@ -10,6 +10,8 @@
 // A name is recorded, retired and put in use in one database transaction, so
 // each accepted request is one step. Syntax, case folding, the reserved list
 // and the closed-account join of the link are predicates of the handler.
+// The link with no name reads no state and names nobody: it always opens the
+// Settings section where a name is chosen, so it adds no transition here.
 module referral_code {
   type S = { owner: int -> int, first: int -> int, used: int -> int }
   val accounts = Set(1, 2)
