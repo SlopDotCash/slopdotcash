@@ -302,6 +302,10 @@ page view traffic to the site's own origin.
   money obligations. This checks ordered filing, pinned inputs, and cumulative
   project and program caps.
   [Accrual proof](validation/finance/referral-accrual-proof-complete.json)
+- The direct standard private-award journal discharged all 101 obligations.
+  Five native Quint witnesses distinguish retained EVM legs from the atomic
+  Solana transfer and exercise receipt replay and recovery.
+  [Direct award proof](validation/active-proof/settlement/direct-bounty-proof.json)
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)

@@ -11,6 +11,7 @@ PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Ru
 - [Payment dispatch and finalized indexing](./paymentDispatch.md)
 - [Solana signature discovery and checkpoints](./solanaScan.md)
 - [Atomic obligation settlement](./composition.md)
+- [Direct standard private-award journal](./directBounty.md)
 - [Private-award destination recovery](./recovery.md)
 - [Wrong-total reserve release](./reserveRelease.md)
 - [Signer limits and binding cancellation](./signer.md)
