@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "13bd3b806c5d526776da2ec1ca603622ca589ead62b39316b8c4799bc25ab5c2",
+      "sha256": "e9d198e6293b3323d81ffad293b22117dfa0a43c64b67d1e352eb5201d9d1754",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        25, 35, 67, 169, 201, 206, 207, 261, 315, 392, 505, 511, 579, 582, 608,
-        609, 630, 642, 708, 938, 966, 1005, 1096, 1202, 1204, 1205, 1409, 1492,
-        1645, 1647, 1677, 1785, 1807, 1878, 1889, 1914, 1985, 1998, 2011, 2020,
-        2021, 2022
+        28, 38, 111, 213, 251, 252, 309, 343, 399, 476, 591, 597, 665, 668, 694,
+        695, 716, 728, 794, 1024, 1052, 1091, 1182, 1288, 1290, 1291, 1495,
+        1578, 1731, 1733, 1763, 1871, 1893, 1964, 1975, 2000, 2071, 2084, 2097,
+        2106, 2107, 2108
       ],
       "review": "mapped-abstraction"
     },
@@ -3842,7 +3842,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "890f46db96ba447085c8c843e52eb696144c3db453ea777a0f98c21732899ecb",
+      "sha256": "91125d6d6bb1bfa52d585f45fa2c9391e74ab73bbc9a599e05b25e363f0e7a57",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3854,15 +3854,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 493, 581, 602, 638, 669, 734,
-        766, 856, 889, 898, 907, 926, 1016, 1212, 1447, 1509, 1517, 1575, 1628,
-        1631, 1824, 1833, 1838, 1845, 1928, 1929, 2076, 2077, 2134, 2160, 2188,
-        2190, 2194, 2228, 2231, 2232, 2235, 2237, 2248, 2275, 2484, 2487, 2736,
-        2856, 2977, 2990, 3001, 3002, 3189, 3190, 3381, 3397, 3409, 3416, 3442,
-        3452, 3456, 3460, 3464, 3519, 3538, 3565, 3582, 3616, 3617, 3619, 3635,
-        3652, 3653, 3654, 3663, 3668, 3848, 4206, 4228, 4237, 4287, 4322, 4328,
-        4335, 4404, 4490, 4648, 4872, 4882, 4884, 4897, 4927, 4929, 4930, 4934,
-        4938, 4994, 5048, 5099, 5102, 5117
+        29, 184, 195, 204, 284, 296, 298, 301, 495, 583, 604, 640, 671, 736,
+        768, 858, 891, 900, 909, 928, 1018, 1214, 1449, 1511, 1519, 1577, 1630,
+        1633, 1826, 1835, 1840, 1847, 1930, 1931, 2078, 2079, 2136, 2162, 2190,
+        2192, 2196, 2230, 2233, 2234, 2237, 2239, 2250, 2277, 2486, 2489, 2738,
+        2858, 2979, 2992, 3003, 3004, 3191, 3192, 3383, 3399, 3411, 3418, 3444,
+        3454, 3458, 3462, 3466, 3521, 3540, 3567, 3584, 3618, 3619, 3621, 3637,
+        3654, 3655, 3656, 3665, 3670, 3850, 4208, 4230, 4239, 4289, 4324, 4330,
+        4337, 4406, 4492, 4650, 4890, 4900, 4902, 4915, 4946, 4948, 4949, 4953,
+        4957, 5013, 5067, 5118, 5121, 5157
       ],
       "review": "mapped-abstraction"
     },
@@ -3897,11 +3897,19 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/github-discussion-cache.ts",
+      "sha256": "cf3e5b0229723a69bc831ab6d4205f5b5cb8e1faea600e0db2b2835f3eb329a5",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [8, 10, 31, 69, 91, 189, 282, 287, 292, 295],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "a815f4564f6fbbea121f39c2832f49c4e44f242af4eccf767780979143099f1b",
+      "sha256": "f305345f6dbf48ededc9c85e1dcce82d6b12dfe77289dee3a5760767e87ce9bb",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        32, 65, 86, 88, 106, 126, 166, 181, 190, 212, 222, 228
+        37, 70, 91, 93, 111, 149, 219, 239, 249, 254, 260, 269, 291, 301, 310,
+        316
       ],
       "review": "mapped-abstraction"
     },
@@ -4435,6 +4443,13 @@
       "sha256": "90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249",
       "models": ["formal/models/api/operator_intake_renewal.qnt"],
       "candidateLines": [23, 24, 25, 30, 33, 52, 53],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/restore-leaderboard-discussions.py",
+      "sha256": "fbad1d73552db5cf098be1cd0365a8f58839fbdee92f92e5e1c14022ef817baa",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [56, 160, 173],
       "review": "mapped-abstraction"
     },
     {
@@ -13505,15 +13520,21 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "29feafe43b55620b874394569d681926c42de6040413e0fdbc078fffad7d0396",
+      "sha256": "0acbfdc0fb6729ca71188c9c5fedfe6322e0eea9e8c9aa34fda20032a2d0f9ca",
       "sources": [
+        "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
+        "scripts/restore-leaderboard-discussions.py",
         "workers/slopbot/github.ts"
       ],
       "scenarios": [
         "authorizationDoesNotRetryTest",
+        "confirmedCheckpointReadTest",
+        "mismatchedValidatorCannotReplayTest",
+        "mismatchedValidatorReadsLiveTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
+        "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
       ]
     },

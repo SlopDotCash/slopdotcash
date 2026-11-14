@@ -1,3 +1,8 @@
+import {
+  type DiscussionCacheOptions,
+  githubDiscussionCache,
+} from "./github-discussion-cache";
+
 const REQUEST_TIMEOUT_MS = 60_000;
 const IMMUTABLE_CACHE_BYTES = 16 * 1024 * 1024;
 
@@ -113,9 +118,27 @@ export function githubPrimaryRateLimitDelay(
   return Number.isSafeInteger(delay) && delay > 0 ? delay : null;
 }
 
-/** One source-collection invocation owns the deadlines and immutable read cache.
- * Quota recovery waits outside each request deadline. Mutable reads stay live.
- */
+export class GitHubIngestionCheckpointError extends Error {
+  constructor() {
+    super("GitHub source collection reached its checkpoint deadline");
+    this.name = "GitHubIngestionCheckpointError";
+  }
+}
+
+interface IngestionReadOptions {
+  discussionCache?: DiscussionCacheOptions;
+  quotaDeadlineMs?: number;
+}
+
+export type IngestionReadTransport = typeof fetch & {
+  assertNoCheckpoint: () => void;
+};
+
+function opaqueTag(etag: string | null) {
+  return etag?.replace(/^W\//u, "");
+}
+
+/** Quota recovery waits outside each request deadline. Mutable reads stay live. */
 export function githubIngestionReadTransport(
   transport: typeof fetch = fetch,
   now: () => number = Date.now,
@@ -128,9 +151,28 @@ export function githubIngestionReadTransport(
     }
   },
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
-): typeof fetch {
+  options: IngestionReadOptions = {},
+): IngestionReadTransport {
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0)
     throw new Error("GitHub request timeout must be a positive integer");
+  const deadline = options.quotaDeadlineMs;
+  if (
+    deadline !== undefined &&
+    (!Number.isSafeInteger(deadline) || deadline <= 0)
+  )
+    throw new Error("GitHub quota deadline must be a positive epoch time");
+  const discussionCache = options.discussionCache
+    ? githubDiscussionCache(options.discussionCache, now)
+    : null;
+  let checkpoint: GitHubIngestionCheckpointError | undefined;
+  const assertNoCheckpoint = () => {
+    if (checkpoint) throw checkpoint;
+  };
+  const checkDeadline = (waitMs = 0) => {
+    if (deadline !== undefined && now() + waitMs >= deadline)
+      checkpoint ??= new GitHubIngestionCheckpointError();
+    assertNoCheckpoint();
+  };
   const cache = new Map<string, ImmutableResponse>();
   let cachedBytes = 0;
   return Object.assign(
@@ -144,7 +186,19 @@ export function githubIngestionReadTransport(
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
+      checkDeadline();
       const headers = new Headers(init?.headers ?? request?.headers);
+      const verifiesRepresentation =
+        !(init?.integrity ?? request?.integrity) &&
+        (init?.cache ?? request?.cache ?? "default") === "default";
+      const discussion = verifiesRepresentation
+        ? discussionCache?.(
+            url,
+            headers,
+            init?.redirect ?? request?.redirect ?? "follow",
+          )
+        : null;
+      let retainedDiscussion = await discussion?.read();
       const identity = immutableRead(url);
       const key =
         identity &&
@@ -152,8 +206,7 @@ export function githubIngestionReadTransport(
         ![...headers.keys()].some((name) => name.startsWith("if-")) &&
         !headers.has("cache-control") &&
         !headers.has("pragma") &&
-        !(init?.integrity ?? request?.integrity) &&
-        (init?.cache ?? request?.cache ?? "default") === "default"
+        verifiesRepresentation
           ? JSON.stringify([
               url.href,
               [...headers].sort(([a], [b]) => a.localeCompare(b)),
@@ -167,15 +220,41 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
-      for (let attempt = 1; ; attempt++) {
+      for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
+        checkDeadline();
+        let readInit = init;
+        if (retainedDiscussion) {
+          const conditionalHeaders = new Headers(headers);
+          conditionalHeaders.set("if-none-match", retainedDiscussion.etag);
+          readInit = { ...init, headers: conditionalHeaders };
+        }
         const { response, bytes } = await readAttempt(
           transport,
           input,
-          init,
+          readInit,
           callerSignal,
           requestTimeoutMs,
         );
+        if (retainedDiscussion && response.status === 304) {
+          if (
+            opaqueTag(response.headers.get("etag")) ===
+            opaqueTag(retainedDiscussion.etag)
+          ) {
+            await discussion?.save(
+              retainedDiscussion.etag,
+              retainedDiscussion.bytes,
+            );
+            return new Response(retainedDiscussion.bytes, {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          // A missing or different validator does not vouch for these bytes.
+          // Retry once without a validator and let the caller check the reply.
+          retainedDiscussion = null;
+          continue;
+        }
         if (
           attempt === 5 ||
           (response.status !== 403 && response.status !== 429)
@@ -216,6 +295,15 @@ export function githubIngestionReadTransport(
               cache.set(key, retained);
             }
           }
+          const etag = response.headers.get("etag");
+          if (
+            discussion &&
+            response.status === 200 &&
+            /^application\/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)/iu.test(
+              response.headers.get("content-type") ?? "",
+            )
+          )
+            await discussion.save(etag ?? "", bytes);
           return response;
         }
         let delay = githubPrimaryRateLimitDelay(response, now());
@@ -228,6 +316,7 @@ export function githubIngestionReadTransport(
         if (delay === null && response.status === 429) delay = 60_000;
         if (delay === null) return response;
         await response.body?.cancel();
+        checkDeadline(delay);
         console.warn(
           JSON.stringify({
             event: "github_ingestion_quota_wait",
@@ -240,8 +329,9 @@ export function githubIngestionReadTransport(
         await (callerSignal
           ? abortable(wait(delay), callerSignal)
           : wait(delay));
+        attempt += 1;
       }
     },
-    { preconnect: transport.preconnect },
+    { preconnect: transport.preconnect, assertNoCheckpoint },
   );
 }
