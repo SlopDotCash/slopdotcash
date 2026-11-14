@@ -650,6 +650,116 @@ lemma AppendingAccrualWithinCaps(a: Accrual, after: Accrual, entry: AccrualRecor
   }
 }
 
+lemma capture_ensures(a: Accrual, project: int, applicant: int, steward: int, referrer: int, signedIn: bool, administrator: bool, moderator: bool)
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysConfigured(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysUnconfiguredEmpty(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysUnitValid(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysRatesValid(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysNextPeriod(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysCompleteFilings(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysUniqueAttribution(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysActiveSourceCount(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysCollectingHeader(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysFileTotals(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysStagedPrivate(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysPinsUnique(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysFileWalletPinned(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysPendingUnique(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysUniquePayouts(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> alwaysCaps(capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> stepPinsRetained(a, capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> stepRecordsRetained(a, capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> stepRatesRetained(a, capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> stepAttributionsRetained(a, capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+  ensures (inv(a) ==> canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) ==> stepFilingsRetained(a, capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator)))
+{
+  if inv(a) && canCapture(a, project, applicant, steward, referrer, signedIn, administrator, moderator) {
+    var after := capture(a, project, applicant, steward, referrer, signedIn, administrator, moderator);
+    var added := Attribution(project, applicant, steward, referrer);
+    assert after.attributions == a.attributions + [added];
+    AppendAttributionKeepsProjectKeys(a.attributions, added);
+  }
+}
+
+lemma AppendAttributionKeepsProjectKeys(xs: seq<Attribution>, added: Attribution)
+  requires forall row :: row in xs ==> |ProofLib.Filter((other: Attribution) => (other.project == row.project), xs)| == 1
+  requires !(exists row :: row in xs && row.project == added.project)
+  ensures forall row :: row in xs + [added] ==> |ProofLib.Filter((other: Attribution) => (other.project == row.project), xs + [added])| == 1
+{
+  forall row | row in xs + [added] ensures |ProofLib.Filter((other: Attribution) => (other.project == row.project), xs + [added])| == 1 {
+    var sameProject := (other: Attribution) => (other.project == row.project);
+    ProofLib.FilterAppend(sameProject, xs, added);
+    if row == added {
+      ProofLib.FilterNone(sameProject, xs);
+    } else {
+      assert row in xs && row.project != added.project;
+    }
+  }
+}
+
+lemma initialHolds_ensures()
+  ensures inv(initialHolds())
+{
+  var a := initialHolds();
+  FoldTotalEmpty(a);
+  assert a.tokenUnit == settlement__money_zero;
+  var units := settlement__money_smallAmount(2000000);
+  assert units == [0, 0, 2, 0, 0, 0];
+  settlement__money_lawMultiplyZero_ensures(units);
+  assert settlement__money_equalAmounts(poolCap(a), settlement__money_zero);
+  settlement__money_lawEqualReflexive_ensures(settlement__money_zero);
+  settlement__money_lawEqualOrder_ensures(poolCap(a), settlement__money_zero, totalAccrued(a));
+  assert alwaysCaps(a);
+  assert alwaysConfigured(a) && alwaysUnconfiguredEmpty(a) && alwaysUnitValid(a) && alwaysRatesValid(a);
+  assert alwaysNextPeriod(a) && alwaysCompleteFilings(a) && alwaysUniqueAttribution(a);
+  assert alwaysActiveSourceCount(a) && alwaysCollectingHeader(a) && alwaysFileTotals(a) && alwaysStagedPrivate(a);
+  assert alwaysPinsUnique(a) && alwaysFileWalletPinned(a) && alwaysPendingUnique(a) && alwaysUniquePayouts(a);
+}
+
+lemma PayoutSnapshotPreservesPending(a: Accrual, after: Accrual, payouts: seq<Payout>, period: int)
+  requires validSource(a, payouts, period)
+  requires allRecords(after) == allRecords(a) && after.pending == payouts
+  ensures alwaysPendingUnique(after)
+{
+  forall p | p in after.pending ensures settlement__money_validAmount(p.gross) &&
+    |ProofLib.Filter((other: Payout) => (other.id == p.id), after.pending)| == 1 &&
+    !(exists r :: r in allRecords(after) && r.payout.id == p.id) {
+    assert p in payouts;
+  }
+}
+
+lemma startMonth_ensures(a: Accrual, period: int, payouts: seq<Payout>, sourceDigest: string, closed: bool, complete: bool, canonicalOrder: bool, leaseId: string, leaseCurrent: bool)
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysConfigured(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysUnconfiguredEmpty(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysUnitValid(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysRatesValid(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysNextPeriod(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysCompleteFilings(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysUniqueAttribution(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysActiveSourceCount(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysCollectingHeader(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysFileTotals(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysStagedPrivate(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysPinsUnique(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysFileWalletPinned(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysPendingUnique(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysUniquePayouts(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> alwaysCaps(startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> stepPinsRetained(a, startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> stepRecordsRetained(a, startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> stepRatesRetained(a, startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> stepAttributionsRetained(a, startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+  ensures (inv(a) ==> canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) ==> stepFilingsRetained(a, startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent)))
+{
+  if inv(a) && canStartMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent) {
+    var after := startMonth(a, period, payouts, sourceDigest, closed, complete, canonicalOrder, leaseId, leaseCurrent);
+    assert a.staged == [] && allRecords(a) == a.records;
+    assert allRecords(after) == allRecords(a) && after.pending == payouts;
+    assert alwaysCollectingHeader(after) && alwaysActiveSourceCount(after);
+    PayoutSnapshotPreservesPending(a, after, payouts, period);
+  }
+}
+
 lemma configure_ensures(a: Accrual, tokenUnit: seq<int>, verified: bool, by_: string)
   ensures (inv(a) ==> canConfigure(a, tokenUnit, verified, by_) ==> alwaysConfigured(configure(a, tokenUnit, verified, by_)))
   ensures (inv(a) ==> canConfigure(a, tokenUnit, verified, by_) ==> alwaysUnconfiguredEmpty(configure(a, tokenUnit, verified, by_)))
@@ -806,14 +916,22 @@ lemma AccrualPrefixCountOne(p: AccrualRecord -> bool, first: seq<AccrualRecord>,
   ensures |ProofLib.Filter(p, first)| == 1
   decreases |tail|
 {
-  if |tail| == 0 { assert tail == []; }
-  else {
-    var prefix := first + tail[..|tail| - 1];
-    assert first + tail == prefix + [tail[|tail| - 1]];
-    ProofLib.FilterAppend(p, prefix, tail[|tail| - 1]);
+  if |tail| == 0 {
+    assert tail == [] && first + tail == first;
+    assert |ProofLib.Filter(p, first)| == 1;
+  } else {
+    var remaining := tail[..|tail| - 1];
+    var last := tail[|tail| - 1];
+    var prefix := first + remaining;
+    assert tail == remaining + [last];
+    assert first + tail == prefix + [last];
+    ProofLib.FilterAppend(p, prefix, last);
     assert known in prefix;
     ProofLib.FilterMember(p, prefix, known);
-    assert |ProofLib.Filter(p, prefix)| == 1;
-    AccrualPrefixCountOne(p, first, tail[..|tail| - 1], known);
+    var kept := ProofLib.Filter(p, prefix);
+    assert known in kept && |kept| > 0;
+    assert |ProofLib.Filter(p, first + tail)| == |kept| + (if p(last) then 1 else 0);
+    assert |kept| == 1;
+    AccrualPrefixCountOne(p, first, remaining, known);
   }
 }
