@@ -16,6 +16,8 @@ pure def focusable(c: Control): bool = not(c.disabled)
 pure def lawBusyRefusesActivation(c: Control): bool = c.busy implies not(activates(c))
 pure def lawDisabledRefusesActivation(c: Control): bool = c.disabled implies not(activates(c)) and not(focusable(c))
 pure def lawBusyStaysFocusable(c: Control): bool = c.busy and not(c.disabled) implies focusable(c)
+pure val cValues = Set({ disabled: false, busy: false, named: true }, { disabled: true, busy: false, named: true },
+  { disabled: false, busy: true, named: true }, { disabled: true, busy: true, named: true })
 ```
 
 ## Story: Correct a field where it is
@@ -30,4 +32,6 @@ pure def describedBy(f: Field): List[Description] =
 pure def lawInvalidFieldNamesItsError(f: Field): bool =
   f.invalid and f.hasError implies describedBy(f).nthOr(0, HintText) == ErrorText
 pure def lawValidFieldShowsNoError(f: Field): bool = not(f.invalid) implies not(describedBy(f).includes(ErrorText))
+pure val fValues = Set({ invalid: false, hasError: false, hasHint: true }, { invalid: true, hasError: true, hasHint: true },
+  { invalid: true, hasError: true, hasHint: false }, { invalid: false, hasError: true, hasHint: false })
 ```

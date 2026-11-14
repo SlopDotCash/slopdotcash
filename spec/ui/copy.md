@@ -25,14 +25,16 @@ pure def answer(c: Copy, written: bool): Copy =
 A failure keeps its message so the person can select the text by hand.
 
 ```quint
-pure def canSettle(c: Copy): bool = c.status == Copied
-pure def settle(c: Copy): Copy = { ...c, status: Ready }
-pure def copyAnnouncement(c: Copy): str = match c.status {
-  | Ready => ""
-  | Copying => ""
-  | Copied => "Copied"
-  | CopyFailed => "Copy failed. Select and copy the text."
-}
+pure def canRest(c: Copy): bool = c.status == Copied
+pure def rest(c: Copy): Copy = { ...c, status: Ready }
+pure def copyAnnouncement(c: Copy): str =
+  val status = c.status
+  match status {
+    | Ready => ""
+    | Copying => ""
+    | Copied => "Copied"
+    | CopyFailed => "Copy failed. Select and copy the text."
+  }
 pure def alwaysCopiesCount(c: Copy): bool = c.copies >= 0 and (c.status == Copied implies c.copies > 0)
 pure def stepFailureKeepsCount(before: Copy, after: Copy): bool =
   after.status == CopyFailed implies after.copies == before.copies
