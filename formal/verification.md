@@ -245,10 +245,25 @@ page view traffic to the site's own origin.
   split. Vault proof now discharges 32 of 42 obligations. The remaining
   conservation and positivity clauses require additional arithmetic proofs.
   [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-reservation-effects.json)
-- Shared money has checked digit validity, padded equality and order
-  substitution and commutative addition. Fixed floor-halving checks quotient
-  validity, parity and the exact arithmetic relation at arbitrary width.
-  [Shared money proofs](validation/active-proof/money-order/verification.json) · [Floor halves](validation/finance/half-proof.json)
+- Shared money proves exact addition, covered subtraction, and value order for
+  arbitrary-width amounts with zero padding. The focused run discharged 27 of
+  31 obligations. Division bounds, division reconstruction, and both fee
+  conservation laws remain open. Fixed floor-halving proves exact quotient,
+  parity and order independently.
+  [Shared money proofs](validation/active-proof/money-add-subtract/verification.json) · [Floor halves](validation/finance/half-proof.json)
+- Monthly settlement discharged all 73 obligations. Allocation proves valid
+  computed shares and whole-pool allocation for a sole eligible recipient.
+  Full conservation across multiple recipients still needs proof.
+  [Monthly proof](validation/active-proof/settlement/monthly-complete.json) · [Share validity](validation/active-proof/settlement/allocation-share-validity.json)
+- Vault registration binds finalized evidence to the exact reviewed creation.
+  Snapshot writes recheck the registered deployment and reject regressions in
+  each cumulative counter. Solana checks its genesis before reading totals.
+  All 62 obligations proved.
+  [Vault snapshot results](validation/source-coverage/vault-snapshots.json)
+- A live Robinhood buyback tick can report the exact finalized RPC observation
+  in its private summary. This diagnostic leaves accounting and signer
+  authority alone. All three obligations proved.
+  [RPC diagnostic results](validation/finance/buyback-rpc-proof.json)
 - Referrals and buyback preserve filing identity, posting history and the
   pinned bridged quantity. The repaired models replayed 210 traces. The
   distributor proof discharged 141 of 146 obligations against its recorded

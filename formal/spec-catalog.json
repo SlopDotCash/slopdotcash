@@ -6514,6 +6514,157 @@
       "references": []
     },
     {
+      "path": "spec/settlement/vaultSnapshots.md",
+      "sha256": "6be41ba1b57b67145b1776d3e03946f2d94dc711cae347416260612aa3b1ba1b",
+      "module": "settlement__vaultSnapshots",
+      "stories": [
+        {
+          "heading": "Story: Register the reviewed deployment before observing its balances",
+          "line": 25
+        },
+        {
+          "heading": "Story: Recover or refresh with exact finalized evidence",
+          "line": 135
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Register the reviewed deployment before observing its balances / Retry recognizes the exact creation transaction before checking a revision",
+          "line": 27,
+          "definitions": [
+            "Purpose",
+            "Chain",
+            "RequestPhase",
+            "RequestResult",
+            "CreationFinality",
+            "WriteReply",
+            "Source",
+            "Identity",
+            "Creation",
+            "Registration",
+            "Revision",
+            "Counters",
+            "Balance",
+            "Balances",
+            "Observation",
+            "DeploymentRow",
+            "RequestRow",
+            "Snapshots",
+            "noIdentity",
+            "noRegistration",
+            "noRevision",
+            "firstRevision",
+            "zeroCounters",
+            "missingBalance",
+            "zeroBalances",
+            "noObservation",
+            "noDeployment",
+            "noRequest",
+            "initial",
+            "deployment",
+            "setDeployment",
+            "requestRow",
+            "updateRequest",
+            "finish",
+            "immutableRevision",
+            "policy",
+            "registered",
+            "validIdentity",
+            "nextRevision",
+            "canAppendRegistryRevision",
+            "appendRegistryRevision",
+            "firstReadPhase",
+            "canBeginRegistration",
+            "beginRegistration",
+            "canCheckCreation",
+            "checkCreation",
+            "canCommitRegistration",
+            "commitRegistration"
+          ]
+        },
+        {
+          "heading": "Story: Recover or refresh with exact finalized evidence / Only a reviewed registry binding can obtain totals",
+          "line": 137,
+          "definitions": [
+            "canBeginRead",
+            "beginBoundRead",
+            "beginRead",
+            "canBeginRecovery",
+            "beginRecovery",
+            "canPinGenesis",
+            "pinGenesis",
+            "canCheckGenesis",
+            "checkGenesis",
+            "validCounters",
+            "validBalance",
+            "validBalances",
+            "exactObservation",
+            "canReadTotals",
+            "readTotals",
+            "canObservationFails",
+            "observationFails"
+          ]
+        },
+        {
+          "heading": "Story: Recover or refresh with exact finalized evidence / The write compares the latest row atomically",
+          "line": 201,
+          "definitions": [
+            "countersAdvance",
+            "isOlder",
+            "writable",
+            "canReadPrior",
+            "readPrior",
+            "canWrite",
+            "write",
+            "rowScoped",
+            "alwaysObservationScoped",
+            "observationMonotonic",
+            "stepOrdinaryObservationMonotonic",
+            "stepPrivateObservationMonotonic",
+            "stepRegistrationIsImmutable",
+            "stepWritePreservesRegistry",
+            "sometimesStored",
+            "sometimesRegisteredWithoutObservation",
+            "sometimesTrustedRecovery",
+            "evm",
+            "solana",
+            "ordinaryRead",
+            "privateRead",
+            "solanaRead",
+            "observationValues",
+            "baseCreation",
+            "creationValues",
+            "networkValues",
+            "txValues",
+            "requestIdValues",
+            "expectedValues",
+            "ordinaryPolicyValues",
+            "privatePolicyValues",
+            "pinnedRootValues",
+            "seenRootValues",
+            "weight_beginRegistration",
+            "weight_checkCreation",
+            "weight_commitRegistration",
+            "weight_beginRecovery",
+            "weight_pinGenesis",
+            "weight_checkGenesis",
+            "weight_readTotals",
+            "weight_readPrior",
+            "weight_write"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": [
+        {
+          "target": "./vault.md",
+          "line": 8
+        }
+      ]
+    },
+    {
       "path": "spec/slopbot/appeals.md",
       "sha256": "027911d19567a27d047525c6bd3d380122672f833a944fe5985442e4a1d7bb7d",
       "module": "slopbot__appeals",

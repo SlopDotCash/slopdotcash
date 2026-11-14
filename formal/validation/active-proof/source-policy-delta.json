@@ -84,9 +84,22 @@
           ],
           "evidence": "workers/payments/solana-progress.workflow.mjs",
           "owners": [
-            "spec/settlement/solanaScan.md"
+            "spec/settlement/solanaScan.md",
+            "spec/settlement/vaultSnapshots.md"
           ],
           "summary": "Each Solana scan and vault snapshot read independently checks the configured genesis trust root before reading or changing state."
+        },
+        "buybackFinalizedRpc": {
+          "sources": [
+            "workers/fee-converter/evm.ts",
+            "workers/fee-converter/buyback.ts",
+            "workers/fee-converter/README.md"
+          ],
+          "evidence": "workers/fee-converter/buyback.test.ts",
+          "owners": [
+            "spec/fees/buybackRpc.md"
+          ],
+          "summary": "The private live recovery summary may report an exact finalized read on the configured Robinhood RPC. The diagnostic cannot change accounting or signing."
         }
       }
     }
