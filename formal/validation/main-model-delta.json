@@ -1,0 +1,84 @@
+{
+  "commit": "8d14a9692b998ee3f4479725b6323125f11f11be",
+  "base": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "scope": "Legacy main model delta observed November 14. Results do not establish successor equivalence. The migration inventory remains pinned to base.",
+  "quint": "0.33.1",
+  "commands": [
+    "quint typecheck <path>",
+    "quint test <path> --seed=812 --max-samples=100"
+  ],
+  "models": [
+    {
+      "path": "formal/models/contracts/solana_validator_callers.qnt",
+      "sha256": "91b33055c4f3cac1c6db6b5b9509fa7468e6a77e056364c050174a5b37775ed3",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "solana_validator_callers\n    ok foreignRpcCannotAdmitTestsTest passed 1 test(s)\n    ok twoIndependentStagesRequireTwoCurrentReceiptsTest passed 1 test(s)\n    ok oldStoppedReceiptCannotAdmitSecondStageTest passed 1 test(s)\n    ok acceptanceRemovesLedgerOnlyAfterConfirmedStopTest passed 1 test(s)\n    ok primaryFailureSurvivesCleanupFailureTest passed 1 test(s)\n    ok cleanupFailureCannotPassTest passed 1 test(s)\n    ok canceledStartupStillWaitsForOwnedStopTest passed 1 test(s)\n    ok lateReadyIsNotAStopReceiptTest passed 1 test(s)\n    ok receiptDoesNotReplaceAwaitedStopTest passed 1 test(s)\n    ok badExitCannotPassWithStoppedReceiptTest passed 1 test(s)\n    ok readyReceiptStillRequiresLocalFundingTest passed 1 test(s)\n    ok localAirdropTimeoutStillWaitsForValidatorStopTest passed 1 test(s)\n    ok localAirdropFailureSurvivesValidatorCleanupFailureTest passed 1 test(s)\n    ok eachShellStageRequiresItsOwnFundingTest passed 1 test(s)\n\n  14 passing (6041ms)"
+      }
+    },
+    {
+      "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
+      "sha256": "d2173192c20133574dd6048dc9c1a8c1e00045de6f0a93454a64f826030e9151",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "operator_keeper_diagnostics\n    ok successfulAndEmptyResultsStaySilentTest passed 1 test(s)\n    ok emptyRunStaysSilentTest passed 1 test(s)\n    ok unknownValuesCollapseWithoutPrivateDataTest passed 1 test(s)\n    ok identicalFailuresAggregatePositiveCountsTest passed 1 test(s)\n    ok nondeploymentCannotBorrowStageOrRpcCauseTest passed 1 test(s)\n    ok waitingWithoutErrorDoesNotTriggerFailureTest passed 1 test(s)\n    ok spoofedRpcNameRemainsOtherTest passed 1 test(s)\n    ok unavailableSubclassHasPriorityTest passed 1 test(s)\n    ok verifierFailureRetainsEvidenceStageTest passed 1 test(s)\n    ok indexFailureRetainsIndexStageTest passed 1 test(s)\n    ok successfulCallbackRestoresScannerStageTest passed 1 test(s)\n    ok diagnosticDoesNotEraseExistingFailureTest passed 1 test(s)\n\n  12 passing (6122ms)"
+      }
+    },
+    {
+      "path": "formal/models/payments/operator_keeper_rpc.qnt",
+      "sha256": "1aba1a76fc1059a518e2e50417a92becac02c8f5cc6cb151a864a1d59ce7cf65",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "operator_keeper_rpc\n    ok existingConfigRemainsAvailableTest passed 1 test(s)\n    ok rotationRetainsIdentityAndJournalTest passed 1 test(s)\n    ok removingOverrideRestoresOriginalTest passed 1 test(s)\n    ok emptyOverrideRefusesTest passed 1 test(s)\n    ok malformedOverrideRefusesTest passed 1 test(s)\n    ok insecureOverrideRefusesTest passed 1 test(s)\n    ok wrongChainRefusesTest passed 1 test(s)\n\n  7 passing (2166ms)"
+      }
+    },
+    {
+      "path": "formal/models/points/historical_implementation_allocation.qnt",
+      "sha256": "fdd3e11c9680b44501ae2daf20c6a641399c4fb24f3cd8de1b76c32229aa967b",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "historical_implementation_allocation\n    ok unchangedPoolAndAppendOnlyTest passed 1 test(s)\n    ok incompleteConnectedProofHeldTest passed 1 test(s)\n    ok privateProtectedPoolHeldTest passed 1 test(s)\n    ok protectionRaceBeforeAtomicImportTest passed 1 test(s)\n    ok changedPredecessorRefusesImportTest passed 1 test(s)\n    ok replayAfterRevocationNeverRestoresTest passed 1 test(s)\n    ok protectionBypassNegativeControlTest passed 1 test(s)\n    ok revaluationNegativeControlTest passed 1 test(s)\n    ok replayResurrectionNegativeControlTest passed 1 test(s)\n\n  9 passing (3136ms)"
+      }
+    },
+    {
+      "path": "formal/models/points/journal_publication.qnt",
+      "sha256": "515102c904c4b4474305c60c7dff4484d5e304e2506ce0ce7c01551d127f0840",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "journal_publication\n    ok extendsExactPrefixTest passed 1 test(s)\n    ok reorderIsRejectedTest passed 1 test(s)\n    ok stalePreparedPublicationIsRejectedTest passed 1 test(s)\n    ok interruptedStagePreservesPublicationTest passed 1 test(s)\n    ok duplicateCannotReplaceRecordTest passed 1 test(s)\n\n  5 passing (991ms)"
+      }
+    },
+    {
+      "path": "formal/models/tooling/formal_process.qnt",
+      "sha256": "c2ea55da758b483d4f232bf9ebaa916e8f744c97ec8c523d2227f394f61f4143",
+      "typecheck": {
+        "exitCode": 0,
+        "output": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "formal_process\n    ok cleanSuccessTest passed 1 test(s)\n    ok timeoutKillsDescendantTest passed 1 test(s)\n    ok exitedLauncherStillOwnsChildTest passed 1 test(s)\n    ok canceledCleanupCannotPassTest passed 1 test(s)\n    ok failureCannotPublishSuccessTest passed 1 test(s)\n    ok cleanupFailureIsExplicitTest passed 1 test(s)\n    ok cooperativeBrowserInterruptClosesServerTest passed 1 test(s)\n    ok uncooperativeBrowserCannotClaimCleanupTest passed 1 test(s)\n    ok normalBrowserClosesManagedServerTest passed 1 test(s)\n    ok forcedBrowserCleanupStopsCapturedGroupTest passed 1 test(s)\n    ok unknownGroupCannotBeKilledTest passed 1 test(s)\n    ok changedGroupCannotBeKilledTest passed 1 test(s)\n    ok normalExitCheckpointRetainsDetachedServerTest passed 1 test(s)\n    ok missingExitCheckpointCannotPassTest passed 1 test(s)\n    ok refusedCheckpointCannotPassTest passed 1 test(s)\n    ok changedNormalExitOwnerCannotBeKilledTest passed 1 test(s)\n    ok changedNormalExitOwnerRefusesSuccessTest passed 1 test(s)\n    ok ownershipReadFailureStillClosesObservedServerTest passed 1 test(s)\n    ok ownershipReadFailureDoesNotAcquireUnknownServerTest passed 1 test(s)\n    ok temporaryRemovalFailureStillReportsTest passed 1 test(s)\n    ok earlierFailureSurvivesTemporaryRemovalFailureTest passed 1 test(s)\n    ok timeoutRetainsLiveResourcesWhenRemovalFailsTest passed 1 test(s)\n    ok timeoutCanRemoveDirectoryWithoutStoppingServerTest passed 1 test(s)\n    ok drainedTimeoutRetainsFailedRemovalTest passed 1 test(s)\n    ok failedSpawnRetainsUnremovedDirectoryTest passed 1 test(s)\n    ok failedSpawnMayRemoveDirectoryTest passed 1 test(s)\n    ok interruptedExitCheckpointClosesRetainedServerTest passed 1 test(s)\n    ok interruptedCheckpointIoFailureClosesObservedServerTest passed 1 test(s)\n    ok refusedCheckpointDuringInterruptCannotPassTest passed 1 test(s)\n    ok localAirdropDeadlineEscalatesAfterGraceTest passed 1 test(s)\n\n  30 passing (13088ms)"
+      }
+    }
+  ]
+}

@@ -9,6 +9,13 @@ The requested `develop` source resolves to Slop's `development` branch.
 The retained PRD bytes match that pinned source and the pinned main revision.
 The user confirmed that new-project automatic closure starts unchecked.
 
+On 14 November, the PRD blob also matched the fetched `development` tip
+`85e831856386d212f8e321897eb48d898b254e9e`. The `main` tip had advanced to
+`8d14a9692b998ee3f4479725b6323125f11f11be` with three added and three changed
+model files. The model inventory and its legacy test results apply to the
+pinned migration snapshot. All six later files also passed direct Quint
+typechecking and seeded named tests. [Later main changes](validation/main-model-delta.json)
+
 ## Rules added
 
 The specification tree defines account and browser ownership, project setup
