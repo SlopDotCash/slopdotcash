@@ -1,0 +1,63 @@
+{"ok":true,"stage":"model","summary":"spec/access.md: 3 transitions, 3 always, 1 step, 3 sometimes","detail":"","where":"spec/access.md"}
+{"ok":true,"stage":"model","summary":"spec/app/index.md: 1 transitions, 2 always, 1 step, 1 sometimes, 1 laws","detail":"","where":"spec/app/index.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/accounts.md: 8 transitions, 8 always, 1 step, 3 sometimes, 1 laws","detail":"","where":"spec/backend/accounts.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/email.md: 6 transitions, 1 always, 1 step, 3 sometimes","detail":"","where":"spec/backend/email.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/index.md: definitions only","detail":"","where":"spec/backend/index.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/projects.md: 14 transitions, 8 always, 6 step, 7 sometimes","detail":"","where":"spec/backend/projects.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/listing.md: 2 transitions, 2 always, 3 step, 2 sometimes, 3 laws","detail":"","where":"spec/backend/listing.md"}
+{"ok":true,"stage":"model","summary":"spec/backend/wallets.md: 7 transitions, 3 always, 1 step, 3 sometimes","detail":"","where":"spec/backend/wallets.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/navigation.md: 4 transitions, 2 always, 2 sometimes","detail":"","where":"spec/frontend/navigation.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/drafts.md: 8 transitions, 1 always, 1 step, 3 sometimes","detail":"","where":"spec/frontend/drafts.md"}
+{"ok":true,"stage":"model","summary":"spec/composition.md: 6 transitions, 2 always, 1 step, 2 sometimes","detail":"","where":"spec/composition.md"}
+{"ok":true,"stage":"model","summary":"spec/contributor/evidence.md: 8 transitions, 6 always, 3 sometimes","detail":"","where":"spec/contributor/evidence.md"}
+{"ok":true,"stage":"model","summary":"spec/contributor/index.md: definitions only","detail":"","where":"spec/contributor/index.md"}
+{"ok":true,"stage":"model","summary":"spec/contributor/installation.md: 10 transitions, 7 always, 3 sometimes","detail":"","where":"spec/contributor/installation.md"}
+{"ok":true,"stage":"model","summary":"spec/contributor/workflow.md: 12 transitions, 2 always, 1 step, 3 sometimes","detail":"","where":"spec/contributor/workflow.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/money.md: 9 laws","detail":"","where":"spec/settlement/money.md"}
+{"ok":true,"stage":"model","summary":"spec/fees/buyback.md: 13 transitions, 5 always, 1 step, 3 sometimes, 1 laws","detail":"","where":"spec/fees/buyback.md"}
+{"ok":true,"stage":"model","summary":"spec/fees/conversion.md: 14 transitions, 7 always, 1 step, 3 sometimes","detail":"","where":"spec/fees/conversion.md"}
+{"ok":true,"stage":"model","summary":"spec/fees/index.md: definitions only","detail":"","where":"spec/fees/index.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/index.md: definitions only","detail":"","where":"spec/frontend/index.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/requests.md: 4 transitions, 1 always, 8 sometimes","detail":"","where":"spec/frontend/requests.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/presentation.md: 14 laws","detail":"","where":"spec/frontend/presentation.md"}
+{"ok":true,"stage":"model","summary":"spec/frontend/projections.md: 12 laws","detail":"","where":"spec/frontend/projections.md"}
+{"ok":true,"stage":"model","summary":"spec/governance.md: 4 transitions, 1 always, 3 sometimes, 3 laws","detail":"","where":"spec/governance.md"}
+{"ok":true,"stage":"model","summary":"spec/index.md: definitions only","detail":"","where":"spec/index.md"}
+{"ok":true,"stage":"model","summary":"spec/operations/backup.md: 13 transitions, 5 always, 3 sometimes","detail":"","where":"spec/operations/backup.md"}
+{"ok":true,"stage":"model","summary":"spec/operations/index.md: definitions only","detail":"","where":"spec/operations/index.md"}
+{"ok":true,"stage":"model","summary":"spec/operations/local.md: 3 transitions, 2 always, 2 sometimes","detail":"","where":"spec/operations/local.md"}
+{"ok":true,"stage":"model","summary":"spec/operations/notifications.md: 16 transitions, 2 always, 1 step, 3 sometimes","detail":"","where":"spec/operations/notifications.md"}
+{"ok":true,"stage":"model","summary":"spec/operations/release.md: 12 transitions, 3 always, 1 step, 4 sometimes, 1 laws","detail":"","where":"spec/operations/release.md"}
+{"ok":true,"stage":"model","summary":"spec/points/allocation.md: 4 laws","detail":"","where":"spec/points/allocation.md"}
+{"ok":true,"stage":"model","summary":"spec/points/authorship.md: 7 transitions, 4 always, 4 sometimes","detail":"","where":"spec/points/authorship.md"}
+{"ok":true,"stage":"model","summary":"spec/points/census.md: 7 transitions, 8 always, 2 sometimes","detail":"","where":"spec/points/census.md"}
+{"ok":true,"stage":"model","summary":"spec/points/index.md: definitions only","detail":"","where":"spec/points/index.md"}
+{"ok":true,"stage":"model","summary":"spec/points/journal.md: 4 transitions, 5 always, 1 step, 2 sometimes","detail":"","where":"spec/points/journal.md"}
+{"ok":true,"stage":"model","summary":"spec/points/penalties.md: 4 transitions, 5 always, 2 step, 5 sometimes","detail":"","where":"spec/points/penalties.md"}
+{"ok":true,"stage":"model","summary":"spec/points/reviews.md: 2 transitions, 5 always, 2 sometimes","detail":"","where":"spec/points/reviews.md"}
+{"ok":true,"stage":"model","summary":"spec/security/enforcement.md: 16 transitions, 8 always, 1 step, 6 sometimes","detail":"","where":"spec/security/enforcement.md"}
+{"ok":true,"stage":"model","summary":"spec/projectComposition.md: 3 laws","detail":"","where":"spec/projectComposition.md"}
+{"ok":true,"stage":"model","summary":"spec/security/admission.md: 11 transitions, 4 always, 1 step, 3 sometimes","detail":"","where":"spec/security/admission.md"}
+{"ok":true,"stage":"model","summary":"spec/security/cases.md: 16 transitions, 7 always, 1 step, 5 sometimes","detail":"","where":"spec/security/cases.md"}
+{"ok":true,"stage":"model","summary":"spec/security/evidence.md: 13 transitions, 3 always, 1 step, 3 sometimes","detail":"","where":"spec/security/evidence.md"}
+{"ok":true,"stage":"model","summary":"spec/security/index.md: definitions only","detail":"","where":"spec/security/index.md"}
+{"ok":true,"stage":"model","summary":"spec/security/intake.md: 11 transitions, 4 always, 1 step, 4 sometimes","detail":"","where":"spec/security/intake.md"}
+{"ok":true,"stage":"model","summary":"spec/security/privacy.md: 4 transitions, 2 always, 2 sometimes, 2 laws","detail":"","where":"spec/security/privacy.md"}
+{"ok":true,"stage":"model","summary":"spec/security/terms.md: 5 laws","detail":"","where":"spec/security/terms.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/allocation.md: 2 laws","detail":"","where":"spec/settlement/allocation.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/vault.md: 4 transitions, 5 always, 2 step, 4 sometimes","detail":"","where":"spec/settlement/vault.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/payment.md: 11 transitions, 6 always, 2 step, 5 sometimes","detail":"","where":"spec/settlement/payment.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/composition.md: 9 transitions, 4 always, 3 sometimes","detail":"","where":"spec/settlement/composition.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/contributorAllocation.md: 6 transitions, 3 always, 2 step, 2 sometimes","detail":"","where":"spec/settlement/contributorAllocation.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/index.md: definitions only","detail":"","where":"spec/settlement/index.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/monthly.md: 10 transitions, 5 always, 2 step, 1 leadsTo, 4 sometimes, 1 laws","detail":"","where":"spec/settlement/monthly.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/recovery.md: 6 transitions, 2 always, 1 step, 3 sometimes","detail":"","where":"spec/settlement/recovery.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/referralAccrual.md: 8 transitions, 11 always, 4 step, 3 sometimes","detail":"","where":"spec/settlement/referralAccrual.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/referrals.md: 4 transitions, 1 always, 2 sometimes","detail":"","where":"spec/settlement/referrals.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/referralPublication.md: 13 transitions, 6 always, 2 step, 3 sometimes","detail":"","where":"spec/settlement/referralPublication.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/reserveRelease.md: 8 transitions, 7 always, 2 step, 2 sometimes","detail":"","where":"spec/settlement/reserveRelease.md"}
+{"ok":true,"stage":"model","summary":"spec/settlement/signer.md: 5 transitions, 2 always, 1 step, 2 sometimes, 2 laws","detail":"","where":"spec/settlement/signer.md"}
+{"ok":true,"stage":"model","summary":"spec/slopbot/appeals.md: 8 transitions, 3 always, 1 step, 2 sometimes","detail":"","where":"spec/slopbot/appeals.md"}
+{"ok":true,"stage":"model","summary":"spec/slopbot/closure.md: 10 transitions, 4 always, 3 sometimes","detail":"","where":"spec/slopbot/closure.md"}
+{"ok":true,"stage":"model","summary":"spec/slopbot/index.md: definitions only","detail":"","where":"spec/slopbot/index.md"}
+{"ok":true,"stage":"model","summary":"spec/slopbot/review.md: 5 transitions, 5 always, 4 sometimes, 1 laws","detail":"","where":"spec/slopbot/review.md"}

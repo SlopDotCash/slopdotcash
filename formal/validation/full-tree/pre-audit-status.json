@@ -1,0 +1,13 @@
+{
+  "status": "superseded-after-source-audit",
+  "reason": "Final audit changed financial invariants, public amount representation, listing/presentation and referral models. A fresh full-tree check is required.",
+  "completedStages": [
+    "model",
+    "always",
+    "sometimes",
+    "replay",
+    "types"
+  ],
+  "proofStage": "incomplete",
+  "acceptance": false
+}

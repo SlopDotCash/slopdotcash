@@ -1,0 +1,3076 @@
+{
+  "startedAt": "2026-11-14T04:16:39.207Z",
+  "finishedAt": "2026-11-14T04:47:20.546Z",
+  "command": "unmodified Vibestack check(root, false)",
+  "acceptance": false,
+  "snapshot": {
+    "spec/access.md": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+    "spec/app/index.md": "8521c3f9c9cd9ea12cd725f64d4f4a1040a63953b5fdbf78885a8275899238f7",
+    "spec/backend/accounts.md": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+    "spec/backend/accounts.proof.dfy": "e8b074b5be700273b52fc33ab042919ca019385be0b3df28cca0618880a30c35",
+    "spec/backend/email.md": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+    "spec/backend/index.md": "fc9beb4a1efa2320d74decddbf7031a51f58974117d075b40bb6c66a3367871f",
+    "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+    "spec/backend/projects.proof.dfy": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19",
+    "spec/backend/listing.md": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+    "spec/backend/wallets.md": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+    "spec/frontend/navigation.md": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+    "spec/frontend/drafts.md": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+    "spec/composition.md": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+    "spec/contributor/evidence.md": "45c0c719573e946a8331c5a1bd7fbfa063b6f04b7876d3a3f4d2077de1a4b25d",
+    "spec/contributor/index.md": "827250f6c22782454e070a2e83122326b58e4890350d96388b041ddec1a30089",
+    "spec/contributor/installation.md": "7b233a3716e02027c4dd5b10d01064004176ae69da1ef27fa94f70e64418df47",
+    "spec/contributor/workflow.md": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+    "spec/fees/buyback.md": "d45d97d3353687f3a134c57b10daddd00d73285687035533e9e330d2a548c8e4",
+    "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+    "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
+    "spec/frontend/index.md": "1f0b60c3adb6c339c39aab294cc76293175e6ac038421caf4bb673ef720cea3d",
+    "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+    "spec/frontend/presentation.md": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545",
+    "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+    "spec/governance.md": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+    "spec/index.md": "11b4a60fb7525929cec6747a7ec8a3f89b3288c0d0eddd256b6dc600ccf48963",
+    "spec/operations/backup.md": "d24dc961e524112ffa9aad9e8942e588b09dfb03e475755fff5285c94e19b93d",
+    "spec/operations/index.md": "d1bb96cae8615cd8d2a406b15462b5dd711d0a345604dfc9f67d39573abaf450",
+    "spec/operations/local.md": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
+    "spec/operations/notifications.md": "621a9f5047b1e99b82fd5edffd02651d76257ea073838c6f9914313a48de6505",
+    "spec/operations/release.md": "16717364ec0c6219b4ff22e7cb98f03b92bbcf5153d53d5c95b4cf1053f79456",
+    "spec/points/allocation.md": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+    "spec/points/allocation.proof.dfy": "348bb1203aa9f8b2023774aedb79212a5a2d6f37b45a2cf41cd41f91536ea0a6",
+    "spec/points/authorship.md": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+    "spec/points/census.md": "f6d7c2e66b6ffa9a9feb1eaf76aed09dfb75f0788fd505567a18868a6ad6f9f4",
+    "spec/points/census.proof.dfy": "940d1cb80009e4b3e7031a1dfb2b85c63736461826475a0e9ff480bab965714a",
+    "spec/points/index.md": "159bc81f817e19f8b96689d6c0d7cb10a3c54328837b7d7732e903ba111b59ce",
+    "spec/points/journal.md": "4ed1dbc6cf4b5cef41d0fe669393c5aa1136586d489c927476feba8ea15a3188",
+    "spec/points/penalties.md": "4c4c0a99ee4f5e7c67d24d6071843e54631eed5c5a0908b5a505cc68d474cba0",
+    "spec/points/penalties.proof.dfy": "045b02ca2fbf0567bd296ec5848e12049505ddcde66e4cc7f8aa11967825aa7d",
+    "spec/points/reviews.md": "4f8d415aac9fef09c53123b069374aa5687ee96bc35d3ef3bf72428e80dfd6b7",
+    "spec/points/reviews.proof.dfy": "04fd8c91e7617f3964c9e79f0063e6e1c9a7aca7f110f706ef018dbe0afaa00e",
+    "spec/security/enforcement.md": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+    "spec/security/enforcement.proof.dfy": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06",
+    "spec/projectComposition.md": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+    "spec/security/admission.md": "e2e276557b6f0632d45f6a68f8b0bb081118e379da7d1192242035d35fdcb803",
+    "spec/security/cases.md": "3c1ce2f2bab10141be7518785f3c6abaff1ef8f387d08922a12c79ef33d58fb7",
+    "spec/security/cases.proof.dfy": "86e36cbaf0428605167ff1a23470132b42d5a80ff2ce0bc1e46f29d344ae436d",
+    "spec/security/evidence.md": "4199c84db9035505ecad7a69f2d0c63d2df4e642eb368673995b17e708fa755a",
+    "spec/security/evidence.proof.dfy": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7",
+    "spec/security/index.md": "3853f59468ffc5b2a4fdce363e9eb19fe65e62eaef1a91566b4fb1a3cf3879eb",
+    "spec/security/intake.md": "96e02eb1c37223a7daaaff7950bba76047ea7e05e2435c4a137e5cc7a6bf7721",
+    "spec/security/privacy.md": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
+    "spec/security/terms.md": "b39ba589fb34a5e49273cf682975f56835eccb6ed168240b1a53decb5d1920d8",
+    "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+    "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
+    "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
+    "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+    "spec/settlement/index.md": "8a3532cc1f1017fbcaa9c50f51be8f613cfd107cc4224022dcca54e9196aab78",
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+    "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+    "spec/settlement/referralAccrual.md": "e848fcd27b1831384147529e29eb69f7e029cf09222dfead4d3bdbd3d89145db",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "153b1fbf185b301de5c5e0449005a417eae0cc3824fc42be85e2545d39c7672c",
+    "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
+    "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
+    "spec/slopbot/appeals.md": "027911d19567a27d047525c6bd3d380122672f833a944fe5985442e4a1d7bb7d",
+    "spec/slopbot/closure.md": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+    "spec/slopbot/index.md": "5b031dccab9c4b89d8fd473ac15cef55a88fce7fa2864c0ba391fd92ff4d0497",
+    "spec/slopbot/review.md": "87dd0d837549d957d32e0e6e0c892c0c431ebf5e479dac0959a7fe868a37e8fd"
+  },
+  "sourceCurrent": false,
+  "documents": 64,
+  "stories": 81,
+  "rules": 270,
+  "ok": false,
+  "results": [
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/access.md: 3 transitions, 3 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/app/index.md: 1 transitions, 2 always, 1 step, 1 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/accounts.md: 8 transitions, 8 always, 1 step, 3 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/email.md: 6 transitions, 1 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/index.md: definitions only",
+      "detail": "",
+      "where": "spec/backend/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/projects.md: 14 transitions, 8 always, 6 step, 7 sometimes",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/listing.md: 2 transitions, 2 always, 3 step, 2 sometimes, 3 laws",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/backend/wallets.md: 7 transitions, 3 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/navigation.md: 4 transitions, 2 always, 2 sometimes",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/drafts.md: 8 transitions, 1 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/composition.md: 6 transitions, 2 always, 1 step, 2 sometimes",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/contributor/evidence.md: 8 transitions, 6 always, 3 sometimes",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/contributor/index.md: definitions only",
+      "detail": "",
+      "where": "spec/contributor/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/contributor/installation.md: 10 transitions, 7 always, 3 sometimes",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/contributor/workflow.md: 12 transitions, 2 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/money.md: 9 laws",
+      "detail": "",
+      "where": "spec/settlement/money.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/fees/buyback.md: 13 transitions, 5 always, 1 step, 3 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/fees/conversion.md: 14 transitions, 7 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/fees/index.md: definitions only",
+      "detail": "",
+      "where": "spec/fees/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/index.md: definitions only",
+      "detail": "",
+      "where": "spec/frontend/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/requests.md: 4 transitions, 1 always, 8 sometimes",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/presentation.md: 19 laws",
+      "detail": "",
+      "where": "spec/frontend/presentation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/frontend/projections.md: 12 laws",
+      "detail": "",
+      "where": "spec/frontend/projections.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/governance.md: 4 transitions, 1 always, 3 sometimes, 3 laws",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/index.md: definitions only",
+      "detail": "",
+      "where": "spec/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/operations/backup.md: 13 transitions, 5 always, 3 sometimes",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/operations/index.md: definitions only",
+      "detail": "",
+      "where": "spec/operations/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/operations/local.md: 3 transitions, 2 always, 2 sometimes",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/operations/notifications.md: 16 transitions, 2 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/operations/release.md: 12 transitions, 3 always, 1 step, 4 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/allocation.md: 4 laws",
+      "detail": "",
+      "where": "spec/points/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/authorship.md: 7 transitions, 4 always, 4 sometimes",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/census.md: 7 transitions, 8 always, 2 sometimes",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/index.md: definitions only",
+      "detail": "",
+      "where": "spec/points/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/journal.md: 4 transitions, 5 always, 1 step, 2 sometimes",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/penalties.md: 4 transitions, 5 always, 2 step, 5 sometimes",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/points/reviews.md: 2 transitions, 5 always, 2 sometimes",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/enforcement.md: 16 transitions, 8 always, 1 step, 6 sometimes",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/projectComposition.md: 3 laws",
+      "detail": "",
+      "where": "spec/projectComposition.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/admission.md: 11 transitions, 4 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/cases.md: 16 transitions, 7 always, 1 step, 5 sometimes",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/evidence.md: 13 transitions, 3 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/index.md: definitions only",
+      "detail": "",
+      "where": "spec/security/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/intake.md: 11 transitions, 4 always, 1 step, 4 sometimes",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/privacy.md: 4 transitions, 2 always, 2 sometimes, 2 laws",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/security/terms.md: 5 laws",
+      "detail": "",
+      "where": "spec/security/terms.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/allocation.md: 2 laws",
+      "detail": "",
+      "where": "spec/settlement/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/vault.md: 4 transitions, 5 always, 2 step, 4 sometimes",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/payment.md: 11 transitions, 6 always, 2 step, 5 sometimes",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/composition.md: 9 transitions, 4 always, 3 sometimes",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/contributorAllocation.md: 6 transitions, 3 always, 2 step, 2 sometimes",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/index.md: definitions only",
+      "detail": "",
+      "where": "spec/settlement/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/monthly.md: 10 transitions, 5 always, 2 step, 1 leadsTo, 4 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/recovery.md: 6 transitions, 2 always, 1 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/referralAccrual.md: 9 transitions, 16 always, 5 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/referralDistributor.md: 12 transitions, 10 always, 2 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/referrals.md: 4 transitions, 1 always, 2 sometimes",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/referralPublication.md: 15 transitions, 12 always, 4 step, 3 sometimes",
+      "detail": "",
+      "where": "spec/settlement/referralPublication.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/reserveRelease.md: 8 transitions, 7 always, 2 step, 2 sometimes",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/settlement/signer.md: 5 transitions, 2 always, 1 step, 2 sometimes, 2 laws",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/slopbot/appeals.md: 8 transitions, 3 always, 1 step, 2 sometimes",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/slopbot/closure.md: 10 transitions, 4 always, 3 sometimes",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/slopbot/index.md: definitions only",
+      "detail": "",
+      "where": "spec/slopbot/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "model",
+      "summary": "spec/slopbot/review.md: 5 transitions, 5 always, 4 sometimes, 1 laws",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAppealOpen is reachable",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReinstated is reachable",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBannedWithFunding is reachable",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "3 of 3 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 16 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesGreetedTwice is reachable",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "1 of 1 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 401 traces: every state, every law, and 7 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSignedIn is reachable",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesClosed is reachable",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDisconnected is reachable",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "8 of 8 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, every law, and 31 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesVerified is reachable",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBothConsent is reachable",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesIndependentNotice is reachable",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "5 of 5 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 16 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPublishedUnfunded is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRetired is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancelled is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAppendedRepositoryDeferred is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesLaterMaintainer is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancelledUpdate is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPublishedUpdate is reachable",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "14 of 14 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 407 traces: every state, and 48 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: beginPublish, completePublish, retryPublish, appendRepository, retire",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFeatured is reachable",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReturnedToCommunity is reachable",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "2 of 2 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, every law, and 16 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBound is reachable",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancelled is reachable",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "7 of 7 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 21 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPrivateDestination is reachable",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSignedOutAfterUse is reachable",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "2 of 2 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 11 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReceived is reachable",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesStorageFailure is reachable",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "7 of 7 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canOpen",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 18 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: loseResponse, retry",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReportSubmitted is reachable",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesLogoutClears is reachable",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "5 of 5 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canAuthenticate",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 15 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: submitReport",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDeclinedAndSubmitted is reachable",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesStored is reachable",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFailedAndSubmitted is reachable",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "6 of 6 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 23 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesInstalled is reachable",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesLocalAuthorized is reachable",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRecovered is reachable",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "10 of 10 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 30 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: confirm",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSubmittedWithoutRun is reachable",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAccepted is reachable",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAdvised is reachable",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "11 of 11 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, and 21 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: selectWork, beginWork, abandon, confirmSubmissionRead, submit, recordRun, recordMerge, review",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/money.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 32 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: divisionStep",
+      "detail": "",
+      "where": "spec/settlement/money.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesInTransit is reachable",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRefunded is reachable",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBurned is reachable",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "13 of 13 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, every law, and 38 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: spentInWindow",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesConverted is reachable",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFailed is reachable",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "14 of 14 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 41 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: retain, retry, nextReceipt, expire",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCurrent is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesEmpty is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesStale is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDenied is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesInvalid is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUnavailable is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFailed is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancelled is reachable",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 408 traces: every state, and 17 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/frontend/presentation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 34 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/frontend/presentation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/frontend/projections.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 26 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/frontend/projections.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReviewed is reachable",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesWaived is reachable",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesTimeout is reachable",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, every law, and 18 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBackupComplete is reachable",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRestored is reachable",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesInterrupted is reachable",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "13 of 13 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 31 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: checkChain, refuseRestore, writeDestination, readDestination",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesLocalSession is reachable",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesExpired is reachable",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "3 of 3 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 10 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDelivered is reachable",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancelled is reachable",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "16 of 16 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canChangeDestination",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 405 traces: every state, and 32 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: send, retirePreparation, accept, reject, loseResponse, confirmDelivery",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesStaging is reachable",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRecoveredUnpublished is reachable",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesVerified is reachable",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "12 of 12 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canConfigure, canObserveBranchHead",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, every law, and 31 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: check, acquireLock, publish, loseResponse, reconcilePublication, proveUnpublished, verifyServed",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 5 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: validRecipients, lineTotal, allocationWeight, weightTotal, eligibleAllocation, pointTotal, floorShare, pointRemainder, floorTotal, remainderRank, allocatePoints, canWriteAllocation",
+      "detail": "",
+      "where": "spec/points/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPrimary is reachable",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesOriginalFallback is reachable",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSourceFallback is reachable",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCredited is reachable",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "7 of 7 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, and 23 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPublished is reachable",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesIncomplete is reachable",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "7 of 7 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 24 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: publish",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCredited is reachable",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFrozen is reachable",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 16 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSeveralSources is reachable",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCappedPenalty is reachable",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReversedPenalty is reachable",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFrozen is reachable",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPenaltyAfterFreeze is reachable",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 405 traces: every state, and 25 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReviewed is reachable",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFiveReviewers is reachable",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "2 of 2 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 15 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: reviewFloor, reviewRemainder, reviewRank, reviewShare",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesQuarantineRecovered is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAppendedPaused is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRetired is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPaused is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesExempt is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReinstated is reachable",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "16 of 16 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 406 traces: every state, and 48 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: checkSetup, reinstateFlags, reinstateBan, releaseQuarantine, activeFlag",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/projectComposition.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 6 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/projectComposition.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesClean is reachable",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesIncomplete is reachable",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesMalicious is reachable",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "11 of 11 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 29 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: pass",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCapacityWait is reachable",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAccepted is reachable",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesAppealed is reachable",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesVerifiedPatch is reachable",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDisclosed is reachable",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "16 of 16 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 405 traces: every state, and 45 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPermanent is reachable",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCleaned is reachable",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesShared is reachable",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "13 of 13 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 31 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: claimDelete, observeAbsence, recordCleanup, deleteBytes",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUnavailable is reachable",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDenied is reachable",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReceived is reachable",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesForwarded is reachable",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "11 of 11 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canObserveAvailability",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, and 31 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReportRead is reachable",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesScannerRead is reachable",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, every law, and 17 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/security/terms.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 8 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/security/terms.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 400 traces: every state, every law, and 8 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: weightedPortion, portionTotal, remainderRank, portion, allocatedTotal",
+      "detail": "",
+      "where": "spec/settlement/allocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReserved is reachable",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesConcurrentReserves is reachable",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPaid is reachable",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRefunded is reachable",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, and 20 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertain is reachable",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPaid is reachable",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPrivate is reachable",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesFullHeld is reachable",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesHeld is reachable",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "11 of 11 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 405 traces: every state, and 37 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: reconcile",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReserved is reachable",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertainReserved is reachable",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPaidTogether is reachable",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "9 of 9 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 25 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: reconcile",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSent is reachable",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUnclaimed is reachable",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "6 of 6 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 20 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces, and no fair run that stops or loops in 2000 of them breaks a `leadsTo` rule (116387 loops found)",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesWalletlessReserve is reachable",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesIndependentPayment is reachable",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCompleted is reachable",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesEmptyMonth is reachable",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "10 of 10 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 2204 traces: every state, every law, and 35 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: pay",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSuccessor is reachable",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesOldWinner is reachable",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesSuccessorWinner is reachable",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "6 of 6 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 17 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: successorPaid",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": false,
+      "stage": "always",
+      "summary": "the simulator could not run",
+      "detail": "      quint run did not complete (seed 208707365285864; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 2500 --max-steps 20 --mbt --seed 208707365285864 --n-threads 1):\n      quint was killed by SIGTERM after 959 s",
+      "where": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "ok": true,
+      "stage": "skipped",
+      "summary": "sometimes and replay of spec/settlement/referralAccrual.md: simulation stopped at the failure above",
+      "detail": ""
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesClaimed is reachable",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesVoided is reachable",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesRescued is reachable",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "12 of 12 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 46 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesDryRun is reachable",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPosting is reachable",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "4 of 4 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 12 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": false,
+      "stage": "always",
+      "summary": "the simulator could not run",
+      "detail": "      quint run did not complete (seed 158060820130480; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 2500 --max-steps 20 --mbt --seed 158060820130480 --n-threads 1):\n      quint was killed by SIGTERM after 945 s",
+      "where": "spec/settlement/referralPublication.md"
+    },
+    {
+      "ok": true,
+      "stage": "skipped",
+      "summary": "sometimes and replay of spec/settlement/referralPublication.md: simulation stopped at the failure above",
+      "detail": ""
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReleased is reachable",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesPartialHeld is reachable",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "8 of 8 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 25 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: ownerSign, finalize",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesOldBindingWins is reachable",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesCancellationWins is reachable",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "5 of 5 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, every law, and 18 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesEscalated is reachable",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReversed is reachable",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "8 of 8 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 402 traces: every state, and 23 definitions evaluated on them",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesClosed is reachable",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesUncertainLabel is reachable",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesReopened is reachable",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "10 of 10 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canRecordParticipant, canRecordQualification, canRecordActivation, canRecordVerdict",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 403 traces: every state, and 25 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: close, labelOutOfScope, reopen",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": true,
+      "stage": "always",
+      "summary": "no rule broken in 12000 simulated traces",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesComplete is reachable",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesLimited is reachable",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesBackup is reachable",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "sometimesProviderFailure is reachable",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "sometimes",
+      "summary": "5 of 5 guards allow their event in some reachable state, and refuse it in another",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "replay",
+      "summary": "generated TypeScript agrees with Quint on 404 traces: every state, every law, and 21 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: failAttempt, retry",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "skipped",
+      "summary": "types, proof, tests and traces: a stage above failed, and their failures would only restate it",
+      "detail": ""
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/access.md: 4 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/access.md"
+    },
+    {
+      "ok": true,
+      "stage": "review",
+      "summary": "spec/app/index.md: prose and model reconciled for all 7 rules and 1 stories",
+      "detail": "",
+      "where": "spec/app/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/accounts.md: 8 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/accounts.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/email.md: 8 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/email.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/projects.md: 11 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/projects.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/listing.md: 5 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/listing.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/backend/wallets.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/backend/wallets.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/navigation.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/navigation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/drafts.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/drafts.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/composition.md: 5 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/composition.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/contributor/evidence.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/contributor/evidence.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/contributor/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/contributor/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/contributor/installation.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/contributor/installation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/contributor/workflow.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/contributor/workflow.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/money.md: 12 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/money.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/fees/buyback.md: 11 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/fees/buyback.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/fees/conversion.md: 18 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/fees/conversion.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/fees/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/fees/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/requests.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/requests.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/presentation.md: 14 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/presentation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/frontend/projections.md: 11 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/frontend/projections.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/governance.md: 5 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/governance.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/operations/backup.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/operations/backup.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/operations/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/operations/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/operations/local.md: 4 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/operations/local.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/operations/notifications.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/operations/notifications.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/operations/release.md: 11 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/operations/release.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/allocation.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/allocation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/authorship.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/authorship.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/census.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/census.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/journal.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/journal.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/penalties.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/penalties.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/points/reviews.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/points/reviews.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/enforcement.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/enforcement.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/projectComposition.md: 3 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/projectComposition.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/admission.md: 9 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/admission.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/cases.md: 10 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/cases.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/evidence.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/evidence.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/intake.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/intake.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/privacy.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/privacy.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/security/terms.md: 5 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/security/terms.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/allocation.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/allocation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/vault.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/vault.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/payment.md: 9 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/payment.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/composition.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/composition.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/contributorAllocation.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/contributorAllocation.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/monthly.md: 8 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/monthly.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/recovery.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/recovery.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/referralAccrual.md: 8 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/referralAccrual.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/referralDistributor.md: 12 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/referralDistributor.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/referrals.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/referrals.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/referralPublication.md: 9 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/referralPublication.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/reserveRelease.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/reserveRelease.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/settlement/signer.md: 8 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/settlement/signer.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/slopbot/appeals.md: 5 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/slopbot/appeals.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/slopbot/closure.md: 6 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/slopbot/closure.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/slopbot/index.md: 1 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/slopbot/index.md"
+    },
+    {
+      "ok": false,
+      "stage": "review",
+      "summary": "spec/slopbot/review.md: 7 item(s) to reconcile, then run `pnpm accept`",
+      "detail": "",
+      "where": "spec/slopbot/review.md"
+    },
+    {
+      "ok": true,
+      "stage": "review",
+      "summary": "apps/app/src/: the //@ contracts of all 1 proved files reconciled",
+      "detail": "",
+      "where": "apps/app/src/"
+    }
+  ],
+  "next": "always (spec/settlement/referralAccrual.md) is the first \u2717: read the trace: fix the model, or add the rule that forbids it, then run `pnpm check` again"
+}

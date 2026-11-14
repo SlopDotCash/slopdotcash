@@ -1,0 +1,5 @@
+{
+  "status": "superseded-inputs-stopped",
+  "reason": "Accrual and publication source/fixtures changed after this snapshot. Only their obsolete sampler trees were stopped; the unchanged distributor continues for cacheable verification. Final current-tree check follows.",
+  "stoppedSamplerCount": 8
+}
