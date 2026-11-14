@@ -38,13 +38,13 @@ type Confirmation = NoConfirmation | ReproducibleBehavior | VerifiedSourceEviden
 type Phase = Queued | Acquiring | Reviewing | Evidence | Publishing | PublicationUnknown | PublicationRejected | Recorded
 type Assignment = { assessment: int, repository: int, revision: int, manifestDigest: int, commit: int, template: int, policy: int }
 type Scan = { assignment: Assignment, phase: Phase, attempts: int,
-  inventory: int, inventoryDigest: int, reviewed: int, deterministic: bool, uncoveredExecutable: int,
+  inventory: int, inventoryDigest: int, reviewed: int, deterministic: bool, uncoveredExecutable: int, blocked: int,
   primary: Review, escalated: bool, specialist: Review, synthesis: bool,
   refusal: Refusal, disposition: Disposition, confirmation: Confirmation,
   reused: bool, reuseOrigin: int, retained: bool, recorded: Disposition }
 pure val assigned: Assignment = { assessment: 1, repository: 1, revision: 1, manifestDigest: 1, commit: 1, template: 1, policy: 1 }
 pure val initial: Scan = { assignment: assigned, phase: Queued, attempts: 0,
-  inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, uncoveredExecutable: 0,
+  inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, uncoveredExecutable: 0, blocked: 0,
   primary: NotRun, escalated: false, specialist: NotRun, synthesis: false,
   refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation,
   reused: false, reuseOrigin: 0, retained: false, recorded: NoDisposition }
@@ -66,7 +66,7 @@ failure is never an incomplete result.
 
 ```quint
 pure def resetRun(target: Phase, s: Scan): Scan =
-  { ...s, phase: target, inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, uncoveredExecutable: 0,
+  { ...s, phase: target, inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, uncoveredExecutable: 0, blocked: 0,
     primary: NotRun, escalated: false, specialist: NotRun, synthesis: false, refusal: NoRefusal,
     disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: 0, retained: false }
 pure def canStart(s: Scan): bool = s.phase == Queued
@@ -75,7 +75,7 @@ pure def canInterrupt(s: Scan): bool = s.phase == Acquiring or s.phase == Review
 pure def interrupt(s: Scan): Scan = resetRun(Queued, s)
 pure def alwaysQueuedHoldsNoRun(s: Scan): bool =
   (s.phase == Queued or s.phase == Acquiring) implies
-    s.inventory == 0 and s.reviewed == 0 and not(s.deterministic) and s.primary == NotRun and
+    s.inventory == 0 and s.reviewed == 0 and s.blocked == 0 and not(s.deterministic) and s.primary == NotRun and
     s.disposition == NoDisposition and not(s.retained) and not(s.reused)
 ```
 
@@ -125,12 +125,12 @@ pure def canReviewBatch(s: Scan, count: int): bool = s.phase == Reviewing and co
 pure def reviewBatch(s: Scan, count: int): Scan = { ...s, reviewed: s.reviewed + count }
 pure val countValues = Set(1, 2, 1000000)
 pure def canCheckDeterministically(s: Scan, uncovered: int): bool =
-  s.phase == Reviewing and not(s.deterministic) and uncovered >= 0 and uncovered <= s.inventory
+  s.phase == Reviewing and not(s.deterministic) and uncovered >= 0 and uncovered + s.blocked <= s.inventory
 pure def checkDeterministically(s: Scan, uncovered: int): Scan = { ...s, deterministic: true, uncoveredExecutable: uncovered }
 pure val uncoveredValues = Set(0, 1)
 pure def alwaysCoverageBounds(s: Scan): bool =
   s.inventory >= 0 and s.reviewed >= 0 and s.reviewed <= s.inventory and
-  s.uncoveredExecutable >= 0 and s.uncoveredExecutable <= s.inventory
+  s.uncoveredExecutable >= 0 and s.blocked >= 0 and s.uncoveredExecutable + s.blocked <= s.inventory
 ```
 
 ### Risky artifacts run in an isolated sandbox without network or secrets
@@ -138,16 +138,25 @@ pure def alwaysCoverageBounds(s: Scan): bool =
 One disposable Cloudflare sandbox runs each risky artifact. The run record
 comes from `workers/vetting-sandbox`; its contract requires disabled internet
 and no provided secrets, so a run that reports either is refused and covers
-nothing.
+nothing. An artifact is released only after a clean static or detonation
+analysis; a suspicious or malicious analysis blocks it (`vetting_artifacts`
+states `quarantined`, `released`, `blocked`), and a blocked artifact prevents
+a clean result.
 
 ```quint
-type SandboxRun = { artifacts: int, internetDisabled: bool, secretsProvided: bool }
+type ArtifactAnalysis = StaticClean | DetonationClean | Suspicious | MaliciousBehavior
+type SandboxRun = { artifacts: int, internetDisabled: bool, secretsProvided: bool, analysis: ArtifactAnalysis }
 pure def canRunIsolated(s: Scan, sandboxRun: SandboxRun): bool =
   s.phase == Reviewing and s.deterministic and sandboxRun.internetDisabled and not(sandboxRun.secretsProvided) and
   sandboxRun.artifacts > 0 and sandboxRun.artifacts <= s.uncoveredExecutable
-pure def runIsolated(s: Scan, sandboxRun: SandboxRun): Scan = { ...s, uncoveredExecutable: s.uncoveredExecutable - sandboxRun.artifacts }
-pure val sandboxRunValues = Set({ artifacts: 1, internetDisabled: true, secretsProvided: false },
-  { artifacts: 1, internetDisabled: false, secretsProvided: false }, { artifacts: 1, internetDisabled: true, secretsProvided: true })
+pure def runIsolated(s: Scan, sandboxRun: SandboxRun): Scan =
+  if (sandboxRun.analysis == StaticClean or sandboxRun.analysis == DetonationClean)
+    { ...s, uncoveredExecutable: s.uncoveredExecutable - sandboxRun.artifacts }
+  else { ...s, uncoveredExecutable: s.uncoveredExecutable - sandboxRun.artifacts, blocked: s.blocked + sandboxRun.artifacts }
+pure val sandboxRunValues = Set({ artifacts: 1, internetDisabled: true, secretsProvided: false, analysis: DetonationClean },
+  { artifacts: 1, internetDisabled: true, secretsProvided: false, analysis: Suspicious },
+  { artifacts: 1, internetDisabled: false, secretsProvided: false, analysis: StaticClean },
+  { artifacts: 1, internetDisabled: true, secretsProvided: true, analysis: StaticClean })
 ```
 
 ### The primary and specialist reviews decide clean, incomplete or escalation
@@ -192,10 +201,10 @@ guest and model context (`PUBLICATION.md`).
 pure def reviewsComplete(s: Scan): bool =
   s.primary == ReviewCompleted and (not(s.escalated) or s.specialist == ReviewCompleted)
 pure def cleanEvidence(s: Scan): bool =
-  s.reviewed == s.inventory and s.deterministic and s.uncoveredExecutable == 0 and reviewsComplete(s) and s.synthesis
+  s.reviewed == s.inventory and s.deterministic and s.uncoveredExecutable == 0 and s.blocked == 0 and reviewsComplete(s) and s.synthesis
 pure def canSynthesize(s: Scan): bool = s.phase == Reviewing and s.deterministic and s.reviewed == s.inventory and reviewsComplete(s)
 pure def synthesize(s: Scan): Scan =
-  { ...s, synthesis: true, phase: Evidence, disposition: if (s.uncoveredExecutable == 0) DClean else DIncomplete }
+  { ...s, synthesis: true, phase: Evidence, disposition: if (s.uncoveredExecutable == 0 and s.blocked == 0) DClean else DIncomplete }
 pure def canConfirmMalice(s: Scan, confirmation: Confirmation): bool =
   s.phase == Reviewing and s.deterministic and s.primary == ReviewCompleted and confirmation != NoConfirmation
 pure def confirmMalice(s: Scan, confirmation: Confirmation): Scan =
@@ -307,6 +316,7 @@ pure def sometimesMaliciousRecorded(s: Scan): bool = s.phase == Recorded and s.r
 pure def sometimesRetriedAfterOutage(s: Scan): bool = s.phase == Recorded and s.attempts >= 2
 pure def sometimesPublicationUnknown(s: Scan): bool = s.phase == PublicationUnknown
 pure def sometimesUncoveredIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.synthesis
+pure def sometimesBlockedArtifactIncomplete(s: Scan): bool = s.phase == Recorded and s.recorded == DIncomplete and s.blocked > 0
 ```
 
 ### Simulation weights steer runs to each outcome

@@ -35,7 +35,7 @@ type Grant = { id: int, repository: int, seq: int, approver: int, steward: int, 
   branch: int, head: int, scope: int, limitations: int }
 type RecordAction = RecordQuarantine | RecordBan | RecordAppeal | RecordReinstate | RecordDeny
 type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
-type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int }
+type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
 type Notice = { entry: int, to: Recipient }
 type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int],
@@ -164,7 +164,9 @@ pure def newlyResolved(e: Enforcement): List[int] =
   e.flags.select(f => not(e.resolved.includes(f.receipt)) and
     e.repositories.every(r => latestOf(e, r).state == AClean and latestOf(e, r).snapshot.includes(f.receipt))).listMap(f => f.receipt)
 pure def entry(e: Enforcement, kind: RecordAction, issuer: Issuer, actor: int): List[JournalEntry] =
-  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor })
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: RevisionNotNeeded })
+pure def restrictionEntry(e: Enforcement, issuer: Issuer, actor: int, kind: RecordAction, plan: RevisionPlan): List[JournalEntry] =
+  e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan })
 pure def owners(e: Enforcement): List[Notice] =
   e.notices.append({ entry: e.journal.length() + 1, to: ListingAccount }).append({ entry: e.journal.length() + 1, to: StewardAccount })
 pure def canRecordResult(e: Enforcement, scanOutcome: A::Outcome, plan: RevisionPlan): bool =
@@ -181,7 +183,7 @@ pure def recordResult(e: Enforcement, scanOutcome: A::Outcome, plan: RevisionPla
       appellants: if (e.restriction == Clear) Set() else e.appellants,
       revisionPending: if (e.restriction == Clear) plan == RevisionPending else e.revisionPending or plan == RevisionPending,
       findings: e.findings.union(Set(scanOutcome.assessment)),
-      journal: entry(e, RecordBan, ByVettingService, 0), notices: owners(e) }
+      journal: restrictionEntry(e, ByVettingService, 0, RecordBan, plan), notices: owners(e) }
   else updated
 pure val scanOutcomeValues = Set(
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
@@ -412,7 +414,7 @@ pure def canQuarantine(e: Enforcement, by: int, plan: RevisionPlan): bool =
   e.moderators.contains(by) and e.restriction == Clear
 pure def quarantine(e: Enforcement, by: int, plan: RevisionPlan): Enforcement =
   { ...e, restriction: ModeratorQuarantine, epoch: e.epoch + 1, restrictedBy: Set(by), appeal: NoAppeal, appellants: Set(),
-    revisionPending: plan == RevisionPending, journal: entry(e, RecordQuarantine, ByModerator, by), notices: owners(e) }
+    revisionPending: plan == RevisionPending, journal: restrictionEntry(e, ByModerator, by, RecordQuarantine, plan), notices: owners(e) }
 pure def canBan(e: Enforcement, by: int, plan: RevisionPlan): bool =
   e.moderators.contains(by) and (e.restriction == Clear or e.restriction == FlagQuarantine or e.restriction == ModeratorQuarantine)
 pure def ban(e: Enforcement, by: int, plan: RevisionPlan): Enforcement =
@@ -420,7 +422,7 @@ pure def ban(e: Enforcement, by: int, plan: RevisionPlan): Enforcement =
     restrictedBy: if (e.restriction == Clear) Set(by) else e.restrictedBy.union(Set(by)),
     appeal: if (e.restriction == Clear) NoAppeal else e.appeal, appellants: if (e.restriction == Clear) Set() else e.appellants,
     revisionPending: e.revisionPending or plan == RevisionPending,
-    journal: entry(e, RecordBan, ByModerator, by), notices: owners(e) }
+    journal: restrictionEntry(e, ByModerator, by, RecordBan, plan), notices: owners(e) }
 pure def canDecideMalice(e: Enforcement, by: int, accounts: List[int]): bool =
   e.moderators.contains(by) and e.restriction == ServiceBan and accounts.every(a => a > 0) and
   (e.appeal == AppealRequested implies independent(e, by))
@@ -486,7 +488,8 @@ pure def alwaysRestrictedEpoch(e: Enforcement): bool = e.restriction != Clear im
 pure def alwaysRestrictedByModerators(e: Enforcement): bool = e.restrictedBy.subseteq(e.moderators)
 pure def alwaysAppealHasAppellant(e: Enforcement): bool = e.appeal == AppealRequested implies e.appellants.size() > 0
 pure def alwaysFlagPauseHasNoRevision(e: Enforcement): bool = e.restriction == FlagQuarantine implies not(e.revisionPending)
-pure def alwaysClearReviewedFindings(e: Enforcement): bool = e.restriction == Clear implies e.findings.subseteq(e.reviewedFindings)
+pure def alwaysUnbannedReviewedFindings(e: Enforcement): bool =
+  (e.restriction != ServiceBan and e.restriction != ModeratorBan) implies e.findings.subseteq(e.reviewedFindings)
 pure def alwaysReviewedAreFindings(e: Enforcement): bool = e.reviewedFindings.subseteq(e.findings)
 pure def alwaysNoticesPerEntry(e: Enforcement): bool =
   e.journal.every(j => e.notices.includes({ entry: j.seq, to: ListingAccount }) and e.notices.includes({ entry: j.seq, to: StewardAccount }))

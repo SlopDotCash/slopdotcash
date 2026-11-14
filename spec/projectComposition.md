@@ -346,7 +346,10 @@ pure def sometimesRestoredAfterRestriction(c: Registry): bool =
 pure def sometimesPendingRestrictionRevision(c: Registry): bool = c.security.revisionPending and c.project.retirement == P::NotRetired
 pure def sometimesAppendedAwaitingScan(c: Registry): bool =
   c.project.repositories.length() == 2 and c.project.status == P::Paused and not(E::cleared(c.security))
-pure val byValues = Set(0, 1, 2, 5, 6)
+pure val byValues = Set(0, 1, 2, 3, 5, 6)
+pure val goodStanding: E::FlagStanding = { actor: 2, revision: 1, accountAgeDays: 30, acceptedContributions: 1, maintainer: E::ReadNo, banned: E::ReadNo }
+pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...goodStanding, revision: 2 },
+  { ...goodStanding, actor: 3, revision: 2 }, { ...goodStanding, actor: 3, maintainer: E::ReadUnavailable })
 pure val repositoryValues = Set(1, 2)
 pure val assessmentIdValues = Set(1, 2, 3)
 pure val creationValues = Set(P::creation1)

@@ -5,7 +5,12 @@ PRD sections 2, 4, 7 and 8 and the owner decisions of 24 October (D11),
 append-only revisions (`projects`, `project_revisions`), its repositories
 (`project_repositories`) and the stored applications that may create or
 update it (`project_applications`, migrations `0019`, `0020`, `0055`,
-`0121`). Every manifest change appends exactly one immutable revision.
+`0121`). Every manifest change appends exactly one immutable revision. The
+referrer is recorded once, at creation or from the published application,
+and never changes (migration `0055`). Applications an administrator approved
+or rejected before self-service are kept as decided history
+(`ApplicationDecidedLegacy`); no route reaches or leaves that state, and an
+applicant's own withdrawal is exposed as cancelled.
 Security restrictions and admission clearance are the
 [enforcement machine](../security/enforcement.md); the
 [composition](../projectComposition.md) joins them in one D1 batch and adds
@@ -38,19 +43,20 @@ type Retirement = NotRetired | OwnerRemoved | AdminDelisted | RestrictionRetired
 type RevisionKind = Created | Activated | OwnerUpdate | RepositoryAppended | Removed | AdminHold | AdminDelist
   | AdminException | RestrictionRetirement | CommunityRestored | Placement | ConsentChanged
 type Revision = { number: int, kind: RevisionKind, status: Status, tier: Tier, by: int }
-type ApplicationPhase = NoApplication | ApplicationPending | ApplicationPublished | ApplicationCancelled
+type ApplicationPhase = NoApplication | ApplicationPending | ApplicationPublished | ApplicationCancelled | ApplicationDecidedLegacy
+type Participation = OpenParticipation | Archived | PermissionRequired
 type UpdatePhase = NoUpdate | UpdatePending | UpdateCancelled | UpdatePublished
 type LicenseTerms = SpdxLicense | UnknownTerms | MixedTerms
 type License = { terms: LicenseTerms, url: int, commit: int, digest: int }
 type RepositoryStart = { repositoryId: int, month: int }
 type EconomicTerm = { fromMonth: int, revision: int }
-type Project = { creator: int, steward: int, administrators: List[int],
+type Project = { creator: int, steward: int, referrer: int, administrators: List[int], participation: Participation,
   application: ApplicationPhase, applicant: int, update: UpdatePhase, updateApplicant: int, updateBase: int,
   revision: int, history: List[Revision], status: Status, tier: Tier, retirement: Retirement,
   repositories: List[int], starts: List[RepositoryStart], fieldsComplete: bool, branch: int, license: License,
   consent: C::SavedConsent, month: int, economic: List[EconomicTerm], asset: int, funded: bool }
 pure val noLicense: License = { terms: UnknownTerms, url: 0, commit: 0, digest: 0 }
-pure val initial: Project = { creator: 0, steward: 0, administrators: List(5, 6, 7),
+pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrators: List(5, 6, 7), participation: OpenParticipation,
   application: ApplicationPending, applicant: 1, update: UpdatePending, updateApplicant: 2, updateBase: 1,
   revision: 0, history: List(), status: Paused, tier: Community, retirement: NotRetired,
   repositories: List(1), starts: List({ repositoryId: 1, month: 202611 }), fieldsComplete: false, branch: 0,
@@ -105,7 +111,7 @@ never controls creation.
 ```quint
 type RepositoryFacts = { repository: int, owner: int, public: bool, archived: bool, fork: bool, branch: int }
 type Creation = { authority: AuthorityRead, facts: RepositoryFacts, fieldsComplete: bool, license: License,
-  fundingChoice: C::FundingChoice, closureChecked: bool }
+  fundingChoice: C::FundingChoice, closureChecked: bool, referrer: int }
 pure def licenseRecorded(l: License): bool = l.url > 0 and l.commit > 0 and l.digest > 0
 pure def creationValid(p: Project, by: int, creation: Creation): bool =
   p.revision == 0 and currentAuthority(p, by, creation.authority) and creation.facts.repository == primary(p) and
@@ -116,16 +122,17 @@ pure def created(by: int, creation: Creation, p: Project): Project =
     starts: List({ repositoryId: primary(p), month: p.month }), fieldsComplete: true, branch: creation.facts.branch,
     license: creation.license, consent: C::newProjectConsent(creation.fundingChoice, creation.closureChecked) }
 pure def canCreate(p: Project, by: int, creation: Creation): bool =
-  (p.application == NoApplication or p.application == ApplicationCancelled) and creationValid(p, by, creation)
-pure def create(p: Project, by: int, creation: Creation): Project = created(by, creation, p)
+  (p.application == NoApplication or p.application == ApplicationCancelled) and creationValid(p, by, creation) and
+  creation.referrer >= 0 and creation.referrer != by
+pure def create(p: Project, by: int, creation: Creation): Project = { ...created(by, creation, p), referrer: creation.referrer }
 pure def canPublishApplication(p: Project, by: int, creation: Creation): bool =
-  p.application == ApplicationPending and by == p.applicant and creationValid(p, by, creation)
+  p.application == ApplicationPending and by == p.applicant and creationValid(p, by, creation) and p.referrer != by
 pure def publishApplication(p: Project, by: int, creation: Creation): Project =
   { ...created(by, creation, p), application: ApplicationPublished }
 pure val facts1: RepositoryFacts = { repository: 1, owner: 1, public: true, archived: false, fork: false, branch: 1 }
 pure val license1: License = { terms: SpdxLicense, url: 1, commit: 1, digest: 1 }
 pure val creation1: Creation = { authority: owner1, facts: facts1, fieldsComplete: true, license: license1,
-  fundingChoice: C::OrdinarySetup, closureChecked: false }
+  fundingChoice: C::OrdinarySetup, closureChecked: false, referrer: 0 }
 pure val creationValues = Set(creation1, { ...creation1, closureChecked: true },
   { ...creation1, license: { ...license1, terms: MixedTerms } }, { ...creation1, fundingChoice: C::BountyOnly, closureChecked: true },
   { ...creation1, authority: { ...owner1, permission: PermissionUnavailable } }, { ...creation1, fieldsComplete: false },
@@ -134,7 +141,10 @@ pure def alwaysCreatedFacts(p: Project): bool =
   p.revision > 0 implies p.creator > 0 and p.steward > 0 and p.branch > 0 and licenseRecorded(p.license)
 pure def alwaysPublishedApplicationCreated(p: Project): bool =
   p.application == ApplicationPublished implies p.revision > 0 and p.creator == p.applicant
-pure def stepCreatorFixed(before: Project, after: Project): bool = before.creator > 0 implies after.creator == before.creator
+pure def stepCreatorFixed(before: Project, after: Project): bool =
+  before.creator > 0 implies after.creator == before.creator and after.referrer == before.referrer
+pure def lawDecidedLegacyApplicationsRefuse(p: Project, by: int, creation: Creation): bool =
+  p.application == ApplicationDecidedLegacy implies not(canPublishApplication(p, by, creation)) and not(canCancelApplication(p, by))
 ```
 
 ### An applicant cancels a pending application or update without GitHub access
@@ -174,6 +184,7 @@ pure def everyRepositoryInstalled(p: Project, check: SetupCheck): bool =
   p.repositories.every(r => check.installations.some(i => i.repository == r and i.installation == Installed))
 pure def canActivate(p: Project, by: int, check: SetupCheck): bool =
   p.revision > 0 and p.status == Paused and p.retirement == NotRetired and p.fieldsComplete and
+  p.participation == OpenParticipation and
   currentAuthority(p, by, check.authority) and everyRepositoryInstalled(p, check)
 pure def activate(p: Project, by: int, check: SetupCheck): Project = revised(Activated, by, Active, p.tier, p)
 pure val checkValues = Set({ authority: owner1, installations: List({ repository: 1, installation: Installed }) },
@@ -316,21 +327,30 @@ pure def stepOwnerRemovalPermanent(before: Project, after: Project): bool =
 A plain paused hold is reactivated by the owner's next passing setup check
 (D11); a delisting appends a paused, retired revision that setup never
 reactivates. Steward changes use the administrator exception path. Featured
-placement is an administrator decision and never depends on funding.
+placement is an administrator decision and never depends on funding. The
+manifest's `participation` state (`archived` with a successor project, or
+`permission-required`) is administrator-only and keeps the project paused.
 
 ```quint
-type AdminKind = Hold | Delist | ChangeSteward
+type AdminKind = Hold | Delist | ChangeSteward | ArchiveParticipation | RequirePermission | OpenParticipationAgain
 pure def canAdminRevise(p: Project, by: int, kind: AdminKind, steward: int): bool =
   p.administrators.includes(by) and p.revision > 0 and p.retirement == NotRetired and
-  (if (kind == ChangeSteward) steward > 0 and steward != p.steward else steward == 0)
+  (if (kind == ChangeSteward) steward > 0 and steward != p.steward else steward == 0) and
+  (kind == ArchiveParticipation implies p.participation != Archived) and
+  (kind == RequirePermission implies p.participation != PermissionRequired) and
+  (kind == OpenParticipationAgain implies p.participation != OpenParticipation)
 pure def adminRevise(p: Project, by: int, kind: AdminKind, steward: int): Project =
   if (kind == Hold) revised(AdminHold, by, Paused, p.tier, p)
   else if (kind == Delist) { ...revised(AdminDelist, by, Paused, Retired, p), retirement: AdminDelisted }
+  else if (kind == ArchiveParticipation) { ...revised(AdminException, by, Paused, p.tier, p), participation: Archived }
+  else if (kind == RequirePermission) { ...revised(AdminException, by, Paused, p.tier, p), participation: PermissionRequired }
+  else if (kind == OpenParticipationAgain) { ...revised(AdminException, by, p.status, p.tier, p), participation: OpenParticipation }
   else { ...revised(AdminException, by, p.status, p.tier, p), steward: steward }
 pure def canPlace(p: Project, by: int, tier: Tier): bool =
   p.administrators.includes(by) and p.revision > 0 and p.retirement == NotRetired and tier != Retired and tier != p.tier
 pure def place(p: Project, by: int, tier: Tier): Project = revised(Placement, by, p.status, tier, p)
 pure val stewardValues = Set(0, 4)
+pure def alwaysRestrictedParticipationPaused(p: Project): bool = p.participation != OpenParticipation implies p.status == Paused
 pure def alwaysRetirementConsistent(p: Project): bool =
   (p.retirement != NotRetired iff p.tier == Retired) and (p.retirement != NotRetired implies p.status == Paused)
 ```
@@ -373,7 +393,8 @@ pure val monthValues = Set(202612, 202701)
 pure def stepEveryManifestChangeAppendsRevision(before: Project, after: Project): bool =
   (before.status != after.status or before.tier != after.tier or before.retirement != after.retirement or
     before.repositories != after.repositories or before.consent != after.consent or before.steward != after.steward or
-    before.fieldsComplete != after.fieldsComplete or before.economic != after.economic or before.asset != after.asset)
+    before.fieldsComplete != after.fieldsComplete or before.economic != after.economic or before.asset != after.asset or
+    before.participation != after.participation)
     implies after.revision == before.revision + 1
 pure def stepClockMonotone(before: Project, after: Project): bool = after.month >= before.month
 ```
