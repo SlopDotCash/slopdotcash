@@ -1,0 +1,1258 @@
+{
+  "scope": "Focused legacy-to-successor transition accounting. Exact successor names denote a projection only. Runtime conformance, equivalence and unlisted source models remain open.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "successorBase": "a48772f60",
+  "modelsReviewed": [
+    {
+      "legacyModel": "formal/models/ui/ui_vault_batched_deposit.qnt",
+      "sourceSha256": "8c22f56883e1cbf2f8c5af0803632b23f32a149253644fdd8e4d2fd55a638297",
+      "sourceEntries": [
+        "src/VaultActions.tsx",
+        "src/lib/evm-vault-actions.ts"
+      ],
+      "evidenceEntries": [
+        "tests/e2e/vault-actions.spec.ts"
+      ],
+      "actions": {
+        "start": {
+          "status": "modeled-projection",
+          "reason": "Review consumes the observed wallet capability; chain outcomes arrive separately.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review"
+              ]
+            }
+          ]
+        },
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Begins with no saved wallet intent and no deposit evidence.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "review": {
+          "status": "modeled-projection",
+          "reason": "Offers the batch only when atomic capability is already supported.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review",
+                "canSaveIntent"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "status": "modeled-projection",
+          "reason": "Writes unique owner-bound exact intent before the one prompt.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canSaveIntent",
+                "saveIntent"
+              ]
+            }
+          ]
+        },
+        "walletReturnsReference": {
+          "status": "modeled-projection",
+          "reason": "Keeps a nonempty wallet reference for future lookup, separate from chain finality.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepWalletReference"
+              ]
+            }
+          ]
+        },
+        "walletRefuses": {
+          "status": "modeled-projection",
+          "reason": "Definitive capability refusal permits the separate-signature path.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "refuseBatch"
+              ]
+            }
+          ]
+        },
+        "walletDeclines": {
+          "status": "modeled-projection",
+          "reason": "Wallet decline closes the intent without funding.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "declineBatch"
+              ]
+            }
+          ]
+        },
+        "walletUnclear": {
+          "status": "modeled-projection",
+          "reason": "Missing response preserves intent. Actual send status awaits chain evidence.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepUncertain"
+              ]
+            }
+          ]
+        },
+        "mine": {
+          "status": "modeled-projection",
+          "reason": "Included canonical observation is not final.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "replace": {
+          "status": "modeled-projection",
+          "reason": "Later pending observation withdraws included status.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "finalize": {
+          "status": "modeled-projection",
+          "reason": "Exact successful event or proven failure are separate terminal results.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "walletReports": {
+          "status": "modeled-projection",
+          "reason": "Wallet report only gives a transaction hint or definite not-sent result.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "nameTransaction",
+                "reportNotSent"
+              ]
+            }
+          ]
+        },
+        "readChain": {
+          "status": "modeled-projection",
+          "reason": "Chain adapter delivers the exact intent digest and transaction outcome; its conformance remains open.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canObserveChain",
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "checkReference": {
+          "status": "modeled-projection",
+          "reason": "Concrete reference is bound to the saved intent and never establishes finality.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canNameTransaction",
+                "nameTransaction",
+                "reportNotSent"
+              ]
+            }
+          ]
+        },
+        "checkNamed": {
+          "status": "modeled-projection",
+          "reason": "Uses the matching transaction identity and verified adapter fact.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canObserveChain",
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "checkEnteredHash": {
+          "status": "modeled-projection",
+          "reason": "Only original owner can resume exact uncertain intent with a hash.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "recoverHash",
+                "canObserveChain"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack generates dispatch from the successor transitions.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "oneRequestTest": {
+          "status": "modeled-projection",
+          "reason": "Atomic request plus final event yields verification; included evidence alone leaves request pending.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "saveIntent",
+                "observeChain",
+                "sometimesOneBatch"
+              ]
+            }
+          ]
+        },
+        "readyWalletKeepsTwoRequestsTest": {
+          "status": "modeled-projection",
+          "reason": "Upgrade-needed capability remains on separate-signature path.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review",
+                "sometimesSeparate"
+              ]
+            }
+          ]
+        },
+        "refusedTest": {
+          "status": "modeled-projection",
+          "reason": "Definite wallet refusal closes batch path and offers separate flow.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "refuseBatch"
+              ]
+            }
+          ]
+        },
+        "walletStatusIsNotProofTest": {
+          "status": "modeled-projection",
+          "reason": "Reference completion only produces named transaction, never verified deposit.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "nameTransaction",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "revertedBatchTest": {
+          "status": "modeled-projection",
+          "reason": "Finalized failure concludes without claimed deposit.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "unclearReplyTest": {
+          "status": "modeled-projection",
+          "reason": "Uncertain response retains intent and owner-entered hash may later verify.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepUncertain",
+                "recoverHash",
+                "observeChain"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/payment_worker_run.qnt",
+      "sourceSha256": "1d99d28bae74fcdefafb2867be2d54f17528f4482b3de55c64511ca421fca826",
+      "sourceEntries": [
+        "workers/fee-converter/index.ts",
+        "workers/fee-converter/wrangler.toml",
+        "workers/fee-converter/wrangler.staging.toml",
+        "workers/operator-keeper/wrangler.toml",
+        "workers/payment-executor/entrypoint.ts",
+        "workers/payment-executor/signer-stacks.mjs",
+        "workers/payments/deployments.ts",
+        "workers/payments/registry-database.mjs",
+        "workers/referral-accrual/wrangler.toml"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts inert.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "configure": {
+          "status": "modeled-projection",
+          "reason": "Captures mode, exact active configuration, independent release authority and per-network work.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "configure"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "reason": "Requires valid configuration and service role, with an additional live-mode release gate.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin",
+                "begin"
+              ]
+            }
+          ]
+        },
+        "first": {
+          "status": "modeled-projection",
+          "reason": "Any configured network may be read and separately executed or failed.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "startRead",
+                "settleRead",
+                "startExecution",
+                "settleExecution"
+              ]
+            }
+          ]
+        },
+        "second": {
+          "status": "modeled-projection",
+          "reason": "The same transition operates a distinct network row.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "startRead",
+                "settleRead",
+                "startExecution",
+                "settleExecution"
+              ]
+            }
+          ]
+        },
+        "report": {
+          "status": "modeled-projection",
+          "reason": "Only all-terminal run state produces a final summary.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canReport",
+                "report"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack dispatches generated events.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "offInertTest": {
+          "status": "modeled-projection",
+          "reason": "Off scheduler mode admits no run.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "roleRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "A configured execute job cannot start with missing role.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "isolatedFailureTest": {
+          "status": "modeled-projection",
+          "reason": "Failed and successful network outcomes can both appear in a terminal summary.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "sometimesIndependentFailure",
+                "report"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/payment_dispatch.qnt",
+      "sourceSha256": "ce74d4658ec2030dcde4c7127ec0c91f410dcd10168731ad6e9bd35ab1899149",
+      "sourceEntries": [
+        "backend/payments/verified-evidence.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0017_robinhood_chain.sql",
+        "migrations/0021_multi_asset_vault_snapshots.sql",
+        "backend/payments/dispatch.ts",
+        "backend/payments/ledger.ts",
+        "workers/payments/reconcile.ts",
+        "workers/payments/scanner.ts",
+        "workers/security-payments/index.ts",
+        "migrations/0057_private_security_payments.sql",
+        "backend/security/payment-database.ts",
+        "backend/payments/handler.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "partial-model",
+          "reason": "Both start before sending. The legacy outbox tracks lease owner, attempt wallet and receiver generation independently.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "lease": {
+          "status": "missing-transition",
+          "reason": "No worker lease token owner or monotonic processing lease generation guards pre-sign operations.",
+          "successors": []
+        },
+        "prepare": {
+          "status": "partial-model",
+          "reason": "Live attempt is journaled before submission. The stable executor idempotency key and captured lease/wallet epoch are unmodeled.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canJournal",
+                "journal"
+              ]
+            }
+          ]
+        },
+        "success": {
+          "status": "missing-transition",
+          "reason": "A stale success may append the matching attempt tx but never change outbox state. A conflicting current success must hold. Active payment has no executor callback/wallet generation.",
+          "successors": []
+        },
+        "ambiguous": {
+          "status": "partial-model",
+          "reason": "Primary state retains uncertainty, without returning leased queue state to ready while preserving attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "loseReceipt",
+                "retransmit"
+              ]
+            }
+          ]
+        },
+        "replaceWallet": {
+          "status": "partial-model",
+          "reason": "Destination change exists as a private-award recovery flow, not as wallet epoch independent of any extant vault attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/recovery.md",
+              "definitions": [
+                "requestChange",
+                "presentSuccessor"
+              ]
+            }
+          ]
+        },
+        "hold": {
+          "status": "partial-model",
+          "reason": "An obligation can be held. No outbox lease or live attempt wallet mismatch guard.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "hold"
+              ]
+            }
+          ]
+        },
+        "releaseHold": {
+          "status": "partial-model",
+          "reason": "Owner resume keeps uncertain attempt held logically, but missing active-wallet mismatch and queue lease fence.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "resume"
+              ]
+            }
+          ]
+        },
+        "finalized": {
+          "status": "modeled-projection",
+          "reason": "A retained, exact, finalized evidence transition settles once.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "stepPaidPermanent"
+              ]
+            }
+          ]
+        },
+        "externalPaid": {
+          "status": "missing-transition",
+          "reason": "Legacy finalized exact scanner receipt can settle a reserved vault obligation whose tx differs from all retained attempts. Active canReconcile explicitly requires journal membership.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canReconcile"
+              ]
+            }
+          ]
+        },
+        "inspectFailure": {
+          "status": "missing-transition",
+          "reason": "No independent overlapping receipt observers record attempt generation before asynchronous checks.",
+          "successors": []
+        },
+        "settleFailure": {
+          "status": "partial-model",
+          "reason": "An exact failed current attempt permits retry. No stale observation can be represented for later refusal.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canRecordFailure",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Current payment state machine dispatch does not include outbox lease races.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "ambiguousClearsLeaseTest": {
+          "status": "missing-transition",
+          "reason": "Missing outbox return-to-ready and explicit current lease clear.",
+          "successors": []
+        },
+        "ambiguousCannotSubmitTest": {
+          "status": "missing-transition",
+          "reason": "Missing late success records exact tx without reacquiring processing lease.",
+          "successors": []
+        },
+        "heldUnderOldWalletRun": {
+          "status": "partial-model",
+          "reason": "A moved wallet has separate private-award successor recovery. No old-wallet vault execution hold.",
+          "successors": [
+            {
+              "path": "spec/settlement/recovery.md",
+              "definitions": [
+                "requestChange",
+                "retire"
+              ]
+            }
+          ]
+        },
+        "guardedReleaseKeepsUncertainHoldTest": {
+          "status": "partial-model",
+          "reason": "Existing hold stays uncertain on resume but does not validate captured wallet epoch.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "resume"
+              ]
+            }
+          ]
+        },
+        "unguardedReleaseIsReparkedTest": {
+          "status": "negative-control-not-product",
+          "reason": "Legacy deliberately includes unguarded release to demonstrate later repark. Active product must refuse unsafe original release, not replicate it. Actual wallet mismatch remains missing.",
+          "successors": []
+        },
+        "staleLeaseRefusedTest": {
+          "status": "missing-transition",
+          "reason": "Missing worker lease supersession and stale prepare refusal.",
+          "successors": []
+        },
+        "ambiguousRetryTest": {
+          "status": "partial-model",
+          "reason": "Retransmission uses same attempt, but not another explicitly re-leased worker callback.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "retransmit",
+                "reconcile"
+              ]
+            }
+          ]
+        },
+        "conflictingResponseTest": {
+          "status": "missing-transition",
+          "reason": "Missing exclusive immutable attempt tx and conflict/current-lease fence.",
+          "successors": []
+        },
+        "lateOriginalAfterWalletReplacementTest": {
+          "status": "missing-transition",
+          "reason": "Missing current wallet change while immutable old-wallet attempt may legitimately become canonical.",
+          "successors": []
+        },
+        "staleConflictCannotHoldCompletedTest": {
+          "status": "missing-transition",
+          "reason": "Missing stale worker callback and conflict refusal before final chain payment.",
+          "successors": []
+        },
+        "staleFailurePreservesSubmittedSuccessorTest": {
+          "status": "partial-model",
+          "reason": "Current attempt ID filters failure. No two receipt observations captured before successor generation.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canRecordFailure"
+              ]
+            }
+          ]
+        },
+        "externalPaidWithoutRecordedTxTest": {
+          "status": "missing-transition",
+          "reason": "Scanner exact event can settle without prior journaled tx. Current required membership prevents that reachable outcome.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canReconcile"
+              ]
+            }
+          ]
+        },
+        "externalPaidBesideRecordedTxTest": {
+          "status": "missing-transition",
+          "reason": "Missing ledger/attempt split when scanner finds a separate finalized tx.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "canReconcile"
+              ]
+            }
+          ]
+        },
+        "paidIsAbsorbingTest": {
+          "status": "modeled-projection",
+          "reason": "Once paid all transitions preserve the whole payment state.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "stepPaidPermanent"
+              ]
+            }
+          ]
+        },
+        "noSecondReceiptAfterExternalPaidTest": {
+          "status": "partial-model",
+          "reason": "Paid absorbs subsequent finality. Initial external-paid path remains missing.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "stepPaidPermanent",
+                "canReconcile"
+              ]
+            }
+          ]
+        },
+        "noResponseAfterPaidTest": {
+          "status": "partial-model",
+          "reason": "Paid absorbs subsequent events. Executor response transition and external-paid path remain missing.",
+          "successors": [
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "stepPaidPermanent"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/vault_initial_snapshot.qnt",
+      "sourceSha256": "8234ea0fd2b4572f31970900d423a59385200f6e53e9eeea963941f213cb9c41",
+      "sourceEntries": [
+        "backend/projects/vault-setup.ts",
+        "backend/projects/handler.ts",
+        "backend/payments/vault-snapshots.ts",
+        "backend/security/payment-database.ts",
+        "workers/payments/index.ts",
+        "contracts/solana/adapter.ts",
+        "src/lib/vault-setup.ts",
+        "scripts/recover-vault-observations.ts"
+      ],
+      "evidenceEntries": [
+        "scripts/vault-setup-network-failure.test.ts",
+        "scripts/solana-vault-setup-network-failure.test.ts",
+        "backend/payments/vault-snapshots.test.ts",
+        "scripts/recover-vault-observations.test.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "missing-transition",
+          "reason": "Current vault balances lack separate registered and latest-observed snapshot records. Record absence is not zero.",
+          "successors": [
+            {
+              "path": "spec/settlement/vault.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "missing-transition",
+          "reason": "Missing registration request capture of current expected revision and prior registered identity.",
+          "successors": []
+        },
+        "beginRecovery": {
+          "status": "missing-transition",
+          "reason": "Missing trusted-main ordinary Solana-only repair admission for a registered vault with no snapshot.",
+          "successors": []
+        },
+        "register": {
+          "status": "partial-model",
+          "reason": "Creation check registers a finalized matching EVM creation, with no expected immutable revision or replay path for the same tx.",
+          "successors": [
+            {
+              "path": "spec/frontend/provisionalVault.md",
+              "definitions": [
+                "checkCreation"
+              ]
+            }
+          ]
+        },
+        "totals": {
+          "status": "missing-transition",
+          "reason": "Missing exact finalized vault totals, reviewed identity reconciliation and unavailable response after registration.",
+          "successors": []
+        },
+        "priorRead": {
+          "status": "missing-transition",
+          "reason": "Missing immutable-scoped latest prior read and older block/lower cumulative count classification.",
+          "successors": []
+        },
+        "observationFails": {
+          "status": "partial-model",
+          "reason": "Creation read unavailable is visible and preserves UI state. Failure of post-registration totals or storage lookup is not modeled.",
+          "successors": [
+            {
+              "path": "spec/frontend/provisionalVault.md",
+              "definitions": [
+                "checkCreation"
+              ]
+            }
+          ]
+        },
+        "write": {
+          "status": "missing-transition",
+          "reason": "Missing monotonic conditional snapshot write with separate durable success and lost response. Free balance can decrease independently of cumulative counters.",
+          "successors": []
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy finite dispatch and stuttering, preserved for source evidence.",
+          "successors": []
+        },
+        "ready": {
+          "status": "generated-harness",
+          "reason": "Legacy test macro combines begin/register; authority linkage remains missing.",
+          "successors": []
+        },
+        "observed": {
+          "status": "generated-harness",
+          "reason": "Legacy test macro combines totals/priorRead; future projection needs both observations.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "registrationSeedsSnapshotTest": {
+          "status": "missing-transition",
+          "reason": "Need post-registration first snapshot from exact matching finalized counters, independent of registration.",
+          "successors": []
+        },
+        "unavailableReadRetainsRegistrationTest": {
+          "status": "missing-transition",
+          "reason": "Need retained registration and explicit 503 unavailable observation without synthesizing a snapshot.",
+          "successors": []
+        },
+        "identityRefusalNeverSeedsTest": {
+          "status": "missing-transition",
+          "reason": "Need exact observed vault chain/genesis/program/config/project/asset/purpose predicate before seed.",
+          "successors": []
+        },
+        "retrySeedsWithoutAnotherRevisionTest": {
+          "status": "missing-transition",
+          "reason": "Need idempotent repeat registered tx and retry snapshot without revision append.",
+          "successors": []
+        },
+        "failedWriteRetainsRegistrationTest": {
+          "status": "missing-transition",
+          "reason": "Need independent rollback boundary from failed snapshot to persisted immutable registration.",
+          "successors": []
+        },
+        "lostWriteReplyDoesNotProveMissingSnapshotTest": {
+          "status": "missing-transition",
+          "reason": "Need lost response after successful durable write and positive fresh read reconciliation.",
+          "successors": []
+        },
+        "racingOlderBlockCannotReplaceNewerTest": {
+          "status": "missing-transition",
+          "reason": "Need atomic current observation compare at commit, not captured prior only.",
+          "successors": []
+        },
+        "racingSameBlockOlderTimeCannotReplaceTest": {
+          "status": "missing-transition",
+          "reason": "Need exact same-block timestamp order.",
+          "successors": []
+        },
+        "racingLowerCounterRefusesTest": {
+          "status": "missing-transition",
+          "reason": "Need monotonic exact per-asset cumulative counters, separate from balances.",
+          "successors": []
+        },
+        "privateAndOrdinaryStoresRemainSeparateTest": {
+          "status": "missing-transition",
+          "reason": "Need purpose-scoped independent registration/snapshot writers.",
+          "successors": []
+        },
+        "registrationRefusalCreatesNoSnapshotTest": {
+          "status": "missing-transition",
+          "reason": "Need dependency from snapshot writer to committed registry generation.",
+          "successors": []
+        },
+        "priorReadFailureKeepsImmutableRegistrationTest": {
+          "status": "missing-transition",
+          "reason": "Need post-registration read/storage error continuation retaining registration.",
+          "successors": []
+        },
+        "missingSnapshotRecoveryNeverAppendsRevisionTest": {
+          "status": "missing-transition",
+          "reason": "Need trusted registered ordinary Solana-mainnet repair with no revision write.",
+          "successors": []
+        },
+        "recoveryCannotSelectRetainedSnapshotTest": {
+          "status": "missing-transition",
+          "reason": "Need only-missing snapshot repair guard and no replacement of newer existing.",
+          "successors": []
+        },
+        "recoveryRefusesUnregisteredDeploymentTest": {
+          "status": "missing-transition",
+          "reason": "Need registered identity in recovery entrypoint.",
+          "successors": []
+        },
+        "recoveryDoesNotSelectPrivateBountyTest": {
+          "status": "missing-transition",
+          "reason": "Need standalone recovery ordinary-vault scope and separate bounty service.",
+          "successors": []
+        },
+        "untrustedRecoveryCannotWriteTest": {
+          "status": "missing-transition",
+          "reason": "Need trusted workflow, exact main checkout and event bound to recovery path.",
+          "successors": []
+        },
+        "racingRegistrationDoesNotAppendTwiceTest": {
+          "status": "missing-transition",
+          "reason": "Need expected-revision compare and one-time canonical registration.",
+          "successors": []
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/operator_keeper_lifecycle.qnt",
+      "sourceSha256": "7377521ae45adfa5ad7469e8492170b3a87ef406d613fd22e9a83437e2f1d89d",
+      "sourceEntries": [
+        "workers/operator-keeper/index.ts",
+        "workers/operator-keeper/storage.ts",
+        "scripts/payment-keeper/keeper.ts",
+        "scripts/payment-keeper/storage.ts",
+        "scripts/payment-keeper/signer.ts",
+        "scripts/payment-keeper/budget.ts"
+      ],
+      "evidenceEntries": [
+        "scripts/payment-keeper/evm.integration.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "partial-model",
+          "reason": "Starts idle, but successor tracks one reconciliation stage run rather than durable-object request slots and histories.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "configure": {
+          "status": "partial-model",
+          "reason": "RPC identity and job modes modeled, without an object instance\u2019s captured configuration tuple and durable registry binding.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperRpc.md",
+              "definitions": [
+                "initial"
+              ]
+            },
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "configure"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "status": "missing-transition",
+          "reason": "No public versus wrong internal route versus protected direct/cron discriminator at keeper entrypoint.",
+          "successors": []
+        },
+        "dispatch": {
+          "status": "missing-transition",
+          "reason": "No admission sharing one active core promise across valid overlapping request slots.",
+          "successors": []
+        },
+        "selectMode": {
+          "status": "partial-model",
+          "reason": "Run mode network admission modeled. Direct off and scheduled off outcomes remain separate transport responses in legacy.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "identity": {
+          "status": "partial-model",
+          "reason": "RPC preflight checks exact chain, current endpoint and immutable identity. Registry identity mismatch against retained object journal is not an instance transition.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperRpc.md",
+              "definitions": [
+                "preflight"
+              ]
+            },
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "confirmPreflight"
+              ]
+            }
+          ]
+        },
+        "indexReads": {
+          "status": "partial-model",
+          "reason": "A receipt callback indexes before returning to scan. Dry-run persistence of observations is not tied to instance/run mode.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "indexReceipt"
+              ]
+            }
+          ]
+        },
+        "stageAttempt": {
+          "status": "missing-transition",
+          "reason": "No keeper staged signed attempt tied to a run and execute mode before durable transaction.",
+          "successors": []
+        },
+        "commitAttempt": {
+          "status": "missing-transition",
+          "reason": "No atomic signer journal/nonce/native liability storage transaction with documented rollback.",
+          "successors": []
+        },
+        "broadcast": {
+          "status": "missing-transition",
+          "reason": "No keeper instance binding from staged attempt to durable commit and explicit restart rebroadcast.",
+          "successors": []
+        },
+        "gasEvidence": {
+          "status": "missing-transition",
+          "reason": "Keeper lifecycle settlement of durable native fee liability is not tied to restart run and journal owner.",
+          "successors": []
+        },
+        "itemFailure": {
+          "status": "partial-model",
+          "reason": "Per-network failure isolation exists, but partial core execution can contain failed items independently of its response transport.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "settleRead",
+                "settleExecution"
+              ]
+            }
+          ]
+        },
+        "finish": {
+          "status": "partial-model",
+          "reason": "All network outcomes produce a summary, with no distinction between core settled vs response awaiting delivery.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "report"
+              ]
+            }
+          ]
+        },
+        "fatal": {
+          "status": "partial-model",
+          "reason": "A keeper scan captures normalized failure stage; no shared fatal core-run outcome for multiple request slots.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "deliver": {
+          "status": "missing-transition",
+          "reason": "No deferred requester delivery and malformed response boundary independent of settled core work.",
+          "successors": []
+        },
+        "inspectScheduled": {
+          "status": "missing-transition",
+          "reason": "No cron-specific response parsing, partial-work acknowledgement or malformed terminal reporting.",
+          "successors": []
+        },
+        "restart": {
+          "status": "missing-transition",
+          "reason": "No ephemeral instance rollover clearing uncommitted work but retaining signed bytes, nonce and native hold.",
+          "successors": []
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy finite multiple-request and restart dispatcher.",
+          "successors": []
+        },
+        "core": {
+          "status": "generated-harness",
+          "reason": "Scenario macro for mode selection and object-journal identity preflight.",
+          "successors": []
+        },
+        "executing": {
+          "status": "generated-harness",
+          "reason": "Scenario macro for dispatch then execute admission.",
+          "successors": []
+        },
+        "committed": {
+          "status": "generated-harness",
+          "reason": "Scenario macro for atomic commitment of signer journal and accounting reservations.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "publicRouteCannotReachKeeperTest": {
+          "status": "missing-transition",
+          "reason": "Public route exclusion must precede acquiring object/core ownership.",
+          "successors": []
+        },
+        "wrongInternalRouteDoesNoWorkTest": {
+          "status": "missing-transition",
+          "reason": "Exact internal path gating needs to precede object work.",
+          "successors": []
+        },
+        "offCronDoesNotValidateConfigurationTest": {
+          "status": "missing-transition",
+          "reason": "Off cron no-op must return without config validation or journal selection.",
+          "successors": []
+        },
+        "directOffTickReturnsEmptyResultTest": {
+          "status": "missing-transition",
+          "reason": "Direct off request needs an empty success with no core work; scheduler off guard alone cannot project its response.",
+          "successors": []
+        },
+        "invalidCronConfigurationStartsNoObjectWorkTest": {
+          "status": "missing-transition",
+          "reason": "Invalid scheduled config must never acquire a Durable Object run.",
+          "successors": []
+        },
+        "invalidDirectConfigurationIsRedacted503Test": {
+          "status": "missing-transition",
+          "reason": "Direct invalid configuration is explicitly redacted 503 rather than a signer invocation.",
+          "successors": []
+        },
+        "overlappingRequestsShareOneCoreRunTest": {
+          "status": "missing-transition",
+          "reason": "Independent waiters need stable shared core run identity.",
+          "successors": []
+        },
+        "settledPromiseDoesNotWaitForResponseDeliveryTest": {
+          "status": "missing-transition",
+          "reason": "Core run can end and admit new work before old requester delivery.",
+          "successors": []
+        },
+        "dryRunMayPersistReadStateWithoutSigningTest": {
+          "status": "missing-transition",
+          "reason": "Persist receipt index and identity in DryRun while all signing admissions refuse.",
+          "successors": []
+        },
+        "dryRunCannotPrepareSignedAttemptTest": {
+          "status": "partial-model",
+          "reason": "Mode gate prevents reaching signing-capable execution.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canStartExecution",
+                "alwaysDryNoSigning"
+              ]
+            }
+          ]
+        },
+        "stagedSigningDoesNotAuthorizeBroadcastTest": {
+          "status": "missing-transition",
+          "reason": "Durable transaction, not candidate bytes or stage alone, must gate broadcast.",
+          "successors": []
+        },
+        "failedTransactionRollsBackNonceAndLiabilityTest": {
+          "status": "missing-transition",
+          "reason": "Signed bytes, nonce, and fee hold commit or roll back atomically.",
+          "successors": []
+        },
+        "instanceLossDiscardsOnlyUncommittedAttemptTest": {
+          "status": "missing-transition",
+          "reason": "Restart drops ephemeral staging without erasing committed journal.",
+          "successors": []
+        },
+        "committedAttemptSurvivesRestartTest": {
+          "status": "missing-transition",
+          "reason": "Committed journal and fee liability survive across instance restart and authorize exact replay.",
+          "successors": []
+        },
+        "unknownSendReusesJournalAfterRestartTest": {
+          "status": "missing-transition",
+          "reason": "Unknown send retains exactly same serialized bytes through restart.",
+          "successors": []
+        },
+        "changedProjectSelectionKeepsSameLiabilityTest": {
+          "status": "missing-transition",
+          "reason": "Changing project selection leaves stable normalized network/gas-wallet object identity and pending attempts.",
+          "successors": []
+        },
+        "changedRegistryCannotReuseJournalTest": {
+          "status": "missing-transition",
+          "reason": "Changed registry identity refuses reusing a previously committed journal.",
+          "successors": []
+        },
+        "stoppingNewInstanceKeepsUnknownAttemptTest": {
+          "status": "missing-transition",
+          "reason": "Off replacement instance stops work without dropping existing signed unknown outcome.",
+          "successors": []
+        },
+        "partialFailureIsHttp200ButScheduledFailureTest": {
+          "status": "missing-transition",
+          "reason": "Direct receipt and scheduled validation need distinct interpretations of a partial summary.",
+          "successors": []
+        },
+        "lostResponseDoesNotUndoSignedAttemptTest": {
+          "status": "missing-transition",
+          "reason": "Durable commit remains when requester response fails.",
+          "successors": []
+        },
+        "settledResponseCanArriveAfterInstanceReplacementTest": {
+          "status": "missing-transition",
+          "reason": "Response captured after core settlement can arrive after an instance restarts.",
+          "successors": []
+        },
+        "unavailableGasEvidenceKeepsLiabilityTest": {
+          "status": "missing-transition",
+          "reason": "Unavailable evidence cannot release a signed send native-fee hold.",
+          "successors": []
+        },
+        "exactGasEvidenceReleasesOnlyGasLiabilityTest": {
+          "status": "missing-transition",
+          "reason": "Exact finalized gas result consumes only its own liability and leaves attempt history.",
+          "successors": []
+        }
+      }
+    }
+  ]
+}

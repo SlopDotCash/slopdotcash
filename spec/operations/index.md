@@ -9,6 +9,7 @@ queues, separated local and production environments, and source-bound releases.
 - [Local Solana validator stages](./localValidator.md)
 - [Notifications](./notifications.md)
 - [Release and operational qualification](./release.md)
+- [Independent payment job runs](./paymentJobs.md)
 
 Administrators manage permitted listing and restriction actions. Moderators
 handle escalated disputes. A role-scoped queue rechecks authority on each read

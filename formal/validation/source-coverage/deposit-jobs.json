@@ -1,0 +1,940 @@
+{
+  "scope": "Focused models and generated replay. Actual wallet capability and intent durability, chain receipt checks, job schedule and signer authorization adapters require application conformance.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "sourceInputs": [
+    {
+      "path": "spec/frontend/batchedDeposit.md",
+      "sha256": "8a5bd7322818847d0a46d4821f2479a37e79d9be17195b6804a01713524f017c"
+    },
+    {
+      "path": "spec/operations/paymentJobs.md",
+      "sha256": "54447807b8e011121ee107f94540d5ae2813f96aa7ca57ae17e2259e1c607c25"
+    }
+  ],
+  "results": {
+    "frontend__batchedDeposit": {
+      "simulation": {
+        "command": "seed 70888949317926; to simulate again: pnpm exec quint run gen/frontend__batchedDeposit.run.qnt --main frontend__batchedDeposit_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 70888949317926",
+        "replayed": 25
+      },
+      "witnesses": {
+        "sometimesOneBatch": {
+          "check": "seed 70888949317926; to simulate again: pnpm exec quint run gen/frontend__batchedDeposit.run.qnt --main frontend__batchedDeposit_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 70888949317926",
+          "events": [
+            {
+              "type": "review",
+              "owner": 1,
+              "capability": "AlreadyAtomic"
+            },
+            {
+              "type": "saveIntent",
+              "intent": 1,
+              "digest": "wrong",
+              "by": 1
+            },
+            {
+              "type": "keepUncertain"
+            },
+            {
+              "type": "recoverHash",
+              "transaction": "other",
+              "by": 1
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainIncluded"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalEvent"
+            }
+          ]
+        },
+        "sometimesSeparate": {
+          "check": "seed 38102426468777; to simulate again: pnpm exec quint run gen/frontend__batchedDeposit.run.qnt --main frontend__batchedDeposit_run --step step --invariant never_sometimesSeparate --max-samples 700 --max-steps 20 --mbt --seed 38102426468777",
+          "events": [
+            {
+              "type": "review",
+              "owner": 1,
+              "capability": "RequiresUpgrade"
+            }
+          ]
+        },
+        "sometimesUncertain": {
+          "check": "seed 70888949317926; to simulate again: pnpm exec quint run gen/frontend__batchedDeposit.run.qnt --main frontend__batchedDeposit_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 70888949317926",
+          "events": [
+            {
+              "type": "review",
+              "owner": 1,
+              "capability": "AlreadyAtomic"
+            },
+            {
+              "type": "saveIntent",
+              "intent": 1,
+              "digest": "wrong",
+              "by": 1
+            },
+            {
+              "type": "keepUncertain"
+            },
+            {
+              "type": "recoverHash",
+              "transaction": "other",
+              "by": 1
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainIncluded"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalEvent"
+            }
+          ]
+        },
+        "sometimesMissingEvent": {
+          "check": "seed 70888949317926; to simulate again: pnpm exec quint run gen/frontend__batchedDeposit.run.qnt --main frontend__batchedDeposit_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 70888949317926",
+          "events": [
+            {
+              "type": "review",
+              "owner": 1,
+              "capability": "AlreadyAtomic"
+            },
+            {
+              "type": "saveIntent",
+              "intent": 1,
+              "digest": "wrong",
+              "by": 1
+            },
+            {
+              "type": "keepUncertain"
+            },
+            {
+              "type": "recoverHash",
+              "transaction": "other",
+              "by": 1
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainIncluded"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalMissingEvent"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainPending"
+            },
+            {
+              "type": "observeChain",
+              "intent": 1,
+              "expectedDigest": "wrong",
+              "transaction": "other",
+              "observed": "ChainFinalEvent"
+            }
+          ]
+        }
+      },
+      "proof": {
+        "total": 52,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    },
+    "operations__paymentJobs": {
+      "simulation": {
+        "command": "seed 245992960768112; to simulate again: pnpm exec quint run gen/operations__paymentJobs.run.qnt --main operations__paymentJobs_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 245992960768112",
+        "replayed": 25
+      },
+      "witnesses": {
+        "sometimesIndependentFailure": {
+          "check": "seed 245992960768112; to simulate again: pnpm exec quint run gen/operations__paymentJobs.run.qnt --main operations__paymentJobs_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 245992960768112",
+          "events": [
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 1
+            },
+            {
+              "type": "startRead",
+              "net": "Base",
+              "runId": 1
+            },
+            {
+              "type": "settleRead",
+              "net": "Base",
+              "runId": 1,
+              "readOk": false
+            },
+            {
+              "type": "report"
+            },
+            {
+              "type": "resetRun"
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 2
+            },
+            {
+              "type": "startRead",
+              "net": "Ethereum",
+              "runId": 2
+            },
+            {
+              "type": "startRead",
+              "net": "Robinhood",
+              "runId": 2
+            },
+            {
+              "type": "settleRead",
+              "net": "Ethereum",
+              "runId": 2,
+              "readOk": false
+            },
+            {
+              "type": "settleRead",
+              "net": "Robinhood",
+              "runId": 2,
+              "readOk": true
+            },
+            {
+              "type": "report"
+            },
+            {
+              "type": "resetRun"
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "sometimesDryComplete": {
+          "check": "seed 245992960768112; to simulate again: pnpm exec quint run gen/operations__paymentJobs.run.qnt --main operations__paymentJobs_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 245992960768112",
+          "events": [
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 1
+            },
+            {
+              "type": "startRead",
+              "net": "Base",
+              "runId": 1
+            },
+            {
+              "type": "settleRead",
+              "net": "Base",
+              "runId": 1,
+              "readOk": false
+            },
+            {
+              "type": "report"
+            },
+            {
+              "type": "resetRun"
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 2
+            },
+            {
+              "type": "startRead",
+              "net": "Ethereum",
+              "runId": 2
+            },
+            {
+              "type": "startRead",
+              "net": "Robinhood",
+              "runId": 2
+            },
+            {
+              "type": "settleRead",
+              "net": "Ethereum",
+              "runId": 2,
+              "readOk": false
+            },
+            {
+              "type": "settleRead",
+              "net": "Robinhood",
+              "runId": 2,
+              "readOk": true
+            },
+            {
+              "type": "report"
+            },
+            {
+              "type": "resetRun"
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": false,
+              "roleAllowed": false,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": false,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base"
+              ]
+            }
+          ]
+        },
+        "sometimesExecuteComplete": {
+          "check": "seed 245992960768112; to simulate again: pnpm exec quint run gen/operations__paymentJobs.run.qnt --main operations__paymentJobs_run --step step --invariant inv --max-samples 300 --max-steps 24 --mbt --seed 245992960768112",
+          "events": [
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": false,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 1
+            },
+            {
+              "type": "startRead",
+              "net": "Base",
+              "runId": 1
+            },
+            {
+              "type": "settleRead",
+              "net": "Base",
+              "runId": 1,
+              "readOk": true
+            },
+            {
+              "type": "startExecution",
+              "net": "Base",
+              "runId": 1,
+              "currentRole": true,
+              "currentRelease": true
+            },
+            {
+              "type": "settleExecution",
+              "net": "Base",
+              "runId": 1,
+              "success": false
+            },
+            {
+              "type": "report"
+            },
+            {
+              "type": "resetRun"
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": false,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Off",
+              "valid": true,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "Execute",
+              "valid": true,
+              "roleAllowed": false,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": true,
+              "networks": [
+                "Base",
+                "Solana"
+              ]
+            },
+            {
+              "type": "configure",
+              "mode": "DryRun",
+              "valid": true,
+              "roleAllowed": true,
+              "released": false,
+              "networks": [
+                "Ethereum",
+                "Robinhood"
+              ]
+            },
+            {
+              "type": "begin",
+              "runId": 2
+            },
+            {
+              "type": "startRead",
+              "net": "Ethereum",
+              "runId": 2
+            },
+            {
+              "type": "settleRead",
+              "net": "Ethereum",
+              "runId": 2,
+              "readOk": false
+            },
+            {
+              "type": "startRead",
+              "net": "Robinhood",
+              "runId": 2
+            },
+            {
+              "type": "settleRead",
+              "net": "Robinhood",
+              "runId": 2,
+              "readOk": true
+            }
+          ]
+        }
+      },
+      "proof": {
+        "total": 26,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "already atomic versus upgrade needed",
+    "foreign wallet refusal",
+    "saved one-prompt intent",
+    "wallet refusal and decline",
+    "wallet reference does not credit funds",
+    "wrong-intent digest refusal",
+    "replaced included block stays pending",
+    "missing finalized event stays recoverable",
+    "finalized failure versus exact event",
+    "uncertain hash recovery without repeat prompt",
+    "off/role/release refusals",
+    "independent network outcome after failure",
+    "report waits for all networks",
+    "late prior callback refuses",
+    "dry run reads only"
+  ]
+}
