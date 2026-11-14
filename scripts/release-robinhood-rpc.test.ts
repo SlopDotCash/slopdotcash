@@ -189,16 +189,23 @@ for (const scenario of [
   "wrong hash",
   "unfinalized",
   "failed contract read",
+  "candidate redirect",
 ] as const) {
   test(`Robinhood TLS preflight handles ${scenario} with read-only RPC`, async () => {
     const calls: string[] = [];
     const url = "https://candidate.invalid/credential";
     const mockFetch: typeof fetch = Object.assign(
       async (input: Request | string | URL, init?: RequestInit) => {
-        expect(init?.redirect).toBe("error");
-        const request = JSON.parse(String(init?.body));
         const isCandidate = String(input) === url;
+        expect(init?.redirect).toBe(isCandidate ? "manual" : "error");
+        const request = JSON.parse(String(init?.body));
         calls.push(request.method);
+        if (scenario === "candidate redirect" && isCandidate) {
+          return Response.json(
+            { jsonrpc: "2.0", id: request.id, result: "0x1237" },
+            { status: 307, headers: { location: "https://redirect.invalid/" } },
+          );
+        }
         let result: unknown;
         switch (request.method) {
           case "eth_chainId":
@@ -251,6 +258,8 @@ for (const scenario of [
     } else {
       await expect(qualified).rejects.toThrow(/candidate|independent/u);
     }
+    if (scenario === "candidate redirect")
+      expect(calls).toEqual(["eth_chainId"]);
     expect(calls).not.toContain("eth_sendRawTransaction");
   });
 }
