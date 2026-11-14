@@ -6,7 +6,7 @@ PRD sections 3, 6, 8 and 10 require exact reconciliation before paid. One instan
 
 ### An approved obligation retains its immutable amount and purpose
 
-The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. An approved full-award case requires its separately released payment rail.
+The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. The standard bounty vault is the private-standard rail owned here. The [direct standard award journal](./directBounty.md) owns independent EVM payment legs and the atomic Solana transfer. An approved full-award case requires its separately released payment rail.
 
 ```quint
 import money as M from "./money"
@@ -30,7 +30,7 @@ pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose:
 pure val grossValues = Set(List(1), List(4), List(100), List(0, 1))
 pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): bool =
   p.phase == AwaitingWallet and not(p.configured) and M::validAmount(gross) and M::positiveAmount(gross)
-    and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
+    and rail != DirectStandard and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
 pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): Payment =
   val fee = if (purpose == Ordinary) M::ordinaryFeeAmount(gross) else if (purpose == PrivateStandard) M::privateFeeAmount(gross) else M::zero
   val principal = if (purpose == Ordinary) M::ordinaryNetAmount(gross) else if (purpose == PrivateStandard) M::privateResearcherAmount(gross) else gross
@@ -56,7 +56,7 @@ pure def bind(p: Payment, recipient: str, consent: int, by: str): Payment =
   { ...p, recipient: recipient, consent: consent, phase: Ready }
 ```
 
-### Direct rails journal before submission and retain every uncertain attempt
+### The released direct full-award rail journals before submission and retain every uncertain attempt
 
 An attempt identifier is a durable journal identity bound to signed bytes outside this machine. Reusing an existing attempt is a retransmission of those same bytes. Replacement authorization is covered by the signer machine. No transition releases an uncertain obligation.
 
@@ -87,11 +87,11 @@ pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, s
 
 ### Direct reconciliation requires a retained exact attempt
 
-The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. Discovered by the proof: retained attempts cannot substitute for releasing the full-award payment rail; reconciliation checks that release independently. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
+The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. Discovered by the proof: retained attempts cannot substitute for releasing the full-award payment rail; reconciliation checks that release independently. This transition reconciles a direct full-award receipt. The standard direct journal reconciles its own receipts.
 
 ```quint
 pure def canReconcile(p: Payment, evidence: PaymentEvidence): bool =
-  directRail(p.rail) and p.phase != Paid and (p.purpose != PrivateFull or p.fullRailReleased) and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
+  p.rail == DirectFull and p.phase != Paid and p.fullRailReleased and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
     and evidence.source == p.vault and evidence.asset == p.asset and evidence.recipient == p.recipient and evidence.feeRecipient == p.feeRecipient
     and M::validAmount(evidence.principal) and M::validAmount(evidence.fee)
     and M::equalAmounts(evidence.principal, p.principal) and M::equalAmounts(evidence.fee, p.fee)
@@ -144,7 +144,7 @@ pure def alwaysUnconfiguredEmpty(p: Payment): bool = not(p.configured) implies
   p.phase == AwaitingWallet and p.recipient == "" and p.attempts.length() == 0 and p.failedAttempts.length() == 0
     and p.attempt == 0 and M::equalAmounts(p.gross, M::zero) and M::equalAmounts(p.principal, M::zero) and M::equalAmounts(p.fee, M::zero)
 pure def alwaysAdmittedAttempts(p: Payment): bool = p.attempts.length() > 0 implies p.configured
-pure def alwaysCorrectRail(p: Payment): bool = railMatchesPurpose(p.purpose, p.rail)
+pure def alwaysCorrectRail(p: Payment): bool = p.rail != DirectStandard and railMatchesPurpose(p.purpose, p.rail)
 pure def alwaysVaultPhase(p: Payment): bool = p.phase == VaultReserved implies p.configured and not(directRail(p.rail))
 pure def sometimesVaultReserved(p: Payment): bool = p.phase == VaultReserved
 pure def sometimesUncertain(p: Payment): bool = p.phase == Uncertain

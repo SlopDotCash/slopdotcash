@@ -173,10 +173,10 @@ events across 36 cases, reaching all 40 transitions and 11 goals. Two random
 seeds also reached every transition and goal in the amended referral units,
 including settlement after UTC-day rollover.
 
-The money proof now verifies multiplication by one for arbitrary-width
-amounts. Four laws remain open for division and fee conservation. The
-financial report lists those laws and the dependent obligations.
-[Money proof results](validation/finance/multiply-one-verified/verification.json)
+The baseline money proof verified multiplication by one for arbitrary-width
+amounts and left four laws open for division and fee conservation. The complete
+38-obligation money proof below supersedes that result.
+[Baseline money proof](validation/finance/multiply-one-verified/verification.json)
 
 The completed model and simulation stages checked all 64 baseline documents.
 The 54 executable units passed invariant simulation, with 200 reachability and
@@ -213,10 +213,10 @@ and approval remain pending.
 
 ## Continuing proof and source audit
 
-The 14 November source updates contain the approved provisional EVM token
-vault policy, member-owned referral names and the two manual release options. It also records the requirement
-for the production Pages Function to configure its analytics beacon to send
-page view traffic to the site's own origin.
+The 14 November source updates cover provisional EVM token vault funding,
+member-owned referral names, public referred projects and the two manual
+release options. They also record the production analytics beacon's same-origin
+reporting requirement.
 [Approved source paragraphs](validation/active-proof/source-policy-delta.json)
 
 - Manual release coverage distinguishes an omitted full lane from a passing
@@ -348,6 +348,10 @@ page view traffic to the site's own origin.
   Five native Quint witnesses distinguish retained EVM legs from the atomic
   Solana transfer and exercise receipt replay and recovery.
   [Direct award proof](validation/active-proof/settlement/direct-bounty-proof.json)
+  The generic one-receipt model refuses the standard direct rail. All 110
+  payment obligations and 27 atomic vault composition obligations passed on
+  the updated inputs.
+  [Rail ownership proof](validation/source-coverage/settlement-rail-ownership.json)
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)

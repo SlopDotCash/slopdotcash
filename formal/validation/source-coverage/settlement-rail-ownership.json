@@ -1,0 +1,58 @@
+{
+  "sourceInputs": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7",
+    "spec/settlement/vault.md": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2",
+    "spec/settlement/vault.proof.dfy": "7e83e05d0339feb1d55b0fd614b23749a2d651526efbf39db95586d19fe75082",
+    "spec/settlement/paymentDispatch.md": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005",
+    "spec/settlement/payment.md": "4895f39f23c1c88a98d40b06411cd6e06d35805096c5c82344b014408408f141",
+    "spec/settlement/payment.proof.dfy": "dd3a6a5570cad57a01d5db407c3214b38ef02fe4cfc2fa15d501eb5e8711e66e",
+    "spec/settlement/composition.md": "58a5ffaf95c1a2428428f8b8df03924125cc5352f6f7d36a53f456849fa28127",
+    "spec/settlement/composition.proof.dfy": "c5bf43910e2b876910a59fa4d57e92353625cd2890565d28a975b45a54c2718d"
+  },
+  "units": {
+    "settlement__payment.ts": {
+      "total": 110,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "sourceHash": "4895f39f23c1c88a98d40b06411cd6e06d35805096c5c82344b014408408f141",
+      "generatedDafnySha256": "70589ea5b9fa4d49ce62a17ea34a3bbbe36a49603aab4a2cfa8252da9996ed09",
+      "proofSource": {
+        "file": "spec/settlement/payment.proof.dfy",
+        "sha256": "dd3a6a5570cad57a01d5db407c3214b38ef02fe4cfc2fa15d501eb5e8711e66e"
+      },
+      "offered": 55
+    },
+    "settlement__composition.ts": {
+      "total": 27,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "sourceHash": "58a5ffaf95c1a2428428f8b8df03924125cc5352f6f7d36a53f456849fa28127",
+      "generatedDafnySha256": "2188631a9863a1ae2726060e60bd256e865d276ae6d026e4addb3ff1e46f04ae",
+      "proofSource": {
+        "file": "spec/settlement/composition.proof.dfy",
+        "sha256": "c5bf43910e2b876910a59fa4d57e92353625cd2890565d28a975b45a54c2718d"
+      },
+      "offered": 75
+    }
+  },
+  "newOwner": "spec/settlement/directBounty.md",
+  "simulation": {
+    "command": "seed 216933763210873; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 120 --max-steps 19 --mbt --seed 216933763210873",
+    "replayed": 32
+  },
+  "directed": [
+    "standard direct synthetic aggregate refused by both legacy owners",
+    "standard bounty vault still admitted",
+    "released direct full rail still retains verified attempt"
+  ],
+  "dependencyEvidence": [
+    "formal/validation/source-coverage/canonical-vault-settlement.json",
+    "formal/validation/active-proof/money-unit-gap/verification.json"
+  ],
+  "boundary": "The direct-standard rail classification is retained at the aggregate boundary, so neither vault reservations nor single-receipt direct full-award reconciliation can accept it. Exact standard direct legs remain in the direct-award journal."
+}

@@ -27,8 +27,9 @@ conformance require separately verified chain adapters.
 One reserved obligation belongs to a contributor actor and immutable payout
 terms. Reserving consumes free funds before a wallet is authorized and
 admits the corresponding outbox identity. The authorized wallet can change
-without rewriting the reservation. Independent direct rails retain their own
-attempt and reconciliation rules under the payment owner.
+without rewriting the reservation. The [direct standard award journal](./directBounty.md) retains independent
+receipt and recovery rules. Direct full awards use the separately released
+rail in [payment evidence](./payment.md).
 
 ```quint
 import vault as V from "./vault"
