@@ -534,3 +534,216 @@ lemma lawPositiveAddition_ensures(a: seq<int>, b: seq<int>)
     assert |longest| >= |a| && |longest| >= |b|;
   }
 }
+
+lemma lawMultiplySmallValid_ensures(a: seq<int>, factor: int)
+  ensures (lawMultiplySmallValid(a, factor) == true)
+{
+  if validAmount(a) && 0 <= factor < 1000 {
+    var advance := (acc: ScaleFold, digit: int) => ScaleFold(quotient_settlement__money(((digit * factor) + acc.carry), 1000), (acc.digits + [remainder_settlement__money(((digit * factor) + acc.carry), 1000)]));
+    forall acc: ScaleFold, digit: int | 0 <= acc.carry < 1000 && 0 <= digit < 1000
+      ensures 0 <= advance(acc, digit).carry < 1000
+      ensures advance(acc, digit).digits == acc.digits + [remainder_settlement__money(digit * factor + acc.carry, 1000)]
+      ensures 0 <= remainder_settlement__money(digit * factor + acc.carry, 1000) < 1000
+    {
+      var raw := digit * factor + acc.carry;
+      assert 0 <= digit * factor <= 998001 by {
+        calc {
+          digit * factor;
+          <= 999 * factor;
+          <= 999 * 999;
+        }
+      }
+      assert 0 <= raw < 1000000;
+      assert quotient_settlement__money(raw, 1000) == raw / 1000;
+      assert remainder_settlement__money(raw, 1000) == raw % 1000;
+      var limb := raw % 1000;
+      assert 0 <= limb < 1000 && advance(acc, digit).digits == acc.digits + [limb];
+    }
+    forall acc: ScaleFold, digit: int | 0 <= acc.carry < 1000 && 0 <= digit < 1000
+      ensures |advance(acc, digit).digits| == |acc.digits| + 1
+      ensures forall limb :: limb in advance(acc, digit).digits ==> limb in acc.digits || 0 <= limb < 1000
+    {
+      var limb := remainder_settlement__money(digit * factor + acc.carry, 1000);
+      assert advance(acc, digit).digits == acc.digits + [limb];
+      assert 0 <= limb < 1000;
+    }
+    ValidScaleFold(advance, ScaleFold(0, []), a);
+  }
+}
+
+lemma ValidScaleFold(advance: (ScaleFold, int) -> ScaleFold, acc: ScaleFold, xs: seq<int>)
+  requires 0 <= acc.carry < 1000
+  requires forall d :: d in acc.digits ==> 0 <= d < 1000
+  requires forall d :: d in xs ==> 0 <= d < 1000
+  requires forall s: ScaleFold, d: int :: 0 <= s.carry < 1000 && 0 <= d < 1000 ==> 0 <= advance(s, d).carry < 1000
+  requires forall s: ScaleFold, d: int :: (0 <= s.carry < 1000 && 0 <= d < 1000 ==>
+    |advance(s, d).digits| == |s.digits| + 1 &&
+    (forall limb :: limb in advance(s, d).digits ==> limb in s.digits || 0 <= limb < 1000))
+  ensures 0 <= Std.Collections.Seq.FoldLeft(advance, acc, xs).carry < 1000
+  ensures forall d :: d in Std.Collections.Seq.FoldLeft(advance, acc, xs).digits ==> 0 <= d < 1000
+  ensures |Std.Collections.Seq.FoldLeft(advance, acc, xs).digits| == |acc.digits| + |xs|
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var next := advance(acc, xs[0]);
+    assert xs[0] in xs;
+    assert 0 <= xs[0] < 1000;
+    assert forall d :: d in next.digits ==> 0 <= d < 1000;
+    assert forall d :: d in xs[1..] ==> d in xs;
+    ValidScaleFold(advance, next, xs[1..]);
+  }
+}
+
+lemma lawMultiplyValid_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawMultiplyValid(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    ValidProductFold(a, ProductFold([], zero), b);
+  }
+}
+
+lemma ValidProductFold(a: seq<int>, acc: ProductFold, xs: seq<int>)
+  requires validAmount(a) && validAmount(acc.product)
+  requires forall d :: d in acc.prefix ==> d == 0
+  requires forall d :: d in xs ==> 0 <= d < 1000
+  ensures validAmount(Std.Collections.Seq.FoldLeft((acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit)))), acc, xs).product)
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var digit := xs[0];
+    assert digit in xs;
+    lawMultiplySmallValid_ensures(a, digit);
+    var scaled := multiplySmall(a, digit);
+    assert validAmount(acc.prefix + scaled) by {
+      assert forall d :: d in acc.prefix + scaled ==> d in acc.prefix || d in scaled;
+    }
+    lawAdditionValid_ensures(acc.product, acc.prefix + scaled);
+    assert forall d :: d in acc.prefix + [0] ==> d == 0;
+    assert forall d :: d in xs[1..] ==> d in xs;
+    ValidProductFold(a, ProductFold(acc.prefix + [0], addAmounts(acc.product, acc.prefix + scaled)), xs[1..]);
+  }
+}
+
+lemma lawDivisionValid_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawDivisionValid(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && positiveAmount(b) {
+    ValidReverse([], a);
+    var reversed := reverseAmount(a);
+    IndexedDigitsValid(reversed);
+    assert validAmount(reversed);
+    ValidDivisionFold(b, Division([], zero), reversed);
+    var result := Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc, digit, b), Division([], zero), reversed);
+    IndexedDigitsValid(result.quotient);
+    assert validAmount(result.quotient);
+    ValidReverse([], result.quotient);
+    IndexedDigitsValid(reverseAmount(result.quotient));
+  }
+}
+
+lemma IndexedDigitsValid(xs: seq<int>)
+  requires forall i :: 0 <= i < |xs| ==> 0 <= xs[i] < 1000
+  ensures forall d :: d in xs ==> 0 <= d < 1000
+{
+  forall d | d in xs ensures 0 <= d < 1000 {
+    var i :| 0 <= i < |xs| && xs[i] == d;
+  }
+}
+
+lemma ValidReverse(prefix: seq<int>, xs: seq<int>)
+  requires forall i :: 0 <= i < |prefix| ==> 0 <= prefix[i] < 1000
+  requires forall d :: d in xs ==> 0 <= d < 1000
+  ensures |Std.Collections.Seq.FoldLeft((acc: seq<int>, digit: int) => ([digit] + acc), prefix, xs)| == |prefix| + |xs|
+  ensures var result := Std.Collections.Seq.FoldLeft((acc: seq<int>, digit: int) => ([digit] + acc), prefix, xs);
+    forall i :: 0 <= i < |result| ==> 0 <= result[i] < 1000
+  decreases |xs|
+{
+  if |xs| > 0 {
+    assert xs[0] in xs;
+    var next := [xs[0]] + prefix;
+    forall i | 0 <= i < |next| ensures 0 <= next[i] < 1000 {
+      if i == 0 { assert next[i] == xs[0]; }
+      else { assert next[i] == prefix[i - 1]; }
+    }
+    assert forall d :: d in xs[1..] ==> d in xs;
+    ValidReverse(next, xs[1..]);
+  } else {
+    assert Std.Collections.Seq.FoldLeft((acc: seq<int>, digit: int) => ([digit] + acc), prefix, xs) == prefix;
+  }
+}
+
+lemma ValidDivisionFold(divisor: seq<int>, acc: Division, xs: seq<int>)
+  requires validAmount(divisor) && validAmount(acc.remainder)
+  requires forall i :: 0 <= i < |acc.quotient| ==> 0 <= acc.quotient[i] < 1000
+  requires forall d :: d in xs ==> 0 <= d < 1000
+  ensures validAmount(Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc, digit, divisor), acc, xs).remainder)
+  ensures |Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc, digit, divisor), acc, xs).quotient| == |acc.quotient| + |xs|
+  ensures var result := Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc, digit, divisor), acc, xs).quotient;
+    forall i :: 0 <= i < |result| ==> 0 <= result[i] < 1000
+  decreases |xs|
+{
+  if |xs| > 0 {
+    assert xs[0] in xs;
+    var partial := [xs[0]] + acc.remainder;
+    assert validAmount(partial) by {
+      assert forall d :: d in partial ==> d == xs[0] || d in acc.remainder;
+    }
+    var selected := quotientDigit(partial, divisor);
+    BoundedQuotientDigit(partial, divisor);
+    lawMultiplySmallValid_ensures(divisor, selected);
+    lawSubtractionValid_ensures(partial, multiplySmall(divisor, selected));
+    var next := divisionStep(acc, xs[0], divisor);
+    assert next.remainder == subtractAmounts(partial, multiplySmall(divisor, selected));
+    assert next.quotient == acc.quotient + [selected];
+    forall i | 0 <= i < |next.quotient| ensures 0 <= next.quotient[i] < 1000 {
+      if i == |acc.quotient| { assert next.quotient[i] == selected; }
+      else { assert next.quotient[i] == acc.quotient[i]; }
+    }
+    assert forall d :: d in xs[1..] ==> d in xs;
+    ValidDivisionFold(divisor, next, xs[1..]);
+  } else {
+    assert Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc, digit, divisor), acc, xs) == acc;
+  }
+}
+
+lemma BoundedQuotientDigit(partial: seq<int>, divisor: seq<int>)
+  ensures 0 <= quotientDigit(partial, divisor) < 1000
+{
+  assert quotientBits == [512, 256, 128, 64, 32, 16, 8, 4, 2, 1];
+  assert forall bit :: bit in quotientBits ==> bit >= 0;
+  QuotientLimb(partial, divisor, 0, quotientBits);
+}
+
+lemma QuotientLimb(partial: seq<int>, divisor: seq<int>, digit: int, bits: seq<int>)
+  requires 0 <= digit < 1000
+  requires forall bit :: bit in bits ==> bit >= 0
+  ensures 0 <= Std.Collections.Seq.FoldLeft((digit: int, bit: int) => quotientCandidate(digit, bit, partial, divisor), digit, bits) < 1000
+  decreases |bits|
+{
+  if |bits| > 0 {
+    assert bits[0] in bits;
+    assert forall bit :: bit in bits[1..] ==> bit in bits;
+    var next := quotientCandidate(digit, bits[0], partial, divisor);
+    assert 0 <= next < 1000;
+    QuotientLimb(partial, divisor, next, bits[1..]);
+  }
+}
+
+lemma lawOrdinaryAmountsValid_ensures(a: seq<int>)
+  ensures (lawOrdinaryAmountsValid(a) == true)
+{
+  if validAmount(a) {
+    lawDivisionValid_ensures(a, [50]);
+    lawAdditionValid_ensures(divideAmounts(a, [50]).quotient, [1]);
+    lawSubtractionValid_ensures(a, ordinaryFeeAmount(a));
+  }
+}
+
+lemma lawPrivateAmountsValid_ensures(a: seq<int>)
+  ensures (lawPrivateAmountsValid(a) == true)
+{
+  if validAmount(a) {
+    lawDivisionValid_ensures(a, [4]);
+    lawMultiplySmallValid_ensures(privateFeeAmount(a), 3);
+  }
+}

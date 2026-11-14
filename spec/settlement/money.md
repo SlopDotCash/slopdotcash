@@ -172,10 +172,11 @@ pure def lawMultiplyOne(a: Amount): bool = validAmount(a) implies equalAmounts(m
 The dividend is processed from its most significant limb. The prior remainder is below the divisor, so bringing down one base-1000 limb yields a quotient digit below 1000. The bit decisions select the largest digit whose product fits. Division by zero returns the input as remainder and a zero quotient, and financial callers require a positive divisor.
 
 ```quint
+pure val quotientBits = List(512, 256, 128, 64, 32, 16, 8, 4, 2, 1)
+pure def quotientCandidate(digit: int, bit: int, partial: Amount, divisor: Amount): int =
+  if (digit + bit < 1000 and compareAmounts(multiplySmall(divisor, digit + bit), partial) <= 0) digit + bit else digit
 pure def quotientDigit(partial: Amount, divisor: Amount): int =
-  List(512, 256, 128, 64, 32, 16, 8, 4, 2, 1).foldl(0, (digit, bit) =>
-    if (digit + bit < 1000 and compareAmounts(multiplySmall(divisor, digit + bit), partial) <= 0)
-      digit + bit else digit)
+  quotientBits.foldl(0, (digit, bit) => quotientCandidate(digit, bit, partial, divisor))
 pure def divisionStep(acc: Division, nextDigit: int, divisor: Amount): Division =
   val broughtDown = List(nextDigit).concat(acc.remainder)
   val selected = quotientDigit(broughtDown, divisor)
@@ -211,6 +212,25 @@ pure def lawFullOrdinaryConservation(a: Amount): bool = validAmount(a) implies
   equalAmounts(addAmounts(ordinaryFeeAmount(a), ordinaryNetAmount(a)), a)
 pure def lawFullPrivateConservation(a: Amount): bool = privateSplitPossible(a) implies
   equalAmounts(addAmounts(privateFeeAmount(a), privateResearcherAmount(a)), a)
+```
+
+### Multiplication, division and derived fees preserve valid limb representations
+
+Products, quotient, remainder and fees retain nonempty base-1000 limbs.
+A single-limb multiplication factor must be between zero and 999.
+
+```quint
+pure def lawMultiplySmallValid(a: Amount, factor: int): bool =
+  (validAmount(a) and factor >= 0 and factor < 1000) implies validAmount(multiplySmall(a, factor))
+pure def lawMultiplyValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(multiplyAmounts(a, b))
+pure def lawDivisionValid(a: Amount, b: Amount): bool =
+  val divided = divideAmounts(a, b)
+  (validAmount(a) and validAmount(b)) implies validAmount(divided.quotient) and validAmount(divided.remainder)
+pure def lawOrdinaryAmountsValid(a: Amount): bool =
+  validAmount(a) implies validAmount(ordinaryFeeAmount(a)) and validAmount(ordinaryNetAmount(a))
+pure def lawPrivateAmountsValid(a: Amount): bool =
+  validAmount(a) implies validAmount(privateFeeAmount(a)) and validAmount(privateResearcherAmount(a))
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence
