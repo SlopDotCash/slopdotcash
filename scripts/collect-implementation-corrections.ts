@@ -1297,6 +1297,9 @@ export async function collectImplementationCorrections(
       ),
       "Sample contains a source outside the positive pool inventory",
     );
+  const outcomesById = new Map(
+    allOutcomes.map((outcome) => [outcome.id, outcome]),
+  );
   const reads = new Map<string, SourceRead>();
   for (const plan of campaign.repositories) {
     const targets = selected
@@ -1306,6 +1309,65 @@ export async function collectImplementationCorrections(
           repositoryIdFromUrl(c.sourceUrl).toLowerCase() ===
           plan.repository.id.toLowerCase(),
       );
+    if (ownershipComplete) {
+      // The canonical census already parsed every accepted PR and hydrated its
+      // complete immutable commit list. Reuse those raw-verified observations
+      // rather than repeating the same metadata and statistics requests.
+      for (const candidate of targets) {
+        const outcome = outcomesById.get(candidate.sourceId);
+        if (!outcome) {
+          limitations.set(candidate.sourceId, "source-unavailable");
+          continue;
+        }
+        if (
+          outcome.url !== candidate.sourceUrl ||
+          canonicalTime(outcome.mergedAt) !== candidate.occurredAt
+        ) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-no-longer-matches-recorded-pool",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.id === candidate.sourceId &&
+            repositoryIdFromUrl(outcome.url).toLowerCase() ===
+              plan.repository.id.toLowerCase() &&
+            typeof outcome.headRefOid === "string" &&
+            /^[a-f0-9]{40}$/u.test(outcome.headRefOid) &&
+            outcome.commits !== null,
+          "Complete census source identity or commit evidence is invalid",
+        );
+        if (outcome.commits.length === 0) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-commit-list-empty",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.commits.at(-1)?.oid === outcome.headRefOid &&
+            new Set(outcome.commits.map((commit) => commit.oid)).size ===
+              outcome.commits.length &&
+            outcome.commits.every(
+              (commit) =>
+                /^[a-f0-9]{40}$/u.test(commit.oid) &&
+                Number.isSafeInteger(commit.parentCount) &&
+                Number(commit.parentCount) >= 0 &&
+                Number.isSafeInteger(commit.additions) &&
+                Number(commit.additions) >= 0 &&
+                Number.isSafeInteger(commit.deletions) &&
+                Number(commit.deletions) >= 0,
+            ),
+          "Complete census source identity or commit evidence is invalid",
+        );
+        reads.set(candidate.sourceId, {
+          outcome,
+          repositoryNodeId: plan.nodeId,
+        });
+      }
+      continue;
+    }
     const loaded = await readSources(
       executor,
       targets,
@@ -1321,7 +1383,6 @@ export async function collectImplementationCorrections(
     }
     for (const [id, value] of loaded.held) limitations.set(id, value);
   }
-  const outcomesById = new Map(allOutcomes.map((o) => [o.id, o]));
   for (const pool of selected) {
     const candidate = pool.candidate;
     const read = reads.get(candidate.sourceId);
@@ -1336,14 +1397,6 @@ export async function collectImplementationCorrections(
       );
       continue;
     }
-    const census = outcomesById.get(candidate.sourceId);
-    requireThat(
-      census &&
-        census.headRefOid === read.outcome.headRefOid &&
-        census.mergedAt === read.outcome.mergedAt &&
-        encode(census.commits) === encode(read.outcome.commits),
-      "Selected source differs from complete ownership census",
-    );
     if (candidate.kind === "work-unit") continue;
     try {
       const sources = await ordinaryRetainedProof(github, read, owners);

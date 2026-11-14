@@ -39,8 +39,10 @@ run must resume from the journal; it is not proof of payment. Use the existing
 `perRun` bound and the operator's spending limits. A provider failure or missing
 receipt remains unavailable work.
 
-An unavailable scheduled run logs only grouped operation, state, fixed cause
-labels and counts before raising its existing failure. It logs no project or
+An unavailable scheduled run logs only grouped operation, state, fixed failure
+stage, typed RPC cause labels and counts before raising its existing failure.
+Schema version 2 distinguishes deployment preflight, authority, gas, history,
+and local payment-state failures. It logs no project or
 wallet IDs, amounts, configuration or raw error text. Successful runs stay
 silent. Unknown categories are recorded as `other`.
 

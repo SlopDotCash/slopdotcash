@@ -306,6 +306,186 @@ test("complete canonical census derives first acceptance and resumes from raw ev
   );
 });
 
+test("a complete census supplies source proofs without another metadata or statistics pass", async () => {
+  const dir = await directory();
+  const base = transport();
+  const operations: string[] = [];
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const operation = /query\s+(\w+)/u.exec(body.query)?.[1] ?? "unknown";
+      operations.push(operation);
+      if (operation === "CorrectionMetadata")
+        throw new Error("Complete census must not re-read PR metadata");
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    month: "2026-01",
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  const deps = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const result = await collectImplementationCorrections(options, deps);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.sourceFactsCollected).toBe(1);
+  expect(
+    operations.filter(
+      (operation) => operation === "LeaderboardOutcomeCommitLines",
+    ),
+  ).toHaveLength(1);
+  expect(operations).not.toContain("CorrectionMetadata");
+  const count = operations.length;
+  const repeated = await collectImplementationCorrections(options, deps);
+  expect(operations).toHaveLength(count);
+  expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
+test("complete census reuse holds absent or mismatched recorded sources", async () => {
+  for (const mismatch of ["absent", "url", "occurredAt"] as const) {
+    const dir = await directory();
+    const base = transport();
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        if (body.query.includes("CorrectionMetadata"))
+          throw new Error("Complete census must not re-read metadata");
+        if (!body.query.includes("LeaderboardSearchReferences"))
+          return base.call(input, init);
+        const node = fixture();
+        if (mismatch === "absent") node.id = "PR_other";
+        if (mismatch === "url")
+          node.url = "https://github.com/SlopDotCash/asi/pull/2";
+        if (mismatch === "occurredAt") node.mergedAt = "2026-01-16T00:00:00Z";
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [node],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T00:00:00Z",
+            },
+          },
+        });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: dir,
+        month: "2026-01",
+        before: "2026-01-31T00:00:00.000Z",
+      },
+      {
+        journal: baseline(),
+        registry: registry(),
+        token: "private-test-token",
+        transport: network,
+        now: new Date("2026-01-31T23:59:59Z"),
+      },
+    );
+    expect(result.receipt.ownershipComplete).toBe(true);
+    expect(result.manifest.candidates[0].proof.status).toBe("held");
+  }
+});
+
+test("an empty accepted commit list holds only that source while another source remains complete", async () => {
+  const dir = await directory();
+  const base = transport();
+  const emptyAward: PointAward = {
+    ...award(),
+    sourceId: "PR_empty",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/2",
+    workUnitId: "history_PR_empty",
+    key: pointKey("asi", actor.id, "merged-pull-request", "PR_empty"),
+  };
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("CorrectionMetadata"))
+        throw new Error("Complete census must not re-read metadata");
+      if (!body.query.includes("LeaderboardSearchReferences"))
+        return base.call(input, init);
+      const empty = {
+        ...fixture(),
+        id: "PR_empty",
+        number: 2,
+        url: emptyAward.sourceUrl,
+        commits: {
+          totalCount: 0,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [],
+        },
+      };
+      return Response.json({
+        data: {
+          search: {
+            issueCount: 2,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [fixture(), empty],
+          },
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    month: "2026-01",
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  const deps = {
+    journal: baseline([award(), emptyAward]),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const result = await collectImplementationCorrections(options, deps);
+  expect(result.receipt.ownershipComplete).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.heldProofs).toBe(1);
+  expect(
+    result.manifest.candidates.find(
+      (candidate) => candidate.sourceId === "PR_source",
+    )?.proof.status,
+  ).toBe("complete");
+  const empty = result.manifest.candidates.find(
+    (candidate) => candidate.sourceId === "PR_empty",
+  );
+  if (!empty) throw new Error("Empty source was omitted from the inventory");
+  expect(empty?.proof.status).toBe("held");
+  expect(result.receipt.limitations).toContainEqual({
+    id: empty.id,
+    reason: "accepted-source-commit-list-empty",
+  });
+  const calls = base.requests();
+  const repeated = await collectImplementationCorrections(options, deps);
+  expect(base.requests()).toBe(calls);
+  expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
 test("linked ordinary attribution uses the canonical accepted source even when the merge object is unavailable", async () => {
   const dir = await directory(),
     network = transport("");
