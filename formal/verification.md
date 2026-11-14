@@ -22,7 +22,7 @@ The specification tree defines account and browser ownership, project setup
 and revisions, contributor installation and work, Points, security admission,
 private cases, notifications, releases, settlement and fee handling. Each
 formal rule is catalogued in [spec-catalog.json](spec-catalog.json).
-The active tree contains 71 documents, 89 story groups and 294 rule groups.
+The active tree contains 71 documents, 90 story groups and 296 rule groups.
 The initial full-tree run covered 64 of those documents. The later additions
 have their own source-bound checks below.
 The retained source maps cover all 63 PRD sections and all 473 original models.
@@ -182,7 +182,7 @@ lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
 The assembled 71-document tree generated successfully and passed both VibeLang
-typechecks. Baseline and focused results together replayed 24,112 traces across
+typechecks. Baseline and focused results together replayed 23,809 traces across
 all 61 current executable models. The integrated report lists the inputs
 carried forward and the focused substitutions. The template tool suite passed
 34 tests and the greeting app passed three. The greeting's conformance driver
@@ -261,6 +261,15 @@ shadowed its generated Dafny function. The repaired model proved all 20
 obligations, replayed 200 traces and passed 11 directed events.
 [Destination recovery evidence](validation/finance/recovery-current.json)
 
+Slopbot measures the seven-day window from the first durably recorded
+maintainer notice. An exact current review and timeline are required before
+a label. A confirmed maintainer action, superseded source, upheld appeal or
+verified reopen resolves the hold. Restricted projects can receive the
+approved security comment and confirmed scam label. The new model passed 46
+directed cases, including late or missing notice evidence, changed source,
+pre-window and exact-deadline labeling, and the label-removal race.
+[Slopbot closure witnesses](validation/journeys/closure-directed.json)
+
 ## Guard diagnostics
 
 The simulation report may list guards it did not observe refusing an event.
@@ -268,11 +277,10 @@ The simulation report may list guards it did not observe refusing an event.
 observation in every state; their trusted adapters own sender and evidence
 validation. `canAuthenticate` and draft `canOpen` require positive authenticated
 identities. Release `canConfigure` requires Candidate and
-`canObserveBranchHead` requires a positive source identity. Closure's
-`canRecordParticipant`, `canRecordQualification`, `canRecordActivation` and
-`canRecordVerdict` refuse changes after closure. Their missing negative samples
-are finite-coverage diagnostics, not evidence that these restrictions were
-removed. The final full-tree log retains the actual diagnostic list.
+`canObserveBranchHead` requires a positive source identity. The baseline
+closure guard diagnostics predate the exact-source and maintainer-hold model.
+The focused closure report covers those current inputs.
+[Baseline diagnostics](validation/full-tree/model-simulation-replay.json)
 
 ## Acceptance boundaries
 

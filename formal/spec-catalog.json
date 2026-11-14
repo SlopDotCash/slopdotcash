@@ -5638,69 +5638,145 @@
     },
     {
       "path": "spec/slopbot/closure.md",
-      "sha256": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+      "sha256": "e68e86ceb091be37354f1486c8dad650090bc7085614e2cd5ffb5e99faa4d68f",
       "module": "slopbot__closure",
       "stories": [
         {
-          "heading": "Story: Close only a verified consenting participant's eligible PR",
+          "heading": "Story: Apply a current review under the registered repository's policy",
           "line": 7
+        },
+        {
+          "heading": "Story: Give the maintainer seven days to decide an uncertain finding",
+          "line": 113
         }
       ],
       "rules": [
         {
-          "heading": "Story: Close only a verified consenting participant's eligible PR / A new draft starts with no saved closure consent",
+          "heading": "Story: Apply a current review under the registered repository's policy / Review actions require the exact current source and effective repository scope",
           "line": 9,
           "definitions": [
             "ClosureCategory",
+            "RepositoryScope",
+            "SourceStatus",
+            "HoldStatus",
+            "MaintainerTimeline",
+            "ReviewIdentity",
+            "TimelineObservation",
+            "RemovalEvidence",
+            "ReviewContext",
+            "ClosureEvidence",
             "Closure",
+            "reviewedItem",
+            "initialContext",
+            "initialEvidence",
             "initial",
-            "canSaveConsent",
-            "saveConsent"
-          ]
-        },
-        {
-          "heading": "Story: Close only a verified consenting participant's eligible PR / Participant evidence binds the member, authenticated run and exact PR",
-          "line": 19,
-          "definitions": [
-            "canRecordParticipant",
-            "recordParticipant",
-            "canRecordQualification",
-            "recordQualification",
-            "canRecordActivation",
-            "recordActivation",
+            "canObserveContext",
+            "observeContext",
+            "mayPostReview",
+            "mayPostOrdinary",
+            "mayPostSecurity",
             "canRecordVerdict",
-            "recordVerdict"
+            "recordVerdict",
+            "canCommentSecurity",
+            "commentSecurity",
+            "canLabelSecurityScam",
+            "labelSecurityScam"
           ]
         },
         {
-          "heading": "Story: Close only a verified consenting participant's eligible PR / A close requires every independent eligibility gate",
-          "line": 35,
+          "heading": "Story: Apply a current review under the registered repository's policy / Closing requires saved consent, an exact participant and every independent gate",
+          "line": 73,
           "definitions": [
+            "canSaveConsent",
+            "saveConsent",
+            "canRecordEvidence",
+            "recordEvidence",
             "eligible",
             "canClose",
             "close",
+            "canLabelOutOfScope",
+            "labelOutOfScope",
             "alwaysCloseEligible",
             "alwaysScamNotice",
             "alwaysOutOfScopeStaysOpen",
-            "canLabelOutOfScope",
-            "labelOutOfScope",
-            "sometimesClosed"
+            "sometimesClosed",
+            "sometimesRestrictedScamLabel"
           ]
         },
         {
-          "heading": "Story: Close only a verified consenting participant's eligible PR / Uncertain findings can only become a label after seven days",
-          "line": 53,
+          "heading": "Story: Give the maintainer seven days to decide an uncertain finding / The first durable maintainer notice starts the window once",
+          "line": 115,
           "definitions": [
-            "canWait",
-            "wait",
-            "daysValues",
+            "holdSeconds",
+            "canObserveTime",
+            "observeTime",
+            "canNotifyMaintainer",
+            "notifyMaintainer",
+            "holdDue",
+            "alwaysHoldTime",
+            "alwaysHoldHasUncertainFinding",
+            "stepHoldStartRetained"
+          ]
+        },
+        {
+          "heading": "Story: Give the maintainer seven days to decide an uncertain finding / The due hold labels only when current evidence proves no maintainer acted",
+          "line": 140,
+          "definitions": [
+            "matchesHoldObservation",
+            "canResolveMaintainerAction",
+            "resolveMaintainerAction",
+            "canSupersedeHold",
+            "supersedeHold",
             "canLabelUncertain",
             "labelUncertain",
-            "canReopen",
-            "reopen",
+            "alwaysDueLabel",
             "alwaysUncertainNeverCloses",
             "sometimesUncertainLabel",
-            "sometimesReopened"
+            "sometimesMaintainerActed",
+            "sometimesSuperseded"
+          ]
+        },
+        {
+          "heading": "Story: Give the maintainer seven days to decide an uncertain finding / A confirmed maintainer reopen or upheld appeal prevents further automatic action",
+          "line": 180,
+          "definitions": [
+            "canReopen",
+            "reopen",
+            "canRemoveUncertainLabel",
+            "removeUncertainLabel",
+            "alwaysReopenedStaysOpen",
+            "sometimesReopened",
+            "sometimesRemovedUncertainLabel"
+          ]
+        },
+        {
+          "heading": "Story: Give the maintainer seven days to decide an uncertain finding / Simulation samples include allowed and refused repository and timeline observations",
+          "line": 207,
+          "definitions": [
+            "verifiedContext",
+            "exactEligibleEvidence",
+            "contextValues",
+            "evidenceValues",
+            "reviewScopeValues",
+            "observedAtValues",
+            "dueObservation",
+            "observationValues",
+            "directRemoval",
+            "removalValues",
+            "weight_observeContext",
+            "weight_recordVerdict",
+            "weight_saveConsent",
+            "weight_recordEvidence",
+            "weight_notifyMaintainer",
+            "weight_observeTime",
+            "weight_labelUncertain",
+            "weight_labelOutOfScope",
+            "weight_resolveMaintainerAction",
+            "weight_supersedeHold",
+            "weight_close",
+            "weight_commentSecurity",
+            "weight_labelSecurityScam",
+            "weight_removeUncertainLabel"
           ]
         }
       ],
