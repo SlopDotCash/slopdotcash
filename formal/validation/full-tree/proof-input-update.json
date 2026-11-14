@@ -1,0 +1,19 @@
+{
+  "installedAt": "2026-11-14T06:18:22.100643+00:00",
+  "phase": "model compilation complete; canonical simulation active; proof stage not started",
+  "snapshotRules": "Vibestack reads active proof text during the proof stage. The run-start snapshot records the earlier proof files. Final results must identify the exact imported proof hashes separately.",
+  "files": [
+    {
+      "path": "spec/backend/wallets.proof.dfy",
+      "priorSha256": null,
+      "proofSha256": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052",
+      "candidate": "formal/validation/journeys/wallet-registration-candidate.proof.dfy"
+    },
+    {
+      "path": "spec/settlement/money.proof.dfy",
+      "priorSha256": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+      "proofSha256": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a",
+      "candidate": "formal/validation/finance/multiply-one-verified/money.proof.dfy"
+    }
+  ]
+}

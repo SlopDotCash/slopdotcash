@@ -61,3 +61,103 @@ lemma lawZeroIdentity_ensures(a: seq<int>)
     lawEqualReflexive_ensures(a);
   }
 }
+
+// The selected fold input has the same length as the amount being copied.
+lemma FoldLeftZero(f: (AddFold, int) -> AddFold, xs: seq<int>, a: seq<int>, n: int)
+  requires |xs| == |a|
+  requires 0 <= n <= |xs|
+  requires forall k :: 0 <= k < |xs| ==>
+    f(AddFold(k, 0, a[..k]), xs[k]) == AddFold(k + 1, 0, a[..k + 1])
+  ensures Std.Collections.Seq.FoldLeft(f, AddFold(0, 0, []), xs[..n]) == AddFold(n, 0, a[..n])
+  decreases n
+{
+  if n > 0 {
+    FoldLeftZero(f, xs, a, n - 1);
+    assert xs[..n] == xs[..n - 1] + [xs[n - 1]];
+    ProofLib.FoldLeftAppend(f, AddFold(0, 0, []), xs[..n - 1], xs[n - 1]);
+  }
+}
+
+lemma AddLeftZero(a: seq<int>)
+  requires validAmount(a)
+  ensures addAmounts(zero, a) == a
+{
+  var f := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0)) + acc.carry), 1000)]));
+  var xs := if |zero| >= |a| then zero else a;
+  assert |a| >= 1 && zero == [0];
+  assert |xs| == |a|;
+  forall k | 0 <= k < |xs|
+    ensures f(AddFold(k, 0, a[..k]), xs[k]) == AddFold(k + 1, 0, a[..k + 1])
+  {
+    assert a[k] in a;
+    assert 0 <= a[k] < 1000;
+    assert a[k] / 1000 == 0;
+    assert quotient_settlement__money(a[k], 1000) == 0;
+    assert remainder_settlement__money(a[k], 1000) == a[k];
+    assert a[..k] + [a[k]] == a[..k + 1];
+  }
+  FoldLeftZero(f, xs, a, |xs|);
+  assert xs[..|xs|] == xs && a[..|a|] == a;
+  assert Std.Collections.Seq.FoldLeft(f, AddFold(0, 0, []), xs) == AddFold(|xs|, 0, a);
+  assert addAmounts(zero, a) == a;
+}
+
+lemma FoldScalesOne(f: (ScaleFold, int) -> ScaleFold, a: seq<int>, n: int)
+  requires 0 <= n <= |a|
+  requires forall k :: 0 <= k < |a| ==>
+    f(ScaleFold(0, a[..k]), a[k]) == ScaleFold(0, a[..k + 1])
+  ensures Std.Collections.Seq.FoldLeft(f, ScaleFold(0, []), a[..n]) == ScaleFold(0, a[..n])
+  decreases n
+{
+  if n > 0 {
+    FoldScalesOne(f, a, n - 1);
+    assert a[..n] == a[..n - 1] + [a[n - 1]];
+    ProofLib.FoldLeftAppend(f, ScaleFold(0, []), a[..n - 1], a[n - 1]);
+  }
+}
+
+lemma ScaleByOne(a: seq<int>, factor: int)
+  requires validAmount(a)
+  requires factor == 1
+  ensures multiplySmall(a, factor) == a
+{
+  var f := (acc: ScaleFold, digit: int) => ScaleFold(quotient_settlement__money(((digit * factor) + acc.carry), 1000), (acc.digits + [remainder_settlement__money(((digit * factor) + acc.carry), 1000)]));
+  forall k | 0 <= k < |a|
+    ensures f(ScaleFold(0, a[..k]), a[k]) == ScaleFold(0, a[..k + 1])
+  {
+    assert a[k] in a;
+    assert 0 <= a[k] < 1000;
+    assert a[k] / 1000 == 0;
+    assert quotient_settlement__money(a[k], 1000) == 0;
+    assert remainder_settlement__money(a[k], 1000) == a[k];
+    assert a[..k] + [a[k]] == a[..k + 1];
+  }
+  FoldScalesOne(f, a, |a|);
+  assert a[..|a|] == a;
+  assert Std.Collections.Seq.FoldLeft(f, ScaleFold(0, []), a) == ScaleFold(0, a);
+  assert multiplySmall(a, factor) == a;
+}
+
+lemma lawMultiplyOne_ensures(a: seq<int>)
+  ensures (lawMultiplyOne(a) == true)
+{
+  if validAmount(a) {
+    ScaleByOne(a, 1);
+    AddLeftZero(a);
+    var f := (acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit))));
+    var init := ProductFold([], zero);
+    assert [1] == [] + [1];
+    assert Std.Collections.Seq.FoldLeft(f, init, []) == init;
+    ProofLib.FoldLeftAppend(f, init, [], 1);
+    assert Std.Collections.Seq.FoldLeft(f, init, [1]) == f(init, 1);
+    assert init.prefix == [] && init.product == zero;
+    assert multiplySmall(a, 1) == a;
+    assert init.prefix + multiplySmall(a, 1) == a;
+    assert addAmounts(init.product, init.prefix + multiplySmall(a, 1)) == a;
+    assert f(init, 1) == ProductFold([0], a);
+    assert f(init, 1).product == a;
+    assert Std.Collections.Seq.FoldLeft(f, init, [1]).product == a;
+    assert multiplyAmounts(a, [1]) == a;
+    lawEqualReflexive_ensures(a);
+  }
+}
