@@ -1,0 +1,13 @@
+{
+  "unit": "settlement__money.ts",
+  "sourceHashes": {
+    "spec/settlement/money.md": "4304f9f1735cd873e637cb3d5166db14d905a4df532ef2771814c02092de9981",
+    "spec/settlement/money.proof.dfy": "9e4f8fe9ec248535066756b85281ced5ffa0626fa0c98ac1996ba41dc6f7893e"
+  },
+  "generatedDafnySha256": "5340a5a5ed0b117101e7b66009d212124e85a3ccb3b141d83dd8585770e4db8a",
+  "total": 37,
+  "unproved": [],
+  "exhausted": [],
+  "resting": {},
+  "errors": []
+}

@@ -223,6 +223,8 @@ pure def lawMultiplyAddition(a: Amount, b: Amount, c: Amount): bool =
 pure def lawMultiplyCancellation(a: Amount, b: Amount, c: Amount): bool =
   (validAmount(a) and validAmount(b) and validAmount(c) and positiveAmount(c)) implies
     compareAmounts(multiplyAmounts(a, c), multiplyAmounts(b, c)) == compareAmounts(a, b)
+pure def lawMultiplyZero(a: Amount): bool = validAmount(a) implies
+  equalAmounts(multiplyAmounts(a, zero), zero) and equalAmounts(multiplyAmounts(zero, a), zero)
 pure def lawDivisionByOne(a: Amount): bool = validAmount(a) implies
   equalAmounts(divideAmounts(a, List(1)).quotient, a) and equalAmounts(divideAmounts(a, List(1)).remainder, zero)
 ```

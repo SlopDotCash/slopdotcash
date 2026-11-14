@@ -1936,3 +1936,19 @@ lemma lawDivisionByOne_ensures(a: seq<int>)
     AmountValueOrder(result.remainder,zero);
   }
 }
+
+lemma lawMultiplyZero_ensures(a: seq<int>)
+  ensures (lawMultiplyZero(a) == true)
+{
+  if validAmount(a) {
+    assert zero == [0] && validAmount(zero);
+    PaddedValueZero(zero);
+    lawMultiplyCommutative_ensures(a,zero);
+    lawMultiplyValid_ensures(a,zero);
+    lawMultiplyValid_ensures(zero,a);
+    AmountValueMultiply(a,zero);
+    AmountValueMultiply(zero,a);
+    AmountValueOrder(multiplyAmounts(a,zero),zero);
+    AmountValueOrder(multiplyAmounts(zero,a),zero);
+  }
+}
