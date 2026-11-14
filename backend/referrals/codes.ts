@@ -34,6 +34,7 @@ import {
 import {
   type GithubFetch,
   githubJson,
+  lookupGitHubActor,
   validGithubLogin,
 } from "../projects/github-lookup";
 
@@ -192,12 +193,16 @@ const PROJECT_FORM = "/projects/new";
 /**
  * `/referral/<code>` forwards to the project form. A code in use names its
  * member as the referrer; any other name forwards without one, so the visitor
- * can still list a project. A failed read answers 503: forwarding without the
- * referrer would drop a referral that exists.
+ * can still list a project. Capture resolves the forwarded login on GitHub,
+ * so the link names the login the account has now, read by its permanent id:
+ * the login cached at sign-in can belong to another account after a rename.
+ * A failed read answers 503: forwarding without the referrer would drop a
+ * referral that exists.
  */
 export async function referralRedirect(
   request: Request,
   db: ReferralCodeDependencies["db"],
+  github: ReferralCodeDependencies["github"],
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(REFERRAL_LINK_PREFIX)) return null;
@@ -214,18 +219,26 @@ export async function referralRedirect(
   let login: string | null = null;
   if (validReferralCode(code)) {
     try {
-      login =
-        (
-          await db
-            .prepare(
-              `SELECT m.login FROM referral_codes c
-                 JOIN points_members m ON m.github_id = c.github_id
-                WHERE c.code_key = ? AND c.retired_at IS NULL
-                  AND m.closed_at IS NULL`,
+      const member = await db
+        .prepare(
+          `SELECT m.login, m.github_id FROM referral_codes c
+             JOIN points_members m ON m.github_id = c.github_id
+            WHERE c.code_key = ? AND c.retired_at IS NULL
+              AND m.closed_at IS NULL`,
+        )
+        .bind(referralCodeKey(code))
+        .first<{ login: string; github_id: string }>();
+      if (member !== null)
+        login =
+          (
+            await lookupGitHubActor(
+              github.fetch,
+              github.token,
+              member.login,
+              github.apiOrigin,
+              member.github_id,
             )
-            .bind(referralCodeKey(code))
-            .first<{ login: string }>()
-        )?.login ?? null;
+          )?.githubLogin ?? null;
     } catch {
       console.error("referral link read failure");
       return new Response("This referral link is unavailable. Retry.", {
