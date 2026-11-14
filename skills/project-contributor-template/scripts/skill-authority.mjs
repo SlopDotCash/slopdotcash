@@ -432,6 +432,16 @@ def render_project_skill(role, template_files, manifest, binding):
     repositories = manifest.get("repositories")
     contribution = manifest.get("contribution")
     repository_record = repositories[0] if isinstance(repositories, list) and repositories else None
+    # project.json consumers use repositoryId as the live clone, origin, PR and
+    # API target. Keep repository.id as registry history; the last alias is the
+    # current GitHub path after any rename or transfer.
+    repository_aliases = repository_record.get("aliases") if isinstance(repository_record, dict) else None
+    if isinstance(repository_aliases, list) and repository_aliases:
+        repository_id = repository_aliases[-1]
+    elif isinstance(repository_record, dict):
+        repository_id = repository_record.get("id")
+    else:
+        repository_id = None
     project_id = manifest.get("id")
     if (
         not isinstance(skill, dict)
@@ -440,8 +450,8 @@ def render_project_skill(role, template_files, manifest, binding):
         or not project_id_pattern.fullmatch(project_id)
         or skill.get("id") != generated_skill_name(role, project_id)
         or not isinstance(repository_record, dict)
-        or not isinstance(repository_record.get("id"), str)
-        or not repository_id_pattern.fullmatch(repository_record["id"])
+        or not isinstance(repository_id, str)
+        or not repository_id_pattern.fullmatch(repository_id)
         or not valid_integration_branch(repository_record.get("integrationBranch"))
         or not isinstance(contribution, dict)
     ):
@@ -452,7 +462,7 @@ def render_project_skill(role, template_files, manifest, binding):
     values = {
         "{{SLOP_SKILL_NAME}}": skill["id"],
         "{{SLOP_PROJECT_ID}}": project_id,
-        "{{SLOP_REPOSITORY}}": repository_record["id"],
+        "{{SLOP_REPOSITORY}}": repository_id,
         "{{SLOP_INTEGRATION_BRANCH}}": repository_record["integrationBranch"],
     }
     checked = text
@@ -472,7 +482,7 @@ def render_project_skill(role, template_files, manifest, binding):
     project = {
         "schemaVersion": "1",
         "projectId": project_id,
-        "repositoryId": repository_record["id"],
+        "repositoryId": repository_id,
         "skillName": skill["id"],
         "skillSourcePath": skill_repository_path,
         "publicOrigin": f"https://slop.cash/projects/{project_id}",
