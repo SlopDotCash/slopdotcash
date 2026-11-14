@@ -42,6 +42,7 @@ import { GitHubClient } from "../workers/slopbot/github";
 import {
   collectValueEvidence,
   collectValueReferenceEvidence,
+  valueReferenceTimelineRequest,
 } from "../workers/slopbot/value-evidence";
 import type {
   Pull,
@@ -68,6 +69,11 @@ import {
   resolveGitHubToken,
 } from "./generate-leaderboard";
 import { loadPublishedPoints } from "./generate-points";
+import {
+  historicalDiscussionHasRateLimit,
+  historicalDiscussionQuery,
+  validateHistoricalDiscussion,
+} from "./historical-discussion-evidence";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import { loadValueInputs, ValueFeedUnavailableError } from "./value-ingestion";
@@ -365,6 +371,20 @@ export class CorrectionEvidenceCache {
   async settleReads(): Promise<void> {
     await Promise.allSettled(this.inFlight);
   }
+  async hasSuccessfulRequest(url: string, method = "GET", body = "") {
+    this.assertUninterrupted();
+    return (
+      (await readJson<CachedResponse>(
+        this.requestPath(this.requestKey(url, method, body)),
+      )) !== null
+    );
+  }
+  private requestKey(url: string, method: string, body: string) {
+    return digest(encode({ url, method, body }));
+  }
+  private requestPath(key: string) {
+    return resolve(this.directory, "requests", `${key}.json`);
+  }
   private interrupt(
     kind: CollectionBudgetExhausted["kind"],
     retryAtMs?: number,
@@ -423,8 +443,8 @@ export class CorrectionEvidenceCache {
         (feed && method === "GET"),
       "Only canonical read-only source requests are permitted",
     );
-    const key = digest(encode({ url: url.href, method, body }));
-    const path = resolve(this.directory, "requests", `${key}.json`);
+    const key = this.requestKey(url.href, method, body);
+    const path = this.requestPath(key);
     const cached = await readJson<CachedResponse>(path);
     if (cached) {
       const bytes = await readFile(
@@ -516,7 +536,9 @@ export class CorrectionEvidenceCache {
       response.ok &&
       validJson &&
       completeGraphql &&
-      (!parsed?.errors || recoverableStatistics)
+      (!parsed?.errors || recoverableStatistics) &&
+      (graphqlRequest?.query !== historicalDiscussionQuery ||
+        historicalDiscussionHasRateLimit(parsed?.data))
     ) {
       await atomicJson(path, {
         status: response.status,
@@ -616,7 +638,10 @@ function cachedExecutor(
       candidateVariables,
     );
     requireThat(
-      value.data && (!value.errors || statisticsFailure),
+      value.data &&
+        (!value.errors || statisticsFailure) &&
+        (query !== historicalDiscussionQuery ||
+          historicalDiscussionHasRateLimit(value.data)),
       "Cached GraphQL response is incomplete",
     );
     cache.cacheHits += 1;
@@ -872,7 +897,7 @@ function actor(
 function ordinarySource(
   read: SourceRead,
   owners: ReadonlyMap<string, string>,
-): CorrectionSource {
+): CorrectionSource & { occurredAt: string } {
   const outcome = read.outcome;
   requireThat(
     outcome.headRefOid && outcome.commits,
@@ -1053,6 +1078,11 @@ async function ordinaryRetainedProof(
   github: GitHubClient,
   read: SourceRead,
   owners: ReadonlyMap<string, string>,
+  discussion: {
+    cache: CorrectionEvidenceCache;
+    executor: GraphqlExecutor;
+    allowNew: boolean;
+  },
 ): Promise<CorrectionSource[]> {
   const plain = ordinarySource(read, owners);
   const needsDiscovery = plain.commits.some(
@@ -1062,10 +1092,91 @@ async function ordinaryRetainedProof(
       !isCreditEligibleCommitAuthor(c.author),
   );
   if (!needsDiscovery) return [plain];
+  let readDiscussion: Parameters<typeof collectValueReferenceEvidence>[3];
+  {
+    const { cache, executor, allowNew } = discussion;
+    const number = read.outcome.number;
+    const repository = plain.repository;
+    const [owner, name] = repository.split("/");
+    const variables = { owner, name, number };
+    const graphqlUrl = "https://api.github.com/graphql";
+    const graphRequest = encode({
+      query: historicalDiscussionQuery,
+      variables,
+    });
+    const root = `https://api.github.com/repos/${repository}`;
+    const pull = `${root}/pulls/${number}`;
+    const suffix = "?per_page=100&page=1";
+    const hasEnvelope = await cache.hasSuccessfulRequest(
+      graphqlUrl,
+      "POST",
+      graphRequest,
+    );
+    const oldAnchors =
+      !hasEnvelope && allowNew
+        ? await Promise.all([
+            cache.hasSuccessfulRequest(pull),
+            cache.hasSuccessfulRequest(`${pull}/reviews${suffix}`),
+            cache.hasSuccessfulRequest(
+              `${root}/issues/${number}/comments${suffix}`,
+            ),
+            cache.hasSuccessfulRequest(`${pull}/comments${suffix}`),
+            cache.hasSuccessfulRequest(
+              graphqlUrl,
+              "POST",
+              encode(valueReferenceTimelineRequest(repository, number, null)),
+            ),
+          ])
+        : [];
+    if (hasEnvelope || (allowNew && !oldAnchors.some(Boolean))) {
+      readDiscussion = async (restPull) => {
+        let envelope: unknown;
+        try {
+          envelope = await executor.execute(
+            historicalDiscussionQuery,
+            variables,
+          );
+        } catch (error) {
+          cache.assertUninterrupted();
+          if (hasEnvelope) throw error;
+          if (
+            !(await cache.hasSuccessfulRequest(
+              graphqlUrl,
+              "POST",
+              graphRequest,
+            ))
+          )
+            return null;
+          // The live client can stop after recording a complete response and
+          // charging its cost. Use exactly that observation in this pass too.
+          envelope = await executor.execute(
+            historicalDiscussionQuery,
+            variables,
+          );
+        }
+        cache.assertUninterrupted();
+        if (!historicalDiscussionHasRateLimit(envelope)) return null;
+        return validateHistoricalDiscussion(
+          envelope,
+          {
+            id: plain.sourceId,
+            number,
+            repository,
+            repositoryNodeId: plain.repositoryNodeId,
+            url: plain.sourceUrl,
+            headSha: plain.headSha,
+            mergedAt: plain.occurredAt,
+          },
+          restPull,
+        );
+      };
+    }
+  }
   const references = await collectValueReferenceEvidence(
     github,
     plain.repository,
     read.outcome.number,
+    readDiscussion,
   );
   requireThat(
     references.pull.node_id === plain.sourceId &&
@@ -1175,6 +1286,7 @@ export interface CollectionOptions {
   before?: string;
   requestBudget?: number;
   resumeForSeconds?: number;
+  graphqlDiscussions?: boolean;
 }
 export interface CollectionDependencies {
   journal?: PointsJournal;
@@ -1638,7 +1750,11 @@ async function collectWithEvidenceCache(
     }
     if (candidate.kind === "work-unit") continue;
     try {
-      const sources = await ordinaryRetainedProof(github, read, owners);
+      const sources = await ordinaryRetainedProof(github, read, owners, {
+        cache,
+        executor,
+        allowNew: options.graphqlDiscussions === true,
+      });
       candidate.sourceIds = sources.map((s) => s.sourceId).sort();
       candidate.proof = { status: "complete", censusDigest, sources };
     } catch (error) {
@@ -1888,6 +2004,12 @@ export function parseCollectionArguments(
         Number.isSafeInteger(result.requestBudget) && result.requestBudget > 0,
         "Invalid request budget",
       );
+    } else if (argument === "--graphql-discussions") {
+      requireThat(
+        value === "true" || value === "false",
+        "Invalid GraphQL discussion option",
+      );
+      result.graphqlDiscussions = value === "true";
     } else if (argument === "--resume-for-seconds") {
       result.resumeForSeconds = Number(value);
       requireThat(

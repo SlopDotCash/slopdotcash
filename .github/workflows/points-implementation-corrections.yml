@@ -21,6 +21,10 @@ on:
       resume_run:
         description: "Optional prior run of this workflow at the current main SHA or a main ancestor"
         type: string
+      graphql_discussions:
+        description: "Try complete GraphQL PR discussions for newly collected sources, with REST fallback"
+        type: boolean
+        default: false
       apply:
         description: "Record eligible corrections after complete evidence and private financial checks"
         type: boolean
@@ -111,6 +115,7 @@ jobs:
           CANDIDATE_MONTH: ${{ inputs.candidate_month }}
           BEFORE: ${{ inputs.before }}
           APPLY: ${{ inputs.apply }}
+          GRAPHQL_DISCUSSIONS: ${{ inputs.graphql_discussions }}
         run: |
           set -euo pipefail
           if [ "$APPLY" = true ] && { [ -n "$MONTH" ] || [ -n "$CANDIDATE_MONTH" ]; }; then
@@ -121,6 +126,7 @@ jobs:
           if [ -n "$MONTH" ]; then args+=(--month "$MONTH"); fi
           if [ -n "$CANDIDATE_MONTH" ]; then args+=(--candidate-month "$CANDIDATE_MONTH"); fi
           if [ -n "$BEFORE" ]; then args+=(--before "$BEFORE"); fi
+          if [ "$GRAPHQL_DISCUSSIONS" = true ]; then args+=(--graphql-discussions true); fi
           # Resume from retained evidence across GitHub quota windows. Exit 75
           # is an incomplete checkpoint and prevents reconciliation. Bound the
           # entire command to five hours so the job has time to upload evidence.
