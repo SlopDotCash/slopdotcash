@@ -4670,10 +4670,10 @@
     },
     {
       "path": "scripts/vault-setup-browser-server.ts",
-      "sha256": "36c1e01891d53f46c3fdba201fe5682b139c15f6e6beb580574ef9a894f6e82e",
+      "sha256": "ae2ea1e385dcf7a01d5984abc6d57fb255b068cdc62fc703a2b643afc699d45a",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        50, 55, 59, 75, 79, 136, 161, 261, 286, 301, 304, 307, 314
+        50, 55, 59, 75, 79, 136, 161, 264, 289, 304, 307, 310, 317
       ],
       "review": "mapped-abstraction"
     },
