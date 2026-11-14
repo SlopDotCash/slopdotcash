@@ -106,6 +106,120 @@ lemma AddSettledCost(p: Publication, cost: GasSettlement)
   ProofLib.FoldLeftAppend((total: int, settlement: GasSettlement) => (total + (if (settlement.day == day) then settlement.actual else 0)), 0, p.settledGas, cost);
 }
 
+
+lemma AppendingAttemptKeepsIds(xs: seq<Attempt>, entry: Attempt)
+  requires forall a :: a in xs ==> |ProofLib.Filter((other: Attempt) => (other.id == a.id), xs)| == 1
+  requires !(exists a :: a in xs && a.id == entry.id)
+  ensures forall a :: a in xs + [entry] ==>
+    |ProofLib.Filter((other: Attempt) => (other.id == a.id), xs + [entry])| == 1
+{
+  forall a | a in xs + [entry] ensures |ProofLib.Filter((other: Attempt) => (other.id == a.id), xs + [entry])| == 1 {
+    ProofLib.FilterAppend((other: Attempt) => (other.id == a.id), xs, entry);
+    if a == entry {
+      ProofLib.FilterNone((other: Attempt) => (other.id == a.id), xs);
+    } else {
+      assert a in xs;
+      assert a.id != entry.id;
+    }
+  }
+}
+
+lemma GasCostIdsAppended(xs: seq<GasSettlement>, cost: GasSettlement)
+  requires forall row :: row in xs ==> |ProofLib.Filter((other: GasSettlement) => (other.attempt == row.attempt), xs)| == 1
+  requires !(exists row :: row in xs && row.attempt == cost.attempt)
+  ensures forall row :: row in xs + [cost] ==> |ProofLib.Filter((other: GasSettlement) => (other.attempt == row.attempt), xs + [cost])| == 1
+{
+  forall row | row in xs + [cost] ensures |ProofLib.Filter((other: GasSettlement) => (other.attempt == row.attempt), xs + [cost])| == 1 {
+    ProofLib.FilterAppend((other: GasSettlement) => (other.attempt == row.attempt), xs, cost);
+    if row == cost {
+      ProofLib.FilterNone((other: GasSettlement) => (other.attempt == row.attempt), xs);
+    } else {
+      assert row in xs;
+      assert row.attempt != cost.attempt;
+    }
+  }
+}
+
+lemma ReconcilePendingGas(before: Publication, after: Publication, cost: GasSettlement)
+  requires alwaysSettledGasValid(before) && alwaysHoldCeiling(before) && gasSettlementMatches(before, cost.attempt, cost.actual, cost.day)
+  requires after.settledGas == before.settledGas + [cost] && after.attempts == before.attempts && after.day == before.day
+  ensures alwaysSettledGasValid(after)
+{
+  var matchEntry :| matchEntry in before.attempts && matchesPendingAttempt(before, matchEntry) && matchEntry.day <= cost.day;
+  assert cost.attempt == matchEntry.id && cost.day > 0 && cost.actual <= matchEntry.reservedGas && 0 <= cost.actual <= 200000000000000;
+  assert cost.day <= after.day && matchEntry in after.attempts;
+  assert forall row :: row in before.settledGas ==> |ProofLib.Filter((other: GasSettlement) => (other.attempt == row.attempt), before.settledGas)| == 1;
+  GasCostIdsAppended(before.settledGas, cost);
+  forall row | row in after.settledGas ensures row.actual >= 0 && row.actual <= 200000000000000 && row.day > 0 && row.day <= after.day &&
+    (exists a :: a in after.attempts && a.id == row.attempt && a.day <= row.day && row.actual <= a.reservedGas) {
+    if row == cost { assert matchEntry.id == row.attempt; }
+    else { assert row in before.settledGas; }
+  }
+}
+
+lemma ReconcileAttemptCoverage(before: Publication, after: Publication, cost: GasSettlement)
+  requires alwaysAttemptGasAccounted(before) && gasSettlementMatches(before, cost.attempt, cost.actual, cost.day)
+  requires after.settledGas == before.settledGas + [cost] && after.attempts == before.attempts
+  ensures alwaysAttemptGasAccounted(after)
+{
+  forall entry | entry in after.attempts ensures (exists row :: row in after.settledGas && row.attempt == entry.id) {
+    if !(exists row :: row in before.settledGas && row.attempt == entry.id) {
+      assert pendingPosting(before) && matchesPendingAttempt(before, entry);
+      assert entry.id == before.currentAttempt && before.currentAttempt == cost.attempt;
+      assert cost in after.settledGas;
+    }
+  }
+}
+
+
+lemma NewAttemptHasNoSettlement(p: Publication, id: int)
+  requires alwaysSettledGasValid(p)
+  requires !(exists entry :: entry in p.attempts && entry.id == id)
+  ensures !(exists cost :: cost in p.settledGas && cost.attempt == id)
+{
+  if exists cost :: cost in p.settledGas && cost.attempt == id {
+    var cost :| cost in p.settledGas && cost.attempt == id;
+    var entry :| entry in p.attempts && entry.id == cost.attempt && entry.day <= cost.day && cost.actual <= entry.reservedGas;
+    assert entry.id != id;
+  }
+}
+
+lemma JournalKeepsPriorGas(p: Publication, after: Publication, entry: Attempt)
+  requires alwaysAttemptGasAccounted(p) && !pendingPosting(p)
+  requires after.attempts == p.attempts + [entry] && after.settledGas == p.settledGas
+  requires pendingPosting(after) && matchesPendingAttempt(after, entry)
+  ensures alwaysAttemptGasAccounted(after)
+{
+  forall row | row in after.attempts ensures
+    (exists cost :: cost in after.settledGas && cost.attempt == row.id) || (pendingPosting(after) && matchesPendingAttempt(after, row)) {
+    if row != entry {
+      assert row in p.attempts;
+      var cost :| cost in p.settledGas && cost.attempt == row.id;
+      assert cost in after.settledGas;
+    }
+  }
+}
+
+lemma JournalPreservesSettledGas(p: Publication, after: Publication, entry: Attempt)
+  requires alwaysSettledGasValid(p)
+  requires after.attempts == p.attempts + [entry] && after.settledGas == p.settledGas && after.day == p.day
+  ensures alwaysSettledGasValid(after)
+{
+  forall cost | cost in after.settledGas ensures (exists row :: row in after.attempts && row.id == cost.attempt && row.day <= cost.day && cost.actual <= row.reservedGas) {
+    var priorEntry :| priorEntry in p.attempts && priorEntry.id == cost.attempt && priorEntry.day <= cost.day && cost.actual <= priorEntry.reservedGas;
+    assert priorEntry in after.attempts;
+  }
+}
+
+lemma FinalizedGasUsesHeldAllowance(p: Publication, after: Publication, cost: GasSettlement)
+  requires alwaysNativeBounded(p) && 0 <= cost.actual <= p.nativeHold
+  requires after.settledGas == p.settledGas + [cost] && after.day == p.day && after.nativeHold == 0
+  ensures alwaysNativeBounded(after)
+{
+  AddSettledCost(p, cost);
+  assert spentGas(after) == spentGas(p) + (if cost.day == p.day then cost.actual else 0);
+}
+
 lemma FileFromLedger(p: Publication, a: settlement__referralAccrual_Accrual)
   requires |nextFiling(p, a).entries| > 0
   ensures nextFiling(p, a) in a.filings
@@ -148,7 +262,16 @@ lemma prepare_ensures(p: Publication, control: settlement__referrals_Referral, a
     assert file in a.filings;
     assert forall e :: e in file.entries ==> settlement__referralAccrual_entryWalletPinned(a.pins, e);
     assert alwaysPreparedCap(after) && alwaysPreparedWalletsPinned(after);
-  }
+    assert alwaysPinsUnique(after);
+    forall root | root in after.roots ensures
+      (forall entry :: entry in root.entries ==> settlement__referralAccrual_entryWalletPinned(after.pins, entry)) {
+      assert root in p.roots;
+      forall entry | entry in root.entries ensures settlement__referralAccrual_entryWalletPinned(after.pins, entry) {
+        var pin :| pin in p.pins && pin.actor == entry.actor && pin.wallet == entry.wallet;
+        assert pin in after.pins;
+      }
+    }
+    assert alwaysRootWalletPinned(after);  }
 }
 
 lemma discardPrepared_ensures(p: Publication)
@@ -341,6 +464,14 @@ lemma journal_ensures(p: Publication, control: settlement__referrals_Referral, a
   if inv(p) && canJournal(p, control, attempt, gas, chain, signer) {
     var after := journal(p, control, attempt, gas, chain, signer);
     SameClaims(p, after);
+    var entry := Attempt(attempt, p.prepared.id, p.prepared.epoch, p.day, gas);
+    assert after.attempts == p.attempts + [entry];
+    assert !(exists priorEntry :: priorEntry in p.attempts && priorEntry.id == attempt);
+    AppendingAttemptKeepsIds(p.attempts, entry);
+    NewAttemptHasNoSettlement(p, attempt);
+    assert entry in after.attempts && matchesPendingAttempt(after, entry);
+    JournalKeepsPriorGas(p, after, entry);
+    JournalPreservesSettledGas(p, after, entry);
   }
 }
 
@@ -367,10 +498,15 @@ lemma finalize_ensures(p: Publication, rootReceipt: RootReceipt)
 {
   if inv(p) && canFinalize(p, rootReceipt) {
     var after := finalize(p, rootReceipt);
+    assert p.token == after.token && p.tokenUnit == after.tokenUnit;
+    assert stepTokenFixed(p, after);
     SameClaims(p, after);
-    AddSettledCost(p, GasSettlement(rootReceipt.attempt, rootReceipt.actualGas, rootReceipt.settledDay));
-    assert spentGas(after) == spentGas(p) + (if rootReceipt.settledDay == p.day then rootReceipt.actualGas else 0);
-    assert alwaysNativeBounded(after);
+    var cost := GasSettlement(rootReceipt.attempt, rootReceipt.actualGas, rootReceipt.settledDay);
+    assert gasSettlementMatches(p, cost.attempt, cost.actual, cost.day);
+    assert after.settledGas == p.settledGas + [cost] && after.day == p.day;
+    FinalizedGasUsesHeldAllowance(p, after, cost);
+    ReconcilePendingGas(p, after, cost);
+    ReconcileAttemptCoverage(p, after, cost);
   }
 }
 
@@ -397,10 +533,15 @@ lemma finalizeFailure_ensures(p: Publication, attempt: int, receipt: int, actual
 {
   if inv(p) && canFinalizeFailure(p, attempt, receipt, actualGas, settledDay, finalized, succeeded) {
     var after := finalizeFailure(p, attempt, receipt, actualGas, settledDay, finalized, succeeded);
+    assert p.token == after.token && p.tokenUnit == after.tokenUnit;
+    assert stepTokenFixed(p, after);
     SameClaims(p, after);
-    AddSettledCost(p, GasSettlement(attempt, actualGas, settledDay));
-    assert spentGas(after) == spentGas(p) + (if settledDay == p.day then actualGas else 0);
-    assert alwaysNativeBounded(after);
+    var cost := GasSettlement(attempt, actualGas, settledDay);
+    assert gasSettlementMatches(p, cost.attempt, cost.actual, cost.day);
+    assert after.settledGas == p.settledGas + [cost] && after.day == p.day;
+    FinalizedGasUsesHeldAllowance(p, after, cost);
+    ReconcilePendingGas(p, after, cost);
+    ReconcileAttemptCoverage(p, after, cost);
   }
 }
 
