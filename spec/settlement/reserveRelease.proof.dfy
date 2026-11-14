@@ -133,11 +133,44 @@ lemma finalize_ensures(r: ReserveRelease, receipt: ReleaseReceipt)
   if inv(r) && canFinalize(r, receipt) {
     assert !r.hasSettled;
     assert r.free == r.originalFree && r.reserved == r.originalReserve;
+    settlement__money_lawAdditionValid_ensures(r.free, r.reserved);
     var released := finalize(r, receipt);
     var total := settlement__money_addAmounts(r.originalFree, r.originalReserve);
     assert released.reserved == settlement__money_zero && released.free == total;
     AmountEqualLimb(settlement__money_zero, settlement__money_zero);
     AmountEqualLimb(total, total);
     assert alwaysWholeRelease(released);
+    assert r.settledAmount == settlement__money_zero;
+    var once := settlement__money_addAmounts(total, settlement__money_zero);
+    var twice := settlement__money_addAmounts(once, settlement__money_zero);
+    settlement__money_lawAdditionValid_ensures(total, settlement__money_zero);
+    settlement__money_lawZeroIdentity_ensures(total);
+    settlement__money_lawZeroIdentity_ensures(once);
+    PaddedAmountSubstitution(twice, once, total);
+    assert alwaysConserved(released);
+  }
+}
+
+lemma settlePart_ensures(r: ReserveRelease, amount: seq<int>)
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysSignedIdentity(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysLiveAttemptFresh(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysFinalizedHeight(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysObservedAfterSignature(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysNoSettlementOnRelease(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysWholeRelease(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysBoundApproval(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysUntouchedBalances(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysSettlementHistory(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysOwnerRevision(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepAttemptHistoryRetained(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepSignedAttemptRetained(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepOriginalTermsRetained(r, settlePart(r, amount)))
+  ensures (inv(r) ==> canSettlePart(r, amount) ==> stepSettlementHistoryRetained(r, settlePart(r, amount)))
+{
+  if inv(r) && canSettlePart(r, amount) {
+    settlement__money_lawAdditionValid_ensures(r.settledAmount, amount);
+    settlement__money_lawSubtractionValid_ensures(r.reserved, amount);
   }
 }
