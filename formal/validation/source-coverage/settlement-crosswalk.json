@@ -462,291 +462,605 @@
         "backend/security/payment-database.ts",
         "backend/payments/handler.ts"
       ],
-      "evidenceEntries": [],
+      "evidenceEntries": [
+        "backend/payments/dispatch.test.ts",
+        "workers/payments/dispatch-clock.workflow.mjs",
+        "workers/payments/recovery.integration.ts",
+        "workers/payments/refused-broadcast.test.ts",
+        "workers/payments/served-network-recovery.test.ts"
+      ],
       "actions": {
         "init": {
-          "status": "partial-model",
-          "reason": "Both start before sending. The legacy outbox tracks lease owner, attempt wallet and receiver generation independently.",
+          "status": "modeled-projection",
+          "reason": "A reserved obligation supplied by the canonical financial owner and an authorized claim put its isolated row into ready.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "initial"
+                "initial",
+                "admit",
+                "authorizeWallet"
               ]
             }
           ]
         },
         "lease": {
-          "status": "missing-transition",
-          "reason": "No worker lease token owner or monotonic processing lease generation guards pre-sign operations.",
-          "successors": []
-        },
-        "prepare": {
-          "status": "partial-model",
-          "reason": "Live attempt is journaled before submission. The stable executor idempotency key and captured lease/wallet epoch are unmodeled.",
+          "status": "modeled-projection",
+          "reason": "An increasing grant identity fences writes. Replacement requires a processing lease past its 60-second expiry.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canJournal",
-                "journal"
+                "canAcquire",
+                "acquire",
+                "owns"
+              ]
+            }
+          ]
+        },
+        "prepare": {
+          "status": "modeled-projection",
+          "reason": "A captured request with a matching current token durably creates one stable attempt key before executor submission.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "readClaim",
+                "canPrepare",
+                "prepare"
               ]
             }
           ]
         },
         "success": {
-          "status": "missing-transition",
-          "reason": "A stale success may append the matching attempt tx but never change outbox state. A conflicting current success must hold. Active payment has no executor callback/wallet generation.",
-          "successors": []
-        },
-        "ambiguous": {
-          "status": "partial-model",
-          "reason": "Primary state retains uncertainty, without returning leased queue state to ready while preserving attempt.",
+          "status": "modeled-projection",
+          "reason": "An exact callback can record the attempt transaction, with queue changes restricted to the current lease.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "loseReceipt",
-                "retransmit"
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "ambiguous": {
+          "status": "modeled-projection",
+          "reason": "An uncertain callback retains the same attempt and clears only its own lease to ready.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous"
               ]
             }
           ]
         },
         "replaceWallet": {
-          "status": "partial-model",
-          "reason": "Destination change exists as a private-award recovery flow, not as wallet epoch independent of any extant vault attempt.",
+          "status": "modeled-projection",
+          "reason": "Scoped wallet proof changes current claim, keeping historical authorized claim and immutable attempt binding.",
           "successors": [
             {
-              "path": "spec/settlement/recovery.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "requestChange",
-                "presentSuccessor"
+                "authorizeWallet",
+                "clearCurrentWallet"
               ]
             }
           ]
         },
         "hold": {
-          "status": "partial-model",
-          "reason": "An obligation can be held. No outbox lease or live attempt wallet mismatch guard.",
+          "status": "modeled-projection",
+          "reason": "Dispatcher parks a missing or mismatching wallet claim under the matching token. Unsigned retirement can return the token to ready instead.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "hold"
+                "canPark",
+                "park"
               ]
             }
           ]
         },
         "releaseHold": {
-          "status": "partial-model",
-          "reason": "Owner resume keeps uncertain attempt held logically, but missing active-wallet mismatch and queue lease fence.",
+          "status": "modeled-projection",
+          "reason": "Effective wallet authorization resumes a held row only when no active attempt names a different wallet.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "resume"
+                "mayRelease",
+                "authorizeWallet"
               ]
             }
           ]
         },
         "finalized": {
           "status": "modeled-projection",
-          "reason": "A retained, exact, finalized evidence transition settles once.",
+          "reason": "Exact finalized payout admits a canonical handoff and marks a matching attempt reference finalized when present.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canReconcile",
-                "reconcile",
-                "stepPaidPermanent"
+                "canIndexFinalized",
+                "indexFinalized"
               ]
             }
           ]
         },
         "externalPaid": {
-          "status": "missing-transition",
-          "reason": "Legacy finalized exact scanner receipt can settle a reserved vault obligation whose tx differs from all retained attempts. Active canReconcile explicitly requires journal membership.",
+          "status": "modeled-projection",
+          "reason": "Canonical handoff permits an exact finalized vault payout without a submitted attempt. The aggregate payment specification requires composition work.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canReconcile"
+                "exactReceipt",
+                "canIndexFinalized",
+                "indexFinalized"
               ]
             }
           ]
         },
         "inspectFailure": {
-          "status": "missing-transition",
-          "reason": "No independent overlapping receipt observers record attempt generation before asynchronous checks.",
-          "successors": []
-        },
-        "settleFailure": {
-          "status": "partial-model",
-          "reason": "An exact failed current attempt permits retry. No stale observation can be represented for later refusal.",
+          "status": "modeled-projection",
+          "reason": "Concurrent reconcilers capture independent immutable attempt keys and transactions.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canRecordFailure",
-                "recordFailure"
+                "canInspectFailure",
+                "inspectFailure"
+              ]
+            }
+          ]
+        },
+        "settleFailure": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized reverts retire the captured attempt. A later duplicate or stale observation cannot reopen a successor.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "settleFailure"
               ]
             }
           ]
         },
         "step": {
           "status": "generated-harness",
-          "reason": "Current payment state machine dispatch does not include outbox lease races.",
-          "successors": []
+          "reason": "Generated successor dispatch drives independently enabled transitions and tests stuttering for stale observations.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "initial",
+                "settleFailure"
+              ]
+            }
+          ]
         }
       },
       "scenarios": {
         "ambiguousClearsLeaseTest": {
-          "status": "missing-transition",
-          "reason": "Missing outbox return-to-ready and explicit current lease clear.",
-          "successors": []
-        },
-        "ambiguousCannotSubmitTest": {
-          "status": "missing-transition",
-          "reason": "Missing late success records exact tx without reacquiring processing lease.",
-          "successors": []
-        },
-        "heldUnderOldWalletRun": {
-          "status": "partial-model",
-          "reason": "A moved wallet has separate private-award successor recovery. No old-wallet vault execution hold.",
+          "status": "modeled-projection",
+          "reason": "An uncertain callback returns current processing to ready and holds the attempt for idempotent continuation.",
           "successors": [
             {
-              "path": "spec/settlement/recovery.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "requestChange",
-                "retire"
+                "returnAmbiguous"
+              ]
+            }
+          ]
+        },
+        "ambiguousCannotSubmitTest": {
+          "status": "modeled-projection",
+          "reason": "A late callback may fill attempt metadata after a lease was cleared without submitting its outbox.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous",
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "heldUnderOldWalletRun": {
+          "status": "modeled-projection",
+          "reason": "A new claim with a different wallet does not retire an uncertain prior-claim obligation.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "authorizeWallet",
+                "readClaim",
+                "park"
               ]
             }
           ]
         },
         "guardedReleaseKeepsUncertainHoldTest": {
-          "status": "partial-model",
-          "reason": "Existing hold stays uncertain on resume but does not validate captured wallet epoch.",
+          "status": "modeled-projection",
+          "reason": "Authorized successor cannot release the hold while a foreign active attempt remains.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "resume"
+                "mayRelease",
+                "authorizeWallet"
               ]
             }
           ]
         },
         "unguardedReleaseIsReparkedTest": {
           "status": "negative-control-not-product",
-          "reason": "Legacy deliberately includes unguarded release to demonstrate later repark. Active product must refuse unsafe original release, not replicate it. Actual wallet mismatch remains missing.",
-          "successors": []
-        },
-        "staleLeaseRefusedTest": {
-          "status": "missing-transition",
-          "reason": "Missing worker lease supersession and stale prepare refusal.",
-          "successors": []
-        },
-        "ambiguousRetryTest": {
-          "status": "partial-model",
-          "reason": "Retransmission uses same attempt, but not another explicitly re-leased worker callback.",
+          "reason": "Legacy unguarded release is a deliberate negative control. Actual authorization leaves the hold pending prior-attempt reconciliation.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "retransmit",
-                "reconcile"
+                "mayRelease",
+                "authorizeWallet"
+              ]
+            }
+          ]
+        },
+        "staleLeaseRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "A prior claim read cannot create a new attempt when the processing lease was replaced.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canAcquire",
+                "canPrepare"
+              ]
+            }
+          ]
+        },
+        "ambiguousRetryTest": {
+          "status": "modeled-projection",
+          "reason": "New lease and replay carry the original attempt key through executor callback and indexed final payout.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous",
+                "acquire",
+                "reuse",
+                "returnSuccess",
+                "indexFinalized"
               ]
             }
           ]
         },
         "conflictingResponseTest": {
-          "status": "missing-transition",
-          "reason": "Missing exclusive immutable attempt tx and conflict/current-lease fence.",
-          "successors": []
-        },
-        "lateOriginalAfterWalletReplacementTest": {
-          "status": "missing-transition",
-          "reason": "Missing current wallet change while immutable old-wallet attempt may legitimately become canonical.",
-          "successors": []
-        },
-        "staleConflictCannotHoldCompletedTest": {
-          "status": "missing-transition",
-          "reason": "Missing stale worker callback and conflict refusal before final chain payment.",
-          "successors": []
-        },
-        "staleFailurePreservesSubmittedSuccessorTest": {
-          "status": "partial-model",
-          "reason": "Current attempt ID filters failure. No two receipt observations captured before successor generation.",
+          "status": "modeled-projection",
+          "reason": "A conflicting current reply holds the row while retaining the first recorded transaction.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canRecordFailure"
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "lateOriginalAfterWalletReplacementTest": {
+          "status": "modeled-projection",
+          "reason": "Receipt uses historical authorized claim even after newly effective wallet, without rebinding the old attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "authorizeWallet",
+                "returnSuccess",
+                "exactReceipt",
+                "indexFinalized"
+              ]
+            }
+          ]
+        },
+        "staleConflictCannotHoldCompletedTest": {
+          "status": "modeled-projection",
+          "reason": "Stale conflicting callback preserves current submitted status and recorded attempt transaction.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "staleFailurePreservesSubmittedSuccessorTest": {
+          "status": "modeled-projection",
+          "reason": "Two reads can capture the same rejected attempt, and a late duplicate cannot touch a later attempt or submitted queue.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "inspectFailure",
+                "settleFailure"
               ]
             }
           ]
         },
         "externalPaidWithoutRecordedTxTest": {
-          "status": "missing-transition",
-          "reason": "Scanner exact event can settle without prior journaled tx. Current required membership prevents that reachable outcome.",
+          "status": "modeled-projection",
+          "reason": "Exact scanner receipt can consume a reserved vault obligation even with no attempt transaction to associate.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canReconcile"
+                "exactReceipt",
+                "indexFinalized"
               ]
             }
           ]
         },
         "externalPaidBesideRecordedTxTest": {
-          "status": "missing-transition",
-          "reason": "Missing ledger/attempt split when scanner finds a separate finalized tx.",
+          "status": "modeled-projection",
+          "reason": "Exact scanner receipt has independent canonical identity and preserves the other attempt transaction.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "canReconcile"
+                "indexFinalized"
               ]
             }
           ]
         },
         "paidIsAbsorbingTest": {
           "status": "modeled-projection",
-          "reason": "Once paid all transitions preserve the whole payment state.",
+          "reason": "No lease can acquire after canonical indexing. Queue and receipt remain fixed.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "stepPaidPermanent"
+                "canAcquire",
+                "stepIndexedIsAbsorbing"
               ]
             }
           ]
         },
         "noSecondReceiptAfterExternalPaidTest": {
-          "status": "partial-model",
-          "reason": "Paid absorbs subsequent finality. Initial external-paid path remains missing.",
+          "status": "modeled-projection",
+          "reason": "Another payout event cannot replace the canonical vault receipt. Exact replay is idempotent.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "stepPaidPermanent",
-                "canReconcile"
+                "canIndexFinalized",
+                "indexFinalized"
               ]
             }
           ]
         },
         "noResponseAfterPaidTest": {
-          "status": "partial-model",
-          "reason": "Paid absorbs subsequent events. Executor response transition and external-paid path remain missing.",
+          "status": "source-refinement",
+          "reason": "Pinned native SQL allows an already started callback to persist exact attempt metadata after external indexing. The cleared token prevents moving the indexed outbox or changing the canonical receipt. The original no-metadata branch is a stronger projection.",
           "successors": [
             {
-              "path": "spec/settlement/payment.md",
+              "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
-                "stepPaidPermanent"
+                "returnSuccess",
+                "stepIndexedIsAbsorbing"
               ]
             }
           ]
         }
-      }
+      },
+      "sourceBindings": [
+        {
+          "path": "backend/payments/dispatch.ts",
+          "sha256": "fce0c6562bed2596cea0a876d5ebeafe44855e891fef54e3fcae8dbb1017d447",
+          "anchors": [
+            {
+              "line": 33,
+              "anchor": "const lease = crypto.randomUUID()"
+            },
+            {
+              "line": 40,
+              "anchor": "new Date(now.getTime() + 60000)"
+            },
+            {
+              "line": 68,
+              "anchor": "previous.claim_id !== payment.claimId"
+            },
+            {
+              "line": 91,
+              "anchor": "INSERT INTO payment_attempts"
+            },
+            {
+              "line": 101,
+              "anchor": "idempotencyKey: id"
+            },
+            {
+              "line": 112,
+              "anchor": "UPDATE payment_attempts SET state='submitted'"
+            },
+            {
+              "line": 146,
+              "anchor": "UPDATE payment_outbox SET state='held'"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/ledger.ts",
+          "sha256": "651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879",
+          "anchors": [
+            {
+              "line": 154,
+              "anchor": "await adapter.verifyFinalized(input)"
+            },
+            {
+              "line": 182,
+              "anchor": "Finalized vault asset snapshot required"
+            },
+            {
+              "line": 200,
+              "anchor": "paymentObligationDecision("
+            },
+            {
+              "line": 239,
+              "anchor": "Payout destination is not an authorized contributor wallet"
+            },
+            {
+              "line": 325,
+              "anchor": "UPDATE payment_obligations SET state='paid'"
+            },
+            {
+              "line": 332,
+              "anchor": "UPDATE payment_outbox SET state='paid'"
+            },
+            {
+              "line": 339,
+              "anchor": "UPDATE payment_attempts SET state='finalized'"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/verified-evidence.ts",
+          "sha256": "7618a7ced8cd7e408ba7255e0bf838891b7cf20202e31d409cd8d1b97876470f",
+          "anchors": [
+            {
+              "line": 137,
+              "anchor": "export function paymentObligationDecision"
+            },
+            {
+              "line": 24,
+              "anchor": "export function paymentEvidenceMatches"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/handler.ts",
+          "sha256": "b0e3b3b8b350e6a129af4b2f06fdb9597e93a4ec9d242a931dd5852e5ab76faa",
+          "anchors": [
+            {
+              "line": 901,
+              "anchor": "ON CONFLICT(obligation_id) DO UPDATE SET state='ready'"
+            }
+          ]
+        },
+        {
+          "path": "backend/security/payment-database.ts",
+          "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
+          "anchors": [
+            {
+              "line": 6,
+              "anchor": "export function securityPaymentDatabase"
+            }
+          ]
+        },
+        {
+          "path": "workers/security-payments/index.ts",
+          "sha256": "b54e8c484758f410f9b3d874420be01f495d764804a9e49c33592c10def3f530",
+          "anchors": [
+            {
+              "line": 29,
+              "anchor": "ON CONFLICT(obligation_id) DO UPDATE SET state='ready'"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/index.ts",
+          "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+          "anchors": [
+            {
+              "line": 86,
+              "anchor": "export async function recoverUncertainAttempts"
+            },
+            {
+              "line": 148,
+              "anchor": "if (outcome.retired === true && outcome.transactionId === null)"
+            },
+            {
+              "line": 191,
+              "anchor": "if (!status.submitted)"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/reconcile.ts",
+          "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
+          "anchors": [
+            {
+              "line": 54,
+              "anchor": "export async function reconcileFailedAttempts"
+            },
+            {
+              "line": 130,
+              "anchor": "Another reconciler may already have retired this attempt"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/scanner.ts",
+          "sha256": "859e9352f0a7a9dd5ad62dbfb45a511d9fee3d039ca57d6fe9eae327c700b5c5",
+          "anchors": [
+            {
+              "line": 23,
+              "anchor": "A cursor advances only after every recognized finalized event"
+            }
+          ]
+        },
+        {
+          "path": "migrations/0011_payments.sql",
+          "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
+          "anchors": [
+            {
+              "line": 24,
+              "anchor": "CREATE TABLE payment_outbox"
+            },
+            {
+              "line": 29,
+              "anchor": "CREATE TABLE payment_attempts"
+            },
+            {
+              "line": 71,
+              "anchor": "CREATE TABLE payment_attempt_failures"
+            }
+          ]
+        },
+        {
+          "path": "workers/payment-executor/README.md",
+          "sha256": "7d462350d94844eb07e09835cf27ec57c7f61cc61a6310fe47b4bd642fa6fc56",
+          "anchors": [
+            {
+              "line": 288,
+              "anchor": "Its journal transaction either finds a previously signed"
+            },
+            {
+              "line": 293,
+              "anchor": "signed bytes commit in the same journal transaction"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/dispatch.test.ts",
+          "sha256": "c60bba040d80c3001804ba53d24d0403fe88ce40b613bc22e3a9894969dcbbe5",
+          "anchors": [
+            {
+              "line": 141,
+              "anchor": "a late dispatch response cannot replace"
+            },
+            {
+              "line": 339,
+              "anchor": "Quint ambiguous-send trace conforms"
+            },
+            {
+              "line": 423,
+              "anchor": "Quint late original remains payable"
+            }
+          ]
+        }
+      ],
+      "successorSha256": "a93b78a4370702981dcf11b7e9f348b045e5bd91a057985b286da1a960d79fec",
+      "boundary": "Exact chain, executor and wallet evidence are supplied by canonical owners. The source-settled scanner route must compose with the financial owner. Payment canReconcile and alwaysPaidEvidence currently require a retained attempt and current recipient. A native D1 conflicting concurrent paid-event integration test and canonical atomic adapter are outside this projected proof."
     },
     {
       "legacyModel": "formal/models/payments/vault_initial_snapshot.qnt",
