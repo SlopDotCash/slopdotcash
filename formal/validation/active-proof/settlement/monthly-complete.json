@@ -1,0 +1,197 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "settlement__monthly.ts",
+  "total": 73,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+    "spec/settlement/allocation.md": "b90cfceec014cc33b742e379db5450a029ca585034f63ebaefac443df450fb92",
+    "spec/settlement/money.md": "b00cb238e46146e9bf37b4665d3f288d6f752c95ca4557d5450ce9ee5f911224",
+    "spec/settlement/monthly.proof.dfy": "4b1edcdfe299e473623396d076ecd23f3701081a0c3e48bbc2a4697cd7f6baca"
+  },
+  "generated": {
+    "typescript": "f2b75ab9beebdf036ef5205ba21d88b39375c0649bdac654ce9f926662ecd05c",
+    "dafny": "63267cb4593a1cb77ad3b775c85d88d4597e2d4498d9e4294399e6cec9586d5e"
+  },
+  "offered": [
+    {
+      "fn": "settlement__money_lawEqualReflexive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSymmetric",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSubstitution",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroIdentity",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAdditionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPositiveAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionRemainder",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionReconstructs",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullPrivateConservation",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullOrdinaryConservation",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplySmallValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawAllocatedSharesValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawAllocationConserves",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__allocation_lawSingleRecipient",
+      "proved": [
+        true
+      ]
+    }
+  ],
+  "checkedDependencies": {
+    "settlement__money.ts": {
+      "sourceHashes": {
+        "spec/settlement/money.md": "b00cb238e46146e9bf37b4665d3f288d6f752c95ca4557d5450ce9ee5f911224",
+        "spec/settlement/money.proof.dfy": "c361e3aeb31a3e7fec1f931ee70456a781f640b62f634688569faae1866daff0"
+      },
+      "generatedDafnySha256": "502ebd29ebe994b392afd98b6e829ae6c1f8f57f402f98554c6ad7b80006e172",
+      "proofRecord": "formal/validation/active-proof/money-products-valid/verification.json"
+    },
+    "settlement__allocation.ts": {
+      "sourceHashes": {
+        "spec/settlement/allocation.md": "b90cfceec014cc33b742e379db5450a029ca585034f63ebaefac443df450fb92",
+        "spec/settlement/money.md": "b00cb238e46146e9bf37b4665d3f288d6f752c95ca4557d5450ce9ee5f911224",
+        "spec/settlement/allocation.proof.dfy": "8764dfac2a381b4d70b0a30ee4fc6cd3c89bf0858698349c4ec6df0ab8a2f3a9"
+      },
+      "generatedDafnySha256": "f76198aebb5f12ca36d53f7f6d3d8dc73f97ebcbaf789c64c0dc6b21443f3608",
+      "proofRecord": "formal/validation/active-proof/settlement/allocation-share-validity.json"
+    }
+  },
+  "log": "formal/validation/active-proof/settlement/monthly-complete.log",
+  "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+  "proved": 73
+}
