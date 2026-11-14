@@ -201,9 +201,12 @@ The local Solana stages require a fresh owned validator receipt for each
 shell stage and a confirmed local funding result before tests. The command
 supervisor distinguishes interruption, the grace period, same-group escalation
 and cleanup confirmation. The caller retains the first failure and waits for
-owned validator stop before removing its acceptance ledger. Three named Quint
-witnesses and 65 generated-core events across five journeys passed.
-[Quint witnesses](validation/journeys/local-validator-witness.qnt) · [Generated-core journeys](validation/journeys/local-validator-stages.json)
+owned validator stop before removing its acceptance ledger. The proof pass
+identified two missing constraints. Interruption preserves a prior nonzero
+status and stage progress stays within the current stage. All 76 obligations
+proved after these changes. Three named Quint witnesses and 65 generated-core
+events across five journeys passed in the focused checks.
+[Local validator proofs](validation/journeys/local-validator-proof.json) · [Quint witnesses](validation/journeys/local-validator-witness.qnt) · [Generated-core journeys](validation/journeys/local-validator-stages.json)
 
 Keeper reconciliation requires an exact chain preflight for the selected
 endpoint, revision and deployment before any work. Receipt processing records

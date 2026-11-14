@@ -48,8 +48,15 @@ pure def cancelStart(v: ValidatorRun, cancellationCode: int): ValidatorRun =
 pure def alwaysCurrentStageFunded(v: ValidatorRun): bool =
   v.phase == TestingValidator and v.mode == ShellCaller implies v.funded == v.stage
 pure def alwaysShellTestsWereFunded(v: ValidatorRun): bool = v.mode == ShellCaller implies v.tests <= v.funded
-pure def alwaysUnstartedHasNoTest(v: ValidatorRun): bool = v.stage == 0 implies v.tests == 0
+pure def alwaysOrderedProgress(v: ValidatorRun): bool =
+  v.stage >= 0 and v.stage <= stageCount(v.mode) and v.tests >= 0 and v.tests <= v.stage and
+    v.funded >= 0 and v.funded <= v.stage
 ```
+
+Discovered by the proof: a stage must retain nonnegative progress and its
+test and funding positions cannot pass the current stage. Without that fact,
+an admissible synthetic prior state could have a future test count or a
+negative funded count while entering a real stage.
 
 ### The awaited stop and its exact receipt settle cleanup
 

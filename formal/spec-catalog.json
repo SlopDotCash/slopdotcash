@@ -2302,7 +2302,7 @@
     },
     {
       "path": "spec/operations/localCommand.md",
-      "sha256": "60e080a22eb5b0923a808b4d772795b30a29eaf02a0f20b6ee893cff7eaca2c8",
+      "sha256": "54eba1490cd95dd2838c24db1006c68107a3de10b86a057bcd1d853effc05ba0",
       "module": "operations__localCommand",
       "stories": [
         {
@@ -2376,7 +2376,7 @@
     },
     {
       "path": "spec/operations/localValidator.md",
-      "sha256": "0be6d6ae4b7f821a39e78e99acb42b1e1141eb73eade5311b15770298f1dfcaa",
+      "sha256": "d67282b42a8e49b96e17c81e241ca8d6ad6a640666fdaedb5171733a09e98f61",
       "module": "operations__localValidator",
       "stories": [
         {
@@ -2406,12 +2406,12 @@
             "cancelStart",
             "alwaysCurrentStageFunded",
             "alwaysShellTestsWereFunded",
-            "alwaysUnstartedHasNoTest"
+            "alwaysOrderedProgress"
           ]
         },
         {
           "heading": "Story: Run tests only against the validator owned by the current stage / The awaited stop and its exact receipt settle cleanup",
-          "line": 54,
+          "line": 61,
           "definitions": [
             "canRecordStop",
             "recordStop",
@@ -2429,7 +2429,7 @@
         },
         {
           "heading": "Story: Run tests only against the validator owned by the current stage / Simulation includes stale receipts, primary failures, and two-stage completion",
-          "line": 87,
+          "line": 94,
           "definitions": [
             "receiptValues",
             "fundingValues",

@@ -37,7 +37,7 @@ forced signal and can settle as unconfirmed cleanup.
 pure def canInterrupt(c: LocalCommand, now: int, canceled: bool): bool =
   c.phase == Executing and now >= c.time and (canceled or now >= c.launchedAt + 60000)
 pure def interrupt(c: LocalCommand, now: int, canceled: bool): LocalCommand =
-  { ...c, phase: Interrupting, time: now, interruptedAt: now, code: 1 }
+  { ...c, phase: Interrupting, time: now, interruptedAt: now, code: if (c.code != 0) c.code else 1 }
 pure def canEscalate(c: LocalCommand, now: int, group: int, currentOwnership: bool): bool =
   c.phase == Interrupting and now >= c.time and now >= c.interruptedAt + 5000 and group == c.group and currentOwnership
 pure def escalate(c: LocalCommand, now: int, group: int, currentOwnership: bool): LocalCommand =
