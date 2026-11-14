@@ -116,3 +116,88 @@ lemma HalvingReconstructsAmount(amount: seq<int>)
   assert settlement__money_validAmount(settlement__money_reverseAmount(amount));
   HalvesReconstructFold(settlement__money_reverseAmount(amount), Half([], 0), 0);
 }
+
+// The highest unequal limb dominates the sum of the lower limbs.
+lemma CompareSuffixValue(a: seq<int>, b: seq<int>, work: seq<int>, index: int, previous: int)
+  requires 0 <= index <= (if |a| >= |b| then |a| else |b|)
+  requires index + |work| == (if |a| >= |b| then |a| else |b|)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(a[if index < |a| then index else |a|..]));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(b[if index < |b| then index else |b|..]));
+    (Std.Collections.Seq.FoldLeft((acc: settlement__money_CompareFold, ignored: int) => settlement__money_CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then 1 else -1))), settlement__money_CompareFold(index, previous), work).comparison ==
+      (if u > v then 1 else if u < v then -1 else previous))
+  decreases |work|
+{
+  if |work| > 0 {
+    var da := if index < |a| then a[index] else 0;
+    var db := if index < |b| then b[index] else 0;
+    var k := index + 1;
+    var at := a[if index < |a| then index else |a|..];
+    var bt := b[if index < |b| then index else |b|..];
+    var atNext := a[if k < |a| then k else |a|..];
+    var btNext := b[if k < |b| then k else |b|..];
+    var h := (n: int, d: int) => 1000*n + d;
+    if index < |a| {
+      assert da in a;
+      assert at == [da] + atNext;
+      PrependingLimbUpdatesValue(atNext, da);
+    } else {
+      assert at == [] && atNext == [];
+    }
+    if index < |b| {
+      assert db in b;
+      assert bt == [db] + btNext;
+      PrependingLimbUpdatesValue(btNext, db);
+    } else {
+      assert bt == [] && btNext == [];
+    }
+    assert 0 <= da < 1000 && 0 <= db < 1000;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(at));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(bt));
+    var tailA := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(atNext));
+    var tailB := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(btNext));
+    assert u == da + 1000 * tailA && v == db + 1000 * tailB;
+    var next := if da == db then previous else if da > db then 1 else -1;
+    CompareSuffixValue(a, b, work[1..], k, next);
+    if tailA > tailB { assert u > v; }
+    else if tailA < tailB { assert u < v; }
+    else { assert next == (if u > v then 1 else if u < v then -1 else previous); }
+  }
+}
+
+lemma AmountValueOrder(a: seq<int>, b: seq<int>)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(a));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(b));
+    settlement__money_compareAmounts(a, b) == (if u > v then 1 else if u < v then -1 else 0)
+{
+  var work := if |a| >= |b| then a else b;
+  CompareSuffixValue(a, b, work, 0, 0);
+  assert a[if 0 < |a| then 0 else |a|..] == a;
+  assert b[if 0 < |b| then 0 else |b|..] == b;
+}
+
+lemma lawHalfOrder_ensures(amount: seq<int>, larger: seq<int>)
+  ensures (lawHalfOrder(amount, larger) == true)
+{
+  if settlement__money_validAmount(amount) && settlement__money_validAmount(larger) && settlement__money_compareAmounts(amount, larger) <= 0 {
+    lawHalfValid_ensures(amount);
+    lawHalfValid_ensures(larger);
+    HalvingReconstructsAmount(amount);
+    HalvingReconstructsAmount(larger);
+    AmountValueOrder(amount, larger);
+    AmountValueOrder(half(amount).quotient, half(larger).quotient);
+    var h := (acc: int, limb: int) => 1000 * acc + limb;
+    var a := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(amount));
+    var b := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(larger));
+    var ha := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(half(amount).quotient));
+    var hb := Std.Collections.Seq.FoldLeft(h, 0, settlement__money_reverseAmount(half(larger).quotient));
+    assert a <= b;
+    assert a == 2 * ha + half(amount).remainder && b == 2 * hb + half(larger).remainder;
+    assert ha <= hb;
+  }
+}
