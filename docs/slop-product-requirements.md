@@ -778,6 +778,8 @@ Slop Cash S.P. funds this separate program from its program-token allocation. It
 
 The submitting maintainer may name a signed-in referrer. Keep the record immutable under migration `0055_project_referrer.sql`. Refuse self, steward, administrator, and moderator referrals at capture.
 
+A signed-in member may choose a name for their own referral link (migration `0124_referral_codes.sql`, `backend/referrals/codes.ts`). `/referral/<name>` forwards to the project form with that member's GitHub login as the referrer. The name is only a pointer to the GitHub account: capture, the immutable record and accrual are unchanged. Refuse reserved names, another GitHub account's login, a name another account holds or has held, and administrator and moderator accounts. A member has one name in use, may replace it, and may hold five names in all; a replaced name stops forwarding and stays with its account. A name nobody has in use forwards to the form without a referrer. Settings shows the link and states no reward. The operator proposed this on 14 November 2026; the owner's merge approves it.
+
 Accrue only from finalized project payouts recorded as `paid` in `payment_obligations`. The first period is November 2026. Only payouts within 12 months of the project's first paid obligation qualify. The initial rate is 3 program tokens per 1 USDC of gross payout, calculated per stablecoin micro-unit. The lifetime pool is 2,000,000 tokens; each referred project has a 250,000-token lifetime cap. Rate changes are prospective. Record each applied rate and never change filed accruals.
 
 Exclude team accounts (`lalalune`, `drew-dot-com`, administrators, and moderators), participation-banned accounts, non-stablecoin payouts, and projects with a public hold.
