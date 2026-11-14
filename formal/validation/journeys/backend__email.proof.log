@@ -1,0 +1,11 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/tmp/slop-owned-proofs-current/gen/proof/backend__email/backend__email.dfy.gen
+Created: /private/tmp/slop-owned-proofs-current/gen/proof/backend__email/backend__email.dfy
+Generated: /private/tmp/slop-owned-proofs-current/gen/proof/backend__email/backend__email.dfy.gen
+
+Dafny program verifier finished with 10 verified, 0 errors
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

@@ -60,11 +60,13 @@ pure def recordTests(c: Contribution, usefulResult: bool, testEvidence: bool): C
 ### Submission requires exact attribution and a fresh pre-submission read
 
 The Slop attribution line occurs once in an agent submission. The exact
-provider, model, and client name remain attached to the contribution.
+provider, model, and client name remain attached to the contribution. Attribution
+can be prepared before submission and stays immutable after the PR exists.
 
 ```quint
 pure def canSetAttribution(c: Contribution, provider: str, model: str, client: str, agentAssisted: bool, lineOnce: bool): bool =
-  not(agentAssisted) or (provider != "" and model != "" and client != "" and lineOnce)
+  c.phase != Submitted and c.phase != Accepted and
+  (not(agentAssisted) or (provider != "" and model != "" and client != "" and lineOnce))
 pure def setAttribution(c: Contribution, provider: str, model: str, client: str, agentAssisted: bool, lineOnce: bool): Contribution =
   { ...c, provider: provider, model: model, client: client,
     agentAssisted: agentAssisted, attributionLine: lineOnce }
@@ -85,6 +87,11 @@ pure def canRecordMerge(c: Contribution, exactAcceptedMerge: bool): bool = c.pha
 pure def recordMerge(c: Contribution, exactAcceptedMerge: bool): Contribution = { ...c, phase: Accepted }
 pure def alwaysSubmissionEvidence(c: Contribution): bool =
   (c.phase == Submitted or c.phase == Accepted) implies c.prNode != "" and c.usefulResult and c.testEvidence
+pure def stepSubmittedAttributionStable(before: Contribution, after: Contribution): bool =
+  (before.phase == Submitted or before.phase == Accepted) implies
+    before.provider == after.provider and before.model == after.model and
+    before.client == after.client and before.agentAssisted == after.agentAssisted and
+    before.attributionLine == after.attributionLine
 ```
 
 ### Reviewer advice records a recommendation without merge or platform authority
@@ -110,6 +117,15 @@ These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules.
 
 ```quint
+pure val weight_selectWork = 15
+pure val weight_beginWork = 15
+pure val weight_recordTests = 10
+pure val weight_confirmSubmissionRead = 10
+pure val weight_submit = 10
+pure val weight_recordRun = 5
+pure val weight_recordMerge = 5
+pure val weight_review = 5
+pure val weight_observe = 2
 pure val clientValues = Set("", "a", "b")
 pure val itemIdValues = Set(0, 1, 2)
 pure val modelValues = Set("", "a", "b")

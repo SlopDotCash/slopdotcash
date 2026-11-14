@@ -74,6 +74,18 @@ pure def lawAttesterCannotPay(operation: str): bool = operation == "ownerPayment
 pure def lawFeeWalletCannotRefund(operation: str): bool = operation == "refund" implies not(permittedOperation(FeeWallet, operation))
 ```
 
+### An unsigned binding has no retained signed attempt
+
+Discovered by the proof. Without this fact, an impossible Authorized state can
+already contain a signed binding, so signing its first attempt would overwrite
+retained history. The Unbound and Authorized phases precede every signature.
+
+```quint
+pure def alwaysUnsignedHasNoAttempt(b: Binding): bool =
+  (b.phase == Unbound or b.phase == Authorized) implies
+    b.bindingAttempt == 0 and b.signedAuthority == 0 and b.cancellationAttempt == 0
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

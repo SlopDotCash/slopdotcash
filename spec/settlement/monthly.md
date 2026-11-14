@@ -11,6 +11,7 @@ The full recipient list uses the full-width largest-remainder algorithm. Every w
 ```quint
 import allocation as A from "./allocation"
 import money as M from "./money"
+type ProjectEligibility = { revision: int, registered: bool, paused: bool, retired: bool, collectionAllowed: bool }
 type MonthlyPhase = Collecting | Proposed | Frozen | Reserved | Completed
 type Monthly = { phase: MonthlyPhase, period: int, revision: int, cap: M::Amount, total: M::Amount,
   shares: List[A::Share], automatic: bool, paid: List[int], receipts: List[int], wallets: List[int], cutoffReached: bool }
@@ -23,7 +24,7 @@ pure val amountValues = Set(List(0), List(1), List(4), List(6), List(0, 0, 0, 0,
 pure val capValues = Set(List(0), List(6), List(0, 0, 0, 0, 0, 0, 1))
 pure val sourceValues = Set("vault", "wrong")
 pure val assetValues = Set("asset", "wrong")
-pure val weightsValues = Set(List({ actor: 1, weight: List(1) }), List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }))
+pure val weightsValues = Set(List(), List({ actor: 1, weight: List(1) }), List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }))
 pure val sharesValues = Set(List({ actor: 1, amount: List(4) }), List({ actor: 1, amount: List(1) }, { actor: 2, amount: List(3) }))
 pure def hasActor(shares: List[A::Share], actor: int): bool = shares.some(s => s.actor == actor)
 pure def amountFor(shares: List[A::Share], actor: int): M::Amount =
@@ -32,13 +33,15 @@ pure def amountFor(shares: List[A::Share], actor: int): M::Amount =
 
 ### A complete closed-month ledger creates a proposal once
 
-Missing or conflicted source coverage refuses the proposal. The shared allocator resolves equal remainders by permanent actor ID. Repeat runs cannot add or replace proposal rows.
+Missing or conflicted source coverage refuses the proposal. Current registry and security evidence must identify the same project revision and permit collection. Paused and retired projects create no monthly proposal. A zero pool with no recipients produces one empty proposal and no obligations. The shared allocator resolves equal remainders by permanent actor ID. Repeat runs cannot add or replace proposal rows.
 
 ```quint
-pure def canPropose(m: Monthly, amount: M::Amount, weights: List[A::Weight], closed: bool, complete: bool): bool =
-  m.phase == Collecting and closed and complete and M::validAmount(amount) and M::compareAmounts(amount, m.cap) <= 0
+pure def projectMayClose(eligibility: ProjectEligibility, revision: int): bool = eligibility.revision == revision and
+  eligibility.registered and not(eligibility.paused) and not(eligibility.retired) and eligibility.collectionAllowed
+pure def canPropose(m: Monthly, amount: M::Amount, weights: List[A::Weight], closed: bool, complete: bool, eligibility: ProjectEligibility): bool =
+  m.phase == Collecting and closed and complete and projectMayClose(eligibility, m.revision) and M::validAmount(amount) and M::compareAmounts(amount, m.cap) <= 0
     and A::canCommitAllocation(amount, weights)
-pure def propose(m: Monthly, amount: M::Amount, weights: List[A::Weight], closed: bool, complete: bool): Monthly =
+pure def propose(m: Monthly, amount: M::Amount, weights: List[A::Weight], closed: bool, complete: bool, eligibility: ProjectEligibility): Monthly =
   { ...m, phase: Proposed, total: amount, shares: A::allocateAmounts(amount, weights) }
 ```
 
@@ -100,6 +103,21 @@ pure def stepPaidNeverReverts(before: Monthly, after: Monthly): bool = before.pa
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Reserved and m.wallets.length() == 0
 pure def sometimesIndependentPayment(m: Monthly): bool = m.phase == Reserved and m.paid.length() > 0
 pure def sometimesCompleted(m: Monthly): bool = m.phase == Completed and M::positiveAmount(m.total)
+pure def sometimesEmptyMonth(m: Monthly): bool = m.phase == Completed and M::equalAmounts(m.total, M::zero) and m.shares.length() == 0
+```
+
+### Unproposed and unfunded periods have no paid recipients
+
+Discovered by the proof. Without these lifecycle facts, an arbitrary Collecting
+state could already hold old paid-recipient IDs, and a new proposal would
+replace the shares those IDs belonged to. Proposal creation begins with no
+shares, receipts or paid recipients. Payment occurs only after full funding.
+
+```quint
+pure def alwaysCollectingEmpty(m: Monthly): bool = m.phase == Collecting implies
+  M::equalAmounts(m.total, M::zero) and m.shares.length() == 0 and m.paid.length() == 0 and m.receipts.length() == 0
+pure def alwaysUnfundedUnpaid(m: Monthly): bool =
+  (m.phase == Collecting or m.phase == Proposed or m.phase == Frozen) implies m.paid.length() == 0 and m.receipts.length() == 0
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence
@@ -112,4 +130,10 @@ pure val actorValues = Set(0, 1, 2)
 pure val heightValues = Set(0, 1, 2)
 pure val receiptValues = Set(0, 1, 2)
 pure val revisionValues = Set(0, 1, 2)
+pure val eligibilityValues = Set(
+  { revision: 1, registered: true, paused: false, retired: false, collectionAllowed: true },
+  { revision: 1, registered: true, paused: true, retired: false, collectionAllowed: false },
+  { revision: 2, registered: true, paused: false, retired: false, collectionAllowed: true })
+pure def lawPausedExcluded(eligibility: ProjectEligibility, revision: int): bool =
+  eligibility.paused implies not(projectMayClose(eligibility, revision))
 ```

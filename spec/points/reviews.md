@@ -12,11 +12,17 @@ the PR's value and is allocated in ten-Point units with deterministic ties.
 
 ### Review records preserve first qualification and highest band
 
+Discovered by the proof review, an empty synthetic review state with a
+five-Point assessment satisfied the prior invariants and accepted a first
+review below the ten-Point minimum. Assessments now retain the same minimum
+and ten-Point granularity already enforced by the assessment transition.
+
 ```quint
 type Reviewer = { actor: int, band: int, firstAt: int, reviewId: int }
 type Reviews = { assessed: int, reviewers: List[Reviewer], mergedAt: int, lastAt: int, lastId: int }
 pure val initial: Reviews = { assessed: 10, reviewers: List(), mergedAt: 10, lastAt: 0, lastId: 0 }
 pure def validBand(band: int): bool = band == 10 or band == 30 or band == 90 or band == 240
+pure def alwaysAssessmentValid(r: Reviews): bool = r.assessed >= 10 and r.assessed % 10 == 0
 pure def alwaysAtMostFive(r: Reviews): bool = r.reviewers.length() <= 5
 pure def alwaysUsefulBands(r: Reviews): bool = r.reviewers.every(v => validBand(v.band) and v.actor > 0 and v.firstAt < r.mergedAt)
 pure def alwaysDistinctReviewers(r: Reviews): bool = r.reviewers.every(v =>

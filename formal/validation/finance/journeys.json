@@ -1,0 +1,81 @@
+{
+  "results": [
+    {
+      "name": "settlement__vault",
+      "count": 7,
+      "passed": true,
+      "source": "spec/settlement/vault.md",
+      "sha256": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd"
+    },
+    {
+      "name": "settlement__monthly",
+      "count": 9,
+      "passed": true,
+      "source": "spec/settlement/monthly.md",
+      "sha256": "40a3a237ee6928eb77625433fcd20771156c5ba73c42b02b910297386533df83"
+    },
+    {
+      "name": "settlement__payment",
+      "count": 12,
+      "passed": true,
+      "source": "spec/settlement/payment.md",
+      "sha256": "590c4b1619c9ff03fe357dfae9652d7bccff2ea3bc9a3417eb01b233cc629d27"
+    },
+    {
+      "name": "settlement__payment",
+      "count": 7,
+      "passed": true,
+      "source": "spec/settlement/payment.md",
+      "sha256": "590c4b1619c9ff03fe357dfae9652d7bccff2ea3bc9a3417eb01b233cc629d27"
+    },
+    {
+      "name": "fees__conversion",
+      "count": 8,
+      "passed": true,
+      "source": "spec/fees/conversion.md",
+      "sha256": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49"
+    },
+    {
+      "name": "settlement__signer",
+      "count": 4,
+      "passed": true,
+      "source": "spec/settlement/signer.md",
+      "sha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9"
+    },
+    {
+      "name": "settlement__reserveRelease",
+      "count": 6,
+      "passed": true,
+      "source": "spec/settlement/reserveRelease.md",
+      "sha256": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856"
+    },
+    {
+      "name": "settlement__recovery",
+      "count": 5,
+      "passed": true,
+      "source": "spec/settlement/recovery.md",
+      "sha256": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7"
+    },
+    {
+      "name": "settlement__contributorAllocation",
+      "count": 5,
+      "passed": true,
+      "source": "spec/settlement/contributorAllocation.md",
+      "sha256": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f"
+    },
+    {
+      "name": "fees__buyback",
+      "count": 8,
+      "passed": true,
+      "source": "spec/fees/buyback.md",
+      "sha256": "15658499f55ef7af77a7e2ee3e5e8b42d5b89d5080bddc1a38ada159b4943107"
+    },
+    {
+      "name": "settlement__composition",
+      "count": 10,
+      "passed": true,
+      "source": "spec/settlement/composition.md",
+      "sha256": "5b69a5555d04c816df712351ce9badaf2e105fc0398e8663b45afd261a62d41c"
+    }
+  ]
+}

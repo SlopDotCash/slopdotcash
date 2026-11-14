@@ -74,6 +74,7 @@ pure def appeal(c: PrivateCase, by: int): PrivateCase = { ...c, previousFinding:
 pure def canResolveAppeal(c: PrivateCase, by: int, moderator: bool): bool = c.appealOpen and moderator and by != 1 and not(c.deciders.contains(by))
 pure def resolveAppeal(c: PrivateCase, by: int, moderator: bool, uphold: bool): PrivateCase = { ...c, finding: if (uphold) c.previousFinding else Undecided, award: if (uphold or c.award == CapacityExhausted) c.award else PendingAward, appealOpen: false, deciders: c.deciders.union(Set(by)) }
 pure def alwaysAppealState(c: PrivateCase): bool = c.appealOpen == (c.finding == Disputed)
+pure def alwaysAppealSource(c: PrivateCase): bool = c.appealOpen implies c.previousFinding != Disputed
 pure def stepPreservesApprovedAward(before: PrivateCase, after: PrivateCase): bool = before.award == ApprovedAward implies after.award == ApprovedAward
 pure def alwaysRelatedApproval(c: PrivateCase): bool = c.related and c.award == ApprovedAward implies c.relatedReview == RelatedApproved
 pure def sometimesCapacityWait(c: PrivateCase): bool = c.award == CapacityExhausted
@@ -115,6 +116,13 @@ verified funds, partial direct legs, successor requests and exact payment
 proofs. Technical acceptance creates no funded reserve. Frozen receipt-time
 terms control eligibility and fixed offers. A case and its fix form one
 financial work unit. Financial authority is checked independently of case roles.
+
+The receipt-time award contract in `spec/security/terms.md` governs every
+positive award admitted from this decision lifecycle. The stored term revision
+and receipt time accompany the approved gross amount into settlement.
+
+Discovered by the proof. An open appeal retains the preceding undisputed
+finding. Upholding an appeal restores that finding and clears the open appeal.
 
 ### Simulation samples exercise missing, matching and conflicting evidence
 

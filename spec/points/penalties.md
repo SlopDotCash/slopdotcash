@@ -17,9 +17,9 @@ type Finding = Spam | Scam | RuleViolation | LowQuality | Duplicate | OutOfScope
 type MonthSource = { source: int, points: int }
 type AppliedPenalty = { receipt: int, requested: int, applied: int, reversed: bool }
 type MonthlyPoints = { period: int, sources: List[MonthSource], penalties: List[AppliedPenalty],
-  financialFrozen: bool, frozenWeight: int }
+  financialFrozen: bool, frozenWeight: int, frozenPenaltyCount: int }
 pure val initial: MonthlyPoints = { period: 1, sources: List(), penalties: List(),
-  financialFrozen: false, frozenWeight: 0 }
+  financialFrozen: false, frozenWeight: 0, frozenPenaltyCount: 0 }
 pure def earnedPoints(m: MonthlyPoints): int = m.sources.foldl(0, (acc, s) => acc + s.points)
 pure def appliedDebits(m: MonthlyPoints): int = m.penalties.foldl(0, (acc, p) =>
   acc + (if (p.reversed) 0 else p.applied))
@@ -31,7 +31,7 @@ pure def alwaysUniqueSources(m: MonthlyPoints): bool = m.sources.every(s =>
   m.sources.select(other => other.source == s.source).length() == 1)
 pure def alwaysNonnegativeStanding(m: MonthlyPoints): bool = standingPoints(m) >= 0 and m.frozenWeight >= 0
 pure def canAddAccepted(m: MonthlyPoints, sourceId: int, points: int, period: int): bool =
-  sourceId > 0 and points >= 10 and period == m.period and not(m.financialFrozen) and
+  sourceId > 0 and points >= 10 and period == m.period and
   not(m.sources.some(s => s.source == sourceId))
 pure def addAccepted(m: MonthlyPoints, sourceId: int, points: int, period: int): MonthlyPoints =
   { ...m, sources: m.sources.append({ source: sourceId, points: points }) }
@@ -49,7 +49,7 @@ pure def requestedDebit(finding: Finding): int =
   if (finding == Spam) 30 else if (finding == Scam) 240 else if (finding == RuleViolation) 10 else 0
 pure def canApplyPenalty(m: MonthlyPoints, receipt: int, period: int, finding: Finding,
   authenticatedMember: bool, exactOwnRun: bool, nonMaintainer: bool, qualifiedDecision: bool): bool =
-  receipt > 0 and period == m.period and not(m.financialFrozen) and authenticatedMember and exactOwnRun and
+  receipt > 0 and period == m.period and authenticatedMember and exactOwnRun and
   nonMaintainer and qualifiedDecision and not(m.penalties.some(p => p.receipt == receipt))
 pure def applyPenalty(m: MonthlyPoints, receipt: int, period: int, finding: Finding,
   authenticatedMember: bool, exactOwnRun: bool, nonMaintainer: bool, qualifiedDecision: bool): MonthlyPoints = {
@@ -67,8 +67,9 @@ pure def alwaysUniqueDecisions(m: MonthlyPoints): bool = m.penalties.every(p =>
 ### Reversals restore the applied debit once and leave frozen rewards unchanged
 
 The moderator decision is separate from Slopbot's appeal triage. A freeze
-captures the actual accepted-work reward weight. Later appeal history can
-change standings while preserving the approved, scheduled, or paid reward.
+captures the actual accepted-work reward weight. Later accepted source records,
+penalty decisions and appeal history may change Points standings while the
+approved, scheduled, or paid reward keeps that frozen weight.
 
 ```quint
 pure def canReversePenalty(m: MonthlyPoints, receipt: int, moderatorUpheld: bool): bool =
@@ -77,7 +78,7 @@ pure def reversePenalty(m: MonthlyPoints, receipt: int, moderatorUpheld: bool): 
   { ...m, penalties: m.penalties.listMap(p => if (p.receipt == receipt) { ...p, reversed: true } else p) }
 pure def canFreezeRewards(m: MonthlyPoints): bool = not(m.financialFrozen)
 pure def freezeRewards(m: MonthlyPoints): MonthlyPoints =
-  { ...m, financialFrozen: true, frozenWeight: standingPoints(m) }
+  { ...m, financialFrozen: true, frozenWeight: standingPoints(m), frozenPenaltyCount: m.penalties.length() }
 pure def stepFrozenRewardStable(before: MonthlyPoints, after: MonthlyPoints): bool =
   before.financialFrozen implies after.financialFrozen and rewardWeight(after) == rewardWeight(before)
 pure def stepSourcesRetained(before: MonthlyPoints, after: MonthlyPoints): bool =
@@ -86,6 +87,8 @@ pure def sometimesSeveralSources(m: MonthlyPoints): bool = m.sources.length() >=
 pure def sometimesCappedPenalty(m: MonthlyPoints): bool = m.penalties.some(p => p.requested > p.applied and p.applied > 0)
 pure def sometimesReversedPenalty(m: MonthlyPoints): bool = m.penalties.some(p => p.reversed and p.applied > 0)
 pure def sometimesFrozen(m: MonthlyPoints): bool = m.financialFrozen
+pure def sometimesPenaltyAfterFreeze(m: MonthlyPoints): bool =
+  m.financialFrozen and m.penalties.length() > m.frozenPenaltyCount
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence

@@ -1,0 +1,1075 @@
+{
+  "scope": "Independent bounded validation of security, Slopbot and operations specifications. The root pnpm check is recorded separately.",
+  "toolchain": {
+    "node": "v26.13.1",
+    "quint": "0.33.1",
+    "dafny": "4.11.0"
+  },
+  "proofs": [
+    {
+      "unit": "operations__local.ts",
+      "total": 8,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/operations/local.md",
+      "sourceCurrent": true,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
+      "modelSha256": "cb581ed7d62f6bdbbc3d4c89b39553404deabb6b61d5bab9df4dacf724d9ef75",
+      "snapshot": "formal/validation/security/initial-operations__local.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/initial-operations__local.dfy",
+      "run": "initial"
+    },
+    {
+      "unit": "operations__notifications.ts",
+      "total": 50,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/operations/notifications.md",
+      "sourceCurrent": true,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "621a9f5047b1e99b82fd5edffd02651d76257ea073838c6f9914313a48de6505",
+      "modelSha256": "ad59b08751bb1fad7107da13a9aa4c2147da31c5d55b14409029f36e4974e2f0",
+      "snapshot": "formal/validation/security/initial-operations__notifications.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/initial-operations__notifications.dfy",
+      "run": "initial"
+    },
+    {
+      "unit": "security__privacy.ts",
+      "total": 12,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/privacy.md",
+      "sourceCurrent": true,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
+      "modelSha256": "772d32b0d939ab99b730efb25dbc26635eb0f975d1d4ae365d077c396379a5f4",
+      "snapshot": "formal/validation/security/initial-security__privacy.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/initial-security__privacy.dfy",
+      "run": "initial"
+    },
+    {
+      "unit": "security__admission.ts",
+      "total": 35,
+      "unproved": [
+        "request: (inv(s) ==> canRequest(s, repository, commit) ==> stepPreservesPermanentEvidence(s, request(s, repository, commit)))",
+        "acquire: (inv(s) ==> canAcquire(s, repository, commit, entries) ==> alwaysCoverageBounds(acquire(s, repository, commit, entries)))",
+        "acquire: (inv(s) ==> canAcquire(s, repository, commit, entries) ==> stepPreservesPermanentEvidence(s, acquire(s, repository, commit, entries)))",
+        "reviewBatch: (inv(s) ==> canReviewBatch(s, count, distinct) ==> stepPreservesPermanentEvidence(s, reviewBatch(s, count, distinct)))",
+        "checkDeterministically: (inv(s) ==> canCheckDeterministically(s) ==> stepPreservesPermanentEvidence(s, checkDeterministically(s)))",
+        "synthesize: (inv(s) ==> canSynthesize(s) ==> stepPreservesPermanentEvidence(s, synthesize(s)))",
+        "interrupt: (inv(s) ==> canInterrupt(s) ==> stepPreservesPermanentEvidence(s, interrupt(s)))",
+        "markIncomplete: (inv(s) ==> canMarkIncomplete(s) ==> stepPreservesPermanentEvidence(s, markIncomplete(s)))",
+        "resume: (inv(s) ==> canResume(s) ==> stepPreservesPermanentEvidence(s, resume(s)))",
+        "recordMalice: (inv(s) ==> canRecordMalice(s) ==> stepPreservesPermanentEvidence(s, recordMalice(s)))",
+        "step: inv(step(current, event))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/admission.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "e2e276557b6f0632d45f6a68f8b0bb081118e379da7d1192242035d35fdcb803",
+      "modelSha256": "7a367299241116241c5684eff61eb3d8194fee79ab4918716df09896be6afad9",
+      "snapshot": "formal/validation/security/initial-security__admission.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/initial-security__admission.dfy",
+      "run": "initial"
+    },
+    {
+      "unit": "slopbot__closure.ts",
+      "total": 29,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/slopbot/closure.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+      "modelSha256": "5c83cbd3c6cce12613b768ad2cc116625b8b1a58cc0a9593ff459279000f5884",
+      "snapshot": "formal/validation/security/initial-slopbot__closure.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/initial-slopbot__closure.dfy",
+      "run": "initial"
+    },
+    {
+      "unit": "security__admission.ts",
+      "total": 57,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/admission.md",
+      "sourceCurrent": true,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "e2e276557b6f0632d45f6a68f8b0bb081118e379da7d1192242035d35fdcb803",
+      "modelSha256": "4f375fb66ef1ad1dae5b2981d7ced57a8325dadbf2e1ba609676d86dabf549d3",
+      "snapshot": "formal/validation/security/final-security__admission.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/final-security__admission.dfy",
+      "run": "final"
+    },
+    {
+      "unit": "slopbot__closure.ts",
+      "total": 42,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/slopbot/closure.md",
+      "sourceCurrent": true,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+      "modelSha256": "3f694a76919fa04fccb45c7c603f27f61d75c038508cbf31218dcffb80be5aa5",
+      "snapshot": "formal/validation/security/final-slopbot__closure.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/final-slopbot__closure.dfy",
+      "run": "final"
+    },
+    {
+      "unit": "security__enforcement.ts",
+      "total": 0,
+      "unproved": [],
+      "errors": [
+        "ERROR: Dafny emission failed for 'cleared' in security__enforcement.ts: Unsupported Dafny method call: .includes() on unknown"
+      ],
+      "exhausted": [],
+      "source": "spec/security/enforcement.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": false,
+      "currentSourceSha256": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+      "modelSha256": "8e44132f4cde23cd4d1eafa4c3df3baf9a8ac5d44413060d717b46407903abf3",
+      "snapshot": "formal/validation/security/extra-security__enforcement.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": null,
+      "run": "extra"
+    },
+    {
+      "unit": "security__evidence.ts",
+      "total": 54,
+      "unproved": [
+        "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysPermanentRetained(markPermanent(e, ref)))",
+        "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysPermanentRetained(expireReference(e, ref)))",
+        "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysReferenceHistory(expireReference(e, ref)))",
+        "deleteBytes: (inv(e) ==> canDeleteBytes(e) ==> alwaysDeletionAuthorized(deleteBytes(e)))",
+        "step: inv(step(current, event))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/evidence.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": false,
+      "currentSourceSha256": "4199c84db9035505ecad7a69f2d0c63d2df4e642eb368673995b17e708fa755a",
+      "modelSha256": "ceabd856f8e3d58fdec80e7d757c6d194afdabfdf42852a4768adc890c04fef7",
+      "snapshot": "formal/validation/security/extra-security__evidence.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/extra-security__evidence.dfy",
+      "run": "extra"
+    },
+    {
+      "unit": "security__cases.ts",
+      "total": 114,
+      "unproved": [
+        "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysScreeningIsAdvisory(decide(c, by_, checkedEpoch, finding, related)))",
+        "resolveAppeal: (inv(c) ==> canResolveAppeal(c, by_, moderator) ==> alwaysAppealState(resolveAppeal(c, by_, moderator, uphold)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/cases.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": false,
+      "currentSourceSha256": "3c1ce2f2bab10141be7518785f3c6abaff1ef8f387d08922a12c79ef33d58fb7",
+      "modelSha256": "78ebf26825ef3cd4a78ca82f700ce7e1d86381b03bc56ecb490e5dba46b95239",
+      "snapshot": "formal/validation/security/extra-security__cases.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/extra-security__cases.dfy",
+      "run": "extra"
+    },
+    {
+      "unit": "operations__release.ts",
+      "total": 39,
+      "unproved": [],
+      "errors": [
+        "canCheck: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)): (((((((((((r.phase.Candidate? && validData(r)) && r.isolatedSecrets) && r.trustedWorkflow) && (r.branchHead == r.source)) && (artifactDigest > 0)) && (\"Types\" in r.passed)) && (\"Models\" in r.passed)) && (\"Unit\" in r.passed)) && (\"Browser\" in r.passed)) && (\"Isolation\" in r.passed)) && (\"Identity\" in r.passed))",
+        "dafny audit: operations__release.dfy(137,161): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: operations__release.dfy(137,188): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: operations__release.dfy(137,213): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: operations__release.dfy(137,241): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: operations__release.dfy(137,271): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: operations__release.dfy(137,300): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+        "dafny audit: dafny audit gave no verdict: operations__release.dfy(137,271): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)) / operations__release.dfy(137,300): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)) / 6 resolution/type errors detected in the_program"
+      ],
+      "exhausted": [],
+      "source": "spec/operations/release.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "ae60f49ec79024802f86d3017f06c1d264e2bd4bc133cc28858333a8d6f66eaa",
+      "modelSha256": "2d5bd3ec342d2e08ece8926a63caafa88bcf6ed03bfbdf394dbbac727df23b28",
+      "snapshot": "formal/validation/security/extra-operations__release.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/extra-operations__release.dfy",
+      "run": "extra"
+    },
+    {
+      "unit": "security__enforcement.ts",
+      "total": 130,
+      "unproved": [
+        "recognizeFrozen: (inv(e) ==> canRecognizeFrozen(e, repository, frozenMember) ==> alwaysFrozenOriginalOnly(recognizeFrozen(e, repository, frozenMember)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/enforcement.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": false,
+      "currentSourceSha256": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+      "modelSha256": "9cd06e8b22dbac8008685c49d9d6e7fa70e176e7c8ab93e0e6550e44e64a0d4c",
+      "snapshot": "formal/validation/security/enforcement-security__enforcement.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/enforcement-security__enforcement.dfy",
+      "run": "enforcement"
+    },
+    {
+      "unit": "security__evidence.ts",
+      "total": 54,
+      "unproved": [
+        "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysPermanentRetained(markPermanent(e, ref)))",
+        "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysPermanentRetained(expireReference(e, ref)))",
+        "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysReferenceHistory(expireReference(e, ref)))",
+        "deleteBytes: (inv(e) ==> canDeleteBytes(e) ==> alwaysDeletionAuthorized(deleteBytes(e)))",
+        "step: inv(step(current, event))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/evidence.md",
+      "sourceCurrent": false,
+      "dependencies": [],
+      "proofSourceCurrent": false,
+      "currentSourceSha256": "4199c84db9035505ecad7a69f2d0c63d2df4e642eb368673995b17e708fa755a",
+      "modelSha256": "3da0c1900b078654244c80f679c75998c47a526ad6687f480d2f3ffd1b91404a",
+      "snapshot": "formal/validation/security/evidence-security__evidence.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/evidence-security__evidence.dfy",
+      "run": "evidence"
+    },
+    {
+      "unit": "security__terms.ts",
+      "total": 5,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "source": "spec/security/terms.md",
+      "sourceCurrent": false,
+      "dependencies": [
+        {
+          "source": "spec/settlement/money.md",
+          "sourceCurrent": false,
+          "snapshotSha256": "acdfb40d996caa419734887995206bebb72947bd1af806e9f35d26550acc0dab"
+        }
+      ],
+      "proofSourceCurrent": true,
+      "currentSourceSha256": "b39ba589fb34a5e49273cf682975f56835eccb6ed168240b1a53decb5d1920d8",
+      "modelSha256": "ebbb9494e9fe33cbddf3f8c494640e39ae37786ee4a43951c431446e18c63b25",
+      "snapshot": "formal/validation/security/terms-security__terms.qnt",
+      "proofSourceSha256": null,
+      "generatedProof": "formal/validation/security/terms-security__terms.dfy",
+      "run": "terms"
+    }
+  ],
+  "simulations": [
+    {
+      "source": "spec/security/admission.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "e2e276557b6f0632d45f6a68f8b0bb081118e379da7d1192242035d35fdcb803",
+      "modelSha256": "7a367299241116241c5684eff61eb3d8194fee79ab4918716df09896be6afad9",
+      "snapshot": "formal/validation/security/initial-security__admission.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 70165847236319; to simulate again: pnpm exec quint run gen/security__admission.run.qnt --main security__admission_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 70165847236319",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "request",
+        "acquire",
+        "checkDeterministically",
+        "reviewBatch",
+        "retain",
+        "markIncomplete",
+        "resume",
+        "interrupt",
+        "synthesize",
+        "recordMalice",
+        "pass"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesClean",
+          "reached": true
+        },
+        {
+          "name": "sometimesIncomplete",
+          "reached": true
+        },
+        {
+          "name": "sometimesMalicious",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/security/enforcement.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+      "modelSha256": "d04d5b315a6caf403a8c05d8ef3d3e25d62c441a4e02734a907fdaf26dac49a4",
+      "snapshot": "formal/validation/security/initial-security__enforcement.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 240312722757772; to simulate again: pnpm exec quint run gen/security__enforcement.run.qnt --main security__enforcement_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 240312722757772",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "grantOwnerExemption",
+        "flag",
+        "revokeExemption",
+        "quarantine",
+        "recordClean",
+        "advanceDay",
+        "confirmMalice",
+        "requestAppeal",
+        "withdrawFlag",
+        "retire",
+        "banAccount",
+        "reinstateAccount",
+        "appendRepository",
+        "reinstateBan",
+        "recognizeFrozen"
+      ],
+      "missingEvents": [
+        "checkSetup",
+        "reinstateFlags",
+        "releaseQuarantine"
+      ],
+      "goals": [
+        {
+          "name": "sometimesQuarantineRecovered",
+          "reached": true
+        },
+        {
+          "name": "sometimesAppendedPaused",
+          "reached": true
+        },
+        {
+          "name": "sometimesRetired",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaused",
+          "reached": true
+        },
+        {
+          "name": "sometimesExempt",
+          "reached": true
+        },
+        {
+          "name": "sometimesReinstated",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/security/intake.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "d30ea471aa939fcb2ef6f6a11bc182d4f49edc3725b1ab166da1cf8a7ec3512a",
+      "modelSha256": "5585acd6bd8bced7b5be59de1fa73100db639f1f77e37650ee39bbea2c5e841e",
+      "snapshot": "formal/validation/security/initial-security__intake.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 178452422165736; to simulate again: pnpm exec quint run gen/security__intake.run.qnt --main security__intake_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 178452422165736",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "observeAvailability",
+        "begin",
+        "interruptUpload",
+        "retryUpload",
+        "verifyObject",
+        "commitReceipt",
+        "reconcileReceipt",
+        "authorizeForwarding",
+        "startForwarding",
+        "proveUnsent",
+        "confirmForwarding"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesUnavailable",
+          "reached": true
+        },
+        {
+          "name": "sometimesDenied",
+          "reached": true
+        },
+        {
+          "name": "sometimesReceived",
+          "reached": true
+        },
+        {
+          "name": "sometimesForwarded",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/security/cases.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "3c1ce2f2bab10141be7518785f3c6abaff1ef8f387d08922a12c79ef33d58fb7",
+      "modelSha256": "78ebf26825ef3cd4a78ca82f700ce7e1d86381b03bc56ecb490e5dba46b95239",
+      "snapshot": "formal/validation/security/initial-security__cases.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 234718297927773; to simulate again: pnpm exec quint run gen/security__cases.run.qnt --main security__cases_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 234718297927773",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "decide",
+        "recordPatch",
+        "consentRecognition",
+        "verifyPatch",
+        "revoke",
+        "screen",
+        "notifyOwner",
+        "approveDisclosure",
+        "appeal",
+        "resolveAppeal",
+        "publishDisclosure",
+        "retryScreen",
+        "recordCapacityWait",
+        "approveAward",
+        "declineAward"
+      ],
+      "missingEvents": [
+        "reviewRelated"
+      ],
+      "goals": [
+        {
+          "name": "sometimesCapacityWait",
+          "reached": true
+        },
+        {
+          "name": "sometimesAccepted",
+          "reached": true
+        },
+        {
+          "name": "sometimesAppealed",
+          "reached": true
+        },
+        {
+          "name": "sometimesVerifiedPatch",
+          "reached": true
+        },
+        {
+          "name": "sometimesDisclosed",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/security/privacy.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
+      "modelSha256": "772d32b0d939ab99b730efb25dbc26635eb0f975d1d4ae365d077c396379a5f4",
+      "snapshot": "formal/validation/security/initial-security__privacy.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 18272180483899; to simulate again: pnpm exec quint run gen/security__privacy.run.qnt --main security__privacy_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 18272180483899",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "expire",
+        "requestRead",
+        "recordAudit",
+        "deliver"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesReportRead",
+          "reached": true
+        },
+        {
+          "name": "sometimesScannerRead",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/security/evidence.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "4199c84db9035505ecad7a69f2d0c63d2df4e642eb368673995b17e708fa755a",
+      "modelSha256": "ceabd856f8e3d58fdec80e7d757c6d194afdabfdf42852a4768adc890c04fef7",
+      "snapshot": "formal/validation/security/initial-security__evidence.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 207694798781137; to simulate again: pnpm exec quint run gen/security__evidence.run.qnt --main security__evidence_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 207694798781137",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "registerReference",
+        "closeReference",
+        "advanceDay",
+        "startUpload",
+        "failUpload",
+        "expireReference",
+        "finishUpload",
+        "markPermanent",
+        "verifyBackup",
+        "claimDelete",
+        "deleteBytes",
+        "observeAbsence"
+      ],
+      "missingEvents": [
+        "recordCleanup"
+      ],
+      "goals": [
+        {
+          "name": "sometimesPermanent",
+          "reached": true
+        },
+        {
+          "name": "sometimesCleaned",
+          "reached": false
+        },
+        {
+          "name": "sometimesShared",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/slopbot/appeals.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "a655a74fff69a0e0e3107e7590dcbfbfdb46b7740a266bd882d024aeab42d6ad",
+      "modelSha256": "c919e99a0ed2f6ebfd5974e76577957dd8d0a303826b8875a2a1bf16e8343416",
+      "snapshot": "formal/validation/security/initial-slopbot__appeals.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 120436299812285; to simulate again: pnpm exec quint run gen/slopbot__appeals.run.qnt --main slopbot__appeals_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 120436299812285",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "open",
+        "age",
+        "propose",
+        "escalate",
+        "resolve",
+        "publish",
+        "replay",
+        "rejectProposal"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesEscalated",
+          "reached": true
+        },
+        {
+          "name": "sometimesReversed",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/slopbot/closure.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+      "modelSha256": "5c83cbd3c6cce12613b768ad2cc116625b8b1a58cc0a9593ff459279000f5884",
+      "snapshot": "formal/validation/security/initial-slopbot__closure.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 57511856067427; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 57511856067427",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "wait",
+        "saveConsent",
+        "recordActivation",
+        "recordQualification",
+        "recordVerdict",
+        "labelUncertain",
+        "recordParticipant"
+      ],
+      "missingEvents": [
+        "close",
+        "reopen"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertainLabel",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "source": "spec/slopbot/review.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "76b01aca7ff311f90438b2dd5fcf6c3aa3fcbecad2641c3e64c03e749aca3467",
+      "modelSha256": "455da08288e5c84866f291c6adf346f10f200b37a24d4d9d24724b94a7d98af9",
+      "snapshot": "formal/validation/security/initial-slopbot__review.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 259774741896432; to simulate again: pnpm exec quint run gen/slopbot__review.run.qnt --main slopbot__review_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 259774741896432",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "bindSource",
+        "start",
+        "failAttempt",
+        "finish",
+        "retry"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesComplete",
+          "reached": true
+        },
+        {
+          "name": "sometimesLimited",
+          "reached": true
+        },
+        {
+          "name": "sometimesBackup",
+          "reached": true
+        },
+        {
+          "name": "sometimesProviderFailure",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "source": "spec/operations/notifications.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "621a9f5047b1e99b82fd5edffd02651d76257ea073838c6f9914313a48de6505",
+      "modelSha256": "8bb2b56e7c4b0abc30e9364c08517de9bd433bfa7aa680793a0d287bda58930e",
+      "snapshot": "formal/validation/security/initial-operations__notifications.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 53236758342113; to simulate again: pnpm exec quint run gen/operations__notifications.run.qnt --main operations__notifications_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 53236758342113",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "changeDestination",
+        "consent",
+        "optOut",
+        "save",
+        "escalate",
+        "acknowledge",
+        "read",
+        "queue",
+        "claim",
+        "retirePreparation"
+      ],
+      "missingEvents": [
+        "send",
+        "accept",
+        "reject",
+        "loseResponse",
+        "proveUnsent",
+        "confirmDelivery"
+      ],
+      "goals": [
+        {
+          "name": "sometimesDelivered",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": false
+        },
+        {
+          "name": "sometimesCancelled",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/operations/backup.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "c086269c8333750dabdedfd14819715b38a93b89aca1e56331e6c09e4290a04f",
+      "modelSha256": "1816d52449a4d7e03e663b4366ba28525348a013968557fd98684607f752f30c",
+      "snapshot": "formal/validation/security/initial-operations__backup.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 69084271841434; to simulate again: pnpm exec quint run gen/operations__backup.run.qnt --main operations__backup_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 69084271841434",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "start",
+        "copyPage",
+        "interrupt",
+        "advanceDay",
+        "resume",
+        "verifyPage",
+        "finish",
+        "expireBackup",
+        "beginRestore",
+        "refuseRestore",
+        "checkChain",
+        "writeDestination",
+        "readDestination"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesBackupComplete",
+          "reached": true
+        },
+        {
+          "name": "sometimesRestored",
+          "reached": true
+        },
+        {
+          "name": "sometimesInterrupted",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/operations/local.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
+      "modelSha256": "cb581ed7d62f6bdbbc3d4c89b39553404deabb6b61d5bab9df4dacf724d9ef75",
+      "snapshot": "formal/validation/security/initial-operations__local.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 134282255201288; to simulate again: pnpm exec quint run gen/operations__local.run.qnt --main operations__local_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 134282255201288",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "advanceTime",
+        "issue",
+        "consume"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesLocalSession",
+          "reached": true
+        },
+        {
+          "name": "sometimesExpired",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/operations/release.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "ae60f49ec79024802f86d3017f06c1d264e2bd4bc133cc28858333a8d6f66eaa",
+      "modelSha256": "77029b75f090e295d54deee7c4382f728312afb0b043f690877d7697649349d7",
+      "snapshot": "formal/validation/security/initial-operations__release.qnt",
+      "run": "initial",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 219140329613618; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 219140329613618",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "configure",
+        "collectData",
+        "retainSnapshot",
+        "recordGate",
+        "observeBranchHead"
+      ],
+      "missingEvents": [
+        "check",
+        "acquireLock",
+        "publish",
+        "loseResponse",
+        "reconcilePublication",
+        "proveUnpublished",
+        "verifyServed"
+      ],
+      "goals": [
+        {
+          "name": "sometimesVerified",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": false
+        },
+        {
+          "name": "sometimesStaging",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "source": "spec/security/enforcement.md",
+      "sourceCurrent": false,
+      "currentSourceSha256": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+      "modelSha256": "8e44132f4cde23cd4d1eafa4c3df3baf9a8ac5d44413060d717b46407903abf3",
+      "snapshot": "formal/validation/security/refined-security__enforcement.qnt",
+      "run": "refined",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 141794589146409; to simulate again: pnpm exec quint run gen/security__enforcement.run.qnt --main security__enforcement_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 141794589146409",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "retire",
+        "advanceDay",
+        "flag",
+        "requestAppeal",
+        "withdrawFlag",
+        "quarantine",
+        "recordClean",
+        "releaseQuarantine",
+        "grantOwnerExemption",
+        "confirmMalice",
+        "revokeExemption",
+        "reinstateBan",
+        "recognizeFrozen",
+        "appendRepository"
+      ],
+      "missingEvents": [
+        "checkSetup",
+        "reinstateFlags"
+      ],
+      "goals": [
+        {
+          "name": "sometimesQuarantineRecovered",
+          "reached": true
+        },
+        {
+          "name": "sometimesAppendedPaused",
+          "reached": true
+        },
+        {
+          "name": "sometimesRetired",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaused",
+          "reached": true
+        },
+        {
+          "name": "sometimesExempt",
+          "reached": true
+        },
+        {
+          "name": "sometimesReinstated",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "source": "spec/slopbot/closure.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "c049653421bb1df3c14b4e5480ba1dbf4a41aae2d705fd0e8f95094835a11978",
+      "modelSha256": "3f694a76919fa04fccb45c7c603f27f61d75c038508cbf31218dcffb80be5aa5",
+      "snapshot": "formal/validation/security/refined-slopbot__closure.qnt",
+      "run": "refined",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 109909688423980; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 109909688423980",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "saveConsent",
+        "wait",
+        "recordVerdict",
+        "recordActivation",
+        "recordParticipant",
+        "recordQualification",
+        "labelUncertain"
+      ],
+      "missingEvents": [
+        "close",
+        "labelOutOfScope",
+        "reopen"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertainLabel",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "source": "spec/slopbot/review.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "76b01aca7ff311f90438b2dd5fcf6c3aa3fcbecad2641c3e64c03e749aca3467",
+      "modelSha256": "aee5237fb612546267e153afb589e22964e9f4180ee40a645acfe3cf3131694e",
+      "snapshot": "formal/validation/security/refined-slopbot__review.qnt",
+      "run": "refined",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 259774741896432; to simulate again: pnpm exec quint run gen/slopbot__review.run.qnt --main slopbot__review_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 259774741896432",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "bindSource",
+        "start",
+        "failAttempt",
+        "finish",
+        "retry"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesComplete",
+          "reached": true
+        },
+        {
+          "name": "sometimesLimited",
+          "reached": true
+        },
+        {
+          "name": "sometimesBackup",
+          "reached": true
+        },
+        {
+          "name": "sometimesProviderFailure",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "source": "spec/operations/notifications.md",
+      "sourceCurrent": true,
+      "currentSourceSha256": "621a9f5047b1e99b82fd5edffd02651d76257ea073838c6f9914313a48de6505",
+      "modelSha256": "ad59b08751bb1fad7107da13a9aa4c2147da31c5d55b14409029f36e4974e2f0",
+      "snapshot": "formal/validation/security/refined-operations__notifications.qnt",
+      "run": "refined",
+      "typecheck": true,
+      "simulation": true,
+      "replay": true,
+      "command": "seed 53236758342113; to simulate again: pnpm exec quint run gen/operations__notifications.run.qnt --main operations__notifications_run --step step --invariant inv --max-samples 300 --max-steps 30 --mbt --seed 53236758342113",
+      "maxSamples": 300,
+      "maxSteps": 30,
+      "retainedTraceCount": 30,
+      "events": [
+        "save",
+        "read",
+        "escalate",
+        "changeDestination",
+        "acknowledge",
+        "consent",
+        "optOut",
+        "queue"
+      ],
+      "missingEvents": [
+        "claim",
+        "send",
+        "retirePreparation",
+        "accept",
+        "reject",
+        "loseResponse",
+        "proveUnsent",
+        "confirmDelivery"
+      ],
+      "goals": [
+        {
+          "name": "sometimesDelivered",
+          "reached": false
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": false
+        },
+        {
+          "name": "sometimesCancelled",
+          "reached": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Simulation uses 300 seeded traces of 30 events with 30 retained traces. It is not exhaustive state exploration.",
+    "sourceCurrent marks exact current Quint equality. Changed snapshots remain historical results.",
+    "These checks compare the model with its generated core. Application conformance and external provider, storage, authority and delivery evidence require future implementation.",
+    "No proof exceptions were accepted and no application code was added."
+  ]
+}

@@ -10,14 +10,15 @@ Current GitHub authority and fresh evidence are adapter-verified inputs.
 ```quint
 type Restriction = Available | AdmissionPaused | FlagPaused | Quarantined | ConfirmedBan
 type ContributorFlag = { receipt: int, actor: int, filedDay: int }
-type Enforcement = { restriction: Restriction, appealOpen: bool, bannedAccounts: Set[int], retired: bool, exemptionEvents: List[str], required: Set[int], clean: Set[int], flags: List[ContributorFlag], withdrawn: Set[int], clockDay: int, scanEpoch: int, restrictionEpoch: int, notice: bool, original: Set[int], frozenExemptions: Set[int], ownerExemptions: Set[int], revokedExemptions: Set[int] }
-pure val initial: Enforcement = { restriction: Available, appealOpen: false, bannedAccounts: Set(), retired: false, exemptionEvents: List(), required: Set(1), clean: Set(), flags: List(), withdrawn: Set(), clockDay: 0, scanEpoch: 0, restrictionEpoch: 0, notice: false, original: Set(1), frozenExemptions: Set(), ownerExemptions: Set(), revokedExemptions: Set() }
-pure def activeFlag(e: Enforcement, f: ContributorFlag): bool = not(e.withdrawn.contains(f.receipt)) and e.clockDay - f.filedDay < 90
+type Enforcement = { restriction: Restriction, appealOpen: bool, retired: bool, exemptionEvents: List[str], required: Set[int], clean: Set[int], flags: List[ContributorFlag], resolvedFlags: List[ContributorFlag], withdrawn: Set[int], clockDay: int, scanEpoch: int, restrictionEpoch: int, notice: bool, original: Set[int], frozenExemptions: Set[int], ownerExemptions: Set[int], revokedExemptions: Set[int] }
+pure val initial: Enforcement = { restriction: Available, appealOpen: false, retired: false, exemptionEvents: List(), required: Set(1), clean: Set(), flags: List(), resolvedFlags: List(), withdrawn: Set(), clockDay: 0, scanEpoch: 0, restrictionEpoch: 0, notice: false, original: Set(1), frozenExemptions: Set(), ownerExemptions: Set(), revokedExemptions: Set() }
+pure def activeFlag(e: Enforcement, f: ContributorFlag): bool = not(e.withdrawn.contains(f.receipt)) and not(e.resolvedFlags.includes(f)) and e.clockDay - f.filedDay < 90
 pure def flagCount(e: Enforcement): int = e.flags.foldl(0, (count, f) => count + (if (activeFlag(e, f)) 1 else 0))
-pure def cleared(e: Enforcement): bool = e.required.subseteq(e.clean.union(e.frozenExemptions).union(e.ownerExemptions.exclude(e.revokedExemptions)))
+pure def twoActiveFlaggers(e: Enforcement): bool = e.flags.some(first => activeFlag(e, first) and e.flags.some(second => activeFlag(e, second) and first.actor != second.actor))
+pure def cleared(e: Enforcement): bool = e.required.forall(id => e.clean.contains(id) or e.frozenExemptions.contains(id) or (e.ownerExemptions.contains(id) and not(e.revokedExemptions.contains(id))))
 pure def mayContribute(e: Enforcement): bool = not(e.retired) and e.restriction == Available and cleared(e)
 pure def canRecordClean(e: Enforcement, repository: int, startedEpoch: int): bool = e.required.contains(repository) and not(e.retired) and startedEpoch == e.restrictionEpoch
-pure def recordClean(e: Enforcement, repository: int, startedEpoch: int): Enforcement = { ...e, clean: e.clean.union(Set(repository)), scanEpoch: e.restrictionEpoch, restriction: if (e.restriction == AdmissionPaused and e.required.subseteq(e.clean.union(Set(repository)).union(e.frozenExemptions).union(e.ownerExemptions.exclude(e.revokedExemptions)))) Available else e.restriction }
+pure def recordClean(e: Enforcement, repository: int, startedEpoch: int): Enforcement = { ...e, clean: e.clean.union(Set(repository)), scanEpoch: e.restrictionEpoch, restriction: if (e.restriction == AdmissionPaused and e.required.forall(id => id == repository or e.clean.contains(id) or e.frozenExemptions.contains(id) or (e.ownerExemptions.contains(id) and not(e.revokedExemptions.contains(id))))) Available else e.restriction }
 pure val startedEpochValues = Set(0, 1, 2, 3)
 pure def canAppendRepository(e: Enforcement, repository: int): bool = mayContribute(e) and repository > 0 and not(e.required.contains(repository))
 pure def appendRepository(e: Enforcement, repository: int): Enforcement = { ...e, required: e.required.union(Set(repository)), restriction: AdmissionPaused }
@@ -31,7 +32,11 @@ The eligibility input verifies membership, contribution eligibility and absence
 of disqualifying self or maintainer identity. Repeated live flags by one actor count
 once. An account must be at least 30 days old and have one accepted Slop
 contribution. Each flag counts for 90 days. Withdrawal stops that receipt
-counting while retaining its history. The pause immediately prevents skill publication and collection.
+counting while retaining its history. Scan reinstatement records resolved flags
+separately from voluntary withdrawals. The pause immediately prevents skill publication and collection.
+
+Discovered by the proof. An admission pause cannot mask a two-contributor
+flag pause, so completing admission cannot reactivate a flagged project.
 
 ```quint
 pure def eligibleFlag(member: bool, ageDays: int, acceptedContribution: bool, ownProject: bool): bool = member and ageDays >= 30 and acceptedContribution and not(ownProject)
@@ -39,9 +44,10 @@ pure def canFlag(e: Enforcement, actor: int, receipt: int, eligible: bool): bool
 pure def flag(e: Enforcement, actor: int, receipt: int, eligible: bool): Enforcement = {
   ...e,
   flags: e.flags.append({ receipt: receipt, actor: actor, filedDay: e.clockDay }),
-  restriction: if (flagCount(e) >= 1) FlagPaused else e.restriction,
-  clean: if (flagCount(e) >= 1) Set() else e.clean,
-  restrictionEpoch: if (flagCount(e) >= 1) e.restrictionEpoch + 1 else e.restrictionEpoch
+  restriction: if (e.flags.some(f => activeFlag(e, f))) FlagPaused else e.restriction,
+  notice: e.notice or e.flags.some(f => activeFlag(e, f)),
+  clean: if (e.flags.some(f => activeFlag(e, f))) Set() else e.clean,
+  restrictionEpoch: if (e.flags.some(f => activeFlag(e, f))) e.restrictionEpoch + 1 else e.restrictionEpoch
 }
 pure def canWithdrawFlag(e: Enforcement, by: int, receipt: int): bool = e.flags.some(f => f.actor == by and f.receipt == receipt) and not(e.withdrawn.contains(receipt))
 pure def withdrawFlag(e: Enforcement, by: int, receipt: int): Enforcement = { ...e, withdrawn: e.withdrawn.union(Set(receipt)) }
@@ -49,18 +55,21 @@ pure def canAdvanceDay(e: Enforcement, day: int): bool = day >= e.clockDay
 pure def advanceDay(e: Enforcement, day: int): Enforcement = { ...e, clockDay: day }
 pure val dayValues = Set(0, 30, 89, 90, 91)
 pure def alwaysFlagTimes(e: Enforcement): bool = e.flags.every(f => f.filedDay <= e.clockDay)
-pure def alwaysFlagPause(e: Enforcement): bool = flagCount(e) >= 2 implies e.restriction != Available
+pure def alwaysFlagPause(e: Enforcement): bool = twoActiveFlaggers(e) implies e.restriction != Available and e.restriction != AdmissionPaused
+pure def alwaysFlagNotice(e: Enforcement): bool = twoActiveFlaggers(e) implies e.notice
+pure def alwaysActiveActorsUnique(e: Enforcement): bool = e.flags.every(first => e.flags.every(second => (activeFlag(e, first) and activeFlag(e, second) and first.actor == second.actor) implies first.receipt == second.receipt))
+pure def alwaysResolvedHistory(e: Enforcement): bool = e.resolvedFlags.every(f => e.flags.includes(f))
 ```
 
 ### Fresh clean scans resolve flag-only pauses while humans decide confirmed malice
 
 ```quint
 pure def canReinstateFlags(e: Enforcement): bool = e.restriction == FlagPaused and e.required.subseteq(e.clean) and e.scanEpoch == e.restrictionEpoch
-pure def reinstateFlags(e: Enforcement): Enforcement = { ...e, restriction: Available, withdrawn: e.flags.foldl(e.withdrawn, (receipts, f) => receipts.union(Set(f.receipt))) }
+pure def reinstateFlags(e: Enforcement): Enforcement = { ...e, restriction: Available, resolvedFlags: e.flags }
 pure def canConfirmMalice(e: Enforcement, moderator: bool, evidence: bool): bool = moderator and evidence and not(e.retired)
 pure def confirmMalice(e: Enforcement, moderator: bool, evidence: bool): Enforcement = { ...e, restriction: ConfirmedBan, restrictionEpoch: e.restrictionEpoch + 1, clean: Set(), notice: true, appealOpen: false }
 pure def canReinstateBan(e: Enforcement, moderator: bool, independent: bool): bool = moderator and independent and e.appealOpen and e.restriction == ConfirmedBan and e.required.subseteq(e.clean) and e.scanEpoch == e.restrictionEpoch
-pure def reinstateBan(e: Enforcement, moderator: bool, independent: bool): Enforcement = { ...e, restriction: Available, appealOpen: false, withdrawn: e.flags.foldl(e.withdrawn, (receipts, f) => receipts.union(Set(f.receipt))) }
+pure def reinstateBan(e: Enforcement, moderator: bool, independent: bool): Enforcement = { ...e, restriction: Available, appealOpen: false, resolvedFlags: e.flags }
 pure def alwaysBanNotice(e: Enforcement): bool = e.restriction == ConfirmedBan implies e.notice
 ```
 
@@ -84,26 +93,25 @@ pure def quarantine(e: Enforcement, administrator: bool): Enforcement = { ...e, 
 pure def canRequestAppeal(e: Enforcement, currentOwner: bool): bool = currentOwner and e.restriction != Available and e.restriction != AdmissionPaused and not(e.appealOpen)
 pure def requestAppeal(e: Enforcement, currentOwner: bool): Enforcement = { ...e, appealOpen: true }
 pure def canReleaseQuarantine(e: Enforcement, moderator: bool, independent: bool): bool = moderator and independent and e.appealOpen and e.restriction == Quarantined and e.required.subseteq(e.clean) and e.scanEpoch == e.restrictionEpoch
-pure def releaseQuarantine(e: Enforcement, moderator: bool, independent: bool): Enforcement = { ...e, restriction: Available, appealOpen: false, withdrawn: e.flags.foldl(e.withdrawn, (receipts, f) => receipts.union(Set(f.receipt))) }
-pure def canBanAccount(e: Enforcement, actor: int, moderator: bool, individualEvidence: bool): bool = actor > 0 and moderator and individualEvidence and not(e.bannedAccounts.contains(actor))
-pure def banAccount(e: Enforcement, actor: int, moderator: bool, individualEvidence: bool): Enforcement = { ...e, bannedAccounts: e.bannedAccounts.union(Set(actor)) }
-pure def canReinstateAccount(e: Enforcement, actor: int, moderator: bool, independent: bool): bool = e.bannedAccounts.contains(actor) and moderator and independent
-pure def reinstateAccount(e: Enforcement, actor: int, moderator: bool, independent: bool): Enforcement = { ...e, bannedAccounts: e.bannedAccounts.exclude(Set(actor)) }
+pure def releaseQuarantine(e: Enforcement, moderator: bool, independent: bool): Enforcement = { ...e, restriction: Available, appealOpen: false, resolvedFlags: e.flags }
 pure def canRetire(e: Enforcement, currentOwner: bool): bool = currentOwner and not(e.retired)
 pure def retire(e: Enforcement, currentOwner: bool): Enforcement = { ...e, retired: true }
 pure def alwaysRestrictionsBlockWork(e: Enforcement): bool = (e.retired or e.restriction != Available) implies not(mayContribute(e))
 pure def stepRetainsExemptionHistory(before: Enforcement, after: Enforcement): bool = after.exemptionEvents.length() >= before.exemptionEvents.length()
 pure def alwaysFrozenOriginalOnly(e: Enforcement): bool = e.frozenExemptions.subseteq(e.original)
-pure def stepProjectRecoveryPreservesAccountBans(before: Enforcement, via: str, after: Enforcement): bool = (via == "reinstateFlags" or via == "reinstateBan" or via == "releaseQuarantine") implies before.bannedAccounts.subseteq(after.bannedAccounts)
 pure def sometimesQuarantineRecovered(e: Enforcement): bool = e.restriction == Available and e.restrictionEpoch > 0 and not(e.appealOpen)
 pure def sometimesAppendedPaused(e: Enforcement): bool = e.restriction == AdmissionPaused
 pure def sometimesRetired(e: Enforcement): bool = e.retired
-pure def sometimesReinstated(e: Enforcement): bool = e.restriction == Available and e.notice and flagCount(e) == 0
+pure def sometimesReinstated(e: Enforcement): bool = e.restriction == Available and e.notice and not(e.flags.some(f => activeFlag(e, f)))
 pure def sometimesPaused(e: Enforcement): bool = e.restriction == FlagPaused
 pure def sometimesExempt(e: Enforcement): bool = e.ownerExemptions.exclude(e.revokedExemptions).size() > 0
 ```
 
 Every restriction preserves registry rows, Points, cases and funded obligations.
+Account bans belong to `spec/access.md`. Reinstating this project's enforcement
+state does not dispatch an account-reinstatement event. The retained moderator
+appeal and independent-review requirements come from `api_project_enforcement`
+at the pinned main source revision.
 Append-repository setup and all-repository activation are modeled by the project
 registry specification. Collection never reads a paused or retired project.
 
@@ -114,9 +122,8 @@ value allowed by their declared types and product rules.
 
 ```quint
 pure val actorValues = Set(0, 1, 2)
-pure val ageDaysValues = Set(0, 1, 2)
+pure val ageDaysValues = Set(-1, 29, 30, 31)
 pure val byValues = Set(0, 1, 2)
 pure val receiptValues = Set(0, 1, 2)
 pure val repositoryValues = Set(0, 1, 2)
-pure val viaValues = Set("", "a", "b")
 ```

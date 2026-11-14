@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "checks": 11027,
+  "inputCount": 49,
+  "seed": "1",
+  "largestInput": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+  "sourceFiles": [
+    {
+      "file": "spec/settlement/money.md",
+      "sha256": "62e08dce0afbb12dae69a65abf8b4067c4f7bdeefca9bf8ca8e2557e55dcce81"
+    },
+    {
+      "file": "spec/settlement/allocation.md",
+      "sha256": "ad486e0ba4d4ffb8e358c6a74aecd78e27eca60d095447ed50b7d185a16f84a5"
+    }
+  ],
+  "method": "Finite independent BigInt comparison of arithmetic, division, fee rounding, allocation conservation and floor bounds. Empty zero-pool admission and positive empty-pool refusal are included."
+}

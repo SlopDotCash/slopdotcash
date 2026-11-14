@@ -8,6 +8,7 @@ current authority and human approval remain separate facts.
 - [Project restrictions](./enforcement.md)
 - [Private intake](./intake.md)
 - [Case decisions](./cases.md)
+- [Receipt-time private award terms](./terms.md)
 - [Shared evidence retention](./evidence.md)
 - [Private access and retention](./privacy.md)
 

@@ -1,0 +1,113 @@
+[
+  {
+    "unit": "backend__accounts.ts",
+    "spec": "spec/backend/accounts.md",
+    "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+    "inputs": {
+      "spec/backend/accounts.md": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356"
+    },
+    "total": 75,
+    "unproved": [
+      "connectX: (inv(a) ==> canConnectX(a, by_, xId, oauthVerified, reservationOwned, disclosed) ==> alwaysIdentityIds(connectX(a, by_, xId, oauthVerified, reservationOwned, disclosed)))",
+      "connectX: (inv(a) ==> canConnectX(a, by_, xId, oauthVerified, reservationOwned, disclosed) ==> alwaysXReservation(connectX(a, by_, xId, oauthVerified, reservationOwned, disclosed)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "backend__email.ts",
+    "spec": "spec/backend/email.md",
+    "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+    "inputs": {
+      "spec/backend/email.md": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6"
+    },
+    "total": 14,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "backend__projects.ts",
+    "spec": "spec/backend/projects.md",
+    "sourceSha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+    "inputs": {
+      "spec/backend/projects.md": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614"
+    },
+    "total": 132,
+    "unproved": [
+      "completePublish: (inv(p) ==> canCompletePublish(p, by_) ==> alwaysRetiredPaused(completePublish(p, by_)))",
+      "completePublish: (inv(p) ==> canCompletePublish(p, by_) ==> alwaysActiveClearance(completePublish(p, by_)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "backend__wallets.ts",
+    "spec": "spec/backend/wallets.md",
+    "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+    "inputs": {
+      "spec/backend/wallets.md": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd"
+    },
+    "total": 30,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "backend.ts",
+    "spec": "spec/backend/index.md",
+    "sourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+    "inputs": {
+      "spec/backend/index.md": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f"
+    },
+    "total": 0,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "contributor__evidence.ts",
+    "spec": "spec/contributor/evidence.md",
+    "sourceSha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+    "inputs": {
+      "spec/contributor/evidence.md": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b"
+    },
+    "total": 34,
+    "unproved": [
+      "persist: (inv(e) ==> canPersist(e, durableObject, digest) ==> alwaysStoredExact(persist(e, durableObject, digest)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "contributor__installation.ts",
+    "spec": "spec/contributor/installation.md",
+    "sourceSha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+    "inputs": {
+      "spec/contributor/installation.md": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb"
+    },
+    "total": 52,
+    "unproved": [
+      "verify: (inv(i) ==> canVerify(i, canonicalTree, approvedDigest, sameRenderedBytes, permitted) ==> alwaysRetainedVersions(verify(i, canonicalTree, approvedDigest, sameRenderedBytes, permitted)))",
+      "commit: (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysActiveRetained(commit(i, relativeLink, atomicRename)))",
+      "step: inv(step(current, event))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "points__authorship.ts",
+    "spec": "spec/points/authorship.md",
+    "sourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+    "inputs": {
+      "spec/points/authorship.md": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055"
+    },
+    "total": 30,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  }
+]

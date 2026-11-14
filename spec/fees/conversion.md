@@ -21,6 +21,8 @@ pure def dailyCeiling(network: Network): int =
 ### A fee attempt starts from a finalized fee receipt
 
 ```quint
+type FeeQuote = { gasValue: int, nativeCost: int, slippageBps: int, impactBps: int, outputWallet: str, route: str, minimumOutput: int }
+type FeeReceipt = { attempt: int, receipt: int, wallet: str, asset: str, output: int, actualNative: int, finalized: bool, succeeded: bool }
 type FeePhase = Empty | Received | Reserved | Signed | Pending | Uncertain | Converted | Retained | Failed
  type FeeConversion = { expiryObservations: List[ExpiryObservation], receivedReceipts: List[int], finalizedReceipts: List[int], attempts: List[int],
   minimumOutput: int, outputAmount: int, phase: FeePhase, network: Network, wallet: str, asset: str,
@@ -35,7 +37,6 @@ pure val initial: FeeConversion = { expiryObservations: List(), receivedReceipts
 pure def canChooseNetwork(f: FeeConversion, network: Network): bool = f.phase == Empty and f.receivedReceipts.length() == 0
 pure def chooseNetwork(f: FeeConversion, network: Network): FeeConversion = { ...f, network: network }
 pure val valueValues = Set(5000000, 25000000, 1000000000)
-pure val nativeCostValues = Set(50000, 1000000, 100000)
 pure def canReceive(f: FeeConversion, receipt: int, value: int, asset: str, finalized: bool): bool =
   f.phase == Empty and receipt > 0 and not(f.receivedReceipts.includes(receipt))
     and value > 0 and asset != "" and finalized
@@ -45,11 +46,6 @@ pure def canEnableRelease(f: FeeConversion, by: str): bool = f.phase == Received
 pure def enableRelease(f: FeeConversion, by: str): FeeConversion = { ...f, releaseEnabled: true }
 pure val byValues = Set("owner", "wrong")
 pure val assetValues = Set("token", "USDC", "")
-pure val minimumOutputValues = Set(1, 5)
-pure val outputValues = Set(0, 1, 5, 6)
-pure val walletValues = Set("fees", "wrong")
-pure val outputWalletValues = Set("fees", "wrong")
-pure val routeValues = Set("inspectedAllowlist", "unchecked")
 ```
 
 ### Only allowlisted same-wallet quotes reserve value and gas
@@ -57,18 +53,16 @@ pure val routeValues = Set("inspectedAllowlist", "unchecked")
 The quote binds every instruction, token program, lookup table, signer and account. Unresolved lookup tables or unsupported Token-2022 extensions are rejected by the later adapter. Route identifiers here denote those completely inspected route records.
 
 ```quint
-pure def canReserve(f: FeeConversion, gasValue: int, nativeCost: int, slippageBps: int,
-  impactBps: int, outputWallet: str, route: str, minimumOutput: int): bool = f.phase == Received and f.releaseEnabled
-    and f.network != Robinhood and f.value >= 5000000 and gasValue >= 0 and f.value >= gasValue * 10
+pure def canReserve(f: FeeConversion, quote: FeeQuote): bool = f.phase == Received and f.releaseEnabled
+    and f.network != Robinhood and f.value >= 5000000 and quote.gasValue >= 0 and f.value >= quote.gasValue * 10
     and f.value <= 1000000000 and f.spentValue + f.value <= 5000000000
-    and nativeCost > 0 and nativeCost <= transactionCeiling(f.network)
-    and f.nativeSpent + f.nativeHold + nativeCost <= dailyCeiling(f.network)
-    and slippageBps >= 0 and slippageBps <= 100 and impactBps >= 0 and impactBps <= 200
-    and outputWallet == f.wallet and route == "inspectedAllowlist" and minimumOutput > 0
-pure def reserve(f: FeeConversion, gasValue: int, nativeCost: int, slippageBps: int,
-  impactBps: int, outputWallet: str, route: str, minimumOutput: int): FeeConversion =
-  { ...f, phase: Reserved, gasValue: gasValue, quoteNative: nativeCost, nativeHold: nativeCost,
-    slippageBps: slippageBps, impactBps: impactBps, outputWallet: outputWallet, route: route, minimumOutput: minimumOutput }
+    and quote.nativeCost > 0 and quote.nativeCost <= transactionCeiling(f.network)
+    and f.nativeSpent + f.nativeHold + quote.nativeCost <= dailyCeiling(f.network)
+    and quote.slippageBps >= 0 and quote.slippageBps <= 100 and quote.impactBps >= 0 and quote.impactBps <= 200
+    and quote.outputWallet == f.wallet and quote.route == "inspectedAllowlist" and quote.minimumOutput > 0
+pure def reserve(f: FeeConversion, quote: FeeQuote): FeeConversion =
+  { ...f, phase: Reserved, gasValue: quote.gasValue, quoteNative: quote.nativeCost, nativeHold: quote.nativeCost,
+    slippageBps: quote.slippageBps, impactBps: quote.impactBps, outputWallet: quote.outputWallet, route: quote.route, minimumOutput: quote.minimumOutput }
 pure def canSign(f: FeeConversion, attempt: int): bool = f.phase == Reserved and attempt > 0 and not(f.attempts.includes(attempt))
 pure def sign(f: FeeConversion, attempt: int): FeeConversion = { ...f, phase: Signed, attempt: attempt, attempts: f.attempts.append(attempt) }
 pure def canBroadcast(f: FeeConversion): bool = f.phase == Signed
@@ -84,16 +78,14 @@ pure def retain(f: FeeConversion): FeeConversion = { ...f, phase: Retained }
 Missing receipts and uncertain broadcasts keep their reservations. A failure receipt consumes its actual native fee while preserving the token fee balance. Daily rollover cannot discard an unresolved hold.
 
 ```quint
-pure def canConfirm(f: FeeConversion, attempt: int, receipt: int, wallet: str, asset: str,
-  output: int, actualNative: int, finalized: bool, succeeded: bool): bool =
-  (f.phase == Pending or f.phase == Uncertain) and attempt == f.attempt and wallet == f.wallet
-    and receipt > 0 and not(f.finalizedReceipts.includes(receipt)) and asset == "USDC"
-    and output >= f.minimumOutput and actualNative >= 0 and actualNative <= f.nativeHold and finalized and succeeded
-pure def confirm(f: FeeConversion, attempt: int, receipt: int, wallet: str, asset: str,
-  output: int, actualNative: int, finalized: bool, succeeded: bool): FeeConversion =
-  { ...f, phase: Converted, nativeSpent: f.nativeSpent + actualNative, nativeHold: 0,
-    spentValue: f.spentValue + f.value, outputAmount: output,
-    finalizedReceipts: f.finalizedReceipts.append(receipt) }
+pure def canConfirm(f: FeeConversion, receiptEvidence: FeeReceipt): bool =
+  (f.phase == Pending or f.phase == Uncertain) and receiptEvidence.attempt == f.attempt and receiptEvidence.wallet == f.wallet
+    and receiptEvidence.receipt > 0 and not(f.finalizedReceipts.includes(receiptEvidence.receipt)) and receiptEvidence.asset == "USDC"
+    and receiptEvidence.output >= f.minimumOutput and receiptEvidence.actualNative >= 0 and receiptEvidence.actualNative <= f.nativeHold and receiptEvidence.finalized and receiptEvidence.succeeded
+pure def confirm(f: FeeConversion, receiptEvidence: FeeReceipt): FeeConversion =
+  { ...f, phase: Converted, nativeSpent: f.nativeSpent + receiptEvidence.actualNative, nativeHold: 0,
+    spentValue: f.spentValue + f.value, outputAmount: receiptEvidence.output,
+    finalizedReceipts: f.finalizedReceipts.append(receiptEvidence.receipt) }
 pure def canConfirmFailure(f: FeeConversion, attempt: int, receipt: int, actualNative: int, finalized: bool, succeeded: bool): bool =
   (f.phase == Pending or f.phase == Uncertain) and attempt == f.attempt
     and receipt > 0 and not(f.finalizedReceipts.includes(receipt)) and not(succeeded)
@@ -234,8 +226,6 @@ pure val finalizedAValues = Set(0, 1, 2)
 pure val finalizedBValues = Set(0, 1, 2)
 pure val firstAValues = Set(0, 1, 2)
 pure val firstBValues = Set(0, 1, 2)
-pure val gasValueValues = Set(0, 500000)
-pure val impactBpsValues = Set(0, 200, 201)
 pure val networkIdValues = Set("", "a", "b")
 pure val networkFeeValues = Set(0, 1, 2)
 pure val originalContentValues = Set("", "a", "b")
@@ -249,6 +239,19 @@ pure val replacementContentValues = Set("", "a", "b")
 pure val replacementFeeValues = Set(0, 1, 2)
 pure val replacementNonceValues = Set(0, 1, 2)
 pure val signedSlotValues = Set(0, 1, 2)
-pure val slippageBpsValues = Set(0, 100, 101)
 pure val vaultValues = Set("", "a", "b")
+
+pure val quoteValues = Set(
+  { gasValue: 100000, nativeCost: 50000, slippageBps: 100, impactBps: 200, outputWallet: "fees", route: "inspectedAllowlist", minimumOutput: 5 },
+  { gasValue: 100000, nativeCost: 50000, slippageBps: 100, impactBps: 200, outputWallet: "wrong", route: "inspectedAllowlist", minimumOutput: 5 },
+  { gasValue: 100000, nativeCost: 50000, slippageBps: 101, impactBps: 200, outputWallet: "fees", route: "inspectedAllowlist", minimumOutput: 5 },
+  { gasValue: 100000, nativeCost: 50000, slippageBps: 100, impactBps: 200, outputWallet: "fees", route: "unchecked", minimumOutput: 5 },
+  { gasValue: 100000, nativeCost: 5000001, slippageBps: 100, impactBps: 200, outputWallet: "fees", route: "inspectedAllowlist", minimumOutput: 5 })
+pure val receiptEvidenceValues = Set(
+  { attempt: 1, receipt: 1, wallet: "fees", asset: "USDC", output: 5, actualNative: 50000, finalized: true, succeeded: true },
+  { attempt: 2, receipt: 2, wallet: "fees", asset: "USDC", output: 5, actualNative: 50000, finalized: true, succeeded: true },
+  { attempt: 1, receipt: 2, wallet: "wrong", asset: "USDC", output: 5, actualNative: 50000, finalized: true, succeeded: true },
+  { attempt: 1, receipt: 2, wallet: "fees", asset: "USDC", output: 4, actualNative: 50000, finalized: true, succeeded: true },
+  { attempt: 1, receipt: 2, wallet: "fees", asset: "wrong", output: 5, actualNative: 50000, finalized: true, succeeded: true },
+  { attempt: 1, receipt: 2, wallet: "fees", asset: "USDC", output: 5, actualNative: 50000, finalized: false, succeeded: true })
 ```

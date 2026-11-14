@@ -1,0 +1,51 @@
+[
+  {
+    "unit": "security__enforcement.ts",
+    "total": 0,
+    "unproved": [],
+    "errors": [
+      "ERROR: Dafny emission failed for 'cleared' in security__enforcement.ts: Unsupported Dafny method call: .includes() on unknown"
+    ],
+    "exhausted": []
+  },
+  {
+    "unit": "security__evidence.ts",
+    "total": 54,
+    "unproved": [
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysPermanentRetained(markPermanent(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysPermanentRetained(expireReference(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysReferenceHistory(expireReference(e, ref)))",
+      "deleteBytes: (inv(e) ==> canDeleteBytes(e) ==> alwaysDeletionAuthorized(deleteBytes(e)))",
+      "step: inv(step(current, event))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "security__cases.ts",
+    "total": 114,
+    "unproved": [
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysScreeningIsAdvisory(decide(c, by_, checkedEpoch, finding, related)))",
+      "resolveAppeal: (inv(c) ==> canResolveAppeal(c, by_, moderator) ==> alwaysAppealState(resolveAppeal(c, by_, moderator, uphold)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "operations__release.ts",
+    "total": 39,
+    "unproved": [],
+    "errors": [
+      "canCheck: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)): (((((((((((r.phase.Candidate? && validData(r)) && r.isolatedSecrets) && r.trustedWorkflow) && (r.branchHead == r.source)) && (artifactDigest > 0)) && (\"Types\" in r.passed)) && (\"Models\" in r.passed)) && (\"Unit\" in r.passed)) && (\"Browser\" in r.passed)) && (\"Isolation\" in r.passed)) && (\"Identity\" in r.passed))",
+      "dafny audit: operations__release.dfy(137,161): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: operations__release.dfy(137,188): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: operations__release.dfy(137,213): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: operations__release.dfy(137,241): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: operations__release.dfy(137,271): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: operations__release.dfy(137,300): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string))",
+      "dafny audit: dafny audit gave no verdict: operations__release.dfy(137,271): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)) / operations__release.dfy(137,300): Error: second argument to \"in\" must be a set, multiset, or sequence with elements of type string, or a map with domain string (instead got seq<QualityGate>) (expecting element type to be assignable to QualityGate (got string)) / 6 resolution/type errors detected in the_program"
+    ],
+    "exhausted": []
+  }
+]

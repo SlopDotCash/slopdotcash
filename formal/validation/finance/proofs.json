@@ -1,0 +1,29 @@
+{
+  "status": "running",
+  "snapshot": {
+    "spec/fees/buyback.md": "15658499f55ef7af77a7e2ee3e5e8b42d5b89d5080bddc1a38ada159b4943107",
+    "spec/fees/conversion.md": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
+    "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
+    "spec/settlement/allocation.md": "ad486e0ba4d4ffb8e358c6a74aecd78e27eca60d095447ed50b7d185a16f84a5",
+    "spec/settlement/composition.md": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
+    "spec/settlement/contributorAllocation.md": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
+    "spec/settlement/index.md": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
+    "spec/settlement/money.md": "62e08dce0afbb12dae69a65abf8b4067c4f7bdeefca9bf8ca8e2557e55dcce81",
+    "spec/settlement/monthly.md": "e44f01c693b0865d0fbedefdc97760ec4913c987c49764f7e14a35f1b8f370a3",
+    "spec/settlement/payment.md": "3d0f766589fd7ed13347f5e77fb9b9866c21786bdb607a1f4095542113045843",
+    "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+    "spec/settlement/referrals.md": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
+    "spec/settlement/reserveRelease.md": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
+    "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
+    "spec/settlement/vault.md": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd"
+  },
+  "results": [],
+  "units": [
+    "settlement__money.ts",
+    "settlement__allocation.ts",
+    "settlement__payment.ts",
+    "settlement__vault.ts",
+    "settlement__monthly.ts",
+    "settlement__composition.ts"
+  ]
+}

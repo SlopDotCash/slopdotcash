@@ -61,6 +61,19 @@ pure def alwaysCompleteClean(s: Scan): bool = s.phase == Clean implies s.fetched
 pure def alwaysCoverageBounds(s: Scan): bool = s.inventory >= 0 and s.reviewed >= 0 and s.reviewed <= s.inventory
 ```
 
+### Permanent evidence stays retained and acquisition starts without reviewed entries
+
+Discovered by the proof. A saved state that marks evidence permanent while
+dropping its retained objects cannot represent a completed admission. Before
+acquisition supplies the manifest, both inventory and reviewed counts are zero.
+These facts let every transition preserve the coverage and retention rules.
+
+```quint
+pure def alwaysPermanentRetained(s: Scan): bool = s.permanent implies s.retained
+pure def alwaysBeforeAcquisitionCoverage(s: Scan): bool =
+  (s.phase == Unrequested or s.phase == Acquiring) implies s.inventory == 0 and s.reviewed == 0
+```
+
 ### Interrupted and incomplete review can resume without granting admission
 
 ```quint

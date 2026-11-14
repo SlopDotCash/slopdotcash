@@ -1,0 +1,12 @@
+[
+  {
+    "unit": "security__enforcement.ts",
+    "total": 130,
+    "unproved": [
+      "recognizeFrozen: (inv(e) ==> canRecognizeFrozen(e, repository, frozenMember) ==> alwaysFrozenOriginalOnly(recognizeFrozen(e, repository, frozenMember)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [],
+    "exhausted": []
+  }
+]

@@ -43,6 +43,24 @@ implementation starts, a matching `apps/<name>` or `packages/<name>` owns that
 area under Vibestack's normal generation rules. Cross-area rules use imports
 and composed machines, and the generated core owns product state.
 
+```mermaid
+flowchart LR
+  GitHub[GitHub identity and accepted work] --> Backend[Accounts and registry]
+  Backend --> Contributor[Contributor workflow]
+  Contributor --> Slopbot[Review and appeals]
+  Slopbot --> Points[Points and source journal]
+  Points --> Monthly[Monthly allocation]
+  Security[Admission and private reports] --> Backend
+  Security --> Award[Human award decision]
+  Monthly --> Settlement[Vault and payment composition]
+  Award --> Settlement
+  Settlement --> Fees[Received fees and buyback]
+  Backend --> Frontend[Account-owned browser views]
+  Settlement --> Frontend
+  Security --> Frontend
+  Operations[Notices, recovery and release] --> Frontend
+```
+
 The template application remains its original greeting demonstration. Its
 tests and drivers exercise the toolchain. The migration adds no Slop runtime,
 database migration, route, signer, deployment or transaction.
@@ -63,6 +81,13 @@ The active specs describe external observations through explicit parameters.
 Their eventual adapters must verify identity, authority, signatures, exact
 bytes, current revisions and finality before producing those events. Formal
 proofs of those parameters' consequences do not verify the external facts.
+
+The generated event decoder checks structure and invariants. The trusted shell
+authenticates the sender and obtains authorization and evidence facts from
+their owning services. Fields such as `moderator`, `freshAuthority`,
+`receiptMatches` and `finalized` must be computed from those verified records.
+A request body cannot assert them on the caller's own behalf. Each eventual
+adapter journey must include a forged-fact request and a role-revocation race.
 
 ## Verification and acceptance
 

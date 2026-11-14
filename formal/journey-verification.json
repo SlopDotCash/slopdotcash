@@ -1,0 +1,801 @@
+{
+  "toolchain": {
+    "node": "26.13.1",
+    "quint": "0.33.1"
+  },
+  "method": "Unmodified Vibestack parser, Quint typecheck, code generator, invariant simulator and TypeScript replay in isolated snapshots. Each simulation used100 seeded traces of20 events and retained20 traces for replay.",
+  "meaning": "Finite sampled model and generated-core agreement. Application conformance remains unimplemented.",
+  "generation": [
+    {
+      "file": "spec/access.md",
+      "sourceSha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "currentSourceSha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/backend/accounts.md",
+      "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "currentSourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/backend/email.md",
+      "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "currentSourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/backend/index.md",
+      "sourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+      "currentSourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/backend/projects.md",
+      "sourceSha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+      "currentSourceSha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/backend/wallets.md",
+      "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "currentSourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/frontend/navigation.md",
+      "sourceSha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+      "currentSourceSha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/frontend/drafts.md",
+      "sourceSha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+      "currentSourceSha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/composition.md",
+      "sourceSha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "currentSourceSha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/contributor/evidence.md",
+      "sourceSha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+      "currentSourceSha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/contributor/index.md",
+      "sourceSha256": "827250f6c22782454e070a2e83122326b58e4890350d96388b041ddec1a30089",
+      "currentSourceSha256": "827250f6c22782454e070a2e83122326b58e4890350d96388b041ddec1a30089",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/contributor/installation.md",
+      "sourceSha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+      "currentSourceSha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/contributor/workflow.md",
+      "sourceSha256": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+      "currentSourceSha256": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/frontend/index.md",
+      "sourceSha256": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930",
+      "currentSourceSha256": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/frontend/projections.md",
+      "sourceSha256": "2a3ad6f576901e24f52cf7ee8f10d6cc68f3a66a76a1e0c93c16eddcf85f6b2f",
+      "currentSourceSha256": "2a3ad6f576901e24f52cf7ee8f10d6cc68f3a66a76a1e0c93c16eddcf85f6b2f",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/frontend/requests.md",
+      "sourceSha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "currentSourceSha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/governance.md",
+      "sourceSha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "currentSourceSha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/allocation.md",
+      "sourceSha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "currentSourceSha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/authorship.md",
+      "sourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "currentSourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/census.md",
+      "sourceSha256": "71998a0297d6756730f428471c0f7c45001cf04972448caeb89237b5aa263645",
+      "currentSourceSha256": "71998a0297d6756730f428471c0f7c45001cf04972448caeb89237b5aa263645",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/index.md",
+      "sourceSha256": "159bc81f817e19f8b96689d6c0d7cb10a3c54328837b7d7732e903ba111b59ce",
+      "currentSourceSha256": "159bc81f817e19f8b96689d6c0d7cb10a3c54328837b7d7732e903ba111b59ce",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/journal.md",
+      "sourceSha256": "a3df21ec3f90f8b6a3ca81ceedae8dfba333876caf126974ae51a2b295aaebfb",
+      "currentSourceSha256": "a3df21ec3f90f8b6a3ca81ceedae8dfba333876caf126974ae51a2b295aaebfb",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/penalties.md",
+      "sourceSha256": "2179af7d9ac20be55122e23cf7ddc02408b8eb3d1bb7ede1a65923bd8789ef71",
+      "currentSourceSha256": "2179af7d9ac20be55122e23cf7ddc02408b8eb3d1bb7ede1a65923bd8789ef71",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/points/reviews.md",
+      "sourceSha256": "b785b7242f7b08d9427af034f3b6ff42f6fcc6f6540b706837d4f734200fea18",
+      "currentSourceSha256": "b785b7242f7b08d9427af034f3b6ff42f6fcc6f6540b706837d4f734200fea18",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/security/enforcement.md",
+      "sourceSha256": "864a0da2b631545b46572b3f3c546e1ae84695a78b7dabb5815c0e2e1c798ab8",
+      "currentSourceSha256": "f7d1650c4d7240d46580b64f14b5cf56e2fee3cab9fd5473d3e83ab81c48cd6b",
+      "sourceCurrent": false,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    },
+    {
+      "file": "spec/projectComposition.md",
+      "sourceSha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+      "currentSourceSha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+      "sourceCurrent": true,
+      "parse": true,
+      "typecheck": true,
+      "generation": true,
+      "error": null
+    }
+  ],
+  "simulations": [
+    {
+      "file": "spec/access.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 62201234304528; to simulate again: pnpm exec quint run gen/access.run.qnt --main access_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 62201234304528",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "ban",
+        "appeal",
+        "decideAppeal"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "currentSourceSha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/backend/accounts.md",
+      "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 56866264643582; to simulate again: pnpm exec quint run gen/backend__accounts.run.qnt --main backend__accounts_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 56866264643582",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "rename",
+        "saveReturn",
+        "signIn",
+        "connectX",
+        "close",
+        "reopen",
+        "endSession",
+        "disconnectX"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesSignedIn",
+          "reached": true
+        },
+        {
+          "name": "sometimesClosed",
+          "reached": true
+        },
+        {
+          "name": "sometimesDisconnected",
+          "reached": true
+        }
+      ],
+      "currentSourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/backend/email.md",
+      "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 114437734775060; to simulate again: pnpm exec quint run gen/backend__email.run.qnt --main backend__email_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 114437734775060",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "advanceTime",
+        "enroll",
+        "unsubscribe",
+        "verify",
+        "addNotice",
+        "setConsent"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesVerified",
+          "reached": true
+        },
+        {
+          "name": "sometimesBothConsent",
+          "reached": true
+        },
+        {
+          "name": "sometimesIndependentNotice",
+          "reached": true
+        }
+      ],
+      "currentSourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/backend/projects.md",
+      "sourceSha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 136288850728370; to simulate again: pnpm exec quint run gen/backend__projects.run.qnt --main backend__projects_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 136288850728370",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "clearRepository",
+        "observeSetup",
+        "recordFunding",
+        "cancel"
+      ],
+      "missingEvents": [
+        "beginPublish",
+        "completePublish",
+        "retryPublish",
+        "appendRepository",
+        "resume",
+        "retire",
+        "beginUpdate",
+        "cancelUpdate",
+        "publishUpdate"
+      ],
+      "goals": [
+        {
+          "name": "sometimesRetired",
+          "reached": false
+        },
+        {
+          "name": "sometimesCancelled",
+          "reached": true
+        },
+        {
+          "name": "sometimesPublishedUnfunded",
+          "reached": false
+        },
+        {
+          "name": "sometimesCancelledUpdate",
+          "reached": false
+        },
+        {
+          "name": "sometimesPublishedUpdate",
+          "reached": false
+        }
+      ],
+      "currentSourceSha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/backend/wallets.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 127777711635027; to simulate again: pnpm exec quint run gen/backend__wallets.run.qnt --main backend__wallets_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 127777711635027",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "begin",
+        "authorizeWallet",
+        "submit",
+        "markUncertain",
+        "requestCancel",
+        "reconcile",
+        "activate"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "currentSourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/frontend/navigation.md",
+      "sourceSha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 233990214974235; to simulate again: pnpm exec quint run gen/frontend__navigation.run.qnt --main frontend__navigation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 233990214974235",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "signIn",
+        "navigate",
+        "signOut"
+      ],
+      "missingEvents": [
+        "receivePrivate"
+      ],
+      "goals": [
+        {
+          "name": "sometimesPrivateDestination",
+          "reached": false
+        },
+        {
+          "name": "sometimesSignedOutAfterUse",
+          "reached": true
+        }
+      ],
+      "currentSourceSha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/frontend/drafts.md",
+      "sourceSha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 183384931237131; to simulate again: pnpm exec quint run gen/frontend__drafts.run.qnt --main frontend__drafts_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 183384931237131",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "leaveAccount",
+        "open",
+        "edit",
+        "review",
+        "send",
+        "receiveReceipt",
+        "loseResponse"
+      ],
+      "missingEvents": [
+        "retry"
+      ],
+      "goals": [
+        {
+          "name": "sometimesReceived",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesStorageFailure",
+          "reached": true
+        }
+      ],
+      "currentSourceSha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/composition.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 62531631731226; to simulate again: pnpm exec quint run gen/composition.run.qnt --main composition_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 62531631731226",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "logout",
+        "authenticate",
+        "beginReport",
+        "editReport",
+        "reviewReport",
+        "submitReport"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "currentSourceSha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/contributor/evidence.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 120995903958197; to simulate again: pnpm exec quint run gen/contributor__evidence.run.qnt --main contributor__evidence_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 120995903958197",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "renewRequest",
+        "decline",
+        "submitPR",
+        "signReceipt",
+        "selectFile",
+        "beginUpload",
+        "failUpload",
+        "persist"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+      "currentSourceSha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/contributor/installation.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 161763228152683; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 161763228152683",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "begin",
+        "download",
+        "processDies",
+        "recoverProcess",
+        "recordFailure",
+        "verify",
+        "prepareLink",
+        "commit",
+        "confirm",
+        "authorizeLocal"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+      "currentSourceSha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/contributor/workflow.md",
+      "sourceSha256": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 16501095380320; to simulate again: pnpm exec quint run gen/contributor__workflow.run.qnt --main contributor__workflow_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 16501095380320",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "setAttribution",
+        "observe",
+        "setEligibility",
+        "selectWork"
+      ],
+      "missingEvents": [
+        "beginWork",
+        "recordTests",
+        "abandon",
+        "confirmSubmissionRead",
+        "submit",
+        "recordRun",
+        "recordMerge",
+        "review"
+      ],
+      "goals": [
+        {
+          "name": "sometimesSubmittedWithoutRun",
+          "reached": false
+        },
+        {
+          "name": "sometimesAccepted",
+          "reached": false
+        },
+        {
+          "name": "sometimesAdvised",
+          "reached": false
+        }
+      ],
+      "currentSourceSha256": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/frontend/requests.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 120213292295208; to simulate again: pnpm exec quint run gen/frontend__requests.run.qnt --main frontend__requests_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 120213292295208",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "selectResource",
+        "request",
+        "cancel",
+        "receive"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "currentSourceSha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/governance.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 95513824287217; to simulate again: pnpm exec quint run gen/governance.run.qnt --main governance_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 95513824287217",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "record",
+        "waive",
+        "changeSource",
+        "review"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "currentSourceSha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/points/authorship.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 83421747775004; to simulate again: pnpm exec quint run gen/points__authorship.run.qnt --main points__authorship_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 83421747775004",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "observeAcceptance",
+        "recordLines",
+        "observePrimary",
+        "observeSource",
+        "observeOriginal"
+      ],
+      "missingEvents": [
+        "creditCommit",
+        "attribute"
+      ],
+      "sourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "currentSourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/points/census.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 112912728211491; to simulate again: pnpm exec quint run gen/points__census.run.qnt --main points__census_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 112912728211491",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "begin",
+        "recordFailure",
+        "recordEmptyPage",
+        "recordPage",
+        "finish",
+        "releaseHold"
+      ],
+      "missingEvents": [
+        "publish"
+      ],
+      "sourceSha256": "71998a0297d6756730f428471c0f7c45001cf04972448caeb89237b5aa263645",
+      "currentSourceSha256": "71998a0297d6756730f428471c0f7c45001cf04972448caeb89237b5aa263645",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/points/journal.md",
+      "sourceSha256": "a3df21ec3f90f8b6a3ca81ceedae8dfba333876caf126974ae51a2b295aaebfb",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 38539680490423; to simulate again: pnpm exec quint run gen/points__journal.run.qnt --main points__journal_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 38539680490423",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "credit",
+        "correct",
+        "reassign",
+        "freeze"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesCredited",
+          "reached": true
+        },
+        {
+          "name": "sometimesFrozen",
+          "reached": true
+        }
+      ],
+      "currentSourceSha256": "a3df21ec3f90f8b6a3ca81ceedae8dfba333876caf126974ae51a2b295aaebfb",
+      "sourceCurrent": true
+    },
+    {
+      "file": "spec/points/penalties.md",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 275403508728069; to simulate again: pnpm exec quint run gen/points__penalties.run.qnt --main points__penalties_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 275403508728069",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "addAccepted",
+        "applyPenalty",
+        "freezeRewards",
+        "reversePenalty"
+      ],
+      "missingEvents": [],
+      "sourceSha256": "2179af7d9ac20be55122e23cf7ddc02408b8eb3d1bb7ede1a65923bd8789ef71",
+      "currentSourceSha256": "2179af7d9ac20be55122e23cf7ddc02408b8eb3d1bb7ede1a65923bd8789ef71",
+      "sourceCurrent": true,
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+    },
+    {
+      "file": "spec/points/reviews.md",
+      "sourceSha256": "b785b7242f7b08d9427af034f3b6ff42f6fcc6f6540b706837d4f734200fea18",
+      "typecheck": true,
+      "generated": true,
+      "machine": true,
+      "simulation": true,
+      "command": "seed 91981157403448; to simulate again: pnpm exec quint run gen/points__reviews.run.qnt --main points__reviews_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 91981157403448",
+      "traces": 20,
+      "replay": true,
+      "events": [
+        "assess",
+        "recordReview"
+      ],
+      "missingEvents": [],
+      "goals": [
+        {
+          "name": "sometimesReviewed",
+          "reached": true
+        },
+        {
+          "name": "sometimesFiveReviewers",
+          "reached": false
+        }
+      ],
+      "currentSourceSha256": "b785b7242f7b08d9427af034f3b6ff42f6fcc6f6540b706837d4f734200fea18",
+      "sourceCurrent": true
+    }
+  ]
+}

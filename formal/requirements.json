@@ -444,7 +444,8 @@
       "owners": [
         "spec/points/allocation.md",
         "spec/points/reviews.md",
-        "spec/points/journal.md"
+        "spec/points/journal.md",
+        "spec/points/authorship.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -470,7 +471,9 @@
       "sourceText": "### Penalties\n\nUse the published table only for eligible authors under section 5. Maintainers and authors outside closure scope receive no penalty.\n\n| Finding | Permitted action | Point debit |\n| --- | --- | --- |\n| Spam | Close | 30 |\n| Scam or malicious | Close and notify a moderator to review the account | 240 |\n| Clear violation of a quoted project rule | Close | 10 |\n| Low quality | Close when the category is qualified | 0 |\n| Duplicate | Close | 0 |\n| Out of scope | Label | 0 |\n\nA debit affects only that UTC month's accepted-work Points and cannot reduce them below zero. It cannot change an approved, scheduled, or paid award. Record each debit and upheld-appeal reversal once. Reopen, retry, and appeal must not multiply them. Later table changes are prospective.\n",
       "owners": [
         "spec/points/journal.md",
-        "spec/slopbot/closure.md"
+        "spec/slopbot/closure.md",
+        "spec/points/penalties.md",
+        "spec/access.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -610,7 +613,9 @@
       "sourceText": "### Private data and retention\n\n| Data | Access and retention rule |\n| --- | --- |\n| Private reports | Only the reporter and currently authorized case reviewers may read retained bodies. Audit every read. Keep cases and obligations through recovery and role changes. |\n| Scanner evidence | Only `lalalune` and `drew-dot-com` may read through audited 15-minute grants. `lalalune` owns this policy. |\n| Successful admission evidence | Retain permanently, including original evidence behind reused results. Missing or corrupt evidence is never valid. |\n| Other scanner evidence | Retain while open and for 90 days after closure. Clean scans close automatically; incomplete or malicious cases require `lalalune` to close them. |\n| Scanner recovery records | Daily private backups retained for 30 days; access logs retained for one year. Prove restoration before activation. |\n| Contributor traces | Permanent private R2 objects. No website or API may return a body to anyone, including its contributor or an operator. |\n\nStore scanner objects once by SHA-256 in private R2 using 8 MiB upload parts. D1 holds manifests and digests. Reuse existing objects by reference; delete shared bytes only after all retained references end. Policy changes require a reviewed source change, not a deployment attestation.\n\nTrace upload remains optional, authenticated, bounded, checksum-verified, write-only, and fail-closed. Failure or refusal must not block contribution. Keep only safe metadata and digests in public artifacts. Preserve existing audit records. The MVP accepts the absence of a durable per-actor upload quota; this does not remove size or authentication controls.\n",
       "owners": [
         "spec/security/privacy.md",
-        "spec/contributor/evidence.md"
+        "spec/contributor/evidence.md",
+        "spec/security/evidence.md",
+        "spec/operations/backup.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -662,7 +667,8 @@
       "sourceText": "### Dependencies and local operation\n\nPublic pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.\n\nProduction `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. Cloudflare does not inject into HTML the site's Pages Function serves, so that function adds the same beacon tag on the production host only. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.\n\n| Dependency | Required failure behavior |\n| --- | --- |\n| GitHub identity, authority, and source | Refuse sensitive actions on unavailable proof; retain recoverable drafts and records. |\n| D1 and private R2 storage | Require durable receipt and verifiable evidence; never report a partial write as success. |\n| Review providers and isolated execution | Preserve incomplete or retryable states; never invent a completed review. |\n| RPC services and supported payment paths | Retain pending obligations and uncertain attempts until exact finality is established. |\n| Email provider | Preserve Inbox access, explicit delivery state, and escalation. |\n\nThe public repository picker uses the read-only `SLOP_GITHUB_READ_TOKEN` in production and staging. It grants no write, private-repository, or organization authority.\n\nLocal development uses durable isolated report storage, background assessment, API flows, and real authorization. The existing GitHub App supplies a loopback-bound single-use identity handoff. Local and production stores remain separate; local handoffs cannot create production assertions. Require no separate developer App or local production secret. Do not silently send real mail or enable a production signer.\n\nThe obsolete `protocol/wallet-possession.md` document, isolated test identity stack, and v1 secure-VM vetting pipeline remain retired. Retain the runtime wallet-possession verifier and its callers. Keep `deck.slop.cash` detached.\n",
       "owners": [
         "spec/operations/release.md",
-        "spec/frontend/requests.md"
+        "spec/frontend/requests.md",
+        "spec/operations/local.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -811,7 +817,9 @@
       "sourceText": "## 12. State correctness and Quint verification\n\nReview every explicit and implicit state transition in the application. Cover UI, APIs, workers, databases, files, queues, jobs, contributor tools, contracts, and release workflows. This requirement grants no new product, policy, deployment, funding, or signing authority.\n\n- **STATE-01 \u2014 Inventory.** Keep source-to-model mappings in `formal/`. Include flags, optional values, collections, times, caches, pending requests, files, database records, and external evidence. List every entry point, unmodeled transition, and assumption.\n- **STATE-02 \u2014 Models.** Define initial states, actions, refusal conditions, invariants, and reachable outcomes. Cover loading, empty, stale, invalid, error, success, authorization, expiry, cancellation, retry, duplicates, concurrency, partial writes, interruption, and recovery. Preserve immutable history, distinct financial states, and integer amounts. Model uncertainty without treating a request or signature as finality. Check parent/child and cross-subsystem composition.\n- **STATE-03 \u2014 Conformance.** Compare models with actual workflows through model-derived traces or equivalent named scenarios at real entry points. Database races need database evidence; UI changes need browser evidence. Keep required provider and chain checks. Models cannot replace them.\n- **STATE-04 \u2014 Fix and maintain.** Reproduce discrepancies, fix their causes, and repeat affected checks. Update models, mappings, and implementation evidence when behavior changes. Never weaken an invariant or remove a failure path to hide a defect.\n- **STATE-05 \u2014 Verification evidence.** Pin Quint in the lockfile. Run `bun run formal:check` and `bun run formal:verify`. Record tool versions, source hashes, scenarios, backend, finite bounds, results, and unresolved gaps. Distinguish simulation, exhaustive finite exploration, implementation conformance, and live integration. Operator decision, 12 November 2026: an exhaustive verification that runs its whole time allowance without a result is recorded as \"not verified within its time bound\", shown as a warning, and does not fail the release gate. A counterexample, crash, broken model, unstable input or failed scenario check still fails it, and every identity, command, tool and view check still applies to the timed-out stage.\n\nPassing abstract models does not prove implementation refinement or the absence of every possible state error. Completion requires reviewed models and implementation evidence for every inventoried transition, corrected discrepancies, passing checks, and explicit assumptions. Keep this requirement open while any required coverage or evidence is incomplete.",
       "owners": [
         "spec/governance.md",
-        "formal/README.md"
+        "formal/README.md",
+        "spec/projectComposition.md",
+        "spec/composition.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

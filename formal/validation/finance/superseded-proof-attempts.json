@@ -1,0 +1,84 @@
+{
+  "meaning": "These completed attempts predate later source corrections and optimizations. Current proof results are tracked separately.",
+  "attempts": [
+    {
+      "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-Lq6b8b",
+      "result": [
+        {
+          "unit": "settlement__signer.ts",
+          "total": 14,
+          "unproved": [
+            "signBinding: (inv(b) ==> canSignBinding(b, nonce, attempt, authority, by_) ==> stepRetainSignedBinding(b, signBinding(b, nonce, attempt, authority, by_)))",
+            "step: inv(step(current, event, by_))"
+          ],
+          "errors": [],
+          "exhausted": []
+        },
+        {
+          "unit": "settlement__monthly.ts",
+          "total": 52,
+          "unproved": [
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysCompletedPaid(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysPaidMember(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> stepPaidNeverReverts(m, propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> stepFrozenAmountsStable(m, propose(m, amount, weights, closed, complete)))",
+            "adjust: (inv(m) ==> canAdjust(m, shares, revision, by_) ==> alwaysAllocationConserved(adjust(m, shares, revision, by_)))",
+            "adjust: (inv(m) ==> canAdjust(m, shares, revision, by_) ==> alwaysPaidMember(adjust(m, shares, revision, by_)))",
+            "setCap: (inv(m) ==> canSetCap(m, cap, by_) ==> alwaysAllocationConserved(setCap(m, cap, by_)))",
+            "fund: (inv(m) ==> canFund(m, available) ==> alwaysCompletedPaid(fund(m, available)))",
+            "step: inv(step(current, event, by_))"
+          ],
+          "errors": [
+            "settlement__allocation_allocateAmounts: Verification out of resource (settlement__allocation_allocateAmounts): function settlement__allocation_allocateAmounts(total: seq<int>, weights: seq<settlement__allocation_Weight>): seq<settlement__allocation_Share>"
+          ],
+          "exhausted": [
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysCompletedPaid(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> alwaysPaidMember(propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> stepPaidNeverReverts(m, propose(m, amount, weights, closed, complete)))",
+            "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete) ==> stepFrozenAmountsStable(m, propose(m, amount, weights, closed, complete)))"
+          ]
+        },
+        {
+          "unit": "settlement__allocation.ts",
+          "total": 2,
+          "unproved": [
+            "lawAllocationConserves: (lawAllocationConserves(total, weights) == true)",
+            "lawSingleRecipient: (lawSingleRecipient(total, actor) == true)"
+          ],
+          "errors": [
+            "allocateAmounts: Verification out of resource (allocateAmounts): function allocateAmounts(total: seq<int>, weights: seq<Weight>): seq<Share>"
+          ],
+          "exhausted": [
+            "lawAllocationConserves: (lawAllocationConserves(total, weights) == true)",
+            "lawSingleRecipient: (lawSingleRecipient(total, actor) == true)"
+          ]
+        },
+        {
+          "unit": "settlement__vault.ts",
+          "total": 30,
+          "unproved": [
+            "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))",
+            "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysValidAmounts(deposit(v, amount, asset, receipt, finalized)))",
+            "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysConserved(reserve(v, amount, recipient, obligation)))",
+            "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysValidAmounts(reserve(v, amount, recipient, obligation)))",
+            "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationMatches(reserve(v, amount, recipient, obligation)))",
+            "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationTotal(reserve(v, amount, recipient, obligation)))",
+            "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationIdentity(reserve(v, amount, recipient, obligation)))",
+            "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysConserved(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+            "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+            "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+            "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+            "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationIdentity(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+            "refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysConserved(refund(v, amount, destination, receipt, finalizedHeight, by_)))",
+            "refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysValidAmounts(refund(v, amount, destination, receipt, finalizedHeight, by_)))",
+            "step: inv(step(current, event, by_))"
+          ],
+          "errors": [],
+          "exhausted": []
+        }
+      ]
+    }
+  ]
+}

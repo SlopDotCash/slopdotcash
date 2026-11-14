@@ -14377,6 +14377,7 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
+        "spec/points/penalties.md",
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
         "spec/slopbot/review.md"
@@ -15912,6 +15913,7 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
+        "spec/points/authorship.md",
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
         "spec/settlement/signer.md"
@@ -24308,6 +24310,7 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
+        "spec/operations/backup.md",
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md"

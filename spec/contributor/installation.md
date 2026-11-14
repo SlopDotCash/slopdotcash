@@ -30,6 +30,8 @@ pure val initial: Installation = { phase: Idle, locked: false, processAlive: tru
   localAuthorized: false }
 pure def alwaysRevisionNonnegative(i: Installation): bool = i.revision >= 0 and i.activeRevision >= 0
 pure def alwaysRetainedVersions(i: Installation): bool = i.versions.every(v => v.template > 0 and v.revision > 0)
+pure def alwaysSelectedVersionValid(i: Installation): bool =
+  (i.phase != Idle and i.phase != Failed) implies i.template > 0 and i.revision > 0
 ```
 
 ### Only one living process can stage an allowed revision
@@ -59,6 +61,10 @@ pure def download(i: Installation, immutableUrl: bool, completeTree: bool): Inst
 
 No missing or extra file is accepted. A checksum alone cannot authorize bytes.
 A retained pair identifies one complete immutable version directory.
+Discovered by the proof, a synthetic Verifying state could contain a zero
+version, and a synthetic LinkReady state could lack its retained version.
+Active stages now require a positive selected version. Retained and later
+stages keep the verified selected pair in the immutable version history.
 
 ```quint
 pure def canVerify(i: Installation, canonicalTree: bool, approvedDigest: bool, sameRenderedBytes: bool, permitted: bool): bool =
@@ -80,6 +86,9 @@ pure def confirm(i: Installation, exactReadback: bool): Installation =
 pure def alwaysSuccessHasReadback(i: Installation): bool = i.phase == Complete implies i.readback
 pure def alwaysActiveRetained(i: Installation): bool = i.activeRevision > 0 implies
   retainedPair(i, i.activeTemplate, i.activeRevision)
+pure def alwaysCandidateRetained(i: Installation): bool =
+  (i.phase == Retained or i.phase == LinkReady or i.phase == Committed or i.phase == Complete) implies
+    retainedPair(i, i.template, i.revision) and i.canonicalTree and i.digestMatches and i.permitted
 ```
 
 ### Failure, process death, and cleanup retain the committed version

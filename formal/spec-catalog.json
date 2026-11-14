@@ -1,0 +1,5592 @@
+{
+  "description": "Active specification source inventory. Validation results are recorded separately and bind source hashes.",
+  "specs": [
+    {
+      "path": "spec/access.md",
+      "sha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "title": "Participation restrictions and retained rights",
+      "rules": [
+        "An account restriction records its human decision independently of project state",
+        "A ban blocks new credit and commitments while existing funded rights remain"
+      ],
+      "stories": [
+        "Story: Restrict new participation while preserving funded awards and appeals"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canBan",
+          "kind": "guard"
+        },
+        {
+          "name": "ban",
+          "kind": "definition"
+        },
+        {
+          "name": "canAppeal",
+          "kind": "guard"
+        },
+        {
+          "name": "appeal",
+          "kind": "definition"
+        },
+        {
+          "name": "canDecideAppeal",
+          "kind": "guard"
+        },
+        {
+          "name": "decideAppeal",
+          "kind": "definition"
+        },
+        {
+          "name": "newParticipationAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "fundedPaymentAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "appealAccessAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysFundsPreserved",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysDecisionsIdentified",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysBanBlocksNewWork",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepHistoryRetained",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesBannedWithFunding",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAppealOpen",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReinstated",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/app/index.md",
+      "sha256": "8521c3f9c9cd9ea12cd725f64d4f4a1040a63953b5fdbf78885a8275899238f7",
+      "title": "App",
+      "rules": [
+        "A greeter holds the last name it greeted and how many greetings it gave",
+        "Only a name that is not empty can be greeted",
+        "Once someone has been greeted, the greeter holds a name",
+        "The number of greetings is never negative",
+        "Every step adds exactly one greeting",
+        "A greeting is for the name it was given",
+        "The greeter can give a second greeting"
+      ],
+      "stories": [
+        "Story: Say hello"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canGreet",
+          "kind": "guard"
+        },
+        {
+          "name": "greet",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysGreetedHasName",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCountIsNonnegative",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepCountsOne",
+          "kind": "step"
+        },
+        {
+          "name": "lawGreetsTheNameGiven",
+          "kind": "law"
+        },
+        {
+          "name": "sometimesGreetedTwice",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/backend/accounts.md",
+      "sha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "title": "Account identity and session lifetime",
+      "rules": [
+        "The actor identity remains stable through account changes",
+        "A verified GitHub sign-in requires the same actor and visibility disclosure",
+        "Closure invalidates sessions and public membership until explicit reopening",
+        "An optional X identity stays reserved after disconnect",
+        "Signing in, disconnecting, closing, and reopening remain possible",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Sign in and manage participation"
+      ],
+      "definitions": [
+        {
+          "name": "newAccount",
+          "kind": "definition"
+        },
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysActorValid",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysRetainedHistory",
+          "kind": "invariant"
+        },
+        {
+          "name": "lawNewAccountPreservesIdentity",
+          "kind": "law"
+        },
+        {
+          "name": "alwaysSessionEpoch",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysIdentityIds",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysSessionMember",
+          "kind": "invariant"
+        },
+        {
+          "name": "canSaveReturn",
+          "kind": "guard"
+        },
+        {
+          "name": "saveReturn",
+          "kind": "definition"
+        },
+        {
+          "name": "canSignIn",
+          "kind": "guard"
+        },
+        {
+          "name": "signIn",
+          "kind": "definition"
+        },
+        {
+          "name": "canRename",
+          "kind": "guard"
+        },
+        {
+          "name": "rename",
+          "kind": "definition"
+        },
+        {
+          "name": "canClose",
+          "kind": "guard"
+        },
+        {
+          "name": "close",
+          "kind": "definition"
+        },
+        {
+          "name": "canReopen",
+          "kind": "guard"
+        },
+        {
+          "name": "reopen",
+          "kind": "definition"
+        },
+        {
+          "name": "canEndSession",
+          "kind": "guard"
+        },
+        {
+          "name": "endSession",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysClosedPrivate",
+          "kind": "invariant"
+        },
+        {
+          "name": "sessionValid",
+          "kind": "definition"
+        },
+        {
+          "name": "canConnectX",
+          "kind": "guard"
+        },
+        {
+          "name": "connectX",
+          "kind": "definition"
+        },
+        {
+          "name": "canDisconnectX",
+          "kind": "guard"
+        },
+        {
+          "name": "disconnectX",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysXReservation",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysXVisibility",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepHistoryIsStable",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesSignedIn",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesClosed",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesDisconnected",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/backend/email.md",
+      "sha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "title": "Account-bound email enrollment",
+      "rules": [
+        "Enrollment keeps pending and verified addresses separate",
+        "Only the authenticated owner can create a pending verification",
+        "Verification is account-bound, single-use, and unexpired",
+        "A changed verified address requires fresh consent",
+        "Unsubscribe only removes consent and in-app notices remain independent",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Verify a notification address and choose consent"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysEnrollmentTimes",
+          "kind": "invariant"
+        },
+        {
+          "name": "canEnroll",
+          "kind": "guard"
+        },
+        {
+          "name": "enroll",
+          "kind": "definition"
+        },
+        {
+          "name": "canAdvanceTime",
+          "kind": "guard"
+        },
+        {
+          "name": "advanceTime",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerify",
+          "kind": "guard"
+        },
+        {
+          "name": "verify",
+          "kind": "definition"
+        },
+        {
+          "name": "canSetConsent",
+          "kind": "guard"
+        },
+        {
+          "name": "setConsent",
+          "kind": "definition"
+        },
+        {
+          "name": "stepChangedAddressClearsConsent",
+          "kind": "step"
+        },
+        {
+          "name": "canUnsubscribe",
+          "kind": "guard"
+        },
+        {
+          "name": "unsubscribe",
+          "kind": "definition"
+        },
+        {
+          "name": "addNotice",
+          "kind": "definition"
+        },
+        {
+          "name": "sometimesVerified",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesBothConsent",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesIndependentNotice",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/backend/projects.md",
+      "sha256": "599ffcefd0dd3b30a1b08df18287078ddadd00bb3285fa6b10f53d6835179614",
+      "title": "Self-service registry lifecycle",
+      "rules": [
+        "Project history and application state remain separate",
+        "Setup requires current GitHub authority, installation, license facts, and required fields",
+        "Admission is repository-specific and appending pauses work until every repository clears",
+        "Cancellation and retirement retain history and never publish a cancelled application",
+        "An update has its own lifecycle and never rewrites the published revision",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Publish and maintain a project",
+        "Story: Cancel or publish an update without disturbing the live project"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysHistoryLength",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysPublishedRevision",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysRetiredPaused",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysRegisteredRepository",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysClearanceBelongs",
+          "kind": "invariant"
+        },
+        {
+          "name": "canObserveSetup",
+          "kind": "guard"
+        },
+        {
+          "name": "observeSetup",
+          "kind": "definition"
+        },
+        {
+          "name": "canBeginPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "beginPublish",
+          "kind": "definition"
+        },
+        {
+          "name": "canCompletePublish",
+          "kind": "guard"
+        },
+        {
+          "name": "completePublish",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetryPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "retryPublish",
+          "kind": "definition"
+        },
+        {
+          "name": "canClearRepository",
+          "kind": "guard"
+        },
+        {
+          "name": "clearRepository",
+          "kind": "definition"
+        },
+        {
+          "name": "canAppendRepository",
+          "kind": "guard"
+        },
+        {
+          "name": "appendRepository",
+          "kind": "definition"
+        },
+        {
+          "name": "canResume",
+          "kind": "guard"
+        },
+        {
+          "name": "resume",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysActiveClearance",
+          "kind": "invariant"
+        },
+        {
+          "name": "canCancel",
+          "kind": "guard"
+        },
+        {
+          "name": "cancel",
+          "kind": "guard"
+        },
+        {
+          "name": "canRetire",
+          "kind": "guard"
+        },
+        {
+          "name": "retire",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordFunding",
+          "kind": "guard"
+        },
+        {
+          "name": "recordFunding",
+          "kind": "definition"
+        },
+        {
+          "name": "listed",
+          "kind": "definition"
+        },
+        {
+          "name": "collectable",
+          "kind": "definition"
+        },
+        {
+          "name": "skillPublished",
+          "kind": "definition"
+        },
+        {
+          "name": "stepHistoryOnlyAppends",
+          "kind": "step"
+        },
+        {
+          "name": "stepRepositoriesRetained",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesPublishedUnfunded",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRetired",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCancelled",
+          "kind": "reachable"
+        },
+        {
+          "name": "canBeginUpdate",
+          "kind": "guard"
+        },
+        {
+          "name": "beginUpdate",
+          "kind": "definition"
+        },
+        {
+          "name": "canCancelUpdate",
+          "kind": "guard"
+        },
+        {
+          "name": "cancelUpdate",
+          "kind": "guard"
+        },
+        {
+          "name": "canPublishUpdate",
+          "kind": "guard"
+        },
+        {
+          "name": "publishUpdate",
+          "kind": "definition"
+        },
+        {
+          "name": "stepUpdateHistoryRetained",
+          "kind": "step"
+        },
+        {
+          "name": "stepCancelKeepsPublishedRevision",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesCancelledUpdate",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPublishedUpdate",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/backend/wallets.md",
+      "sha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "title": "Wallet binding and replacement",
+      "rules": [
+        "A wallet binding retains its first proof and each attempted nonce",
+        "Only the authenticated account can begin an unused binding attempt",
+        "Activation requires account and wallet proof for the exact candidate",
+        "An uncertain broadcast keeps both signed attempts until one finalizes",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Replace a payout wallet safely"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysWalletIds",
+          "kind": "invariant"
+        },
+        {
+          "name": "canBegin",
+          "kind": "guard"
+        },
+        {
+          "name": "begin",
+          "kind": "definition"
+        },
+        {
+          "name": "canAuthorizeWallet",
+          "kind": "guard"
+        },
+        {
+          "name": "authorizeWallet",
+          "kind": "definition"
+        },
+        {
+          "name": "canActivate",
+          "kind": "guard"
+        },
+        {
+          "name": "activate",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysActiveHasProof",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysUnsignedKeepsWallet",
+          "kind": "invariant"
+        },
+        {
+          "name": "canSubmit",
+          "kind": "guard"
+        },
+        {
+          "name": "submit",
+          "kind": "definition"
+        },
+        {
+          "name": "canMarkUncertain",
+          "kind": "guard"
+        },
+        {
+          "name": "markUncertain",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequestCancel",
+          "kind": "guard"
+        },
+        {
+          "name": "requestCancel",
+          "kind": "definition"
+        },
+        {
+          "name": "canReconcile",
+          "kind": "guard"
+        },
+        {
+          "name": "reconcile",
+          "kind": "definition"
+        },
+        {
+          "name": "stepFirstProofPersists",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesBound",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCancelled",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/composition.md",
+      "sha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "title": "Account-owned browser composition",
+      "rules": [
+        "The active draft and navigation share one authenticated actor",
+        "Account changes erase drafts and preserve every child invariant",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Change accounts without disclosing the prior account's draft"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canAuthenticate",
+          "kind": "guard"
+        },
+        {
+          "name": "authenticate",
+          "kind": "definition"
+        },
+        {
+          "name": "logout",
+          "kind": "definition"
+        },
+        {
+          "name": "canBeginReport",
+          "kind": "guard"
+        },
+        {
+          "name": "beginReport",
+          "kind": "definition"
+        },
+        {
+          "name": "canEditReport",
+          "kind": "guard"
+        },
+        {
+          "name": "editReport",
+          "kind": "definition"
+        },
+        {
+          "name": "canReviewReport",
+          "kind": "guard"
+        },
+        {
+          "name": "reviewReport",
+          "kind": "definition"
+        },
+        {
+          "name": "canSubmitReport",
+          "kind": "guard"
+        },
+        {
+          "name": "submitReport",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysSharedActor",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysChildrenValid",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepAccountChangeClearsDraft",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesReportSubmitted",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesLogoutClears",
+          "kind": "reachable"
+        }
+      ],
+      "imports": [
+        [
+          "navigation as N",
+          "./frontend/navigation"
+        ],
+        [
+          "drafts as D",
+          "./frontend/drafts"
+        ]
+      ]
+    },
+    {
+      "path": "spec/contributor/evidence.md",
+      "sha256": "7d630d10011118f071aa0cd7bed9a98c1f48aec117533cfd1b645a976210759b",
+      "title": "Optional receipts and private trace upload",
+      "rules": [
+        "Trace collection state is separate from ordinary submission",
+        "Only contributor-inspected exact bytes can enter an authorized bounded upload",
+        "A signed receipt binds available evidence without inventing provider billing truth",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Submit optional private evidence without blocking a contribution"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPrivateBodies",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysDiagnosticOnly",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysTraceSize",
+          "kind": "invariant"
+        },
+        {
+          "name": "submitPR",
+          "kind": "definition"
+        },
+        {
+          "name": "canDecline",
+          "kind": "guard"
+        },
+        {
+          "name": "decline",
+          "kind": "definition"
+        },
+        {
+          "name": "canSelectFile",
+          "kind": "guard"
+        },
+        {
+          "name": "selectFile",
+          "kind": "definition"
+        },
+        {
+          "name": "renewRequest",
+          "kind": "definition"
+        },
+        {
+          "name": "canBeginUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "beginUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canPersist",
+          "kind": "guard"
+        },
+        {
+          "name": "persist",
+          "kind": "definition"
+        },
+        {
+          "name": "canFailUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "failUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysStoredExact",
+          "kind": "invariant"
+        },
+        {
+          "name": "canSignReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "signReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "sometimesDeclinedAndSubmitted",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesStored",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFailedAndSubmitted",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/contributor/installation.md",
+      "sha256": "fd5eea5c41a8905371e9cfbdf02689892218310eb7871bef6804f23e354371bb",
+      "title": "Immutable skill installation",
+      "rules": [
+        "Installation tracks verification, activation, and readback separately",
+        "Only one living process can stage an allowed revision",
+        "Canonical bytes and approved D1 rendering must both match before retention",
+        "Failure, process death, and cleanup retain the committed version",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Install, update, and roll back a verified project skill"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysRevisionNonnegative",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysRetainedVersions",
+          "kind": "invariant"
+        },
+        {
+          "name": "retainedPair",
+          "kind": "definition"
+        },
+        {
+          "name": "canBegin",
+          "kind": "guard"
+        },
+        {
+          "name": "begin",
+          "kind": "definition"
+        },
+        {
+          "name": "canDownload",
+          "kind": "guard"
+        },
+        {
+          "name": "download",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerify",
+          "kind": "guard"
+        },
+        {
+          "name": "verify",
+          "kind": "definition"
+        },
+        {
+          "name": "canPrepareLink",
+          "kind": "guard"
+        },
+        {
+          "name": "prepareLink",
+          "kind": "definition"
+        },
+        {
+          "name": "canCommit",
+          "kind": "guard"
+        },
+        {
+          "name": "commit",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirm",
+          "kind": "guard"
+        },
+        {
+          "name": "confirm",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysSuccessHasReadback",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysActiveRetained",
+          "kind": "invariant"
+        },
+        {
+          "name": "canRecordFailure",
+          "kind": "guard"
+        },
+        {
+          "name": "recordFailure",
+          "kind": "definition"
+        },
+        {
+          "name": "canProcessDies",
+          "kind": "guard"
+        },
+        {
+          "name": "processDies",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecoverProcess",
+          "kind": "guard"
+        },
+        {
+          "name": "recoverProcess",
+          "kind": "definition"
+        },
+        {
+          "name": "canAuthorizeLocal",
+          "kind": "guard"
+        },
+        {
+          "name": "authorizeLocal",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysUncommittedRetainsActive",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesInstalled",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesLocalAuthorized",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRecovered",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/contributor/workflow.md",
+      "sha256": "d9004a0d187ff5ce9fcfde0c6f5f564b12a2566ff27032f53ca1fc8edc38d1a3",
+      "title": "Live work selection and attributed submission",
+      "rules": [
+        "Work selection records blockers and live observation epochs",
+        "A current unblocked observation is required to select and begin work",
+        "Submission requires exact attribution and a fresh pre-submission read",
+        "Reviewer advice records a recommendation without merge or platform authority",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Ship useful work through the project's repository"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysContributionEpochs",
+          "kind": "invariant"
+        },
+        {
+          "name": "canObserve",
+          "kind": "guard"
+        },
+        {
+          "name": "observe",
+          "kind": "definition"
+        },
+        {
+          "name": "setEligibility",
+          "kind": "definition"
+        },
+        {
+          "name": "canSelectWork",
+          "kind": "guard"
+        },
+        {
+          "name": "selectWork",
+          "kind": "definition"
+        },
+        {
+          "name": "canBeginWork",
+          "kind": "guard"
+        },
+        {
+          "name": "beginWork",
+          "kind": "definition"
+        },
+        {
+          "name": "canAbandon",
+          "kind": "guard"
+        },
+        {
+          "name": "abandon",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordTests",
+          "kind": "guard"
+        },
+        {
+          "name": "recordTests",
+          "kind": "definition"
+        },
+        {
+          "name": "canSetAttribution",
+          "kind": "guard"
+        },
+        {
+          "name": "setAttribution",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmSubmissionRead",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmSubmissionRead",
+          "kind": "definition"
+        },
+        {
+          "name": "canSubmit",
+          "kind": "guard"
+        },
+        {
+          "name": "submit",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordRun",
+          "kind": "guard"
+        },
+        {
+          "name": "recordRun",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordMerge",
+          "kind": "guard"
+        },
+        {
+          "name": "recordMerge",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysSubmissionEvidence",
+          "kind": "invariant"
+        },
+        {
+          "name": "canReview",
+          "kind": "guard"
+        },
+        {
+          "name": "review",
+          "kind": "definition"
+        },
+        {
+          "name": "sometimesSubmittedWithoutRun",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAccepted",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAdvised",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/fees/buyback.md",
+      "sha256": "058a61db9c41a629c15e8b2ad793856c35564f85d4d140c24471f04faaf66d75",
+      "title": "SLOP buyback and burn",
+      "rules": [
+        "Only finalized income at or after activation increases the buyback budget",
+        "A bridge order commits only available share and exact approved destinations",
+        "An unfilled order stays in transit until fulfillment or refund is proven",
+        "Each proven arrival is spent in full and half the acquired SLOP can burn once",
+        "A completed cycle preserves cumulative accounting and the journal",
+        "Bridge-native spending observes its own network ceilings",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Commit each share of fee income once",
+        "Story: Continue without counting income or burns twice",
+        "Story: Check bridge-native and direct-receipt boundaries"
+      ],
+      "definitions": [
+        {
+          "name": "spentInWindow",
+          "kind": "definition"
+        },
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canActivate",
+          "kind": "guard"
+        },
+        {
+          "name": "activate",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordIncome",
+          "kind": "guard"
+        },
+        {
+          "name": "recordIncome",
+          "kind": "definition"
+        },
+        {
+          "name": "canOrder",
+          "kind": "guard"
+        },
+        {
+          "name": "order",
+          "kind": "definition"
+        },
+        {
+          "name": "canBroadcast",
+          "kind": "guard"
+        },
+        {
+          "name": "broadcast",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveArrival",
+          "kind": "guard"
+        },
+        {
+          "name": "observeArrival",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveRefund",
+          "kind": "guard"
+        },
+        {
+          "name": "observeRefund",
+          "kind": "definition"
+        },
+        {
+          "name": "canPurchase",
+          "kind": "guard"
+        },
+        {
+          "name": "purchase",
+          "kind": "definition"
+        },
+        {
+          "name": "canCommitBurn",
+          "kind": "guard"
+        },
+        {
+          "name": "commitBurn",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinalizeBurn",
+          "kind": "guard"
+        },
+        {
+          "name": "finalizeBurn",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysShareBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysBurnBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesInTransit",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRefunded",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesBurned",
+          "kind": "reachable"
+        },
+        {
+          "name": "canContinueCycle",
+          "kind": "guard"
+        },
+        {
+          "name": "continueCycle",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysWindowLimits",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepIncomeMonotonic",
+          "kind": "step"
+        },
+        {
+          "name": "bridgeNativeAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "localFeeShare",
+          "kind": "definition"
+        },
+        {
+          "name": "lawLocalShareBound",
+          "kind": "law"
+        },
+        {
+          "name": "canSelectSource",
+          "kind": "guard"
+        },
+        {
+          "name": "selectSource",
+          "kind": "definition"
+        },
+        {
+          "name": "canReserveLocalShare",
+          "kind": "guard"
+        },
+        {
+          "name": "reserveLocalShare",
+          "kind": "definition"
+        },
+        {
+          "name": "canReceiveSlopFee",
+          "kind": "guard"
+        },
+        {
+          "name": "receiveSlopFee",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysLocalShareBounded",
+          "kind": "invariant"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "../settlement/money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/fees/conversion.md",
+      "sha256": "226d371aa6f7cb2dcb5954217660f97b27d62b0e0ba29a0f17570720c400ef97",
+      "title": "Received-fee conversion and native holds",
+      "rules": [
+        "Each network has a fixed transaction and UTC-day native ceiling",
+        "A fee attempt starts from a finalized fee receipt",
+        "Only allowlisted same-wallet quotes reserve value and gas",
+        "Only a matching finalized receipt consumes a native hold",
+        "Both independent history providers must prove expiry and absence",
+        "Replacement preserves nonce and transaction content and bounds the fee increase",
+        "A claim can only deliver the accrued amount to the configured fee wallet",
+        "Retrying a failed conversion preserves the received fee and spent gas",
+        "Expiry proof releases only the pending native hold and keeps the attempt history",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Convert received fees within limits",
+        "Story: Resolve expired Solana sends conservatively",
+        "Story: Replace only an unmined underpriced EVM attempt",
+        "Story: Claim only accrued fees from reviewed vaults",
+        "Story: Continue after a terminal attempt without discarding uncertainty",
+        "Story: Retire an expired Solana attempt only from two retained observations"
+      ],
+      "definitions": [
+        {
+          "name": "transactionCeiling",
+          "kind": "definition"
+        },
+        {
+          "name": "dailyCeiling",
+          "kind": "definition"
+        },
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canChooseNetwork",
+          "kind": "guard"
+        },
+        {
+          "name": "chooseNetwork",
+          "kind": "definition"
+        },
+        {
+          "name": "canReceive",
+          "kind": "guard"
+        },
+        {
+          "name": "receive",
+          "kind": "definition"
+        },
+        {
+          "name": "canEnableRelease",
+          "kind": "guard"
+        },
+        {
+          "name": "enableRelease",
+          "kind": "definition"
+        },
+        {
+          "name": "canReserve",
+          "kind": "guard"
+        },
+        {
+          "name": "reserve",
+          "kind": "definition"
+        },
+        {
+          "name": "canSign",
+          "kind": "guard"
+        },
+        {
+          "name": "sign",
+          "kind": "definition"
+        },
+        {
+          "name": "canBroadcast",
+          "kind": "guard"
+        },
+        {
+          "name": "broadcast",
+          "kind": "definition"
+        },
+        {
+          "name": "canLoseObservation",
+          "kind": "guard"
+        },
+        {
+          "name": "loseObservation",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetain",
+          "kind": "guard"
+        },
+        {
+          "name": "retain",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirm",
+          "kind": "guard"
+        },
+        {
+          "name": "confirm",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmFailure",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmFailure",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysNativeBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysValueBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysOutputOwned",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysPendingHeld",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesConverted",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFailed",
+          "kind": "reachable"
+        },
+        {
+          "name": "mayReleaseExpiredHold",
+          "kind": "definition"
+        },
+        {
+          "name": "mayReplaceEvm",
+          "kind": "definition"
+        },
+        {
+          "name": "claimAdmitted",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetry",
+          "kind": "guard"
+        },
+        {
+          "name": "retry",
+          "kind": "definition"
+        },
+        {
+          "name": "canNextReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "nextReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveDay",
+          "kind": "guard"
+        },
+        {
+          "name": "observeDay",
+          "kind": "definition"
+        },
+        {
+          "name": "stepUncertainHolds",
+          "kind": "step"
+        },
+        {
+          "name": "alwaysConvertedReceipt",
+          "kind": "invariant"
+        },
+        {
+          "name": "expiryProvesAbsence",
+          "kind": "definition"
+        },
+        {
+          "name": "canExpire",
+          "kind": "guard"
+        },
+        {
+          "name": "expire",
+          "kind": "definition"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/frontend/drafts.md",
+      "sha256": "87241a213cb4f256e3866f9b271082b660e27bcfa44cb23d858d302f44216ecc",
+      "title": "Private report drafts",
+      "rules": [
+        "A draft belongs to one account and project",
+        "Editing keeps storage failures visible and invalidates the reviewed content",
+        "The first send fixes a key and retries keep that key and content",
+        "A receipt requires a submitted account-bound draft",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Recover a report draft and an uncertain submission"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canOpen",
+          "kind": "guard"
+        },
+        {
+          "name": "open",
+          "kind": "definition"
+        },
+        {
+          "name": "leaveAccount",
+          "kind": "definition"
+        },
+        {
+          "name": "canEdit",
+          "kind": "guard"
+        },
+        {
+          "name": "edit",
+          "kind": "definition"
+        },
+        {
+          "name": "canReview",
+          "kind": "guard"
+        },
+        {
+          "name": "review",
+          "kind": "definition"
+        },
+        {
+          "name": "canSend",
+          "kind": "guard"
+        },
+        {
+          "name": "send",
+          "kind": "definition"
+        },
+        {
+          "name": "canLoseResponse",
+          "kind": "guard"
+        },
+        {
+          "name": "loseResponse",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetry",
+          "kind": "guard"
+        },
+        {
+          "name": "retry",
+          "kind": "definition"
+        },
+        {
+          "name": "canReceiveReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "receiveReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysDraftBinding",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepRetryKeepsSubmission",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesReceived",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesStorageFailure",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/frontend/navigation.md",
+      "sha256": "dde3a74c4c47f02b06b0b60f26efb2647ede6bc00aa1a937b6d5ade6cb894621",
+      "title": "Navigation and session ownership",
+      "rules": [
+        "The browser remembers its requested page independently of authentication",
+        "Navigation gates private destinations on a signed-in account",
+        "A private read belongs to the current account and navigation lifetime",
+        "A private destination and a cleared sign-out state are reachable",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Resume an authorized destination after signing in"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "privatePage",
+          "kind": "definition"
+        },
+        {
+          "name": "navigate",
+          "kind": "definition"
+        },
+        {
+          "name": "canSignIn",
+          "kind": "guard"
+        },
+        {
+          "name": "signIn",
+          "kind": "definition"
+        },
+        {
+          "name": "signOut",
+          "kind": "definition"
+        },
+        {
+          "name": "canReceivePrivate",
+          "kind": "guard"
+        },
+        {
+          "name": "receivePrivate",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPrivateRowsHaveOwner",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysEpochsAreValid",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesPrivateDestination",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesSignedOutAfterUse",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/frontend/projections.md",
+      "sha256": "2a3ad6f576901e24f52cf7ee8f10d6cc68f3a66a76a1e0c93c16eddcf85f6b2f",
+      "title": "Public and private projections",
+      "rules": [
+        "Project visibility, collection and installation have separate predicates",
+        "Ordinary public payment rows require finalized evidence and a public account",
+        "Removed public evidence pages and downloads stay unavailable",
+        "Interface capability requirements survive responsive and accessibility modes",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Show only the records a viewer may read"
+      ],
+      "definitions": [
+        {
+          "name": "listed",
+          "kind": "definition"
+        },
+        {
+          "name": "collected",
+          "kind": "definition"
+        },
+        {
+          "name": "installable",
+          "kind": "definition"
+        },
+        {
+          "name": "lawPausedRemainsListed",
+          "kind": "law"
+        },
+        {
+          "name": "lawInstallationRequiresClearance",
+          "kind": "law"
+        },
+        {
+          "name": "publicPayment",
+          "kind": "definition"
+        },
+        {
+          "name": "knownContributionMonth",
+          "kind": "definition"
+        },
+        {
+          "name": "lawPrivatePaymentNeverPublic",
+          "kind": "law"
+        },
+        {
+          "name": "lawPublicPaymentHasFinality",
+          "kind": "law"
+        },
+        {
+          "name": "removedRoute",
+          "kind": "definition"
+        },
+        {
+          "name": "publicRouteAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "traceBodyReadable",
+          "kind": "definition"
+        },
+        {
+          "name": "lawRemovedRoutesStayClosed",
+          "kind": "law"
+        },
+        {
+          "name": "lawTraceBodiesStayPrivate",
+          "kind": "law"
+        },
+        {
+          "name": "acceptedInterface",
+          "kind": "definition"
+        },
+        {
+          "name": "lawAcceptanceRequiresKeyboard",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/frontend/requests.md",
+      "sha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "title": "Asynchronous reads and recovery",
+      "rules": [
+        "Loading, empty, stale, denied, invalid and unavailable remain distinct",
+        "Changing a resource clears its data and invalidates in-flight results",
+        "Only the current request may publish its validated result",
+        "Empty and denied never display retained rows as current data",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Read current data without losing the last good result"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canSelectResource",
+          "kind": "guard"
+        },
+        {
+          "name": "selectResource",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequest",
+          "kind": "guard"
+        },
+        {
+          "name": "request",
+          "kind": "definition"
+        },
+        {
+          "name": "canCancel",
+          "kind": "guard"
+        },
+        {
+          "name": "cancel",
+          "kind": "guard"
+        },
+        {
+          "name": "canReceive",
+          "kind": "guard"
+        },
+        {
+          "name": "receive",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysReadShape",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesCurrent",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesEmpty",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesStale",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesDenied",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesInvalid",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUnavailable",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFailed",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCancelled",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/governance.md",
+      "sha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "title": "Scope and verification evidence",
+      "rules": [
+        "A verification result records the exact source and kind of evidence",
+        "A reviewed waiver and a bounded timeout never become a passing result",
+        "MVP completion requires reviewed coverage and real workflow evidence"
+      ],
+      "stories": [
+        "Story: Complete the approved MVP with auditable evidence"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecord",
+          "kind": "guard"
+        },
+        {
+          "name": "record",
+          "kind": "definition"
+        },
+        {
+          "name": "canWaive",
+          "kind": "guard"
+        },
+        {
+          "name": "waive",
+          "kind": "definition"
+        },
+        {
+          "name": "canReview",
+          "kind": "guard"
+        },
+        {
+          "name": "review",
+          "kind": "definition"
+        },
+        {
+          "name": "canChangeSource",
+          "kind": "guard"
+        },
+        {
+          "name": "changeSource",
+          "kind": "definition"
+        },
+        {
+          "name": "passed",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysEvidenceIdentity",
+          "kind": "invariant"
+        },
+        {
+          "name": "lawTimeoutIsNotProof",
+          "kind": "law"
+        },
+        {
+          "name": "lawWaiverIsNotPassing",
+          "kind": "law"
+        },
+        {
+          "name": "sometimesReviewed",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesWaived",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesTimeout",
+          "kind": "reachable"
+        },
+        {
+          "name": "mvpComplete",
+          "kind": "definition"
+        },
+        {
+          "name": "laterPhaseAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "lawLaterPhaseNeedsCompletion",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/operations/backup.md",
+      "sha256": "c086269c8333750dabdedfd14819715b38a93b89aca1e56331e6c09e4290a04f",
+      "title": "Daily private backup and exact restoration",
+      "rules": [
+        "Backup pages retain an ordered verified prefix and one complete manifest",
+        "Restoration verifies the complete chain and observes the exact destination bytes",
+        "Backup expiry observes its own thirty-day retention",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Complete a verifiable backup before restoring private evidence"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canStart",
+          "kind": "guard"
+        },
+        {
+          "name": "start",
+          "kind": "definition"
+        },
+        {
+          "name": "canCopyPage",
+          "kind": "guard"
+        },
+        {
+          "name": "copyPage",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerifyPage",
+          "kind": "guard"
+        },
+        {
+          "name": "verifyPage",
+          "kind": "definition"
+        },
+        {
+          "name": "canInterrupt",
+          "kind": "guard"
+        },
+        {
+          "name": "interrupt",
+          "kind": "definition"
+        },
+        {
+          "name": "canResume",
+          "kind": "guard"
+        },
+        {
+          "name": "resume",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinish",
+          "kind": "guard"
+        },
+        {
+          "name": "finish",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysBackupPrefix",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCompleteManifest",
+          "kind": "invariant"
+        },
+        {
+          "name": "canBeginRestore",
+          "kind": "guard"
+        },
+        {
+          "name": "beginRestore",
+          "kind": "definition"
+        },
+        {
+          "name": "canCheckChain",
+          "kind": "guard"
+        },
+        {
+          "name": "checkChain",
+          "kind": "definition"
+        },
+        {
+          "name": "canRefuseRestore",
+          "kind": "guard"
+        },
+        {
+          "name": "refuseRestore",
+          "kind": "definition"
+        },
+        {
+          "name": "canWriteDestination",
+          "kind": "guard"
+        },
+        {
+          "name": "writeDestination",
+          "kind": "definition"
+        },
+        {
+          "name": "canReadDestination",
+          "kind": "guard"
+        },
+        {
+          "name": "readDestination",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysRestoredExact",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesBackupComplete",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRestored",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesInterrupted",
+          "kind": "reachable"
+        },
+        {
+          "name": "canAdvanceDay",
+          "kind": "guard"
+        },
+        {
+          "name": "advanceDay",
+          "kind": "definition"
+        },
+        {
+          "name": "canExpireBackup",
+          "kind": "guard"
+        },
+        {
+          "name": "expireBackup",
+          "kind": "definition"
+        },
+        {
+          "name": "retainAccessLog",
+          "kind": "definition"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/operations/local.md",
+      "sha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
+      "title": "Isolated local identity and private storage",
+      "rules": [
+        "A handoff binds one actor, exact loopback origin and environment",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Sign into local development without creating production authority"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canIssue",
+          "kind": "guard"
+        },
+        {
+          "name": "issue",
+          "kind": "definition"
+        },
+        {
+          "name": "canConsume",
+          "kind": "guard"
+        },
+        {
+          "name": "consume",
+          "kind": "definition"
+        },
+        {
+          "name": "canAdvanceTime",
+          "kind": "guard"
+        },
+        {
+          "name": "advanceTime",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysLocalOnly",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysSingleUse",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesLocalSession",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesExpired",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/operations/notifications.md",
+      "sha256": "621a9f5047b1e99b82fd5edffd02651d76257ea073838c6f9914313a48de6505",
+      "title": "Inbox and email delivery",
+      "rules": [
+        "Inbox state is independent of email delivery",
+        "Activity email requires consent for the exact verified destination version",
+        "Every attempt has one owner and uncertain delivery blocks retries",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Receive one notice and control future email"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canSave",
+          "kind": "guard"
+        },
+        {
+          "name": "save",
+          "kind": "definition"
+        },
+        {
+          "name": "canRead",
+          "kind": "guard"
+        },
+        {
+          "name": "read",
+          "kind": "definition"
+        },
+        {
+          "name": "canAcknowledge",
+          "kind": "guard"
+        },
+        {
+          "name": "acknowledge",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysInboxAvailable",
+          "kind": "invariant"
+        },
+        {
+          "name": "canConsent",
+          "kind": "guard"
+        },
+        {
+          "name": "consent",
+          "kind": "definition"
+        },
+        {
+          "name": "canChangeDestination",
+          "kind": "guard"
+        },
+        {
+          "name": "changeDestination",
+          "kind": "definition"
+        },
+        {
+          "name": "canOptOut",
+          "kind": "guard"
+        },
+        {
+          "name": "optOut",
+          "kind": "definition"
+        },
+        {
+          "name": "canQueue",
+          "kind": "guard"
+        },
+        {
+          "name": "queue",
+          "kind": "definition"
+        },
+        {
+          "name": "canClaim",
+          "kind": "guard"
+        },
+        {
+          "name": "claim",
+          "kind": "definition"
+        },
+        {
+          "name": "canSend",
+          "kind": "guard"
+        },
+        {
+          "name": "send",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetirePreparation",
+          "kind": "guard"
+        },
+        {
+          "name": "retirePreparation",
+          "kind": "definition"
+        },
+        {
+          "name": "canAccept",
+          "kind": "guard"
+        },
+        {
+          "name": "accept",
+          "kind": "definition"
+        },
+        {
+          "name": "canReject",
+          "kind": "guard"
+        },
+        {
+          "name": "reject",
+          "kind": "definition"
+        },
+        {
+          "name": "canLoseResponse",
+          "kind": "guard"
+        },
+        {
+          "name": "loseResponse",
+          "kind": "definition"
+        },
+        {
+          "name": "canProveUnsent",
+          "kind": "guard"
+        },
+        {
+          "name": "proveUnsent",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmDelivery",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmDelivery",
+          "kind": "definition"
+        },
+        {
+          "name": "canEscalate",
+          "kind": "guard"
+        },
+        {
+          "name": "escalate",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAttemptBudget",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepNoticeRetained",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesDelivered",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCancelled",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/operations/release.md",
+      "sha256": "a9323c2ec03b65124595fa9e551ff6033418b6a21087772d0a515147da1bf210",
+      "title": "Environment-scoped source-bound release",
+      "rules": [
+        "Source identity, checks, data and delivery remain separate evidence",
+        "Normal releases need verified registry and GitHub collections for this environment",
+        "An explicit manual release may retain its own verified published snapshot",
+        "Every required check binds the same candidate and artifact",
+        "The shared publication lock and unchanged branch sourceHead gate every send",
+        "Served bytes require exact deployment identity and current branch equivalence",
+        "Expired reporting health restricts only optional trace collection",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Publish the exact checked source and data to its own environment",
+        "Story: Keep operational readiness distinct from source approval"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfigure",
+          "kind": "guard"
+        },
+        {
+          "name": "configure",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveBranchHead",
+          "kind": "guard"
+        },
+        {
+          "name": "observeBranchHead",
+          "kind": "definition"
+        },
+        {
+          "name": "requiredBranch",
+          "kind": "definition"
+        },
+        {
+          "name": "canCollectData",
+          "kind": "guard"
+        },
+        {
+          "name": "collectData",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetainSnapshot",
+          "kind": "guard"
+        },
+        {
+          "name": "retainSnapshot",
+          "kind": "definition"
+        },
+        {
+          "name": "validData",
+          "kind": "definition"
+        },
+        {
+          "name": "stepPreservesDataTimestamps",
+          "kind": "step"
+        },
+        {
+          "name": "canRecordGate",
+          "kind": "guard"
+        },
+        {
+          "name": "recordGate",
+          "kind": "definition"
+        },
+        {
+          "name": "canCheck",
+          "kind": "guard"
+        },
+        {
+          "name": "check",
+          "kind": "definition"
+        },
+        {
+          "name": "canAcquireLock",
+          "kind": "guard"
+        },
+        {
+          "name": "acquireLock",
+          "kind": "definition"
+        },
+        {
+          "name": "canPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "publish",
+          "kind": "definition"
+        },
+        {
+          "name": "canLoseResponse",
+          "kind": "guard"
+        },
+        {
+          "name": "loseResponse",
+          "kind": "definition"
+        },
+        {
+          "name": "canReconcilePublication",
+          "kind": "guard"
+        },
+        {
+          "name": "reconcilePublication",
+          "kind": "definition"
+        },
+        {
+          "name": "canProveUnpublished",
+          "kind": "guard"
+        },
+        {
+          "name": "proveUnpublished",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerifyServed",
+          "kind": "guard"
+        },
+        {
+          "name": "verifyServed",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPublicationChecked",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysVerifiedBytes",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesVerified",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesStaging",
+          "kind": "reachable"
+        },
+        {
+          "name": "traceCollectionReady",
+          "kind": "definition"
+        },
+        {
+          "name": "contributionAvailable",
+          "kind": "definition"
+        },
+        {
+          "name": "lawHealthNeverBlocksContribution",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/allocation.md",
+      "sha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "title": "Implementation Points allocation",
+      "rules": [
+        "Eligible recipients have unique positive actor IDs and complete nonnegative line evidence",
+        "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID",
+        "Source eligibility and fixed financial history are checked before any allocation is written",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Divide one work unit's fixed value between its implementation authors"
+      ],
+      "definitions": [
+        {
+          "name": "validRecipients",
+          "kind": "definition"
+        },
+        {
+          "name": "eligibleAllocation",
+          "kind": "definition"
+        },
+        {
+          "name": "lineTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "allocationWeight",
+          "kind": "definition"
+        },
+        {
+          "name": "weightTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "floorShare",
+          "kind": "definition"
+        },
+        {
+          "name": "pointRemainder",
+          "kind": "definition"
+        },
+        {
+          "name": "floorTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "remainderRank",
+          "kind": "definition"
+        },
+        {
+          "name": "allocatePoints",
+          "kind": "definition"
+        },
+        {
+          "name": "pointTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "lawSingleRecipient",
+          "kind": "law"
+        },
+        {
+          "name": "lawEqualTwo",
+          "kind": "law"
+        },
+        {
+          "name": "lawTenPointSplit",
+          "kind": "law"
+        },
+        {
+          "name": "canWriteAllocation",
+          "kind": "guard"
+        },
+        {
+          "name": "sizePoints",
+          "kind": "definition"
+        },
+        {
+          "name": "lawAcceptedMinimum",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/authorship.md",
+      "sha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "title": "Accepted-commit authorship and retained copies",
+      "rules": [
+        "Commit identity and accepted-copy line evidence remain bound together",
+        "Primary authorship takes precedence over the PR opener and retained-copy fallback",
+        "Only accepted unique non-merge commits can contribute line weight",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Credit the implementation author without rewarding a carrier PR"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysCommitIdentity",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysLineEvidence",
+          "kind": "invariant"
+        },
+        {
+          "name": "recipientFor",
+          "kind": "definition"
+        },
+        {
+          "name": "canObservePrimary",
+          "kind": "guard"
+        },
+        {
+          "name": "observePrimary",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveOriginal",
+          "kind": "guard"
+        },
+        {
+          "name": "observeOriginal",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveSource",
+          "kind": "guard"
+        },
+        {
+          "name": "observeSource",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveAcceptance",
+          "kind": "guard"
+        },
+        {
+          "name": "observeAcceptance",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordLines",
+          "kind": "guard"
+        },
+        {
+          "name": "recordLines",
+          "kind": "definition"
+        },
+        {
+          "name": "canAttribute",
+          "kind": "guard"
+        },
+        {
+          "name": "attribute",
+          "kind": "definition"
+        },
+        {
+          "name": "canCreditCommit",
+          "kind": "guard"
+        },
+        {
+          "name": "creditCommit",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAttributedEligibility",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCreditOnce",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesPrimary",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesOriginalFallback",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesSourceFallback",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCredited",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/census.md",
+      "sha256": "71998a0297d6756730f428471c0f7c45001cf04972448caeb89237b5aa263645",
+      "title": "Source census and publication",
+      "rules": [
+        "Snapshot progress preserves exact bounds and distinct immutable source IDs",
+        "Collection records all pages and deduplicates immutable sources",
+        "Publication requires a complete reconciled journal and preserves the previous snapshot on failure",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Publish complete rankings and deterministic work decisions"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysWindow",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysDistinctSources",
+          "kind": "invariant"
+        },
+        {
+          "name": "canBegin",
+          "kind": "guard"
+        },
+        {
+          "name": "begin",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordPage",
+          "kind": "guard"
+        },
+        {
+          "name": "recordPage",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordEmptyPage",
+          "kind": "guard"
+        },
+        {
+          "name": "recordEmptyPage",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordFailure",
+          "kind": "guard"
+        },
+        {
+          "name": "recordFailure",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinish",
+          "kind": "guard"
+        },
+        {
+          "name": "finish",
+          "kind": "definition"
+        },
+        {
+          "name": "canReleaseHold",
+          "kind": "guard"
+        },
+        {
+          "name": "releaseHold",
+          "kind": "definition"
+        },
+        {
+          "name": "canPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "publish",
+          "kind": "definition"
+        },
+        {
+          "name": "promotionExcluded",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPublishedComplete",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysFailedKeepsSnapshot",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesPublished",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesIncomplete",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/journal.md",
+      "sha256": "a3df21ec3f90f8b6a3ca81ceedae8dfba333876caf126974ae51a2b295aaebfb",
+      "title": "Append-only Points journal",
+      "rules": [
+        "Original occurrence time and append-only recording history are distinct",
+        "One verified accepted source creates one credit",
+        "Unpaid corrections append their difference without rewriting history",
+        "Credited and frozen source states are reachable",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Preserve accepted work and correct unpaid attribution"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysJournalTime",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysNonnegative",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysHistoryRetained",
+          "kind": "invariant"
+        },
+        {
+          "name": "canCredit",
+          "kind": "guard"
+        },
+        {
+          "name": "credit",
+          "kind": "definition"
+        },
+        {
+          "name": "canFreeze",
+          "kind": "guard"
+        },
+        {
+          "name": "freeze",
+          "kind": "definition"
+        },
+        {
+          "name": "canCorrect",
+          "kind": "guard"
+        },
+        {
+          "name": "correct",
+          "kind": "definition"
+        },
+        {
+          "name": "canReassign",
+          "kind": "guard"
+        },
+        {
+          "name": "reassign",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysFrozenReward",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepAppendOnly",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesCredited",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFrozen",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/penalties.md",
+      "sha256": "2179af7d9ac20be55122e23cf7ddc02408b8eb3d1bb7ede1a65923bd8789ef71",
+      "title": "Aggregate monthly Points and penalties",
+      "rules": [
+        "Monthly totals aggregate immutable accepted sources",
+        "The published category determines the requested debit",
+        "Reversals restore the applied debit once and leave frozen rewards unchanged",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Apply a published penalty without erasing accepted work or funded rewards"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "earnedPoints",
+          "kind": "definition"
+        },
+        {
+          "name": "appliedDebits",
+          "kind": "definition"
+        },
+        {
+          "name": "standingPoints",
+          "kind": "definition"
+        },
+        {
+          "name": "rewardWeight",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPositiveSources",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysUniqueSources",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysNonnegativeStanding",
+          "kind": "invariant"
+        },
+        {
+          "name": "canAddAccepted",
+          "kind": "guard"
+        },
+        {
+          "name": "addAccepted",
+          "kind": "definition"
+        },
+        {
+          "name": "requestedDebit",
+          "kind": "definition"
+        },
+        {
+          "name": "canApplyPenalty",
+          "kind": "guard"
+        },
+        {
+          "name": "applyPenalty",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysDebitsBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysUniqueDecisions",
+          "kind": "invariant"
+        },
+        {
+          "name": "canReversePenalty",
+          "kind": "guard"
+        },
+        {
+          "name": "reversePenalty",
+          "kind": "definition"
+        },
+        {
+          "name": "canFreezeRewards",
+          "kind": "guard"
+        },
+        {
+          "name": "freezeRewards",
+          "kind": "definition"
+        },
+        {
+          "name": "stepFrozenRewardStable",
+          "kind": "step"
+        },
+        {
+          "name": "stepSourcesRetained",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesSeveralSources",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCappedPenalty",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReversedPenalty",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFrozen",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/points/reviews.md",
+      "sha256": "b785b7242f7b08d9427af034f3b6ff42f6fcc6f6540b706837d4f734200fea18",
+      "title": "Useful review credit",
+      "rules": [
+        "Review records preserve first qualification and highest band",
+        "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews",
+        "Pool shares use ten-Point largest remainder and the original review order",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Credit the first five distinct useful reviewers"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "validBand",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAtMostFive",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysUsefulBands",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysDistinctReviewers",
+          "kind": "invariant"
+        },
+        {
+          "name": "canRecordReview",
+          "kind": "guard"
+        },
+        {
+          "name": "recordReview",
+          "kind": "definition"
+        },
+        {
+          "name": "canAssess",
+          "kind": "guard"
+        },
+        {
+          "name": "assess",
+          "kind": "definition"
+        },
+        {
+          "name": "bandTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "poolPoints",
+          "kind": "definition"
+        },
+        {
+          "name": "reviewFloor",
+          "kind": "definition"
+        },
+        {
+          "name": "reviewRemainder",
+          "kind": "definition"
+        },
+        {
+          "name": "reviewFloorTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "reviewRank",
+          "kind": "definition"
+        },
+        {
+          "name": "reviewShare",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPoolBound",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesReviewed",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFiveReviewers",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/projectComposition.md",
+      "sha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+      "title": "Registry and security composition",
+      "rules": [
+        "Collection requires both registry availability and matching security clearance"
+      ],
+      "stories": [
+        "Story: Stop work immediately when any repository loses clearance"
+      ],
+      "definitions": [
+        {
+          "name": "sameRepositories",
+          "kind": "definition"
+        },
+        {
+          "name": "mayCollect",
+          "kind": "definition"
+        },
+        {
+          "name": "mayPublishSkill",
+          "kind": "definition"
+        },
+        {
+          "name": "lawSecurityRestrictionStopsCollection",
+          "kind": "law"
+        },
+        {
+          "name": "lawRegistryPauseStopsCollection",
+          "kind": "law"
+        },
+        {
+          "name": "lawSkillsRequireCollection",
+          "kind": "law"
+        }
+      ],
+      "imports": [
+        [
+          "projects as P",
+          "./backend/projects"
+        ],
+        [
+          "enforcement as E",
+          "./security/enforcement"
+        ]
+      ]
+    },
+    {
+      "path": "spec/security/admission.md",
+      "sha256": "6aab1af83b33f8419a7570b94ab4681b7f9b107942f7627ebb012ea8b53071ac",
+      "title": "Repository admission scan",
+      "rules": [
+        "A scan records acquisition, coverage, synthesis and retention separately",
+        "Acquisition binds one shallow fetch to the requested repository and commit",
+        "Every reviewed batch covers distinct inventory entries",
+        "Evidence durability precedes a clean result",
+        "Interrupted and incomplete review can resume without granting admission",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Review every acquired item before granting admission"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequest",
+          "kind": "guard"
+        },
+        {
+          "name": "request",
+          "kind": "definition"
+        },
+        {
+          "name": "canAcquire",
+          "kind": "guard"
+        },
+        {
+          "name": "acquire",
+          "kind": "definition"
+        },
+        {
+          "name": "canReviewBatch",
+          "kind": "guard"
+        },
+        {
+          "name": "reviewBatch",
+          "kind": "definition"
+        },
+        {
+          "name": "canCheckDeterministically",
+          "kind": "guard"
+        },
+        {
+          "name": "checkDeterministically",
+          "kind": "definition"
+        },
+        {
+          "name": "canSynthesize",
+          "kind": "guard"
+        },
+        {
+          "name": "synthesize",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetain",
+          "kind": "guard"
+        },
+        {
+          "name": "retain",
+          "kind": "definition"
+        },
+        {
+          "name": "canPass",
+          "kind": "guard"
+        },
+        {
+          "name": "pass",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysCompleteClean",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCoverageBounds",
+          "kind": "invariant"
+        },
+        {
+          "name": "canInterrupt",
+          "kind": "guard"
+        },
+        {
+          "name": "interrupt",
+          "kind": "definition"
+        },
+        {
+          "name": "canMarkIncomplete",
+          "kind": "guard"
+        },
+        {
+          "name": "markIncomplete",
+          "kind": "definition"
+        },
+        {
+          "name": "canResume",
+          "kind": "guard"
+        },
+        {
+          "name": "resume",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordMalice",
+          "kind": "guard"
+        },
+        {
+          "name": "recordMalice",
+          "kind": "definition"
+        },
+        {
+          "name": "stepPreservesPermanentEvidence",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesClean",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesIncomplete",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesMalicious",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/security/cases.md",
+      "sha256": "dacad070c2afada1424c53f13b29565c21ddfdd35163a3859435c2a230067925",
+      "title": "Private case review, awards and disclosure",
+      "rules": [
+        "Screening outcomes preserve a recoverable private case",
+        "Current authorized reviewers decide technical findings and awards",
+        "Plausible reports and authorized overrides permit private owner notification",
+        "An independent moderator upholds or returns escalated appeals",
+        "A patch is verified at its exact digest",
+        "Only separately approved redacted content may be published",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Obtain a human case decision without automatic rejection",
+        "Story: Verify remediation and approve exact disclosure independently"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canScreen",
+          "kind": "guard"
+        },
+        {
+          "name": "screen",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetryScreen",
+          "kind": "guard"
+        },
+        {
+          "name": "retryScreen",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysScreeningIsAdvisory",
+          "kind": "invariant"
+        },
+        {
+          "name": "canRevoke",
+          "kind": "guard"
+        },
+        {
+          "name": "revoke",
+          "kind": "definition"
+        },
+        {
+          "name": "canDecide",
+          "kind": "guard"
+        },
+        {
+          "name": "decide",
+          "kind": "definition"
+        },
+        {
+          "name": "canApproveAward",
+          "kind": "guard"
+        },
+        {
+          "name": "approveAward",
+          "kind": "definition"
+        },
+        {
+          "name": "canDeclineAward",
+          "kind": "guard"
+        },
+        {
+          "name": "declineAward",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordCapacityWait",
+          "kind": "guard"
+        },
+        {
+          "name": "recordCapacityWait",
+          "kind": "definition"
+        },
+        {
+          "name": "canReviewRelated",
+          "kind": "guard"
+        },
+        {
+          "name": "reviewRelated",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAwardHasAcceptance",
+          "kind": "invariant"
+        },
+        {
+          "name": "canNotifyOwner",
+          "kind": "guard"
+        },
+        {
+          "name": "notifyOwner",
+          "kind": "definition"
+        },
+        {
+          "name": "canAppeal",
+          "kind": "guard"
+        },
+        {
+          "name": "appeal",
+          "kind": "definition"
+        },
+        {
+          "name": "canResolveAppeal",
+          "kind": "guard"
+        },
+        {
+          "name": "resolveAppeal",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAppealState",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepPreservesApprovedAward",
+          "kind": "step"
+        },
+        {
+          "name": "alwaysRelatedApproval",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesCapacityWait",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAccepted",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAppealed",
+          "kind": "reachable"
+        },
+        {
+          "name": "canRecordPatch",
+          "kind": "guard"
+        },
+        {
+          "name": "recordPatch",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerifyPatch",
+          "kind": "guard"
+        },
+        {
+          "name": "verifyPatch",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysVerifiedPatchMatches",
+          "kind": "invariant"
+        },
+        {
+          "name": "canApproveDisclosure",
+          "kind": "guard"
+        },
+        {
+          "name": "approveDisclosure",
+          "kind": "definition"
+        },
+        {
+          "name": "canPublishDisclosure",
+          "kind": "guard"
+        },
+        {
+          "name": "publishDisclosure",
+          "kind": "definition"
+        },
+        {
+          "name": "canConsentRecognition",
+          "kind": "guard"
+        },
+        {
+          "name": "consentRecognition",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysExactDisclosure",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesVerifiedPatch",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesDisclosed",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/security/enforcement.md",
+      "sha256": "864a0da2b631545b46572b3f3c546e1ae84695a78b7dabb5815c0e2e1c798ab8",
+      "title": "Project restrictions and reinstatement",
+      "rules": [
+        "Clearance and restrictions are independent dimensions",
+        "Two distinct eligible contributors pause the project",
+        "Fresh clean scans resolve flag-only pauses while humans decide confirmed malice",
+        "Exemptions retain explicit identity and revocation",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Pause unsafe work while retaining history and obligations"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "activeFlag",
+          "kind": "definition"
+        },
+        {
+          "name": "flagCount",
+          "kind": "definition"
+        },
+        {
+          "name": "cleared",
+          "kind": "definition"
+        },
+        {
+          "name": "mayContribute",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordClean",
+          "kind": "guard"
+        },
+        {
+          "name": "recordClean",
+          "kind": "definition"
+        },
+        {
+          "name": "canAppendRepository",
+          "kind": "guard"
+        },
+        {
+          "name": "appendRepository",
+          "kind": "definition"
+        },
+        {
+          "name": "canCheckSetup",
+          "kind": "guard"
+        },
+        {
+          "name": "checkSetup",
+          "kind": "definition"
+        },
+        {
+          "name": "eligibleFlag",
+          "kind": "definition"
+        },
+        {
+          "name": "canFlag",
+          "kind": "guard"
+        },
+        {
+          "name": "flag",
+          "kind": "definition"
+        },
+        {
+          "name": "canWithdrawFlag",
+          "kind": "guard"
+        },
+        {
+          "name": "withdrawFlag",
+          "kind": "definition"
+        },
+        {
+          "name": "canAdvanceDay",
+          "kind": "guard"
+        },
+        {
+          "name": "advanceDay",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysFlagTimes",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysFlagPause",
+          "kind": "invariant"
+        },
+        {
+          "name": "canReinstateFlags",
+          "kind": "guard"
+        },
+        {
+          "name": "reinstateFlags",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmMalice",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmMalice",
+          "kind": "definition"
+        },
+        {
+          "name": "canReinstateBan",
+          "kind": "guard"
+        },
+        {
+          "name": "reinstateBan",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysBanNotice",
+          "kind": "invariant"
+        },
+        {
+          "name": "canRecognizeFrozen",
+          "kind": "guard"
+        },
+        {
+          "name": "recognizeFrozen",
+          "kind": "definition"
+        },
+        {
+          "name": "canGrantOwnerExemption",
+          "kind": "guard"
+        },
+        {
+          "name": "grantOwnerExemption",
+          "kind": "definition"
+        },
+        {
+          "name": "canRevokeExemption",
+          "kind": "guard"
+        },
+        {
+          "name": "revokeExemption",
+          "kind": "definition"
+        },
+        {
+          "name": "canQuarantine",
+          "kind": "guard"
+        },
+        {
+          "name": "quarantine",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequestAppeal",
+          "kind": "guard"
+        },
+        {
+          "name": "requestAppeal",
+          "kind": "definition"
+        },
+        {
+          "name": "canReleaseQuarantine",
+          "kind": "guard"
+        },
+        {
+          "name": "releaseQuarantine",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetire",
+          "kind": "guard"
+        },
+        {
+          "name": "retire",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysRestrictionsBlockWork",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepRetainsExemptionHistory",
+          "kind": "step"
+        },
+        {
+          "name": "alwaysFrozenOriginalOnly",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesQuarantineRecovered",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesAppendedPaused",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRetired",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReinstated",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPaused",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesExempt",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/security/evidence.md",
+      "sha256": "a2391dad4c15a1d0212fd10241e2776839105a6661523684e002ab74fe7ee143",
+      "title": "Shared evidence retention and cleanup",
+      "rules": [
+        "References, permanent admission and pending uploads are separate",
+        "Successful admission stays permanent and ordinary evidence waits ninety days",
+        "Last-reference cleanup excludes new references and waits for all admitted uploads",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Preserve every retained reference to shared evidence"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "activeReferences",
+          "kind": "definition"
+        },
+        {
+          "name": "canRegisterReference",
+          "kind": "guard"
+        },
+        {
+          "name": "registerReference",
+          "kind": "definition"
+        },
+        {
+          "name": "canStartUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "startUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinishUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "finishUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canFailUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "failUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canMarkPermanent",
+          "kind": "guard"
+        },
+        {
+          "name": "markPermanent",
+          "kind": "definition"
+        },
+        {
+          "name": "canCloseReference",
+          "kind": "guard"
+        },
+        {
+          "name": "closeReference",
+          "kind": "definition"
+        },
+        {
+          "name": "canAdvanceDay",
+          "kind": "guard"
+        },
+        {
+          "name": "advanceDay",
+          "kind": "definition"
+        },
+        {
+          "name": "canExpireReference",
+          "kind": "guard"
+        },
+        {
+          "name": "expireReference",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysPermanentRetained",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysReferenceHistory",
+          "kind": "invariant"
+        },
+        {
+          "name": "canVerifyBackup",
+          "kind": "guard"
+        },
+        {
+          "name": "verifyBackup",
+          "kind": "definition"
+        },
+        {
+          "name": "canClaimDelete",
+          "kind": "guard"
+        },
+        {
+          "name": "claimDelete",
+          "kind": "definition"
+        },
+        {
+          "name": "canDeleteBytes",
+          "kind": "guard"
+        },
+        {
+          "name": "deleteBytes",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveAbsence",
+          "kind": "guard"
+        },
+        {
+          "name": "observeAbsence",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordCleanup",
+          "kind": "guard"
+        },
+        {
+          "name": "recordCleanup",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysDeletionAuthorized",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepRetainsReferences",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesPermanent",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCleaned",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesShared",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/security/intake.md",
+      "sha256": "d30ea471aa939fcb2ef6f6a11bc182d4f49edc3725b1ab166da1cf8a7ec3512a",
+      "title": "Durable private report intake",
+      "rules": [
+        "Upload and receipt creation have separate durable states",
+        "A new attempt binds authenticated identity and keeps its idempotency key",
+        "Only verified exact object bytes permit an atomic case and Inbox receipt",
+        "Forwarding requires separate researcher authorization and its own receipt",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Submit and recover one private report"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canBegin",
+          "kind": "guard"
+        },
+        {
+          "name": "begin",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserveAvailability",
+          "kind": "guard"
+        },
+        {
+          "name": "observeAvailability",
+          "kind": "definition"
+        },
+        {
+          "name": "canInterruptUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "interruptUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetryUpload",
+          "kind": "guard"
+        },
+        {
+          "name": "retryUpload",
+          "kind": "definition"
+        },
+        {
+          "name": "canVerifyObject",
+          "kind": "guard"
+        },
+        {
+          "name": "verifyObject",
+          "kind": "definition"
+        },
+        {
+          "name": "canCommitReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "commitReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "canReconcileReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "reconcileReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAtomicReceipt",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepPreservesReceipt",
+          "kind": "step"
+        },
+        {
+          "name": "canAuthorizeForwarding",
+          "kind": "guard"
+        },
+        {
+          "name": "authorizeForwarding",
+          "kind": "definition"
+        },
+        {
+          "name": "canStartForwarding",
+          "kind": "guard"
+        },
+        {
+          "name": "startForwarding",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmForwarding",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmForwarding",
+          "kind": "definition"
+        },
+        {
+          "name": "canProveUnsent",
+          "kind": "guard"
+        },
+        {
+          "name": "proveUnsent",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysForwardedAfterReceipt",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesUnavailable",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesDenied",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReceived",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesForwarded",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/security/privacy.md",
+      "sha256": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
+      "title": "Private access and retained evidence",
+      "rules": [
+        "Read authorization is scoped, expiring and audited",
+        "Content-addressed objects cannot be deleted while retained",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Read only authorized retained evidence",
+        "Story: Retain evidence while any obligation references it"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "scannerActorAllowed",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequestRead",
+          "kind": "guard"
+        },
+        {
+          "name": "requestRead",
+          "kind": "definition"
+        },
+        {
+          "name": "allowed",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordAudit",
+          "kind": "guard"
+        },
+        {
+          "name": "recordAudit",
+          "kind": "definition"
+        },
+        {
+          "name": "canDeliver",
+          "kind": "guard"
+        },
+        {
+          "name": "deliver",
+          "kind": "definition"
+        },
+        {
+          "name": "canExpire",
+          "kind": "guard"
+        },
+        {
+          "name": "expire",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAuditedDelivery",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysNoTraceRead",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesReportRead",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesScannerRead",
+          "kind": "reachable"
+        },
+        {
+          "name": "emptyObject",
+          "kind": "definition"
+        },
+        {
+          "name": "mayDeleteObject",
+          "kind": "definition"
+        },
+        {
+          "name": "lawSuccessfulAdmissionPermanent",
+          "kind": "law"
+        },
+        {
+          "name": "lawSharedObjectsRetained",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/settlement/allocation.md",
+      "sha256": "14ffdddbf0905e0d1c8fe3615594e86947caa894824ea9cce639203223d0c22f",
+      "title": "Full-width largest-remainder allocation",
+      "rules": [
+        "Weights name unique actors and at least one positive accepted-work amount",
+        "Each floor and remainder comes from full-width multiplication and division",
+        "The largest remainders receive the remaining units exactly once",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Allocate the complete monthly pool without losing or creating units"
+      ],
+      "definitions": [
+        {
+          "name": "totalWeight",
+          "kind": "definition"
+        },
+        {
+          "name": "validWeights",
+          "kind": "definition"
+        },
+        {
+          "name": "canAllocate",
+          "kind": "guard"
+        },
+        {
+          "name": "portion",
+          "kind": "definition"
+        },
+        {
+          "name": "floorTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "remainderRank",
+          "kind": "definition"
+        },
+        {
+          "name": "allocateAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "allocatedTotal",
+          "kind": "definition"
+        },
+        {
+          "name": "canCommitAllocation",
+          "kind": "guard"
+        },
+        {
+          "name": "lawAllocationConserves",
+          "kind": "law"
+        },
+        {
+          "name": "lawSingleRecipient",
+          "kind": "law"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/settlement/contributorAllocation.md",
+      "sha256": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
+      "title": "Separate contributor token allocation",
+      "rules": [
+        "An unpublished distribution exposes no recipient row",
+        "A timely first wallet confirmation survives replacement",
+        "Only the owner sender records the single transaction",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Register before the deadline and receive at most one send"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "publish",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfirmWallet",
+          "kind": "guard"
+        },
+        {
+          "name": "confirmWallet",
+          "kind": "definition"
+        },
+        {
+          "name": "canReplaceWallet",
+          "kind": "guard"
+        },
+        {
+          "name": "replaceWallet",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordSend",
+          "kind": "guard"
+        },
+        {
+          "name": "recordSend",
+          "kind": "definition"
+        },
+        {
+          "name": "canExpire",
+          "kind": "guard"
+        },
+        {
+          "name": "expire",
+          "kind": "definition"
+        },
+        {
+          "name": "canCloseBatch",
+          "kind": "guard"
+        },
+        {
+          "name": "closeBatch",
+          "kind": "definition"
+        },
+        {
+          "name": "mayRead",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysScheduledWallet",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysSentRecorded",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepSentPermanent",
+          "kind": "step"
+        },
+        {
+          "name": "stepFirstConfirmationPreserved",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesSent",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesUnclaimed",
+          "kind": "reachable"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/settlement/money.md",
+      "sha256": "572fb592d393d6b08b95613e08d002e62e495a380e544b76fbf3ac143ce75532",
+      "title": "Exact asset amounts",
+      "rules": [
+        "Every amount contains only integer limbs from zero through 999",
+        "Addition carries each limb and subtraction borrows each limb",
+        "Ordinary fees round upward and private splits require exact division",
+        "Token-2022 admission permits only immutable metadata and immutable token ownership",
+        "Multiplication accumulates shifted limb products without converting the amount to a number",
+        "Long division chooses each quotient limb by ten fixed binary decisions",
+        "Full-width ordinary and private fee calculations conserve every base unit",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Preserve every base unit",
+        "Story: Admit the exact supported token behavior",
+        "Story: Multiply and divide full-width monetary values"
+      ],
+      "definitions": [
+        {
+          "name": "zero",
+          "kind": "definition"
+        },
+        {
+          "name": "validAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "smallAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "compareAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "equalAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "positiveAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "lawEqualReflexive",
+          "kind": "law"
+        },
+        {
+          "name": "addAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "subtractAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "lawZeroIdentity",
+          "kind": "law"
+        },
+        {
+          "name": "ordinaryFee",
+          "kind": "definition"
+        },
+        {
+          "name": "ordinaryNet",
+          "kind": "definition"
+        },
+        {
+          "name": "privateResearcher",
+          "kind": "definition"
+        },
+        {
+          "name": "privateSponsor",
+          "kind": "definition"
+        },
+        {
+          "name": "lawOrdinaryConservation",
+          "kind": "law"
+        },
+        {
+          "name": "lawPrivateConservation",
+          "kind": "law"
+        },
+        {
+          "name": "token2022Admissible",
+          "kind": "definition"
+        },
+        {
+          "name": "sameAsset",
+          "kind": "definition"
+        },
+        {
+          "name": "multiplySmall",
+          "kind": "definition"
+        },
+        {
+          "name": "multiplyAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "reverseAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "lawMultiplyOne",
+          "kind": "law"
+        },
+        {
+          "name": "quotientDigit",
+          "kind": "definition"
+        },
+        {
+          "name": "divideAmounts",
+          "kind": "definition"
+        },
+        {
+          "name": "lawDivisionReconstructs",
+          "kind": "law"
+        },
+        {
+          "name": "lawDivisionRemainder",
+          "kind": "law"
+        },
+        {
+          "name": "ordinaryFeeAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "ordinaryNetAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "privateSplitPossible",
+          "kind": "definition"
+        },
+        {
+          "name": "privateFeeAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "privateResearcherAmount",
+          "kind": "definition"
+        },
+        {
+          "name": "lawFullOrdinaryConservation",
+          "kind": "law"
+        },
+        {
+          "name": "lawFullPrivateConservation",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/settlement/monthly.md",
+      "sha256": "e68af66fc4a3518620ee902f54f20330ec766e2736034579c53aa0787b33414d",
+      "title": "Monthly allocations",
+      "rules": [
+        "A new period has no proposal or financial obligation",
+        "A complete closed-month ledger creates a proposal once",
+        "The current owner may adjust before freeze without exceeding the cap",
+        "Full funding reserves every recipient and walletless awards do not expire",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Freeze one complete allocation"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "hasActor",
+          "kind": "definition"
+        },
+        {
+          "name": "amountFor",
+          "kind": "definition"
+        },
+        {
+          "name": "canPropose",
+          "kind": "guard"
+        },
+        {
+          "name": "propose",
+          "kind": "definition"
+        },
+        {
+          "name": "canAdjust",
+          "kind": "guard"
+        },
+        {
+          "name": "adjust",
+          "kind": "definition"
+        },
+        {
+          "name": "canSetAutomatic",
+          "kind": "guard"
+        },
+        {
+          "name": "setAutomatic",
+          "kind": "definition"
+        },
+        {
+          "name": "canSetCap",
+          "kind": "guard"
+        },
+        {
+          "name": "setCap",
+          "kind": "definition"
+        },
+        {
+          "name": "canReachCutoff",
+          "kind": "guard"
+        },
+        {
+          "name": "reachCutoff",
+          "kind": "definition"
+        },
+        {
+          "name": "canFreeze",
+          "kind": "guard"
+        },
+        {
+          "name": "freeze",
+          "kind": "definition"
+        },
+        {
+          "name": "canAutoFreeze",
+          "kind": "guard"
+        },
+        {
+          "name": "autoFreeze",
+          "kind": "definition"
+        },
+        {
+          "name": "leadsToCutoffFrozen",
+          "kind": "liveness"
+        },
+        {
+          "name": "canFund",
+          "kind": "guard"
+        },
+        {
+          "name": "fund",
+          "kind": "definition"
+        },
+        {
+          "name": "canRegisterWallet",
+          "kind": "guard"
+        },
+        {
+          "name": "registerWallet",
+          "kind": "definition"
+        },
+        {
+          "name": "canPay",
+          "kind": "guard"
+        },
+        {
+          "name": "pay",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAllocationConserved",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCompletedPaid",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysPaidMember",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepFrozenAmountsStable",
+          "kind": "step"
+        },
+        {
+          "name": "stepPaidNeverReverts",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesWalletlessReserve",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesIndependentPayment",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCompleted",
+          "kind": "reachable"
+        }
+      ],
+      "imports": [
+        [
+          "allocation as A",
+          "./allocation"
+        ],
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/settlement/payment.md",
+      "sha256": "dde58af3d40b9b9483baecaa78ec11900adde317a2fcf33716cd45a683cb1369",
+      "title": "Payment evidence and recovery",
+      "rules": [
+        "An approved obligation retains its immutable amount and purpose",
+        "A destination requires the current account and wallet consent",
+        "Journal before submission and retain every uncertain attempt",
+        "Exact finalized evidence is the only transition to paid",
+        "Private fee schedules are exact and purpose-bound",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Pay one obligation exactly once",
+        "Story: Preserve policy-specific private awards"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canConfigure",
+          "kind": "guard"
+        },
+        {
+          "name": "configure",
+          "kind": "definition"
+        },
+        {
+          "name": "canReleaseFullRail",
+          "kind": "guard"
+        },
+        {
+          "name": "releaseFullRail",
+          "kind": "definition"
+        },
+        {
+          "name": "canBind",
+          "kind": "guard"
+        },
+        {
+          "name": "bind",
+          "kind": "definition"
+        },
+        {
+          "name": "canJournal",
+          "kind": "guard"
+        },
+        {
+          "name": "journal",
+          "kind": "definition"
+        },
+        {
+          "name": "canSubmit",
+          "kind": "guard"
+        },
+        {
+          "name": "submit",
+          "kind": "definition"
+        },
+        {
+          "name": "canLoseReceipt",
+          "kind": "guard"
+        },
+        {
+          "name": "loseReceipt",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetransmit",
+          "kind": "guard"
+        },
+        {
+          "name": "retransmit",
+          "kind": "definition"
+        },
+        {
+          "name": "canHold",
+          "kind": "guard"
+        },
+        {
+          "name": "hold",
+          "kind": "definition"
+        },
+        {
+          "name": "canResume",
+          "kind": "guard"
+        },
+        {
+          "name": "resume",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordFailure",
+          "kind": "guard"
+        },
+        {
+          "name": "recordFailure",
+          "kind": "definition"
+        },
+        {
+          "name": "canReconcile",
+          "kind": "guard"
+        },
+        {
+          "name": "reconcile",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysConserved",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysPaidEvidence",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepPaidPermanent",
+          "kind": "step"
+        },
+        {
+          "name": "stepObligationPermanent",
+          "kind": "step"
+        },
+        {
+          "name": "alwaysCorrectFee",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesUncertain",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPaid",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPrivate",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesFullHeld",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesHeld",
+          "kind": "reachable"
+        },
+        {
+          "name": "validSplit",
+          "kind": "definition"
+        },
+        {
+          "name": "fullRailAdmission",
+          "kind": "definition"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/settlement/recovery.md",
+      "sha256": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+      "title": "Private-award destination recovery",
+      "rules": [
+        "A request keeps its original destination until renewed consent and retirement",
+        "The reporter requests a successor and renews exact destination consent",
+        "Every prior signable attempt must be retired before the successor is presented",
+        "A finalized old winner ends recovery without a successor payment",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Change a destination without paying twice"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canRequestChange",
+          "kind": "guard"
+        },
+        {
+          "name": "requestChange",
+          "kind": "definition"
+        },
+        {
+          "name": "canConsent",
+          "kind": "guard"
+        },
+        {
+          "name": "consent",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetire",
+          "kind": "guard"
+        },
+        {
+          "name": "retire",
+          "kind": "definition"
+        },
+        {
+          "name": "canPresentSuccessor",
+          "kind": "guard"
+        },
+        {
+          "name": "presentSuccessor",
+          "kind": "definition"
+        },
+        {
+          "name": "canOldWins",
+          "kind": "guard"
+        },
+        {
+          "name": "oldWins",
+          "kind": "definition"
+        },
+        {
+          "name": "canSuccessorPaid",
+          "kind": "guard"
+        },
+        {
+          "name": "successorPaid",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysSuccessorRetired",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysPaidCanonical",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepPaidUnchanged",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesSuccessor",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesOldWinner",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesSuccessorWinner",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/settlement/referrals.md",
+      "sha256": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
+      "title": "Deferred referral program",
+      "rules": [
+        "Program configuration starts off and posting requires independent activation",
+        "Cumulative roots obey both pool caps and never reduce a paid total",
+        "Eligibility uses finalized stablecoin payouts and immutable captured referrers",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Require every activation prerequisite"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canDryRun",
+          "kind": "guard"
+        },
+        {
+          "name": "dryRun",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordFunding",
+          "kind": "guard"
+        },
+        {
+          "name": "recordFunding",
+          "kind": "definition"
+        },
+        {
+          "name": "canStartWatcher",
+          "kind": "guard"
+        },
+        {
+          "name": "startWatcher",
+          "kind": "definition"
+        },
+        {
+          "name": "canActivate",
+          "kind": "guard"
+        },
+        {
+          "name": "activate",
+          "kind": "definition"
+        },
+        {
+          "name": "canPostRoot",
+          "kind": "guard"
+        },
+        {
+          "name": "postRoot",
+          "kind": "definition"
+        },
+        {
+          "name": "canClaim",
+          "kind": "guard"
+        },
+        {
+          "name": "claim",
+          "kind": "definition"
+        },
+        {
+          "name": "canVoidRoot",
+          "kind": "guard"
+        },
+        {
+          "name": "voidRoot",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysClaimBounded",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysActivationReady",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepClaimsPermanent",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesDryRun",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesClaimed",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesVoided",
+          "kind": "reachable"
+        },
+        {
+          "name": "eligiblePayout",
+          "kind": "definition"
+        },
+        {
+          "name": "posterGasAllowed",
+          "kind": "definition"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/settlement/reserveRelease.md",
+      "sha256": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
+      "title": "Untouched wrong-total reserve release",
+      "rules": [
+        "A reserve retains the admitted root and complete allocation",
+        "Current authority and fresh complete wrong-total evidence permit approval",
+        "Finalized release returns the whole untouched reserve",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Recover an allocation with the wrong total"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canObserve",
+          "kind": "guard"
+        },
+        {
+          "name": "observe",
+          "kind": "definition"
+        },
+        {
+          "name": "canQualifyUpgrade",
+          "kind": "guard"
+        },
+        {
+          "name": "qualifyUpgrade",
+          "kind": "definition"
+        },
+        {
+          "name": "canCheck",
+          "kind": "guard"
+        },
+        {
+          "name": "check",
+          "kind": "definition"
+        },
+        {
+          "name": "canApprove",
+          "kind": "guard"
+        },
+        {
+          "name": "approve",
+          "kind": "definition"
+        },
+        {
+          "name": "canOwnerSign",
+          "kind": "guard"
+        },
+        {
+          "name": "ownerSign",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinalize",
+          "kind": "guard"
+        },
+        {
+          "name": "finalize",
+          "kind": "definition"
+        },
+        {
+          "name": "canChangeOwner",
+          "kind": "guard"
+        },
+        {
+          "name": "changeOwner",
+          "kind": "definition"
+        },
+        {
+          "name": "canSettlePart",
+          "kind": "guard"
+        },
+        {
+          "name": "settlePart",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysNoSettlementOnRelease",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysWholeRelease",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysBoundApproval",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesReleased",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPartialHeld",
+          "kind": "reachable"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/settlement/signer.md",
+      "sha256": "d084840cd3cf8fdb969f929d4ae2c817a1247a2eeebe277d5bf5067f69e54819",
+      "title": "Signer boundaries and transaction replacement",
+      "rules": [
+        "A binding requires both account attestation and wallet authorization",
+        "Cancellation uses the same nonce and an empty zero-value self-transfer",
+        "Signer permissions distinguish identity roots from payments and fee assets",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Retain both possible winners of a binding cancellation",
+        "Story: Restrict every service operation"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canAuthorize",
+          "kind": "guard"
+        },
+        {
+          "name": "authorize",
+          "kind": "definition"
+        },
+        {
+          "name": "canSignBinding",
+          "kind": "guard"
+        },
+        {
+          "name": "signBinding",
+          "kind": "definition"
+        },
+        {
+          "name": "canCancelBinding",
+          "kind": "guard"
+        },
+        {
+          "name": "cancelBinding",
+          "kind": "guard"
+        },
+        {
+          "name": "canFinalizeBinding",
+          "kind": "guard"
+        },
+        {
+          "name": "finalizeBinding",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinalizeCancellation",
+          "kind": "guard"
+        },
+        {
+          "name": "finalizeCancellation",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysCanonicalRetained",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepRetainSignedBinding",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesOldBindingWins",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesCancellationWins",
+          "kind": "reachable"
+        },
+        {
+          "name": "permittedOperation",
+          "kind": "definition"
+        },
+        {
+          "name": "lawAttesterCannotPay",
+          "kind": "law"
+        },
+        {
+          "name": "lawFeeWalletCannotRefund",
+          "kind": "law"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/settlement/vault.md",
+      "sha256": "4e0af17e1ff3ef0c183c25f1586a06fed7ac10b76db82f03a7f1a489161211bd",
+      "title": "Project vault conservation",
+      "rules": [
+        "A vault begins empty with a fixed asset and refund destination",
+        "Only finalized deposits of the configured asset increase free funds",
+        "Reservations require the complete amount and never consume another reserve",
+        "Only the fixed refund destination receives free funds",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Deposit and preserve obligations"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canDeposit",
+          "kind": "guard"
+        },
+        {
+          "name": "deposit",
+          "kind": "definition"
+        },
+        {
+          "name": "canReserve",
+          "kind": "guard"
+        },
+        {
+          "name": "reserve",
+          "kind": "definition"
+        },
+        {
+          "name": "reservationMatches",
+          "kind": "definition"
+        },
+        {
+          "name": "canPayReserved",
+          "kind": "guard"
+        },
+        {
+          "name": "payReserved",
+          "kind": "definition"
+        },
+        {
+          "name": "canRefund",
+          "kind": "guard"
+        },
+        {
+          "name": "refund",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysConserved",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysValidAmounts",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysReservationMatches",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysReservationTotal",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysReservationIdentity",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepRetainedObligations",
+          "kind": "step"
+        },
+        {
+          "name": "stepIdentityFixed",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesReserved",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesConcurrentReserves",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesPaid",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesRefunded",
+          "kind": "reachable"
+        }
+      ],
+      "imports": [
+        [
+          "money as M",
+          "./money"
+        ]
+      ]
+    },
+    {
+      "path": "spec/slopbot/appeals.md",
+      "sha256": "a655a74fff69a0e0e3107e7590dcbfbfdb46b7740a266bd882d024aeab42d6ad",
+      "title": "Appeals and penalty correction",
+      "rules": [
+        "An appeal records triage, escalation and resolution separately",
+        "High stakes, low confidence, rejection or seven days require escalation",
+        "Only a moderator resolves an escalated appeal"
+      ],
+      "stories": [
+        "Story: Appeal a decision and preserve the complete decision journal"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canOpen",
+          "kind": "guard"
+        },
+        {
+          "name": "open",
+          "kind": "definition"
+        },
+        {
+          "name": "mustEscalate",
+          "kind": "definition"
+        },
+        {
+          "name": "canPropose",
+          "kind": "guard"
+        },
+        {
+          "name": "propose",
+          "kind": "definition"
+        },
+        {
+          "name": "canRejectProposal",
+          "kind": "guard"
+        },
+        {
+          "name": "rejectProposal",
+          "kind": "definition"
+        },
+        {
+          "name": "canAge",
+          "kind": "guard"
+        },
+        {
+          "name": "age",
+          "kind": "definition"
+        },
+        {
+          "name": "canEscalate",
+          "kind": "guard"
+        },
+        {
+          "name": "escalate",
+          "kind": "definition"
+        },
+        {
+          "name": "canResolve",
+          "kind": "guard"
+        },
+        {
+          "name": "resolve",
+          "kind": "definition"
+        },
+        {
+          "name": "canPublish",
+          "kind": "guard"
+        },
+        {
+          "name": "publish",
+          "kind": "definition"
+        },
+        {
+          "name": "canReplay",
+          "kind": "guard"
+        },
+        {
+          "name": "replay",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysReversalBound",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysResolvedBeforePublication",
+          "kind": "invariant"
+        },
+        {
+          "name": "stepAppendOnly",
+          "kind": "step"
+        },
+        {
+          "name": "sometimesEscalated",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReversed",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/slopbot/closure.md",
+      "sha256": "ed129f70107d5c49cce5ebf6b8c183467329c01a23d3a0bde697b8c9f260cd25",
+      "title": "Qualified automatic closure",
+      "rules": [
+        "A new draft starts with no saved closure consent",
+        "Participant evidence binds the member, authenticated run and exact PR",
+        "A close requires every independent eligibility gate",
+        "Uncertain findings can only become a label after seven days"
+      ],
+      "stories": [
+        "Story: Close only a verified consenting participant's eligible PR"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canSaveConsent",
+          "kind": "guard"
+        },
+        {
+          "name": "saveConsent",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordParticipant",
+          "kind": "guard"
+        },
+        {
+          "name": "recordParticipant",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordQualification",
+          "kind": "guard"
+        },
+        {
+          "name": "recordQualification",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordActivation",
+          "kind": "guard"
+        },
+        {
+          "name": "recordActivation",
+          "kind": "definition"
+        },
+        {
+          "name": "canRecordVerdict",
+          "kind": "guard"
+        },
+        {
+          "name": "recordVerdict",
+          "kind": "definition"
+        },
+        {
+          "name": "eligible",
+          "kind": "definition"
+        },
+        {
+          "name": "canClose",
+          "kind": "guard"
+        },
+        {
+          "name": "close",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysCloseEligible",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysScamNotice",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesClosed",
+          "kind": "reachable"
+        },
+        {
+          "name": "canWait",
+          "kind": "guard"
+        },
+        {
+          "name": "wait",
+          "kind": "definition"
+        },
+        {
+          "name": "canLabelUncertain",
+          "kind": "guard"
+        },
+        {
+          "name": "labelUncertain",
+          "kind": "definition"
+        },
+        {
+          "name": "canReopen",
+          "kind": "guard"
+        },
+        {
+          "name": "reopen",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysUncertainNeverCloses",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesUncertainLabel",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesReopened",
+          "kind": "reachable"
+        }
+      ],
+      "imports": []
+    },
+    {
+      "path": "spec/slopbot/review.md",
+      "sha256": "76b01aca7ff311f90438b2dd5fcf6c3aa3fcbecad2641c3e64c03e749aca3467",
+      "title": "Review attempts and provider recovery",
+      "rules": [
+        "The review records provider order and coverage separately",
+        "Any failed provider attempt advances directly to the next approved provider",
+        "Alerts-only mode crosses each 500 dollar milestone once",
+        "Simulation samples exercise missing, matching and conflicting evidence"
+      ],
+      "stories": [
+        "Story: Review registered work and preserve incomplete outcomes",
+        "Story: Report inference spending without inventing a hard cap"
+      ],
+      "definitions": [
+        {
+          "name": "initial",
+          "kind": "definition"
+        },
+        {
+          "name": "canBindSource",
+          "kind": "guard"
+        },
+        {
+          "name": "bindSource",
+          "kind": "definition"
+        },
+        {
+          "name": "canStart",
+          "kind": "guard"
+        },
+        {
+          "name": "start",
+          "kind": "definition"
+        },
+        {
+          "name": "canFailAttempt",
+          "kind": "guard"
+        },
+        {
+          "name": "failAttempt",
+          "kind": "definition"
+        },
+        {
+          "name": "canRetry",
+          "kind": "guard"
+        },
+        {
+          "name": "retry",
+          "kind": "definition"
+        },
+        {
+          "name": "canFinish",
+          "kind": "guard"
+        },
+        {
+          "name": "finish",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysAttemptAccounting",
+          "kind": "invariant"
+        },
+        {
+          "name": "alwaysCompletedCoverage",
+          "kind": "invariant"
+        },
+        {
+          "name": "mayEnforce",
+          "kind": "definition"
+        },
+        {
+          "name": "alwaysLimitedIsAdvisory",
+          "kind": "invariant"
+        },
+        {
+          "name": "sometimesComplete",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesLimited",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesBackup",
+          "kind": "reachable"
+        },
+        {
+          "name": "sometimesProviderFailure",
+          "kind": "reachable"
+        },
+        {
+          "name": "crossedMilestone",
+          "kind": "definition"
+        },
+        {
+          "name": "lawNoAlertForUnchangedCost",
+          "kind": "law"
+        },
+        {
+          "name": "validBudget",
+          "kind": "definition"
+        }
+      ],
+      "imports": []
+    }
+  ]
+}

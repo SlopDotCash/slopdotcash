@@ -1,0 +1,5 @@
+operations__local.ts obligations 8 unproved 0 errors 0
+operations__notifications.ts obligations 50 unproved 0 errors 0
+security__privacy.ts obligations 12 unproved 0 errors 0
+security__admission.ts obligations 35 unproved 11 errors 0
+slopbot__closure.ts obligations 29 unproved 0 errors 0

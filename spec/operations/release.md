@@ -56,7 +56,7 @@ counterexamples, crashes, unstable inputs and failed scenarios remain failures.
 ```quint
 pure def canRecordGate(r: Release, gate: QualityGate, source: int): bool = r.phase == Candidate and source == r.source and r.branchHead == r.source
 pure def recordGate(r: Release, gate: QualityGate, source: int): Release = { ...r, passed: r.passed.union(Set(gate)) }
-pure def canCheck(r: Release, artifactDigest: int): bool = r.phase == Candidate and validData(r) and r.isolatedSecrets and r.trustedWorkflow and r.branchHead == r.source and artifactDigest > 0 and Set(Types, Models, Unit, Browser, Isolation, Identity).subseteq(r.passed)
+pure def canCheck(r: Release, artifactDigest: int): bool = r.phase == Candidate and validData(r) and r.isolatedSecrets and r.trustedWorkflow and r.branchHead == r.source and artifactDigest > 0 and r.passed.exists(checked => checked == Types) and r.passed.exists(checked => checked == Models) and r.passed.exists(checked => checked == Unit) and r.passed.exists(checked => checked == Browser) and r.passed.exists(checked => checked == Isolation) and r.passed.exists(checked => checked == Identity)
 pure def check(r: Release, artifactDigest: int): Release = { ...r, phase: Checked, checkedSource: r.source, artifactDigest: artifactDigest }
 ```
 

@@ -10,6 +10,8 @@ A token receipt counts only after conversion into USDC. The same receipt cannot 
 
 ```quint
 import money as M from "../settlement/money"
+type BridgeOrder = { orderId: int, amount: int, costBps: int, receiver: str, authority: str, beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, now: int }
+type PurchaseQuote = { spent: int, acquired: M::Amount, slippageBps: int, impactBps: int, receiver: str, tokenPaused: bool, now: int }
 type BuybackPhase = Off | Ready | Ordered | InTransit | Arrived | Purchased | BurnPending | Burned | Refunded
  type Spend = { at: int, amount: int }
 pure def spentInWindow(spends: List[Spend], now: int): int = spends.foldl(0, (total, spend) =>
@@ -20,7 +22,6 @@ pure def spentInWindow(spends: List[Spend], now: int): int = spends.foldl(0, (to
 pure val initial: Buyback = { sourceIsRobinhood: false, localSlopIncome: M::zero, localSlopCommitted: M::zero, clock: 0, bridgeSpends: List(), purchaseSpends: List(), phase: Off, income: M::zero, committed: M::zero, orderAmount: 0, order: 0,
   arrival: 0, acquired: M::zero, burnCommitted: M::zero, burned: M::zero, receipts: List(), orders: List(),
   finalizedHeight: 0, outputWallet: "fees" }
-pure val acquiredValues = Set(List(1), List(2), List(6), List(0, 0, 0, 0, 0, 0, 1))
 pure val quantityValues = Set(List(1), List(2), List(3), List(0, 0, 0, 0, 0, 0, 1))
 pure val amountValues = Set(1, 500000000, 1000000000)
 pure val incomeAmountValues = Set(List(1), List(0, 0, 500), List(0, 0, 0, 1), List(0, 0, 0, 0, 0, 0, 1))
@@ -36,11 +37,8 @@ pure def recordIncome(b: Buyback, receipt: int, incomeAmount: M::Amount, receive
   { ...b, income: M::addAmounts(b.income, incomeAmount), receipts: b.receipts.append(receipt) }
 pure val byValues = Set("owner", "wrong")
 pure val receiverValues = Set("fees", "wrong")
-pure val authorityValues = Set("fees", "wrong")
 pure val beneficiaryValues = Set("fees", "wrong")
-pure val reservedTakerValues = Set("", "unknown")
 pure val destinationValues = Set("0x000000000000000000000000000000000000dEaD", "wrong")
-pure val spentValues = Set(0, 500000000, 1000000000)
 ```
 
 ### A bridge order commits only available share and exact approved destinations
@@ -48,18 +46,18 @@ pure val spentValues = Set(0, 500000000, 1000000000)
 Stablecoin inputs use integer micro-units. Cumulative income and committed share use arbitrary-length Amount limbs, so every verified base unit remains in the ledger. The available share is half the cumulative income rounded down to one micro-unit, less every previous commitment. The source wallet, receiver, order authority and refund beneficiary are the same reviewed fee-wallet identity across their network addresses. Every byte is checked before signing.
 
 ```quint
-pure def canOrder(b: Buyback, order: int, amount: int, costBps: int, receiver: str,
-  authority: str, beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, now: int): bool =
-  b.phase == Ready and not(b.sourceIsRobinhood) and order > 0 and not(b.orders.includes(order)) and amount >= 500000000 and amount <= 1000000000
-    and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(amount)), M::divideAmounts(b.income, List(2)).quotient) <= 0 and costBps >= 0 and costBps <= 150
-    and receiver == b.outputWallet and authority == b.outputWallet and beneficiary == b.outputWallet
-    and not(externalCall) and affiliateFee == 0 and reservedTaker == ""
-    and now >= b.clock and spentInWindow(b.bridgeSpends, now) + amount <= 5000000000
-pure def order(b: Buyback, order: int, amount: int, costBps: int, receiver: str,
-  authority: str, beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, now: int): Buyback =
-  { ...b, phase: Ordered, committed: M::addAmounts(b.committed, M::smallAmount(amount)), orderAmount: amount,
-    order: order, orders: b.orders.append(order), clock: now,
-    bridgeSpends: b.bridgeSpends.append({ at: now, amount: amount }) }
+pure def canOrder(b: Buyback, orderRequest: BridgeOrder): bool =
+  b.phase == Ready and not(b.sourceIsRobinhood) and orderRequest.orderId > 0 and not(b.orders.includes(orderRequest.orderId))
+    and orderRequest.amount >= 500000000 and orderRequest.amount <= 1000000000
+    and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(orderRequest.amount)), M::divideAmounts(b.income, List(2)).quotient) <= 0
+    and orderRequest.costBps >= 0 and orderRequest.costBps <= 150
+    and orderRequest.receiver == b.outputWallet and orderRequest.authority == b.outputWallet and orderRequest.beneficiary == b.outputWallet
+    and not(orderRequest.externalCall) and orderRequest.affiliateFee == 0 and orderRequest.reservedTaker == ""
+    and orderRequest.now >= b.clock and spentInWindow(b.bridgeSpends, orderRequest.now) + orderRequest.amount <= 5000000000
+pure def order(b: Buyback, orderRequest: BridgeOrder): Buyback =
+  { ...b, phase: Ordered, committed: M::addAmounts(b.committed, M::smallAmount(orderRequest.amount)), orderAmount: orderRequest.amount,
+    order: orderRequest.orderId, orders: b.orders.append(orderRequest.orderId), clock: orderRequest.now,
+    bridgeSpends: b.bridgeSpends.append({ at: orderRequest.now, amount: orderRequest.amount }) }
 pure def canBroadcast(b: Buyback): bool = b.phase == Ordered
 pure def broadcast(b: Buyback): Buyback = { ...b, phase: InTransit }
 ```
@@ -84,14 +82,17 @@ pure def observeRefund(b: Buyback, order: int, amount: int, beneficiary: str, he
 SLOP token identity and the pinned swap route are checked by the receipt adapter. A paused token has no enabled purchase or burn. Burn transfers go only to the canonical dead address, and total supply is not modeled as decreasing.
 
 ```quint
-pure def canPurchase(b: Buyback, spent: int, acquired: M::Amount, slippageBps: int, impactBps: int,
-  receiver: str, tokenPaused: bool, now: int): bool = b.phase == Arrived and spent == b.arrival and spent >= 25000000
-    and M::validAmount(acquired) and M::positiveAmount(acquired) and slippageBps >= 0 and slippageBps <= 100
-    and impactBps >= 0 and impactBps <= 300 and receiver == b.outputWallet and not(tokenPaused)
-    and spent <= 1000000000 and now >= b.clock and spentInWindow(b.purchaseSpends, now) + spent <= 5000000000
-pure def purchase(b: Buyback, spent: int, acquired: M::Amount, slippageBps: int, impactBps: int,
-  receiver: str, tokenPaused: bool, now: int): Buyback = { ...b, phase: Purchased, acquired: M::addAmounts(b.acquired, acquired), clock: now,
-    purchaseSpends: b.purchaseSpends.append({ at: now, amount: spent }) }
+pure def canPurchase(b: Buyback, purchaseRequest: PurchaseQuote): bool =
+  b.phase == Arrived and purchaseRequest.spent == b.arrival and purchaseRequest.spent >= 25000000
+    and M::validAmount(purchaseRequest.acquired) and M::positiveAmount(purchaseRequest.acquired)
+    and purchaseRequest.slippageBps >= 0 and purchaseRequest.slippageBps <= 100
+    and purchaseRequest.impactBps >= 0 and purchaseRequest.impactBps <= 300
+    and purchaseRequest.receiver == b.outputWallet and not(purchaseRequest.tokenPaused)
+    and purchaseRequest.spent <= 1000000000 and purchaseRequest.now >= b.clock
+    and spentInWindow(b.purchaseSpends, purchaseRequest.now) + purchaseRequest.spent <= 5000000000
+pure def purchase(b: Buyback, purchaseRequest: PurchaseQuote): Buyback =
+  { ...b, phase: Purchased, acquired: M::addAmounts(b.acquired, purchaseRequest.acquired), clock: purchaseRequest.now,
+    purchaseSpends: b.purchaseSpends.append({ at: purchaseRequest.now, amount: purchaseRequest.spent }) }
 pure def canCommitBurn(b: Buyback, quantity: M::Amount, value: int, destination: str, tokenPaused: bool): bool =
   b.phase == Purchased and M::validAmount(quantity) and M::positiveAmount(quantity)
     and M::equalAmounts(quantity, M::subtractAmounts(M::divideAmounts(b.acquired, List(2)).quotient, b.burnCommitted))
@@ -172,18 +173,29 @@ These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules.
 
 ```quint
-pure val affiliateFeeValues = Set(0, 1)
 pure val alreadyCommittedValues = Set(0, 1, 2)
-pure val costBpsValues = Set(0, 150, 151)
 pure val dayNativeValues = Set(0, 100000000, 100000001)
 pure val fixedFeeValues = Set(0, 1000000, 1000001)
 pure val heightValues = Set(0, 1, 2)
-pure val impactBpsValues = Set(0, 1, 2)
 pure val nowValues = Set(0, 1, 86400000, 86400001)
 pure val orderValues = Set(0, 1, 2)
 pure val orderNativeValues = Set(0, 50000000, 50000001)
 pure val receiptValues = Set(0, 1, 2)
 pure val receivedValues = Set(0, 1, 2)
-pure val slippageBpsValues = Set(0, 1, 2)
 pure val valueValues = Set(4999999, 5000000)
+
+pure val orderRequestValues = Set(
+  { orderId: 1, amount: 500000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", now: 1 },
+  { orderId: 2, amount: 500000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", now: 86400001 },
+  { orderId: 1, amount: 500000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", now: 1 },
+  { orderId: 1, amount: 499999999, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", now: 1 },
+  { orderId: 1, amount: 500000000, costBps: 151, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", now: 1 },
+  { orderId: 1, amount: 500000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: true, affiliateFee: 1, reservedTaker: "unknown", now: 1 })
+pure val purchaseRequestValues = Set(
+  { spent: 500000000, acquired: List(6), slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, now: 1 },
+  { spent: 1000000000, acquired: List(6), slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, now: 86400001 },
+  { spent: 500000000, acquired: List(6), slippageBps: 100, impactBps: 300, receiver: "wrong", tokenPaused: false, now: 1 },
+  { spent: 500000000, acquired: List(6), slippageBps: 101, impactBps: 300, receiver: "fees", tokenPaused: false, now: 1 },
+  { spent: 500000000, acquired: List(6), slippageBps: 100, impactBps: 301, receiver: "fees", tokenPaused: false, now: 1 },
+  { spent: 500000000, acquired: List(6), slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: true, now: 1 })
 ```

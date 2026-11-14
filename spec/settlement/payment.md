@@ -6,36 +6,37 @@ PRD sections 3, 6, 8 and 10 require exact reconciliation before paid. One instan
 
 ### An approved obligation retains its immutable amount and purpose
 
-The sponsor approval that creates an obligation is modeled in private-case specifications. This machine starts with that approved obligation. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. An approved full-award case requires its separately released payment rail.
+The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. This machine starts with that approved obligation. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. An approved full-award case requires its separately released payment rail.
 
 ```quint
 import money as M from "./money"
 type Purpose = Ordinary | PrivateStandard | PrivateFull
+type PaymentRail = OrdinaryVault | StandardBountyVault | DirectStandard | DirectFull
+type PaymentEvidence = { attempt: int, obligation: int, source: str, asset: str, recipient: str,
+  feeRecipient: str, principal: M::Amount, fee: M::Amount, height: int, finalized: bool, succeeded: bool }
 type PaymentPhase = AwaitingWallet | Ready | Journaled | Submitted | Uncertain | Paid | Held
-type Payment = { configured: bool, phase: PaymentPhase, purpose: Purpose, obligation: int, vault: str, asset: str,
+type Payment = { configured: bool, phase: PaymentPhase, purpose: Purpose, rail: PaymentRail, feeRecipient: str, obligation: int, vault: str, asset: str,
   recipient: str, gross: M::Amount, principal: M::Amount, fee: M::Amount, consent: int, request: int,
   attempt: int, attempts: List[int], failedAttempts: List[int], canonical: int, finalizedHeight: int, observedPrincipal: M::Amount,
   observedFee: M::Amount, fullRailReleased: bool }
-pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose: Ordinary, obligation: 1, vault: "vault", asset: "asset",
+pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose: Ordinary, rail: OrdinaryVault, feeRecipient: "fees", obligation: 1, vault: "vault", asset: "asset",
   recipient: "", gross: List(100), principal: List(98), fee: List(2), consent: 0, request: 1,
   attempt: 0, attempts: List(), failedAttempts: List(), canonical: 0, finalizedHeight: 0,
   observedPrincipal: M::zero, observedFee: M::zero, fullRailReleased: false }
 pure val grossValues = Set(List(1), List(4), List(100), List(0, 0, 0, 0, 0, 0, 1))
-pure def canConfigure(p: Payment, purpose: Purpose, gross: M::Amount): bool =
+pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): bool =
   p.phase == AwaitingWallet and not(p.configured) and M::validAmount(gross) and M::positiveAmount(gross)
-    and (purpose != PrivateStandard or M::privateSplitPossible(gross))
-pure def configure(p: Payment, purpose: Purpose, gross: M::Amount): Payment =
+    and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
+pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): Payment =
   val fee = if (purpose == Ordinary) M::ordinaryFeeAmount(gross) else if (purpose == PrivateStandard) M::privateFeeAmount(gross) else M::zero
-  { ...p, configured: true, purpose: purpose, gross: gross, fee: fee, principal: M::subtractAmounts(gross, fee) }
+  { ...p, configured: true, purpose: purpose, rail: rail, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: M::subtractAmounts(gross, fee) }
 pure def canReleaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): bool =
-  p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
+  p.phase != Paid and p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
     and approved and released and qualified and by == "owner"
 pure def releaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): Payment =
   { ...p, fullRailReleased: true }
 pure val byValues = Set("recipient", "owner", "wrong")
 pure val recipientValues = Set("wallet", "wrong")
-pure val sourceValues = Set("vault", "wrong")
-pure val assetValues = Set("asset", "wrong")
 pure val principalValues = Set(List(0), List(1), List(3), List(4), List(98), List(99), List(100))
 pure val feeValues = Set(List(0), List(1), List(2), List(3), List(25))
 ```
@@ -71,8 +72,8 @@ pure def resume(p: Payment, by: str): Payment =
   { ...p, phase: if (p.recipient == "") AwaitingWallet else
     if (p.attempt == 0 or p.failedAttempts.includes(p.attempt)) Ready else Uncertain }
 pure def canRecordFailure(p: Payment, attempt: int, height: int, finalized: bool, succeeded: bool): bool =
-  (p.phase == Submitted or p.phase == Uncertain or p.phase == Held) and attempt == p.attempt
-    and not(p.failedAttempts.includes(attempt)) and height > 0 and finalized and not(succeeded)
+  (p.phase == Submitted or p.phase == Uncertain or p.phase == Held) and attempt > 0 and attempt == p.attempt
+    and p.attempts.includes(attempt) and not(p.failedAttempts.includes(attempt)) and height > 0 and finalized and not(succeeded)
 pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, succeeded: bool): Payment =
   { ...p, phase: Ready, failedAttempts: p.failedAttempts.append(attempt) }
 
@@ -80,29 +81,30 @@ pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, s
 
 ### Exact finalized evidence is the only transition to paid
 
-The observation names the obligation, source, asset, recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
+The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
 
 ```quint
-pure def canReconcile(p: Payment, attempt: int, obligation: int, source: str, asset: str,
-  recipient: str, principal: M::Amount, fee: M::Amount, height: int, finalized: bool, succeeded: bool): bool =
-  p.phase != Paid and p.attempts.includes(attempt) and not(p.failedAttempts.includes(attempt)) and obligation == p.obligation
-    and source == p.vault and asset == p.asset and recipient == p.recipient
-    and M::validAmount(principal) and M::validAmount(fee)
-    and M::equalAmounts(principal, p.principal) and M::equalAmounts(fee, p.fee) and height > 0 and finalized and succeeded
-pure def reconcile(p: Payment, attempt: int, obligation: int, source: str, asset: str,
-  recipient: str, principal: M::Amount, fee: M::Amount, height: int, finalized: bool, succeeded: bool): Payment =
-  { ...p, phase: Paid, canonical: attempt, finalizedHeight: height,
-    observedPrincipal: principal, observedFee: fee }
+pure def canReconcile(p: Payment, evidence: PaymentEvidence): bool =
+  p.phase != Paid and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
+    and evidence.source == p.vault and evidence.asset == p.asset and evidence.recipient == p.recipient and evidence.feeRecipient == p.feeRecipient
+    and M::validAmount(evidence.principal) and M::validAmount(evidence.fee)
+    and M::equalAmounts(evidence.principal, p.principal) and M::equalAmounts(evidence.fee, p.fee)
+    and evidence.height > 0 and evidence.finalized and evidence.succeeded
+pure def reconcile(p: Payment, evidence: PaymentEvidence): Payment =
+  { ...p, phase: Paid, canonical: evidence.attempt, finalizedHeight: evidence.height,
+    observedPrincipal: evidence.principal, observedFee: evidence.fee }
 pure def alwaysConserved(p: Payment): bool = M::equalAmounts(p.gross, M::addAmounts(p.principal, p.fee))
   and M::validAmount(p.gross) and M::validAmount(p.principal) and M::validAmount(p.fee)
 pure def alwaysPaidEvidence(p: Payment): bool = p.phase == Paid implies p.canonical > 0
+  and (p.purpose != PrivateFull or p.fullRailReleased)
   and p.attempts.includes(p.canonical) and p.finalizedHeight > 0
   and M::equalAmounts(p.observedPrincipal, p.principal) and M::equalAmounts(p.observedFee, p.fee)
 pure def stepPaidPermanent(before: Payment, after: Payment): bool = before.phase == Paid implies after == before
 pure def stepObligationPermanent(before: Payment, after: Payment): bool = before.configured implies before.obligation == after.obligation
   and before.gross == after.gross and before.principal == after.principal and before.fee == after.fee
-  and before.vault == after.vault and before.asset == after.asset
+  and before.vault == after.vault and before.asset == after.asset and before.rail == after.rail and before.feeRecipient == after.feeRecipient
 pure def alwaysCorrectFee(p: Payment): bool = validSplit(p.purpose, p.gross, p.principal, p.fee)
+pure def alwaysCorrectRail(p: Payment): bool = railMatchesPurpose(p.purpose, p.rail)
 pure def sometimesUncertain(p: Payment): bool = p.phase == Uncertain
 pure def sometimesPaid(p: Payment): bool = p.phase == Paid
 pure def sometimesPrivate(p: Payment): bool = p.configured and p.purpose == PrivateStandard
@@ -125,6 +127,10 @@ pure def validSplit(purpose: Purpose, gross: M::Amount, principal: M::Amount, fe
        and M::equalAmounts(principal, M::privateResearcherAmount(gross)) and M::equalAmounts(fee, M::privateFeeAmount(gross))
      else M::equalAmounts(principal, gross) and M::equalAmounts(fee, M::zero))
 
+pure def railMatchesPurpose(purpose: Purpose, rail: PaymentRail): bool =
+  if (purpose == Ordinary) rail == OrdinaryVault
+  else if (purpose == PrivateStandard) rail == StandardBountyVault or rail == DirectStandard
+  else rail == DirectFull
 pure def fullRailAdmission(purpose: Purpose, usesSplitVault: bool, approved: bool, released: bool, qualified: bool): bool =
   if (purpose == PrivateFull) not(usesSplitVault) and approved and released and qualified else true
 ```
@@ -138,5 +144,14 @@ value allowed by their declared types and product rules.
 pure val attemptValues = Set(0, 1, 2)
 pure val consentValues = Set(0, 1, 2)
 pure val heightValues = Set(0, 1, 2)
-pure val obligationValues = Set(0, 1, 2)
+pure val evidenceValues = Set(
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true },
+  { attempt: 2, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 2, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(3), fee: List(1), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(75), fee: List(25), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "", principal: List(100), fee: List(0), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "wrong", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "wrong", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(97), fee: List(2), height: 1, finalized: true, succeeded: true },
+  { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: false, succeeded: true })
 ```

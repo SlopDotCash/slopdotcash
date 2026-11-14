@@ -25,12 +25,22 @@ pure val initial: Evidence = { phase: Undecided, actor: 1, consent: false,
 pure def alwaysPrivateBodies(e: Evidence): bool = not(e.traceReadable)
 pure def alwaysDiagnosticOnly(e: Evidence): bool = e.scoreBonus == 0
 pure def alwaysTraceSize(e: Evidence): bool = e.byteCount >= 0
+pure def alwaysSelectedEvidence(e: Evidence): bool =
+  (e.phase == Selected or e.phase == Uploading or e.phase == Stored) implies
+    e.consent and e.inspected and e.digest != ""
+pure def alwaysUploadAuthorization(e: Evidence): bool =
+  (e.phase == Uploading or e.phase == Stored) implies e.uploadAuthorized
 pure def submitPR(e: Evidence): Evidence = { ...e, prSubmitted: true }
 pure def canDecline(e: Evidence): bool = e.phase == Undecided or e.phase == Selected
 pure def decline(e: Evidence): Evidence = { ...e, phase: Declined, consent: false }
 ```
 
 ### Only contributor-inspected exact bytes can enter an authorized bounded upload
+
+Discovered by the proof, a synthetic Uploading state could previously lack
+selected content and consent while still retaining uploadAuthorized. Active
+selection and upload states now require the contributor-reviewed digest and
+consent, and every upload retains its authorization.
 
 The uploader performs no automatic redaction. The private-request health
 status is independently renewed and gates optional trace collection alone.

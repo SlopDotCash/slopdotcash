@@ -56,12 +56,17 @@ pure def receiveReceipt(d: Draft, actorId: int, projectId: int, contentDigest: i
   { ...d, receipt: receiptId, stage: Received, stored: false }
 ```
 
-### A receipt requires a submitted account-bound draft
+### A reviewed or submitted draft retains its account, project and content identity
+
+Discovered by the proof: a synthetic Reviewing state with no account, project
+or content could satisfy the earlier invariant and then reach Sending. Reviewing
+now requires those same identities before a submission key is assigned.
 
 ```quint
-pure def alwaysDraftBinding(d: Draft): bool = d.actor >= 0 and d.project >= 0 and d.key >= 0 and d.receipt >= 0 and
+pure def alwaysDraftBinding(d: Draft): bool = d.actor >= 0 and d.project >= 0 and d.digest >= 0 and d.key >= 0 and d.receipt >= 0 and
   (d.actor == 0 implies d.project == 0 and d.digest == 0 and d.key == 0 and d.receipt == 0) and
-  (d.stage == Sending or d.stage == Uncertain or d.stage == Received implies d.actor > 0 and d.project > 0 and d.digest > 0 and d.key > 0) and
+  (d.stage == Reviewing or d.stage == Sending or d.stage == Uncertain or d.stage == Received implies d.actor > 0 and d.project > 0 and d.digest > 0) and
+  (d.stage == Sending or d.stage == Uncertain or d.stage == Received implies d.key > 0) and
   (d.stage == Received iff d.receipt > 0)
 pure def stepRetryKeepsSubmission(before: Draft, via: str, after: Draft): bool = via == "retry" implies
   after.actor == before.actor and after.project == before.project and after.digest == before.digest and after.key == before.key

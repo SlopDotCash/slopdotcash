@@ -127,19 +127,22 @@ pure def quotientDigit(partial: Amount, divisor: Amount): int =
   List(512, 256, 128, 64, 32, 16, 8, 4, 2, 1).foldl(0, (digit, bit) =>
     if (digit + bit < 1000 and compareAmounts(multiplySmall(divisor, digit + bit), partial) <= 0)
       digit + bit else digit)
+pure def divisionStep(acc: Division, nextDigit: int, divisor: Amount): Division =
+  val broughtDown = List(nextDigit).concat(acc.remainder)
+  val selected = quotientDigit(broughtDown, divisor)
+  { quotient: acc.quotient.append(selected),
+    remainder: subtractAmounts(broughtDown, multiplySmall(divisor, selected)) }
 pure def divideAmounts(dividend: Amount, divisor: Amount): Division =
-  val divided = reverseAmount(dividend).foldl({ quotient: List(), remainder: zero }, (acc, digit) => {
-    quotient: acc.quotient.append(quotientDigit(List(digit).concat(acc.remainder), divisor)),
-    remainder: subtractAmounts(List(digit).concat(acc.remainder),
-      multiplySmall(divisor, quotientDigit(List(digit).concat(acc.remainder), divisor)))
-  })
+  val divided = reverseAmount(dividend).foldl({ quotient: List(), remainder: zero },
+    (acc, digit) => divisionStep(acc, digit, divisor))
   if (not(positiveAmount(divisor))) { quotient: zero, remainder: dividend }
   else { quotient: reverseAmount(divided.quotient), remainder: divided.remainder }
 pure val aValues = Set(List(0), List(1), List(999), List(0, 1), List(999, 999), List(123, 456, 789, 123, 456, 789, 1))
 pure val bValues = Set(List(1), List(2), List(50), List(999), List(0, 1), List(5, 12))
 pure def lawDivisionReconstructs(a: Amount, b: Amount): bool =
+  val divided = divideAmounts(a, b)
   (validAmount(a) and validAmount(b) and positiveAmount(b)) implies
-    equalAmounts(addAmounts(multiplyAmounts(divideAmounts(a, b).quotient, b), divideAmounts(a, b).remainder), a)
+    equalAmounts(addAmounts(multiplyAmounts(divided.quotient, b), divided.remainder), a)
 pure def lawDivisionRemainder(a: Amount, b: Amount): bool =
   (validAmount(a) and validAmount(b) and positiveAmount(b)) implies
     compareAmounts(divideAmounts(a, b).remainder, b) < 0

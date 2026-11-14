@@ -1,0 +1,17 @@
+{
+  "status": "targeted-obligations-verified",
+  "proofFile": "spec/settlement/money.proof.dfy",
+  "proofSha256": "dd905ee663aaf89978dc830c60b92a6ac387c16cb99b8c32138febd88b089a0d",
+  "source": "spec/settlement/money.md",
+  "sourceSha256": "572fb592d393d6b08b95613e08d002e62e495a380e544b76fbf3ac143ce75532",
+  "tool": "Dafny 4.11.0",
+  "verified": [
+    "FoldComparisonStable",
+    "lawEqualReflexive_ensures"
+  ],
+  "commands": [
+    "dafny verify --standard-libraries --unicode-char:true --cores 1 --resource-limit 30000000 --verification-time-limit 60 --filter-symbol FoldComparisonStable <generated money unit>",
+    "dafny verify --standard-libraries --unicode-char:true --cores 1 --resource-limit 30000000 --verification-time-limit 60 --filter-symbol lawEqualReflexive_ensures <generated money unit>"
+  ],
+  "outcome": "Each command completed with 1 verified and 0 errors. Complete money-unit verification remains in progress."
+}

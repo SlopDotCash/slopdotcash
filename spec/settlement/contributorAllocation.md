@@ -69,5 +69,5 @@ value allowed by their declared types and product rules.
 ```quint
 pure val actorValues = Set(0, 1, 2)
 pure val confirmedAtValues = Set(0, 1, 2)
-pure val nowValues = Set(0, 1, 2)
+pure val nowValues = Set(0, 3, 4, 5)
 ```

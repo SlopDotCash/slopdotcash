@@ -1,7 +1,26 @@
 # Contributing
 
+Slop's product requirements start at [spec/index.md](spec/index.md). Read the
+[migration record](docs/migration.md) and preserved Slop policies before
+choosing work. This branch is in the specification phase. Changes here cover
+requirements, models, proofs and their validation evidence.
+
+GitHub remains the authority for work and repository permissions. D1 remains
+the only project inventory. Preserve immutable history, private-report access,
+write-only trace bodies, exact attribution, financial states and the narrowly
+scoped service signers. The user confirmed that new project closure consent
+starts unchecked.
+
+Only project owners and maintainers open issues. Future implementation changes
+cite the owning specification and observable acceptance evidence. UI changes
+require the approved requirement or reproduced broken flow and its required
+browser evidence. Provider-backed behavior requires real provider calls and
+affected agent-client coverage. The retained source policies describe those
+acceptance obligations in full.
+
 Every contributor, person or agent, reads [AGENTS.md](AGENTS.md) and [README.md](README.md) in full before any work.
-How the repository works is in [AGENTS.md](AGENTS.md); starting a project from the template is [README.md, "Set up a new project"](README.md#set-up-a-new-project).
+How the repository works is in [AGENTS.md](AGENTS.md). Template setup is in
+[the Vibestack guide](vibestack/README.md#set-up-a-new-project).
 Everything is built on [the stack](AGENTS.md#the-stack): Node 26, pnpm, VibeLang on Effect for the shell, React for every interface.
 
 ## The monorepo
@@ -44,7 +63,9 @@ tasks wait for its `gen` and the root's, and its `check` for all of them, since 
 as `@repo/app`'s are. `pnpm lint:js` on its own needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`);
 `pnpm lint` runs them first.
 
-Pull requests go to `develop`, and `develop` to `main`; what CI runs on each is in
+Slop's release path is `development` to `main`. The template CI configuration
+still uses its original `develop` and `main` triggers in this specification
+branch. What the template CI runs on each is in
 [CI](#ci).
 
 ## Changing the tools

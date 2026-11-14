@@ -12,6 +12,11 @@ Missing data is never presented as an empty successful census. Only a complete
 
 ### Snapshot progress preserves exact bounds and distinct immutable source IDs
 
+Discovered by the proof review, a synthetic saved census could previously
+contain repeated or out-of-range page IDs while satisfying the expected page
+count. Every retained page now has a unique valid page index, and every source
+has a positive immutable ID before completion can be accepted.
+
 ```quint
 type CensusPhase = Empty | Collecting | Incomplete | Ready | Published
 type Census = { phase: CensusPhase, lowerDay: int, upperDay: int,
@@ -23,6 +28,11 @@ pure val initial: Census = { phase: Empty, lowerDay: 0, upperDay: 35,
   publishedSnapshot: 1, historicalHold: true, duplicateChecked: false,
   frozenChecked: false, assessmentsComplete: false }
 pure def alwaysWindow(c: Census): bool = c.upperDay - c.lowerDay == 35
+pure def alwaysExpectedCounts(c: Census): bool = c.pagesExpected >= 0 and c.sourcesExpected >= 0
+pure def alwaysPageRange(c: Census): bool = c.pagesSeen.every(page => page >= 1 and page <= c.pagesExpected)
+pure def alwaysDistinctPages(c: Census): bool = c.pagesSeen.every(page =>
+  c.pagesSeen.select(other => other == page).length() == 1)
+pure def alwaysSourceIds(c: Census): bool = c.sourceIds.every(id => id > 0)
 pure def alwaysDistinctSources(c: Census): bool = c.sourceIds.every(id =>
   c.sourceIds.select(other => other == id).length() == 1)
 ```

@@ -1,0 +1,303 @@
+{
+  "toolchain": {
+    "node": "26.13.1",
+    "quint": "0.33.1",
+    "dafny": "4.11.0",
+    "solver": "Z3 4.15.4"
+  },
+  "method": "Unmodified Vibestack readSpecs, typecheckAll, generated, proofUnits and prove with no proof exceptions. Source inputs are SHA-256 bound.",
+  "source": "isolated current-spec snapshots",
+  "implementationConformance": "not-run-specification-only",
+  "units": [
+    {
+      "unit": "access.ts",
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/access.md",
+      "sourceSha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
+      "inputs": {
+        "spec/access.md": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/access.proof.log"
+    },
+    {
+      "unit": "backend.ts",
+      "spec": "spec/backend/index.md",
+      "sourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+      "inputs": {
+        "spec/backend/index.md": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f"
+      },
+      "total": 0,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/backend.proof.log"
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "total": 75,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/backend/accounts.md",
+      "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+      "inputs": {
+        "spec/backend/accounts.md": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
+        "spec/backend/accounts.proof.dfy": "29e3c39ac39361a4fb6c623bfc2c1115b8273cf3e8b6dda61674d4f10b749c6e"
+      },
+      "sourceCurrent": false,
+      "status": "passed",
+      "log": "formal/validation/journeys/backend__accounts.proof.log"
+    },
+    {
+      "unit": "backend__email.ts",
+      "spec": "spec/backend/email.md",
+      "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "inputs": {
+        "spec/backend/email.md": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6"
+      },
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/backend__email.proof.log"
+    },
+    {
+      "unit": "backend__projects.ts",
+      "total": 170,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/backend/projects.md",
+      "sourceSha256": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596",
+      "inputs": {
+        "spec/backend/projects.md": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/backend__projects.proof.log"
+    },
+    {
+      "unit": "backend__wallets.ts",
+      "spec": "spec/backend/wallets.md",
+      "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "inputs": {
+        "spec/backend/wallets.md": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd"
+      },
+      "total": 30,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/backend__wallets.proof.log"
+    },
+    {
+      "unit": "composition.ts",
+      "total": 20,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/composition.md",
+      "sourceSha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "inputs": {
+        "spec/composition.md": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+        "spec/frontend/drafts.md": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+        "spec/frontend/navigation.md": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/composition.proof.log"
+    },
+    {
+      "unit": "contributor__evidence.ts",
+      "total": 50,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/contributor/evidence.md",
+      "sourceSha256": "45c0c719573e946a8331c5a1bd7fbfa063b6f04b7876d3a3f4d2077de1a4b25d",
+      "inputs": {
+        "spec/contributor/evidence.md": "45c0c719573e946a8331c5a1bd7fbfa063b6f04b7876d3a3f4d2077de1a4b25d"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/contributor__evidence.proof.log"
+    },
+    {
+      "unit": "contributor__installation.ts",
+      "total": 72,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/contributor/installation.md",
+      "sourceSha256": "7b233a3716e02027c4dd5b10d01064004176ae69da1ef27fa94f70e64418df47",
+      "inputs": {
+        "spec/contributor/installation.md": "7b233a3716e02027c4dd5b10d01064004176ae69da1ef27fa94f70e64418df47"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/contributor__installation.proof.log"
+    },
+    {
+      "unit": "contributor__workflow.ts",
+      "total": 38,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/contributor/workflow.md",
+      "sourceSha256": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2",
+      "inputs": {
+        "spec/contributor/workflow.md": "2f5eaf97dcd8a56b10b470554bde329ba13bcf9ec8f5116fbb89e8fc00ec88d2"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/contributor__workflow.proof.log"
+    },
+    {
+      "unit": "frontend.ts",
+      "total": 0,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/index.md",
+      "sourceSha256": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930",
+      "inputs": {
+        "spec/frontend/index.md": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/frontend.proof.log"
+    },
+    {
+      "unit": "frontend__drafts.ts",
+      "total": 18,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/drafts.md",
+      "sourceSha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+      "inputs": {
+        "spec/frontend/drafts.md": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/frontend__drafts.proof.log"
+    },
+    {
+      "unit": "frontend__navigation.ts",
+      "total": 10,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/navigation.md",
+      "sourceSha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+      "inputs": {
+        "spec/frontend/navigation.md": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/frontend__navigation.proof.log"
+    },
+    {
+      "unit": "frontend__projections.ts",
+      "total": 10,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/projections.md",
+      "sourceSha256": "64951eebef3084913871402bff4b0ae4562fe4ffe6effe92b86a64c53bd8ab84",
+      "inputs": {
+        "spec/frontend/projections.md": "64951eebef3084913871402bff4b0ae4562fe4ffe6effe92b86a64c53bd8ab84"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/frontend__projections.proof.log"
+    },
+    {
+      "unit": "frontend__requests.ts",
+      "total": 6,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/requests.md",
+      "sourceSha256": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+      "inputs": {
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/frontend__requests.proof.log"
+    },
+    {
+      "unit": "governance.ts",
+      "total": 9,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/governance.md",
+      "sourceSha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
+      "inputs": {
+        "spec/governance.md": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/governance.proof.log"
+    },
+    {
+      "unit": "points__authorship.ts",
+      "spec": "spec/points/authorship.md",
+      "sourceSha256": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055",
+      "inputs": {
+        "spec/points/authorship.md": "4c9bc635da7a91c1f9f7bbba7c7df9520ebf57924d485967c0025f8691213055"
+      },
+      "total": 30,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__authorship.proof.log"
+    },
+    {
+      "unit": "points__journal.ts",
+      "total": 26,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/points/journal.md",
+      "sourceSha256": "4ed1dbc6cf4b5cef41d0fe669393c5aa1136586d489c927476feba8ea15a3188",
+      "inputs": {
+        "spec/points/journal.md": "4ed1dbc6cf4b5cef41d0fe669393c5aa1136586d489c927476feba8ea15a3188"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "log": "formal/validation/journeys/points__journal.proof.log"
+    },
+    {
+      "unit": "projectComposition.ts",
+      "total": 3,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/projectComposition.md",
+      "sourceSha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+      "inputs": {
+        "spec/backend/projects.md": "0977064b3ec0c9b7cc73237090b2aa8e68634b29ac7cfad167253b0418c81596",
+        "spec/projectComposition.md": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+        "spec/security/enforcement.md": "25452cb8355aa12ca608b7c15a22d0cbaa120f3432f09fe585270a1922a220f7"
+      },
+      "sourceCurrent": false,
+      "status": "passed",
+      "log": "formal/validation/journeys/projectComposition.proof.log"
+    }
+  ]
+}

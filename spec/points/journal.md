@@ -22,6 +22,7 @@ pure val initial: Journal = { sourceId: 1, occurredAt: 1, recordedAt: 1,
   historicalParticipation: 30, rewardWeight: 0 }
 pure def alwaysJournalTime(j: Journal): bool = j.recordedAt >= j.occurredAt
 pure def alwaysNonnegative(j: Journal): bool = j.workPoints >= 0 and j.rewardWeight >= 0
+pure def alwaysFrozenHasCredit(j: Journal): bool = j.financialFrozen implies j.credited
 pure def alwaysHistoryRetained(j: Journal): bool = j.sourceId == 1 and j.occurredAt == 1 and j.historicalParticipation == 30
 ```
 
@@ -59,6 +60,10 @@ pure def alwaysFrozenReward(j: Journal): bool = j.financialFrozen implies j.rewa
 ```
 
 ### Credited and frozen source states are reachable
+
+Discovered by the proof, a synthetic frozen source could previously have no
+initial credit and then accept a first credit that changed its frozen weight.
+A financial freeze now records that its underlying source is already credited.
 
 Monthly penalties and their reversals are applied by the aggregate monthly
 Points specification. Individual source values retain their attribution and

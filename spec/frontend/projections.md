@@ -78,6 +78,47 @@ pure val eValues = Set(
 )
 ```
 
+## Story: Distinguish an award decision from its funding and payment
+
+### Award, funding and settlement status are independent facts
+
+The account and case services supply these facts from their owning records.
+An approved award can remain underfunded or await a wallet. A scheduled or
+submitted payment keeps its financial obligation until exact finality is
+reconciled. A missing funding observation remains unavailable. The separate
+contributor token allocation owns its Unclaimed state.
+
+```quint
+type AwardDecision = Projected | UnderReview | ApprovedAward | ExcludedAward
+type FundingObservation = FundingUnavailable | Underfunded | Funded
+type PaymentDisplay = PaymentUnavailable | PaymentUnderfunded | AwaitingWallet | ReadyToPay | ScheduledPayment | HeldPayment | SubmittedPayment | PaidPayment
+type AwardFacts = { decision: AwardDecision, funding: FundingObservation, wallet: bool,
+  scheduled: bool, held: bool, submitted: bool, exactFinality: bool }
+pure def paymentDisplay(facts: AwardFacts): PaymentDisplay =
+  if (facts.exactFinality) PaidPayment
+  else if (facts.submitted) SubmittedPayment
+  else if (facts.held) HeldPayment
+  else if (facts.funding == FundingUnavailable) PaymentUnavailable
+  else if (facts.funding == Underfunded) PaymentUnderfunded
+  else if (not(facts.wallet)) AwaitingWallet
+  else if (facts.scheduled) ScheduledPayment
+  else ReadyToPay
+pure def lawPaidNeedsFinality(facts: AwardFacts): bool =
+  paymentDisplay(facts) == PaidPayment implies facts.exactFinality
+pure def lawApprovalIsNotPayment(facts: AwardFacts): bool =
+  facts.decision == ApprovedAward and not(facts.exactFinality) implies paymentDisplay(facts) != PaidPayment
+pure def lawMissingFundingIsUnavailable(facts: AwardFacts): bool =
+  facts.funding == FundingUnavailable and not(facts.exactFinality) and not(facts.submitted) and not(facts.held)
+    implies paymentDisplay(facts) == PaymentUnavailable
+pure val factsValues = Set(
+  { decision: ApprovedAward, funding: Underfunded, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: true, scheduled: true, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: true, scheduled: false, held: false, submitted: true, exactFinality: true },
+  { decision: UnderReview, funding: FundingUnavailable, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false }
+)
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every
