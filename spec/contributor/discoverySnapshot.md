@@ -16,8 +16,8 @@ selection decision.
 The open-item inventory is read first and the activity second, within a
 bounded command budget of three reads per attempt. If the inventory changed
 while activity was read, the whole snapshot is retried once; a second change
-fails closed. A transport failure, malformed response or exhausted budget
-fails without publishing an empty success. Every run of the command's own
+fails closed. A transport failure, malformed response or exhausted command budget
+(`failRead`) fails without publishing an empty success. Every run of the command's own
 reads ends published or failed.
 
 ```quint
@@ -32,8 +32,6 @@ pure def readActivity(s: Snapshot, inventoryChanged: bool): Snapshot =
   if (not(inventoryChanged)) { ...s, phase: ReadyToPublish, reads: s.reads + 1, activityRead: true }
   else if (s.attempt == 1) { phase: ReadingInventory, attempt: 2, reads: 0, inventoryItems: -1, activityRead: false }
   else { ...s, phase: SnapshotFailed, reads: s.reads + 1 }
-pure def canExhaustBudget(s: Snapshot): bool = (s.phase == ReadingInventory or s.phase == ReadingActivity) and s.reads >= readBudget
-pure def exhaustBudget(s: Snapshot): Snapshot = { ...s, phase: SnapshotFailed }
 pure def canFailRead(s: Snapshot): bool = s.phase == ReadingInventory or s.phase == ReadingActivity or s.phase == ReadyToPublish
 pure def failRead(s: Snapshot): Snapshot = { ...s, phase: SnapshotFailed }
 pure def canPublish(s: Snapshot): bool = s.phase == ReadyToPublish
@@ -49,5 +47,4 @@ pure def leadsToTerminal(s: Snapshot, later: Snapshot): bool = later.phase == Pu
 pure val fair_readInventory = "weak"
 pure val fair_readActivity = "weak"
 pure val fair_publish = "weak"
-pure val fair_exhaustBudget = "weak"
 pure val itemsValues = Set(0, 2)

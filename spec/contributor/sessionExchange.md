@@ -186,11 +186,12 @@ pure def alwaysLifetimes(e: Exchange): bool =
   and ((e.flow == AssertionIssued or e.assertionIssuedAt > 0) implies e.assertionExpires == e.assertionIssuedAt + assertionLifetime)
   and (e.assertionConsumed implies e.bearerExpires == e.bearerIssuedAt + bearerLifetime)
 pure def alwaysContributorOnly(e: Exchange): bool = e.role != OperatorRole and (e.minted iff e.role == ContributorRole)
+pure def issued(e: Exchange): bool = e.assertionIssuedAt > 0 and (e.flow == AssertionIssued or e.flow == FlowPurged)
 pure def alwaysEvidenceOrder(e: Exchange): bool = (e.minted implies e.assertionConsumed)
-  and (e.assertionConsumed implies e.flow == AssertionIssued)
-  and (e.phase == Exchanging implies e.flow == AssertionIssued)
+  and (e.assertionConsumed implies issued(e))
+  and (e.phase == Exchanging implies issued(e))
   and ((e.phase == Authenticating or e.phase == Inserting or e.phase == CreateReply) implies e.minted)
-  and ((e.phase == PollReply and e.poll == AssertionReturned) implies e.flow == AssertionIssued)
+  and ((e.phase == PollReply and e.poll == AssertionReturned) implies issued(e))
 pure def alwaysReply(e: Exchange): bool = (e.snapshot.serverId != "") implies e.snapshot.status != NoRow
   and e.key != "" and e.minted and (e.created == RowCreated or e.created == RowExisting) and (e.phase == CreateReply or e.phase == Done)
 pure def alwaysActiveInvocation(e: Exchange): bool = (e.phase != Idle and e.phase != Done) implies e.attempt > 0 and e.key != ""
