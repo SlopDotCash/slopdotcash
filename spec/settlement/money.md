@@ -205,6 +205,28 @@ pure def reverseAmount(a: Amount): Amount = a.foldl(List(), (acc, digit) => List
 pure def lawMultiplyOne(a: Amount): bool = validAmount(a) implies equalAmounts(multiplyAmounts(a, List(1)), a)
 ```
 
+### Full-width products preserve value, distributivity, and exact cancellation
+
+Equivalent limb vectors produce equivalent products. Multiplication by a
+positive valid amount is injective over valid amounts and distributes over
+addition. Division by one preserves the dividend and leaves zero remainder.
+
+```quint
+pure def lawMultiplyCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    equalAmounts(multiplyAmounts(a, c), multiplyAmounts(b, c)) and equalAmounts(multiplyAmounts(c, a), multiplyAmounts(c, b))
+pure def lawMultiplyCommutative(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies equalAmounts(multiplyAmounts(a, b), multiplyAmounts(b, a))
+pure def lawMultiplyAddition(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    equalAmounts(multiplyAmounts(a, addAmounts(b, c)), addAmounts(multiplyAmounts(a, b), multiplyAmounts(a, c)))
+pure def lawMultiplyCancellation(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and positiveAmount(c)) implies
+    compareAmounts(multiplyAmounts(a, c), multiplyAmounts(b, c)) == compareAmounts(a, b)
+pure def lawDivisionByOne(a: Amount): bool = validAmount(a) implies
+  equalAmounts(divideAmounts(a, List(1)).quotient, a) and equalAmounts(divideAmounts(a, List(1)).remainder, zero)
+```
+
 ### Long division chooses each quotient limb by ten fixed binary decisions
 
 The dividend is processed from its most significant limb. The prior remainder is below the divisor, so bringing down one base-1000 limb yields a quotient digit below 1000. The bit decisions select the largest digit whose product fits. Division by zero returns the input as remainder and a zero quotient, and financial callers require a positive divisor.

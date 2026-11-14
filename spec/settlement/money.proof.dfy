@@ -1317,3 +1317,622 @@ lemma lawSubtractionAtMost_ensures(a: seq<int>, b: seq<int>)
     AmountValueOrder(subtractAmounts(a,b),a);
   }
 }
+lemma ScaleSuffixValue(work: seq<int>, factor: int, current: ScaleFold)
+  requires 0 <= factor < 1000 && 0 <= current.carry < 1000
+  requires forall d :: d in work ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000 * n + d;
+    var result := Std.Collections.Seq.FoldLeft((acc: ScaleFold, digit: int) => ScaleFold(quotient_settlement__money(((digit * factor) + acc.carry), 1000), (acc.digits + [remainder_settlement__money(((digit * factor) + acc.carry), 1000)])), current, work);
+    |result.digits| == |current.digits| + |work| && result.digits[..|current.digits|] == current.digits &&
+    (var tail := result.digits[|current.digits|..];
+      var out := if result.carry > 0 then tail + [result.carry] else tail;
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out)) == factor * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(work)) + current.carry)
+  decreases |work|
+{
+  var h := (n: int, d: int) => 1000*n + d;
+  var f := (acc: ScaleFold, digit: int) => ScaleFold(quotient_settlement__money(((digit * factor) + acc.carry), 1000), (acc.digits + [remainder_settlement__money(((digit * factor) + acc.carry), 1000)]));
+  var full := Std.Collections.Seq.FoldLeft(f, current, work);
+  if |work| > 0 {
+    var digit := work[0];
+    var rest := work[1..];
+    assert digit in work;
+    assert 0 <= digit < 1000;
+    assert forall d :: d in rest ==> d in work;
+    var combined := digit*factor + current.carry;
+    assert 0 <= combined < 1000000;
+    var low := combined % 1000;
+    var next := f(current, digit);
+    assert next.carry == combined / 1000 && next.digits == current.digits + [low];
+    ScaleSuffixValue(rest, factor, next);
+    assert full == Std.Collections.Seq.FoldLeft(f, next, rest);
+    var k := |current.digits|;
+    assert |next.digits| == k + 1;
+    assert full.digits[..k+1] == current.digits + [low];
+    assert full.digits[k] == low;
+    var tail := full.digits[k..];
+    var nextTail := full.digits[k+1..];
+    assert tail == full.digits[k..k+1] + nextTail;
+    assert full.digits[k..k+1] == [low];
+    var out := if full.carry > 0 then tail + [full.carry] else tail;
+    var nextOut := if full.carry > 0 then nextTail + [full.carry] else nextTail;
+    assert out == [low] + nextOut;
+    assert work == [digit] + rest;
+    AmountValueCons(low, nextOut);
+    AmountValueCons(digit, rest);
+    var sub := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(rest));
+    assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(nextOut)) == factor*sub + next.carry;
+    assert combined == low + 1000*next.carry;
+    LinearScaleStep(digit,factor,sub,current.carry,low,next.carry);
+    var scaled := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out));
+    assert scaled == low + 1000*(factor*sub + next.carry);
+    assert Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work)) == digit+1000*sub;
+    assert scaled == factor*Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work)) + current.carry;
+  } else {
+    assert work == [] && full == current;
+    var tail := full.digits[|current.digits|..];
+    var out := if full.carry > 0 then tail + [full.carry] else tail;
+    assert tail == [] && reverseAmount([]) == [];
+    if current.carry > 0 {
+      assert out == [current.carry]+[];
+      AmountValueCons(current.carry, []);
+    }
+    assert Std.Collections.Seq.FoldLeft(h,0,reverseAmount(out)) == current.carry;
+  }
+}
+
+lemma AmountValueMultiplySmall(a: seq<int>, factor: int)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires 0 <= factor < 1000
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(multiplySmall(a,factor))) ==
+      factor * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a))
+{
+  ScaleSuffixValue(a, factor, ScaleFold(0, []));
+}
+
+lemma PaddedValueZero(xs: seq<int>)
+  requires forall d :: d in xs ==> d == 0
+  ensures Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n+d, 0, reverseAmount(xs)) == 0
+  decreases |xs|
+{
+  if |xs| > 0 {
+    assert xs[0] in xs;
+    var rest := xs[1..];
+    assert forall d :: d in rest ==> d in xs;
+    PaddedValueZero(rest);
+    assert xs == [0] + rest;
+    AmountValueCons(0, rest);
+  }
+}
+
+lemma AmountValueProductFold(a: seq<int>, work: seq<int>, current: ProductFold)
+  requires validAmount(a) && validAmount(current.product)
+  requires forall z :: z in current.prefix ==> z == 0
+  requires forall d :: d in work ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var w := (n: int, d: int) => 1000*n;
+    var result := Std.Collections.Seq.FoldLeft((acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit)))), current, work);
+    Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.product)) ==
+      Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.product)) + Std.Collections.Seq.FoldLeft(w,1,current.prefix) *
+        Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a)) * Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work))
+  decreases |work|
+{
+  if |work| > 0 {
+    var f := (acc: ProductFold, digit: int) => ProductFold((acc.prefix + [0]), addAmounts(acc.product, (acc.prefix + multiplySmall(a, digit))));
+    var h := (n: int, d: int) => 1000*n+d;
+    var w := (n: int, d: int) => 1000*n;
+    var digit := work[0];
+    var rest := work[1..];
+    assert digit in work;
+    assert forall d :: d in rest ==> d in work;
+    var next := f(current, digit);
+    var scale := multiplySmall(a,digit);
+    var shifted := current.prefix + scale;
+    lawMultiplySmallValid_ensures(a,digit);
+    forall d | d in shifted ensures 0 <= d < 1000 { if d in current.prefix { assert d == 0; } else { assert d in scale; } }
+    assert validAmount(shifted);
+    lawAdditionValid_ensures(current.product,shifted);
+    assert next.product == addAmounts(current.product,shifted) && validAmount(next.product);
+    assert forall d :: d in next.prefix ==> d in current.prefix || d == 0;
+    AmountValueProductFold(a, rest, next);
+    AmountValueAdd(current.product,shifted);
+    AmountValueConcat(current.prefix,scale);
+    PaddedValueZero(current.prefix);
+    AmountValueMultiplySmall(a,digit);
+    ProofLib.FoldLeftAppend(w,1,current.prefix,0);
+    assert work == [digit] + rest;
+    AmountValueCons(digit,rest);
+    var result := Std.Collections.Seq.FoldLeft(f,current,work);
+    assert result == Std.Collections.Seq.FoldLeft(f,next,rest);
+    var shift := Std.Collections.Seq.FoldLeft(w,1,current.prefix);
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a));
+    var tail := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(rest));
+    var prior := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.product));
+    calc {
+      Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.product));
+      == prior + shift*digit*base + (1000*shift)*base*tail;
+      == prior + shift*base*(digit+1000*tail);
+      == prior + shift*base*Std.Collections.Seq.FoldLeft(h,0,reverseAmount(work));
+    }
+  }
+}
+
+lemma AmountValueMultiply(a: seq<int>, b: seq<int>)
+  requires validAmount(a) && validAmount(b)
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    Std.Collections.Seq.FoldLeft(h,0,reverseAmount(multiplyAmounts(a,b))) ==
+      Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a)) * Std.Collections.Seq.FoldLeft(h,0,reverseAmount(b))
+{
+  assert zero == [0] && validAmount(zero);
+  PaddedValueZero(zero);
+  AmountValueProductFold(a,b,ProductFold([],zero));
+}
+
+lemma LinearScaleStep(digit: int, factor: int, rest: int, incoming: int, low: int, outgoing: int)
+  requires digit*factor+incoming == low+1000*outgoing
+  ensures low+1000*(factor*rest+outgoing) == factor*(digit+1000*rest)+incoming
+{
+}
+lemma QuotientCandidateNumeric(digit: int, bit: int, partial: seq<int>, divisor: seq<int>)
+  requires validAmount(partial) && validAmount(divisor)
+  requires digit >= 0 && bit >= 0
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    quotientCandidate(digit,bit,partial,divisor) == (if digit+bit < 1000 && (digit+bit)*base <= amount then digit+bit else digit)
+{
+  if digit+bit < 1000 {
+    var n := digit+bit;
+    lawMultiplySmallValid_ensures(divisor,n);
+    AmountValueMultiplySmall(divisor,n);
+    AmountValueOrder(multiplySmall(divisor,n),partial);
+  }
+}
+
+lemma QuotientCandidateFloor(digit: int, bit: int, partial: seq<int>, divisor: seq<int>, expected: int)
+  requires validAmount(partial) && validAmount(divisor)
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    base > 0 && expected*base <= amount < (expected+1)*base
+  requires 0 <= expected < 1000 && 0 <= digit <= expected && 0 < bit && expected < digit+2*bit
+  ensures digit <= quotientCandidate(digit,bit,partial,divisor) <= expected
+  ensures expected < quotientCandidate(digit,bit,partial,divisor)+bit
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+  QuotientCandidateNumeric(digit,bit,partial,divisor);
+  CandidateFitsFloor(digit,bit,expected,base,amount);
+  var candidate := digit+bit;
+  assert (candidate*base <= amount) == (candidate <= expected);
+  if candidate <= expected {
+    assert candidate < 1000;
+    assert quotientCandidate(digit,bit,partial,divisor) == candidate;
+  } else {
+    assert quotientCandidate(digit,bit,partial,divisor) == digit;
+  }
+}
+
+lemma QuotientFloor(partial: seq<int>, divisor: seq<int>)
+  requires validAmount(partial) && validAmount(divisor)
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    base > 0 && 0 <= amount < 1000*base
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    quotientDigit(partial,divisor) * base <= amount < (quotientDigit(partial,divisor)+1)*base
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  var f := (digit: int, bit: int) => quotientCandidate(digit, bit, partial, divisor);
+  var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+  var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  var expected := amount / base;
+  assert expected*base <= amount < (expected+1)*base;
+  assert 0 <= expected < 1000;
+  QuotientCandidateFloor(0,512,partial,divisor,expected);
+  var b512 := f(0,512);
+  QuotientCandidateFloor(b512,256,partial,divisor,expected);
+  var b256 := f(b512,256);
+  QuotientCandidateFloor(b256,128,partial,divisor,expected);
+  var b128 := f(b256,128);
+  QuotientCandidateFloor(b128,64,partial,divisor,expected);
+  var b64 := f(b128,64);
+  QuotientCandidateFloor(b64,32,partial,divisor,expected);
+  var b32 := f(b64,32);
+  QuotientCandidateFloor(b32,16,partial,divisor,expected);
+  var b16 := f(b32,16);
+  QuotientCandidateFloor(b16,8,partial,divisor,expected);
+  var b8 := f(b16,8);
+  QuotientCandidateFloor(b8,4,partial,divisor,expected);
+  var b4 := f(b8,4);
+  QuotientCandidateFloor(b4,2,partial,divisor,expected);
+  var b2 := f(b4,2);
+  QuotientCandidateFloor(b2,1,partial,divisor,expected);
+  assert f(b2,1) == expected;
+  assert quotientBits == [512,256,128,64,32,16,8,4,2,1];
+  QuotientFixedFold(f, 0, b512, b256, b128, b64, b32, b16, b8, b4, b2);
+}
+
+lemma QuotientFixedFold(f: (int,int) -> int, initial: int, b512: int, b256: int, b128: int, b64: int,
+  b32: int, b16: int, b8: int, b4: int, b2: int)
+  requires b512 == f(initial,512) && b256 == f(b512,256) && b128 == f(b256,128) && b64 == f(b128,64)
+  requires b32 == f(b64,32) && b16 == f(b32,16) && b8 == f(b16,8) && b4 == f(b8,4) && b2 == f(b4,2)
+  ensures Std.Collections.Seq.FoldLeft(f,initial,[512,256,128,64,32,16,8,4,2,1]) == f(b2,1)
+{
+  calc {
+    Std.Collections.Seq.FoldLeft(f,initial,[512,256,128,64,32,16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b512,[256,128,64,32,16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b256,[128,64,32,16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b128,[64,32,16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b64,[32,16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b32,[16,8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b16,[8,4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b8,[4,2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b4,[2,1]);
+    == Std.Collections.Seq.FoldLeft(f,b2,[1]);
+    == f(b2,1);
+  }
+}
+
+lemma CandidateFitsFloor(digit: int, bit: int, expected: int, base: int, amount: int)
+  requires base > 0 && expected*base <= amount < (expected+1)*base
+  ensures (digit+bit)*base <= amount <==> digit+bit <= expected
+{
+  var candidate := digit+bit;
+  if candidate <= expected {
+    assert candidate*base <= expected*base;
+  } else {
+    assert expected+1 <= candidate;
+    assert (expected+1)*base <= candidate*base;
+  }
+}
+lemma ReverseAmountInvolution(xs: seq<int>)
+  ensures reverseAmount(reverseAmount(xs)) == xs
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var d := xs[0];
+    var rest := xs[1..];
+    var push := (acc: seq<int>, digit: int) => ([digit] + acc);
+    assert xs == [d] + rest;
+    assert push([], d) == [d];
+    assert reverseAmount(xs) == Std.Collections.Seq.FoldLeft(push, [d], rest);
+    ReverseOneAtEnd(push, rest, d);
+    assert reverseAmount(xs) == reverseAmount(rest) + [d];
+    ReverseAmountAppend(reverseAmount(rest), d);
+    ReverseAmountInvolution(rest);
+  }
+}
+
+lemma DivisionNumericalStep(current: Division, digit: int, divisor: seq<int>)
+  requires validAmount(current.remainder) && validAmount(divisor)
+  requires 0 <= digit < 1000
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    0 <= rem < base
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+    var next := divisionStep(current,digit,divisor);
+    var nextRem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(next.remainder));
+    validAmount(next.remainder) && 0 <= nextRem < base &&
+    next.quotient == current.quotient + [quotientDigit([digit]+current.remainder,divisor)] &&
+    1000*rem+digit == quotientDigit([digit]+current.remainder,divisor)*base + nextRem
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+  var partial := [digit] + current.remainder;
+  assert validAmount(partial);
+  AmountValueCons(digit,current.remainder);
+  var value := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(partial));
+  assert value == 1000*rem+digit;
+  assert 0 <= value < 1000*base;
+  QuotientFloor(partial,divisor);
+  var q := quotientDigit(partial,divisor);
+  BoundedQuotientDigit(partial,divisor);
+  var product := multiplySmall(divisor,q);
+  lawMultiplySmallValid_ensures(divisor,q);
+  AmountValueMultiplySmall(divisor,q);
+  AmountValueOrder(partial,product);
+  assert compareAmounts(partial,product) >= 0;
+  AmountValueSubtract(partial,product);
+  lawSubtractionValid_ensures(partial,product);
+}
+
+// Separate the induction over an opaque step from its arithmetic contract.
+lemma DivisionReconstructFold(work: seq<int>, current: Division, divisor: seq<int>, original: int)
+  requires validAmount(current.remainder) && validAmount(divisor)
+  requires forall d :: d in work ==> 0 <= d < 1000
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+    0 <= rem < base && original == base*Std.Collections.Seq.FoldLeft(h,0,current.quotient) + rem
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    var result := Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc,digit,divisor),current,work);
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.remainder));
+    0 <= rem < base && Std.Collections.Seq.FoldLeft(h,original,work) == base*Std.Collections.Seq.FoldLeft(h,0,result.quotient) + rem
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  var f := (acc: Division, digit: int) => divisionStep(acc,digit,divisor);
+  var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  var num := (acc: Division) => Std.Collections.Seq.FoldLeft(h,0,reverseAmount(acc.remainder));
+  var q := (acc: Division) => Std.Collections.Seq.FoldLeft(h,0,acc.quotient);
+  var stateOk := (acc: Division) => validAmount(acc.remainder) && 0 <= num(acc) < base;
+  var value := (acc: Division) => base*q(acc) + num(acc);
+  forall acc: Division, d: int | stateOk(acc) && 0 <= d < 1000
+    ensures stateOk(f(acc,d)) && value(f(acc,d)) == h(value(acc),d)
+  {
+    DivisionStepValue(acc,d,divisor);
+  }
+  FoldTracksHorner(f,stateOk,value,current,work);
+  var result := Std.Collections.Seq.FoldLeft(f,current,work);
+  assert value(current) == original && stateOk(result);
+}
+
+lemma DivisionStepValue(current: Division, digit: int, divisor: seq<int>)
+  requires validAmount(current.remainder) && validAmount(divisor)
+  requires 0 <= digit < 1000
+  requires var h := (n: int, d: int) => 1000*n+d;
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+    0 <= rem < base
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+    var after := divisionStep(current,digit,divisor);
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(after.remainder));
+    var priorRem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+    validAmount(after.remainder) && 0 <= rem < base &&
+    base*Std.Collections.Seq.FoldLeft(h,0,after.quotient)+rem ==
+      1000*(base*Std.Collections.Seq.FoldLeft(h,0,current.quotient)+priorRem)+digit
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  var next := divisionStep(current,digit,divisor);
+  var q := quotientDigit([digit]+current.remainder,divisor);
+  DivisionNumericalStep(current,digit,divisor);
+  ProofLib.FoldLeftAppend(h,0,current.quotient,q);
+  var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(divisor));
+  var nextRem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(next.remainder));
+  var prior := Std.Collections.Seq.FoldLeft(h,0,current.quotient);
+  var priorRem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(current.remainder));
+  assert 1000*priorRem+digit == q*base+nextRem;
+  FoldQuotientEquation(base,prior,q,base*prior+priorRem,priorRem,nextRem,digit);
+}
+
+lemma FoldTracksHorner<T>(step: (T,int) -> T, good: T -> bool, value: T -> int, current: T, work: seq<int>)
+  requires good(current)
+  requires forall d :: d in work ==> 0 <= d < 1000
+  requires forall acc, d :: good(acc) && 0 <= d < 1000 ==>
+    good(step(acc,d)) && value(step(acc,d)) == 1000*value(acc)+d
+  ensures good(Std.Collections.Seq.FoldLeft(step,current,work))
+  ensures value(Std.Collections.Seq.FoldLeft(step,current,work)) ==
+    Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n+d,value(current),work)
+  decreases |work|
+{
+  if |work| > 0 {
+    var d := work[0];
+    var tail := work[1..];
+    assert d in work;
+    assert forall x :: x in tail ==> x in work;
+    assert good(step(current,d));
+    assert value(step(current,d)) == 1000*value(current)+d;
+    FoldTracksHorner(step,good,value,step(current,d),tail);
+  }
+}
+
+lemma FoldQuotientEquation(base: int, prior: int, q: int, original: int, priorRem: int, nextRem: int, digit: int)
+  requires original == base*prior + priorRem
+  requires 1000*priorRem+digit == q*base+nextRem
+  ensures 1000*original+digit == base*(1000*prior+q)+nextRem
+{
+}
+
+lemma DivisionValue(a: seq<int>, b: seq<int>)
+  requires validAmount(a) && validAmount(b) && positiveAmount(b)
+  ensures var h := (n: int, d: int) => 1000*n+d;
+    var result := divideAmounts(a,b);
+    var base := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(b));
+    var quotient := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.quotient));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.remainder));
+    0 <= rem < base && Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a)) == quotient*base + rem
+{
+  var h := (n: int, d: int) => 1000*n+d;
+  assert zero == [0] && validAmount(zero);
+  PaddedValueZero(zero);
+  AmountValueOrder(b,zero);
+  assert Std.Collections.Seq.FoldLeft(h,0,reverseAmount(b)) > 0;
+  ValidReverse([],a);
+  var digits := reverseAmount(a);
+  IndexedDigitsValid(digits);
+  var start := Division([],zero);
+  var result := Std.Collections.Seq.FoldLeft((acc: Division, digit: int) => divisionStep(acc,digit,b),start,digits);
+  DivisionReconstructFold(digits,start,b,0);
+  ReverseAmountInvolution(result.quotient);
+}
+
+lemma lawDivisionRemainder_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawDivisionRemainder(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && positiveAmount(b) {
+    lawDivisionValid_ensures(a,b);
+    DivisionValue(a,b);
+    AmountValueOrder(divideAmounts(a,b).remainder,b);
+  }
+}
+
+lemma lawDivisionReconstructs_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawDivisionReconstructs(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && positiveAmount(b) {
+    var result := divideAmounts(a,b);
+    lawDivisionValid_ensures(a,b);
+    DivisionValue(a,b);
+    var product := multiplyAmounts(result.quotient,b);
+    lawMultiplyValid_ensures(result.quotient,b);
+    AmountValueMultiply(result.quotient,b);
+    lawAdditionValid_ensures(product,result.remainder);
+    AmountValueAdd(product,result.remainder);
+    AmountValueOrder(addAmounts(product,result.remainder),a);
+  }
+}
+lemma lawFullPrivateConservation_ensures(a: seq<int>)
+  ensures (lawFullPrivateConservation(a) == true)
+{
+  if privateSplitPossible(a) {
+    var b := [4];
+    var h := (n: int, d: int) => 1000*n+d;
+    var result := divideAmounts(a,b);
+    assert validAmount(a) && validAmount(b);
+    AmountValueCons(4,[]);
+    PaddedValueZero(zero);
+    AmountValueOrder(b,zero);
+    assert positiveAmount(b);
+    lawDivisionValid_ensures(a,b);
+    DivisionValue(a,b);
+    AmountValueOrder(result.remainder,zero);
+    var fee := privateFeeAmount(a);
+    var principal := privateResearcherAmount(a);
+    assert fee == result.quotient;
+    lawPrivateAmountsValid_ensures(a);
+    AmountValueMultiplySmall(fee,3);
+    AmountValueAdd(fee,principal);
+    lawAdditionValid_ensures(fee,principal);
+    AmountValueOrder(addAmounts(fee,principal),a);
+  }
+}
+
+lemma lawFullOrdinaryConservation_ensures(a: seq<int>)
+  ensures (lawFullOrdinaryConservation(a) == true)
+{
+  if validAmount(a) {
+    var b := [50];
+    var h := (n: int, d: int) => 1000*n+d;
+    var result := divideAmounts(a,b);
+    assert validAmount(b);
+    AmountValueCons(50,[]);
+    AmountValueCons(1,[]);
+    PaddedValueZero(zero);
+    AmountValueOrder(b,zero);
+    assert positiveAmount(b);
+    lawDivisionValid_ensures(a,b);
+    DivisionValue(a,b);
+    AmountValueOrder(result.remainder,zero);
+    lawOrdinaryAmountsValid_ensures(a);
+    var fee := ordinaryFeeAmount(a);
+    var q := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.quotient));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.remainder));
+    var amount := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a));
+    var charged := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(fee));
+    AmountValueConsRange(result.quotient);
+    if rem > 0 {
+      assert positiveAmount(result.remainder);
+      AmountValueAdd(result.quotient,[1]);
+      assert charged == q+1;
+    } else {
+      assert rem == 0 && !positiveAmount(result.remainder);
+      assert charged == q;
+    }
+    assert amount == 50*q+rem && charged <= amount;
+    AmountValueOrder(a,fee);
+    assert compareAmounts(a,fee) >= 0;
+    lawSubtractionReconstructs_ensures(a,fee);
+    lawAddCommutative_ensures(fee,ordinaryNetAmount(a));
+  }
+}
+lemma lawMultiplyCongruence_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawMultiplyCongruence(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) && equalAmounts(a,b) {
+    AmountValueOrder(a,b);
+    lawMultiplyValid_ensures(a,c);
+    lawMultiplyValid_ensures(b,c);
+    lawMultiplyValid_ensures(c,a);
+    lawMultiplyValid_ensures(c,b);
+    AmountValueMultiply(a,c);
+    AmountValueMultiply(b,c);
+    AmountValueMultiply(c,a);
+    AmountValueMultiply(c,b);
+    AmountValueOrder(multiplyAmounts(a,c),multiplyAmounts(b,c));
+    AmountValueOrder(multiplyAmounts(c,a),multiplyAmounts(c,b));
+  }
+}
+
+lemma lawMultiplyCommutative_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawMultiplyCommutative(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    lawMultiplyValid_ensures(a,b);
+    lawMultiplyValid_ensures(b,a);
+    AmountValueMultiply(a,b);
+    AmountValueMultiply(b,a);
+    AmountValueOrder(multiplyAmounts(a,b),multiplyAmounts(b,a));
+  }
+}
+
+lemma lawMultiplyAddition_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawMultiplyAddition(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) {
+    var sum := addAmounts(b,c);
+    var ab := multiplyAmounts(a,b);
+    var ac := multiplyAmounts(a,c);
+    lawAdditionValid_ensures(b,c);
+    lawMultiplyValid_ensures(a,b);
+    lawMultiplyValid_ensures(a,c);
+    lawMultiplyValid_ensures(a,sum);
+    lawAdditionValid_ensures(ab,ac);
+    AmountValueAdd(b,c);
+    AmountValueMultiply(a,sum);
+    AmountValueMultiply(a,b);
+    AmountValueMultiply(a,c);
+    AmountValueAdd(ab,ac);
+    AmountValueOrder(multiplyAmounts(a,sum),addAmounts(ab,ac));
+  }
+}
+
+lemma lawMultiplyCancellation_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawMultiplyCancellation(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) && positiveAmount(c) {
+    var h := (n: int, d: int) => 1000*n+d;
+    PaddedValueZero(zero);
+    AmountValueOrder(c,zero);
+    AmountValueOrder(a,b);
+    lawMultiplyValid_ensures(a,c);
+    lawMultiplyValid_ensures(b,c);
+    AmountValueMultiply(a,c);
+    AmountValueMultiply(b,c);
+    AmountValueOrder(multiplyAmounts(a,c),multiplyAmounts(b,c));
+    var first := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a));
+    var second := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(b));
+    var factor := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(c));
+    if first < second { assert first*factor < second*factor; }
+    else if first > second { assert first*factor > second*factor; }
+  }
+}
+
+lemma lawDivisionByOne_ensures(a: seq<int>)
+  ensures (lawDivisionByOne(a) == true)
+{
+  if validAmount(a) {
+    var h := (n: int, d: int) => 1000*n+d;
+    var result := divideAmounts(a,[1]);
+    assert [1] == [1]+[];
+    AmountValueCons(1,[]);
+    PaddedValueZero(zero);
+    AmountValueOrder([1],zero);
+    assert validAmount([1]) && positiveAmount([1]);
+    lawDivisionValid_ensures(a,[1]);
+    DivisionValue(a,[1]);
+    var value := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(a));
+    var quot := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.quotient));
+    var rem := Std.Collections.Seq.FoldLeft(h,0,reverseAmount(result.remainder));
+    assert value == quot+rem && 0 <= rem < 1;
+    AmountValueOrder(result.quotient,a);
+    AmountValueOrder(result.remainder,zero);
+  }
+}
