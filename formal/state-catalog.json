@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "804de5c745658afeeca2e34185607ffebd5c2476ab77990a8fd8316f43c7fd7b",
+  "inventorySha256": "12bd3734a2c7438e914b67cd12fd3ad29faec25952633502cdbfb57d7b91525c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2864,7 +2864,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 368,
+      "line": 370,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -2872,7 +2872,8 @@
         "failed",
         "finalized",
         "not-sent",
-        "pending"
+        "pending",
+        "received"
       ],
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
@@ -2936,7 +2937,7 @@
       "line": 355,
       "name": "status",
       "kind": "string-union",
-      "values": ["failed", "finalized", "not-sent", "pending"],
+      "values": ["failed", "finalized", "not-sent", "pending", "received"],
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
@@ -3687,14 +3688,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "line": 52,
+      "line": 65,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/payments/operator_keeper_diagnostics.qnt",
-        "formal/models/payments/operator_keeper_lifecycle.qnt"
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/operator_keeper_rpc.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

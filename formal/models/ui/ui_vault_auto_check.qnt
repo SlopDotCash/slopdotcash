@@ -8,7 +8,10 @@
 // opens a wallet prompt. An approval settles from canonical inclusion and only
 // opens the next review; a deposit or withdrawal counts only from a final block.
 // The deposit prompt requires the live allowance, so a replaced approval is
-// refused before signing. A failed automatic read shows its error, keeps the
+// refused before signing. A transfer read in a successful canonical block that
+// is not final yet is reported as received: the request stays saved and checked,
+// nothing counts, and a later read that no longer sees it withdraws the notice.
+// A failed automatic read shows its error, keeps the
 // saved request and keeps checking; the next read that works, or any owner
 // action, withdraws that message. Abstracted: three automatic attempts stand for the
 // source's 240, and the receipt, intent and event predicates are supplied by
@@ -16,12 +19,12 @@
 module ui_vault_auto_check {
   var s: { kind: str, origin: str, block: str, reverted: bool, pending: bool, wallet: bool,
     busy: bool, inflight: str, attempts: int, outcome: str, reviewOpen: bool,
-    funded: bool, prompts: int, error: bool }
+    funded: bool, prompts: int, error: bool, received: bool }
   pure val LIMIT = 3
   action start(kind: str, origin: str, reverted: bool): bool = s' = { kind: kind, origin: origin,
     block: "unmined", reverted: reverted, pending: true, wallet: false, busy: false,
     inflight: "none", attempts: 0, outcome: "none", reviewOpen: false, funded: false,
-    prompts: 0, error: false }
+    prompts: 0, error: false, received: false }
   action init = any { start("approval", "wallet", false), start("approval", "wallet", true),
     start("approval", "recovery", false), start("transfer", "wallet", false),
     start("transfer", "wallet", true), start("transfer", "recovery", false) }
@@ -41,15 +44,19 @@ module ui_vault_auto_check {
   action autoCheckFails = all { s.inflight == "auto",
     s' = s.with("inflight", "none").with("error", true) }
   val evidenceMet = if (s.kind == "approval") included else s.block == "final"
+  // Successful, canonical and not final: a transfer is reported as received.
+  val receivedNow = s.kind == "transfer" and s.block == "included" and not(s.reverted)
   action settle = all { s.inflight != "none",
     s' = if (not(evidenceMet)) s.with("inflight", "none").with("busy", false).with("error", false)
+        .with("received", receivedNow)
       else if (s.reverted) s.with("inflight", "none").with("busy", false).with("error", false)
-        .with("pending", false).with("outcome", "failed")
+        .with("pending", false).with("outcome", "failed").with("received", false)
       else if (s.kind == "approval") s.with("inflight", "none").with("busy", false).with("error", false)
         .with("pending", false).with("outcome", "approval-confirmed")
         .with("reviewOpen", true)
       else s.with("inflight", "none").with("busy", false).with("error", false)
-        .with("pending", false).with("outcome", "verified").with("funded", true) }
+        .with("pending", false).with("outcome", "verified").with("funded", true)
+        .with("received", false) }
   // The deposit prompt re-reads the allowance and estimates gas before signing,
   // so it opens only while the approval is still in the canonical chain.
   action promptDeposit = all { s.reviewOpen, s.outcome == "approval-confirmed", included, s.prompts == 0,
@@ -67,7 +74,9 @@ module ui_vault_auto_check {
     s.busy implies s.inflight == "manual",
     s.attempts <= LIMIT,
     s.outcome != "none" implies not(s.pending),
-    s.error implies (s.pending and s.outcome == "none" and not(s.funded) and s.inflight != "manual")
+    s.error implies (s.pending and s.outcome == "none" and not(s.funded) and s.inflight != "manual"),
+    // Received is a notice only: never an approval, never funding, never final.
+    s.received implies (s.kind == "transfer" and s.pending and not(s.funded) and s.outcome == "none")
   }
   run failedReadShowsThenClearsTest = start("transfer", "wallet", false).then(connect).then(mine)
     .then(autoCheck).then(autoCheckFails).expect(s.error and s.pending and s.attempts == 1)
@@ -78,7 +87,7 @@ module ui_vault_auto_check {
     .expect(s.outcome == "approval-confirmed" and s.reviewOpen and s.block == "included" and not(s.funded))
     .then(promptDeposit).expect(s.prompts == 1)
   run transferWaitsForFinalityTest = start("transfer", "wallet", false).then(connect).then(mine)
-    .then(autoCheck).then(settle).expect(s.pending and not(s.funded))
+    .then(autoCheck).then(settle).expect(s.pending and not(s.funded) and s.received)
     .then(finalize).then(autoCheck).then(settle).expect(s.funded and not(s.pending))
   run replacedApprovalTest = start("approval", "wallet", false).then(connect).then(mine)
     .then(autoCheck).then(settle).then(replace).then(refuseDeposit)
@@ -86,6 +95,13 @@ module ui_vault_auto_check {
   run recoveryHashNeedsClickTest = start("transfer", "recovery", false).then(connect).then(mine)
     .then(finalize).expect(s.attempts == 0 and s.pending)
     .then(manualCheck).then(settle).expect(s.funded)
+  run receivedWithdrawnAfterReplacementTest = start("transfer", "wallet", false).then(connect).then(mine)
+    .then(autoCheck).then(settle).expect(s.received)
+    .then(replace).then(autoCheck).then(settle).expect(not(s.received) and s.pending and not(s.funded))
+  run revertedTransferNeverReceivedTest = start("transfer", "wallet", true).then(connect).then(mine)
+    .then(autoCheck).then(settle).expect(not(s.received) and s.pending)
+  run approvalNeverReceivedTest = start("approval", "wallet", false).then(connect).then(mine)
+    .then(autoCheck).then(settle).expect(not(s.received) and s.outcome == "approval-confirmed")
   run failedTransferTest = start("transfer", "wallet", true).then(connect).then(mine).then(finalize)
     .then(autoCheck).then(settle).expect(s.outcome == "failed" and not(s.funded))
   run attemptLimitTest = start("transfer", "wallet", false).then(connect)

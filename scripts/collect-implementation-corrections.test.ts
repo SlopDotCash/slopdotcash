@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -630,6 +630,47 @@ test("a request-budget stop retains raw progress and the next invocation complet
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(resumed.receipt.completeProofs).toBe(1);
   expect(resumed.receipt.cacheHits).toBeGreaterThan(0);
+});
+
+test("resumed attempts in one millisecond retain distinct immutable evidence", async () => {
+  const dir = await directory();
+  const clock = spyOn(Date, "now").mockReturnValue(1794620000000);
+  let calls = 0;
+  const transport = Object.assign(
+    async () => {
+      calls++;
+      return calls === 1
+        ? Response.json({ error: "unavailable" }, { status: 503 })
+        : Response.json({ restored: true });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const url = "https://api.github.com/repos/SlopDotCash/asi/pulls/1";
+  try {
+    const first = new CorrectionEvidenceCache(dir, transport);
+    expect((await first.fetch(url)).status).toBe(503);
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(calls).toBe(2);
+    const attempts = await readdir(join(dir, "attempts"));
+    expect(attempts).toHaveLength(2);
+    const retained = await Promise.all(
+      attempts.map(async (name) => {
+        const attempt = JSON.parse(
+          await readFile(join(dir, "attempts", name), "utf8"),
+        );
+        const bytes = await readFile(join(dir, "objects", attempt.bodyDigest));
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+          attempt.bodyDigest,
+        );
+        return attempt.status;
+      }),
+    );
+    expect(retained.sort()).toEqual([200, 503]);
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 test("GitHub quota failures retain raw attempts without caching them or swallowing other failures", async () => {

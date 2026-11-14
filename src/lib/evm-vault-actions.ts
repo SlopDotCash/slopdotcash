@@ -352,7 +352,7 @@ export async function checkVaultBatch(
   transactionId: string | null,
   payoutPolicy: PayoutPolicy = "ordinary",
 ): Promise<{
-  status: "pending" | "not-sent" | "failed" | "finalized";
+  status: "pending" | "not-sent" | "received" | "failed" | "finalized";
   transactionId: string | null;
 }> {
   const request = wallet.evmRequest;
@@ -398,7 +398,8 @@ export async function checkVaultBatch(
     hash,
     "finalized",
   );
-  if (settled !== "finalized") return { status: settled, transactionId: hash };
+  if (settled === "pending" || settled === "failed")
+    return { status: settled, transactionId: hash };
   const depositor = `0x${wallet.address.slice(2).toLowerCase().padStart(64, "0")}`;
   // A shared transaction may contain other wallets' deposits. Keep every
   // deposit by this wallet so an ambiguous own receipt still fails closed.
@@ -408,6 +409,13 @@ export async function checkVaultBatch(
       log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.Deposited &&
       log.topics[1]?.toLowerCase() === depositor,
   );
+  // Before finality the batch is only reported as received when it carries
+  // this wallet's one deposit event; the final check below proves the amount.
+  if (settled === "included")
+    return {
+      status: events.length === 1 ? "received" : "pending",
+      transactionId: hash,
+    };
   if (events.length !== 1)
     throw new Error("This transaction does not match the request.");
   await verifyVaultFundingAction(
@@ -458,6 +466,9 @@ export async function checkVaultAction(
     // a reorganized approval makes the deposit fail before the wallet prompt.
     step === "send" ? "finalized" : "included",
   );
+  // Only a transfer of funds reads "finalized" evidence, so only it can report
+  // "received": included in a canonical block, waiting for finality to count.
+  if (checked.status === "included") return "received" as const;
   if (checked.status !== "finalized") return checked.status;
   const receipt = checked.receipt;
   if (step !== "send") return "approval-confirmed";
@@ -535,6 +546,7 @@ export async function readFinalizedWalletTransaction(
   );
   if (settled === "pending")
     return { status: "pending" as const, receipt: null };
+  if (settled === "included") return { status: "included" as const, receipt };
   if (settled === "failed") return { status: "failed" as const, receipt };
   return { status: "finalized" as const, receipt };
 }
@@ -552,14 +564,14 @@ async function settleWalletReceipt(
   receipt: WalletReceipt,
   transactionId: string,
   evidence: "finalized" | "included",
-): Promise<"pending" | "failed" | "finalized"> {
+): Promise<"pending" | "included" | "failed" | "finalized"> {
+  let final = true;
   if (evidence === "finalized") {
     const finalized = (await request("eth_getBlockByNumber", [
       "finalized",
       false,
     ])) as { number: string };
-    if (BigInt(receipt.blockNumber) > BigInt(finalized.number))
-      return "pending";
+    final = BigInt(receipt.blockNumber) <= BigInt(finalized.number);
   }
   const block = (await request("eth_getBlockByNumber", [
     receipt.blockNumber,
@@ -570,9 +582,12 @@ async function settleWalletReceipt(
     receipt.transactionHash.toLowerCase() !== transactionId.toLowerCase()
   ) {
     // A block that is not final can still be replaced; ask again later.
-    if (evidence === "included") return "pending";
+    if (evidence === "included" || !final) return "pending";
     throw new Error("The transaction is not in the canonical finalized chain.");
   }
+  // Successful and in the canonical chain, but not final yet. It is reported so
+  // the owner sees the transfer arrived; it never counts as funding.
+  if (!final) return receipt.status === "0x1" ? "included" : "pending";
   if (receipt.status === "0x0") return "failed";
   if (receipt.status !== "0x1")
     throw new Error("The transaction status is not recognized.");
