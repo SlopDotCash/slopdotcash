@@ -182,7 +182,9 @@ lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
 The assembled 71-document tree generated successfully and passed both VibeLang
-typechecks. The template tool suite passed 34 tests and the greeting app passed
+typechecks. Baseline and focused results together replayed 24,315 traces across
+all 61 current executable models. The integrated report lists the inputs
+carried forward and the focused substitutions. The template tool suite passed 34 tests and the greeting app passed
 three. The scratch checkout initially lacked its design-package dependency
 link. After restoring the installed dependency link, the full rerun passed.
 [Integrated generation and test results](validation/full-tree/integrated-generation.json)

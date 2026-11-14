@@ -126,5 +126,12 @@
       "output": "integrated-app-tests.log"
     },
     "firstRootAttempt": "An isolated-worktree dependency link for packages/design-system was missing. The design lint test failed. After linking the installed package dependencies, the focused rerun and full suite both passed."
+  },
+  "composedModelEvidence": {
+    "executableUnits": 61,
+    "baselineReplayUnitsCarriedForward": 53,
+    "focusedReplayUnits": 8,
+    "replayedTraces": 24315,
+    "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release unit result and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary and local reachability replays, excluding supplemental Points and keeper targeted witness runs."
   }
 }
