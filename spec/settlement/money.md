@@ -60,6 +60,20 @@ pure def subtractAmounts(a: Amount, b: Amount): Amount =
 pure def lawZeroIdentity(a: Amount): bool = validAmount(a) implies equalAmounts(addAmounts(a, zero), a)
 ```
 
+### Carry and borrow preserve valid base-unit digits
+
+A valid operand is a nonempty sequence of digits from zero to 999. Addition
+returns a valid amount, including when the final carry adds a limb.
+Subtraction produces valid digits. The caller still checks the minuend before
+using a subtraction as a financial amount.
+
+```quint
+pure def lawAdditionValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(addAmounts(a, b))
+pure def lawSubtractionValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(subtractAmounts(a, b))
+```
+
 ### Ordinary fees round upward and private splits require exact division
 
 Scalar compatibility helpers retain existing safe-integer callers. Full-width fee and allocation operations below use limb arithmetic. A one-unit ordinary award has zero net. A private 75/25 award requires exact quarter division and never adds the ordinary fee.

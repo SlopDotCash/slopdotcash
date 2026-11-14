@@ -161,3 +161,84 @@ lemma lawMultiplyOne_ensures(a: seq<int>)
     lawEqualReflexive_ensures(a);
   }
 }
+
+lemma AddValidDigits(f: (AddFold, int) -> AddFold, current: AddFold, xs: seq<int>)
+  requires 0 <= current.carry <= 1
+  requires forall d :: d in current.digits ==> 0 <= d < 1000
+  requires forall acc: AddFold, x: int :: (0 <= acc.carry <= 1 && (forall d :: d in acc.digits ==> 0 <= d < 1000)) ==>
+    (0 <= f(acc, x).carry <= 1 && |f(acc, x).digits| == |acc.digits| + 1 && (forall d :: d in f(acc, x).digits ==> 0 <= d < 1000))
+  ensures 0 <= Std.Collections.Seq.FoldLeft(f, current, xs).carry <= 1
+  ensures |Std.Collections.Seq.FoldLeft(f, current, xs).digits| == |current.digits| + |xs|
+  ensures forall d :: d in Std.Collections.Seq.FoldLeft(f, current, xs).digits ==> 0 <= d < 1000
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var next := f(current, xs[0]);
+    AddValidDigits(f, next, xs[1..]);
+  }
+}
+
+lemma lawAdditionValid_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawAdditionValid(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    var f := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)]));
+    forall acc: AddFold, x: int | 0 <= acc.carry <= 1 && (forall d :: d in acc.digits ==> 0 <= d < 1000)
+      ensures 0 <= f(acc, x).carry <= 1 && |f(acc, x).digits| == |acc.digits| + 1 && (forall d :: d in f(acc, x).digits ==> 0 <= d < 1000)
+    {
+      var da := if 0 <= acc.index < |a| then a[acc.index] else 0;
+      var db := if 0 <= acc.index < |b| then b[acc.index] else 0;
+      if 0 <= acc.index < |a| { assert da in a; }
+      if 0 <= acc.index < |b| { assert db in b; }
+      assert 0 <= da < 1000 && 0 <= db < 1000;
+      var combined := da + db + acc.carry;
+      assert 0 <= combined <= 1999;
+      assert quotient_settlement__money(combined, 1000) == combined / 1000;
+      assert remainder_settlement__money(combined, 1000) == combined % 1000;
+    }
+    var longest := if |a| >= |b| then a else b;
+    AddValidDigits(f, AddFold(0, 0, []), longest);
+    var result := Std.Collections.Seq.FoldLeft(f, AddFold(0, 0, []), longest);
+    assert |result.digits| == |longest| > 0;
+    assert addAmounts(a, b) == (if result.carry > 0 then result.digits + [result.carry] else result.digits);
+  }
+}
+
+lemma SubtractValidDigits(f: (SubtractFold, int) -> SubtractFold, current: SubtractFold, xs: seq<int>)
+  requires 0 <= current.borrow <= 1
+  requires forall d :: d in current.digits ==> 0 <= d < 1000
+  requires forall acc: SubtractFold, x: int :: (0 <= acc.borrow <= 1 && (forall d :: d in acc.digits ==> 0 <= d < 1000)) ==>
+    (0 <= f(acc, x).borrow <= 1 && |f(acc, x).digits| == |acc.digits| + 1 && (forall d :: d in f(acc, x).digits ==> 0 <= d < 1000))
+  ensures 0 <= Std.Collections.Seq.FoldLeft(f, current, xs).borrow <= 1
+  ensures |Std.Collections.Seq.FoldLeft(f, current, xs).digits| == |current.digits| + |xs|
+  ensures forall d :: d in Std.Collections.Seq.FoldLeft(f, current, xs).digits ==> 0 <= d < 1000
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var next := f(current, xs[0]);
+    SubtractValidDigits(f, next, xs[1..]);
+  }
+}
+
+lemma lawSubtractionValid_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawSubtractionValid(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    var f := (acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))]));
+    forall acc: SubtractFold, x: int | 0 <= acc.borrow <= 1 && (forall d :: d in acc.digits ==> 0 <= d < 1000)
+      ensures 0 <= f(acc, x).borrow <= 1 && |f(acc, x).digits| == |acc.digits| + 1 && (forall d :: d in f(acc, x).digits ==> 0 <= d < 1000)
+    {
+      var da := if 0 <= acc.index < |a| then a[acc.index] else 0;
+      var db := if 0 <= acc.index < |b| then b[acc.index] else 0;
+      if 0 <= acc.index < |a| { assert da in a; }
+      if 0 <= acc.index < |b| { assert db in b; }
+      assert 0 <= da < 1000 && 0 <= db < 1000;
+      var combined := da - db - acc.borrow;
+      assert -1000 <= combined <= 999;
+    }
+    SubtractValidDigits(f, SubtractFold(0, 0, []), a);
+    var result := Std.Collections.Seq.FoldLeft(f, SubtractFold(0, 0, []), a);
+    assert |result.digits| == |a| > 0;
+    assert subtractAmounts(a, b) == result.digits;
+  }
+}
