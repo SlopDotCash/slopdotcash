@@ -760,11 +760,11 @@
       "evidenceEntries": [],
       "actions": {
         "init": {
-          "status": "partial-model",
-          "reason": "Installer starts idle; the role-and-binding transport lifecycle has no initialization.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
                 "initial"
               ]
@@ -772,87 +772,104 @@
           ]
         },
         "selectRole": {
-          "status": "missing-transition",
-          "reason": "Static, generated contributor and generated reviewer admission predicates differ; installation currently has no role state.",
-          "successors": []
-        },
-        "fetch": {
-          "status": "partial-model",
-          "reason": "Download stage exists, but endpoint/caller ownership and bounded transient transport attempts are absent.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canDownload",
-                "download"
+                "selectRole"
+              ]
+            }
+          ]
+        },
+        "fetch": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "fetch",
+                "sendCredential"
               ]
             }
           ]
         },
         "transient": {
-          "status": "missing-transition",
-          "reason": "No transport retry phase or bounded retry accounting.",
-          "successors": []
-        },
-        "integrityFailure": {
-          "status": "partial-model",
-          "reason": "Invalid bytes cannot verify. The same invocation does not distinguish integrity refusal from transport retry.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify",
-                "recordFailure"
+                "rejectRead",
+                "transient",
+                "nextDelay"
+              ]
+            }
+          ]
+        },
+        "integrityFailure": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "rejectRead",
+                "transient"
               ]
             }
           ]
         },
         "complete": {
-          "status": "partial-model",
-          "reason": "Complete immutable tree admits verification. No transport done/error result state.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canDownload",
-                "download"
+                "downloadComplete"
               ]
             }
           ]
         },
         "compare": {
-          "status": "partial-model",
-          "reason": "Canonical tree and D1 digest checks exist for the generated install flow, without separate role binding and independent file/blob observations.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify"
+                "compare"
               ]
             }
           ]
         },
         "currentProject": {
-          "status": "partial-model",
-          "reason": "A permission fact gates installation. Reviewer-versus-contributor treatment of project openness is not represented.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canBegin",
-                "canVerify"
+                "observeProject"
               ]
             }
           ]
         },
         "admit": {
-          "status": "partial-model",
-          "reason": "Generated installation admission requires D1 digest and current permission, without role-specific admission or credential transport.",
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify"
+                "canAdmit",
+                "admit",
+                "bytesAdmitted"
               ]
             }
           ]
@@ -865,104 +882,180 @@
       },
       "scenarios": {
         "transientMayRetryTest": {
-          "status": "missing-transition",
-          "reason": "Missing bounded transport retry and later admission.",
-          "successors": []
-        },
-        "digestFailureCannotRetryTest": {
-          "status": "partial-model",
-          "reason": "Mismatching digest refuses verification, but error class has no effect on retry policy.",
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify",
-                "canBegin"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "digestFailureCannotRetryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "extraFileRefusedTest": {
           "status": "modeled-projection",
-          "reason": "Complete-tree predicate must refuse an extra file and binds exact GitHub bytes.",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canDownload",
-                "canVerify"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "pausedProjectRefusedTest": {
           "status": "modeled-projection",
-          "reason": "Contributor install takes current permission to begin and verify. Adapter must derive it from current restrictions.",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canBegin",
-                "canVerify"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "staticSkillNeedsNoRegistryTest": {
-          "status": "missing-transition",
-          "reason": "No static artifact route without generated project binding.",
-          "successors": []
-        },
-        "staticSkillRejectsRegistryBindingTest": {
-          "status": "missing-transition",
-          "reason": "No static role with explicit registry-binding refusal.",
-          "successors": []
-        },
-        "reviewerDoesNotRequireOpenProjectTest": {
-          "status": "missing-transition",
-          "reason": "No authorized reviewer-only signed manifest branch distinct from contributor install clearance.",
-          "successors": []
-        },
-        "reviewerStillNeedsManifestTest": {
-          "status": "partial-model",
-          "reason": "Manifest digest gates generated install generally. No independent reviewer role.",
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "staticSkillRejectsRegistryBindingTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "reviewerDoesNotRequireOpenProjectTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "reviewerStillNeedsManifestTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "contributorNeedsBindingTest": {
           "status": "modeled-projection",
-          "reason": "Contributor install requires approved D1 digest and rendered bytes.",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "reviewerNeedsBindingTest": {
-          "status": "partial-model",
-          "reason": "The digest requirement is generic and reviewer role is not a state.",
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
           "successors": [
             {
-              "path": "spec/contributor/installation.md",
+              "path": "spec/contributor/skillAuthority.md",
               "definitions": [
-                "canVerify"
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
               ]
             }
           ]
         },
         "staticSkillStillNeedsExactBytesTest": {
-          "status": "missing-transition",
-          "reason": "Missing static artifact path with byte check independent of a project registry.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
         }
       }
     },

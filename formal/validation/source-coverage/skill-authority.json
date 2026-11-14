@@ -1,0 +1,452 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/skillAuthority.md",
+  "sourceHash": "1ba04fdf187558b5fd7f70ee96bd9dbc1ac8bbf3c1b836d980ea36b5ddd54e2a",
+  "proof": {
+    "generatedDafnySha256": "ed0d40a7debb777259f6f79b579535cd4601f63da0c6031c9b1275f60a7e99f5",
+    "total": 24,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 143601486109509; to simulate again: pnpm exec quint run gen/contributor__skillAuthority.run.qnt --main contributor__skillAuthority_run --step step --invariant inv --max-samples 380 --max-steps 28 --mbt --seed 143601486109509",
+    "replayed": 25
+  },
+  "witnesses": {
+    "sometimesRetry": {
+      "command": "seed 143601486109509; to simulate again: pnpm exec quint run gen/contributor__skillAuthority.run.qnt --main contributor__skillAuthority_run --step step --invariant inv --max-samples 380 --max-steps 28 --mbt --seed 143601486109509",
+      "events": [
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": true,
+          "commit": ""
+        },
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": false,
+          "commit": ""
+        },
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "fetch",
+          "authority": "InjectedFixture",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": true,
+          "published": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "AbruptTlsEnd"
+        },
+        {
+          "type": "fetch",
+          "authority": "CanonicalApi",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "AbruptTlsEnd"
+        },
+        {
+          "type": "fetch",
+          "authority": "Registry",
+          "sameAuthority": true,
+          "fixtureEnabled": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "InvalidAuthority"
+        }
+      ]
+    },
+    "sometimesExhausted": {
+      "command": "seed 143601486109509; to simulate again: pnpm exec quint run gen/contributor__skillAuthority.run.qnt --main contributor__skillAuthority_run --step step --invariant inv --max-samples 380 --max-steps 28 --mbt --seed 143601486109509",
+      "events": [
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": true,
+          "commit": ""
+        },
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": false,
+          "commit": ""
+        },
+        {
+          "type": "selectRole",
+          "role": "ContributorSkill",
+          "binding": false,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "fetch",
+          "authority": "InjectedFixture",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": true,
+          "published": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "AbruptTlsEnd"
+        },
+        {
+          "type": "fetch",
+          "authority": "CanonicalApi",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "AbruptTlsEnd"
+        },
+        {
+          "type": "fetch",
+          "authority": "Registry",
+          "sameAuthority": true,
+          "fixtureEnabled": false
+        },
+        {
+          "type": "rejectRead",
+          "issue": "InvalidAuthority"
+        }
+      ]
+    },
+    "sometimesAdmitted": {
+      "command": "seed 143601486109509; to simulate again: pnpm exec quint run gen/contributor__skillAuthority.run.qnt --main contributor__skillAuthority_run --step step --invariant inv --max-samples 380 --max-steps 28 --mbt --seed 143601486109509",
+      "events": [
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": true,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "fetch",
+          "authority": "RawFiles",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": true,
+          "published": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "downloadComplete"
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": false
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": false,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": true,
+          "published": false
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "admit"
+        }
+      ]
+    },
+    "sometimesReviewerClosed": {
+      "command": "seed 143601486109509; to simulate again: pnpm exec quint run gen/contributor__skillAuthority.run.qnt --main contributor__skillAuthority_run --step step --invariant inv --max-samples 380 --max-steps 28 --mbt --seed 143601486109509",
+      "events": [
+        {
+          "type": "selectRole",
+          "role": "ReviewerSkill",
+          "binding": true,
+          "commit": "0123456789abcdef0123456789abcdef01234567"
+        },
+        {
+          "type": "fetch",
+          "authority": "RawFiles",
+          "sameAuthority": true,
+          "fixtureEnabled": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": true,
+          "published": true
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": true
+        },
+        {
+          "type": "downloadComplete"
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": false
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": false,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "observeProject",
+          "active": false,
+          "exactProject": false,
+          "published": false
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "observeProject",
+          "active": true,
+          "exactProject": true,
+          "published": false
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": false,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "compare",
+          "facts": {
+            "exactCommit": true,
+            "completeFiles": true,
+            "matchingBlobs": true,
+            "approvedManifest": true,
+            "exactRendering": true
+          }
+        },
+        {
+          "type": "admit"
+        }
+      ]
+    }
+  },
+  "directed": [
+    "API credential confinement and deterministic fixture gate",
+    "transient retry and exact backoff",
+    "third failed read retires retry",
+    "integrity and rate failures do not retry",
+    "exact committed tree and D1 manifest checks",
+    "static, contributor and reviewer scope matrix",
+    "project status cannot rewrite authorized verification"
+  ]
+}

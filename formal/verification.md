@@ -228,6 +228,11 @@ page view traffic to the site's own origin.
   lifetime. All 33 obligations proved, 60 traces replayed, and five reachability
   goals were witnessed.
   [Referral settings and registry results](validation/source-coverage/referral-links.json)
+- Contributor command completion preserves the first failure through both
+  cleanup boundaries. Skill authority has bounded transport retries and
+  separate static, contributor and reviewer admission. All 50 obligations
+  across the two units proved.
+  [Command proof](validation/source-coverage/command-completion.json) · [Skill authority proof](validation/source-coverage/skill-authority.json)
 - Report details clear on account changes and support independently mounted
   siblings. Snapshot consumers cannot detach another lease or have a stale
   response overwrite a newer request. All 67 obligations proved.
@@ -250,10 +255,10 @@ page view traffic to the site's own origin.
   split. All 42 vault obligations proved, including conservation and positivity.
   [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-complete.json)
 - Shared money proves exact addition, covered subtraction, and value order for
-  arbitrary-width amounts with zero padding. All 36 obligations proved, including long
+  arbitrary-width amounts with zero padding. All 37 obligations proved, including long
   division bounds and reconstruction, and both fee conservation laws. Fixed
   floor-halving proves exact quotient, parity and order independently.
-  [Shared money proofs](validation/active-proof/money-complete/verification.json) · [Floor halves](validation/finance/half-proof.json)
+  [Shared money proofs](validation/active-proof/money-multiply-zero/verification.json) · [Floor halves](validation/finance/half-proof.json)
 - Monthly settlement discharged all 73 obligations. Allocation proves valid
   computed shares and whole-pool allocation for a sole eligible recipient.
   Full conservation across multiple recipients still needs proof.

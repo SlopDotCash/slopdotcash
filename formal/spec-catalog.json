@@ -1154,7 +1154,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "fec8d428e68011ef53e31d9532834f33370e9e06c60edc08210e05d76b7cbc8f",
+      "sha256": "e23f6a646fc5ee932a2559b13d8845a502c819973fccb16202e621fa6617376f",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -1165,16 +1165,20 @@
           "line": 7
         },
         {
-          "target": "./installation.md",
+          "target": "./skillAuthority.md",
           "line": 8
         },
         {
-          "target": "./workflow.md",
+          "target": "./installation.md",
           "line": 9
         },
         {
-          "target": "./evidence.md",
+          "target": "./workflow.md",
           "line": 10
+        },
+        {
+          "target": "./evidence.md",
+          "line": 11
         }
       ]
     },
@@ -1259,6 +1263,91 @@
       ],
       "imports": [],
       "references": []
+    },
+    {
+      "path": "spec/contributor/skillAuthority.md",
+      "sha256": "1ba04fdf187558b5fd7f70ee96bd9dbc1ac8bbf3c1b836d980ea36b5ddd54e2a",
+      "module": "contributor__skillAuthority",
+      "stories": [
+        {
+          "heading": "Story: Resolve every immutable object with its own bounded retry",
+          "line": 13
+        },
+        {
+          "heading": "Story: Admit the exact role and rendered payload",
+          "line": 74
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Resolve every immutable object with its own bounded retry / Only the exact GitHub API authority receives the optional credential",
+          "line": 15,
+          "definitions": [
+            "Authority",
+            "Role",
+            "Transport",
+            "Issue",
+            "Selection",
+            "ByteCheck",
+            "SkillRead",
+            "unchecked",
+            "initial",
+            "transportAllowed",
+            "sendCredential",
+            "lawCredentialStaysOnApi",
+            "canSelectRole",
+            "selectRole"
+          ]
+        },
+        {
+          "heading": "Story: Resolve every immutable object with its own bounded retry / Retry transient transport failures up to three attempts",
+          "line": 49,
+          "definitions": [
+            "transient",
+            "nextDelay",
+            "canFetch",
+            "fetch",
+            "canRejectRead",
+            "rejectRead",
+            "canDownloadComplete",
+            "downloadComplete"
+          ]
+        },
+        {
+          "heading": "Story: Admit the exact role and rendered payload / A contributor also needs current clearance for the exact project",
+          "line": 76,
+          "definitions": [
+            "canCompare",
+            "compare",
+            "canObserveProject",
+            "observeProject",
+            "bytesAdmitted",
+            "canAdmit",
+            "admit",
+            "alwaysAttemptLimit",
+            "alwaysAdmittedBytes",
+            "stepTerminal",
+            "sometimesRetry",
+            "sometimesExhausted",
+            "sometimesAdmitted",
+            "sometimesReviewerClosed",
+            "commitValues",
+            "exactBytes",
+            "factsValues",
+            "weight_selectRole",
+            "weight_fetch",
+            "weight_compare",
+            "weight_admit"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./installation.md",
+          "line": 8
+        }
+      ]
     },
     {
       "path": "spec/contributor/workflow.md",
@@ -1355,7 +1444,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+      "sha256": "4304f9f1735cd873e637cb3d5166db14d905a4df532ef2771814c02092de9981",
       "module": "settlement__money",
       "stories": [
         {
@@ -1488,12 +1577,13 @@
             "lawMultiplyCommutative",
             "lawMultiplyAddition",
             "lawMultiplyCancellation",
+            "lawMultiplyZero",
             "lawDivisionByOne"
           ]
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
-          "line": 230,
+          "line": 232,
           "definitions": [
             "quotientBits",
             "quotientCandidate",
@@ -1508,7 +1598,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 261,
+          "line": 263,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1521,7 +1611,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication, division and derived fees preserve valid limb representations",
-          "line": 277,
+          "line": 279,
           "definitions": [
             "lawMultiplySmallValid",
             "lawMultiplyValid",
@@ -1532,7 +1622,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 296,
+          "line": 298,
           "definitions": [
             "assetValues",
             "decimalsValues",
@@ -5782,7 +5872,7 @@
     },
     {
       "path": "spec/settlement/paymentDispatch.md",
-      "sha256": "a93b78a4370702981dcf11b7e9f348b045e5bd91a057985b286da1a960d79fec",
+      "sha256": "c122f31d9b7c0ba7eea803c8fb74112142c54646408bc99f79ab080415b229ad",
       "module": "settlement__paymentDispatch",
       "stories": [
         {
@@ -6032,7 +6122,7 @@
     },
     {
       "path": "spec/settlement/referralAccrual.md",
-      "sha256": "b266367ea004830b865b8860189e57393ca7897493d1aeae983ca695a4a78110",
+      "sha256": "b5bf2ea5825a29e59cc2bd021ed3623fa6f07e5398e803b7dea0b0296254b135",
       "module": "settlement__referralAccrual",
       "stories": [
         {
@@ -6156,7 +6246,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Simulation distinguishes eligible, excluded and repeated payout evidence",
-          "line": 262,
+          "line": 264,
           "definitions": [
             "dateValues",
             "firstValues",
