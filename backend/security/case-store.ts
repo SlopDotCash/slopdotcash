@@ -27,6 +27,7 @@ import type { R2Bucket } from "../trace/cloudflare-persistence";
 import type { AdvisoryReader } from "./advisories";
 import type { SecurityAnalyzer } from "./analysis";
 import type { DirectPaymentConfiguration } from "./direct-payments";
+import type { IdentityFacts } from "./github-advisories";
 import type { IntakeConfig } from "./intake-grant";
 import {
   reportingAuthorityUnavailable,
@@ -52,6 +53,12 @@ export type SecurityApiDependencies = {
   sessionActor: (request: Request) => Promise<Actor | null>;
   /** Fresh App-authenticated repository facts for sensitive submissions. */
   reportingRead: ReportingReader;
+  /**
+   * Current login of a GitHub account id (App JWT). The triager role is held
+   * by id, so the stored login is only a label and must match the id.
+   * Absent means the assignment records the login without checking it.
+   */
+  identityRead?: ((githubId: string) => Promise<IdentityFacts>) | null;
   /**
    * Reads the program repository's private vulnerability reports so receipt
    * is verified from GitHub, never typed in. Absent means receipt checks are
