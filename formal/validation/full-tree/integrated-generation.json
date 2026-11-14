@@ -59,7 +59,7 @@
     "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
     "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
-    "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+    "spec/settlement/recovery.md": "8b195819b102971152bb155def8d1298e67ef463e7727296b9bbc2c7f8557f89",
     "spec/settlement/referralAccrual.md": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
     "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
     "spec/settlement/referralPublication.md": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
@@ -92,7 +92,7 @@
     "pnpm exec vibelang --noEmit -p .",
     "pnpm --filter @repo/app exec vibelang --noEmit -p ."
   ],
-  "unchangedBaselineModelInputs": 60,
+  "unchangedBaselineModelInputs": 59,
   "newExecutableModelInputs": [
     "spec/operations/localCommand.md",
     "spec/operations/localValidator.md",
@@ -106,13 +106,15 @@
     "spec/operations/index.md",
     "spec/points/index.md",
     "spec/settlement/index.md",
+    "spec/settlement/recovery.md",
     "spec/settlement/reserveRelease.md"
   ],
   "focusedModelEvidence": [
     "formal/validation/journeys/local-validator-stages.json",
     "formal/validation/journeys/keeper-delta-final.json",
     "formal/validation/finance/reserve-release-signed-verification.json",
-    "formal/validation/points/targeted.json"
+    "formal/validation/points/targeted.json",
+    "formal/validation/finance/recovery-current.json"
   ],
   "qualification": "Generation and VibeLang typechecks passed on the assembled specification tree. The check results do not claim live Slop implementation, a single complete current-tree proof run, or acceptance.",
   "tests": {
@@ -130,10 +132,10 @@
   },
   "composedModelEvidence": {
     "executableUnits": 61,
-    "baselineReplayUnitsCarriedForward": 53,
-    "focusedReplayUnits": 8,
-    "replayedTraces": 24315,
-    "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release unit result and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary and local reachability replays, excluding supplemental Points and keeper targeted witness runs."
+    "baselineReplayUnitsCarriedForward": 52,
+    "focusedReplayUnits": 9,
+    "replayedTraces": 24112,
+    "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release and destination-recovery unit results and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary and local reachability replays, excluding supplemental Points and keeper targeted witness runs."
   },
   "templateConformance": {
     "result": "passed",

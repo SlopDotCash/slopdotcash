@@ -182,13 +182,13 @@ lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
 The assembled 71-document tree generated successfully and passed both VibeLang
-typechecks. Baseline and focused results together replayed 24,315 traces across
+typechecks. Baseline and focused results together replayed 24,112 traces across
 all 61 current executable models. The integrated report lists the inputs
-carried forward and the focused substitutions. The template tool suite passed 34 tests and the greeting app passed
-three. The greeting's conformance driver also passed a directed journey,
+carried forward and the focused substitutions. The template tool suite passed
+34 tests and the greeting app passed three. The greeting's conformance driver also passed a directed journey,
 five malformed-input cases and 1,000 walks. The scratch checkout initially
-lacked its design-package dependency
-link. After restoring the installed dependency link, the full rerun passed.
+lacked its design-package dependency link. After restoring the installed
+link, the full rerun passed.
 [Integrated generation and test results](validation/full-tree/integrated-generation.json)
 
 The proof stage took its input after the verified wallet and money helpers
@@ -253,6 +253,13 @@ obligations. The seven open clauses cover monetary equivalence, conservation
 and dependent step preservation. Dafny reported zero tool errors or exhaustion
 for that run.
 [Reserve release evidence](validation/finance/reserve-release-signed-handoff.md)
+
+Private-award destination recovery now requires a retired request to retain
+renewed consent and exact retirement evidence before publishing a successor.
+The proof pass found the missing reachable-state fact and a parameter that
+shadowed its generated Dafny function. The repaired model proved all 20
+obligations, replayed 200 traces and passed 11 directed events.
+[Destination recovery evidence](validation/finance/recovery-current.json)
 
 ## Guard diagnostics
 

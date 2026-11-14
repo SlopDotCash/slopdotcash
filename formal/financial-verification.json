@@ -8,7 +8,7 @@
     "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
     "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
-    "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+    "spec/settlement/recovery.md": "8b195819b102971152bb155def8d1298e67ef463e7727296b9bbc2c7f8557f89",
     "spec/settlement/referralAccrual.md": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
     "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
     "spec/settlement/referralPublication.md": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
@@ -403,5 +403,11 @@
       "exhausted": 0,
       "errors": 0
     }
+  },
+  "recovery": {
+    "verification": "formal/validation/finance/recovery-current.json",
+    "proved": 20,
+    "unproved": 0,
+    "replayTraces": 200
   }
 }

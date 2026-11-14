@@ -28,19 +28,24 @@ pure def canRequestChange(r: Recovery, wallet: str, by: str): bool = r.phase == 
   and not(r.paidLeg) and wallet != "" and wallet != r.oldWallet and by == "reporter"
 pure def requestChange(r: Recovery, wallet: str, by: str): Recovery =
   { ...r, phase: ChangeRequested, newWallet: wallet }
-pure def canConsent(r: Recovery, wallet: str, consent: int, by: str): bool = r.phase == ChangeRequested
-  and wallet == r.newWallet and consent > r.oldConsent and by == "reporter"
-pure def consent(r: Recovery, wallet: str, consent: int, by: str): Recovery =
-  { ...r, phase: Consented, newConsent: consent }
+pure def canConsent(r: Recovery, wallet: str, consentRevision: int, by: str): bool = r.phase == ChangeRequested
+  and wallet == r.newWallet and consentRevision > r.oldConsent and by == "reporter"
+pure def consent(r: Recovery, wallet: str, consentRevision: int, by: str): Recovery =
+  { ...r, phase: Consented, newConsent: consentRevision }
 ```
 
 ### Every prior signable attempt must be retired before the successor is presented
+
+Discovered by the proof: the retired phase must carry a recorded retirement,
+renewed consent and an evidence height before a successor can become available.
+A phase marker alone cannot stand in for that evidence.
 
 The external retirement verifier must bind this exact request and every retained attempt. Solana expiry requires independent full-history absence evidence. EVM nonce replacement requires its canonical finalized winner. A missing receipt never supplies either proof.
 
 ```quint
 pure def canRetire(r: Recovery, request: int, retirement: Retirement, height: int): bool =
-  r.phase == Consented and request == r.oldRequest and retirement != NoEvidence and height > 0
+  r.phase == Consented and request == r.oldRequest and r.newConsent > r.oldConsent
+    and retirement != NoEvidence and height > 0
 pure def retire(r: Recovery, request: int, retirement: Retirement, height: int): Recovery =
   { ...r, phase: Retired, retirement: retirement, evidenceHeight: height }
 pure def canPresentSuccessor(r: Recovery, request: int): bool = r.phase == Retired
@@ -63,7 +68,7 @@ pure def canSuccessorPaid(r: Recovery, request: int, wallet: str, height: int): 
   r.phase == Successor and request == r.newRequest and wallet == r.newWallet and height > r.evidenceHeight
 pure def successorPaid(r: Recovery, request: int, wallet: str, height: int): Recovery =
   { ...r, phase: Paid, paidLeg: true, canonicalRequest: request, evidenceHeight: height }
-pure def alwaysSuccessorRetired(r: Recovery): bool = r.newRequest > 0 implies
+pure def alwaysSuccessorRetired(r: Recovery): bool = (r.phase == Retired or r.newRequest > 0) implies
   r.retirement != NoEvidence and r.newConsent > r.oldConsent and r.evidenceHeight > 0
 pure def alwaysPaidCanonical(r: Recovery): bool = r.paidLeg implies r.phase == Paid
   and (r.canonicalRequest == r.oldRequest or r.canonicalRequest == r.newRequest)
@@ -79,7 +84,7 @@ These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules.
 
 ```quint
-pure val consentValues = Set(0, 1, 2)
+pure val consentRevisionValues = Set(0, 1, 2)
 pure val heightValues = Set(0, 1, 2)
 pure val requestValues = Set(0, 1, 2)
 ```

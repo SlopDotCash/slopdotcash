@@ -4763,7 +4763,7 @@
     },
     {
       "path": "spec/settlement/recovery.md",
-      "sha256": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+      "sha256": "8b195819b102971152bb155def8d1298e67ef463e7727296b9bbc2c7f8557f89",
       "module": "settlement__recovery",
       "stories": [
         {
@@ -4806,7 +4806,7 @@
         },
         {
           "heading": "Story: Change a destination without paying twice / A finalized old winner ends recovery without a successor payment",
-          "line": 52,
+          "line": 57,
           "definitions": [
             "canOldWins",
             "oldWins",
@@ -4822,9 +4822,9 @@
         },
         {
           "heading": "Story: Change a destination without paying twice / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 76,
+          "line": 81,
           "definitions": [
-            "consentValues",
+            "consentRevisionValues",
             "heightValues",
             "requestValues"
           ]
