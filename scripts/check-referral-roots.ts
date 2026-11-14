@@ -27,17 +27,6 @@ import {
 } from "../workers/referral-accrual/core";
 import { buildTree, type Leaf } from "../workers/referral-accrual/merkle";
 
-/**
- * The watcher keeps no cursor: every run rereads both event histories from the
- * deployment block. Robinhood Chain adds about 830,000 blocks a day, so the
- * registered 9,000-block scan page meant about 96 more requests per history
- * each day and a run that outgrows the job limit within days. These reads are
- * filtered to one contract and one event, and the public endpoints answer a
- * million-block range in under a second (measured 12 November 2026). An
- * endpoint that refuses the range fails the run; it never skips blocks.
- */
-const WATCH_SCAN_PAGE_BLOCKS = 1_000_000n;
-
 const POSTED = parseAbiItem(
   "event RootPosted(uint256 indexed epoch, bytes32 root, uint256 total, uint64 claimableAt)",
 );
@@ -422,7 +411,6 @@ export async function checkReferralRoots(options: {
           toBlock,
           strict: true,
         }),
-      WATCH_SCAN_PAGE_BLOCKS,
     ),
     scanReferralLogs(
       config.poster.network,
@@ -436,7 +424,6 @@ export async function checkReferralRoots(options: {
           toBlock,
           strict: true,
         }),
-      WATCH_SCAN_PAGE_BLOCKS,
     ),
   ]);
   const count = await client.readContract({
