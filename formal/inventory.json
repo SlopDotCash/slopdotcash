@@ -7768,14 +7768,14 @@
     },
     {
       "path": "workers/payment-executor/binding-shared.ts",
-      "sha256": "50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3",
+      "sha256": "c1ec4f0f529c097a4928d1f75e13427c94282931cc2c5095380c48c5f3207cdc",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
-      "candidateLines": [320, 321],
+      "candidateLines": [321, 322],
       "review": "mapped-abstraction"
     },
     {
@@ -7851,7 +7851,7 @@
     },
     {
       "path": "workers/payment-executor/mainnet-execution.mjs",
-      "sha256": "fc7ba1aa1977a92005517ddcd7d937c8f50225a18255903d718947f8e2edc7a5",
+      "sha256": "ed9e1bac1ddeba48c4490bd23ef7741364bcba2b0b7b75169ef6697ab1fd80e3",
       "models": ["formal/models/payments/deployment_plan.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
