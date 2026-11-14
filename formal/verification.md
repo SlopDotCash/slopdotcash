@@ -366,6 +366,11 @@ reporting requirement.
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)
+- With the final shared money proof, the current inputs discharged 450
+  obligations across exact halves, buyback, the referral distributor, reserve
+  release and vault snapshot recovery. The current browser, release, terms
+  and contributor-allocation reruns also discharged all 148 obligations.
+  [Financial reruns](validation/full-tree/current-financial-proofs.json) · [Other reruns](validation/full-tree/current-residual-proofs.json)
 
 The structural inventory accounts for all 473 retained models, 5,800 legacy
 actions and 4,962 legacy scenarios. The detailed crosswalks map the reviewed
