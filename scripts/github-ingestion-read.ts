@@ -27,6 +27,22 @@ function immutableRead(url: URL): string | null {
   return null;
 }
 
+/** GitHub names a secondary limit in the 403 body; without Retry-After it
+ * directs clients to wait at least one minute, as the GraphQL client does. */
+function secondaryRateLimit(bytes: Uint8Array): boolean {
+  try {
+    const { message } = JSON.parse(new TextDecoder().decode(bytes)) as {
+      message?: unknown;
+    };
+    return (
+      typeof message === "string" &&
+      /secondary rate limit|abuse detection/iu.test(message)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function replay(value: ImmutableResponse): Response {
   return new Response(value.bytes.slice(), {
     status: 200,
@@ -225,7 +241,11 @@ export function githubIngestionReadTransport(
           if (Number.isSafeInteger(milliseconds))
             delay = Math.max(delay ?? 0, milliseconds);
         }
-        if (delay === null && response.status === 429) delay = 60_000;
+        if (
+          delay === null &&
+          (response.status === 429 || secondaryRateLimit(bytes))
+        )
+          delay = 60_000;
         if (delay === null) return response;
         await response.body?.cancel();
         console.warn(

@@ -3879,10 +3879,10 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "a815f4564f6fbbea121f39c2832f49c4e44f242af4eccf767780979143099f1b",
+      "sha256": "60179938a2785a2bd9423688e0ee78a499974834dc9878bc1b498516d89ce0fa",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        32, 65, 86, 88, 106, 126, 166, 181, 190, 212, 222, 228
+        30, 48, 81, 102, 104, 122, 142, 182, 197, 206, 228, 238, 246
       ],
       "review": "mapped-abstraction"
     },
@@ -13468,7 +13468,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "29feafe43b55620b874394569d681926c42de6040413e0fdbc078fffad7d0396",
+      "sha256": "f0dfd0cad5dcc2f3045c04a8caa2d68e742bd7bc75ce6c146731b0de4956a991",
       "sources": [
         "scripts/github-ingestion-read.ts",
         "workers/slopbot/github.ts"
@@ -13477,6 +13477,8 @@
         "authorizationDoesNotRetryTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
+        "repeatedSecondaryLimitFailsTest",
+        "secondaryLimitMessageResumesTest",
         "writeDoesNotRetryTest"
       ]
     },
