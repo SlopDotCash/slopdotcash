@@ -8,14 +8,15 @@ before integrating it into that tree.
   claim across overlapping groups. Proof and replay certification is pending.
 - [Incomplete assessments in the private Inbox](assessment-inbox.md) drafts
   gap coalescing and current-authority reads. The [partial report](assessment-inbox-partial.json)
-  records 24 generated replays and binds the draft SHA. Proof certification
-  and integration are pending.
+  records 24 generated replays for an earlier draft. Rerun verification
+  against the preserved revision before integration.
 - [EVM monthly reserve](monthly-reserve.md) drafts admission of a funded root,
   partial leaf materialization and observed contract release. Proof and replay
   certification is pending.
 - [Slopbot value history](../../spec/slopbot/valueHistory.md) is already on
   the branch. Its [partial report](value-history-partial.json) and
   [Quint witness](value-history-witness.qnt) preserve focused work.
+  The [witness log](value-history-witness.log) records five passing scenarios.
   Verify the final proof, wire the spec into the index and refresh the catalog.
 
 The [source manifest](../source-manifest.json) records the application and

@@ -1,0 +1,9 @@
+
+  slopbotValueHistoryWitness
+    ok siblingRootsJoinAcrossSparsePinnedPagesTest passed 1 test(s)
+    ok driftEarlyCompletionAndWrongContinuationRefuseTest passed 1 test(s)
+    ok omittedCurrentOwnerAndIncompletePredecessorRefuseTest passed 1 test(s)
+    ok retiredParentCannotForkAndUnrelatedRootRefusesTest passed 1 test(s)
+    ok completeEvidenceKindsStayDistinctTest passed 1 test(s)
+
+  5 passing (2221ms)
