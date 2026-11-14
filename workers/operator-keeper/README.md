@@ -107,6 +107,15 @@ and its address must match the configuration. Never print or commit a secret.
 For a temporary stop, deploy `KEEPER_MODE = "off"` with the same namespace.
 This stops new work without deleting unknown transactions or funded awards.
 
+To rotate an unavailable RPC endpoint, set the optional `KEEPER_RPC_URL` secret
+through Wrangler's secret prompt while the keeper is off or in dry-run. The
+keeper uses that HTTPS URL in place of `KEEPER_CONFIG.rpcUrl`. Removing the
+override restores the URL in `KEEPER_CONFIG`. An empty, malformed or non-HTTPS
+override refuses the run. Keep the existing Worker and namespace, then inspect
+the next scheduled dry-run result. Network, signer, project selection, budgets
+and journal identity still come from `KEEPER_CONFIG`, and the usual chain and
+deployment checks apply to the replacement endpoint.
+
 ## Runtime references
 
 Cloudflare's [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
