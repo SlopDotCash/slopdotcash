@@ -3,6 +3,7 @@
 PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Runtime money movement is outside this specification-only migration. Every external observation needs an authenticated, source-bound adapter and implementation conformance before deployment. The models preserve immutable obligations, integer amounts, uncertain attempts and explicit authority.
 
 - [Exact amounts](./money.md)
+- [Exact half shares](./half.md)
 - [Project vaults](./vault.md)
 - [Full-width largest remainder](./allocation.md)
 - [Monthly allocation](./monthly.md)

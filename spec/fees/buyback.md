@@ -10,6 +10,7 @@ A token receipt counts only after conversion into USDC. The same receipt cannot 
 
 ```quint
 import money as M from "../settlement/money"
+import half as H from "../settlement/half"
 type BridgeOrder = { orderId: int, amount: int, costBps: int, receiver: str, authority: str, beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, now: int }
 type PurchaseQuote = { spent: int, acquired: M::Amount, slippageBps: int, impactBps: int, receiver: str, tokenPaused: bool, now: int }
 type BuybackPhase = Off | Ready | Ordered | InTransit | Arrived | Purchased | BurnPending | Burned | Refunded
@@ -43,13 +44,13 @@ pure val destinationValues = Set("0x000000000000000000000000000000000000dEaD", "
 
 ### A bridge order commits only available share and exact approved destinations
 
-Stablecoin inputs use integer micro-units. Cumulative income and committed share use arbitrary-length Amount limbs, so every verified base unit remains in the ledger. The available share is half the cumulative income rounded down to one micro-unit, less every previous commitment. The source wallet, receiver, order authority and refund beneficiary are the same reviewed fee-wallet identity across their network addresses. Every byte is checked before signing.
+Stablecoin inputs use integer micro-units. Cumulative income and committed share use arbitrary-length Amount limbs, so every verified base unit remains in the ledger. The available share is half the cumulative income rounded down to one micro-unit, less every previous commitment. The [exact half](../settlement/half.md) keeps the full-width amount. The source wallet, receiver, order authority and refund beneficiary are the same reviewed fee-wallet identity across their network addresses. Every byte is checked before signing.
 
 ```quint
 pure def canOrder(b: Buyback, orderRequest: BridgeOrder): bool =
   b.phase == Ready and not(b.sourceIsRobinhood) and orderRequest.orderId > 0 and not(b.orders.includes(orderRequest.orderId))
     and orderRequest.amount >= 500000000 and orderRequest.amount <= 1000000000
-    and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(orderRequest.amount)), M::divideAmounts(b.income, List(2)).quotient) <= 0
+    and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(orderRequest.amount)), H::half(b.income).quotient) <= 0
     and orderRequest.costBps >= 0 and orderRequest.costBps <= 150
     and orderRequest.receiver == b.outputWallet and orderRequest.authority == b.outputWallet and orderRequest.beneficiary == b.outputWallet
     and not(orderRequest.externalCall) and orderRequest.affiliateFee == 0 and orderRequest.reservedTaker == ""
@@ -95,7 +96,7 @@ pure def purchase(b: Buyback, purchaseRequest: PurchaseQuote): Buyback =
     purchaseSpends: b.purchaseSpends.append({ at: purchaseRequest.now, amount: purchaseRequest.spent }) }
 pure def canCommitBurn(b: Buyback, quantity: M::Amount, value: int, destination: str, tokenPaused: bool): bool =
   b.phase == Purchased and M::validAmount(quantity) and M::positiveAmount(quantity)
-    and M::equalAmounts(quantity, M::subtractAmounts(M::divideAmounts(b.acquired, List(2)).quotient, b.burnCommitted))
+    and M::equalAmounts(quantity, M::subtractAmounts(H::half(b.acquired).quotient, b.burnCommitted))
     and value >= 5000000 and destination == "0x000000000000000000000000000000000000dEaD" and not(tokenPaused)
 pure def commitBurn(b: Buyback, quantity: M::Amount, value: int, destination: str, tokenPaused: bool): Buyback =
   { ...b, phase: BurnPending, burnCommitted: M::addAmounts(b.burnCommitted, quantity) }
@@ -103,10 +104,10 @@ pure def canFinalizeBurn(b: Buyback, quantity: M::Amount, height: int, finalized
   b.phase == BurnPending and M::equalAmounts(quantity, M::subtractAmounts(b.burnCommitted, b.burned)) and height > b.finalizedHeight and finalized
 pure def finalizeBurn(b: Buyback, quantity: M::Amount, height: int, finalized: bool): Buyback =
   { ...b, phase: Burned, burned: M::addAmounts(b.burned, quantity), finalizedHeight: height }
-pure def alwaysShareBounded(b: Buyback): bool = M::validAmount(b.income) and M::validAmount(b.committed) and M::compareAmounts(b.committed, M::divideAmounts(b.income, List(2)).quotient) <= 0
+pure def alwaysShareBounded(b: Buyback): bool = M::validAmount(b.income) and M::validAmount(b.committed) and M::compareAmounts(b.committed, H::half(b.income).quotient) <= 0
 pure def alwaysBurnBounded(b: Buyback): bool = M::validAmount(b.burned) and M::compareAmounts(b.burned, b.burnCommitted) <= 0
   and M::validAmount(b.burnCommitted) and M::validAmount(b.acquired)
-  and M::compareAmounts(b.burnCommitted, M::divideAmounts(b.acquired, List(2)).quotient) <= 0
+  and M::compareAmounts(b.burnCommitted, H::half(b.acquired).quotient) <= 0
 pure def sometimesInTransit(b: Buyback): bool = b.phase == InTransit
 pure def sometimesRefunded(b: Buyback): bool = b.phase == Refunded
 pure def sometimesBurned(b: Buyback): bool = b.phase == Burned
@@ -168,19 +169,19 @@ Robinhood fee claims enter the purchase leg directly after the same cumulative h
 pure def canSelectSource(b: Buyback, robinhood: bool): bool = b.phase == Off and b.receipts.length() == 0
 pure def selectSource(b: Buyback, robinhood: bool): Buyback = { ...b, sourceIsRobinhood: robinhood }
 pure def canReserveLocalShare(b: Buyback, amount: int): bool = b.phase == Ready and b.sourceIsRobinhood
-  and amount >= 25000000 and amount <= 1000000000 and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(amount)), M::divideAmounts(b.income, List(2)).quotient) <= 0
+  and amount >= 25000000 and amount <= 1000000000 and M::compareAmounts(M::addAmounts(b.committed, M::smallAmount(amount)), H::half(b.income).quotient) <= 0
 pure def reserveLocalShare(b: Buyback, amount: int): Buyback =
   { ...b, phase: Arrived, committed: M::addAmounts(b.committed, M::smallAmount(amount)), arrival: amount }
 pure def canReceiveSlopFee(b: Buyback, receipt: int, quantity: M::Amount, receivedAt: int, finalized: bool): bool = b.phase == Ready and b.sourceIsRobinhood
   and receipt > 0 and not(b.receipts.includes(receipt)) and M::validAmount(quantity) and M::positiveAmount(quantity) and receivedAt >= 20261112 and finalized
 pure def receiveSlopFee(b: Buyback, receipt: int, quantity: M::Amount, receivedAt: int, finalized: bool): Buyback =
   val total = M::addAmounts(b.localSlopIncome, quantity)
-  val half = M::divideAmounts(total, List(2)).quotient
+  val half = H::half(total).quotient
   val share = M::subtractAmounts(half, b.localSlopCommitted)
   { ...b, phase: Purchased, localSlopIncome: total, localSlopCommitted: half,
     acquired: M::addAmounts(b.acquired, share), receipts: b.receipts.append(receipt) }
 pure def alwaysLocalShareBounded(b: Buyback): bool = M::validAmount(b.localSlopIncome)
-  and M::validAmount(b.localSlopCommitted) and M::compareAmounts(b.localSlopCommitted, M::divideAmounts(b.localSlopIncome, List(2)).quotient) <= 0
+  and M::validAmount(b.localSlopCommitted) and M::compareAmounts(b.localSlopCommitted, H::half(b.localSlopIncome).quotient) <= 0
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence
