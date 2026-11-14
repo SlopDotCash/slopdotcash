@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "13fd753fdceb4b6ad0b61f05409beba83defbc469c4eb828530866801bfe2f0c",
+  "inventorySha256": "95429799311b3b48aa7fcdeb4574361327badeb024d1e83a7192b70541c41c71",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3688,14 +3688,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "line": 52,
+      "line": 65,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/payments/operator_keeper_diagnostics.qnt",
-        "formal/models/payments/operator_keeper_lifecycle.qnt"
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/operator_keeper_rpc.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
