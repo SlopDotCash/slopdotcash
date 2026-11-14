@@ -1,0 +1,18 @@
+{
+  "scope": "Focused grouped value history selection, native bounded simulation and generated replay. Raw D1 and GitHub evidence, per-source history authentication, and runtime conformance are separate.",
+  "legacyMain": "ee1a4b2cd2672245537928380e425f5bd9ecb994",
+  "sourceInputs": [
+    {
+      "path": "spec/slopbot/valueHistory.md",
+      "sha256": "6842196912092532d0e1168f4b3e7fc34f172783efccfabbe3cd812e2c0f7bff"
+    }
+  ],
+  "results": {
+    "slopbot__valueHistory": {
+      "simulation": {
+        "command": "seed 86703783475666; to simulate again: pnpm exec quint run gen/slopbot__valueHistory.run.qnt --main slopbot__valueHistory_run --step step --invariant inv --max-samples 250 --max-steps 25 --mbt --seed 86703783475666",
+        "replayed": 24
+      }
+    }
+  }
+}
